@@ -59,6 +59,42 @@ void copy_bounded(std::array<char, N>& target, std::uint16_t& size, bool& trunca
   truncated = copied != source.size();
 }
 
+void append_single_line(std::string& output, std::string_view text) {
+  constexpr unsigned char kAsciiDelete = 0x7FU;
+  for (const char value : text) {
+    const auto byte = static_cast<unsigned char>(value);
+    const bool is_control = byte < static_cast<unsigned char>(' ') || byte == kAsciiDelete;
+    output.push_back(is_control ? ' ' : value);
+  }
+}
+
+template <typename ErrorLike>
+void append_error_context(std::string& output, const ErrorLike& error) {
+  if (!error.message().empty()) {
+    output.append(": ");
+    append_single_line(output, error.message());
+    if (error.message_truncated()) {
+      output.append("...");
+    }
+  }
+  if (!error.source().empty()) {
+    output.append(" [source: ");
+    append_single_line(output, error.source());
+    if (error.source_truncated()) {
+      output.append("...");
+    }
+    output.push_back(']');
+  }
+  if (!error.path().empty()) {
+    output.append(" [path: ");
+    append_single_line(output, error.path());
+    if (error.path_truncated()) {
+      output.append("...");
+    }
+    output.push_back(']');
+  }
+}
+
 [[nodiscard]] ConfigError type_error(std::string_view message) noexcept {
   return ConfigError::make(ConfigErrorCode::kTypeMismatch, message);
 }
@@ -821,6 +857,21 @@ std::string_view ConfigErrorCause::source() const noexcept {
 }
 std::span<const std::byte> ConfigErrorCause::excerpt() const noexcept {
   return {excerpt_.data(), excerpt_size_};
+}
+
+std::string format_error(const ConfigError& error) {
+  std::string result{error.token()};
+  append_error_context(result, error);
+  for (std::size_t index = 0; index < error.cause_count(); ++index) {
+    const ConfigErrorCause* cause = error.cause(index);
+    if (cause == nullptr) {
+      continue;
+    }
+    result.append("; caused by: ");
+    result.append(cause->token());
+    append_error_context(result, *cause);
+  }
+  return result;
 }
 
 ConfigValue::ConfigValue() noexcept = default;

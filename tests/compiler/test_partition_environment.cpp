@@ -123,6 +123,25 @@ class UnusedReadinessInputOperator final : public Operator<> {
   ReadableSource unused;
 };
 
+class SelectedReadinessInputOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input");
+    spec.readable_source(selected, "selected");
+  }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnReadable{selected});
+    return result;
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<std::uint32_t> input;
+  ReadableSource selected;
+};
+
 class UnusedReadinessLeaf final : public Graph {
  public:
   Input<std::uint32_t> input{"input"};
@@ -167,13 +186,14 @@ class UnusedReadinessLeaf final : public Graph {
   return compile(graph);
 }
 
-// Declaration-only readiness sources remain inert under every planner. In particular, the
-// experimental source-chain planner must resolve the embedded interface predecessor and preserve
+// Declaration-only readiness sources remain inert under production source-chain planning. The
+// planner must resolve the embedded interface predecessor and preserve
 // one unnamed serial partition rather than isolating the inner Operator.
 TEST(PartitionEnvironmentSelectionTest,
-     SourceChainIgnoresUnusedReadinessAcrossEmbeddedInputBoundary) {
+     ProductionSourceChainIgnoresUnusedReadinessAcrossEmbeddedInputBoundary) {
+  // REQ: COMPILE-068
   const ScopedPartitionEnvironment guard;
-  set_partition_environment("source_chain/v1");
+  set_partition_environment(std::nullopt);
 
   Graph graph{"source-chain-unused-readiness"};
   test::add_compile_test_default_clock(graph);
@@ -189,11 +209,34 @@ TEST(PartitionEnvironmentSelectionTest,
   EXPECT_TRUE(test::has_diagnostic(plan, "READINESS_SOURCE_UNUSED"));
 }
 
-// REQ: COMPILE-005
-TEST(PartitionEnvironmentSelectionTest, AbsentUsesCoreDefaultAndExactValuesOverride) {
+// REQ: COMPILE-068
+TEST(PartitionEnvironmentSelectionTest,
+     ProductionSourceChainIsolatesSelectedIndependentReadinessRoot) {
+  const ScopedPartitionEnvironment guard;
+  set_partition_environment(std::nullopt);
+
+  Graph graph{"source-chain-selected-readiness"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto target = graph.op<SelectedReadinessInputOperator>("target");
+  graph.add_flow(source->output, target->input);
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 2U);
+  EXPECT_TRUE(std::any_of(plan.partition_decisions().begin(),
+                          plan.partition_decisions().end(),
+                          [](const auto& decision) {
+                            return std::find(decision.reasons.begin(),
+                                             decision.reasons.end(),
+                                             PartitionDecisionReason::kReadinessIsolation) !=
+                                   decision.reasons.end();
+                          }));
+}
+
+// REQ: COMPILE-005, COMPILE-068
+TEST(PartitionEnvironmentSelectionTest, AbsentUsesProductionSourceChainDefault) {
   const ScopedPartitionEnvironment restore_environment;
-  // Key setup: absent env selects the core-default algorithm; explicit tag strings
-  // activate kEnvironmentOverride and select the named algorithm.
   set_partition_environment(std::nullopt);
   const ExecutionPlan absent = compile_linear_with_profile();
   ASSERT_TRUE(absent.ok());
@@ -202,113 +245,64 @@ TEST(PartitionEnvironmentSelectionTest, AbsentUsesCoreDefaultAndExactValuesOverr
     ADD_FAILURE() << "expected the default partition algorithm";
     return;
   }
-  EXPECT_EQ(absent_algorithm->id, "holoscan.partition.serial_baseline");
+  EXPECT_EQ(absent_algorithm->id, "holoscan.partition.source_chain");
   EXPECT_EQ(absent.partitioning_plan().selection_source, PlanSelectionSource::kCoreDefault);
-
-  set_partition_environment("serial_baseline/v1");
-  const ExecutionPlan explicit_baseline = compile_linear_with_profile();
-  ASSERT_TRUE(explicit_baseline.ok());
-  EXPECT_EQ(explicit_baseline.partitioning_plan().selection_source,
-            PlanSelectionSource::kEnvironmentOverride);
-  const auto& explicit_algorithm = explicit_baseline.partitioning_plan().accepted_algorithm;
-  if (!explicit_algorithm.has_value()) {
-    ADD_FAILURE() << "expected the explicit baseline partition algorithm";
-    return;
-  }
-  EXPECT_EQ(explicit_algorithm->id, "holoscan.partition.serial_baseline");
-
-  set_partition_environment("source_chain/v1");
-  const ExecutionPlan source_chain = compile_linear_with_profile();
-  ASSERT_TRUE(source_chain.ok());
-  const auto& source_chain_algorithm = source_chain.partitioning_plan().accepted_algorithm;
-  if (!source_chain_algorithm.has_value()) {
-    ADD_FAILURE() << "expected the source-chain partition algorithm";
-    return;
-  }
-  EXPECT_EQ(source_chain_algorithm->id, "holoscan.partition.source_chain");
-  EXPECT_EQ(source_chain.partitioning_plan().selection_source,
-            PlanSelectionSource::kEnvironmentOverride);
-  // Key assertion: source_chain is experimental and must emit exactly one warning diagnostic.
-  const auto warnings = std::count_if(
-      source_chain.diagnostics().begin(), source_chain.diagnostics().end(), [](const auto& item) {
-        return item.token == "PARTITION_PLANNER_EXPERIMENTAL_SELECTED" &&
-               item.severity == DiagnosticSeverity::kWarning;
-      });
-  EXPECT_EQ(warnings, 1);
+  EXPECT_FALSE(test::has_diagnostic(absent, "PARTITION_PLANNER_EXPERIMENTAL_SELECTED"));
 }
 
-// REQ: COMPILE-005
-TEST(PartitionEnvironmentSelectionTest, RejectsInvalidValuesConflictsAndForbiddenProfiles) {
+// REQ: COMPILE-005, COMPILE-068
+TEST(PartitionEnvironmentSelectionTest, EveryPresentValueFailsClosedWithoutValueAuthority) {
   const ScopedPartitionEnvironment restore_environment;
-  // Key setup: 5 syntactically invalid strings, 3 forbidden profiles, and a direct
-  // PartitioningPass conflict scenario are all exercised in a single test body.
-  constexpr std::array invalid_values{
-      "", "source_chain", "source_chain/v2", " source_chain/v1", "SOURCE_CHAIN/v1"};
-  for (std::string_view invalid : invalid_values) {
-    set_partition_environment(invalid);
+  constexpr std::array present_values{
+      "", "serial_baseline/v1", "source_chain/v1", "not-a-selector", "secret-value"};
+  std::optional<PlanDigest> first_digest;
+  std::optional<std::string> first_json;
+  for (std::string_view present : present_values) {
+    set_partition_environment(present);
     const ExecutionPlan plan = compile_linear_with_profile();
-    EXPECT_FALSE(plan.ok()) << invalid;
-    EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_SELECTION_ENV_VALUE_INVALID")) << invalid;
-    EXPECT_EQ(plan.partitioning_plan().selection_source, PlanSelectionSource::kEnvironmentOverride);
-    EXPECT_FALSE(plan.partitioning_plan().requested_algorithm.has_value());
+    EXPECT_FALSE(plan.ok()) << present;
+    EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_ENVIRONMENT_SELECTOR_REMOVED")) << present;
+    EXPECT_EQ(plan.partitioning_plan().selection_source, PlanSelectionSource::kCoreDefault);
+    ASSERT_TRUE(plan.partitioning_plan().requested_algorithm.has_value());
+    EXPECT_EQ(plan.partitioning_plan().requested_algorithm->id, "holoscan.partition.source_chain");
     EXPECT_FALSE(plan.partitioning_plan().accepted_algorithm.has_value());
     EXPECT_TRUE(static_cast<bool>(plan.partitioning_plan().reason));
     EXPECT_NE(plan.partitioning_plan().config_digest, PlanDigest{});
     const auto diagnostic =
         std::find_if(plan.diagnostics().begin(), plan.diagnostics().end(), [](const auto& item) {
-          return item.token == "PARTITION_SELECTION_ENV_VALUE_INVALID";
+          return item.token == "PARTITION_ENVIRONMENT_SELECTOR_REMOVED";
         });
     ASSERT_NE(diagnostic, plan.diagnostics().end());
     EXPECT_EQ(plan.partitioning_plan().reason, diagnostic->id);
-  }
-
-  for (const Profile forbidden : {Profile::kRobotics, Profile::kRealTime, Profile::kRegulated}) {
-    set_partition_environment("serial_baseline/v1");
-    const ExecutionPlan plan = compile_linear_with_profile(forbidden);
-    EXPECT_FALSE(plan.ok());
-    EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_SELECTION_PROFILE_FORBIDDEN"));
-    const auto& requested_algorithm = plan.partitioning_plan().requested_algorithm;
-    if (!requested_algorithm.has_value()) {
-      ADD_FAILURE() << "expected forbidden profile evidence to retain the requested algorithm";
-      return;
+    const std::string json{plan.json()};
+    if (!present.empty()) {
+      EXPECT_EQ(json.find(present), std::string::npos);
     }
-    EXPECT_EQ(requested_algorithm->id, "holoscan.partition.serial_baseline");
-    EXPECT_EQ(plan.partitioning_plan().selection_source, PlanSelectionSource::kEnvironmentOverride);
-    EXPECT_FALSE(plan.partitioning_plan().accepted_algorithm.has_value());
-    EXPECT_TRUE(static_cast<bool>(plan.partitioning_plan().reason));
+    if (!first_digest.has_value()) {
+      first_digest = plan.digest();
+      first_json = json;
+    } else {
+      EXPECT_EQ(plan.digest(), *first_digest);
+      EXPECT_EQ(json, *first_json);
+    }
   }
 
-  for (const Profile forbidden : {Profile::kRobotics, Profile::kRealTime, Profile::kRegulated}) {
-    Graph graph{"partition-environment-empty-region"};
-    test::add_linear_graph(graph);
-    graph.region("empty-constrained-region").profile(forbidden);
-    CompileOptions options;
-    options.profile = Profile::kStandard;
-
-    set_partition_environment("serial_baseline/v1");
-    const ExecutionPlan plan = compile(graph, options);
-    EXPECT_FALSE(plan.ok());
-    EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_SELECTION_PROFILE_FORBIDDEN"));
-    EXPECT_FALSE(plan.partitioning_plan().accepted_algorithm.has_value());
-  }
-
-  auto catalog = detail::partitioning::PartitionPlannerCatalog::create_ea1_builtins();
+  // The removed product selector does not remove the compiler-private, test-only
+  // selection seam used to validate a planner in isolation.
+  auto catalog = detail::partitioning::PartitionPlannerCatalog::create_default_builtins();
   ASSERT_TRUE(catalog);
   const test::PartitionProblemStorage storage{1U};
-  const auto request = detail::partitioning::serial_baseline_algorithm();
-  const std::string_view captured{"serial_baseline/v1"};
+  const auto request = detail::partitioning::source_chain_algorithm();
   const detail::partitioning::PartitionSelectionInput conflicting{
-      captured, request, std::nullopt, Profile::kStandard, {}};
+      request, request, Profile::kStandard, {}};
   auto result =
       detail::partitioning::PartitioningPass(*catalog).run(conflicting, storage.problem());
   ASSERT_FALSE(result);
-  // Key assertion: direct PartitioningPass invocation with a conflict reports the error
-  // message directly rather than through the diagnostics list.
   EXPECT_EQ(result.error().message, "PARTITION_SELECTION_CONFLICT");
 }
 
-// REQ: COMPILE-058
-TEST(PartitionEnvironmentSelectionTest, ManualCoverRejectsEveryExplicitPlannerSelection) {
+// REQ: COMPILE-058, COMPILE-068
+TEST(PartitionEnvironmentSelectionTest, ManualCoverAlsoRejectsRetiredEnvironmentSelector) {
   const ScopedPartitionEnvironment restore_environment;
   Graph graph{"manual-partition-selection-conflict"};
   test::add_compile_test_default_clock(graph);
@@ -321,37 +315,33 @@ TEST(PartitionEnvironmentSelectionTest, ManualCoverRejectsEveryExplicitPlannerSe
     set_partition_environment(selection);
     const ExecutionPlan plan = compile(graph);
     EXPECT_FALSE(plan.ok()) << selection;
-    EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_SELECTION_CONFLICT")) << selection;
-    EXPECT_EQ(plan.partitioning_plan().selection_source, PlanSelectionSource::kEnvironmentOverride);
+    EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_ENVIRONMENT_SELECTOR_REMOVED")) << selection;
+    EXPECT_EQ(plan.partitioning_plan().selection_source, PlanSelectionSource::kCoreDefault);
     EXPECT_FALSE(plan.partitioning_plan().accepted_algorithm.has_value());
   }
 }
 
-// REQ: COMPILE-005
-TEST(PartitionEnvironmentSelectionTest, CaptureIsPartOfIdentityAndRuntimeNeverRereadsEnvironment) {
+// REQ: COMPILE-005, COMPILE-068
+TEST(PartitionEnvironmentSelectionTest, RuntimeNeverRereadsRemovedEnvironmentSelector) {
   const ScopedPartitionEnvironment restore_environment;
   set_partition_environment(std::nullopt);
   const ExecutionPlan baseline = compile_linear_with_profile();
   ASSERT_TRUE(baseline.ok());
 
-  // Key setup: compile with source_chain, then mutate the env to an invalid value
-  // after compile to verify that the frozen plan is unaffected.
   set_partition_environment("source_chain/v1");
-  const ExecutionPlan source_chain = compile_linear_with_profile();
-  ASSERT_TRUE(source_chain.ok());
-  const PlanDigest accepted_digest = source_chain.digest();
-  const std::string accepted_json{source_chain.json()};
-  EXPECT_NE(baseline.digest(), accepted_digest);
+  const ExecutionPlan rejected = compile_linear_with_profile();
+  ASSERT_FALSE(rejected.ok());
+  EXPECT_TRUE(test::has_diagnostic(rejected, "PARTITION_ENVIRONMENT_SELECTOR_REMOVED"));
+  const PlanDigest accepted_digest = baseline.digest();
+  const std::string accepted_json{baseline.json()};
 
   set_partition_environment("invalid-after-compile");
-  // Key assertion: post-compile env mutation cannot alter a frozen ExecutionPlan's
-  // digest, JSON, or accepted algorithm.
-  EXPECT_TRUE(source_chain.ok());
-  EXPECT_EQ(source_chain.digest(), accepted_digest);
-  EXPECT_EQ(source_chain.json(), accepted_json);
-  const auto& accepted_algorithm = source_chain.partitioning_plan().accepted_algorithm;
+  EXPECT_TRUE(baseline.ok());
+  EXPECT_EQ(baseline.digest(), accepted_digest);
+  EXPECT_EQ(baseline.json(), accepted_json);
+  const auto& accepted_algorithm = baseline.partitioning_plan().accepted_algorithm;
   if (!accepted_algorithm.has_value()) {
-    ADD_FAILURE() << "expected the frozen source-chain partition algorithm";
+    ADD_FAILURE() << "expected the frozen production source-chain partition algorithm";
     return;
   }
   EXPECT_EQ(accepted_algorithm->id, "holoscan.partition.source_chain");
@@ -359,30 +349,21 @@ TEST(PartitionEnvironmentSelectionTest, CaptureIsPartOfIdentityAndRuntimeNeverRe
 
 // REQ: COMPILE-005
 // REQ: COMPILE-048
+// REQ: COMPILE-064
+// REQ: COMPILE-068
 TEST(PartitionResourceSeparationTest,
-     EnvironmentSelectedCoverCreatesNoImplicitTensorOrDeviceResources) {
+     ProductionSourceChainCreatesNoImplicitTensorOrDeviceResources) {
   const ScopedPartitionEnvironment restore_environment;
-  // Key setup: same fanout graph compiled under serial_baseline and source_chain yields
-  // a different number of execution partitions, proving the cover selection took effect.
-  set_partition_environment("serial_baseline/v1");
-  const ExecutionPlan baseline = compile_fanout();
-  ASSERT_TRUE(baseline.ok());
-
-  set_partition_environment("source_chain/v1");
+  set_partition_environment(std::nullopt);
   const ExecutionPlan source_chain = compile_fanout();
   ASSERT_TRUE(source_chain.ok());
-  EXPECT_NE(baseline.execution_partitions().size(), source_chain.execution_partitions().size());
-  // Key assertion: neither cover allocates implicit Tensor or device resources
-  // for a pure-scalar fanout graph.
-  EXPECT_TRUE(baseline.tensor_allocations().empty());
+  EXPECT_EQ(source_chain.execution_partitions().size(), 3U);
   EXPECT_TRUE(source_chain.tensor_allocations().empty());
-  EXPECT_TRUE(baseline.tensor_interface_pools().empty());
   EXPECT_TRUE(source_chain.tensor_interface_pools().empty());
-  EXPECT_TRUE(baseline.tensor_device_resources().empty());
   EXPECT_TRUE(source_chain.tensor_device_resources().empty());
 
   const PlanDigest accepted_digest = source_chain.digest();
-  set_partition_environment("serial_baseline/v1");
+  set_partition_environment("retired-after-compile");
   EXPECT_EQ(source_chain.digest(), accepted_digest);
   EXPECT_TRUE(source_chain.tensor_device_resources().empty());
 }

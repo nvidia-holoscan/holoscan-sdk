@@ -55,7 +55,7 @@ target_link_libraries(expected_installed_consumer
 # Compile the header-isolation translation unit a second time through the installed package. It
 # includes expected_macros.hpp as its only header, so this target proves install-tree
 # self-containment rather than relying on the build-tree smoke target.
-add_executable(expected_macros_installed_consumer ../ea1_expected_macros_header_smoke.cpp)
+add_executable(expected_macros_installed_consumer ../expected_macros_header_smoke.cpp)
 target_compile_features(expected_macros_installed_consumer PRIVATE cxx_std_20)
 set_target_properties(expected_macros_installed_consumer PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(expected_macros_installed_consumer PRIVATE holoscan::core)

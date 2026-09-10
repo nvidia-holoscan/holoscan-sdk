@@ -19,14 +19,15 @@
 #include <vector>
 
 #include <holoscan/core/parameter_schema.hpp>
+#include "core/canonical_text_encoding.hpp"
 #include "core/clock_binding_resolution.hpp"
 #include "core/graph_compiler_access.hpp"
 #include "core/operator_spec_compiler_access.hpp"
 #include "core/readiness_source_internal.hpp"
 #include "core/source_id_internal.hpp"
 #include "core/temporal_contract_lowering.hpp"
-#include "detail/snapshot_lookup.hpp"
 #include "profile_admission.hpp"
+#include "snapshot_lookup.hpp"
 
 namespace holoscan::detail {
 namespace {
@@ -44,28 +45,9 @@ namespace {
   return found == snapshot.ports.end() ? nullptr : &*found;
 }
 
-[[nodiscard]] std::vector<GraphPortId> alias_component(const GraphSnapshotData& snapshot,
-                                                       GraphPortId initial) {
-  std::vector<GraphPortId> component{initial};
-  for (std::size_t cursor = 0; cursor < component.size(); ++cursor) {
-    for (const auto& binding : snapshot.interface_bindings) {
-      GraphPortId adjacent{};
-      if (binding.public_port == component[cursor]) {
-        adjacent = binding.internal_port;
-      } else if (binding.internal_port == component[cursor]) {
-        adjacent = binding.public_port;
-      }
-      if (adjacent && std::find(component.begin(), component.end(), adjacent) == component.end()) {
-        component.push_back(adjacent);
-      }
-    }
-  }
-  return component;
-}
-
 [[nodiscard]] const EdgeRecord* incoming_edge(const GraphSnapshotData& snapshot,
                                               GraphPortId input) {
-  const auto aliases = alias_component(snapshot, input);
+  const auto aliases = interface_alias_component(snapshot, input);
   const auto found =
       std::find_if(snapshot.edges.begin(), snapshot.edges.end(), [&](const auto& edge) {
         return std::find(aliases.begin(), aliases.end(), edge.target) != aliases.end();
@@ -121,14 +103,6 @@ void bind_source(const OperatorSpecCompilerAccess::SourceMetadata& source, Sourc
   }
 }
 
-[[nodiscard]] std::optional<Profile> profile_for(std::span<const std::optional<Profile>> profiles,
-                                                 VertexId owner) noexcept {
-  if (!owner || owner.value > profiles.size()) {
-    return std::nullopt;
-  }
-  return profiles[static_cast<std::size_t>(owner.value - 1U)];
-}
-
 [[nodiscard]] ClockId resolve_clock(const GraphSnapshotData& snapshot,
                                     std::span<const ClockPlanRecord> clocks, GraphId graph,
                                     const ClockKey& key) noexcept {
@@ -171,7 +145,7 @@ void bind_source(const OperatorSpecCompilerAccess::SourceMetadata& source, Sourc
 
 [[nodiscard]] const ExternalTopicRecord* imported_source_topic(const GraphSnapshotData& snapshot,
                                                                const EdgeRecord& edge) noexcept {
-  const auto aliases = alias_component(snapshot, edge.source);
+  const auto aliases = interface_alias_component(snapshot, edge.source);
   const auto topic = std::find_if(
       snapshot.external_topics.begin(), snapshot.external_topics.end(), [&](const auto& candidate) {
         return candidate.imported &&
@@ -253,21 +227,15 @@ struct SourceClockCoordinate {
   return port.setup.queue_depth.value_or(1U);
 }
 
-[[nodiscard]] QueuePolicy effective_queue_policy(const EdgeRecord& edge) noexcept {
-  return edge.graph_override.queue_policy.value_or(edge.add_flow_options.queue_policy);
+[[nodiscard]] bool has_explicit_queue_depth(const PortRecord& port,
+                                            const EdgeRecord& edge) noexcept {
+  return edge.graph_override.queue_depth.has_value() ||
+         edge.add_flow_options.queue_depth.has_value() ||
+         port.graph_override.queue_depth.has_value() || port.setup.queue_depth.has_value();
 }
 
-[[nodiscard]] std::string sha256_text(const ParamSchemaHash& digest) {
-  constexpr std::array<char, 16> kHex{
-      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-  std::string result{"sha256:"};
-  result.reserve(71U);
-  for (const std::byte value : digest.value) {
-    const auto byte = std::to_integer<std::uint8_t>(value);
-    result.push_back(kHex[byte >> 4U]);
-    result.push_back(kHex[byte & 0x0FU]);
-  }
-  return result;
+[[nodiscard]] QueuePolicy effective_queue_policy(const EdgeRecord& edge) noexcept {
+  return edge.graph_override.queue_policy.value_or(edge.add_flow_options.queue_policy);
 }
 
 [[nodiscard]] InputSelectorKind selector_kind(TemporalRecordSelectorKind kind) noexcept {
@@ -426,7 +394,7 @@ struct SourceClockCoordinate {
                                         kind == PredicateCallableKind::kNonCapturingLambda)) {
     // The maintained matrix admits direct noncritical Robotics callables. A
     // critical-region contributor would require bounded-call and nonthrowing
-    // package evidence; no such contributor is present in this EA1 slice.
+    // package evidence; no such contributor is present in this baseline slice.
     return PredicateCallableDisposition::kAdmitted;
   }
   // Callable category and noexcept constrain dispatch/exception shape, but do
@@ -504,7 +472,7 @@ struct SourceClockCoordinate {
   hash.add(schema);
   hash.add(size_bytes);
   hash.add(alignment_bytes);
-  return sha256_text(hash.finish());
+  return lowercase_hex_text(hash.finish().value, HexPrefix::kSha256);
 }
 
 [[nodiscard]] PredicateCallablePlanRecord make_predicate_callable_record(
@@ -567,16 +535,42 @@ void add_warning(TemporalPlanLoweringResult& result, std::string token, VertexId
       {.token = std::move(token), .source = DiagnosticSource{.vertex = owner}});
 }
 
+[[nodiscard]] bool completion_trigger_supported(TemporalTriggerKind kind) noexcept {
+  switch (kind) {
+    case TemporalTriggerKind::kClock:
+    case TemporalTriggerKind::kReadable:
+    case TemporalTriggerKind::kNotified:
+    case TemporalTriggerKind::kDoorbell:
+    case TemporalTriggerKind::kSpin:
+      return true;
+    case TemporalTriggerKind::kNone:
+    case TemporalTriggerKind::kAnyInput:
+    case TemporalTriggerKind::kEach:
+    case TemporalTriggerKind::kAligned:
+    case TemporalTriggerKind::kWindow:
+    case TemporalTriggerKind::kPredicate:
+      return false;
+  }
+  return false;
+}
+
+[[nodiscard]] bool completion_placement_supported(
+    const GraphCompilerAccess::TemporalReplay& replay) noexcept {
+  const bool has_input =
+      std::any_of(replay.ports.begin(), replay.ports.end(), [](const auto& port) {
+        return port.direction == PortDirection::kInput;
+      });
+  const bool has_output =
+      std::any_of(replay.ports.begin(), replay.ports.end(), [](const auto& port) {
+        return port.direction == PortDirection::kOutput;
+      });
+  return !has_input && has_output && completion_trigger_supported(replay.contract.trigger.kind);
+}
+
 void add_missing_default_clock_error(TemporalPlanLoweringResult& result,
                                      const GraphSnapshotData& snapshot, GraphId graph) {
-  const auto record =
-      std::find_if(snapshot.graphs.begin(), snapshot.graphs.end(), [graph](const auto& candidate) {
-        return candidate.id == graph;
-      });
-  const std::size_t index =
-      record == snapshot.graphs.end()
-          ? 0U
-          : static_cast<std::size_t>(std::distance(snapshot.graphs.begin(), record));
+  const GraphRecord* record = find_graph(snapshot, graph);
+  const std::size_t index = record == nullptr ? 0U : static_cast<std::size_t>(graph.value - 1U);
   result.errors.push_back(TemporalPlanDiagnostic{
       .token = "TEMPORAL_CLOCK_UNDECLARED",
       .source = DiagnosticSource{.graph_generation = snapshot.generation, .graph = graph},
@@ -604,12 +598,7 @@ void add_undeclared_temporal_clock_error(TemporalPlanLoweringResult& result,
 }
 
 [[nodiscard]] std::size_t vertex_index(const GraphSnapshotData& snapshot, VertexId owner) noexcept {
-  const auto record = std::find_if(snapshot.vertices.begin(),
-                                   snapshot.vertices.end(),
-                                   [&](const auto& candidate) { return candidate.id == owner; });
-  return record == snapshot.vertices.end()
-             ? 0U
-             : static_cast<std::size_t>(std::distance(snapshot.vertices.begin(), record));
+  return find_vertex(snapshot, owner) == nullptr ? 0U : static_cast<std::size_t>(owner.value - 1U);
 }
 
 [[nodiscard]] std::uint32_t first_unassigned_source_id(
@@ -845,7 +834,7 @@ GraphCompilerAccess::replay_temporal_contracts(const ExecutableFactoryInventory&
     }
     const std::size_t connected_count = connected_input_count(snapshot, owner);
     // Existing operators that have no temporal authoring and no connected input are inert in
-    // EA1. Inputful contracts may omit the trigger and normalize to OnAnyInput, including when
+    // baseline. Inputful contracts may omit the trigger and normalize to OnAnyInput, including when
     // they customize selectors, missing policy, or deadline policy.
     if (connected_count == 0U && ContractTestAccess::empty(contract)) {
       continue;
@@ -890,13 +879,17 @@ TemporalPlanLoweringResult lower_temporal_plan(
       add_error(result, "TEMPORAL_CONTRACT_OWNER_UNRESOLVED", replay.owner);
       continue;
     }
-    const auto profile = profile_for(effective_profiles, replay.owner);
+    const auto profile = effective_profile_for_vertex(effective_profiles, replay.owner);
     if (!profile) {
       add_error(result, "TEMPORAL_PROFILE_UNRESOLVED", replay.owner);
       continue;
     }
 
     auto contract = replay.contract;
+    if (contract.compute_calls && !completion_placement_supported(replay)) {
+      add_error(result, "OPERATOR_COMPLETION_PLACEMENT_UNSUPPORTED", replay.owner);
+      continue;
+    }
     const ClockKey reference_key = (contract.trigger.kind == TemporalTriggerKind::kClock ||
                                     contract.trigger.kind == TemporalTriggerKind::kWindow ||
                                     (contract.trigger.kind == TemporalTriggerKind::kPredicate &&
@@ -950,11 +943,8 @@ TemporalPlanLoweringResult lower_temporal_plan(
     const auto connected = connected_inputs(snapshot, replay.owner);
     if (contract.trigger.kind == TemporalTriggerKind::kAnyInput) {
       for (std::size_t index = 0; index < connected.size(); ++index) {
-        const auto port =
-            std::find_if(snapshot.ports.begin(), snapshot.ports.end(), [&](const auto& candidate) {
-              return candidate.id.value == connected[index].value();
-            });
-        if (port != snapshot.ports.end()) {
+        const PortRecord* port = find_port(snapshot, GraphPortId{connected[index].value()});
+        if (port != nullptr) {
           context.trigger_pins.push_back({
               .resolved = true,
               .input_name = port->name,
@@ -987,11 +977,8 @@ TemporalPlanLoweringResult lower_temporal_plan(
         selection_error = true;
         break;
       }
-      const auto port =
-          std::find_if(snapshot.ports.begin(), snapshot.ports.end(), [&](const auto& candidate) {
-            return candidate.id.value == replayed_port->id.value();
-          });
-      if (port == snapshot.ports.end()) {
+      const PortRecord* port = find_port(snapshot, GraphPortId{replayed_port->id.value()});
+      if (port == nullptr) {
         add_error(result, "TEMPORAL_INPUT_PORT_INVALID", replay.owner, replayed_port->id);
         selection_error = true;
         break;
@@ -1025,7 +1012,7 @@ TemporalPlanLoweringResult lower_temporal_plan(
       }
       // REQ: COMPILE-017 - freeze the final retained geometry before deriving
       // selector cardinality or selected-sample bounds.
-      const std::uint32_t depth = effective_queue_depth(*port, *edge);
+      std::uint32_t depth = effective_queue_depth(*port, *edge);
       if (depth == 0U) {
         add_error(result, "TEMPORAL_RETENTION_UNBOUNDED", replay.owner, replayed_port->id);
         selection_error = true;
@@ -1043,12 +1030,19 @@ TemporalPlanLoweringResult lower_temporal_plan(
         const std::uint64_t pending_windows = contract.trigger.capacity;
         const std::uint64_t required_complete_history =
             static_cast<std::uint64_t>(input.bracket.max_samples) * pending_windows;
-        if (input.bracket.max_samples < minimum || pending_windows == 0U ||
-            required_complete_history > std::numeric_limits<std::uint32_t>::max() ||
-            depth < required_complete_history) {
+        const bool invalid_geometry =
+            input.bracket.max_samples < minimum || pending_windows == 0U ||
+            required_complete_history > std::numeric_limits<std::uint32_t>::max();
+        const bool explicit_depth_insufficient = !invalid_geometry &&
+                                                 has_explicit_queue_depth(*port, *edge) &&
+                                                 depth < required_complete_history;
+        if (invalid_geometry || explicit_depth_insufficient) {
           add_error(result, "TEMPORAL_RETENTION_INSUFFICIENT", replay.owner, replayed_port->id);
           selection_error = true;
           break;
+        }
+        if (!has_explicit_queue_depth(*port, *edge)) {
+          depth = static_cast<std::uint32_t>(required_complete_history);
         }
       }
       // An external import whose catalog makes capture time optional cannot
@@ -1185,7 +1179,8 @@ TemporalPlanLoweringResult lower_temporal_plan(
       fingerprint_hash.add(contract.trigger.predicate_callable_noexcept);
       fingerprint_hash.add(package_capabilities.manifest().package_id);
       fingerprint_hash.add(package_capabilities.manifest().build_id);
-      const std::string fingerprint = sha256_text(fingerprint_hash.finish());
+      const std::string fingerprint =
+          lowercase_hex_text(fingerprint_hash.finish().value, HexPrefix::kSha256);
       const auto disposition =
           callable_disposition(kind, contract.trigger.predicate_callable_noexcept, *profile);
       callable_plan = make_predicate_callable_record(predicate_id,
@@ -1766,6 +1761,13 @@ TemporalPlanLoweringResult lower_temporal_plan(
       result.predicate_triggers.push_back(std::move(planned));
     }
 
+    if (contract.compute_calls) {
+      result.operator_completion_rules.push_back(OperatorCompletionPlanRecord{
+          .owner = OperatorRef{.id = replay.operator_id, .plan_generation = plan_generation},
+          .kind = OperatorCompletionRuleKind::kComputeCalls,
+          .limit = contract.compute_calls->limit,
+      });
+    }
     result.triggers.push_back(std::move(trigger));
   }
   std::sort(
@@ -1775,6 +1777,9 @@ TemporalPlanLoweringResult lower_temporal_plan(
   std::sort(result.parameter_derived_terms.begin(),
             result.parameter_derived_terms.end(),
             [](const auto& left, const auto& right) { return left.term_id < right.term_id; });
+  std::sort(result.operator_completion_rules.begin(),
+            result.operator_completion_rules.end(),
+            [](const auto& left, const auto& right) { return left.owner.id < right.owner.id; });
   ClockId scheduling_clock{};
   for (const auto& trigger : result.triggers) {
     if (!trigger.reference_clock.valid()) {

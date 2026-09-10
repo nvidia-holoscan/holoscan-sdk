@@ -64,7 +64,7 @@ if(forbidden_root_symbol)
 endif()
 
 string(REGEX MATCH
-    "(PartitionAlgorithm|PartitionPlanner|set_partition_algorithm|source_chain|serial_baseline)"
+    "(PartitionAlgorithm|PartitionPlanner|partition_of|set_partition_algorithm|source_chain|serial_baseline)"
     forbidden_partition_symbol
     "${exported_symbols}"
 )

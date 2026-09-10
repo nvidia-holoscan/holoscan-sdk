@@ -246,7 +246,7 @@ struct OnClock {
   std::chrono::nanoseconds period{};    ///< Required positive representable period.
   ClockKey clock{};                     ///< Cold key; omission selects the graph default clock.
   std::optional<TimePoint> start_at{};  ///< Optional absolute phase in a comparable domain.
-  ClockTickPolicy tick_policy{ClockTickPolicy::kCoalesceLateTicks};  ///< Closed EA1 policy.
+  ClockTickPolicy tick_policy{ClockTickPolicy::kCoalesceLateTicks};  ///< Closed baseline policy.
 };
 
 /// @brief Own a cold declaration-order list of borrowed input port references.
@@ -1139,7 +1139,7 @@ template <typename State = NoPredicateState, typename Identity, PublishedPayload
       std::move(storage));
 }
 
-/// @brief Name the sole EA1 predicate evaluation source alternatives.
+/// @brief Name the sole baseline predicate evaluation source alternatives.
 using PredicateEvaluationSource = std::variant<OnInputUpdate, OnClock>;
 
 /// @brief Trigger bounded predicate evaluation from one exact input update or one clock tick.
@@ -1147,6 +1147,13 @@ struct OnPredicate {
   PredicateEvaluationSource evaluate_on;  ///< Exact input-update or clock source.
   PredicateBinding predicate;             ///< Deep-owning cold callable descriptor.
   PredicateFiring firing{PredicateFiring::kOnFalseToTrue};  ///< Explicit firing rule.
+};
+
+/// @brief Complete one finite source after a fixed number of successful compute calls.
+/// @note This \c holoscan.core rule is cold authoring state. Compilation freezes its value for
+/// one logical Operator; it is not a scheduler selector or mutable run option.
+struct ComputeCalls {
+  std::uint64_t limit{};  ///< Exact limit; zero and \c UINT64_MAX are ordinary values.
 };
 
 /// @brief Build one closed, deep-owning operator temporal contract.
@@ -1337,6 +1344,14 @@ class HOLOSCAN_CORE_EXPORT Contract {
   /// @param budget Positive duration added to the frozen eligibility time with checked arithmetic.
   /// @return This contract for chained cold authoring.
   Contract& deadline(std::chrono::nanoseconds budget);
+  /// @brief Declare natural completion after a fixed number of successful compute calls.
+  /// @param rule Exact Operator-local compute-call rule. Zero and \c UINT64_MAX remain ordinary
+  /// values and are never interpreted as absent or unbounded sentinels.
+  /// @return This contract for chained cold authoring.
+  /// @note Repeated calls replace the previously authored rule; the last call wins.
+  /// @note This rule supplies no activation trigger. Without an explicit trigger, contract
+  /// normalization reports `NO_TRIGGER` before completion-placement validation.
+  Contract& complete_after(ComputeCalls rule);
   /// @brief Bind the latest-permitted-compute-start budget to one duration Parameter field.
   /// @tparam MemberPath Valid declared duration field path.
   /// @param dependency Compile-resolved dependency token.

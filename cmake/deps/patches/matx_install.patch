@@ -11,21 +11,6 @@ index 3c67ee0..649eb72 100644
  
  # Command line options
  option(MATX_BUILD_EXAMPLES "Build examples" OFF)
-@@ -117,8 +117,12 @@ if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")
-     endif()
- endif()
-
--# CPM is required for all package management
--include(public/cpm-cmake/cmake/CPM.cmake)
-+# CPM is required for all package management. rapids_cpm_init loads it for the
-+# main build, so only include the vendored copy when MatX is configured without
-+# that initialization path.
-+if(NOT COMMAND CPMAddPackage)
-+    include(public/cpm-cmake/cmake/CPM.cmake)
-+endif()
- # Helper for selecting build type
- include(cmake/BuildType.cmake)
-
 @@ -364,13 +364,13 @@ endif()
  
  # Build config files if the user isn't adding this as a subdirectory. At this point our transitive target

@@ -29,6 +29,8 @@
 #include "../threading/linux_thread_controller.hpp"
 #endif
 
+#include "../threading/thread_placement_contracts.hpp"
+
 namespace holoscan::detail {
 namespace {
 
@@ -69,15 +71,6 @@ void count_phase(RuntimePhaseCounters* counters, RuntimePhaseCounter counter) no
   }
 }
 
-[[nodiscard]] bool deadline_equal(const std::optional<DeadlineScheduling>& lhs,
-                                  const std::optional<DeadlineScheduling>& rhs) noexcept {
-  if (lhs.has_value() != rhs.has_value()) {
-    return false;
-  }
-  return !lhs || (lhs->runtime_ns == rhs->runtime_ns && lhs->deadline_ns == rhs->deadline_ns &&
-                  lhs->period_ns == rhs->period_ns);
-}
-
 [[nodiscard]] expected<void, Error> verify_snapshot(
     const ExecutionLaneOsPlacement& accepted, const ExecutionLanePlacementSnapshot& observed) {
   if (accepted.affinity && accepted.affinity->cores != observed.affinity.cores) {
@@ -85,7 +78,7 @@ void count_phase(RuntimePhaseCounters* counters, RuntimePhaseCounter counter) no
   }
   if (accepted.scheduling.policy != observed.policy ||
       accepted.scheduling.priority != observed.priority ||
-      !deadline_equal(accepted.scheduling.deadline, observed.deadline)) {
+      !deadline_scheduling_equal(accepted.scheduling.deadline, observed.deadline)) {
     return lane_error(ErrorCode::kIncompatible, "RUNTIME_LANE_SCHEDULING_READBACK_MISMATCH");
   }
   if (accepted.scheduling.policy != SchedulingPolicy::kOther && !observed.reset_on_fork) {
@@ -715,6 +708,12 @@ struct ExecutionLaneSet::Impl {
 #endif
   }
 
+  void lane_main_with_thread_usage(std::size_t index) noexcept {
+    const RuntimeThreadUsageScope thread_usage{phase_counters,
+                                               RuntimeThreadUsageRole::kExecutionLane};
+    lane_main(index);
+  }
+
   void stop_lanes() noexcept {
     {
       const std::lock_guard lock(startup_mutex);
@@ -958,8 +957,15 @@ expected<void, ExecutionLaneStartupEvidence> ExecutionLaneSet::start() {
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     try {
 #endif
-      impl_->lanes[index]->worker =
-          std::thread([impl = impl_.get(), index] { impl->lane_main(index); });
+      // Keep ordinary lanes on the original entry point. Thread-usage accounting is selected once
+      // during cold startup and adds no scope or sampling work to the uninstrumented loop.
+      if (impl_->phase_counters != nullptr) {
+        impl_->lanes[index]->worker =
+            std::thread([impl = impl_.get(), index] { impl->lane_main_with_thread_usage(index); });
+      } else {
+        impl_->lanes[index]->worker =
+            std::thread([impl = impl_.get(), index] { impl->lane_main(index); });
+      }
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     } catch (const std::system_error& error) {
       const std::lock_guard startup_lock(impl_->startup_mutex);

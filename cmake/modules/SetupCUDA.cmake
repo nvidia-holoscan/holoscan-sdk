@@ -30,7 +30,7 @@ if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native")
 else()
     # Get the CUDA architectures from the script
     set(_script_command
-        "${CMAKE_SOURCE_DIR}/scripts/get_cmake_cuda_archs.py"
+        "${holoscan_SOURCE_DIR}/scripts/get_cmake_cuda_archs.py"
         "${CMAKE_CUDA_ARCHITECTURES}"
         "--nvcc-path" "${CMAKE_CUDA_COMPILER}"
         "--min-arch" "70" # Holoscan requirement

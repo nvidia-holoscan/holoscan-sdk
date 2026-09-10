@@ -17,6 +17,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <holoscan/core/execution_context.hpp>
@@ -106,7 +107,11 @@ TEST(RuntimeChannelBinding, PrebindsProtectedTerminalHandleForDropOldestSubscrib
 // REQ: RUNTIME-030
 TEST(RuntimeChannelBinding, PumpSignalsControllerAfterProductiveTypedIngress) {
   SessionFixture fixture;
-  std::array<RuntimePhaseTraceRecord, 8U> trace_storage;
+  // Sized with headroom rather than exactly: wait_kernel polls readiness once before it
+  // blocks, so a productive scan now records one more transport-wait point than the eight
+  // slots this originally held and the trace silently dropped the tail. The order assertions
+  // below are the contract; the capacity is only what lets them be observed.
+  std::array<RuntimePhaseTraceRecord, 16U> trace_storage;
   const auto counters = std::make_shared<RuntimePhaseCounters>(std::span{trace_storage});
   fixture.plan.executable_factories.phase_counters = counters;
   std::binary_semaphore wake{0};
@@ -155,17 +160,28 @@ TEST(RuntimeChannelBinding, PumpSignalsControllerAfterProductiveTypedIngress) {
   std::optional<std::int64_t> transport_ready;
   std::optional<std::int64_t> ingress_retained;
   std::optional<std::int64_t> wake_signaled;
+  // First occurrence of each point, not the last. The contract is the ordering within the one
+  // productive scan, but the pump keeps scanning: cancel() below wakes it again and records a
+  // second transport-wait point after the ingress. Taking the last occurrence compared the
+  // shutdown wake against the productive retention, which only ever held because the trace buffer
+  // was too small to keep that record.
   for (const RuntimePhaseTraceRecord& record : counters->trace_records()) {
     switch (record.point) {
       case RuntimePhaseTracePoint::kChannelTransportWaitReturned:
-        transport_ready = record.timestamp_ns;
+        if (!transport_ready.has_value()) {
+          transport_ready = record.timestamp_ns;
+        }
         break;
       case RuntimePhaseTracePoint::kChannelIngressRetained:
-        ingress_retained = record.timestamp_ns;
+        if (!ingress_retained.has_value()) {
+          ingress_retained = record.timestamp_ns;
+        }
         EXPECT_EQ(record.source_sequence, 1U);
         break;
       case RuntimePhaseTracePoint::kChannelReadinessWakeSignaled:
-        wake_signaled = record.timestamp_ns;
+        if (!wake_signaled.has_value()) {
+          wake_signaled = record.timestamp_ns;
+        }
         break;
       default:
         break;
@@ -331,15 +347,28 @@ TEST(ChannelTemporalDispatchTest, CommitsAndRollsBackTypedSelectionsTransactiona
   for (std::size_t index = 3U; index < script->records.size(); ++index) {
     ASSERT_TRUE(direct->push(script->records[index]));
   }
-  auto overflow = direct->begin(TimePoint{70, ClockId{1U}},
+  auto expanded = direct->begin(TimePoint{70, ClockId{1U}},
                                 script->records.back().arrival_sequence,
                                 script->records.back().producer_epoch);
-  ASSERT_FALSE(overflow);
-  EXPECT_EQ(overflow.error().code, ErrorCode::kResourceExhausted);
+  ASSERT_TRUE(expanded);
+  ASSERT_EQ(expanded->selected().size(), 4U);
+  const std::array expanded_selection{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = expanded->selection(),
+      .samples = expanded->selected(),
+      .batch = true,
+      .destructive = true,
+  }};
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 4U, expanded_selection));
+  auto expanded_view = fixture.sink.input.selected_batch();
+  ASSERT_TRUE(expanded_view);
+  EXPECT_EQ(batch_values(*expanded_view), (std::vector<std::int32_t>{40, 50, 60, 70}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 4U, false));
+  ASSERT_TRUE(expanded->finish(false));
   EXPECT_EQ(direct->retained_count(), 4U);
-  auto no_partial_view = fixture.sink.input.selected_batch();
-  ASSERT_FALSE(no_partial_view);
-  EXPECT_EQ(no_partial_view.error().code, ErrorCode::kStaleEndpoint);
+  auto rolled_back_view = fixture.sink.input.selected_batch();
+  ASSERT_FALSE(rolled_back_view);
+  EXPECT_EQ(rolled_back_view.error().code, ErrorCode::kStaleEndpoint);
 
   for (std::size_t index = 3U; index < script->events.size(); ++index) {
     ASSERT_TRUE((*binding)->retire(script->events[index].source_sequence));
@@ -1430,6 +1459,73 @@ TEST(RuntimeChannelBinding, ProtectsWitnessAndTemporalClaimFromLossyCacheReplace
   EXPECT_TRUE((*session)->join());
 }
 
+// A transported drop-oldest receive reserves the typed destination it will overwrite. Count that
+// actual claim as a pre-witness replacement even though the receive commits through its reserved
+// destination and therefore does not query writable_slot() a second time.
+// REQ: RUNTIME-017
+// REQ: CHAN-131
+TEST(RuntimeChannelBinding, TransportedReservationCountsItsPreWitnessReplacement) {
+  SessionFixture fixture;
+  fixture.use_one_slot_drop_oldest_queue();
+  const auto counters = std::make_shared<RuntimePhaseCounters>();
+  fixture.plan.executable_factories.phase_counters = counters;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto binding =
+      (*session)->create_readiness_binding(VertexId{2U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(1U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 2U,
+                                           });
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{11}));
+  ASSERT_TRUE(wait_for_occupied_sample(**session, PortId{2U}));
+  const auto before = counters->snapshot();
+  EXPECT_EQ(
+      before[RuntimePhaseCounters::index(RuntimePhaseCounter::kChannelPreWitnessReplacements)], 0U);
+
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{22}));
+  const auto received_deadline = std::chrono::steady_clock::now() + 2s;
+  RuntimePhaseCounters::Snapshot received;
+  do {
+    received = counters->snapshot();
+    if (received[RuntimePhaseCounters::index(RuntimePhaseCounter::kChannelSamplesReceived)] >= 2U) {
+      break;
+    }
+    std::this_thread::yield();
+  } while (std::chrono::steady_clock::now() < received_deadline);
+  ASSERT_GE(received[RuntimePhaseCounters::index(RuntimePhaseCounter::kChannelSamplesReceived)],
+            2U);
+  const auto replacement_state =
+      RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(replacement_state) << runtime_error_message(replacement_state.error());
+  EXPECT_EQ(replacement_state->occupied_samples, 1U);
+  EXPECT_EQ(replacement_state->pending_direct_ingress_samples, 0U);
+  auto replacement = wait_for_event(**session, **binding);
+  ASSERT_TRUE(replacement) << runtime_error_message(replacement.error());
+  auto replacement_record =
+      (*session)->temporal_sample(replacement->port, replacement->source_sequence);
+  ASSERT_TRUE(replacement_record) << runtime_error_message(replacement_record.error());
+  EXPECT_EQ(replacement_record->source_sequence, 2U);
+  const auto after = counters->snapshot();
+  EXPECT_EQ(after[RuntimePhaseCounters::index(RuntimePhaseCounter::kChannelPreWitnessReplacements)],
+            1U);
+
+  ASSERT_TRUE((*binding)->retire(replacement->source_sequence));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
 // Selector commit can release temporal history before compute returns. The activation and witness
 // claims independently keep the typed payload stable until both later retirement boundaries pass.
 // REQ: RUNTIME-017
@@ -2010,6 +2106,1332 @@ TEST(RuntimeChannelBinding, RejectsZeroAndOccupiedButUnemittedWitnessRetirement)
   ASSERT_TRUE((*binding)->retire(event->source_sequence));
   (*session)->cancel();
   ASSERT_TRUE((*session)->join());
+}
+
+// REQ: RUNTIME-017
+// REQ: CHAN-131
+// Freshness recovery is useful only when drop-oldest has bounded staging behind a pinned typed
+// slot. A blocking LatestWithin input has the temporal contract but no lossy handoff to reconcile,
+// so registering it would add status queries and retained-claim scans to an unrelated path.
+TEST(RuntimeChannelBindingTemporal, FreshnessSupportRequiresDropOldestStaging) {
+  for (const bool drop_oldest : {false, true}) {
+    SCOPED_TRACE(drop_oldest ? "drop-oldest" : "blocking");
+    SessionFixture fixture;
+    fixture.enable_latest_within();
+    if (drop_oldest) {
+      fixture.use_one_slot_drop_oldest_queue();
+    }
+    auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+    ASSERT_TRUE(session) << runtime_error_message(session.error());
+
+    auto supported = (*session)->supports_freshness_refill(PortId{2U});
+    ASSERT_TRUE(supported) << runtime_error_message(supported.error());
+    EXPECT_EQ(*supported, drop_oldest);
+  }
+}
+
+// REQ: RUNTIME-017
+// REQ: CHAN-131
+// The causality qualification, stated as the reconcile depends on it: a staged successor captured
+// after the coordinate of a witness this round can freeze must not be admitted in place of a
+// record that witness could already have selected. Evicting for it would strand that witness --
+// the successor sorts behind it in freeze_next's reference-time ordering, so the activation reads
+// a cache the eviction emptied and selects nothing.
+//
+// This is the deterministic form of the end-to-end HighRateSource case. That one can only observe
+// the outcome at a producer fast enough to lose the race; this one fixes both coordinates.
+TEST(RuntimeChannelBindingTemporal, ReserveDeclinesASuccessorCapturedAfterTheWitness) {
+  constexpr std::int64_t kRetainedCaptureNs = 10;
+  constexpr std::int64_t kSuccessorCaptureNs = 20;
+
+  // The witness coordinate is the only variable: at the successor's own capture the successor is
+  // causal to it, and one nanosecond earlier it is not.
+  struct Vector {
+    std::int64_t witness_reference_ns{};
+    bool expected_reserved{};
+  };
+  constexpr std::array vectors{
+      Vector{kSuccessorCaptureNs, true},
+      Vector{kSuccessorCaptureNs - 1, false},
+  };
+
+  for (const Vector& vector : vectors) {
+    SCOPED_TRACE(vector.witness_reference_ns);
+    SessionFixture fixture;
+    fixture.enable_scalar(InputSelectorKind::kLatestWithin, TemporalRecordMissingKind::kSkip);
+    fixture.use_one_slot_drop_oldest_queue();
+    fixture.use_direct_retained_delivery();
+
+    auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+    ASSERT_TRUE(session) << runtime_error_message(session.error());
+    auto binding =
+        (*session)->create_readiness_binding(VertexId{2U},
+                                             RuntimePortBindingRequest{
+                                                 .plan_generation = fixture.plan.plan_generation,
+                                                 .run_generation = 1U,
+                                                 .kind = RuntimeEventKind::kInputArrival,
+                                                 .source = make_source_id(1U),
+                                                 .source_clock = ClockId{1U},
+                                                 .reference_clock = ClockId{1U},
+                                                 .capacity = 8U,
+                                             });
+    ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+    ASSERT_TRUE((*session)->refresh_connections());
+    ASSERT_TRUE((*session)->arm());
+    ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+
+    ASSERT_TRUE(fixture.source.output.emit(
+        Sample<std::int32_t>{11,
+                             SampleMetadata{
+                                 .capture_timestamp_ns = kRetainedCaptureNs,
+                                 .source_clock_id = ClockId{1U},
+                             }}));
+    auto retained_event = wait_for_event(**session, **binding);
+    ASSERT_TRUE(retained_event) << runtime_error_message(retained_event.error());
+    auto retained =
+        (*session)->temporal_sample(retained_event->port, retained_event->source_sequence);
+    ASSERT_TRUE(retained) << runtime_error_message(retained.error());
+
+    // Match the dispatcher state this unit-level reservation normally observes. The selector
+    // still owns the payload claim, but its readiness witness has already been ingested and
+    // retired, so releasing the temporal claim can make the typed slot reclaimable.
+    ASSERT_TRUE((*binding)->retire(retained_event->source_sequence));
+
+    // The sole typed slot is now claimed, so the successor can only stage.
+    ASSERT_TRUE(fixture.source.output.emit(
+        Sample<std::int32_t>{22,
+                             SampleMetadata{
+                                 .capture_timestamp_ns = kSuccessorCaptureNs,
+                                 .source_clock_id = ClockId{1U},
+                             }}));
+
+    auto reserved = (*session)->reserve_freshness_refill(
+        PortId{2U}, *retained, TimePoint{vector.witness_reference_ns, ClockId{1U}});
+    ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+    EXPECT_EQ(reserved->has_value(), vector.expected_reserved);
+
+    if (reserved->has_value()) {
+      (*session)->release_freshness_reservation(**reserved);
+    }
+    ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+    (*session)->cancel();
+    ASSERT_TRUE((*session)->join());
+  }
+}
+
+// REQ: CHAN-136
+// REQ: RUNTIME-050
+TEST(RuntimeChannelBindingTemporal, DirectAffineReuseLastReservationUsesReferenceCoordinates) {
+  SessionFixture fixture;
+  fixture.require_direct_capture_conversion();
+  fixture.plan.input_selections.front().missing = TemporalRecordMissingKind::kReuseLast;
+  fixture.plan.input_selections.front().reuse_max_age_ns = 1000;
+  fixture.use_one_slot_drop_oldest_queue();
+  fixture.use_direct_retained_delivery();
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto binding = (*session)->create_readiness_binding(
+      VertexId{2U},
+      RuntimePortBindingRequest{.plan_generation = fixture.plan.plan_generation,
+                                .run_generation = 1U,
+                                .kind = RuntimeEventKind::kInputArrival,
+                                .source = make_source_id(1U),
+                                .source_clock = ClockId{1U},
+                                .reference_clock = ClockId{2U},
+                                .source_to_reference_conversion_id = 1U,
+                                .capacity = 8U});
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  ASSERT_TRUE(fixture.source.output.emit(Sample<std::int32_t>{
+      11, SampleMetadata{.capture_timestamp_ns = 10, .source_clock_id = ClockId{1U}}}));
+  auto event = wait_for_event(**session, **binding, ClockId{2U});
+  ASSERT_TRUE(event) << runtime_error_message(event.error());
+  auto retained = (*session)->temporal_sample(event->port, event->source_sequence);
+  ASSERT_TRUE(retained) << runtime_error_message(retained.error());
+  ASSERT_TRUE((*binding)->retire(event->source_sequence));
+  ASSERT_TRUE(fixture.source.output.emit(Sample<std::int32_t>{
+      22, SampleMetadata{.capture_timestamp_ns = 20, .source_clock_id = ClockId{1U}}}));
+
+  auto too_early =
+      (*session)->reserve_freshness_refill(PortId{2U}, *retained, TimePoint{42, ClockId{2U}});
+  ASSERT_TRUE(too_early) << runtime_error_message(too_early.error());
+  EXPECT_FALSE(too_early->has_value());
+  auto reserved =
+      (*session)->reserve_freshness_refill(PortId{2U}, *retained, TimePoint{43, ClockId{2U}});
+  ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+  ASSERT_TRUE(reserved->has_value());
+  EXPECT_EQ((**reserved).successor.capture_time, (TimePoint{20, ClockId{1U}}));
+  EXPECT_EQ((**reserved).successor_reference, (TimePoint{43, ClockId{2U}}));
+  auto selector = RuntimeInputSelectionState::create(fixture.plan.input_selections.front());
+  ASSERT_TRUE(selector) << runtime_error_message(selector.error());
+  EXPECT_FALSE(selector->staged_reuse_eligible((**reserved).successor.capture_time,
+                                               TimePoint{43, ClockId{2U}}));
+  EXPECT_TRUE(selector->staged_reuse_eligible((**reserved).successor_reference,
+                                              TimePoint{43, ClockId{2U}}));
+  (*session)->release_freshness_reservation(**reserved);
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
+// REQ: RUNTIME-017
+// REQ: CHAN-131
+// The invariant the reconcile owes its caller: after a pass in which it evicts, the selector cache
+// is non-empty whenever it was non-empty before. Releasing a retained record is only ever a trade,
+// and a trade that hands back nothing converts a bounded staleness into a lost activation, which
+// is strictly worse and is the regression this branch had to clear.
+//
+// Both halves are asserted, because the invariant holds two ways. When a successor qualifies, the
+// same pass admits it. When none qualifies, the reservation refuses and the caller never evicts,
+// so there is nothing to hand back.
+TEST(RuntimeChannelBindingTemporal, EvictionRefillsTheCacheItEmptiedWithinTheSamePass) {
+  constexpr std::int64_t kRetainedCaptureNs = 10;
+  constexpr std::int64_t kSuccessorCaptureNs = 20;
+  constexpr std::int64_t kLaterSuccessorCaptureNs = 30;
+
+  for (const bool successor_qualifies : {true, false}) {
+    SCOPED_TRACE(successor_qualifies ? "successor qualifies" : "no successor qualifies");
+    SessionFixture fixture;
+    fixture.enable_scalar(InputSelectorKind::kLatestWithin, TemporalRecordMissingKind::kSkip);
+    fixture.use_one_slot_drop_oldest_queue();
+    fixture.use_direct_retained_delivery();
+
+    auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+    ASSERT_TRUE(session) << runtime_error_message(session.error());
+    auto binding =
+        (*session)->create_readiness_binding(VertexId{2U},
+                                             RuntimePortBindingRequest{
+                                                 .plan_generation = fixture.plan.plan_generation,
+                                                 .run_generation = 1U,
+                                                 .kind = RuntimeEventKind::kInputArrival,
+                                                 .source = make_source_id(1U),
+                                                 .source_clock = ClockId{1U},
+                                                 .reference_clock = ClockId{1U},
+                                                 .capacity = 8U,
+                                             });
+    ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+    ASSERT_TRUE((*session)->refresh_connections());
+    ASSERT_TRUE((*session)->arm());
+    ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+
+    ASSERT_TRUE(fixture.source.output.emit(
+        Sample<std::int32_t>{11,
+                             SampleMetadata{
+                                 .capture_timestamp_ns = kRetainedCaptureNs,
+                                 .source_clock_id = ClockId{1U},
+                             }}));
+    auto retained_event = wait_for_event(**session, **binding);
+    ASSERT_TRUE(retained_event) << runtime_error_message(retained_event.error());
+    auto retained =
+        (*session)->temporal_sample(retained_event->port, retained_event->source_sequence);
+    ASSERT_TRUE(retained) << runtime_error_message(retained.error());
+
+    // Retire the readiness witness the way the dispatcher does once it has ingested the candidate.
+    // The slot stays occupied and protected regardless, because the selector still holds its
+    // payload claim -- and that claim is precisely what the reconcile trades away below.
+    ASSERT_TRUE((*binding)->retire(retained_event->source_sequence));
+
+    ASSERT_TRUE(fixture.source.output.emit(
+        Sample<std::int32_t>{22,
+                             SampleMetadata{
+                                 .capture_timestamp_ns = kSuccessorCaptureNs,
+                                 .source_clock_id = ClockId{1U},
+                             }}));
+
+    // A floor at the successor's capture qualifies it; one below it disqualifies every staged
+    // record, which is the "nothing to trade for" half of the invariant.
+    const TimePoint floor{successor_qualifies ? kSuccessorCaptureNs : kSuccessorCaptureNs - 1,
+                          ClockId{1U}};
+    auto reserved = (*session)->reserve_freshness_refill(PortId{2U}, *retained, floor);
+    ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+    ASSERT_EQ(reserved->has_value(), successor_qualifies);
+
+    if (!successor_qualifies) {
+      // No eviction happens, so the record the witness could already have selected is untouched.
+      auto still_held =
+          (*session)->temporal_sample(retained_event->port, retained_event->source_sequence);
+      ASSERT_TRUE(still_held) << runtime_error_message(still_held.error());
+      EXPECT_EQ(still_held->source_sequence, retained->source_sequence);
+      ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+      (*session)->cancel();
+      ASSERT_TRUE((*session)->join());
+      continue;
+    }
+
+    // Stage a second, later successor and qualify it instead. A reserved record does not count
+    // against the authored staging depth, so both are now staged, and the qualified one is no
+    // longer the one arrival order would admit. Without that separation this case cannot tell
+    // "admits the record it qualified" from "admits whatever staging happened to hold", which is
+    // exactly the confusion that produced the third mechanism.
+    ASSERT_TRUE(fixture.source.output.emit(
+        Sample<std::int32_t>{33,
+                             SampleMetadata{
+                                 .capture_timestamp_ns = kLaterSuccessorCaptureNs,
+                                 .source_clock_id = ClockId{1U},
+                             }}));
+    auto requalified = (*session)->reserve_freshness_refill(
+        PortId{2U}, *retained, TimePoint{kLaterSuccessorCaptureNs, ClockId{1U}});
+    ASSERT_TRUE(requalified) << runtime_error_message(requalified.error());
+    ASSERT_TRUE(requalified->has_value());
+
+    // Key assertion: the release that empties the cache admits the reserved record in the same
+    // call, rather than leaving the refill to whatever the pipeline does afterwards.
+    std::uint32_t promoted = 0U;
+    ASSERT_TRUE((*session)->retire_samples(PortId{2U},
+                                           std::span<const TemporalSampleRecord>{&*retained, 1U},
+                                           &promoted,
+                                           &**requalified));
+    EXPECT_EQ(promoted, 1U);
+
+    // And the record admitted is the successor that was qualified, not a later arrival that would
+    // sort behind the witness the eviction was justified against.
+    auto refilled_event = wait_for_event(**session, **binding);
+    ASSERT_TRUE(refilled_event) << runtime_error_message(refilled_event.error());
+    auto refilled =
+        (*session)->temporal_sample(refilled_event->port, refilled_event->source_sequence);
+    ASSERT_TRUE(refilled) << runtime_error_message(refilled.error());
+    // The later successor, not the earlier one that arrival order would have taken.
+    EXPECT_EQ(refilled->capture_time.timestamp_ns, kLaterSuccessorCaptureNs);
+    EXPECT_GT(refilled->source_sequence, retained->source_sequence);
+
+    ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+    (*session)->cancel();
+    ASSERT_TRUE((*session)->join());
+  }
+}
+
+// Arrange the state the freshness reconcile operates on, which every case below needs and none of
+// them is about: a depth-one drop-oldest direct-retained input holding one published record whose
+// payload claim has transferred to the selector and whose readiness witness the dispatcher has
+// already retired. The sole typed slot is then claimed, so anything published afterwards can only
+// stage, which is the condition the reconcile inspects.
+struct RetainedRefillArrangement {
+  SessionFixture fixture;
+  std::unique_ptr<RuntimeChannelSession> session;
+  std::unique_ptr<PortBinding> binding;
+  TemporalSampleRecord retained{};
+
+  [[nodiscard]] bool emit(std::int32_t value, std::int64_t capture_ns) {
+    return fixture.source.output
+        .emit(Sample<std::int32_t>{value,
+                                   SampleMetadata{
+                                       .capture_timestamp_ns = capture_ns,
+                                       .source_clock_id = ClockId{1U},
+                                   }})
+        .has_value();
+  }
+};
+
+struct FreshnessTypedIngressBarrier {
+  static void observe(void* const opaque) noexcept {
+    auto& state = *static_cast<FreshnessTypedIngressBarrier*>(opaque);
+    state.calls.fetch_add(1U, std::memory_order_relaxed);
+    if (!state.block.load(std::memory_order_acquire)) {
+      return;
+    }
+    state.entered.store(true, std::memory_order_release);
+    while (!state.release.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  }
+
+  std::atomic<std::uint32_t> calls{};
+  std::atomic<bool> block{};
+  std::atomic<bool> entered{};
+  std::atomic<bool> release{};
+};
+
+void arrange_retained_refill(RetainedRefillArrangement& arrangement, std::int64_t retained_capture,
+                             FreshnessTypedIngressBarrier* const ingress_barrier = nullptr,
+                             const bool transported = false) {
+  arrangement.fixture.enable_scalar(InputSelectorKind::kLatestWithin,
+                                    TemporalRecordMissingKind::kSkip);
+  arrangement.fixture.use_one_slot_drop_oldest_queue();
+  if (!transported) {
+    arrangement.fixture.use_direct_retained_delivery();
+  }
+
+  auto session =
+      RuntimeChannelSession::create(arrangement.fixture.plan, arrangement.fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  arrangement.session = std::move(*session);
+  if (ingress_barrier != nullptr) {
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_typed_ingress_observer(
+        *arrangement.session, PortId{2U}, ingress_barrier, &FreshnessTypedIngressBarrier::observe));
+  }
+  auto binding = arrangement.session->create_readiness_binding(
+      VertexId{2U},
+      RuntimePortBindingRequest{
+          .plan_generation = arrangement.fixture.plan.plan_generation,
+          .run_generation = 1U,
+          .kind = RuntimeEventKind::kInputArrival,
+          .source = make_source_id(1U),
+          .source_clock = ClockId{1U},
+          .reference_clock = ClockId{1U},
+          .capacity = 8U,
+      });
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  arrangement.binding = std::move(*binding);
+  ASSERT_TRUE(arrangement.session->refresh_connections());
+  ASSERT_TRUE(arrangement.session->arm());
+  ASSERT_TRUE(arrangement.session->prepare_activation(VertexId{1U}, 1U, {}));
+
+  ASSERT_TRUE(arrangement.emit(11, retained_capture));
+  auto event = wait_for_event(*arrangement.session, *arrangement.binding);
+  ASSERT_TRUE(event) << runtime_error_message(event.error());
+  auto record = arrangement.session->temporal_sample(event->port, event->source_sequence);
+  ASSERT_TRUE(record) << runtime_error_message(record.error());
+  arrangement.retained = *record;
+  // The dispatcher retires the readiness witness once it has ingested the candidate. The slot
+  // stays occupied because the selector still holds the payload claim.
+  ASSERT_TRUE(arrangement.binding->retire(event->source_sequence));
+}
+
+// REQ: RUNTIME-017
+// REQ: CHAN-131
+// A transported receive can reserve a staging slot after a freshness successor is reserved but
+// before the selector releases its retained typed claim. That in-flight staging reservation must
+// not hide the typed capacity the exact retained slot releases for the reserved successor.
+TEST(RuntimeChannelBindingTemporal,
+     ReservedRefillUsesReleasedTypedCapacityWhileNextReceiveIsStaging) {
+  constexpr std::int64_t kRetainedCaptureNs = 10;
+  constexpr std::int64_t kReservedCaptureNs = 20;
+  constexpr std::int64_t kFollowingCaptureNs = 30;
+
+  FreshnessTypedIngressBarrier ingress_barrier;
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(
+      arrange_retained_refill(arrangement, kRetainedCaptureNs, &ingress_barrier, true));
+  ASSERT_TRUE(arrangement.emit(22, kReservedCaptureNs));
+  bool successor_staged = false;
+  const auto successor_deadline = std::chrono::steady_clock::now() + 2s;
+  while (!successor_staged && std::chrono::steady_clock::now() < successor_deadline) {
+    auto available =
+        arrangement.session->has_freshness_refill_candidate(PortId{2U}, arrangement.retained);
+    ASSERT_TRUE(available) << runtime_error_message(available.error());
+    successor_staged = *available;
+    if (!successor_staged) {
+      std::this_thread::yield();
+    }
+  }
+  ASSERT_TRUE(successor_staged);
+  auto reserved = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kReservedCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+  ASSERT_TRUE(reserved->has_value());
+
+  ingress_barrier.block.store(true, std::memory_order_release);
+  bool following_emitted = false;
+  std::thread producer{[&] { following_emitted = arrangement.emit(33, kFollowingCaptureNs); }};
+  auto producer_cleanup = ScopeExit{[&]() noexcept {
+    ingress_barrier.release.store(true, std::memory_order_release);
+    if (producer.joinable()) {
+      producer.join();
+    }
+  }};
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  while (!ingress_barrier.entered.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  ASSERT_TRUE(ingress_barrier.entered.load(std::memory_order_acquire));
+  const auto in_flight =
+      RuntimeChannelSessionTestAccess::typed_ingress_reservations(*arrangement.session, PortId{2U});
+  ASSERT_TRUE(in_flight) << runtime_error_message(in_flight.error());
+  ASSERT_EQ(*in_flight, 1U);
+
+  std::uint32_t promoted = 0U;
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U},
+      std::span<const TemporalSampleRecord>{&arrangement.retained, 1U},
+      &promoted,
+      &**reserved));
+  ASSERT_EQ(promoted, 1U);
+
+  ingress_barrier.release.store(true, std::memory_order_release);
+  producer.join();
+  ASSERT_TRUE(following_emitted);
+  auto refilled_event = wait_for_event(*arrangement.session, *arrangement.binding);
+  ASSERT_TRUE(refilled_event) << runtime_error_message(refilled_event.error());
+  auto refilled =
+      arrangement.session->temporal_sample(refilled_event->port, refilled_event->source_sequence);
+  ASSERT_TRUE(refilled) << runtime_error_message(refilled.error());
+  EXPECT_EQ(refilled->capture_time.timestamp_ns, kReservedCaptureNs);
+
+  ASSERT_TRUE(arrangement.binding->retire(refilled_event->source_sequence));
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// A reservation is useful only if the controller can make the exact retained slot writable.
+// An active selection remains observable and must decline. The exact ReuseLast slot is instead the
+// supported two-owner handoff: reserving it is reversible and does not mutate either claim until
+// the selector and Channel commit together.
+TEST(RuntimeChannelBindingTemporal, FreshnessReservationPreflightsEverySurvivingTypedClaim) {
+  struct Vector {
+    bool active_selected{};
+    bool reuse_retained{};
+    bool reservation_expected{};
+  };
+  constexpr std::array vectors{
+      Vector{.active_selected = true},
+      Vector{.reuse_retained = true, .reservation_expected = true},
+  };
+
+  for (const Vector& vector : vectors) {
+    SCOPED_TRACE(vector.active_selected ? "active selection" : "finite reuse");
+    RetainedRefillArrangement arrangement;
+    ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, 10));
+    ASSERT_TRUE(arrangement.emit(22, 20));
+    ASSERT_TRUE(
+        RuntimeChannelSessionTestAccess::set_single_occupied_claim_state(*arrangement.session,
+                                                                         PortId{2U},
+                                                                         vector.active_selected,
+                                                                         vector.reuse_retained,
+                                                                         true,
+                                                                         false));
+
+    auto available =
+        arrangement.session->has_freshness_refill_candidate(PortId{2U}, arrangement.retained);
+    ASSERT_TRUE(available) << runtime_error_message(available.error());
+    EXPECT_EQ(*available, vector.reservation_expected);
+    auto reservation = arrangement.session->reserve_freshness_refill(
+        PortId{2U}, arrangement.retained, TimePoint{20, ClockId{1U}});
+    ASSERT_TRUE(reservation) << runtime_error_message(reservation.error());
+    EXPECT_EQ(reservation->has_value(), vector.reservation_expected);
+    if (reservation->has_value()) {
+      arrangement.session->release_freshness_reservation(**reservation);
+      auto available_after_release =
+          arrangement.session->has_freshness_refill_candidate(PortId{2U}, arrangement.retained);
+      ASSERT_TRUE(available_after_release)
+          << runtime_error_message(available_after_release.error());
+      EXPECT_TRUE(*available_after_release);
+    }
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_single_occupied_claim_state(
+        *arrangement.session, PortId{2U}, false, false, true, false));
+    ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+    arrangement.session->cancel();
+    ASSERT_TRUE(arrangement.session->join());
+  }
+}
+
+// REQ: RUNTIME-017
+// Authored Graphs currently reject input fan-in, so a source-tree alias injects the
+// multi-subscriber topology at this private binding boundary. Subscriber-local arrival identities
+// can coincide; when both match, recovery cannot prove which queue owns the successor and must
+// safely decline.
+TEST(RuntimeChannelBindingTemporal, AmbiguousSubscriberIdentityDeclinesFreshnessRecovery) {
+  SessionFixture fixture;
+  fixture.enable_scalar(InputSelectorKind::kLatestWithin, TemporalRecordMissingKind::kSkip);
+  fixture.use_one_slot_drop_oldest_fanout();
+
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto first_binding =
+      (*session)->create_readiness_binding(VertexId{2U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(1U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 8U,
+                                           });
+  ASSERT_TRUE(first_binding) << runtime_error_message(first_binding.error());
+  auto second_binding =
+      (*session)->create_readiness_binding(VertexId{3U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(2U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 8U,
+                                           });
+  ASSERT_TRUE(second_binding) << runtime_error_message(second_binding.error());
+  const SampleMetadata retained_metadata{
+      .sequence = 1U,
+      .capture_timestamp_ns = 10,
+      .source_clock_id = ClockId{1U},
+      .byte_size = sizeof(std::int32_t),
+      .payload_kind = PayloadKind::kInlineTyped,
+  };
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::inject_received_metadata(
+      **session, PortId{2U}, retained_metadata));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::inject_received_metadata(
+      **session, PortId{3U}, retained_metadata));
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+  std::array<TemporalSampleRecord, 2U> retained;
+  const std::array bindings{first_binding->get(), second_binding->get()};
+  for (std::size_t index = 0U; index < retained.size(); ++index) {
+    auto event = wait_for_event(**session, *bindings[index]);
+    ASSERT_TRUE(event) << runtime_error_message(event.error());
+    auto sample = (*session)->temporal_sample(event->port, event->source_sequence);
+    ASSERT_TRUE(sample) << runtime_error_message(sample.error());
+    retained[index] = *sample;
+    ASSERT_TRUE(bindings[index]->retire(event->source_sequence));
+  }
+  ASSERT_EQ(retained[0], retained[1]);
+
+  auto live_alias = RuntimeChannelSessionTestAccess::set_freshness_subscriber_alias(
+      **session, PortId{2U}, PortId{3U}, true);
+  ASSERT_FALSE(live_alias);
+  EXPECT_EQ(live_alias.error().code, ErrorCode::kInvalidArgument);
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_freshness_subscriber_alias(
+      **session, PortId{2U}, PortId{3U}, true));
+  auto available = (*session)->has_freshness_refill_candidate(PortId{2U}, retained[0]);
+  EXPECT_TRUE(available) << runtime_error_message(available.error());
+  if (available) {
+    EXPECT_FALSE(*available);
+  }
+  auto reservation =
+      (*session)->reserve_freshness_refill(PortId{2U}, retained[0], TimePoint{20, ClockId{1U}});
+  EXPECT_TRUE(reservation) << runtime_error_message(reservation.error());
+  if (reservation) {
+    EXPECT_FALSE(reservation->has_value());
+  }
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_freshness_subscriber_alias(
+      **session, PortId{2U}, PortId{3U}, false));
+}
+
+// REQ: RUNTIME-017
+// Reservation generations make the handoff exclusive: a token superseded by a later probe cannot
+// release the retained claim or consume whatever staging happens to occupy the slot now.
+TEST(RuntimeChannelBindingTemporal, SupersededReservationCannotCommitALaterHandoff) {
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, 10));
+  ASSERT_TRUE(arrangement.emit(22, 20));
+
+  auto first = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{20, ClockId{1U}});
+  ASSERT_TRUE(first) << runtime_error_message(first.error());
+  ASSERT_TRUE(first->has_value());
+  auto second = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{20, ClockId{1U}});
+  ASSERT_TRUE(second) << runtime_error_message(second.error());
+  ASSERT_TRUE(second->has_value());
+  ASSERT_NE((*first)->generation, (*second)->generation);
+
+  std::uint32_t promoted = 0U;
+  auto stale = arrangement.session->retire_samples(
+      PortId{2U},
+      std::span<const TemporalSampleRecord>{&arrangement.retained, 1U},
+      &promoted,
+      &**first);
+  ASSERT_FALSE(stale);
+  EXPECT_EQ(stale.error().code, ErrorCode::kStaleEndpoint);
+  EXPECT_EQ(promoted, 0U);
+  auto retained = arrangement.session->temporal_sample(PortId{2U}, 1U);
+  ASSERT_TRUE(retained) << runtime_error_message(retained.error());
+
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U},
+      std::span<const TemporalSampleRecord>{&arrangement.retained, 1U},
+      &promoted,
+      &**second));
+  EXPECT_EQ(promoted, 1U);
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// A reserved newest record may promote before an older staged record. Both still reach the
+// temporal cache in capture order, so their arrival identities must reflect staging order rather
+// than the deliberately inverted promotion order.
+TEST(RuntimeChannelBindingTemporal, OutOfOrderRefillPromotionKeepsStagedArrivalIdentityMonotonic) {
+  SessionFixture fixture;
+  fixture.enable_scalar(InputSelectorKind::kLatestWithin, TemporalRecordMissingKind::kSkip);
+  fixture.use_two_slot_drop_oldest_queue();
+  fixture.use_direct_retained_delivery();
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto binding =
+      (*session)->create_readiness_binding(VertexId{2U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(1U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 8U,
+                                           });
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+
+  std::array<TemporalSampleRecord, 2U> retained;
+  for (std::size_t index = 0U; index < retained.size(); ++index) {
+    ASSERT_TRUE(fixture.source.output.emit(
+        Sample<std::int32_t>{static_cast<std::int32_t>(11 + index),
+                             SampleMetadata{
+                                 .capture_timestamp_ns = static_cast<std::int64_t>(10 + index * 10),
+                                 .source_clock_id = ClockId{1U},
+                             }}));
+    auto event = wait_for_event(**session, **binding);
+    ASSERT_TRUE(event) << runtime_error_message(event.error());
+    auto record = (*session)->temporal_sample(event->port, event->source_sequence);
+    ASSERT_TRUE(record) << runtime_error_message(record.error());
+    retained[index] = *record;
+    ASSERT_TRUE((*binding)->retire(event->source_sequence));
+  }
+
+  ASSERT_TRUE(fixture.source.output.emit(Sample<std::int32_t>{
+      33, SampleMetadata{.capture_timestamp_ns = 30, .source_clock_id = ClockId{1U}}}));
+  ASSERT_TRUE(fixture.source.output.emit(Sample<std::int32_t>{
+      44, SampleMetadata{.capture_timestamp_ns = 40, .source_clock_id = ClockId{1U}}}));
+  auto reservation =
+      (*session)->reserve_freshness_refill(PortId{2U}, retained[0], TimePoint{40, ClockId{1U}});
+  ASSERT_TRUE(reservation) << runtime_error_message(reservation.error());
+  ASSERT_TRUE(reservation->has_value());
+  std::uint32_t promoted = 0U;
+  ASSERT_TRUE((*session)->retire_samples(PortId{2U},
+                                         std::span<const TemporalSampleRecord>{&retained[0], 1U},
+                                         &promoted,
+                                         &**reservation));
+  ASSERT_EQ(promoted, 1U);
+  auto newer_event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(newer_event) << runtime_error_message(newer_event.error());
+  auto newer = (*session)->temporal_sample(newer_event->port, newer_event->source_sequence);
+  ASSERT_TRUE(newer) << runtime_error_message(newer.error());
+  ASSERT_EQ(newer->capture_time.timestamp_ns, 40);
+  ASSERT_TRUE((*binding)->retire(newer_event->source_sequence));
+
+  promoted = 0U;
+  ASSERT_TRUE((*session)->retire_samples(
+      PortId{2U}, std::span<const TemporalSampleRecord>{&retained[1], 1U}, &promoted));
+  ASSERT_EQ(promoted, 1U);
+  auto older_event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(older_event) << runtime_error_message(older_event.error());
+  auto older = (*session)->temporal_sample(older_event->port, older_event->source_sequence);
+  ASSERT_TRUE(older) << runtime_error_message(older.error());
+  ASSERT_EQ(older->capture_time.timestamp_ns, 30);
+  EXPECT_LT(older->arrival_sequence, newer->arrival_sequence);
+
+  ASSERT_TRUE((*binding)->retire(older_event->source_sequence));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
+// REQ: RUNTIME-017
+// REQ: CHAN-128
+// Rotate the retained typed record away from slots.begin(), then reserve its successor in the now
+// first staging slot. Every ordinary promotion candidate is ineligible, so min_element returns the
+// reserved sentinel at begin(); that result must remain untouched for reservation recovery.
+TEST(RuntimeChannelBindingTemporal, AllIneligibleOrdinaryPromotionPreservesReservedRefill) {
+  constexpr std::int64_t kFirstCaptureNs = 10;
+  constexpr std::int64_t kRetainedCaptureNs = 20;
+  constexpr std::int64_t kReservedCaptureNs = 30;
+
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, kFirstCaptureNs));
+
+  ASSERT_TRUE(arrangement.emit(22, kRetainedCaptureNs));
+  std::uint32_t promoted = 0U;
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U}, std::span<const TemporalSampleRecord>{&arrangement.retained, 1U}, &promoted));
+  ASSERT_EQ(promoted, 1U);
+  auto retained_event = wait_for_event(*arrangement.session, *arrangement.binding);
+  ASSERT_TRUE(retained_event) << runtime_error_message(retained_event.error());
+  auto retained =
+      arrangement.session->temporal_sample(retained_event->port, retained_event->source_sequence);
+  ASSERT_TRUE(retained) << runtime_error_message(retained.error());
+  ASSERT_EQ(retained->capture_time.timestamp_ns, kRetainedCaptureNs);
+  ASSERT_TRUE(arrangement.binding->retire(retained_event->source_sequence));
+
+  ASSERT_TRUE(arrangement.emit(33, kReservedCaptureNs));
+  auto reservation = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, *retained, TimePoint{kReservedCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(reservation) << runtime_error_message(reservation.error());
+  ASSERT_TRUE(reservation->has_value());
+  const auto before =
+      RuntimeChannelSessionTestAccess::input_reset_state(*arrangement.session, PortId{2U});
+  ASSERT_TRUE(before) << runtime_error_message(before.error());
+  ASSERT_EQ(before->occupied_samples, 1U);
+  ASSERT_EQ(before->pending_direct_ingress_samples, 1U);
+
+  promoted = 1U;
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U}, std::span<const TemporalSampleRecord>{&*retained, 1U}, &promoted));
+  EXPECT_EQ(promoted, 0U);
+  const auto preserved =
+      RuntimeChannelSessionTestAccess::input_reset_state(*arrangement.session, PortId{2U});
+  ASSERT_TRUE(preserved) << runtime_error_message(preserved.error());
+  EXPECT_EQ(preserved->occupied_samples, 0U);
+  EXPECT_EQ(preserved->pending_direct_ingress_samples, 1U);
+  EXPECT_EQ(preserved->last_producer_sequence, before->last_producer_sequence);
+  EXPECT_EQ(preserved->next_global_arrival_order, before->next_global_arrival_order);
+
+  auto recovered = arrangement.session->recover_abandoned_freshness_reservation(PortId{2U});
+  ASSERT_TRUE(recovered) << runtime_error_message(recovered.error());
+  ASSERT_TRUE(*recovered);
+  auto recovered_event = wait_for_event(*arrangement.session, *arrangement.binding);
+  ASSERT_TRUE(recovered_event) << runtime_error_message(recovered_event.error());
+  auto recovered_record =
+      arrangement.session->temporal_sample(recovered_event->port, recovered_event->source_sequence);
+  ASSERT_TRUE(recovered_record) << runtime_error_message(recovered_record.error());
+  EXPECT_EQ(recovered_record->capture_time.timestamp_ns, kReservedCaptureNs);
+
+  const std::array selected{*recovered_record};
+  const std::array selection{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = {InputState::kSelected, SelectionReason::kNone},
+      .samples = selected,
+      .destructive = true,
+  }};
+  ASSERT_TRUE(arrangement.session->prepare_activation(VertexId{2U}, 1U, selection));
+  auto value = arrangement.fixture.sink.input.receive_data();
+  ASSERT_TRUE(value) << runtime_error_message(value.error());
+  EXPECT_EQ(*value, 33);
+
+  ASSERT_TRUE(arrangement.binding->retire(recovered_event->source_sequence));
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{2U}, 1U, true));
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// A lifecycle restart must clear reservation-only state even when clear_samples() makes its
+// occupied staged slot unoccupied directly. Otherwise the first post-restart sample inherits
+// refill_reserved and is invisible to ordinary promotion.
+TEST(RuntimeChannelBindingTemporal, LifecycleRestartClearsAnAbandonedFreshnessReservation) {
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, 10));
+  ASSERT_TRUE(arrangement.emit(22, 20));
+  auto reservation = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{20, ClockId{1U}});
+  ASSERT_TRUE(reservation) << runtime_error_message(reservation.error());
+  ASSERT_TRUE(reservation->has_value());
+
+  // Ordinary retirement deliberately skips the reserved staged slot. This leaves a claim-free,
+  // occupied reservation for reset() to discard through clear_samples().
+  std::uint32_t promoted = 1U;
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U}, std::span<const TemporalSampleRecord>{&arrangement.retained, 1U}, &promoted));
+  ASSERT_EQ(promoted, 0U);
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+  const std::array affected{VertexId{1U}, VertexId{2U}};
+  ASSERT_TRUE(arrangement.session->commit_restart(VertexId{1U}, affected));
+
+  ASSERT_TRUE(arrangement.session->refresh_connections());
+  ASSERT_TRUE(arrangement.session->arm());
+  ASSERT_TRUE(arrangement.session->prepare_activation(VertexId{1U}, 2U, {}));
+  ASSERT_TRUE(arrangement.emit(33, 30));
+  auto event = wait_for_event(*arrangement.session, *arrangement.binding);
+  ASSERT_TRUE(event) << runtime_error_message(event.error());
+  auto record = arrangement.session->temporal_sample(event->port, event->source_sequence);
+  ASSERT_TRUE(record) << runtime_error_message(record.error());
+  EXPECT_EQ(record->capture_time.timestamp_ns, 30);
+
+  ASSERT_TRUE(arrangement.binding->retire(event->source_sequence));
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 2U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// A reserved record does not consume the authored staging depth, so a producer that keeps
+// publishing neither displaces it nor is itself blocked. Both halves matter: protecting the record
+// without the headroom closes the producer's only staging destination, which measured as a 12x
+// throughput loss, and providing headroom without excluding it from the depth accounting makes
+// staging retain two unread records and promote the older one, which is the staleness this whole
+// path exists to remove.
+TEST(RuntimeChannelBindingTemporal, AReservedRefillSurvivesAProducerThatKeepsStaging) {
+  constexpr std::int64_t kRetainedCaptureNs = 10;
+  constexpr std::int64_t kReservedCaptureNs = 20;
+  constexpr std::int64_t kLaterCaptureNs = 30;
+  constexpr std::int64_t kNewestCaptureNs = 40;
+
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, kRetainedCaptureNs));
+
+  ASSERT_TRUE(arrangement.emit(22, kReservedCaptureNs));
+  auto reserved = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kReservedCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+  ASSERT_TRUE(reserved->has_value());
+
+  // The producer keeps going. Staging has room for this because the reserved record is spoken for
+  // and does not count against the authored depth.
+  ASSERT_TRUE(arrangement.emit(33, kLaterCaptureNs));
+  // And once more, which leaves no free slot at all and so drives the replacement branch rather
+  // than the free-slot one. Drop-oldest must take the unreserved record here even though the
+  // reserved one is older; without that this case never exercises the exclusion it claims to.
+  ASSERT_TRUE(arrangement.emit(44, kNewestCaptureNs));
+
+  // Key assertion: the reserved record is still staged. Requalifying at its own coordinate finds
+  // it, which it could not if the later arrival had displaced it.
+  auto still_staged = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kReservedCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(still_staged) << runtime_error_message(still_staged.error());
+  EXPECT_TRUE(still_staged->has_value());
+
+  // And the other half: the later arrival staged rather than being turned away, which it could not
+  // have done if the reserved record had consumed the authored depth. Qualifying at the later
+  // coordinate takes the newest staged record, so what the eviction then admits names which of the
+  // two is actually there.
+  auto both_staged = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kNewestCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(both_staged) << runtime_error_message(both_staged.error());
+  ASSERT_TRUE(both_staged->has_value());
+  std::uint32_t promoted = 0U;
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U},
+      std::span<const TemporalSampleRecord>{&arrangement.retained, 1U},
+      &promoted,
+      &**both_staged));
+  ASSERT_EQ(promoted, 1U);
+  auto admitted_event = wait_for_event(*arrangement.session, *arrangement.binding);
+  ASSERT_TRUE(admitted_event) << runtime_error_message(admitted_event.error());
+  auto admitted =
+      arrangement.session->temporal_sample(admitted_event->port, admitted_event->source_sequence);
+  ASSERT_TRUE(admitted) << runtime_error_message(admitted.error());
+  EXPECT_EQ(admitted->capture_time.timestamp_ns, kNewestCaptureNs);
+
+  ASSERT_TRUE(arrangement.binding->retire(admitted_event->source_sequence));
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// Releasing a reservation hands the record back to ordinary drop-oldest. The reconcile abandons a
+// reservation whose eviction did not proceed, and a reservation that outlived its eviction would
+// pin that record against replacement for the rest of the run -- which at depth one starves the
+// producer of anywhere to stage and shows up only as a throughput symptom, not a failure.
+TEST(RuntimeChannelBindingTemporal, ReleasingAReservationReturnsTheRecordToDropOldest) {
+  constexpr std::int64_t kRetainedCaptureNs = 10;
+  constexpr std::int64_t kReservedCaptureNs = 20;
+  constexpr std::int64_t kLaterCaptureNs = 30;
+
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, kRetainedCaptureNs));
+
+  ASSERT_TRUE(arrangement.emit(22, kReservedCaptureNs));
+  auto reserved = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kReservedCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+  ASSERT_TRUE(reserved->has_value());
+
+  arrangement.session->release_freshness_reservation(**reserved);
+
+  // With the protection gone the authored depth applies again, so this arrival replaces the record
+  // the reservation had been holding.
+  ASSERT_TRUE(arrangement.emit(33, kLaterCaptureNs));
+
+  // Key assertion: nothing qualifies at the released record's coordinate any more, because that
+  // record is gone. A release that did nothing would leave it staged and findable here.
+  auto requalified = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kReservedCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(requalified) << runtime_error_message(requalified.error());
+  EXPECT_FALSE(requalified->has_value());
+
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// A refused selector eviction releases its reservation from the dispatcher thread. Contention
+// with a producer must defer that cleanup instead of parking the dispatcher behind the cache lock.
+TEST(RuntimeChannelBindingTemporal, ReleasingAReservationDoesNotWaitForTheProducer) {
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, 10));
+  ASSERT_TRUE(arrangement.emit(22, 20));
+  auto reserved = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{20, ClockId{1U}});
+  ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+  ASSERT_TRUE(reserved->has_value());
+
+  struct LockScript {
+    std::binary_semaphore held{0};
+    std::binary_semaphore release{0};
+    std::binary_semaphore caller_started{0};
+    std::binary_semaphore caller_returned{0};
+  } script;
+  std::thread holder{[&] {
+    static_cast<void>(RuntimeChannelSessionTestAccess::with_input_lock(
+        *arrangement.session, PortId{2U}, &script, [](void* state) noexcept {
+          auto& owned = *static_cast<LockScript*>(state);
+          owned.held.release();
+          owned.release.acquire();
+        }));
+  }};
+  script.held.acquire();
+  std::thread caller{[&] {
+    script.caller_started.release();
+    arrangement.session->release_freshness_reservation(**reserved);
+    script.caller_returned.release();
+  }};
+  script.caller_started.acquire();
+  const bool returned_while_contended = script.caller_returned.try_acquire_for(50ms);
+  script.release.release();
+  if (!returned_while_contended) {
+    script.caller_returned.acquire();
+  }
+  caller.join();
+  holder.join();
+
+  EXPECT_TRUE(returned_while_contended);
+  // A deferred release deliberately leaves the generation-fenced reservation for the next pass.
+  arrangement.session->release_freshness_reservation(**reserved);
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// A deferred reservation release must not leave an idle staged successor fenced after the retained
+// claim disappears. The next self-heal promotes it without requiring another producer arrival.
+TEST(RuntimeChannelBindingTemporal, DeferredReservationSelfHealPromotesAnIdleSuccessor) {
+  constexpr std::int64_t kSuccessorCaptureNs = 20;
+
+  RetainedRefillArrangement arrangement;
+  const auto counters = std::make_shared<RuntimePhaseCounters>();
+  arrangement.fixture.plan.executable_factories.phase_counters = counters;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, 10));
+  ASSERT_TRUE(arrangement.emit(22, kSuccessorCaptureNs));
+  auto reserved = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kSuccessorCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+  ASSERT_TRUE(reserved->has_value());
+
+  struct LockScript {
+    std::binary_semaphore held{0};
+    std::binary_semaphore release{0};
+    std::binary_semaphore caller_returned{0};
+  } script;
+  std::thread holder{[&] {
+    static_cast<void>(RuntimeChannelSessionTestAccess::with_input_lock(
+        *arrangement.session, PortId{2U}, &script, [](void* state) noexcept {
+          auto& owned = *static_cast<LockScript*>(state);
+          owned.held.release();
+          owned.release.acquire();
+        }));
+  }};
+  script.held.acquire();
+  std::thread caller{[&] {
+    arrangement.session->release_freshness_reservation(**reserved);
+    script.caller_returned.release();
+  }};
+  const bool returned_while_contended = script.caller_returned.try_acquire_for(50ms);
+  script.release.release();
+  if (!returned_while_contended) {
+    script.caller_returned.acquire();
+  }
+  caller.join();
+  holder.join();
+  ASSERT_TRUE(returned_while_contended);
+  const auto deferred = counters->snapshot();
+  EXPECT_EQ(deferred[RuntimePhaseCounters::index(
+                RuntimePhaseCounter::kChannelFreshnessReservationReleaseDeferred)],
+            1U);
+
+  // Simulate the selector dropping the retained claim after the refused eviction. Ordinary
+  // retirement cannot promote the fenced successor, leaving the typed slot free and the source
+  // idle until reservation recovery makes the already-staged record visible again.
+  std::uint32_t promoted = 0U;
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U}, std::span<const TemporalSampleRecord>{&arrangement.retained, 1U}, &promoted));
+  ASSERT_EQ(promoted, 0U);
+  auto recovered = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kSuccessorCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(recovered) << runtime_error_message(recovered.error());
+  EXPECT_FALSE(recovered->has_value());
+  const auto recovered_state =
+      RuntimeChannelSessionTestAccess::input_reset_state(*arrangement.session, PortId{2U});
+  ASSERT_TRUE(recovered_state) << runtime_error_message(recovered_state.error());
+  EXPECT_EQ(recovered_state->pending_direct_ingress_samples, 0U);
+  EXPECT_EQ(recovered_state->occupied_samples, 1U);
+
+  auto successor = wait_for_event(*arrangement.session, *arrangement.binding);
+  EXPECT_TRUE(successor) << runtime_error_message(successor.error());
+  if (successor) {
+    auto record = arrangement.session->temporal_sample(successor->port, successor->source_sequence);
+    ASSERT_TRUE(record) << runtime_error_message(record.error());
+    EXPECT_EQ(record->capture_time.timestamp_ns, kSuccessorCaptureNs);
+    ASSERT_TRUE(arrangement.binding->retire(successor->source_sequence));
+  }
+
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// The next reconcile self-heals an abandoned reservation. That retry is still speculative and
+// must decline immediately when the producer owns the cache lock rather than waiting it out.
+TEST(RuntimeChannelBindingTemporal, ReservationSelfHealDoesNotWaitForTheProducer) {
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, 10));
+  ASSERT_TRUE(arrangement.emit(22, 20));
+  auto reserved = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{20, ClockId{1U}});
+  ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+  ASSERT_TRUE(reserved->has_value());
+
+  struct LockScript {
+    std::binary_semaphore held{0};
+    std::binary_semaphore release{0};
+    std::binary_semaphore caller_started{0};
+    std::binary_semaphore caller_returned{0};
+  } script;
+  std::thread holder{[&] {
+    static_cast<void>(RuntimeChannelSessionTestAccess::with_input_lock(
+        *arrangement.session, PortId{2U}, &script, [](void* state) noexcept {
+          auto& owned = *static_cast<LockScript*>(state);
+          owned.held.release();
+          owned.release.acquire();
+        }));
+  }};
+  script.held.acquire();
+  bool probe_succeeded = false;
+  std::optional<RuntimeChannelFreshnessReservation> replacement;
+  std::thread caller{[&] {
+    script.caller_started.release();
+    auto probed = arrangement.session->reserve_freshness_refill(
+        PortId{2U}, arrangement.retained, TimePoint{20, ClockId{1U}});
+    probe_succeeded = probed.has_value();
+    if (probed) {
+      replacement = *probed;
+    }
+    script.caller_returned.release();
+  }};
+  script.caller_started.acquire();
+  const bool returned_while_contended = script.caller_returned.try_acquire_for(50ms);
+  script.release.release();
+  if (!returned_while_contended) {
+    script.caller_returned.acquire();
+  }
+  caller.join();
+  holder.join();
+
+  EXPECT_TRUE(returned_while_contended);
+  EXPECT_TRUE(probe_succeeded);
+  EXPECT_FALSE(replacement.has_value());
+  if (replacement) {
+    arrangement.session->release_freshness_reservation(*replacement);
+  } else {
+    arrangement.session->release_freshness_reservation(**reserved);
+  }
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// REQ: CHAN-131
+// A promoted refill carries no claim until its readiness publishes, and pre-witness replacement
+// would otherwise admit exactly that shape. So a fast producer could take back the very record the
+// eviction gave up a retained one to obtain, and because the replacement is captured after the
+// witness the eviction was justified against, it sorts behind that witness and the activation
+// selects nothing. Measured at 89.8% of lost selections against 6.1% of all refills.
+TEST(RuntimeChannelBindingTemporal, APromotedRefillIsNotReplacedBeforeItsReadinessPublishes) {
+  constexpr std::int64_t kRetainedCaptureNs = 10;
+  constexpr std::int64_t kRefillCaptureNs = 20;
+  constexpr std::int64_t kIntruderCaptureNs = 30;
+
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, kRetainedCaptureNs));
+
+  ASSERT_TRUE(arrangement.emit(22, kRefillCaptureNs));
+  auto reserved = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kRefillCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+  ASSERT_TRUE(reserved->has_value());
+
+  std::uint32_t promoted = 0U;
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U},
+      std::span<const TemporalSampleRecord>{&arrangement.retained, 1U},
+      &promoted,
+      &**reserved));
+  ASSERT_EQ(promoted, 1U);
+  auto protected_outcome = arrangement.session->last_refill_outcome(PortId{2U});
+  ASSERT_TRUE(protected_outcome) << runtime_error_message(protected_outcome.error());
+  ASSERT_EQ(*protected_outcome, 0U)
+      << "post-handoff capacity probes must not report a replacement attempt";
+
+  // The refill now occupies the typed slot and has not yet published. This is the window the
+  // producer used to win. Unlike the post-handoff capacity query above, this publish reaches the
+  // staged-promotion path and genuinely attempts to replace the protected refill.
+  ASSERT_TRUE(arrangement.emit(33, kIntruderCaptureNs));
+  protected_outcome = arrangement.session->last_refill_outcome(PortId{2U});
+  ASSERT_TRUE(protected_outcome) << runtime_error_message(protected_outcome.error());
+  EXPECT_EQ(*protected_outcome, 2U)
+      << "the rejected replacement must be observable as refill protection";
+
+  // Key assertion: the readiness that surfaces is the refill the eviction was traded for, not the
+  // arrival that came after it.
+  auto refilled_event = wait_for_event(*arrangement.session, *arrangement.binding);
+  ASSERT_TRUE(refilled_event) << runtime_error_message(refilled_event.error());
+  auto refilled =
+      arrangement.session->temporal_sample(refilled_event->port, refilled_event->source_sequence);
+  ASSERT_TRUE(refilled) << runtime_error_message(refilled.error());
+  EXPECT_EQ(refilled->capture_time.timestamp_ns, kRefillCaptureNs);
+
+  ASSERT_TRUE(arrangement.binding->retire(refilled_event->source_sequence));
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: CHAN-136
+// REQ: RUNTIME-050
+// A direct freshness handoff replaces the Channel payload before the optional process-local retry.
+// If that retry fails, selector rollback would resurrect metadata for the destroyed payload. Model
+// the controller's two-party ordering and prove the retry observes two already-committed ledgers.
+TEST(RuntimeChannelBindingTemporal, PostHandoffRetryFailureCannotRestoreTheReplacedReuseIdentity) {
+  constexpr std::int64_t kRetainedCaptureNs = 10;
+  constexpr std::int64_t kSuccessorCaptureNs = 20;
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, kRetainedCaptureNs));
+
+  auto selection = arrangement.fixture.plan.input_selections.front();
+  selection.missing = TemporalRecordMissingKind::kReuseLast;
+  selection.reuse_max_age_ns = 1000;
+  auto selector = RuntimeInputSelectionState::create(selection);
+  ASSERT_TRUE(selector) << runtime_error_message(selector.error());
+  ASSERT_TRUE(selector->push(arrangement.retained));
+  auto selected = selector->begin(TimePoint{kRetainedCaptureNs, ClockId{1U}}, 1U, 1U);
+  ASSERT_TRUE(selected) << runtime_error_message(selected.error());
+  ASSERT_TRUE(selected->finish(true));
+  ASSERT_EQ(selector->reuse_retained_record(), arrangement.retained);
+
+  ASSERT_TRUE(arrangement.emit(22, kSuccessorCaptureNs));
+  auto channel_reservation = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kSuccessorCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(channel_reservation) << runtime_error_message(channel_reservation.error());
+  ASSERT_TRUE(channel_reservation->has_value());
+  auto selector_reservation = selector->reserve_reuse_replacement(arrangement.retained);
+  ASSERT_TRUE(selector_reservation) << runtime_error_message(selector_reservation.error());
+  ASSERT_TRUE(
+      RuntimeChannelSessionTestAccess::fail_next_freshness_handoff_retry(*arrangement.session));
+
+  std::uint32_t promoted = 0U;
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U},
+      std::span<const TemporalSampleRecord>{&arrangement.retained, 1U},
+      &promoted,
+      &**channel_reservation));
+  ASSERT_EQ(promoted, 1U);
+  selector_reservation->commit();
+  auto retried = arrangement.session->retry_after_freshness_handoff();
+  ASSERT_FALSE(retried);
+  EXPECT_EQ(retried.error().code, ErrorCode::kProtocolError);
+
+  std::array<TemporalSampleRecord, 1U> selector_claims{};
+  auto selector_claim_count = selector->copy_payload_claims(selector_claims);
+  ASSERT_TRUE(selector_claim_count) << runtime_error_message(selector_claim_count.error());
+  EXPECT_EQ(*selector_claim_count, 0U);
+  auto channel_state =
+      RuntimeChannelSessionTestAccess::input_reset_state(*arrangement.session, PortId{2U});
+  ASSERT_TRUE(channel_state) << runtime_error_message(channel_state.error());
+  EXPECT_FALSE(channel_state->reuse_retained);
+  EXPECT_FALSE(channel_state->reuse_slot_matches_single_occupied);
+  EXPECT_EQ(channel_state->occupied_samples, 1U);
+
+  // Failed-run cleanup may discard the committed successor, but it must not reconstruct N.
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
+}
+
+// REQ: RUNTIME-017
+// poll() abandons its pass on a contended cache lock, reporting no error and creating no event.
+// That is right for the ordinary pass, which must never wait on a producer and can retry for free.
+// It is wrong directly after a freshness eviction, where the retained record is already released
+// and the refill is held unpublished until a poll publishes it: there the abandoned pass costs an
+// activation rather than deferring one. poll_blocking() is the same pass that waits instead.
+TEST(RuntimeChannelBindingTemporal, PollBlockingCompletesAPassAContendedPollAbandons) {
+  constexpr std::int64_t kRetainedCaptureNs = 10;
+  constexpr std::int64_t kRefillCaptureNs = 20;
+
+  RetainedRefillArrangement arrangement;
+  ASSERT_NO_FATAL_FAILURE(arrange_retained_refill(arrangement, kRetainedCaptureNs));
+
+  ASSERT_TRUE(arrangement.emit(22, kRefillCaptureNs));
+  auto reserved = arrangement.session->reserve_freshness_refill(
+      PortId{2U}, arrangement.retained, TimePoint{kRefillCaptureNs, ClockId{1U}});
+  ASSERT_TRUE(reserved) << runtime_error_message(reserved.error());
+  ASSERT_TRUE(reserved->has_value());
+  std::uint32_t promoted = 0U;
+  ASSERT_TRUE(arrangement.session->retire_samples(
+      PortId{2U},
+      std::span<const TemporalSampleRecord>{&arrangement.retained, 1U},
+      &promoted,
+      &**reserved));
+  ASSERT_EQ(promoted, 1U);
+
+  struct LockScript {
+    std::binary_semaphore held{0};
+    std::binary_semaphore release{0};
+    std::binary_semaphore waiter_started{0};
+  } script;
+
+  // Hold the cache lock the poll must acquire, from another thread, so the contention is arranged
+  // rather than raced for.
+  std::thread holder{[&] {
+    static_cast<void>(RuntimeChannelSessionTestAccess::with_input_lock(
+        *arrangement.session, PortId{2U}, &script, [](void* state) noexcept {
+          auto& owned = *static_cast<LockScript*>(state);
+          owned.held.release();
+          owned.release.acquire();
+        }));
+  }};
+  script.held.acquire();
+
+  // The contended pass reports success and does nothing, which is the outcome that cannot be told
+  // from "nothing was ready" without asking.
+  const TimePoint observed{kRefillCaptureNs + 1, ClockId{1U}};
+  ASSERT_TRUE(arrangement.binding->poll(observed));
+  EXPECT_TRUE(arrangement.binding->last_poll_incomplete());
+
+  // The blocking pass waits out the holder and completes. It is issued from another thread because
+  // this one has to release the lock for it to finish.
+  std::atomic<bool> blocking_poll_succeeded{false};
+  std::thread waiter{[&] {
+    script.waiter_started.release();
+    blocking_poll_succeeded.store(arrangement.binding->poll_blocking(observed).has_value(),
+                                  std::memory_order_relaxed);
+  }};
+  script.waiter_started.acquire();
+  // Bound how long the wrong behaviour has to reveal itself. A pass that does not wait returns
+  // within microseconds and reports itself incomplete; one that waits is still parked on the
+  // holder, so this delay only ever delays the correct case. Without it the waiter can start after
+  // the lock is already free, and a non-blocking pass would pass this test.
+  std::this_thread::sleep_for(std::chrono::milliseconds{50});
+  script.release.release();
+  waiter.join();
+  holder.join();
+
+  EXPECT_TRUE(blocking_poll_succeeded.load(std::memory_order_relaxed));
+  EXPECT_FALSE(arrangement.binding->last_poll_incomplete());
+  auto event = wait_for_event(*arrangement.session, *arrangement.binding);
+  ASSERT_TRUE(event) << runtime_error_message(event.error());
+  auto record = arrangement.session->temporal_sample(event->port, event->source_sequence);
+  ASSERT_TRUE(record) << runtime_error_message(record.error());
+  EXPECT_EQ(record->capture_time.timestamp_ns, kRefillCaptureNs);
+
+  ASSERT_TRUE(arrangement.binding->retire(event->source_sequence));
+  ASSERT_TRUE(arrangement.session->retire_activation(VertexId{1U}, 1U, true));
+  arrangement.session->cancel();
+  ASSERT_TRUE(arrangement.session->join());
 }
 
 }  // namespace

@@ -168,6 +168,8 @@ class LifecycleControlState final : public std::enable_shared_from_this<Lifecycl
                                        const RestartTarget& target,
                                        const NormalizedPolicy* policy) const noexcept;
   [[nodiscard]] static Error map_error(const LifecycleTransactionKernelError& error) noexcept;
+  [[nodiscard]] expected<LifecycleRestartReceiptView, Error> project_receipt_locked(
+      LifecycleRestartReceipt receipt) const noexcept;
   [[nodiscard]] LifecycleRestartReceiptView public_receipt_view(
       const LifecycleTransactionReceiptView& view) const noexcept;
   [[nodiscard]] static RuntimeLifecycleRequestOrigin diagnostic_origin(

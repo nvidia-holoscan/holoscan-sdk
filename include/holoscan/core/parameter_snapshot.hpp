@@ -71,7 +71,7 @@ struct ParamSnapshotCodecIdentity {
 
 /// @brief Configure one owning Parameter capture.
 struct ParamCaptureOptions {
-  ParamReadView view{ParamReadView::kPublished};  ///< Value view; EA1 admits published only.
+  ParamReadView view{ParamReadView::kPublished};  ///< Value view; baseline admits published only.
   ParamCaptureConsistency consistency{
       ParamCaptureConsistency::kRequireStopped};  ///< Requested coherence boundary.
   std::optional<ParamUpdateSequence>
@@ -164,7 +164,8 @@ class ParamSnapshotScope {
   /// @note Moving an existing path into this call does not allocate. Passing an lvalue may allocate
   /// while copying the by-value argument before the function is entered.
   /// @throws std::bad_alloc if construction of the by-value \p path argument fails.
-  [[nodiscard]] static ParamSnapshotScope operator_(OperatorPath path) {
+  [[nodiscard]] static ParamSnapshotScope operator_(
+      OperatorPath path) {  // NOLINT(performance-unnecessary-value-param)
     return ParamSnapshotScope{ParamSnapshotScopeKind::kOperator, std::move(path)};
   }
 
@@ -189,7 +190,7 @@ class ParamSnapshotScope {
 /// @brief Own a consistency-labeled, value-safe Parameter capture envelope.
 ///
 /// Snapshot storage is independent of live generation slots and remains valid
-/// after the originating session retires. EA1 never copies opaque C++ object
+/// after the originating session retires. The baseline never copies opaque C++ object
 /// representation into this envelope.
 /// @note Distinct snapshot objects may be used concurrently. Concurrent const access to one
 /// snapshot is safe, but assigning, moving, or destroying that object requires external exclusion

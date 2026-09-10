@@ -3,8 +3,15 @@
 
 list(APPEND CMAKE_MESSAGE_CONTEXT "benchmark_deps")
 
+# Ignore build-tree package configs while resolving the Google Benchmark dependency.
 set(_HOLOSCAN_BENCHMARK_DEPS_SAVED_CMAKE_IGNORE_PREFIX_PATH "${CMAKE_IGNORE_PREFIX_PATH}")
-list(APPEND CMAKE_IGNORE_PREFIX_PATH "${CMAKE_BINARY_DIR}")
+
+# Use holoscan_BINARY_DIR when embedded and CMAKE_BINARY_DIR otherwise.
+if(DEFINED holoscan_BINARY_DIR)
+    list(APPEND CMAKE_IGNORE_PREFIX_PATH "${holoscan_BINARY_DIR}")
+else()
+    list(APPEND CMAKE_IGNORE_PREFIX_PATH "${CMAKE_BINARY_DIR}")
+endif()
 
 # SDK builds acquire benchmark through the shared dependency module in
 # public/cmake/deps/benchmark.cmake via holoscan_add_dependency(). Standalone benchmark

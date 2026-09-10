@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -16,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -31,17 +33,22 @@
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/operator_spec.hpp>
+#include <holoscan/time/realtime_clock.hpp>
 
+#include "../common/benchmark_pod.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "core/operator_spec_compiler_access.hpp"
 #include "core/source_id_internal.hpp"
 #include "runtime/channel_runtime_binding_access.hpp"
 #include "runtime/execution_lane.hpp"
 #include "runtime/runtime_channel_binding.hpp"
+#include "runtime/runtime_channel_binding_test_access.hpp"
 #include "runtime/runtime_phase_counters.hpp"
+#include "time/clock_registry_internal.hpp"
 
 namespace {
 
+template <typename PayloadT>
 class ChannelSourceOperator final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
@@ -53,9 +60,10 @@ class ChannelSourceOperator final : public holoscan::Operator<> {
     return {};
   }
 
-  holoscan::Output<std::int32_t> output{"output"};
+  holoscan::Output<PayloadT> output{"output"};
 };
 
+template <typename PayloadT>
 class ChannelSinkOperator final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override { spec.input(input).queue_depth(1024U); }
@@ -65,26 +73,36 @@ class ChannelSinkOperator final : public holoscan::Operator<> {
     return {};
   }
 
-  holoscan::Input<std::int32_t> input{"input"};
+  holoscan::Input<PayloadT> input{"input"};
 };
 
-class ChannelBenchmarkFixture {
+template <typename PayloadT>
+class ChannelBenchmarkFixtureT {
  public:
-  [[nodiscard]] static holoscan::expected<std::unique_ptr<ChannelBenchmarkFixture>, holoscan::Error>
-  create(std::uint32_t input_count, std::uint32_t queue_depth, bool shared_sink_owner,
-         holoscan::detail::ProcessLocalChannelDeliveryKind delivery_kind =
-             holoscan::detail::ProcessLocalChannelDeliveryKind::kHoloMQ) {
+  using CreateResult =
+      holoscan::expected<std::unique_ptr<ChannelBenchmarkFixtureT>, holoscan::Error>;
+
+  [[nodiscard]] static CreateResult create(
+      std::uint32_t input_count, std::uint32_t queue_depth, bool shared_sink_owner,
+      holoscan::detail::ProcessLocalChannelDeliveryKind delivery_kind =
+          holoscan::detail::ProcessLocalChannelDeliveryKind::kHoloMQ) {
     if (input_count == 0U || queue_depth == 0U) {
       return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kInvalidArgument});
     }
-    auto fixture = std::unique_ptr<ChannelBenchmarkFixture>{
-        new ChannelBenchmarkFixture{input_count, queue_depth, shared_sink_owner, delivery_kind}};
+    auto fixture = std::unique_ptr<ChannelBenchmarkFixtureT>{
+        new ChannelBenchmarkFixtureT{input_count, queue_depth, shared_sink_owner, delivery_kind}};
     auto session =
         holoscan::detail::RuntimeChannelSession::create(fixture->plan_, fixture->replay_);
     if (!session) {
       return holoscan::make_unexpected(std::move(session).error());
     }
     fixture->session_ = std::move(*session);
+    // Production binds the plan default clock before arm, so every publication reads it inside the
+    // timed emit interval. Leaving the session unbound would take the inert branch and silently
+    // exclude that clock read from every measurement here.
+    if (auto bound = fixture->bind_publish_clock(); !bound) {
+      return holoscan::make_unexpected(std::move(bound).error());
+    }
     return fixture;
   }
 
@@ -131,8 +149,7 @@ class ChannelBenchmarkFixture {
     return {};
   }
 
-  [[nodiscard]] holoscan::expected<void, holoscan::Error> emit_typed_pod(
-      std::int32_t value) noexcept {
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> emit_typed_pod(PayloadT value) noexcept {
     auto emitted = source_.output.emit(value);
     if (!emitted) {
       return holoscan::make_unexpected(holoscan::Error{emitted.error().code, "emit"});
@@ -150,7 +167,7 @@ class ChannelBenchmarkFixture {
   }
 
   [[nodiscard]] holoscan::expected<void, holoscan::Error> publish_typed_pod_before_cut(
-      std::uint64_t generation, std::int32_t value) noexcept {
+      std::uint64_t generation, PayloadT value) noexcept {
     auto prepared = prepare_typed_pod_source(generation);
     if (!prepared) {
       return prepared;
@@ -171,7 +188,7 @@ class ChannelBenchmarkFixture {
   }
 
   [[nodiscard]] holoscan::expected<void, holoscan::Error> publish_typed_pod(
-      std::uint64_t generation, std::int32_t value) noexcept {
+      std::uint64_t generation, PayloadT value) noexcept {
     auto published = publish_typed_pod_before_cut(generation, value);
     if (!published) {
       return published;
@@ -181,12 +198,12 @@ class ChannelBenchmarkFixture {
     return flush_process_local_cut();
   }
 
-  [[nodiscard]] holoscan::expected<std::int32_t, holoscan::Error> consume_typed_pod(
+  [[nodiscard]] holoscan::expected<PayloadT, holoscan::Error> consume_typed_pod(
       holoscan::detail::PortBinding& binding, std::uint64_t generation) noexcept {
     return consume_typed_pod_impl(binding, generation, 0U, true);
   }
 
-  [[nodiscard]] holoscan::expected<std::int32_t, holoscan::Error> consume_typed_pod(
+  [[nodiscard]] holoscan::expected<PayloadT, holoscan::Error> consume_typed_pod(
       holoscan::detail::PortBinding& binding, std::uint64_t generation,
       std::size_t sink_index) noexcept {
     if (sink_index >= sinks_.size()) {
@@ -196,12 +213,12 @@ class ChannelBenchmarkFixture {
     return consume_typed_pod_impl(binding, generation, sink_index, true);
   }
 
-  [[nodiscard]] holoscan::expected<std::int32_t, holoscan::Error> consume_typed_pod_after_poll(
+  [[nodiscard]] holoscan::expected<PayloadT, holoscan::Error> consume_typed_pod_after_poll(
       holoscan::detail::PortBinding& binding, std::uint64_t generation) noexcept {
     return consume_typed_pod_impl(binding, generation, 0U, false);
   }
 
-  [[nodiscard]] holoscan::expected<std::int32_t, holoscan::Error> consume_typed_pod_after_poll(
+  [[nodiscard]] holoscan::expected<PayloadT, holoscan::Error> consume_typed_pod_after_poll(
       holoscan::detail::PortBinding& binding, std::uint64_t generation,
       std::size_t sink_index) noexcept {
     if (sink_index >= sinks_.size()) {
@@ -212,12 +229,11 @@ class ChannelBenchmarkFixture {
   }
 
  private:
-  [[nodiscard]] holoscan::expected<std::int32_t, holoscan::Error> consume_typed_pod_impl(
+  [[nodiscard]] holoscan::expected<PayloadT, holoscan::Error> consume_typed_pod_impl(
       holoscan::detail::PortBinding& binding, std::uint64_t generation, std::size_t sink_index,
       bool poll_before_drain) noexcept {
-    const auto failure =
-        [](const holoscan::Error& error,
-           const char* stage) -> holoscan::expected<std::int32_t, holoscan::Error> {
+    const auto failure = [](const holoscan::Error& error,
+                            const char* stage) -> holoscan::expected<PayloadT, holoscan::Error> {
       return holoscan::make_unexpected(holoscan::Error{error.code, stage});
     };
     holoscan::detail::RuntimeEvent event;
@@ -290,9 +306,8 @@ class ChannelBenchmarkFixture {
   }
 
  public:
-  [[nodiscard]] holoscan::expected<std::int32_t, holoscan::Error> run_typed_pod_cycle(
-      holoscan::detail::PortBinding& binding, std::uint64_t generation,
-      std::int32_t value) noexcept {
+  [[nodiscard]] holoscan::expected<PayloadT, holoscan::Error> run_typed_pod_cycle(
+      holoscan::detail::PortBinding& binding, std::uint64_t generation, PayloadT value) noexcept {
     auto published = publish_typed_pod(generation, value);
     if (!published) {
       return holoscan::make_unexpected(std::move(published).error());
@@ -305,7 +320,7 @@ class ChannelBenchmarkFixture {
     for (std::uint32_t offset = 0U; offset < queue_depth_; ++offset) {
       holoscan::SampleMetadata metadata{};
       metadata.sequence = first_sequence + offset;
-      metadata.byte_size = sizeof(std::int32_t);
+      metadata.byte_size = sizeof(PayloadT);
       metadata.payload_kind = holoscan::PayloadKind::kInlineTyped;
       for (const holoscan::PortId port : input_ports_) {
         auto injected = holoscan::detail::RuntimeChannelSessionTestAccess::inject_received_metadata(
@@ -322,7 +337,7 @@ class ChannelBenchmarkFixture {
       holoscan::PortId port, std::uint64_t sequence) noexcept {
     holoscan::SampleMetadata metadata{};
     metadata.sequence = sequence;
-    metadata.byte_size = sizeof(std::int32_t);
+    metadata.byte_size = sizeof(PayloadT);
     metadata.payload_kind = holoscan::PayloadKind::kInlineTyped;
     return holoscan::detail::RuntimeChannelSessionTestAccess::inject_received_metadata(
         *session_, port, metadata);
@@ -357,9 +372,9 @@ class ChannelBenchmarkFixture {
   }
 
  private:
-  ChannelBenchmarkFixture(std::uint32_t input_count, std::uint32_t queue_depth,
-                          bool shared_sink_owner,
-                          holoscan::detail::ProcessLocalChannelDeliveryKind delivery_kind)
+  ChannelBenchmarkFixtureT(std::uint32_t input_count, std::uint32_t queue_depth,
+                           bool shared_sink_owner,
+                           holoscan::detail::ProcessLocalChannelDeliveryKind delivery_kind)
       : queue_depth_(queue_depth) {
     source_.setup(source_spec_);
     const auto output = holoscan::detail::OperatorSpecCompilerAccess::port(source_spec_, 0U);
@@ -402,7 +417,7 @@ class ChannelBenchmarkFixture {
     });
 
     for (std::uint32_t index = 0U; index < input_count; ++index) {
-      auto sink = std::make_unique<ChannelSinkOperator>();
+      auto sink = std::make_unique<ChannelSinkOperator<PayloadT>>();
       auto spec = std::make_unique<holoscan::OperatorSpec>();
       sink->setup(*spec);
       const auto input = holoscan::detail::OperatorSpecCompilerAccess::port(*spec, 0U);
@@ -469,7 +484,7 @@ class ChannelBenchmarkFixture {
         .source = holoscan::PortId{1U},
         .service_id = service,
         .payload_identity = output.payload_identity,
-        .payload_size_bytes = sizeof(std::int32_t),
+        .payload_size_bytes = sizeof(PayloadT),
         .delivery_kind = delivery_kind,
         .queue_policy = holoscan::QueuePolicy::kBlocking,
         .max_subscribers = input_count,
@@ -486,18 +501,52 @@ class ChannelBenchmarkFixture {
         }};
   }
 
+  // Build one readable clock generation and bind it as this session's publication domain. The
+  // registry is retained because ClockRef borrows from the generation that produced it.
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> bind_publish_clock() {
+    const holoscan::ClockKey key = holoscan::ClockKey::named("benchmark-publish-clock");
+    holoscan::detail::ClockRegistryBuilder builder;
+    if (auto added = builder.add_clock(key,
+                                       std::make_shared<holoscan::RealtimeClock>(),
+                                       holoscan::detail::ClockCapabilityOptions{
+                                           .can_read_now = true,
+                                           .can_wait_until = true,
+                                           .steady = true,
+                                       });
+        !added) {
+      return holoscan::make_unexpected(std::move(added).error());
+    }
+    if (auto selected = builder.set_default(key); !selected) {
+      return holoscan::make_unexpected(std::move(selected).error());
+    }
+    auto registry = builder.build();
+    if (!registry) {
+      return holoscan::make_unexpected(std::move(registry).error());
+    }
+    clock_registry_ = std::move(*registry);
+    auto resolved = clock_registry_.resolve(holoscan::ClockKey::default_clock());
+    if (!resolved) {
+      return holoscan::make_unexpected(std::move(resolved).error());
+    }
+    return session_->bind_publish_clock(std::move(*resolved));
+  }
+
   std::uint32_t queue_depth_{};
-  ChannelSourceOperator source_;
+  ChannelSourceOperator<PayloadT> source_;
   holoscan::OperatorSpec source_spec_;
-  std::vector<std::unique_ptr<ChannelSinkOperator>> sinks_;
+  std::vector<std::unique_ptr<ChannelSinkOperator<PayloadT>>> sinks_;
   std::vector<std::unique_ptr<holoscan::OperatorSpec>> sink_specs_;
   holoscan::detail::ExecutionPlanState plan_;
   std::vector<holoscan::detail::RuntimeChannelPortReplayRecord> replay_;
   std::vector<holoscan::PortId> input_ports_;
   holoscan::VertexId last_sink_owner_{};
   std::uint64_t readiness_poll_count_{};
+  // Declared before the session so the borrowed publish ClockRef outlives every publication.
+  holoscan::detail::ClockRegistry clock_registry_;
   std::unique_ptr<holoscan::detail::RuntimeChannelSession> session_;
 };
+
+using ChannelBenchmarkFixture = ChannelBenchmarkFixtureT<std::int32_t>;
 
 void skip_with_error(benchmark::State& state, const char* operation, const holoscan::Error& error) {
   std::string message =
@@ -509,10 +558,13 @@ void skip_with_error(benchmark::State& state, const char* operation, const holos
   state.SkipWithError(message.c_str());
 }
 
-struct TypedPODCycleContext {
-  std::unique_ptr<ChannelBenchmarkFixture> fixture;
+template <typename PayloadT>
+struct TypedPODCycleContextT {
+  std::unique_ptr<ChannelBenchmarkFixtureT<PayloadT>> fixture;
   std::unique_ptr<holoscan::detail::PortBinding> binding;
 };
+
+using TypedPODCycleContext = TypedPODCycleContextT<std::int32_t>;
 
 struct TypedPODFanoutContext {
   std::unique_ptr<ChannelBenchmarkFixture> fixture;
@@ -1011,7 +1063,8 @@ class AsyncInlineConsumer {
         fail(received.error().code);
         return;
       }
-      if (received->sequence != expected_sequence || received_value != 7) {
+      if (received->metadata.sequence != expected_sequence ||
+          received->payload_size != destination.size() || received_value != 7) {
         fail(holoscan::ErrorCode::kProtocolError);
         return;
       }
@@ -1070,7 +1123,8 @@ class PollingInlineConsumer {
         error_code_.store(received.error().code, std::memory_order_release);
         return;
       }
-      if (received->sequence != expected_sequence || received_value != 7) {
+      if (received->metadata.sequence != expected_sequence ||
+          received->payload_size != destination.size() || received_value != 7) {
         error_code_.store(holoscan::ErrorCode::kProtocolError, std::memory_order_release);
         return;
       }
@@ -1211,11 +1265,19 @@ create_inline_publish_context(bool enable_event_wake = true) {
   return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kNotReady});
 }
 
-[[nodiscard]] holoscan::expected<TypedPODCycleContext, holoscan::Error>
-create_typed_pod_cycle_context(holoscan::detail::ProcessLocalChannelDeliveryKind delivery_kind =
-                                   holoscan::detail::ProcessLocalChannelDeliveryKind::kHoloMQ,
-                               std::uint32_t queue_depth = 2U) {
-  auto fixture = ChannelBenchmarkFixture::create(1U, queue_depth, false, delivery_kind);
+template <typename PayloadT>
+[[nodiscard]] bool has_equal_object_representation(const PayloadT& left,
+                                                   const PayloadT& right) noexcept {
+  static_assert(std::has_unique_object_representations_v<PayloadT>,
+                "bytewise benchmark validation requires unique object representations");
+  return std::memcmp(std::addressof(left), std::addressof(right), sizeof(PayloadT)) == 0;
+}
+
+template <typename PayloadT>
+[[nodiscard]] holoscan::expected<TypedPODCycleContextT<PayloadT>, holoscan::Error>
+create_typed_pod_cycle_context_for(holoscan::detail::ProcessLocalChannelDeliveryKind delivery_kind,
+                                   std::uint32_t queue_depth, const PayloadT& warmup_value) {
+  auto fixture = ChannelBenchmarkFixtureT<PayloadT>::create(1U, queue_depth, false, delivery_kind);
   if (!fixture) {
     return holoscan::make_unexpected(std::move(fixture).error());
   }
@@ -1240,16 +1302,24 @@ create_typed_pod_cycle_context(holoscan::detail::ProcessLocalChannelDeliveryKind
   // Endpoint discovery is cold setup. Match the established Runtime tests, then prove one full
   // excluded cycle before Google Benchmark starts a measured loop.
   std::this_thread::sleep_for(std::chrono::milliseconds{20});
-  auto warmup = (*fixture)->run_typed_pod_cycle(**binding, 1U, 1);
+  auto warmup = (*fixture)->run_typed_pod_cycle(**binding, 1U, warmup_value);
   if (!warmup) {
     return holoscan::make_unexpected(std::move(warmup).error());
   }
-  if (*warmup != 1) {
+  if (!has_equal_object_representation(*warmup, warmup_value)) {
     return holoscan::make_unexpected(
         holoscan::Error{holoscan::ErrorCode::kProtocolError, "warmup_value"});
   }
   (*fixture)->reset_readiness_poll_count();
-  return TypedPODCycleContext{.fixture = std::move(*fixture), .binding = std::move(*binding)};
+  return TypedPODCycleContextT<PayloadT>{.fixture = std::move(*fixture),
+                                         .binding = std::move(*binding)};
+}
+
+[[nodiscard]] holoscan::expected<TypedPODCycleContext, holoscan::Error>
+create_typed_pod_cycle_context(holoscan::detail::ProcessLocalChannelDeliveryKind delivery_kind =
+                                   holoscan::detail::ProcessLocalChannelDeliveryKind::kHoloMQ,
+                               std::uint32_t queue_depth = 2U) {
+  return create_typed_pod_cycle_context_for<std::int32_t>(delivery_kind, queue_depth, 1);
 }
 
 [[nodiscard]] holoscan::expected<TypedPODFanoutContext, holoscan::Error>
@@ -2237,6 +2307,69 @@ void BM_ChannelTypedPODDirectRetainedCycle(benchmark::State& state) {
                                 holoscan::detail::ProcessLocalChannelDeliveryKind::kDirectRetained);
 }
 
+[[nodiscard]] holoscan::BenchmarkPOD64 make_channel_pod64_payload(
+    const std::uint64_t sequence) noexcept {
+  holoscan::BenchmarkPOD64 payload{
+      .sequence = sequence,
+      .auxiliary0 = static_cast<std::uint32_t>(sequence) ^ 0xA5A5'5A5AU,
+      .auxiliary1 = sequence * 3U,
+  };
+  payload.checksum = holoscan::benchmark_pod_checksum(payload);
+  return payload;
+}
+
+// Match the production Graph's 64-byte POD, blocking depth-one, direct-retained edge while
+// deliberately excluding Dispatcher selection and the two Operator callback transactions.
+// REQ: CHAN-096
+// REQ: RUNTIME-016
+// REQ: RUNTIME-018
+void BM_ChannelTypedPOD64DirectRetainedCycle(benchmark::State& state) {
+  constexpr std::uint32_t kQueueDepth = 1U;
+  auto context = create_typed_pod_cycle_context_for<holoscan::BenchmarkPOD64>(
+      holoscan::detail::ProcessLocalChannelDeliveryKind::kDirectRetained,
+      kQueueDepth,
+      make_channel_pod64_payload(1U));
+  if (!context) {
+    skip_with_error(
+        state, "failed to create 64-byte direct-retained Channel fixture", context.error());
+    return;
+  }
+
+  std::uint64_t generation = 2U;
+  holoscan::BenchmarkPOD64 final_received;
+  holoscan::BenchmarkPOD64 final_expected;
+  for (auto _ : state) {
+    final_expected = make_channel_pod64_payload(generation);
+    auto received =
+        context->fixture->run_typed_pod_cycle(*context->binding, generation, final_expected);
+    if (!received) {
+      skip_with_error(
+          state, "failed to run 64-byte direct-retained Channel cycle", received.error());
+      return;
+    }
+    final_received = *received;
+    benchmark::DoNotOptimize(final_received.sequence);
+    ++generation;
+  }
+  if (!holoscan::benchmark_pod_valid(final_received) ||
+      !has_equal_object_representation(final_received, final_expected)) {
+    state.SkipWithError("64-byte direct-retained Channel cycle returned the wrong final value");
+    return;
+  }
+
+  state.counters["activation_cuts_per_cycle"] = 2.0;
+  state.counters["comparison_uncontaminated"] =
+      context->fixture->readiness_poll_count() == state.iterations() ? 1.0 : 0.0;
+  state.counters["direct_retained"] = 1.0;
+  state.counters["final_validation"] = 1.0;
+  state.counters["payload_bytes"] = static_cast<double>(sizeof(holoscan::BenchmarkPOD64));
+  state.counters["queue_depth"] = kQueueDepth;
+  state.counters["readiness_polls_per_cycle"] =
+      static_cast<double>(context->fixture->readiness_poll_count()) /
+      static_cast<double>(state.iterations());
+  state.SetItemsProcessed(state.iterations());
+}
+
 // Time producer activation, publication, retirement, and the post-source Channel cut. The
 // downstream receive and cleanup run outside the manual interval so the bounded edge remains
 // reusable.
@@ -3100,6 +3233,7 @@ BENCHMARK(BM_ChannelLastWitnessRetirementByGraphInputs)
     ->Arg(64);
 BENCHMARK(BM_ChannelTypedPODCycle)->UseRealTime();
 BENCHMARK(BM_ChannelTypedPODDirectRetainedCycle)->UseRealTime();
+BENCHMARK(BM_ChannelTypedPOD64DirectRetainedCycle)->UseRealTime();
 BENCHMARK(BM_ChannelTypedPODPublishCut)->UseManualTime();
 BENCHMARK(BM_ChannelTypedPODPublishRetire)->UseManualTime();
 BENCHMARK(BM_ChannelTypedPODEmit)->UseManualTime();

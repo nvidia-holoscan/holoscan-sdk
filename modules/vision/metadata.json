@@ -1,0 +1,57 @@
+{
+  "$schema": "urn:holohub:module:v2",
+  "module": {
+    "name": "holoscan-vision",
+    "version": "0.1.0",
+    "description": "Holoscan SDK vision operators backed by CV-CUDA",
+    "authors": [
+      {
+        "name": "Holoscan Team",
+        "affiliation": "NVIDIA"
+      }
+    ],
+    "license": "Apache-2.0",
+    "language": [
+      "C++"
+    ],
+    "namespace": {
+      "cpp": "holoscan::vision"
+    },
+    "holoscan_sdk": {
+      "minimum_required_version": "5.0.0",
+      "tested_versions": [
+        "5.0.0"
+      ]
+    },
+    "platforms": [
+      "x86_64",
+      "aarch64"
+    ],
+    "tags": [
+      "Computer Vision",
+      "Image Processing",
+      "CUDA",
+      "CV-CUDA"
+    ],
+    "source_repository": "https://github.com/nvidia-holoscan/holoscan-sdk",
+    "operator_names": [
+      "resize_op",
+      "custom_crop_op",
+      "copy_make_border_op",
+      "remap_op",
+      "normalize_op",
+      "convert_to_op",
+      "reformat_op",
+      "non_maximum_suppression_op"
+    ],
+    "binary_packages": {
+      "debian": "holoscan"
+    },
+    "documentation": {
+      "readme": "README.md"
+    },
+    "testing": {
+      "cpp": "ctest"
+    }
+  }
+}

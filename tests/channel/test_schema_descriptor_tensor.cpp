@@ -10,10 +10,13 @@
 #include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
 // Provides generated owning types and schema-trait specializations.
 #include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
-#include <holoscan/schema/image_metadata.hpp>
 #include <holoscan/schema/inline_flatbuffer_payload.hpp>
 #include <holoscan/schema/tensor_materialization.hpp>
+#include <holoscan/sensor_io/image_metadata.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
+#include "../../src/channel/channel_common.hpp"
+#include "../../src/channel/channel_tensor_test_access.hpp"
 #include "../../src/channel/holomq_tensor.hpp"
 #include "../../src/channel/payload_descriptor_wire.hpp"
 #include "../../src/runtime/channel_runtime_binding_access.hpp"
@@ -31,6 +34,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <future>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -71,22 +75,86 @@ using holoscan::channel_test::wait_until;
 using holoscan::channel_test::write_exact;
 using holoscan::channel_test::write_host_pattern;
 
+class BackpressuredTensorSchemaPayloadPublisher final
+    : public holoscan::channel_internal::TensorSchemaPayloadPublisher {
+ public:
+  [[nodiscard]] holoscan::expected<holoscan::channel_internal::TensorSchemaPayloadReservation,
+                                   holoscan::Error>
+  reserve_tensors(std::span<const holoscan::Tensor>, bool) override {
+    ++reserve_calls;
+    return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kBackpressured});
+  }
+
+  [[nodiscard]] holoscan::expected<std::uint32_t, holoscan::Error> publish_payload(
+      std::span<const std::byte>, holoscan::channel_internal::TensorSchemaPayloadReservation,
+      holoscan::SampleMetadata) override {
+    return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kFailure});
+  }
+
+  [[nodiscard]] holoscan::channel_internal::InlinePublicationResult close_stream(
+      holoscan::SampleMetadata) override {
+    ++close_calls;
+    if (close_recipient_count) {
+      closed = true;
+      return {
+          .phase = holoscan::channel_internal::InlinePublicationPhase::kAccepted,
+          .recipient_count = *close_recipient_count,
+      };
+    }
+    closed = close_phase != holoscan::channel_internal::InlinePublicationPhase::kPreSubmitRejected;
+    return {
+        .phase = close_phase,
+        .error = holoscan::Error{close_error},
+    };
+  }
+
+  [[nodiscard]] holoscan::expected<std::uint64_t, holoscan::Error> next_operation_sequence()
+      const noexcept override {
+    ++next_sequence_calls;
+    if (closed) {
+      return holoscan::make_unexpected(holoscan::Error{closed_sequence_error});
+    }
+    return 1U;
+  }
+
+  void release_tensor(
+      holoscan::channel_internal::TensorSchemaPayloadReservation) noexcept override {}
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> update_connections() noexcept override {
+    return {};
+  }
+  [[nodiscard]] bool has_subscribers() const noexcept override { return false; }
+  [[nodiscard]] holoscan::expected<holoscan::MemoryBuffer::Options, holoscan::Error>
+  tensor_memory_options() const override {
+    return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kNotSupported});
+  }
+
+  std::uint32_t reserve_calls{};
+  std::uint32_t close_calls{};
+  mutable std::uint32_t next_sequence_calls{};
+  std::optional<std::uint32_t> close_recipient_count;
+  holoscan::ErrorCode close_error{holoscan::ErrorCode::kProtocolError};
+  holoscan::ErrorCode closed_sequence_error{holoscan::ErrorCode::kClosed};
+  holoscan::channel_internal::InlinePublicationPhase close_phase{
+      holoscan::channel_internal::InlinePublicationPhase::kPostSubmitUncertain};
+  bool closed{};
+};
+
 #ifndef HOLOSCAN_CHANNEL_SCHEMA_INTERPROCESS_CHILD_EXE
 #define HOLOSCAN_CHANNEL_SCHEMA_INTERPROCESS_CHILD_EXE ""
 #endif
 
 // Returns a structurally valid BufferHandlePayloadReference built from the fixed 8-byte
-// sentinel "HSDK5EA1". Simulates a cross-process handle shape without a live HoloMQ
+// sentinel "TESTBYTE". Simulates a cross-process handle shape without a live HoloMQ
 // export; used in descriptor field round-trip tests that do not import a real buffer.
 [[nodiscard]] holoscan::BufferHandlePayloadReference make_structural_opaque_reference() {
-  constexpr std::array<std::byte, 8U> kOpaqueCarrier{std::byte{0x48},
-                                                     std::byte{0x53},
-                                                     std::byte{0x44},
-                                                     std::byte{0x4B},
-                                                     std::byte{0x35},
-                                                     std::byte{0x45},
-                                                     std::byte{0x41},
-                                                     std::byte{0x31}};
+  constexpr std::array<std::byte, 8U> kOpaqueCarrier{std::byte{'T'},
+                                                     std::byte{'E'},
+                                                     std::byte{'S'},
+                                                     std::byte{'T'},
+                                                     std::byte{'B'},
+                                                     std::byte{'Y'},
+                                                     std::byte{'T'},
+                                                     std::byte{'E'}};
   return holoscan::channel_internal::OpaquePayloadReferenceAccess::from_bytes(kOpaqueCarrier);
 }
 template <typename T>
@@ -103,6 +171,25 @@ static_assert(std::is_trivially_copyable_v<ResolvedImageMetadata>);
 static_assert(offsetof(ResolvedImageMetadata, endpoint_generation) == 24U);
 static_assert(sizeof(ResolvedImageMetadata) == 544U);
 
+template <typename Publisher, typename Payload>
+concept SupportsPreparedPayloadEmit =
+    requires(Publisher& publisher, const Payload& payload) { publisher.emit_payload(payload); };
+
+template <typename Subscriber>
+concept SupportsSingularTensorSchemaReceive =
+    requires(Subscriber& subscriber) { subscriber.receive(); };
+
+static_assert(SupportsPreparedPayloadEmit<
+              holoscan::ChannelTensorSchemaPublisher<DescriptorBackedImagePayload>,
+              DescriptorBackedImagePayload>);
+static_assert(
+    !SupportsPreparedPayloadEmit<holoscan::ChannelTensorSchemaPublisher<MultiTensorStagingPayload>,
+                                 MultiTensorStagingPayload>);
+static_assert(SupportsSingularTensorSchemaReceive<
+              holoscan::ChannelTensorSchemaSubscriber<DescriptorBackedImagePayload>>);
+static_assert(!SupportsSingularTensorSchemaReceive<
+              holoscan::ChannelTensorSchemaSubscriber<MultiTensorStagingPayload>>);
+
 constexpr std::size_t kHoloMQSchemaTensorBufferBytes = 64U;
 constexpr std::uint32_t kHoloMQSchemaTensorBufferCount = 1U;
 constexpr std::uint32_t kHoloMQSchemaTensorPatternSeed = 0x4d510000U;
@@ -111,6 +198,106 @@ struct MultiTensorStagingEnvelope {
   holoscan::SampleMetadata metadata{};
   MultiTensorStagingPayload payload{};
 };
+
+template <typename Envelope>
+class TwoSampleTensorSchemaPayloadSubscriber final
+    : public holoscan::channel_internal::TensorSchemaPayloadSubscriber {
+ public:
+  TwoSampleTensorSchemaPayloadSubscriber(std::array<Envelope, 2U> envelopes,
+                                         holoscan::Tensor second_tensor,
+                                         const bool reject_first_field = false) noexcept
+      : envelopes_(std::move(envelopes)),
+        second_tensor_(std::move(second_tensor)),
+        reject_first_field_(reject_first_field) {}
+
+  [[nodiscard]] holoscan::expected<bool, holoscan::Error> has_samples() const override {
+    return next_envelope_ < envelopes_.size();
+  }
+
+  [[nodiscard]] bool has_publishers() const noexcept override { return true; }
+
+  // This double serves envelopes from memory and owns no transport, so it has no kernel event
+  // lane and no runtime to build a wait context from. Reporting that honestly makes a wait on it
+  // fail closed with kNotSupported rather than block on a lane that does not exist.
+  [[nodiscard]] bool event_wake_enabled() const noexcept override { return false; }
+
+  [[nodiscard]] void* wait_context_runtime() noexcept override { return nullptr; }
+
+  [[nodiscard]] holoscan::expected<holoscan::channel_internal::TensorSchemaPayloadReceiveGuard,
+                                   holoscan::Error>
+  receive_payload(std::span<std::byte> payload) override {
+    if (loan_active_ || next_envelope_ >= envelopes_.size()) {
+      return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kNotReady});
+    }
+    const auto source =
+        std::as_bytes(std::span<const Envelope, 1U>(&envelopes_[next_envelope_], 1U));
+    if (payload.size() < source.size()) {
+      return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kInvalidArgument});
+    }
+    for (std::size_t index = 0U; index < source.size(); ++index) {
+      payload[index] = source[index];
+    }
+    ++next_envelope_;
+    loan_active_ = true;
+    return holoscan::channel_internal::TensorSchemaPayloadReceiveGuard{*this};
+  }
+
+  [[nodiscard]] holoscan::expected<holoscan::Tensor, holoscan::Error> acquire_tensor(
+      const holoscan::PayloadDescriptor&) override {
+    ++acquire_calls_;
+    if (next_envelope_ == 1U) {
+      return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kNotFound});
+    }
+    return std::move(second_tensor_);
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> validate_field_descriptor(
+      std::uint32_t, const holoscan::TensorViewMetadata&,
+      const holoscan::PayloadDescriptor&) const noexcept override {
+    ++validation_calls_;
+    if (reject_first_field_ && validation_calls_ == 1U) {
+      return holoscan::make_unexpected(
+          holoscan::Error{holoscan::ErrorCode::kInvalidArgument,
+                          "Tensor schema field violates the endpoint contract"});
+    }
+    return {};
+  }
+
+  [[nodiscard]] holoscan::expected<holoscan::Tensor, holoscan::Error> import_buffer_handle_tensor(
+      const holoscan::PayloadDescriptor&, const holoscan::TensorViewMetadata&,
+      std::uint32_t) override {
+    return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kNotSupported});
+  }
+
+  void release_recipient_claim(const holoscan::PayloadDescriptor&) noexcept override {
+    ++released_claims_;
+  }
+
+  void release_payload_loan() noexcept override { loan_active_ = false; }
+
+  [[nodiscard]] holoscan::expected<std::uint64_t, holoscan::Error> attach_wait_set(
+      void* wait_set) override {
+    if (wait_set == nullptr) {
+      return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kInvalidArgument});
+    }
+    return 1U;
+  }
+
+  [[nodiscard]] std::uint32_t released_claims() const noexcept { return released_claims_; }
+  [[nodiscard]] std::uint32_t validation_calls() const noexcept { return validation_calls_; }
+  [[nodiscard]] std::uint32_t acquire_calls() const noexcept { return acquire_calls_; }
+
+ private:
+  std::array<Envelope, 2U> envelopes_{};
+  holoscan::Tensor second_tensor_{};
+  std::size_t next_envelope_{};
+  std::uint32_t released_claims_{};
+  mutable std::uint32_t validation_calls_{};
+  std::uint32_t acquire_calls_{};
+  bool loan_active_{};
+  bool reject_first_field_{};
+};
+
 [[nodiscard]] std::unique_ptr<holoscan::channel_test::HoloMQPoolFixture> make_schema_pool_fixture(
     const HoloMQTestMemoryKind memory_kind) {
   return holoscan::channel_test::make_holomq_pool_fixture(
@@ -155,6 +342,53 @@ class CountingTensorStorage : public holoscan::TensorMemoryReference {
  private:
   std::shared_ptr<std::atomic<int>> destroyed_counter_;
 };
+
+// Readiness-aware device storage whose generic synchronization method is deliberately unusable.
+// It proves staging uses its cold slot event instead of allocating through the generic helper.
+class PreallocatedOrderingTensorStorage final : public holoscan::TensorMemoryReference {
+ public:
+  PreallocatedOrderingTensorStorage(holoscan::Tensor backing, cudaStream_t producer_stream,
+                                    std::shared_ptr<std::atomic<int>> generic_sync_calls) noexcept
+      : backing_(std::move(backing)),
+        producer_stream_(producer_stream),
+        generic_sync_calls_(std::move(generic_sync_calls)) {}
+
+  bool set_deallocation_stream(cudaStream_t stream) override {
+    return backing_.set_deallocation_stream(stream);
+  }
+
+  [[nodiscard]] bool has_readiness_stream_contract() const noexcept override { return true; }
+
+  [[nodiscard]] cudaStream_t readiness_stream() const noexcept override { return producer_stream_; }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> synchronize_for_consumer(
+      cudaStream_t) override {
+    generic_sync_calls_->fetch_add(1, std::memory_order_relaxed);
+    return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kFailure});
+  }
+
+ private:
+  holoscan::Tensor backing_;
+  cudaStream_t producer_stream_{};
+  std::shared_ptr<std::atomic<int>> generic_sync_calls_;
+};
+
+[[nodiscard]] holoscan::Tensor make_preallocated_ordering_tensor(
+    holoscan::Tensor backing, cudaStream_t producer_stream,
+    const std::shared_ptr<std::atomic<int>>& generic_sync_calls) {
+  auto context = std::make_shared<holoscan::DLManagedTensorContext>();
+  context->dl_shape.assign(backing.shape_span().begin(), backing.shape_span().end());
+  context->tensor.dl_tensor.data = const_cast<void*>(backing.data());
+  context->tensor.dl_tensor.device = backing.device();
+  context->tensor.dl_tensor.ndim = backing.ndim();
+  context->tensor.dl_tensor.dtype = backing.dtype();
+  context->tensor.dl_tensor.shape = context->dl_shape.data();
+  context->tensor.dl_tensor.strides = nullptr;
+  context->tensor.dl_tensor.byte_offset = 0U;
+  context->memory_reference = std::make_shared<PreallocatedOrderingTensorStorage>(
+      std::move(backing), producer_stream, generic_sync_calls);
+  return holoscan::Tensor(std::move(context));
+}
 
 // Builds a 2×3 uint8 CPU Tensor whose CountingTensorStorage increments destroyed_counter
 // on destruction. Returns the raw data pointer via data_out so tests can verify that
@@ -400,13 +634,29 @@ void expect_generic_tensor_dtype_round_trip(const DLDataType dtype) {
 [[nodiscard]] std::vector<std::byte> make_image_metadata_bytes(const holoscan::Tensor& tensor,
                                                                std::string_view frame_id,
                                                                const std::int64_t time_ns) {
-  const holoscan::schema::ImageMetadataOptions metadata_options{
-      .height = 2,
-      .width = 3,
-      .encoding = holoscan::schema::ImageEncoding_MONO8,
-      .time_ns = time_ns,
-      .acqtime_ns = time_ns + 17,
-      .frame_id = std::string(frame_id)};
+  // Callers back this with an 8-bit counting Tensor, a float32 strided one, or a 32-bit imported
+  // buffer, and a known encoding may not contradict the element type carrying it. Naming the MONO
+  // entry that matches keeps each caller's descriptor coherent without making them all agree on one
+  // element type.
+  const DLDataType dtype = tensor.dtype();
+  const holoscan::schema::ImageEncoding encoding = [dtype]() {
+    if (dtype.code == kDLFloat) {
+      return holoscan::schema::ImageEncoding_MONO32F;
+    }
+    switch (dtype.bits) {
+      case 32:
+        return holoscan::schema::ImageEncoding_MONO32;
+      case 16:
+        return holoscan::schema::ImageEncoding_MONO16;
+      default:
+        return holoscan::schema::ImageEncoding_MONO8;
+    }
+  }();
+  const holoscan::schema::ImageMetadataOptions metadata_options{.height = 2,
+                                                                .width = 3,
+                                                                .encoding = encoding,
+                                                                .capture_timestamp_ns = time_ns,
+                                                                .frame_id = std::string(frame_id)};
   auto metadata = holoscan::schema::build_image_metadata(tensor, metadata_options);
   if (!metadata) {
     return {};
@@ -424,17 +674,30 @@ template <typename Publisher, typename... Subscribers>
                                                      const std::chrono::milliseconds timeout,
                                                      Subscribers&... subscribers) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
+  std::string last_emit_error;
+  std::string last_receive_error;
   while (std::chrono::steady_clock::now() < deadline) {
     auto destroyed = std::make_shared<std::atomic<int>>(0);
     void* data = nullptr;
     auto emitted = publisher.emit(metadata, make_counting_tensor(destroyed, &data, 0U));
-    ((void)subscribers.receive(), ...);
+    if (!emitted) {
+      last_emit_error = holoscan::runtime_error_message(emitted.error());
+    }
+    const auto receive_one = [&](auto& subscriber) {
+      auto received = subscriber.receive();
+      if (!received) {
+        last_receive_error = holoscan::runtime_error_message(received.error());
+      }
+    };
+    (receive_one(subscribers), ...);
     if (emitted && emitted.value() >= expected_count) {
       return true;
     }
     static_cast<void>(publisher.update_connections());
     std::this_thread::sleep_for(std::chrono::microseconds(100));
   }
+  ADD_FAILURE() << "Tensor schema recipient handshake timed out; last emit error="
+                << last_emit_error << "; last receive error=" << last_receive_error;
   return false;
 }
 
@@ -522,6 +785,66 @@ TEST(ChannelSchemaPayloadTest, PayloadDescriptorWireEncodingZerosNonSemanticByte
     }
   }
 }
+
+// A manual Tensor schema publisher frames the payload aggregate as one inline typed sample. The
+// declared frame size must equal the payload type so a standalone client subscribing with the plain
+// typed facade admits it instead of rejecting it as a short same-bucket frame.
+// REQ: CHAN-139
+TEST(ChannelSchemaPayloadTest, ManualTensorSchemaPublicationDeclaresItsInlineFrameSize) {
+  //   tensor_schema_publisher --[kBlocking]--> typed subscriber (no Tensor materialization)
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+
+  const holoscan::Tensor tensor = make_strided_cpu_tensor_3x2();
+  const auto metadata = make_image_metadata_bytes(tensor, "manual_frame_image", 424000);
+  ASSERT_FALSE(metadata.empty());
+  const holoscan::PayloadDescriptor payload_descriptor{
+      .payload_kind = holoscan::ChannelPayloadKind::kBufferHandle,
+      .schema_id = holoscan::schema_identity<holoscan::schema::Tensor>().id,
+      .sequence = 101U,
+      .byte_size = static_cast<std::uint64_t>(tensor.nbytes()),
+      .buffer = make_structural_opaque_reference()};
+  auto payload = DescriptorBackedImagePayload::copy_from(
+      std::span<const std::byte>(metadata.data(), metadata.size()), payload_descriptor);
+  ASSERT_TRUE(payload) << holoscan::runtime_error_message(payload.error());
+
+  const auto options = make_options(holoscan::ChannelQueuePolicy::kBlocking);
+  const std::string channel_name = make_unique_channel_name();
+  auto publisher =
+      runtime->create_tensor_schema_publisher<DescriptorBackedImagePayload>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<DescriptorBackedImagePayload>(channel_name, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+
+  // A publication that reaches zero recipients is rejected pre-submit, so retrying leaves no stray
+  // sample ahead of the single asserting publication below.
+  std::string last_emit_error;
+  const bool delivered = wait_until(
+      [&publisher, &payload, &last_emit_error] {
+        static_cast<void>(publisher->update_connections());
+        auto published = publisher->emit_payload(payload.value());
+        if (published) {
+          return published.value() >= 1U;
+        }
+        if (published.error().code != holoscan::ErrorCode::kNotReady) {
+          last_emit_error = holoscan::runtime_error_message(published.error());
+        }
+        return false;
+      },
+      std::chrono::seconds(3));
+  ASSERT_TRUE(delivered) << "failed to publish descriptor-backed Image schema payload: "
+                         << last_emit_error;
+
+  // Key assertion: the typed facade admits the frame. It rejects any declared size other than the
+  // payload type before bit-casting its endpoint scratch, so a publication that declared the
+  // referenced Tensor byte size or declared nothing would fail here with kProtocolError.
+  auto received = subscriber->receive();
+  ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  ASSERT_NE(received->descriptor_at(0U), nullptr);
+  EXPECT_EQ(received->descriptor_at(0U)->payload_kind, holoscan::ChannelPayloadKind::kBufferHandle);
+  EXPECT_EQ(received->descriptor_at(0U)->byte_size, static_cast<std::uint64_t>(tensor.nbytes()));
+}
+
 // Verifies descriptor-backed Image metadata and its structurally valid opaque external-buffer
 // reference can cross a real process boundary before Tensor materialization is involved.
 TEST(ChannelSchemaPayloadTest, BlockingPublishesDescriptorBackedImageFlatBufferToChildProcess) {
@@ -650,8 +973,7 @@ TEST(ChannelSchemaPayloadTest, PublisherSubscriberCarryImageMetadataFlatBuffer) 
       .height = 3,
       .width = 2,
       .encoding = holoscan::schema::ImageEncoding_MONO32F,
-      .time_ns = 987654321,
-      .acqtime_ns = 987654399,
+      .capture_timestamp_ns = 987654321,
       .frame_id = "camera_frame"};
   auto metadata = holoscan::schema::build_image_metadata(tensor, metadata_options);
   ASSERT_TRUE(metadata) << holoscan::runtime_error_message(metadata.error());
@@ -685,8 +1007,7 @@ TEST(ChannelSchemaPayloadTest, PublisherSubscriberCarryImageMetadataFlatBuffer) 
   EXPECT_EQ(image->width(), 2);
   EXPECT_EQ(image->encoding(), holoscan::schema::ImageEncoding_MONO32F);
   ASSERT_NE(image->header(), nullptr);
-  ASSERT_NE(image->header()->stamp(), nullptr);
-  EXPECT_EQ(image->header()->stamp()->time_ns(), 987654321);
+  EXPECT_EQ(image->header()->capture_timestamp_ns(), 987654321);
   ASSERT_NE(image->header()->frame_id(), nullptr);
   EXPECT_EQ(image->header()->frame_id()->string_view(), std::string_view("camera_frame"));
   ASSERT_NE(image->data(), nullptr);
@@ -926,8 +1247,7 @@ TEST(ChannelSchemaPayloadTest,
       .height = 3,
       .width = 2,
       .encoding = holoscan::schema::ImageEncoding_MONO32F,
-      .time_ns = 555000,
-      .acqtime_ns = 555123,
+      .capture_timestamp_ns = 555000,
       .frame_id = "descriptor_camera"};
   auto metadata = holoscan::schema::build_image_metadata(tensor, metadata_options);
   ASSERT_TRUE(metadata) << holoscan::runtime_error_message(metadata.error());
@@ -1017,8 +1337,7 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedImageRejectsInvalidTensorDescript
       .height = 3,
       .width = 2,
       .encoding = holoscan::schema::ImageEncoding_MONO32F,
-      .time_ns = 777000,
-      .acqtime_ns = 777123,
+      .capture_timestamp_ns = 777000,
       .frame_id = "descriptor_camera"};
   auto metadata = holoscan::schema::build_image_metadata(tensor, metadata_options);
   ASSERT_TRUE(metadata) << holoscan::runtime_error_message(metadata.error());
@@ -1119,6 +1438,148 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedTensorSchemaMaterializesTensorFro
   EXPECT_EQ(destroyed_counter->load(std::memory_order_relaxed), 1);
 }
 
+// Caller-supplied Tensor view metadata is independent of transport descriptors. Validate it before
+// reserving finite sidecar or staging capacity so the semantic error cannot be masked by pressure.
+// REQ: EXTERNAL-010
+TEST(ChannelSchemaPayloadTest, DescriptorBackedTensorSchemaRejectsMismatchedViewBeforeReservation) {
+  auto backend = std::make_unique<BackpressuredTensorSchemaPayloadPublisher>();
+  auto* const backend_observer = backend.get();
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::bind_tensor_schema_publisher<
+      DescriptorBackedImagePayload>(std::move(backend));
+
+  // Key setup: pair valid Image metadata for a strided rank-two Tensor with a different submitted
+  // Tensor, while the backend would report pressure if reservation were reached.
+  const auto mismatched_metadata =
+      make_image_metadata_bytes(make_strided_cpu_tensor_3x2(), "pre_reservation_mismatch", 123500);
+  ASSERT_FALSE(mismatched_metadata.empty());
+  auto destroyed = std::make_shared<std::atomic<int>>(0);
+  void* data = nullptr;
+  auto rejected = publisher.emit(mismatched_metadata, make_counting_tensor(destroyed, &data, 73U));
+
+  // Key assertion: the stable semantic error wins and no finite Tensor reservation is attempted.
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_EQ(backend_observer->reserve_calls, 0U);
+  EXPECT_EQ(destroyed->load(std::memory_order_relaxed), 1);
+}
+
+// REQ: CHAN-044
+TEST(ChannelSchemaPayloadTest, ManualTensorSchemaRejectsSemanticMetadataBeforeReservation) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const auto options = make_options(holoscan::ChannelQueuePolicy::kBlocking);
+  const std::string channel_name = make_unique_channel_name();
+  auto publisher =
+      runtime->create_tensor_schema_publisher<DescriptorBackedImagePayload>(channel_name, options);
+  auto subscriber =
+      runtime->create_tensor_schema_subscriber<DescriptorBackedImagePayload>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+
+  // Key setup: submit nondefault semantic metadata through the shared facade of a manual endpoint.
+  auto rejected_destroyed = std::make_shared<std::atomic<int>>(0);
+  void* rejected_data = nullptr;
+  auto rejected_tensor = make_counting_tensor(rejected_destroyed, &rejected_data, 74U);
+  const auto rejected_metadata =
+      make_image_metadata_bytes(rejected_tensor, "manual_metadata_rejected", 123750);
+  auto rejected = publisher->emit_sample(rejected_metadata,
+                                         std::move(rejected_tensor),
+                                         holoscan::SampleMetadata{.trace_id = 7U, .frame_id = 9U});
+
+  // Key assertion: rejection precedes sidecar retention and does not prevent a default emit.
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_EQ(rejected_destroyed->load(std::memory_order_relaxed), 1);
+  auto valid_tensor = make_counting_tensor(rejected_destroyed, &rejected_data, 75U);
+  const auto valid_metadata =
+      make_image_metadata_bytes(valid_tensor, "manual_metadata_default", 124000);
+  ASSERT_TRUE(wait_for_tensor_schema_recipients(
+      publisher.value(), valid_metadata, 1U, std::chrono::seconds(3), subscriber.value()));
+  auto emitted = publisher->emit(valid_metadata, std::move(valid_tensor));
+  ASSERT_TRUE(emitted) << holoscan::runtime_error_message(emitted.error());
+  auto received = subscriber->receive();
+  ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  EXPECT_EQ(received->sample_metadata.trace_id, 0U);
+  EXPECT_EQ(received->sample_metadata.frame_id, 0U);
+  EXPECT_EQ(received->sample_metadata.flags, holoscan::SampleFlags::kNone);
+}
+
+// REQ: EXTERNAL-009
+TEST(ChannelSchemaPayloadTest, DescriptorBackedTensorSchemaTerminalCloseErrorConsumesAuthority) {
+  auto backend = std::make_unique<BackpressuredTensorSchemaPayloadPublisher>();
+  auto* const backend_observer = backend.get();
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::bind_tensor_schema_publisher<
+      DescriptorBackedImagePayload>(std::move(backend), true);
+
+  // Key setup: the backend reports a terminal protocol error after accepting the proposed close
+  // sequence, and its post-close sequence probe would report an unrelated error. The explicit
+  // submit phase remains the only reliable authority evidence.
+  backend_observer->closed_sequence_error = holoscan::ErrorCode::kResourceExhausted;
+  auto first_close = publisher.close();
+
+  // Key assertion: the facade consumes its authority and rejects a second close locally without
+  // invoking the backend a second time.
+  ASSERT_FALSE(first_close);
+  EXPECT_EQ(first_close.error().code, holoscan::ErrorCode::kProtocolError);
+  auto second_close = publisher.close();
+  ASSERT_FALSE(second_close);
+  EXPECT_EQ(second_close.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ(backend_observer->close_calls, 1U);
+  EXPECT_EQ(backend_observer->next_sequence_calls, 1U);
+}
+
+// REQ: EXTERNAL-009
+TEST(ChannelSchemaPayloadTest, DescriptorBackedTensorSchemaZeroRecipientCloseConsumesAuthority) {
+  auto backend = std::make_unique<BackpressuredTensorSchemaPayloadPublisher>();
+  auto* const backend_observer = backend.get();
+  // Key setup: model a custom backend that successfully closes a stream with no recipients.
+  backend_observer->close_recipient_count = 0U;
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::bind_tensor_schema_publisher<
+      DescriptorBackedImagePayload>(std::move(backend), true);
+
+  ASSERT_TRUE(publisher.close());
+  auto second_close = publisher.close();
+
+  // Key assertion: every successful close consumes the facade authority, including success-zero.
+  ASSERT_FALSE(second_close);
+  EXPECT_EQ(second_close.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ(backend_observer->close_calls, 1U);
+
+  // Key assertion: every public utility observes the same latched facade closure.
+  auto capture_time = publisher.make_capture_time(1);
+  ASSERT_FALSE(capture_time);
+  EXPECT_EQ(capture_time.error().code, holoscan::ErrorCode::kClosed);
+  auto updated = publisher.update_connections();
+  ASSERT_FALSE(updated);
+  EXPECT_EQ(updated.error().code, holoscan::ErrorCode::kClosed);
+  auto memory_options = publisher.tensor_memory_options();
+  ASSERT_FALSE(memory_options);
+  EXPECT_EQ(memory_options.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_FALSE(publisher.has_subscribers());
+}
+
+// REQ: EXTERNAL-009
+TEST(ChannelSchemaPayloadTest, DescriptorBackedTensorSchemaPreSubmitCloseErrorRemainsRetryable) {
+  auto backend = std::make_unique<BackpressuredTensorSchemaPayloadPublisher>();
+  auto* const backend_observer = backend.get();
+  // Key setup: model a pre-submit validation rejection that leaves backend authority intact.
+  backend_observer->close_error = holoscan::ErrorCode::kInvalidArgument;
+  backend_observer->close_phase =
+      holoscan::channel_internal::InlinePublicationPhase::kPreSubmitRejected;
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::bind_tensor_schema_publisher<
+      DescriptorBackedImagePayload>(std::move(backend), true);
+
+  auto first_close = publisher.close();
+  auto second_close = publisher.close();
+
+  // Key assertion: the facade trusts the explicit pre-submit phase and permits a retry.
+  ASSERT_FALSE(first_close);
+  EXPECT_EQ(first_close.error().code, holoscan::ErrorCode::kInvalidArgument);
+  ASSERT_FALSE(second_close);
+  EXPECT_EQ(second_close.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_EQ(backend_observer->close_calls, 2U);
+}
+
 // Verifies malformed metadata is rejected before Tensor sidecar reservation, so a failed emit
 // neither retains the Tensor nor consumes the only sidecar record needed by the next valid emit.
 TEST(ChannelSchemaPayloadTest,
@@ -1147,6 +1608,17 @@ TEST(ChannelSchemaPayloadTest,
   EXPECT_EQ(invalid_emit.error().code, holoscan::ErrorCode::kCodecError);
   EXPECT_EQ(invalid_destroyed->load(std::memory_order_relaxed), 1);
 
+  const auto mismatched_view_metadata =
+      make_image_metadata_bytes(make_strided_cpu_tensor_3x2(), "mismatched_view", 123500);
+  ASSERT_FALSE(mismatched_view_metadata.empty());
+  auto mismatched_destroyed = std::make_shared<std::atomic<int>>(0);
+  void* mismatched_data = nullptr;
+  auto mismatched_emit = publisher->emit(
+      mismatched_view_metadata, make_counting_tensor(mismatched_destroyed, &mismatched_data, 73U));
+  ASSERT_FALSE(mismatched_emit);
+  EXPECT_EQ(mismatched_emit.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_EQ(mismatched_destroyed->load(std::memory_order_relaxed), 1);
+
   auto valid_destroyed = std::make_shared<std::atomic<int>>(0);
   void* valid_data = nullptr;
   auto valid_tensor = make_counting_tensor(valid_destroyed, &valid_data, 72U);
@@ -1163,6 +1635,129 @@ TEST(ChannelSchemaPayloadTest,
   auto received = subscriber->receive();
   ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
   EXPECT_EQ(received->tensor.data(), valid_data);
+}
+
+// REQ: EXTERNAL-010
+TEST(ChannelSchemaPayloadTest,
+     DescriptorSchemaReceiveCommitsSequenceOnlyAfterCompleteMaterialization) {
+  using Payload = DescriptorBackedImagePayload;
+  using Envelope = holoscan::channel_internal::TensorSchemaRuntimeEnvelope<Payload>;
+  auto valid_destroyed = std::make_shared<std::atomic<int>>(0);
+  void* valid_data = nullptr;
+  auto valid_tensor = make_counting_tensor(valid_destroyed, &valid_data, 75U);
+  const auto metadata = make_image_metadata_bytes(valid_tensor, "valid_lower_sequence", 125000);
+  ASSERT_FALSE(metadata.empty());
+  const holoscan::PayloadDescriptor descriptor =
+      holoscan::payload_descriptor_from_descriptor(make_tensor_data_descriptor(valid_tensor, 1U));
+  auto payload = Payload::copy_from(
+      metadata, descriptor, holoscan::channel_internal::kCompatibilitySchemaEndpointGeneration);
+  ASSERT_TRUE(payload) << holoscan::runtime_error_message(payload.error());
+  // Key setup: expose an unmaterializable maximum sequence before a valid lower sequence through
+  // one transport subscriber, making any eager sequence commit observable on the second receive.
+  const std::array envelopes{
+      Envelope{
+          .metadata =
+              holoscan::SampleMetadata{
+                  .sequence = std::numeric_limits<std::uint64_t>::max(),
+                  .byte_size = descriptor.byte_size,
+                  .payload_kind = holoscan::PayloadKind::kDescriptorBacked,
+              },
+          .payload = *payload,
+      },
+      Envelope{
+          .metadata =
+              holoscan::SampleMetadata{
+                  .sequence = 1U,
+                  .byte_size = descriptor.byte_size,
+                  .payload_kind = holoscan::PayloadKind::kDescriptorBacked,
+              },
+          .payload = *payload,
+      },
+  };
+  auto transport_subscriber = std::make_unique<TwoSampleTensorSchemaPayloadSubscriber<Envelope>>(
+      envelopes, std::move(valid_tensor));
+  auto* const transport_probe = transport_subscriber.get();
+  auto subscriber =
+      holoscan::detail::RuntimeChannelBindingAccess::bind_tensor_schema_subscriber<Payload>(
+          std::move(transport_subscriber), true);
+
+  // Key assertion: failed materialization releases its claim without committing the maximum
+  // sequence, so the following sequence-one sample remains valid and retains its exact backing.
+  auto failed_high_sequence = subscriber.receive();
+  ASSERT_FALSE(failed_high_sequence);
+  EXPECT_EQ(failed_high_sequence.error().code, holoscan::ErrorCode::kNotFound);
+  EXPECT_EQ(transport_probe->released_claims(), 1U);
+
+  auto valid_received = subscriber.receive();
+  ASSERT_TRUE(valid_received) << holoscan::runtime_error_message(valid_received.error());
+  EXPECT_EQ(valid_received->tensor.data(), valid_data);
+  valid_received->tensor = {};
+  EXPECT_TRUE(wait_until([&] { return valid_destroyed->load(std::memory_order_relaxed) == 1; },
+                         std::chrono::seconds(2)));
+}
+
+// REQ: EXTERNAL-010
+TEST(ChannelSchemaPayloadTest,
+     DescriptorSchemaFieldValidationPrecedesBackingMaterializationAndSequenceCommit) {
+  using Payload = DescriptorBackedImagePayload;
+  using Envelope = holoscan::channel_internal::TensorSchemaRuntimeEnvelope<Payload>;
+  auto valid_destroyed = std::make_shared<std::atomic<int>>(0);
+  void* valid_data = nullptr;
+  auto valid_tensor = make_counting_tensor(valid_destroyed, &valid_data, 76U);
+  const auto metadata = make_image_metadata_bytes(valid_tensor, "field_contract", 126000);
+  ASSERT_FALSE(metadata.empty());
+  const holoscan::PayloadDescriptor descriptor =
+      holoscan::payload_descriptor_from_descriptor(make_tensor_data_descriptor(valid_tensor, 2U));
+  auto payload = Payload::copy_from(
+      metadata, descriptor, holoscan::channel_internal::kCompatibilitySchemaEndpointGeneration);
+  ASSERT_TRUE(payload) << holoscan::runtime_error_message(payload.error());
+
+  // Key setup: reject a maximum-sequence sample in the field-contract hook, then expose a valid
+  // sequence-one sample through the same finite subscriber and backing.
+  const std::array envelopes{
+      Envelope{
+          .metadata =
+              holoscan::SampleMetadata{
+                  .sequence = std::numeric_limits<std::uint64_t>::max(),
+                  .byte_size = descriptor.byte_size,
+                  .payload_kind = holoscan::PayloadKind::kDescriptorBacked,
+              },
+          .payload = *payload,
+      },
+      Envelope{
+          .metadata =
+              holoscan::SampleMetadata{
+                  .sequence = 1U,
+                  .byte_size = descriptor.byte_size,
+                  .payload_kind = holoscan::PayloadKind::kDescriptorBacked,
+              },
+          .payload = *payload,
+      },
+  };
+  auto transport_subscriber = std::make_unique<TwoSampleTensorSchemaPayloadSubscriber<Envelope>>(
+      envelopes, std::move(valid_tensor), true);
+  auto* const transport_probe = transport_subscriber.get();
+  auto subscriber =
+      holoscan::detail::RuntimeChannelBindingAccess::bind_tensor_schema_subscriber<Payload>(
+          std::move(transport_subscriber), true);
+
+  // Key assertion: rejection occurs before backing acquisition or sequence commit, releases the
+  // local claim, and leaves the following valid sample able to materialize the exact Tensor.
+  auto rejected = subscriber.receive();
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_EQ(transport_probe->validation_calls(), 1U);
+  EXPECT_EQ(transport_probe->acquire_calls(), 0U);
+  EXPECT_EQ(transport_probe->released_claims(), 1U);
+
+  auto accepted = subscriber.receive();
+  ASSERT_TRUE(accepted) << holoscan::runtime_error_message(accepted.error());
+  EXPECT_EQ(transport_probe->validation_calls(), 2U);
+  EXPECT_EQ(transport_probe->acquire_calls(), 1U);
+  EXPECT_EQ(accepted->tensor.data(), valid_data);
+  accepted->tensor = {};
+  EXPECT_TRUE(wait_until([&] { return valid_destroyed->load(std::memory_order_relaxed) == 1; },
+                         std::chrono::seconds(2)));
 }
 
 // A release-callback allocation failure occurs before HoloMQ submits the sample. The adapter must
@@ -1549,22 +2144,21 @@ TEST(ChannelSchemaPayloadTest,
   holoscan::test::skip_without_cuda_device();
   ASSERT_EQ(cudaSetDevice(0), cudaSuccess);
   ASSERT_EQ(cudaFree(nullptr), cudaSuccess);
-  auto fixture = make_holomq_device_pool_fixture();
-  ASSERT_NE(fixture, nullptr);
-  auto second_source_pool = fixture->context.create_device_buffer_pool(
-      kHoloMQSchemaTensorBufferBytes, kHoloMQSchemaTensorBufferCount);
-  ASSERT_TRUE(second_source_pool);
-  auto first_source_buffer = fixture->pool.acquire();
-  auto second_source_buffer = second_source_pool->acquire();
-  ASSERT_TRUE(first_source_buffer);
-  ASSERT_TRUE(second_source_buffer);
+  auto first_source_pool = std::make_shared<holoscan::BlockMemoryPool>(
+      holoscan::MemoryStorageType::kDevice, kHoloMQSchemaTensorBufferBytes, 1U, 0);
+  auto second_source_pool = std::make_shared<holoscan::BlockMemoryPool>(
+      holoscan::MemoryStorageType::kDevice, kHoloMQSchemaTensorBufferBytes, 1U, 0);
+  ASSERT_TRUE(first_source_pool->initialize_pool());
+  ASSERT_TRUE(second_source_pool->initialize_pool());
 
   holoscan::test::UniqueCudaStream first_producer_stream;
   holoscan::test::UniqueCudaStream second_producer_stream;
+  holoscan::test::UniqueCudaStream staging_service_stream;
   holoscan::test::UniqueCudaStream consumer_stream;
   holoscan::test::UniqueCudaStream unfenced_probe_stream;
   ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(first_producer_stream), cudaSuccess);
   ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(second_producer_stream), cudaSuccess);
+  ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(staging_service_stream), cudaSuccess);
   ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(consumer_stream), cudaSuccess);
   ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(unfenced_probe_stream), cudaSuccess);
   holoscan::test::BlockingHostState first_producer_state;
@@ -1579,16 +2173,18 @@ TEST(ChannelSchemaPayloadTest,
   constexpr std::uint8_t kSecondPattern = 0xa7U;
   const std::array<std::int64_t, 1U> device_shape{
       static_cast<std::int64_t>(kHoloMQSchemaTensorBufferBytes)};
-  auto first_tensor = holoscan::channel_internal::make_tensor_from_holomq_buffer(
-      device_shape,
-      DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
-      std::nullopt,
-      std::move(*first_source_buffer));
-  auto second_tensor = holoscan::channel_internal::make_tensor_from_holomq_buffer(
-      device_shape,
-      DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
-      std::nullopt,
-      std::move(*second_source_buffer));
+  auto first_tensor = holoscan::make_tensor(device_shape,
+                                            DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+                                            std::nullopt,
+                                            holoscan::MemoryStorageType::kDevice,
+                                            first_source_pool,
+                                            first_producer_stream.get());
+  auto second_tensor = holoscan::make_tensor(device_shape,
+                                             DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+                                             std::nullopt,
+                                             holoscan::MemoryStorageType::kDevice,
+                                             second_source_pool,
+                                             second_producer_stream.get());
   ASSERT_TRUE(first_tensor);
   ASSERT_TRUE(second_tensor);
   auto first_data = first_tensor->mutable_data();
@@ -1660,7 +2256,8 @@ TEST(ChannelSchemaPayloadTest,
       sizeof(MultiTensorStagingEnvelope),
       descriptor_offsets,
       options,
-      staging);
+      staging,
+      staging_service_stream.get());
   auto subscriber = holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_subscriber(
       *runtime, channel_name, sizeof(MultiTensorStagingEnvelope), 3U, options);
   ASSERT_TRUE(publisher);
@@ -1673,9 +2270,21 @@ TEST(ChannelSchemaPayloadTest,
   auto direct_only = (*publisher)->reserve_tensors(tensors, true);
   // Key assertion: one non-exportable field rejects an all-direct transaction before staging.
   ASSERT_FALSE(direct_only);
-  auto reservation = (*publisher)->reserve_tensors(tensors);
+  holoscan::expected<holoscan::channel_internal::TensorSchemaPayloadReservation, holoscan::Error>
+      reservation;
+  std::size_t allocation_count = 0U;
+  {
+    const holoscan::test::ScopedAllocationCounter allocations;
+    reservation = (*publisher)->reserve_tensors(tensors);
+    allocation_count = allocations.count();
+  }
   ASSERT_TRUE(reservation) << holoscan::runtime_error_message(reservation.error());
+  // Key assertion: the complete staging contract bypasses the expected direct-export error path.
+  EXPECT_EQ(allocation_count, 0U);
   ASSERT_EQ(reservation->field_count, tensors.size());
+  // The runtime-supplied service stream, rather than either producer stream, owns both staged
+  // copies and remains ordered behind the deliberately blocked first producer.
+  EXPECT_EQ(cudaStreamQuery(staging_service_stream.get()), cudaErrorNotReady);
   MultiTensorStagingEnvelope sent{};
   for (std::size_t index = 0U; index < tensors.size(); ++index) {
     auto* field = reservation->field_at(index);
@@ -1770,6 +2379,77 @@ TEST(ChannelSchemaPayloadTest,
       [](const auto value) { return value == kSecondPattern; }));
 }
 
+// REQ: CHAN-134
+// REQ: TENSOR-STORAGE-014
+TEST(ChannelSchemaPayloadTest, BorrowedServiceStreamReusesColdProducerOrderingEvent) {
+  holoscan::test::skip_without_cuda_device();
+  ASSERT_EQ(cudaSetDevice(0), cudaSuccess);
+  ASSERT_EQ(cudaFree(nullptr), cudaSuccess);
+
+  holoscan::test::UniqueCudaStream producer_stream;
+  holoscan::test::UniqueCudaStream service_stream;
+  ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(producer_stream), cudaSuccess);
+  ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(service_stream), cudaSuccess);
+  auto source_pool = std::make_shared<holoscan::BlockMemoryPool>(
+      holoscan::MemoryStorageType::kDevice, kHoloMQSchemaTensorBufferBytes, 1U, 0);
+  ASSERT_TRUE(source_pool->initialize_pool());
+  const std::array<std::int64_t, 1U> shape{
+      static_cast<std::int64_t>(kHoloMQSchemaTensorBufferBytes)};
+  auto backing = holoscan::make_tensor(shape,
+                                       DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+                                       std::nullopt,
+                                       holoscan::MemoryStorageType::kDevice,
+                                       source_pool,
+                                       producer_stream.get());
+  ASSERT_TRUE(backing) << holoscan::runtime_error_message(backing.error());
+  auto data = backing->mutable_data();
+  ASSERT_TRUE(data) << holoscan::runtime_error_message(data.error());
+  ASSERT_EQ(cudaMemsetAsync(*data, 0x5a, kHoloMQSchemaTensorBufferBytes, producer_stream.get()),
+            cudaSuccess);
+  const auto generic_sync_calls = std::make_shared<std::atomic<int>>(0);
+  const holoscan::Tensor source = make_preallocated_ordering_tensor(
+      std::move(*backing), producer_stream.get(), generic_sync_calls);
+
+  constexpr std::array<std::size_t, 1U> kDescriptorOffsets{0U};
+  constexpr std::array staging{holoscan::channel_internal::TensorSchemaStagingOptions{
+      .max_byte_span = kHoloMQSchemaTensorBufferBytes,
+      .slot_count = 1U,
+      .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+      .rank = 1U,
+      .memory_kind = holoscan::MemoryKind::kCudaDevice,
+      .device = holoscan::DeviceId{0},
+      .foreign_emit_policy = holoscan::InterfaceTensorEmitPolicy::kCopyIfNeeded,
+  }};
+  auto options = make_options(holoscan::ChannelQueuePolicy::kBlocking);
+  options.tensor_transfer_mode = holoscan::ChannelTensorTransferMode::kBufferHandle;
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_publisher(
+      *runtime,
+      make_unique_channel_name(),
+      sizeof(holoscan::PayloadDescriptor),
+      kDescriptorOffsets,
+      options,
+      staging,
+      service_stream.get());
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+
+  // Key setup: reuse the sole staging slot across repeated publications whose producer and
+  // compiler-owned service streams differ.
+  constexpr std::size_t kRepetitions = 4U;
+  for (std::size_t repetition = 0U; repetition < kRepetitions; ++repetition) {
+    const std::array tensors{source};
+    auto reservation = (*publisher)->reserve_tensors(tensors);
+    ASSERT_TRUE(reservation) << holoscan::runtime_error_message(reservation.error());
+    (*publisher)->release_tensor(std::move(*reservation));
+    ASSERT_EQ(cudaStreamSynchronize(service_stream.get()), cudaSuccess);
+  }
+
+  // Key assertion: the hot path never enters the generic synchronizer that creates and destroys
+  // a transient event; the staging slot's cold producer-order event handles every repetition.
+  EXPECT_EQ(generic_sync_calls->load(std::memory_order_relaxed), 0);
+}
+
 // An incomplete-fanout rejection retires its unsent HoloMQ loan synchronously, but the staging
 // D2D copy remains local CUDA work. The sole slot must stay backpressured until that copy
 // completes. REQ: CHAN-126
@@ -1849,6 +2529,129 @@ TEST(ChannelSchemaPayloadTest, DeviceStagingSlotWaitsForCopyAfterIncompleteFanou
   ASSERT_TRUE(recycled) << holoscan::runtime_error_message(recycled.error());
   (*publisher)->release_tensor(std::move(*recycled));
   ASSERT_EQ(cudaStreamSynchronize(producer_stream.get()), cudaSuccess);
+}
+
+// Device staging pools own their cold-bound buffer lifetime even when Runtime owns the copy
+// stream. Pool teardown must therefore wait for any slot-local copy still in flight.
+// REQ: CHAN-126
+// REQ: LIFECYCLE-010
+TEST(ChannelSchemaPayloadTest, DeviceStagingPoolTeardownWaitsForPendingBorrowedStreamCopy) {
+  holoscan::test::skip_without_cuda_device();
+  ASSERT_EQ(cudaSetDevice(0), cudaSuccess);
+  ASSERT_EQ(cudaFree(nullptr), cudaSuccess);
+
+  holoscan::test::UniqueCudaStream producer_stream;
+  holoscan::test::UniqueCudaStream staging_stream;
+  ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(producer_stream), cudaSuccess);
+  ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(staging_stream), cudaSuccess);
+
+  auto source_pool = std::make_shared<holoscan::BlockMemoryPool>(
+      holoscan::MemoryStorageType::kDevice, kHoloMQSchemaTensorBufferBytes, 1U, 0);
+  ASSERT_TRUE(source_pool->initialize_pool());
+  const std::array<std::int64_t, 1U> shape{
+      static_cast<std::int64_t>(kHoloMQSchemaTensorBufferBytes)};
+  auto source = holoscan::make_tensor(shape,
+                                      DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+                                      std::nullopt,
+                                      holoscan::MemoryStorageType::kDevice,
+                                      source_pool,
+                                      producer_stream.get());
+  ASSERT_TRUE(source) << holoscan::runtime_error_message(source.error());
+  auto source_data = source->mutable_data();
+  ASSERT_TRUE(source_data) << holoscan::runtime_error_message(source_data.error());
+  ASSERT_EQ(
+      cudaMemsetAsync(*source_data, 0x43, kHoloMQSchemaTensorBufferBytes, producer_stream.get()),
+      cudaSuccess);
+  ASSERT_TRUE(source->set_readiness_stream(producer_stream.get()));
+
+  holoscan::test::BlockingHostState producer_state;
+  ASSERT_EQ(cudaLaunchHostFunc(
+                producer_stream.get(), holoscan::test::blocking_host_callback, &producer_state),
+            cudaSuccess);
+  holoscan::test::BlockingHostReleaseGuard producer_guard(producer_state);
+  ASSERT_TRUE(holoscan::test::wait_until_started(producer_state));
+
+  constexpr std::array<std::size_t, 1U> kDescriptorOffsets{0U};
+  constexpr std::array staging{holoscan::channel_internal::TensorSchemaStagingOptions{
+      .max_byte_span = kHoloMQSchemaTensorBufferBytes,
+      .slot_count = 1U,
+      .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+      .rank = 1U,
+      .memory_kind = holoscan::MemoryKind::kCudaDevice,
+      .device = holoscan::DeviceId{0},
+      .foreign_emit_policy = holoscan::InterfaceTensorEmitPolicy::kCopyIfNeeded,
+  }};
+  auto options = make_options(holoscan::ChannelQueuePolicy::kBlocking);
+  options.tensor_transfer_mode = holoscan::ChannelTensorTransferMode::kBufferHandle;
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_publisher(
+      *runtime,
+      make_unique_channel_name(),
+      sizeof(holoscan::PayloadDescriptor),
+      kDescriptorOffsets,
+      options,
+      staging,
+      staging_stream.get());
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+
+  // Key setup: enqueue one staging copy behind the blocked producer, then release the reservation
+  // while the borrowed service stream remains unable to complete the copy.
+  const std::array tensors{*source};
+  auto reservation = (*publisher)->reserve_tensors(tensors);
+  ASSERT_TRUE(reservation) << holoscan::runtime_error_message(reservation.error());
+  (*publisher)->release_tensor(std::move(*reservation));
+  auto teardown =
+      std::async(std::launch::async,
+                 [owned_publisher = std::move(*publisher)]() mutable { owned_publisher.reset(); });
+
+  // Key assertion: publisher teardown cannot release its staging buffer before the pending copy.
+  EXPECT_EQ(teardown.wait_for(std::chrono::milliseconds{50}), std::future_status::timeout);
+  producer_guard.dismiss();
+  holoscan::test::release_blocking_host(producer_state);
+  EXPECT_EQ(teardown.wait_for(std::chrono::seconds{2}), std::future_status::ready);
+  teardown.get();
+}
+
+// Pinned-host schema staging only accepts pinned-host source values and completes synchronously;
+// a CUDA service stream would be unused and indicates a misrouted Runtime binding.
+// REQ: CHAN-126
+// REQ: CHAN-134
+TEST(ChannelSchemaPayloadTest, PinnedHostStagingRejectsCudaServiceStream) {
+  holoscan::test::skip_without_cuda_device();
+  int device_ordinal = -1;
+  ASSERT_EQ(cudaGetDevice(&device_ordinal), cudaSuccess);
+  holoscan::test::UniqueCudaStream staging_stream;
+  ASSERT_EQ(holoscan::test::create_non_blocking_cuda_stream(staging_stream), cudaSuccess);
+
+  constexpr std::array<std::size_t, 1U> kDescriptorOffsets{0U};
+  const std::array staging{holoscan::channel_internal::TensorSchemaStagingOptions{
+      .max_byte_span = kHoloMQSchemaTensorBufferBytes,
+      .slot_count = 1U,
+      .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+      .rank = 1U,
+      .memory_kind = holoscan::MemoryKind::kPinnedHost,
+      .device = holoscan::DeviceId{device_ordinal},
+      .foreign_emit_policy = holoscan::InterfaceTensorEmitPolicy::kCopyIfNeeded,
+  }};
+  auto options = make_options(holoscan::ChannelQueuePolicy::kBlocking);
+  options.tensor_transfer_mode = holoscan::ChannelTensorTransferMode::kBufferHandle;
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+
+  // Key setup: bind a CUDA stream to an endpoint whose only staging pool is pinned host memory.
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_publisher(
+      *runtime,
+      make_unique_channel_name(),
+      sizeof(holoscan::PayloadDescriptor),
+      kDescriptorOffsets,
+      options,
+      staging,
+      staging_stream.get());
+
+  // Key assertion: endpoint construction rejects the unused and semantically invalid binding.
+  ASSERT_FALSE(publisher);
+  EXPECT_EQ(publisher.error().code, holoscan::ErrorCode::kInvalidArgument);
 }
 
 // REQ: CHAN-126
@@ -2023,6 +2826,106 @@ TEST(ChannelSchemaPayloadTest, MultiTensorReservationReapRetryPreservesHotPathAn
   for (auto& reservation : held) {
     (*publisher)->release_tensor(std::move(reservation));
   }
+}
+
+// REQ: EXTERNAL-010
+TEST(ChannelSchemaPayloadTest,
+     DirectExportRejectsEveryOutOfContractTensorBeforeRetainingTransportCapacity) {
+  holoscan::test::skip_without_cuda_device();
+  ASSERT_EQ(cudaSetDevice(0), cudaSuccess);
+  ASSERT_EQ(cudaFree(nullptr), cudaSuccess);
+  auto fixture = make_holomq_pinned_host_pool_fixture();
+  ASSERT_NE(fixture, nullptr);
+
+  // Key setup: require one contiguous pinned-host uint8 field with a finite rank-one, 32-byte
+  // contract, then exercise each independently invalid physical Tensor property.
+  constexpr std::array<std::size_t, 1U> kDescriptorOffsets{0U};
+  const std::array field_contracts{holoscan::channel_internal::TensorSchemaStagingOptions{
+      .max_byte_span = 32U,
+      .slot_count = 0U,
+      .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+      .rank = 1U,
+      .axes = {holoscan::TensorAxisBounds{.max_extent = 32U, .max_abs_stride_bytes = 1U}},
+      .strides = holoscan::TensorStridePolicy::kContiguousOnly,
+      .memory_kind = holoscan::MemoryKind::kPinnedHost,
+      .device = {},
+      .foreign_emit_policy = holoscan::InterfaceTensorEmitPolicy::kRequireExportable,
+  }};
+  auto options = make_options(holoscan::ChannelQueuePolicy::kBlocking);
+  options.tensor_transfer_mode = holoscan::ChannelTensorTransferMode::kBufferHandle;
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_publisher(
+      *runtime,
+      make_unique_channel_name(),
+      sizeof(holoscan::PayloadDescriptor),
+      kDescriptorOffsets,
+      options,
+      field_contracts);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+
+  const auto make_pinned_tensor =
+      [&](const std::span<const std::int64_t> shape,
+          const DLDataType dtype,
+          const holoscan::TensorByteStridesView byte_strides =
+              std::nullopt) -> holoscan::expected<holoscan::Tensor, holoscan::Error> {
+    auto buffer = fixture->pool.acquire();
+    if (!buffer) {
+      return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kResourceExhausted});
+    }
+    return holoscan::channel_internal::make_tensor_from_holomq_buffer(
+        shape, dtype, byte_strides, std::move(*buffer));
+  };
+  const auto expect_rejected_then_valid = [&](holoscan::Tensor invalid) {
+    // Key assertion: every invalid direct Tensor is rejected before retaining finite transport
+    // capacity, proven by immediately reserving and releasing a valid Tensor afterward.
+    {
+      const std::array invalid_fields{invalid};
+      auto rejected = (*publisher)->reserve_tensors(invalid_fields, true);
+      EXPECT_FALSE(rejected);
+      EXPECT_EQ(rejected.error().code, holoscan::ErrorCode::kInvalidArgument);
+    }
+    invalid = {};
+
+    constexpr std::array<std::int64_t, 1U> kValidShape{32};
+    auto valid =
+        make_pinned_tensor(kValidShape, DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U});
+    ASSERT_TRUE(valid) << holoscan::runtime_error_message(valid.error());
+    const std::array valid_fields{*valid};
+    auto reserved = (*publisher)->reserve_tensors(valid_fields, true);
+    ASSERT_TRUE(reserved) << holoscan::runtime_error_message(reserved.error());
+    (*publisher)->release_tensor(std::move(*reserved));
+  };
+
+  auto destroyed = std::make_shared<std::atomic<int>>(0);
+  void* host_data{};
+  expect_rejected_then_valid(make_counting_tensor(destroyed, &host_data, 0x31U));
+
+  constexpr std::array<std::int64_t, 1U> kValidShape{32};
+  auto wrong_dtype =
+      make_pinned_tensor(kValidShape, DLDataType{.code = kDLUInt, .bits = 16U, .lanes = 1U});
+  ASSERT_TRUE(wrong_dtype) << holoscan::runtime_error_message(wrong_dtype.error());
+  expect_rejected_then_valid(std::move(*wrong_dtype));
+
+  constexpr std::array<std::int64_t, 2U> kWrongRankShape{4, 8};
+  auto wrong_rank =
+      make_pinned_tensor(kWrongRankShape, DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U});
+  ASSERT_TRUE(wrong_rank) << holoscan::runtime_error_message(wrong_rank.error());
+  expect_rejected_then_valid(std::move(*wrong_rank));
+
+  constexpr std::array<std::int64_t, 1U> kStridedShape{16};
+  constexpr std::array<std::int64_t, 1U> kStrides{2};
+  auto wrong_stride = make_pinned_tensor(kStridedShape,
+                                         DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+                                         holoscan::TensorByteStridesSpan{kStrides});
+  ASSERT_TRUE(wrong_stride) << holoscan::runtime_error_message(wrong_stride.error());
+  expect_rejected_then_valid(std::move(*wrong_stride));
+
+  constexpr std::array<std::int64_t, 1U> kOversizedShape{64};
+  auto oversized =
+      make_pinned_tensor(kOversizedShape, DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U});
+  ASSERT_TRUE(oversized) << holoscan::runtime_error_message(oversized.error());
+  expect_rejected_then_valid(std::move(*oversized));
 }
 
 // REQ: CHAN-126
@@ -2216,8 +3119,7 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedImageBufferHandleRelayPreservesSt
   const holoscan::schema::Image* downstream_image = downstream_sample.root();
   ASSERT_NE(downstream_image, nullptr);
   ASSERT_NE(downstream_image->header(), nullptr);
-  ASSERT_NE(downstream_image->header()->stamp(), nullptr);
-  EXPECT_EQ(downstream_image->header()->stamp()->time_ns(), 931000);
+  EXPECT_EQ(downstream_image->header()->capture_timestamp_ns(), 931000);
   ASSERT_NE(downstream_image->header()->frame_id(), nullptr);
   EXPECT_EQ(downstream_image->header()->frame_id()->string_view(),
             std::string_view("buffer_handle_relay_ordered"));
@@ -2482,9 +3384,20 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedImageBufferHandleRejectsInvalidMa
   ASSERT_TRUE(wait_for_tensor_schema_payload_recipients(
       publisher.value(), 1U, valid_payload.value(), std::chrono::seconds(2), subscriber.value()));
 
-  auto emit_and_expect_error = [&](std::vector<std::byte> metadata,
-                                   holoscan::PayloadDescriptor descriptor,
-                                   holoscan::ErrorCode expected_code) {
+  auto expect_emit_error = [&](std::vector<std::byte> metadata,
+                               holoscan::PayloadDescriptor descriptor,
+                               holoscan::ErrorCode expected_code) {
+    auto payload = DescriptorBackedImagePayload::copy_from(
+        std::span<const std::byte>(metadata.data(), metadata.size()), descriptor);
+    ASSERT_TRUE(payload) << holoscan::runtime_error_message(payload.error());
+    auto published = publisher->emit_payload(payload.value());
+    ASSERT_FALSE(published);
+    EXPECT_EQ(published.error().code, expected_code)
+        << holoscan::runtime_error_message(published.error());
+  };
+  auto emit_and_expect_receive_error = [&](std::vector<std::byte> metadata,
+                                           holoscan::PayloadDescriptor descriptor,
+                                           holoscan::ErrorCode expected_code) {
     auto payload = DescriptorBackedImagePayload::copy_from(
         std::span<const std::byte>(metadata.data(), metadata.size()), descriptor);
     ASSERT_TRUE(payload) << holoscan::runtime_error_message(payload.error());
@@ -2496,10 +3409,12 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedImageBufferHandleRejectsInvalidMa
         << holoscan::runtime_error_message(received.error());
   };
 
-  emit_and_expect_error(make_image_metadata_without_tensor(),
-                        valid_descriptor(kHoloMQSchemaTensorBufferBytes),
-                        holoscan::ErrorCode::kCodecError);
-  emit_and_expect_error(
+  // Key assertion: malformed schema fields are rejected at the publisher trust boundary before
+  // transport or backing materialization can consume authority.
+  expect_emit_error(make_image_metadata_without_tensor(),
+                    valid_descriptor(kHoloMQSchemaTensorBufferBytes),
+                    holoscan::ErrorCode::kCodecError);
+  expect_emit_error(
       make_image_metadata_with_tensor_fields(
           {static_cast<int64_t>(kHoloMQSchemaTensorBufferBytes / sizeof(std::uint32_t))},
           /*ndim=*/1U,
@@ -2507,12 +3422,12 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedImageBufferHandleRejectsInvalidMa
           &host_device),
       valid_descriptor(kHoloMQSchemaTensorBufferBytes),
       holoscan::ErrorCode::kCodecError);
-  emit_and_expect_error(make_image_metadata_with_tensor_fields(std::vector<int64_t>(9U, 1),
-                                                               /*ndim=*/9U,
-                                                               &uint32_dtype,
-                                                               &host_device),
-                        valid_descriptor(kHoloMQSchemaTensorBufferBytes),
-                        holoscan::ErrorCode::kCodecError);
+  expect_emit_error(make_image_metadata_with_tensor_fields(std::vector<int64_t>(9U, 1),
+                                                           /*ndim=*/9U,
+                                                           &uint32_dtype,
+                                                           &host_device),
+                    valid_descriptor(kHoloMQSchemaTensorBufferBytes),
+                    holoscan::ErrorCode::kCodecError);
   const auto malformed_reference_metadata = make_image_metadata_with_tensor_fields(
       {static_cast<int64_t>(kHoloMQSchemaTensorBufferBytes / sizeof(std::uint32_t))},
       /*ndim=*/1U,
@@ -2529,7 +3444,9 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedImageBufferHandleRejectsInvalidMa
           .buffer = holoscan::BufferHandlePayloadReference{}});
   ASSERT_FALSE(malformed_reference);
   EXPECT_EQ(malformed_reference.error().code, holoscan::ErrorCode::kCodecError);
-  emit_and_expect_error(
+  // Key assertion: structurally valid fields with incompatible physical backing reach the
+  // subscriber and fail before exposing a materialized Tensor.
+  emit_and_expect_receive_error(
       make_image_metadata_with_tensor_fields(
           {static_cast<int64_t>(kHoloMQSchemaTensorBufferBytes / sizeof(std::uint32_t))},
           /*ndim=*/1U,
@@ -2537,7 +3454,7 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedImageBufferHandleRejectsInvalidMa
           &cuda_device),
       valid_descriptor(kHoloMQSchemaTensorBufferBytes),
       holoscan::ErrorCode::kInvalidArgument);
-  emit_and_expect_error(
+  emit_and_expect_receive_error(
       make_image_metadata_with_tensor_fields(
           {static_cast<int64_t>(kHoloMQSchemaTensorBufferBytes / sizeof(std::uint32_t))},
           /*ndim=*/1U,
@@ -2558,7 +3475,7 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedImageBufferHandleRejectsInvalidMa
   };
   // Key assertion: imported-buffer validation compares the physical CUDA ordinal against the
   // schema descriptor instead of trusting independently frozen peer metadata.
-  emit_and_expect_error(
+  emit_and_expect_receive_error(
       make_image_metadata_with_tensor_fields(
           {static_cast<int64_t>(kHoloMQSchemaTensorBufferBytes / sizeof(std::uint32_t))},
           /*ndim=*/1U,
@@ -2626,6 +3543,258 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedTensorSchemaDropOldestRetainsNewe
     EXPECT_EQ(destroyed_counters[index]->load(std::memory_order_relaxed), 1);
   }
   EXPECT_FALSE(subscriber->has_samples().value());
+}
+
+// Keep EOS on the protected lane so queued data is delivered before closure.
+// REQ: CHAN-136
+TEST(ChannelSchemaPayloadTest, ProtectedTerminalDrainsSchemaDataBeforeClosing) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+
+  auto options = make_options(holoscan::ChannelQueuePolicy::kDropOldest);
+  options.subscriber_queue_depth = 1U;
+  constexpr std::array<std::size_t, 1U> kDescriptorOffsets{0U};
+  const std::string channel_name = make_unique_channel_name();
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_publisher(
+      *runtime,
+      channel_name,
+      sizeof(holoscan::PayloadDescriptor),
+      kDescriptorOffsets,
+      options,
+      std::span<const holoscan::channel_internal::TensorSchemaStagingOptions>{});
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_subscriber(
+      *runtime, channel_name, sizeof(holoscan::PayloadDescriptor), 1U, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(**publisher, std::chrono::seconds(2)));
+  constexpr std::uint64_t kTerminalSequence = 17U;
+
+  auto destroyed = std::make_shared<std::atomic<int>>(0);
+  void* data = nullptr;
+  const std::array tensors{make_counting_tensor(destroyed, &data, 91U)};
+  ASSERT_NE(data, nullptr);
+  EXPECT_EQ(destroyed->load(std::memory_order_relaxed), 0);
+  auto reservation = (*publisher)->reserve_tensors(tensors);
+  ASSERT_TRUE(reservation) << holoscan::runtime_error_message(reservation.error());
+  const auto* field = reservation->field_at(0U);
+  ASSERT_NE(field, nullptr);
+  std::array<std::byte, sizeof(holoscan::PayloadDescriptor)> payload{};
+  std::memcpy(payload.data(), &field->descriptor, sizeof(field->descriptor));
+  ASSERT_TRUE((*publisher)->publish_payload(payload, std::move(*reservation)));
+
+  const auto close_result =
+      (*publisher)->close_stream(holoscan::SampleMetadata{.sequence = kTerminalSequence});
+  ASSERT_EQ(close_result.phase, holoscan::channel_internal::InlinePublicationPhase::kAccepted);
+
+  std::array<std::byte, sizeof(holoscan::PayloadDescriptor)> received{};
+  {
+    auto data_loan = (*subscriber)->receive_payload(received);
+    ASSERT_TRUE(data_loan) << holoscan::runtime_error_message(data_loan.error());
+  }
+  EXPECT_EQ(received, payload);
+
+  auto closed = (*subscriber)->borrow_payload();
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ((*subscriber)->end_of_stream_sequence(), kTerminalSequence);
+
+  auto repeated_closed = (*subscriber)->borrow_payload();
+  ASSERT_FALSE(repeated_closed);
+  EXPECT_EQ(repeated_closed.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ((*subscriber)->end_of_stream_sequence(), kTerminalSequence);
+
+  auto repeated_close =
+      (*publisher)->close_stream(holoscan::SampleMetadata{.sequence = kTerminalSequence + 1U});
+  EXPECT_EQ(repeated_close.phase,
+            holoscan::channel_internal::InlinePublicationPhase::kPreSubmitRejected);
+  EXPECT_EQ(repeated_close.error.code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ((*subscriber)->end_of_stream_sequence(), kTerminalSequence);
+}
+
+// REQ: CHAN-136
+TEST(ChannelSchemaPayloadTest, BlockingTerminalBackpressureRemainsRetryable) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+
+  auto options = make_options(holoscan::ChannelQueuePolicy::kBlocking);
+  options.subscriber_queue_depth = 1U;
+  constexpr std::array<std::size_t, 1U> kDescriptorOffsets{0U};
+  const std::string channel_name = make_unique_channel_name();
+  auto publisher = holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_publisher(
+      *runtime,
+      channel_name,
+      sizeof(holoscan::PayloadDescriptor),
+      kDescriptorOffsets,
+      options,
+      std::span<const holoscan::channel_internal::TensorSchemaStagingOptions>{});
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_subscriber(
+      *runtime, channel_name, sizeof(holoscan::PayloadDescriptor), 1U, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(**publisher, std::chrono::seconds(2)));
+
+  auto destroyed = std::make_shared<std::atomic<int>>(0);
+  void* data = nullptr;
+  const std::array tensors{make_counting_tensor(destroyed, &data, 92U)};
+  auto reservation = (*publisher)->reserve_tensors(tensors);
+  ASSERT_TRUE(reservation) << holoscan::runtime_error_message(reservation.error());
+  const auto* field = reservation->field_at(0U);
+  ASSERT_NE(field, nullptr);
+  std::array<std::byte, sizeof(holoscan::PayloadDescriptor)> payload{};
+  std::memcpy(payload.data(), &field->descriptor, sizeof(field->descriptor));
+  ASSERT_TRUE((*publisher)->publish_payload(payload, std::move(*reservation)));
+
+  constexpr std::uint64_t kTerminalSequence = 19U;
+  auto pressured =
+      (*publisher)->close_stream(holoscan::SampleMetadata{.sequence = kTerminalSequence});
+  EXPECT_EQ(pressured.phase,
+            holoscan::channel_internal::InlinePublicationPhase::kPreSubmitRejected);
+  EXPECT_EQ(pressured.error.code, holoscan::ErrorCode::kBackpressured);
+
+  std::array<std::byte, sizeof(holoscan::PayloadDescriptor)> received{};
+  {
+    auto data_loan = (*subscriber)->receive_payload(received);
+    ASSERT_TRUE(data_loan) << holoscan::runtime_error_message(data_loan.error());
+  }
+  EXPECT_EQ(received, payload);
+  const auto close_result =
+      (*publisher)->close_stream(holoscan::SampleMetadata{.sequence = kTerminalSequence});
+  ASSERT_EQ(close_result.phase, holoscan::channel_internal::InlinePublicationPhase::kAccepted);
+
+  auto closed = (*subscriber)->borrow_payload();
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ((*subscriber)->end_of_stream_sequence(), kTerminalSequence);
+
+  auto repeated_close =
+      (*publisher)->close_stream(holoscan::SampleMetadata{.sequence = kTerminalSequence + 1U});
+  EXPECT_EQ(repeated_close.phase,
+            holoscan::channel_internal::InlinePublicationPhase::kPreSubmitRejected);
+  EXPECT_EQ(repeated_close.error.code, holoscan::ErrorCode::kClosed);
+  auto repeated_closed = (*subscriber)->borrow_payload();
+  ASSERT_FALSE(repeated_closed);
+  EXPECT_EQ(repeated_closed.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ((*subscriber)->end_of_stream_sequence(), kTerminalSequence);
+}
+
+// Both the ordinary and protected terminal lanes validate the complete canonical EOS envelope
+// before exposing closure to Runtime. A malformed record is consumed as a protocol error without
+// latching a sequence; the same subscriber remains open for a later canonical close.
+// REQ: CHAN-136
+TEST(ChannelSchemaPayloadTest, MalformedTerminalEnvelopeDoesNotLatchEndOfStream) {
+  constexpr std::size_t kBucketSize =
+      *holoscan::channel_internal::inline_payload_bucket_size(sizeof(holoscan::PayloadDescriptor));
+  using Bucket = holoscan::channel_internal::InlinePayloadBucket<kBucketSize>;
+  struct Mutation {
+    const char* name;
+    void (*apply)(Bucket&);
+  };
+  constexpr std::array mutations{
+      Mutation{"operation",
+               [](Bucket& bucket) {
+                 bucket.operation = holoscan::channel_internal::InlinePayloadOperation::kData;
+               }},
+      Mutation{"payload-size", [](Bucket& bucket) { bucket.payload_size = 1U; }},
+      Mutation{"version", [](Bucket& bucket) { bucket.metadata.version.major = 2U; }},
+      Mutation{"sequence", [](Bucket& bucket) { bucket.metadata.sequence = 0U; }},
+      Mutation{"capture-time", [](Bucket& bucket) { bucket.metadata.capture_timestamp_ns = 1; }},
+      Mutation{"source-clock",
+               [](Bucket& bucket) { bucket.metadata.source_clock_id = holoscan::ClockId{1U}; }},
+      Mutation{"publish-time", [](Bucket& bucket) { bucket.metadata.publish_timestamp_ns = 1; }},
+      Mutation{"publish-clock",
+               [](Bucket& bucket) { bucket.metadata.publish_clock_id = holoscan::ClockId{1U}; }},
+      Mutation{"trace", [](Bucket& bucket) { bucket.metadata.trace_id = 1U; }},
+      Mutation{"frame", [](Bucket& bucket) { bucket.metadata.frame_id = 1U; }},
+      Mutation{"byte-size", [](Bucket& bucket) { bucket.metadata.byte_size = 1U; }},
+      Mutation{"payload-kind",
+               [](Bucket& bucket) {
+                 bucket.metadata.payload_kind = holoscan::PayloadKind::kInlineTyped;
+               }},
+      Mutation{"flags",
+               [](Bucket& bucket) { bucket.metadata.flags = holoscan::SampleFlags::kInvalid; }},
+  };
+  constexpr std::array policies{holoscan::ChannelQueuePolicy::kBlocking,
+                                holoscan::ChannelQueuePolicy::kDropOldest};
+
+  for (const auto policy : policies) {
+    for (const Mutation& mutation : mutations) {
+      SCOPED_TRACE(mutation.name);
+      SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+      auto runtime = holoscan::ChannelRuntime::create();
+      ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+      holomq::Context* const context =
+          holoscan::channel_internal::TensorPublisherTestAccess::transport_context(*runtime);
+      ASSERT_NE(context, nullptr);
+      auto options = make_options(policy);
+      options.subscriber_queue_depth = 1U;
+      const std::string channel_name = make_unique_channel_name();
+      auto subscriber =
+          holoscan::detail::RuntimeChannelBindingAccess::create_tensor_schema_subscriber(
+              *runtime, channel_name, sizeof(holoscan::PayloadDescriptor), 1U, options);
+      ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+
+      const bool protected_terminal = policy == holoscan::ChannelQueuePolicy::kDropOldest;
+      const std::string service =
+          protected_terminal ? channel_name + ".hsdk-terminal-v1" : channel_name;
+      const holomq::PubSubServiceOptions service_options{
+          .queue_policy = holomq::QueuePolicy::kBlocking,
+          .max_subscribers = options.expected_recipient_count,
+          .max_subscriber_queue_depth = 1U,
+          .max_subscriber_borrowed_samples = protected_terminal ? 1U : 0U,
+          .publisher_history_depth = 0U,
+          .enable_event_wake = options.enable_event_wake,
+      };
+      const holomq::PublisherPubSubOptions publisher_options{
+          .max_loaned_samples = protected_terminal ? 1U : 0U,
+          .expected_recipient_count = options.expected_recipient_count,
+          .enable_sample_release_callbacks = !protected_terminal,
+          .replacement_attribution_required = false,
+          .pressure_policy = holomq::PublisherPressurePolicy::kFollowService,
+          .bounded_retry_budget_ns = 0U,
+      };
+      auto publisher = context->publisher_builder(service)
+                           .service_options(service_options)
+                           .publisher_options(publisher_options)
+                           .payload_type<Bucket>()
+                           .create();
+      ASSERT_TRUE(publisher);
+      ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+      const auto send_terminal = [&](const bool malformed) {
+        auto message = publisher->loan();
+        EXPECT_TRUE(message);
+        if (!message) {
+          return false;
+        }
+        Bucket& bucket = message->payload();
+        bucket.operation = holoscan::channel_internal::InlinePayloadOperation::kEndOfStream;
+        bucket.metadata = holoscan::SampleMetadata{
+            .sequence = 1U,
+            .byte_size = 0U,
+            .payload_kind = holoscan::PayloadKind::kDescriptorBacked,
+        };
+        bucket.payload_size = 0U;
+        if (malformed) {
+          mutation.apply(bucket);
+        }
+        auto sent = publisher->send(std::move(*message));
+        EXPECT_TRUE(sent);
+        return sent.has_value();
+      };
+
+      ASSERT_TRUE(send_terminal(true));
+      auto rejected = (*subscriber)->borrow_payload();
+      ASSERT_FALSE(rejected);
+      EXPECT_EQ(rejected.error().code, holoscan::ErrorCode::kProtocolError);
+      EXPECT_FALSE((*subscriber)->end_of_stream_sequence().has_value());
+
+      ASSERT_TRUE(send_terminal(false));
+      auto closed = (*subscriber)->borrow_payload();
+      ASSERT_FALSE(closed);
+      EXPECT_EQ(closed.error().code, holoscan::ErrorCode::kClosed);
+      EXPECT_EQ((*subscriber)->end_of_stream_sequence(), 1U);
+    }
+  }
 }
 
 // Verifies the materializing receive path fails closed when descriptor-backed schema metadata
@@ -2790,8 +3959,15 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedTensorSchemaDeviceFanoutWaitsForR
   const auto metadata = make_image_metadata_bytes(tensor, "device_fanout_camera", 623000);
   ASSERT_FALSE(metadata.empty());
   const auto metadata_view = std::span<const std::byte>(metadata.data(), metadata.size());
+  auto handshake_destroyed = std::make_shared<std::atomic<int>>(0);
+  void* handshake_data = nullptr;
+  const auto handshake_metadata =
+      make_image_metadata_bytes(make_counting_tensor(handshake_destroyed, &handshake_data, 0U),
+                                "device_fanout_handshake",
+                                622000);
+  ASSERT_FALSE(handshake_metadata.empty());
   ASSERT_TRUE(wait_for_tensor_schema_recipients(publisher.value(),
-                                                metadata_view,
+                                                handshake_metadata,
                                                 2U,
                                                 std::chrono::seconds(3),
                                                 subscriber_a.value(),
@@ -2891,8 +4067,15 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedTensorSchemaDeviceDLPackExportRet
   const auto metadata = make_image_metadata_bytes(tensor, "device_dlpack_camera", 723000);
   ASSERT_FALSE(metadata.empty());
   const auto metadata_view = std::span<const std::byte>(metadata.data(), metadata.size());
+  auto handshake_destroyed = std::make_shared<std::atomic<int>>(0);
+  void* handshake_data = nullptr;
+  const auto handshake_metadata =
+      make_image_metadata_bytes(make_counting_tensor(handshake_destroyed, &handshake_data, 0U),
+                                "device_dlpack_handshake",
+                                722000);
+  ASSERT_FALSE(handshake_metadata.empty());
   ASSERT_TRUE(wait_for_tensor_schema_recipients(
-      publisher.value(), metadata_view, 1U, std::chrono::seconds(3), subscriber.value()));
+      publisher.value(), handshake_metadata, 1U, std::chrono::seconds(3), subscriber.value()));
 
   auto emitted = publisher->emit(metadata_view, std::move(tensor));
   ASSERT_TRUE(emitted) << holoscan::runtime_error_message(emitted.error());
@@ -2929,4 +4112,71 @@ TEST(ChannelSchemaPayloadTest, DescriptorBackedTensorSchemaDeviceDLPackExportRet
   EXPECT_EQ(reused.value(), expected_data);
   EXPECT_TRUE(pool->free(reused.value()));
   EXPECT_TRUE(pool->deinitialize_pool());
+}
+
+// The tensor-schema family gets the same event-driven wait as the other two, under the same name:
+// wait_and_receive_sample, matching ChannelSubscriber<T> and ChannelSubscriber<Tensor>. The sample
+// arrives while the caller is already blocked, so this exercises the wake path rather than the
+// receive-first fast path.
+// Topology (blocking, event wake): publisher --[descriptor-backed Image]--> subscriber
+// Key assertion: a blocked wait is woken by the emit, and an idle endpoint whose producer has not
+// closed reports kTimeout rather than a terminal code.
+// REQ: CHAN-142
+TEST(ChannelSchemaPayloadTest, WaitAndReceiveWakesOnDescriptorBackedTensorWithoutEndOfStream) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+
+  auto destroyed_counter = std::make_shared<std::atomic<int>>(0);
+  void* expected_data = nullptr;
+  auto tensor = make_counting_tensor(destroyed_counter, &expected_data, 11U);
+  const auto metadata = make_image_metadata_bytes(tensor, "waiting_camera", 123000);
+  ASSERT_FALSE(metadata.empty());
+  const auto metadata_view = std::span<const std::byte>(metadata.data(), metadata.size());
+
+  auto options = make_options(holoscan::ChannelQueuePolicy::kBlocking);
+  options.enable_event_wake = true;
+  const std::string channel_name = make_unique_channel_name();
+  auto publisher =
+      runtime->create_tensor_schema_publisher<DescriptorBackedImagePayload>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber =
+      runtime->create_tensor_schema_subscriber<DescriptorBackedImagePayload>(channel_name, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  // Also primes the sidecar store and drains everything it emitted, so the queue starts empty.
+  ASSERT_TRUE(wait_for_tensor_schema_recipients(
+      publisher.value(), metadata_view, 1U, std::chrono::seconds(3), subscriber.value()));
+
+  std::atomic<bool> emitted{false};
+  std::chrono::steady_clock::duration elapsed{};
+  {
+    std::jthread producer([&] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      emitted.store(publisher->emit(metadata_view, std::move(tensor)).has_value());
+    });
+    const auto started = std::chrono::steady_clock::now();
+    auto received = subscriber->wait_and_receive_sample(std::chrono::steady_clock::now() +
+                                                        std::chrono::seconds(5));
+    elapsed = std::chrono::steady_clock::now() - started;
+    ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+    EXPECT_EQ(received->tensor.data(), expected_data);
+    EXPECT_EQ(received->metadata.schema_id, DescriptorBackedImagePayload::expected_schema_id);
+  }
+  EXPECT_TRUE(emitted.load());
+
+  // The value assertions cannot tell an event-lane wake from the one second per-pass clamp, which
+  // re-checks has_samples() and would deliver the same sample a beat later. The emit lands ~50 ms
+  // in, so bounding the wait is what makes this a wake test rather than a delivery test.
+  EXPECT_LT(elapsed, std::chrono::seconds(1));
+
+  // No producer can ever signal end of stream on this family, so an idle endpoint must time out.
+  // A kClosed here would mean the shared contract had been copied over without narrowing it.
+  auto timed_out = subscriber->wait_and_receive_sample(std::chrono::steady_clock::now() +
+                                                       std::chrono::milliseconds(200));
+  ASSERT_FALSE(timed_out);
+  EXPECT_EQ(timed_out.error().code, holoscan::ErrorCode::kTimeout);
+
+  auto ready = subscriber->wait_for_sample(std::chrono::steady_clock::now() +
+                                           std::chrono::milliseconds(200));
+  ASSERT_FALSE(ready);
+  EXPECT_EQ(ready.error().code, holoscan::ErrorCode::kTimeout);
 }

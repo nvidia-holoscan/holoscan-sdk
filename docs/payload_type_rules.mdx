@@ -79,7 +79,16 @@ also ships several ready-to-use types with no generation step:
 |---|---|
 | `holoscan::schema::TimeT` | A timestamp pair (`time_ns`, `acqtime_ns`) |
 | `holoscan::schema::StringT` | A variable-length string (`data`) |
-| `holoscan::schema::ImuT` | An IMU sample with a stamped header |
+| `holoscan::schema::ImageT` | One image frame: the frame metadata plus its pixels in a Core `Tensor` |
+| `holoscan::schema::ImuT` | One IMU sample: three measurements, their three covariances, and a flag word, under a shared `Header` |
+
+`ImageT` and `ImuT` are the sensor payloads, and the two that share a `Header`. They are
+owned by the `holoscan::sensor_io` library rather than by Core, so carrying either one
+means linking that library and installing the `holoscan-sensor-io` component; their type
+names stay `holoscan::schema::*` because a FlatBuffers namespace is part of the wire
+identity. `ImageT` is descriptor-backed — its pixels live in a Core `Tensor` rather than
+inside the FlatBuffer — so a port emitting one declares Tensor layout and allocation
+bounds like any other Tensor-carrying port.
 
 ```cpp
 holoscan::Output<holoscan::schema::TimeT> out;
@@ -92,7 +101,9 @@ runtime verifies the encoded payload before your `compute()` ever sees it. Schem
 have a bounded serialized size — an oversized value (for example, a very long
 `schema::StringT`) fails with `kResourceExhausted` rather than allocating without bound.
 See [Schema payloads](/holoscan/sdk-user-guide/data-and-payloads/schema-payloads) for
-the built-in types and capacity sizing, or
+the built-in types, their complete field sets, and capacity sizing;
+[Sensor payloads](/holoscan/sdk-user-guide/data-and-payloads/sensor-payloads) for what the
+shared `Header` promises and what a schema change costs a running deployment; or
 [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
 to define your own message.
 
@@ -145,10 +156,13 @@ identity exactly:
 
 Inside one process this is largely enforced by the C++ type system: `add_flow()` connects
 an `Output<T>` to an `Input<T>` of the same `T`. The identity rules matter most at process
-boundaries, where the type system cannot reach: an interprocess frame whose identity does
-not match the receiving port is rejected with a typed `kIncompatible` error and never
-reaches `compute()`. Experimental raw-POD users must bump the manually authored version
-whenever layout or semantics change and roll out producer and consumer together.
+boundaries, where the type system cannot reach, and there the agreement is checked twice.
+Attaching an endpoint compares the complete identity and refuses a mismatch with a typed
+`kIncompatible` error, so a wrong peer never reaches steady state. Every received frame
+then revalidates the identity its envelope carries and fails with a typed `kProtocolError`;
+neither failure lets a payload byte reach `compute()`. Experimental raw-POD users must bump
+the manually authored version whenever layout or semantics change and roll out producer and
+consumer together.
 
 Malformed external frames are handled the same way: verification happens before delivery,
 so your operator only ever receives payloads that match its declared type exactly. See
@@ -160,12 +174,16 @@ for feeding a graph from an external process.
 ## Recap
 
 - Use a generated schema type for ordinary application-defined messages; SDK schema types
-  (`schema::TimeT`/`StringT`/`ImuT`) need no generation step.
+  (`schema::TimeT`/`StringT`/`ImageT`/`ImuT`) need no generation step. The sensor payloads
+  among them, `schema::ImageT` and `schema::ImuT`, are owned by the `holoscan::sensor_io`
+  library rather than by Core, but keep their `holoscan::schema::` type names.
 - Always spell scalars fixed-width: `std::int32_t`, never `int` or `long`.
 - Raw POD is an experimental expert escape hatch with manual identity, layout,
   compatibility, and rollout responsibilities.
-- Identity is pinned exactly between producer and consumer; mismatches fail with
-  `kIncompatible`. There is no negotiation or version evolution in this release.
+- Identity is pinned exactly between producer and consumer: across processes a peer whose
+  identity differs is refused at attach with `kIncompatible`, and a frame whose envelope
+  identity differs fails with `kProtocolError` before delivery. There is no negotiation or
+  version evolution in this release.
 
 Next: [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
 walks through defining and generating an application-owned message.

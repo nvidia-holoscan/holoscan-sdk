@@ -14,7 +14,8 @@
 // Uses host (kDLCPU) data only, so it needs no CUDA device.
 
 #include <holoscan/core/domain/tensor.hpp>
-#include <holoscan/schema/image_metadata.hpp>
+#include <holoscan/sensor_io/image_metadata.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -44,8 +45,7 @@ int main() {
       .height = 3,
       .width = 2,
       .encoding = holoscan::schema::ImageEncoding_MONO32F,
-      .time_ns = 987654321,
-      .acqtime_ns = 987654399,
+      .capture_timestamp_ns = 987654321,
       .frame_id = "hello_schema_frame"};
 
   const auto metadata = holoscan::schema::build_image_metadata(tensor, options);

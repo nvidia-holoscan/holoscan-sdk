@@ -22,6 +22,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS typed_parameters
-    RUNTIME DESTINATION examples/typed_parameters/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/typed_parameters/cpp"
     COMPONENT holoscan-examples
 )

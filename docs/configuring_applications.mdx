@@ -14,7 +14,7 @@ compile-then-freeze model is a feature rather than a limitation.
 **Complete C++ example:** [`examples/essential/config_file/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/essential/config_file/cpp)
 
 <Note>
-  **EA1 packaging boundary.** Source builds enable the optional
+  **baseline packaging boundary.** Source builds enable the optional
   `config_io`/`params`/`params_io` libraries by default. Installed consumers
   should request `find_package(holoscan REQUIRED CONFIG COMPONENTS params_io)`,
   which imports the complete `core`/`config`/`config_io`/`params`/`params_io`
@@ -79,7 +79,7 @@ it from a file extension or by sniffing content:
 auto doc = holoscan::config_io::load("app_config.yaml",
                                      holoscan::config_io::Format::kYaml);
 if (!doc) {
-  log_error(doc.error().token());   // e.g. CONFIG_PARSE_ERROR, CONFIG_DUPLICATE_KEY
+  log_error(holoscan::config::format_error(doc.error()));
   return 1;
 }
 ```
@@ -88,6 +88,11 @@ Loading follows the errors-as-values style used across the SDK: the result is
 a `ConfigResult<Document>` (an `expected`), and failures carry a stable
 `CONFIG_*` token plus bounded diagnostic context (path, source excerpt, and
 the stage that failed) rather than free-form log prose.
+`config::format_error()` produces a single line for logs, including useful
+message, source, path, and cause context, with truncated fields marked. It
+never prints the raw source excerpt, which may contain sensitive configuration
+values. Use the structured error accessors, not the formatted wording, for
+programmatic decisions.
 
 The parser is **fail-closed by design**. Duplicate keys are errors, not
 last-one-wins. YAML is an admitted semantic subset: ordinary acyclic anchors
@@ -167,7 +172,7 @@ detector.set_params(DetectorParams{.threshold = 5});   // authored baseline (opt
 auto overrides = holoscan::params::decode_overrides(
     *doc, {holoscan::params::bind(detector, "/detector")});
 if (!overrides) {
-  log_error(overrides.error().token());
+  log_error(holoscan::params::format_error(overrides.error()));
   return 1;
 }
 ```
@@ -186,6 +191,18 @@ override the baseline; fields absent from it preserve the value you authored
 with `set_params()` (or the struct's default member initializers if you
 authored nothing). You never have to repeat every field in every file.
 
+Declared container fields work the same way and do not require a
+`ConfigCodec<ParamsT>`. Built-in codecs decode containers such as
+`std::vector<std::string>` and `std::map<std::string, double>` directly from
+their schema declarations. For a container of custom values, provide only the
+`ConfigCodec` for the element type and make that specialization visible where
+you call `params::bind()`. A supplied container replaces that field as a unit;
+an omitted container keeps its baseline value. If a whole-aggregate
+`ConfigCodec<ParamsT>` is visible, it remains the preferred path for
+non-scalar fields. `PARAM_CONFIG_FIELD_CODEC_UNAVAILABLE` means the needed
+codec was not visible at the `params::bind()` call site or the binding resolved
+to a different local parameter type.
+
 The decoded `ParamOverrideSet` slots straight into compilation:
 
 ```cpp
@@ -200,6 +217,15 @@ From here the usual rules apply: check `plan.ok()`, read `plan.diagnostics()`
 on rejection, and pass the accepted plan to `holoscan::run()`. See
 [compiling and checking a plan](/holoscan/sdk-user-guide/getting-started/compile-and-check)
 for the full result model.
+
+A decoded configuration override stays tied to the same Graph, schemas, and
+authored baseline, but not to the default profile and placement used during
+decoding. You can reuse it with another valid `CompileOptions::profile` or
+`CompileOptions::deployment`; the compiler checks the values against those
+actual options. Snapshot and rebind overrides remain tied to their captured
+context. When inspecting provenance, `target_profile` records the profile used
+during capture in both cases. Exact-context sets additionally require their
+captured admission-context digest to match the compile context.
 
 <Tip>
   Keep one document per deployment (bench, lab, production) rather than one

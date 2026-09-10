@@ -24,6 +24,7 @@
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "common/allocation_counter.hpp"
@@ -291,7 +292,7 @@ void BM_CompiledCatalogImu(benchmark::State& state) {
   value.header->stamp->time_ns = 123456789;
   value.header->stamp->acqtime_ns = 987654321;
   value.header->frame_id = "imu-benchmark-frame";
-  value.orientation = schema::Quaternionf{1.0F, 0.1F, 0.2F, 0.3F};
+  value.orientation = schema::Quaternionf{0.1F, 0.2F, 0.3F, 1.0F};
   value.angular_velocity = schema::Vector3f{1.0F, 2.0F, 3.0F};
   value.linear_acceleration = schema::Vector3f{4.0F, 5.0F, 6.0F};
   run_payload_benchmark(state, "imu", value);

@@ -4,11 +4,15 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-# Pin to the post-v1.0.0 MatX commit that adds owned DLManagedTensorVersioned
-# import/export support. This is needed for Holoscan Tensor DLPack 1.x
-# interop validation until a newer MatX release tag is available.
+# Pin to latest post-v1.0.0 MatX commit that includes owned
+# DLManagedTensorVersioned import/export support and the upstream parent-CPM
+# reuse fix.
 set(HOLOSCAN_MATX_VERSION 1.0.0)
-set(HOLOSCAN_MATX_GIT_TAG 968ca84c137d22b6c43b19d186994498a37c8cc7)
+set(HOLOSCAN_MATX_GIT_TAG 186c72d4794ead29527f45ca4a6f59caa7a08caf)
+holoscan_generate_dependency_patch_command(_holoscan_matx_patch_command
+    PATCHES
+        "${CMAKE_CURRENT_LIST_DIR}/patches/matx_install.patch"
+        "${CMAKE_CURRENT_LIST_DIR}/patches/matx_cmp0144_new.patch")
 
 rapids_cpm_find(matx ${HOLOSCAN_MATX_VERSION}
     GLOBAL_TARGETS matx
@@ -18,10 +22,13 @@ rapids_cpm_find(matx ${HOLOSCAN_MATX_VERSION}
     GITHUB_REPOSITORY NVIDIA/MatX
     GIT_TAG ${HOLOSCAN_MATX_GIT_TAG}
     GIT_SHALLOW FALSE
-    PATCH_COMMAND bash -c "git apply ${CMAKE_CURRENT_LIST_DIR}/patches/matx_install.patch || [ \$? -eq 1 ]"
+    # Apply HSDK's install/export support and remove MatX's deprecated CMP0144 OLD
+    # override; CMP0144 NEW intentionally honors caller-provided uppercase roots.
+    PATCH_COMMAND ${_holoscan_matx_patch_command}
     EXCLUDE_FROM_ALL
     OPTIONS CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON
 )
+unset(_holoscan_matx_patch_command)
 
 if(matx_ADDED)
     # Correct the include directories for MatX target.

@@ -87,7 +87,11 @@ class TensorOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
     spec.output(output, "output")
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 4, .max_byte_span = 4096});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice},
+            .bounds = TensorBounds{.max_rank = 4U, .max_byte_span = 4096U},
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
@@ -97,14 +101,16 @@ class TensorOp : public Operator<> {
 
 // Tensor pass-through operator with device-memory layout annotations on both ports.
 // Exercises layout normalization, per-edge conflict detection, and mutation rollback.
-// Representative test: TensorEdgeLayoutsRejectMemoryDtypeAndRankConflictsAtomically.
+// Representative test: TensorEdgeLayoutsRejectRepresentationConflictsAtomically.
 class TensorPassOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
     spec.input(input, "input")
-        .expects_tensor(TensorPortLayout{.memory_kind = MemoryKind::kCudaDevice});
+        .expects_tensor(
+            TensorInputSpec{.representation = {.memory_kind = MemoryKind::kCudaDevice}});
     spec.output(output, "output")
-        .produces_tensor(TensorPortLayout{.memory_kind = MemoryKind::kCudaDevice});
+        .produces_tensor(
+            TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kCudaDevice}});
   }
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
   Input<Tensor> input;

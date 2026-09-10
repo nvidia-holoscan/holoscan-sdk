@@ -113,8 +113,8 @@ template <typename Enum>
   };
 }
 
-[[nodiscard]] expected<std::optional<LogicalTensorRequirementsRecord>, Error>
-copy_tensor_requirements(const TopicOptions& options, const PayloadIdentityRecord& identity) {
+[[nodiscard]] expected<std::optional<TensorBoundaryContractRecord>, Error> copy_tensor_requirements(
+    const TopicOptions& options, const PayloadIdentityRecord& identity) {
   if (identity.kind != PayloadIdentityKind::kTensor) {
     if (options.tensor) {
       return make_unexpected(
@@ -125,49 +125,37 @@ copy_tensor_requirements(const TopicOptions& options, const PayloadIdentityRecor
   if (!options.tensor) {
     return std::nullopt;
   }
-
-  const auto& tensor = *options.tensor;
-  if (!closed_enum(tensor.strides, TensorStridePolicy::kBoundedStrided) ||
-      !closed_enum(tensor.foreign_emit_policy,
-                   InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded) ||
-      (tensor.memory_kind && !closed_enum(*tensor.memory_kind, MemoryKind::kCudaManaged))) {
-    return make_unexpected(builder_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_ENUM_INVALID"));
+  TensorBoundaryContract boundary = *options.tensor;
+  if (!boundary.memory_conversion) {
+    boundary.memory_conversion = options.memory_conversion;
+  } else if (options.memory_conversion && boundary.memory_conversion != options.memory_conversion) {
+    return make_unexpected(
+        builder_error(ErrorCode::kIncompatible, "GRAPH_TENSOR_MEMORY_POLICY_CONFLICT"));
   }
-  LogicalTensorRequirementsRecord result{
-      .memory_kind = tensor.memory_kind,
-      .dtype = tensor.dtype,
-      .rank = tensor.rank,
-      .strides = tensor.strides,
-      .foreign_emit_policy = tensor.foreign_emit_policy,
-      .max_inline_bytes = tensor.max_inline_bytes,
+  auto normalized = detail::normalize_tensor_boundary_contract(boundary);
+  if (!normalized) {
+    return make_unexpected(std::move(normalized.error()));
+  }
+  const auto& tensor = *normalized;
+  const auto& transfer = tensor.transfer.value_or(TensorTransferPolicy{});
+  TensorBoundaryContractRecord result{
+      .memory_kind = tensor.representation.memory_kind,
+      .dtype = tensor.representation.dtype,
+      .rank = tensor.representation.rank,
+      .max_rank = tensor.max_rank,
+      .max_byte_span = tensor.max_byte_span,
+      .axes = tensor.axes,
+      .strides = *tensor.representation.strides,
+      .foreign_emit_policy = transfer.foreign_emit_policy,
+      .max_inline_bytes =
+          transfer.max_inline_bytes
+              ? std::optional{static_cast<std::uint32_t>(*transfer.max_inline_bytes)}
+              : std::nullopt,
+      .max_staging_byte_span = transfer.max_staging_byte_span,
+      .memory_conversion = tensor.memory_conversion,
+      .origins = tensor.origins,
   };
-  if (tensor.logical_bounds) {
-    const auto& bounds = *tensor.logical_bounds;
-    if (bounds.max_rank == 0U || bounds.max_byte_span == 0U ||
-        bounds.axes.size() > bounds.max_rank || (tensor.rank && *tensor.rank > bounds.max_rank)) {
-      return make_unexpected(
-          builder_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_LOGICAL_BOUNDS_INVALID"));
-    }
-    result.max_rank = bounds.max_rank;
-    result.max_byte_span = bounds.max_byte_span;
-    result.axes.assign(bounds.axes.begin(), bounds.axes.end());
-  }
-  if (tensor.strides == TensorStridePolicy::kBoundedStrided &&
-      (!result.max_rank || result.axes.size() != *result.max_rank ||
-       std::any_of(result.axes.begin(), result.axes.end(), [](const TensorAxisBounds& axis) {
-         return axis.max_abs_stride_bytes == 0U;
-       }))) {
-    return make_unexpected(
-        builder_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_STRIDE_BOUNDS_INCOMPLETE"));
-  }
-  const bool inline_policy =
-      tensor.foreign_emit_policy == InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
-  if ((inline_policy && (!tensor.max_inline_bytes || *tensor.max_inline_bytes == 0U)) ||
-      (!inline_policy && tensor.max_inline_bytes)) {
-    return make_unexpected(
-        builder_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_INLINE_POLICY_INVALID"));
-  }
-  return std::optional<LogicalTensorRequirementsRecord>{std::move(result)};
+  return std::optional<TensorBoundaryContractRecord>{std::move(result)};
 }
 
 [[nodiscard]] expected<void, Error> validate_clock_health(std::string_view endpoint_name,
@@ -252,6 +240,10 @@ copy_tensor_requirements(const TopicOptions& options, const PayloadIdentityRecor
   if (!tensor) {
     return make_unexpected(std::move(tensor).error());
   }
+  const auto memory_conversion =
+      options.memory_conversion
+          ? options.memory_conversion
+          : (options.tensor ? options.tensor->memory_conversion : std::nullopt);
   const ClockHealthOptions health = options.clock_health.value_or(ClockHealthOptions{});
   auto valid_health = validate_clock_health(record.name, health, record.direction);
   if (!valid_health) {
@@ -259,7 +251,7 @@ copy_tensor_requirements(const TopicOptions& options, const PayloadIdentityRecor
   }
 
   record.schema_identity = std::move(schema);
-  record.memory_conversion = options.memory_conversion;
+  record.memory_conversion = memory_conversion;
   record.capture_time_clock =
       options.capture_time ? std::optional<ClockKey>{options.capture_time->clock} : std::nullopt;
   record.clock_health = health;

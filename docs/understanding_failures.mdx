@@ -97,6 +97,7 @@ admitted plan.
 
 ```cpp
 #include <holoscan/core/compile.hpp>
+#include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/execution_plan.hpp>
 
 const holoscan::ExecutionPlan plan = holoscan::compile(graph);
@@ -104,8 +105,7 @@ const holoscan::ExecutionPlan plan = holoscan::compile(graph);
 if (!plan.ok()) {
   for (const holoscan::Diagnostic& d : plan.diagnostics()) {
     if (d.severity != holoscan::DiagnosticSeverity::kError) continue;  // skip warnings
-    // d.token is a stable registry spelling — branch or report on it directly.
-    report_rejection(d.token, d.required, d.provided);
+    log_error(holoscan::format_diagnostic(d, plan.graph()));
   }
   return;  // never run a rejected plan
 }
@@ -138,14 +138,15 @@ composing. For the full compile workflow, see
 
 ## Style 3: the run fails closed
 
-`holoscan::run()` returns `0` only for clean `kCompleted` termination; a
-compiler-accepted empty graph is one valid zero-work example. A recurring
-nonempty graph does not complete naturally and must be stopped cooperatively.
-Any other outcome is nonzero. With `run_async()`, the session reaches a
-terminal `RunTermination` — and anything other than `kCompleted` means stopped
-or failed. Crucially, when a required runtime binding or resource is unavailable,
-the run terminates `kFailed` **before any of your callbacks execute**. The
-runtime never selects weaker semantics to limp along.
+`holoscan::run()` returns `0` for natural `kCompleted` or explicit
+`kRequestedCompleted`; a compiler-accepted empty graph is one natural
+zero-work example. A recurring nonempty graph does not complete naturally.
+With `run_async()`, those two states are successful, `kStopped` is an explicit
+stop, and `kFailed` is failure. Requested completion is immediate whole-run
+success, not EOS or downstream drain. Crucially, when a required runtime
+binding or resource is unavailable, the run terminates `kFailed` **before any
+of your callbacks execute**. The runtime never selects weaker semantics to limp
+along.
 
 The only exceptions at this boundary are `holoscan::CompileError` for a
 default-constructed/no-state or rejected plan wrapper (check `plan.ok()` first)
@@ -155,17 +156,26 @@ Everything else — startup exhaustion, missing bindings, execution failure —
 arrives through the terminal state plus diagnostics:
 
 ```cpp
+#include <holoscan/core/diagnostic.hpp>
+#include <holoscan/core/execution_plan.hpp>
 #include <holoscan/core/run_session.hpp>
 
 holoscan::RunSession session = holoscan::run_async(plan);
 session.wait();
 
 if (session.termination() == holoscan::RunTermination::kFailed) {
-  for (const holoscan::Diagnostic& d : session.diagnostics()) {
-    log_error(d.token);  // same Diagnostic record type as the compile phase
+  for (const holoscan::Diagnostic& diagnostic : session.diagnostics()) {
+    log_error(holoscan::format_diagnostic(diagnostic, plan.graph()));
   }
 }
 ```
+
+`format_diagnostic()` resolves a nonzero source vertex against the immutable
+compiled graph and includes the diagnostic's populated public fields. Passing
+the compiled graph view prevents mixing its canonical IDs with source graph
+IDs. Use the rendered text for people, not program decisions: branch, grep, and
+assert on the structured token and fields rather than parsing the rendered
+line.
 
 Runtime tokens you are likely to meet:
 
@@ -183,9 +193,37 @@ Runtime tokens you are likely to meet:
   means the run rolled back — completed work unwound in reverse, with simple
   `stop()` running only for the operators that completed `kStart` earlier;
   during shutdown, cleanup still ran to completion before the run was marked
-  failed. See
+  failed. Cleanup failure overrides natural or requested success and stop. See
   [lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
   for the exact rollback rules.
+- `RUNTIME_MANAGED_SIGNAL_RECEIVED` — a first synchronously accepted SIGINT or
+  SIGTERM requested cooperative stop. This is warning evidence on a clean
+  `kStopped` session, not a failure; a direct application `request_stop()` does
+  not add it.
+- `RUNTIME_MANAGED_SIGNAL_DOMAIN_REQUIRED` — default Linux `run(plan)` had no
+  adoptable domain and a successful census read observed anything other than
+  exactly one live process task, or the successful second read changed from
+  the first. Create an
+  explicit domain before any background threads, or deliberately select
+  `RunSignalPolicy::kCallerManaged`.
+- `RUNTIME_MANAGED_SIGNAL_OWNER_BUSY` — an existing domain or binding is
+  unavailable, or the process registry is poisoned. Let an active binding
+  retire, close and recreate a spent domain, or reconcile signal ownership.
+  After registry poisoning, contain and restart the process rather than retrying.
+- `RUNTIME_MANAGED_SIGNAL_INSTALL_FAILED` — mask, census read, disposition,
+  descriptor, broker, or binding setup failed before a usable managed run was
+  established. The typed detail identifies the exact setup phase.
+- `RUNTIME_MANAGED_SIGNAL_WAIT_FAILED` — synchronous signal waiting,
+  consumption, or controller notification failed. An attached session stops
+  and terminates `kFailed` after cleanup; later managed admission remains
+  poisoned.
+- `RUNTIME_MANAGED_SIGNAL_RESTORE_FAILED` — delegation, descriptor cleanup,
+  disposition validation, or exact creator-mask restoration failed. Treat the
+  process as contaminated and restart it rather than assuming later managed
+  admission is safe.
+- `RUNTIME_MANAGED_SIGNAL_ESCALATED` — warning evidence that a second accepted
+  occurrence was delegated under the unchanged prior disposition. It does not
+  replace that disposition's behavior.
 
 `session.diagnostics()` is append-only and stable: the span you hold stays
 valid, and a later call may expose a longer prefix. Until the session is
@@ -284,10 +322,9 @@ value-channel model, including the `HOLOSCAN_TRY` propagation macros, see
 - Check `plan.ok()` after every compile and iterate `plan.diagnostics()` on
   rejection; use `require_no_errors()` only when downstream setup cannot
   proceed without an admitted plan.
-- `rc == 0` / `kCompleted` is the only run success; accepted zero-work plans
-  complete immediately, while recurring nonempty graphs require a cooperative
-  stop. Inspect `session.diagnostics()` for anything else, and re-poll it until
-  terminal.
+- `rc == 0` means natural `kCompleted` or explicit `kRequestedCompleted`;
+  requested completion is immediate success without EOS or drain guarantees.
+  Inspect `session.diagnostics()` on `kFailed`, and re-poll it until terminal.
 - Diagnostic tokens are stable registry spellings — branch, grep, and assert
   on tokens, never on message text.
 - `kResourceExhausted` means a configured bound is undersized: check pool

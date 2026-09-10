@@ -54,10 +54,13 @@ def write_cpu_topology(
     core: int,
     *,
     online: bool = True,
+    thread_siblings: str | None = None,
 ) -> None:
     cpu_dir = root / f"cpu{cpu}"
     write_value(cpu_dir / "topology/physical_package_id", str(package))
     write_value(cpu_dir / "topology/core_id", str(core))
+    if thread_siblings is not None:
+        write_value(cpu_dir / "topology/thread_siblings_list", thread_siblings)
     if cpu != 0:
         write_value(cpu_dir / "online", "1" if online else "0")
 
@@ -78,6 +81,74 @@ def test_recommend_selects_distinct_online_cores_from_one_socket(tmp_path: Path)
     # Key assertion: the fuller socket wins and contributes one thread per physical core.
     assert completed.stdout.strip() == "4,5,6"
     assert "3 distinct physical cores on socket 1" in completed.stderr
+
+
+def test_recommend_uses_thread_siblings_when_core_ids_are_ambiguous(tmp_path: Path) -> None:
+    # Thor exposes singleton sibling sets even when every CPU reports package/core (0, 0).
+    sysfs = tmp_path / "sysfs"
+    for cpu in range(8):
+        write_cpu_topology(sysfs, cpu, 0, 0, thread_siblings=str(cpu))
+
+    completed = run_script(sysfs, "recommend", "8")
+
+    assert completed.stdout.strip() == "0,1,2,3,4,5,6,7"
+    assert "8 distinct physical cores on socket 0" in completed.stderr
+
+
+def test_recommend_returns_available_cores_when_socket_has_fewer_than_requested(
+    tmp_path: Path,
+) -> None:
+    # Key setup: model the six-core Ampere topology from the reduced-hardware report.
+    sysfs = tmp_path / "sysfs"
+    for cpu in range(6):
+        write_cpu_topology(sysfs, cpu, 0, cpu, thread_siblings=str(cpu))
+
+    completed = run_script(sysfs, "recommend", "8")
+
+    # Key assertion: the command remains usable by docs-core-runtime and explains the reduction.
+    assert completed.stdout.strip() == "0,1,2,3,4,5"
+    assert "Requested 8 cores, but socket 0 exposes only 6" in completed.stderr
+    assert "Selected 6 distinct physical cores on socket 0" in completed.stderr
+
+
+def test_recommend_selects_only_isolated_physical_cores(tmp_path: Path) -> None:
+    # Key setup: mirror an 18-core SMT host with physical cores 2-9 isolated.
+    sysfs = tmp_path / "sysfs"
+    write_value(sysfs / "isolated", "2-9,20-27")
+    for cpu in range(36):
+        core = cpu % 18
+        write_cpu_topology(
+            sysfs,
+            cpu,
+            0,
+            core,
+            thread_siblings=f"{core},{core + 18}",
+        )
+
+    completed = run_script(sysfs, "recommend", "8")
+
+    # Key assertion: housekeeping CPUs 0-1 are not mixed into the recommendation.
+    assert completed.stdout.strip() == "2,3,4,5,6,7,8,9"
+    assert "Selected 8 distinct isolated physical cores on socket 0" in completed.stderr
+
+
+def test_recommend_does_not_fill_a_short_isolated_set_with_housekeeping_cpus(
+    tmp_path: Path,
+) -> None:
+    # Key setup: expose six physical cores but reserve only three for pinned work.
+    sysfs = tmp_path / "sysfs"
+    write_value(sysfs / "isolated", "2-4")
+    for cpu in range(6):
+        write_cpu_topology(sysfs, cpu, 0, cpu, thread_siblings=str(cpu))
+
+    completed = run_script(sysfs, "recommend", "8")
+
+    # Key assertion: reduced-core planning receives only the isolated CPU set.
+    assert completed.stdout.strip() == "2,3,4"
+    assert "isolated CPU set on socket 0 exposes only 3 distinct physical cores" in (
+        completed.stderr
+    )
+    assert "Selected 3 distinct isolated physical cores on socket 0" in completed.stderr
 
 
 def test_apply_and_restore_preserve_exact_cpu_state(tmp_path: Path) -> None:

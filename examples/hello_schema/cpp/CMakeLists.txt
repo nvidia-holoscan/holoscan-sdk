@@ -13,6 +13,7 @@ target_compile_features(hello_schema PRIVATE cxx_std_20)
 target_link_libraries(hello_schema
     PRIVATE
         holoscan::schema
+        holoscan::sensor_io
 )
 holoscan_configure_example_install(hello_schema)
 
@@ -25,6 +26,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS hello_schema
-    RUNTIME DESTINATION examples/hello_schema/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/hello_schema/cpp"
     COMPONENT holoscan-examples
 )

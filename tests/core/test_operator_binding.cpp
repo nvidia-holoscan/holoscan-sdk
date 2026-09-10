@@ -1153,10 +1153,18 @@ class InvalidBuilderOperator final : public Operator<> {
         spec.output(tensor_).max_emits_per_compute(0);
         break;
       case Kind::kTensorRank:
-        spec.output(tensor_).tensor_allocation({.max_rank = 0, .max_byte_span = 1024});
+        spec.output(tensor_).produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost},
+            .bounds = TensorBounds{.max_rank = 0U, .max_byte_span = 1024U},
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
         break;
       case Kind::kTensorBytes:
-        spec.output(tensor_).tensor_allocation({.max_rank = 4, .max_byte_span = 0});
+        spec.output(tensor_).produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost},
+            .bounds = TensorBounds{.max_rank = 4U, .max_byte_span = 0U},
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
         break;
       case Kind::kReadableCapacity:
         spec.readable_source(readable_, "readable").capacity(2);
@@ -2017,8 +2025,8 @@ TEST(OperatorBindingConformance, ConfiguredParamsUsePositiveDefaultAndPermitExpl
   EXPECT_EQ(op.observed_params, &op.params());
 
   // The synthetic fixture preserves its configured-parameter default of one. An explicit zero is
-  // additionally accepted so EA1-004 can exercise the real generation-zero startup contract
-  // before EA1-009 owns plan/session reconstruction.
+  // additionally accepted so HSDK5-004 can exercise the real generation-zero startup contract
+  // before HSDK5-009 owns plan/session reconstruction.
   const detail::SyntheticActivationOptions initial_zero{
       .params_generation = ParamGeneration{0},
   };

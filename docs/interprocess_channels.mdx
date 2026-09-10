@@ -2,10 +2,10 @@
   **Developer preview.** Cross-process channels currently support scalar, POD,
   self-contained-schema, and Tensor payloads; cross-process Tensors may be
   host-pageable, pinned-host, or CUDA-device backed (with bounded staging
-  where placement requires it) and always arrive read-only. A non-Tensor
-  external producer may restart at most once against a boundary, a catalog
-  Tensor import does not support producer rebind at all, and there is no
-  author-facing launcher for multi-process worker isolation yet. The API
+  where placement requires it) and always arrive read-only. A restart-capable
+  external import may accept at most one replacement producer incarnation,
+  including raw-Tensor and descriptor-backed Tensor schema imports, and there
+  is no author-facing launcher for multi-process worker isolation yet. The API
   surface may evolve in upcoming releases — verify against the current headers
   before relying on it.
 </Warning>
@@ -148,8 +148,8 @@ holoscan::RunSession session = holoscan::run_async(plan);
 ```
 
 This graph-side declaration is illustrative;
-`ea1_camera_imu_control` supplies the shipping graph-boundary use, while
-`ea1_external_clients` supplies the standalone peer loops.
+`camera_imu_control` supplies the shipping graph-boundary use, while
+`external_clients` supplies the standalone peer loops.
 
 That is the entire graph-side story: declare the topic, compile, save the
 catalog, run. Binding, producer-restart fencing, and Tensor transport all
@@ -170,6 +170,16 @@ if (!runtime) { return 1; }
 auto publisher = runtime->create_publisher<std::uint32_t>(*catalog, "frames");
 if (!publisher) { return 1; }
 ```
+
+For a descriptor-backed schema, attach with
+`create_tensor_schema_publisher<Payload>()` or
+`create_tensor_schema_subscriber<Payload>()`; publish the FlatBuffer metadata
+and complete Tensor inventory together, and receive them with
+`receive_tensors()`. Descriptor-schema publishers support the same capture,
+frame, trace, and validity metadata as the scalar catalog surface, while the
+resolved sample or bundle exposes the received `sample_metadata`. The
+[`descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
+example contains both the Graph process and standalone process for this case.
 
 <Warning>
   **Cross-process attach is asynchronous, and there is no "wait until
@@ -205,7 +215,7 @@ const auto try_emit = [&](std::uint32_t value, std::int64_t capture_ns) {
 
 A subscriber is symmetric: `runtime->create_subscriber<T>(*catalog, name)`,
 then poll `receive_sample()` in the same deadline loop, retrying only on
-`kNotReady`. The `ea1_external_clients` example ships both halves — a
+`kNotReady`. The `external_clients` example ships both halves — a
 `sensor_daemon` publisher and a `recorder` subscriber — each taking the
 catalog path and endpoint name on the command line.
 <Tip>
@@ -217,8 +227,10 @@ catalog path and endpoint name on the command line.
 
 ## Producer restart: generation-fenced rebind
 
-When an admitted reset or lifecycle restart touches a non-Tensor external
-import, Runtime may rebind it to a later producer incarnation. Before detaching
+When an admitted reset or lifecycle restart touches an external import,
+Runtime may rebind it to a later producer incarnation. This includes scalar,
+POD, ordinary schema, raw-Tensor, and descriptor-backed Tensor schema imports.
+Before detaching
 the old binding, preflight requires both the **old incarnation's** accepted
 nonzero token and that same incarnation's explicit end-of-stream (the
 publisher's `close()`). A replacement producer need not already be present.
@@ -240,17 +252,17 @@ rebind is part of the admitted reset or restart:
   **terminal**.
 
 <Warning>
-  **The restart budget is one — and Tensor imports have none.** For non-Tensor
-  imports, generation capacity is two — one active producer plus one
-  replacement — so a producer may restart exactly once against a given
-  boundary. A further rebind attempt returns `kResourceExhausted` **before**
-  any destructive mutation, and the slot is not reusable in that run; an
-  in-graph lifecycle restart that therefore cannot publish ends
-  failed-stopped. Once an accepted cutover's detach begins, a partial failure
-  terminalizes the session rather than exposing a half-rebound stream. Catalog
-  **Tensor** imports do not participate at all: a reset or lifecycle restart
-  touching one fails closed with `kNotSupported` before mutation. Design
-  supervision-and-relaunch policies around these budgets; see
+  **The restart budget is one.** Restart-capable imports have generation
+  capacity two—one active producer plus one replacement—so a producer may
+  restart exactly once against a given boundary. Raw-Tensor and
+  descriptor-backed Tensor schema imports use the same budget and additionally
+  require all retained backing claims to quiesce before cutover. A further
+  rebind attempt returns `kResourceExhausted` **before** any destructive
+  mutation, and the slot is not reusable in that run; an in-graph lifecycle
+  restart that therefore cannot publish ends failed-stopped. Once an accepted
+  cutover's detach begins, a partial failure terminalizes the session rather
+  than exposing a half-rebound stream. Design supervision-and-relaunch
+  policies around these budgets; see
   [Restart control](/holoscan/sdk-user-guide/advanced/restart-control) for the
   in-graph counterpart.
 </Warning>
@@ -295,12 +307,13 @@ last claim retires. Three facts shape the surface today:
   `create_subscriber`). Never mix the two vocabularies.
 - Attach is asynchronous: wrap emit/receive in deadline retry loops over
   `kNotReady` / `kBackpressured` — the loop *is* the connection handshake.
-- Producer restart for non-Tensor imports is generation-fenced (the old
+- Producer restart for external imports is generation-fenced (the old
   incarnation's accepted token plus that incarnation's explicit EOS) with a
   budget of one. A missing fence fact or compiled no-rebind policy is
   `kNotSupported`, a live peer or retained claim is `kBackpressured`, and a
   spent generation budget is terminal `kResourceExhausted` before mutation.
-  Catalog Tensor imports do not support rebind at all (`kNotSupported`).
+  Raw-Tensor and descriptor-backed Tensor schema imports share this behavior
+  and wait for retained backing claims to quiesce before cutover.
 - Cross-process Tensors may be host-pageable, pinned-host, or CUDA-device
   backed, always arrive read-only, and need a CUDA device present to create
   catalog Tensor endpoints; there is no author-facing multi-process worker

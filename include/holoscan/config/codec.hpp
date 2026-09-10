@@ -19,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -163,9 +164,10 @@ class EncodeContext {
 
 /// @brief Declare the sole application customization point for typed configuration values.
 ///
-/// A user specialization must implement whole-value `decode` and `encode` with the exact
-/// ConfigCodecSignature signatures. It should route every child through the supplied context and
-/// charge owning allocations before performing them. No reflection or field-discovery fallback is
+/// A user specialization must provide whole-value `decode` and `encode` with the exact
+/// ConfigCodecSignature signatures. It may implement them directly or inherit ObjectCodec for
+/// ordinary data members. It should route every child through the supplied context and charge
+/// owning allocations before performing them. No reflection or field-discovery fallback is
 /// selected when a specialization is absent.
 ///
 /// @note The decode callback intentionally accepts ConfigView by value so it retains shared
@@ -335,18 +337,21 @@ ConfigResult<T> DecodeContext::decode_child(std::string_view token, ConfigView v
     return tl::make_unexpected(charged.error());
   }
   auto decoded = ConfigCodec<T>::decode(value, options, child_context);
-  if (!decoded && decoded.error().path().empty()) {
-    return tl::make_unexpected(
-        ConfigError::nest(ConfigError::make(decoded.error().code(),
-                                            decoded.error().message(),
-                                            child_context.path(),
-                                            decoded.error().source(),
-                                            decoded.error().excerpt(),
-                                            decoded.error().operation_stage(),
-                                            decoded.error().destination_state()),
-                          decoded.error()));
+  if (!decoded) {
+    if (decoded.error().path().empty()) {
+      return tl::make_unexpected(
+          ConfigError::nest(ConfigError::make(decoded.error().code(),
+                                              decoded.error().message(),
+                                              child_context.path(),
+                                              decoded.error().source(),
+                                              decoded.error().excerpt(),
+                                              decoded.error().operation_stage(),
+                                              decoded.error().destination_state()),
+                            decoded.error()));
+    }
+    return tl::make_unexpected(decoded.error());
   }
-  return decoded;
+  return ConfigResult<T>{std::move(*decoded)};
 }
 
 template <class T>
@@ -395,11 +400,14 @@ template <ConfigCodable T>
       return tl::make_unexpected(charged.error());
     }
     auto result = ConfigCodec<T>::decode(view, options, context);
-    if (result && state.unfinished_decoders != 0) {
+    if (!result) {
+      return tl::make_unexpected(result.error());
+    }
+    if (state.unfinished_decoders != 0) {
       return tl::make_unexpected(ConfigError::make(ConfigErrorCode::kCodecFailure,
                                                    "configuration decoder did not call finish"));
     }
-    return result;
+    return ConfigResult<T>{std::move(*result)};
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   } catch (...) {
     return tl::make_unexpected(
@@ -571,6 +579,207 @@ class ObjectDecoder {
   std::vector<bool> consumed_;
   std::optional<ConfigError> initialization_error_;
   bool finished_{false};
+};
+
+namespace detail {
+
+template <class Owner, class Member>
+struct ObjectField {
+  using owner_type = Owner;
+  using member_type = Member;
+
+  std::string_view name;
+  Member Owner::* member;
+  bool required;
+};
+
+template <class T, class Field>
+struct ObjectFieldValid : std::false_type {};
+
+template <class T, class Owner, class Member>
+struct ObjectFieldValid<T, ObjectField<Owner, Member>>
+    : std::bool_constant<std::same_as<T, Owner> && ConfigCodable<Member> &&
+                         std::is_constructible_v<Member, Member&&> &&
+                         std::is_assignable_v<Member&, Member&&>> {};
+
+template <class T, class Fields>
+[[nodiscard]] constexpr bool validate_object_fields(const Fields&) {
+  return false;
+}
+
+template <class T, class... Fields>
+[[nodiscard]] constexpr bool validate_object_fields(const std::tuple<Fields...>& fields) {
+  if constexpr (!std::default_initializable<T> || !std::is_constructible_v<T, T&&> ||
+                !(ObjectFieldValid<T, Fields>::value && ...)) {
+    return false;
+  } else {
+    const auto members_are_valid =
+        std::apply([](const auto&... field) { return ((field.member != nullptr) && ...); }, fields);
+    if (!members_are_valid) {
+      return false;
+    }
+    const auto names = std::apply(
+        [](const auto&... field) {
+          return std::array<std::string_view, sizeof...(Fields)>{field.name...};
+        },
+        fields);
+    for (std::size_t first = 0; first < names.size(); ++first) {
+      for (std::size_t second = first + 1; second < names.size(); ++second) {
+        if (names[first] == names[second]) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+}
+
+template <class T, class = void>
+struct ObjectCodecSchemaValid : std::false_type {};
+
+template <class T>
+struct ObjectCodecSchemaValid<
+    T,
+    std::void_t<decltype(std::bool_constant<validate_object_fields<T>(ConfigCodec<T>::fields)>{})>>
+    : std::bool_constant<validate_object_fields<T>(ConfigCodec<T>::fields)> {};
+
+template <class T>
+concept ValidObjectCodecSchema = ObjectCodecSchemaValid<T>::value;
+
+template <std::size_t I = 0, class T, class Fields>
+ConfigResult<void> decode_object_fields(ObjectDecoder& decoder, T& value, const Fields& fields) {
+  if constexpr (I == std::tuple_size_v<Fields>) {
+    return {};
+  } else {
+    const auto& field = std::get<I>(fields);
+    using Field = std::remove_cvref_t<decltype(field)>;
+    using Member = typename Field::member_type;
+    if (field.required) {
+      auto decoded = decoder.required<Member>(field.name);
+      if (!decoded) {
+        return tl::make_unexpected(decoded.error());
+      }
+      value.*(field.member) = std::move(*decoded);
+    } else {
+      auto decoded = decoder.optional<Member>(field.name);
+      if (!decoded) {
+        return tl::make_unexpected(decoded.error());
+      }
+      if (*decoded) {
+        value.*(field.member) = std::move(**decoded);
+      }
+    }
+    return decode_object_fields<I + 1>(decoder, value, fields);
+  }
+}
+
+template <std::size_t I = 0, class T, class Fields, std::size_t N>
+ConfigResult<void> encode_object_fields(const T& value, const Fields& fields,
+                                        const EncodeOptions& options, EncodeContext& context,
+                                        std::array<ConfigObjectEntry, N>& entries) {
+  if constexpr (I == N) {
+    return {};
+  } else {
+    const auto& field = std::get<I>(fields);
+    using Field = std::remove_cvref_t<decltype(field)>;
+    using Member = typename Field::member_type;
+    auto key_charged = context.charge_string(field.name.size());
+    if (!key_charged) {
+      return tl::make_unexpected(key_charged.error());
+    }
+    auto encoded = context.encode_child<Member>(field.name, value.*(field.member), options);
+    if (!encoded) {
+      return tl::make_unexpected(encoded.error());
+    }
+    entries[I] = ConfigObjectEntry{field.name, std::move(*encoded)};
+    return encode_object_fields<I + 1>(value, fields, options, context, entries);
+  }
+}
+
+}  // namespace detail
+
+/// @brief Describe one required member in an ObjectCodec field list.
+/// @tparam Owner Object type containing the member.
+/// @tparam Member Member value type with a visible ConfigCodec specialization.
+/// @param name Configuration object key.
+/// @param member Pointer to the object member populated by decoding.
+/// @return A constexpr field descriptor consumed by ObjectCodec.
+template <class Owner, class Member>
+[[nodiscard]] constexpr auto object_field(std::string_view name, Member Owner::* member) noexcept {
+  return detail::ObjectField<Owner, Member>{name, member, true};
+}
+
+/// @brief Describe a member that retains its default value when its object key is absent.
+/// @tparam Owner Object type containing the member.
+/// @tparam Member Member value type with a visible ConfigCodec specialization.
+/// @param name Configuration object key.
+/// @param member Pointer to the object member populated when the key is present.
+/// @return A constexpr field descriptor consumed by ObjectCodec.
+template <class Owner, class Member>
+[[nodiscard]] constexpr auto defaulted_object_field(std::string_view name,
+                                                    Member Owner::* member) noexcept {
+  return detail::ObjectField<Owner, Member>{name, member, false};
+}
+
+/// @brief Implement ConfigCodec for a default-constructible object from a declared field tuple.
+///
+/// A ConfigCodec specialization can inherit this type and declare a static constexpr `fields`
+/// tuple containing object_field and defaulted_object_field descriptors. Field names must be
+/// unique, every descriptor must contain a non-null pointer to a move-constructible,
+/// move-assignable ConfigCodable member of T, and T must be default-initializable and
+/// move-constructible. The helper preserves child paths and codec budgets, rejects unknown keys
+/// under the selected DecodeOptions, and encodes every declared field in tuple order.
+///
+/// @note Object traversal can allocate and invoke potentially throwing operations. The inherited
+/// callbacks are therefore not admitted by ConfigCodable when exceptions are disabled; provide a
+/// manually proven non-throwing ConfigCodec for that environment.
+///
+/// @tparam T Default-initializable object type owned by the ConfigCodec specialization.
+template <class T>
+struct ObjectCodec {
+  /// @brief Decode declared object fields through their member codecs.
+  static ConfigResult<T> decode(ConfigView view, const DecodeOptions& options,
+                                DecodeContext& context)
+    requires detail::ValidObjectCodecSchema<T>
+  {  // NOLINT(whitespace/braces)
+    if (view.kind() != ConfigValueKind::kObject) {
+      return tl::make_unexpected(ConfigError::make(
+          ConfigErrorCode::kTypeMismatch, "configuration value is not an object", context.path()));
+    }
+    constexpr const auto& fields = ConfigCodec<T>::fields;
+    T result{};
+    ObjectDecoder object{std::move(view), options, context};
+    auto decoded = detail::decode_object_fields(object, result, fields);
+    if (!decoded) {
+      return tl::make_unexpected(decoded.error());
+    }
+    auto finished = object.finish();
+    if (!finished) {
+      return tl::make_unexpected(finished.error());
+    }
+    return ConfigResult<T>{std::move(result)};
+  }
+
+  /// @brief Encode every declared object field through its member codec.
+  static ConfigResult<ConfigValue> encode(const T& value, const EncodeOptions& options,
+                                          EncodeContext& context)
+    requires detail::ValidObjectCodecSchema<T>
+  {  // NOLINT(whitespace/braces)
+    constexpr const auto& fields = ConfigCodec<T>::fields;
+    constexpr auto field_count = std::tuple_size_v<std::remove_cvref_t<decltype(fields)>>;
+    constexpr auto field_storage_bytes =
+        sizeof(std::string) + sizeof(ConfigValue) + sizeof(ConfigObjectEntry);
+    auto charged = context.charge_container(field_count, field_storage_bytes);
+    if (!charged) {
+      return tl::make_unexpected(charged.error());
+    }
+    std::array<ConfigObjectEntry, field_count> entries{};
+    auto encoded = detail::encode_object_fields(value, fields, options, context, entries);
+    if (!encoded) {
+      return tl::make_unexpected(encoded.error());
+    }
+    return ConfigValue::object(entries);
+  }
 };
 
 /// @brief Traverse an array in order and enforce complete consumption.
@@ -1277,8 +1486,7 @@ ConfigResult<Document> Document::replace(const Path& path, T&& value) const {
   if (!encoded) {
     return tl::make_unexpected(encoded.error());
   }
-  Edit edit = Edit::replace(path, std::move(*encoded));
-  return patched(std::span<const Edit>{&edit, 1});
+  return patched(Edit::replace(path, std::move(*encoded)));
 }
 
 template <class T>

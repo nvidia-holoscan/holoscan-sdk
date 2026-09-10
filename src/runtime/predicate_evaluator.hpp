@@ -142,10 +142,12 @@ class PredicateEvaluatorEngine {
     return engine;
   }
 
+  // Evaluation validates and commits one bounded predicate transaction; separating the stages
+  // would obscure which state is provisional and which state is committed.
   [[nodiscard]] expected<PredicateCandidateDecision<MaxPredicateInputs, MaxComputeInputs>, Error>
-  evaluate(PredicateFrozenSource source,
-           std::span<const PredicateFrozenInput> predicate_inputs = {},
-           PredicateComputeSelectionRequest compute = {}, PredicateReceiver self_receiver = {}) {
+  evaluate(  // NOLINT(readability-function-cognitive-complexity)
+      PredicateFrozenSource source, std::span<const PredicateFrozenInput> predicate_inputs = {},
+      PredicateComputeSelectionRequest compute = {}, PredicateReceiver self_receiver = {}) {
     if (!callable_ || active_generation_ == 0U || !source.reference_time.valid() ||
         !source.tag.valid() || source.tag.generation != active_generation_ ||
         !source.tag_time.valid() || predicate_inputs.size() != expected_input_count_ ||
@@ -281,6 +283,8 @@ class PredicateEvaluatorEngine {
   }
 
  private:
+  // Admission intentionally validates the complete cross-record predicate contract in one pass.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] static bool valid_plan(const PredicateTriggerPlanRecord& trigger,
                                        std::span<const PredicateInputPlanRecord> inputs,
                                        const PredicateCallablePlanRecord& callable) noexcept {
@@ -290,7 +294,7 @@ class PredicateEvaluatorEngine {
         !trigger.successful_evaluation_commits_truth || !trigger.missing_or_error_preserves_truth ||
         !trigger.candidate_state_is_transactional || !trigger.compute_adopts_evaluator_snapshot ||
         !trigger.consumes_reserved_candidate_tag ||
-        trigger.reset_policy != TemporalPredicateResetPolicy::kEa1ResetEventsV1 ||
+        trigger.reset_policy != TemporalPredicateResetPolicy::kResetEventsV1 ||
         (trigger.firing != PredicateFiring::kOnFalseToTrue &&
          trigger.firing != PredicateFiring::kOnEveryTrueEvaluation) ||
         trigger.missing_precedence != "safe_default_then_skip_or_exhausted_reuse" ||
@@ -353,8 +357,6 @@ class PredicateEvaluatorEngine {
       case InputState::kSelected:
         return selection.reason == SelectionReason::kNone;
       case InputState::kReused:
-        return selection.reason != SelectionReason::kNone &&
-               selection.reason != SelectionReason::kNotSelectedForActivation;
       case InputState::kSafeDefault:
       case InputState::kAbsent:
         return selection.reason != SelectionReason::kNone &&
@@ -453,7 +455,10 @@ class RuntimePredicateEvaluatorEngine {
 #endif
   }
 
-  [[nodiscard]] expected<RuntimePredicateCandidateDecision, Error> evaluate(
+  // Evaluation validates and commits one bounded predicate transaction; separating the stages
+  // would obscure which state is provisional and which state is committed.
+  [[nodiscard]] expected<RuntimePredicateCandidateDecision, Error>
+  evaluate(  // NOLINT(readability-function-cognitive-complexity)
       PredicateFrozenSource source, std::span<const PredicateFrozenInput> predicate_inputs,
       PredicateComputeSelectionRequest compute = {}, PredicateReceiver self_receiver = {}) {
     if (!callable_ || active_generation_ == 0U || !source.reference_time.valid() ||
@@ -606,6 +611,8 @@ class RuntimePredicateEvaluatorEngine {
     };
   }
 
+  // Admission intentionally validates the complete cross-record predicate contract in one pass.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] static bool valid_plan(const PredicateTriggerPlanRecord& trigger,
                                        std::span<const PredicateInputPlanRecord> inputs,
                                        const PredicateCallablePlanRecord& callable) noexcept {
@@ -615,7 +622,7 @@ class RuntimePredicateEvaluatorEngine {
         !trigger.successful_evaluation_commits_truth || !trigger.missing_or_error_preserves_truth ||
         !trigger.candidate_state_is_transactional || !trigger.compute_adopts_evaluator_snapshot ||
         !trigger.consumes_reserved_candidate_tag ||
-        trigger.reset_policy != TemporalPredicateResetPolicy::kEa1ResetEventsV1 ||
+        trigger.reset_policy != TemporalPredicateResetPolicy::kResetEventsV1 ||
         (trigger.firing != PredicateFiring::kOnFalseToTrue &&
          trigger.firing != PredicateFiring::kOnEveryTrueEvaluation) ||
         trigger.missing_precedence != "safe_default_then_skip_or_exhausted_reuse" ||

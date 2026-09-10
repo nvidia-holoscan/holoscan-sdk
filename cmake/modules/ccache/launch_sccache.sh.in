@@ -1,11 +1,17 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Reference: https://github.com/mozilla/sccache
 
 export SCCACHE_DIR=${SCCACHE_DIR:-"@SCCACHE_DIR@"}
 export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-"@SCCACHE_CACHE_SIZE@"}
+
+# Prevent containers using host networking from sharing a sccache server.
+# Explicit endpoint configuration remains authoritative.
+if [ -z "${SCCACHE_SERVER_UDS:-}" ] && [ -z "${SCCACHE_SERVER_PORT:-}" ]; then
+    export SCCACHE_SERVER_UDS="/tmp/holoscan-sccache-${UID}.sock"
+fi
 
 # Execute sccache
 @SCCACHE_BIN_PATH@ "$@"

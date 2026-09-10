@@ -128,6 +128,12 @@ HOLOSCAN_PARAM_SCHEMA(ControllerParams, holoscan::param_schema("com.example.Cont
 | `.external_read_only()` | External tools may observe the value but not change it; the field appears read-only in the external catalog. |
 | `.external_tuning()` | External tools may propose new values (live tuning). A tuning field is writable only when it is also runtime-mutable, public, and non-sensitive, and the plan admits updates; other catalog fields stay read-only. |
 
+A `.sensitive()` field cannot be a dependency of a derived Tensor output-pool
+capacity. That compile-time resource decision must read the generation-zero
+value and publish concrete allocation geometry in the execution plan, which
+would violate the field's redaction contract. Use a separate non-sensitive,
+compile-time or `.recompile_required()` capacity Parameter instead.
+
 ### Documentation and migration
 
 | Policy | Meaning |
@@ -254,6 +260,31 @@ lifecycle-mutable publication, observing generation changes, and ordering
 guarantees — is covered in
 [Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).
 
+## Parameters that size Tensor pools
+
+A compile-time or `.recompile_required()` integral scalar or bounded integral
+vector may feed a `TensorByteSpanExpression` declared by a runtime-pooled Tensor
+output. For example,
+`parameter_contiguous_byte_span(param_ref<&P::shape>())` reduces a bounded shape
+to a contiguous slot byte capacity using the output's exact dtype and rank.
+`parameter_byte_span(param_ref<&P::bytes>())` uses a positive scalar byte count
+directly.
+
+These expressions are evaluated only while compiling a plan. A deployment can
+bind a different generation-zero value with `set_params()` or a compile-time
+configuration override and compile a new plan with different finite pool
+geometry. This compiles a new execution plan and rematerializes its resources
+without rebuilding or relinking the application binary. The Operator's setup
+declaration remains unchanged. The value is not a live update: an already
+materialized pool never grows or changes capacity between activations.
+
+Use `.max_elements(rank)` on a vector shape field and declare the same exact
+rank on the Tensor output. Compilation rejects an empty shape, a length
+mismatch, a zero extent, an unsupported element type, or overflow rather than
+guessing a capacity. See
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth)
+for allocation-plan evidence and the scalar input-bound form.
+
 ## Recap
 
 - `field<>` policies fall into seven groups: mutability, value constraints,
@@ -274,5 +305,9 @@ guarantees — is covered in
   arrive as future generations — through the next compute boundary for
   `.runtime_mutable()` fields or a lifecycle restart transaction for
   `.lifecycle_mutable(stage)` fields — never as mid-callback mutations.
+- Compile-time and `.recompile_required()` fields may size finite Tensor pool
+  slots without changing `setup()`; a new value needs a new execution plan and
+  rematerialized resources, not a rebuilt or relinked binary or a live update
+  to an existing pool.
 
 Next: [Lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks).

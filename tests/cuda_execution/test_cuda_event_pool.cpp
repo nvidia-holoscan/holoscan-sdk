@@ -15,6 +15,8 @@
 
 #include <holoscan/cuda_execution/cuda_event_pool.hpp>
 
+#include "cuda_execution/cuda_driver_entry_points.hpp"
+
 namespace holoscan {
 using ::holoscan::test::create_non_blocking_cuda_stream;
 using ::holoscan::test::invalid_cuda_device_id;
@@ -365,14 +367,13 @@ TEST(CudaEventPool, LeaseRecordsAndWaitsThroughEventRef) {
 TEST(CudaEventPool, CreatesEventsInProvidedContext) {
   skip_without_cuda_device();
 
-  // Resolve cuCtxGetCurrent to capture the device primary context.
+  // Resolve cuCtxGetCurrent to capture the device primary context. The version argument selects
+  // the driver-function ABI, so keep it aligned with this function-pointer signature.
   CUresult (*ctx_get_current)(CUcontext*) = nullptr;
-  int version = 0;
-  cudaRuntimeGetVersion(&version);
   cudaDriverEntryPointQueryResult driver_status{};
   cudaGetDriverEntryPointByVersion("cuCtxGetCurrent",
                                    reinterpret_cast<void**>(&ctx_get_current),
-                                   version,
+                                   cuda_execution_detail::kCUDADriverABIVersion12030,
                                    cudaEnableDefault,
                                    &driver_status);
   if (ctx_get_current == nullptr) {

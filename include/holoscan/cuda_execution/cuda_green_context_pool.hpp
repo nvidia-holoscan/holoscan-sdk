@@ -6,8 +6,6 @@
 #pragma once
 
 #include <cuda.h>
-#include <cuda_runtime.h>
-
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -19,22 +17,23 @@
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/expected.hpp>
 
-// CUDA green-context driver APIs (CUgreenCtx, cuGreenCtxCreate, cuDevSmResourceSplitByCount, ...)
-// were introduced in CUDA 12.4. Guard so the experimental library still builds against older CUDA
-// toolkits, where these native types are simply unavailable.
-#if defined(CUDA_VERSION) && (CUDA_VERSION >= 12040)
+// CUDA Green Context resources arrived in CUDA 12.4, but the stream-creation API required by the
+// usable execution contract arrived in CUDA 12.5. Guard the complete feature accordingly.
+#ifndef HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE
+#if defined(CUDA_VERSION) && (CUDA_VERSION >= 12050)
 #define HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE 1
 #else
 #define HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE 0
+#endif
 #endif
 
 namespace holoscan {
 
 #if HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE
 
-// Lazily-loaded CUDA driver entry points used to create and query green contexts. Defined in the
-// translation unit so the public header does not expose the driver function-pointer surface.
-struct CudaDriverFunctionTable;
+namespace cuda_execution_detail {
+struct CudaGreenContextDriver;
+}  // namespace cuda_execution_detail
 
 /**
  * @brief Native experimental counterpart of nvidia::gxf::CudaGreenContextPool.
@@ -51,50 +50,70 @@ struct CudaDriverFunctionTable;
  */
 class CudaGreenContextPool {
  public:
+  /// @brief Configure one experimental low-level Green Context pool.
   struct Config {
-    int32_t device_id = 0;
-    // Flags forwarded to cuDevSmResourceSplitByCount (matches the GXF default).
-    uint32_t green_context_flags = cudaStreamNonBlocking;
-    // Number of explicitly requested partitions. 0 means "one partition spanning the whole device".
-    uint32_t num_partitions = 0;
-    // Minimum SMs per partition; requested partition sizes must be a multiple of this.
-    uint32_t min_sm_count = 2;
-    // SM count for each requested partition (size must be >= num_partitions when num_partitions >
-    // 0).
+    std::int32_t device_id{};  ///< Explicit nonnegative process-local CUDA device ordinal.
+    /// Number of explicitly requested groups; zero requests one whole-device group.
+    std::uint32_t num_partitions{};
+    /// Exact SM count per requested group; each count must satisfy driver-reported granularity.
     std::vector<int32_t> sms_per_partition = {0};
-    // Partition index used as the default context. If unset, the last partition is used.
+    /// Default group index, or the final group when absent.
     std::optional<int32_t> default_context;
+    /// Stable observability identifier owned by this value.
     std::string nvtx_identifier = "cuda_green_context_pool";
   };
 
-  // Constructor and destructor are defined out-of-line so the pimpl'd CudaDriverFunctionTable can
-  // stay incomplete in this header.
+  /// @brief Construct a pool with one whole-device group on device zero.
   HOLOSCAN_CORE_EXPORT CudaGreenContextPool();
+  /// @brief Construct an uninitialized pool from an owned configuration.
+  /// @param config Exact device and structured group request.
   HOLOSCAN_CORE_EXPORT explicit CudaGreenContextPool(Config config);
   CudaGreenContextPool(const CudaGreenContextPool&) = delete;
   CudaGreenContextPool& operator=(const CudaGreenContextPool&) = delete;
+  /// @brief Destroy every owned Green Context in reverse creation order.
   HOLOSCAN_CORE_EXPORT ~CudaGreenContextPool();
 
-  // Initialize and throw RuntimeError on failure (parallels CudaStreamPool / CudaEventPool).
+  /// @brief Initialize the pool or throw RuntimeError on failure.
+  /// @throws RuntimeError if configuration, CUDA capability probing, splitting, or creation fails.
   HOLOSCAN_CORE_EXPORT void initialize();
+  /// @brief Initialize every requested structured group exactly once.
+  /// @return Success or a typed cold-path CUDA/configuration error.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> initialize_pool();
+  /// @brief Destroy every owned Green Context and reset the pool.
+  /// @return Success or the first native destruction error.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> deinitialize_pool();
 
-  // Green context handle for a given partition index.
+  /// @brief Return the borrowed Green Context handle for one group index.
+  /// @param index Zero-based materialized group index.
+  /// @return Borrowed handle or an out-of-range/uninitialized error.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<CUgreenCtx, Error> green_context(
       uint32_t index) const;
-  // Primary CUcontext associated with a partition's green context.
+  /// @brief Return the borrowed converted CUDA context for one group index.
+  /// @param index Zero-based materialized group index.
+  /// @return Borrowed converted context or an out-of-range/uninitialized error.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<CUcontext, Error> cuda_context(uint32_t index) const;
-  // SM count of a given partition.
+  /// @brief Return the accepted SM count for one structured group.
+  /// @param index Zero-based materialized group index.
+  /// @return Accepted SM count or an out-of-range/uninitialized error.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<uint32_t, Error> partition_sms(uint32_t index) const;
-  // Index of the default partition.
+  /// @brief Return the configured or derived default group index.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<uint32_t, Error> default_context_index() const;
-  // Green context handle of the default partition.
+  /// @brief Return the borrowed default Green Context handle.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<CUgreenCtx, Error> default_context() const;
-  // Total SM count of the device backing this pool.
+  /// @brief Return the driver-reported device SM count.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<uint32_t, Error> device_total_sms() const;
+  /// @brief Return the driver-reported minimum structured partition size.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<uint32_t, Error> min_sm_partition_size() const;
+  /// @brief Return the driver-reported SM co-scheduling alignment.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<uint32_t, Error> sm_coscheduled_alignment() const;
+  /// @brief Return the driver-qualified maximum number of minimum-size structured groups.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<uint32_t, Error> max_structured_context_count() const;
 
+  /// @brief Return the number of materialized Green Context groups.
+  /// @return Materialized group count, or zero before initialization.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT size_t num_partitions() const;
+  /// @brief Return the owned cold configuration.
+  /// @return Immutable pool configuration retained by this object.
   [[nodiscard]] const Config& config() const noexcept { return config_; }
 
  private:
@@ -106,8 +125,7 @@ class CudaGreenContextPool {
   };
 
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> load_cuda_driver();
-  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> reserve_green_contexts(
-      int32_t compute_capability_major);
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> reserve_green_contexts();
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> destroy_green_contexts();
 
   Config config_;
@@ -119,10 +137,14 @@ class CudaGreenContextPool {
   std::vector<int32_t> resolved_sms_per_partition_;
   uint32_t resolved_num_partitions_ = 0;
   uint32_t max_sm_count_ = 0;
+  uint32_t min_sm_partition_size_ = 0;
+  uint32_t sm_coscheduled_alignment_ = 0;
+  uint32_t structured_sm_quantum_ = 0;
+  uint32_t max_structured_context_count_ = 0;
   int32_t dev_id_ = -1;
   uint32_t default_index_ = 0;
 
-  std::unique_ptr<CudaDriverFunctionTable> driver_;
+  std::shared_ptr<const cuda_execution_detail::CudaGreenContextDriver> driver_;
 };
 
 #endif  // HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE

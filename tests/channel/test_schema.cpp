@@ -9,6 +9,7 @@
 // Provides generated owning types and schema-trait specializations.
 #include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/schema/inline_flatbuffer_payload.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "../../src/channel/channel_catalog_binding.hpp"
 #include "../../src/channel/channel_inline_payload_test_access.hpp"
@@ -89,10 +90,18 @@ class OneShotInlinePayloadSubscriber final
     return pending_;
   }
 
+  // This double has no transport, so it has no event lane and no runtime to build a wait context
+  // from. Reporting that honestly makes wait_for_readiness fail with kNotSupported rather than
+  // pretend to wait.
+  [[nodiscard]] bool event_wake_enabled() const noexcept override { return false; }
+
+  [[nodiscard]] void* wait_context_runtime() noexcept override { return nullptr; }
+
   [[nodiscard]] bool has_publishers() const noexcept override { return true; }
 
-  [[nodiscard]] holoscan::expected<holoscan::SampleMetadata, holoscan::Error> receive(
-      std::span<std::byte> payload) override {
+  [[nodiscard]] holoscan::expected<holoscan::channel_internal::InlinePayloadReceiveResult,
+                                   holoscan::Error>
+  receive(std::span<std::byte> payload) override {
     if (!pending_) {
       return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kNotReady});
     }
@@ -103,7 +112,8 @@ class OneShotInlinePayloadSubscriber final
       payload[index] = payload_[index];
     }
     pending_ = false;
-    return metadata_;
+    return holoscan::channel_internal::InlinePayloadReceiveResult{.metadata = metadata_,
+                                                                  .payload_size = payload_.size()};
   }
 
   [[nodiscard]] holoscan::expected<std::uint64_t, holoscan::Error> attach_wait_set(
@@ -217,7 +227,7 @@ template <typename Publisher, typename Payload, typename... Subscribers>
   const auto stamp = holoscan::schema::CreateTime(builder, time_ns, time_ns + 10);
   const auto frame = builder.CreateString(frame_id.data(), frame_id.size());
   const auto header = holoscan::schema::CreateHeader(builder, stamp, frame);
-  const holoscan::schema::Quaternionf orientation{1.0F, 0.0F, 0.0F, 0.0F};
+  const holoscan::schema::Quaternionf orientation{0.0F, 0.0F, 0.0F, 1.0F};
   const holoscan::schema::Vector3f angular_velocity{0.1F, 0.2F, 0.3F};
   const holoscan::schema::Vector3f linear_acceleration{9.8F, 0.0F, -0.1F};
   builder.Finish(holoscan::schema::CreateImu(
@@ -267,6 +277,73 @@ TEST(ChannelSchemaPayloadTest, PayloadAliasesUseSchemaTraitDefaultCapacities) {
   EXPECT_EQ(holoscan::schema::flatbuffer_default_inline_capacity_v<
                 holoscan::tests::channel::CustomControl>,
             512U);
+}
+
+// The catalog frame budget is capacity plus attribution plus the schema envelope, so a schema
+// endpoint publishing at its declared capacity is the boundary case for that arithmetic.
+// Attachment bounds are covered elsewhere; this exercises a maximum-capacity data transfer.
+// REQ: CHAN-137
+TEST(ChannelSchemaPayloadTest, MaximumCapacityOwningSchemaTraversesCatalogEndpoints) {
+  using Payload = holoscan::schema::StringT;
+  constexpr std::size_t kCapacity = holoscan::generated_schema_max_serialized_size_v<Payload>;
+
+  // Find the largest value the package still encodes within its declared bound.
+  std::array<std::byte, kCapacity> scratch{};
+  const auto encoded_size = [&scratch](const std::size_t length) -> std::size_t {
+    Payload probe;
+    probe.data = std::string(length, 'x');
+    auto encoded = holoscan::schema_package<Payload>().encode(probe, scratch);
+    return encoded ? *encoded : 0U;
+  };
+  std::size_t maximum_length = 0U;
+  for (std::size_t length = kCapacity; length > 0U; --length) {
+    if (encoded_size(length) != 0U) {
+      maximum_length = length;
+      break;
+    }
+  }
+  ASSERT_GT(maximum_length, 0U);
+  const std::size_t maximum_encoded = encoded_size(maximum_length);
+
+  // Key setup: the value fills the declared capacity up to FlatBuffer alignment, and one more
+  // byte cannot be encoded within that bound.
+  EXPECT_LE(maximum_encoded, kCapacity);
+  EXPECT_GE(maximum_encoded, kCapacity - 8U);
+  EXPECT_EQ(encoded_size(maximum_length + 1U), 0U);
+
+  const std::string endpoint_name = make_unique_channel_name();
+  auto import_catalog =
+      make_catalog_endpoint<Payload>(holoscan::TopicDirection::kImport, endpoint_name);
+  auto export_catalog =
+      make_catalog_endpoint<Payload>(holoscan::TopicDirection::kExport, endpoint_name);
+  ASSERT_TRUE(import_catalog) << holoscan::runtime_error_message(import_catalog.error());
+  ASSERT_TRUE(export_catalog) << holoscan::runtime_error_message(export_catalog.error());
+  const auto import_endpoint = import_catalog->endpoint(endpoint_name);
+  const auto export_endpoint = export_catalog->endpoint(endpoint_name);
+  ASSERT_TRUE(import_endpoint);
+  ASSERT_TRUE(export_endpoint);
+
+  auto external_runtime = holoscan::ChannelRuntime::create();
+  auto graph_runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(external_runtime);
+  ASSERT_TRUE(graph_runtime);
+  auto subscriber = graph_runtime->create_subscriber<Payload>(*export_endpoint);
+  auto publisher = external_runtime->create_publisher<Payload>(*import_endpoint);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  ASSERT_TRUE(wait_for_catalog_attachment(*publisher, *subscriber, std::chrono::seconds(2)));
+
+  Payload source;
+  source.data = std::string(maximum_length, 'x');
+  auto emitted = publisher->emit(source);
+  ASSERT_TRUE(emitted) << holoscan::runtime_error_message(emitted.error());
+
+  // Key assertion: the maximum-capacity payload survives the complete catalog frame intact.
+  auto received = subscriber->receive_sample();
+  ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  EXPECT_EQ(received->data.data, source.data);
+  EXPECT_EQ(received->metadata.byte_size, maximum_encoded);
+  EXPECT_EQ(received->metadata.payload_kind, holoscan::PayloadKind::kSerializedBytes);
 }
 
 // REQ: CHAN-078

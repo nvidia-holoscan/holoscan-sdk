@@ -21,6 +21,8 @@
 #include "../core/diagnostic_registry.hpp"
 #include "../threading/linux_thread_controller.hpp"
 #include "detail/canonical_utils.hpp"
+#include "execution_plan_contracts.hpp"
+#include "snapshot_lookup.hpp"
 
 namespace holoscan::detail {
 namespace {
@@ -65,33 +67,14 @@ void append_probe(std::vector<PlacementProbePlanRecord>& probes, ExecutionPartit
   });
 }
 
-[[nodiscard]] std::optional<std::uint8_t> profile_rank(Profile profile) noexcept {
-  switch (profile) {
-    case Profile::kResearch:
-      return 0U;
-    case Profile::kStandard:
-      return 1U;
-    case Profile::kRobotics:
-      return 2U;
-    case Profile::kRealTime:
-      return 3U;
-    case Profile::kRegulated:
-      return 4U;
-  }
-  return std::nullopt;
-}
-
 [[nodiscard]] std::optional<Profile> effective_partition_profile(
     std::span<const VertexId> operators,
     std::span<const std::optional<Profile>> effective_profiles) noexcept {
   std::optional<Profile> result;
   std::uint8_t result_rank = 0U;
   for (const VertexId owner : operators) {
-    if (owner.value == 0U || owner.value > effective_profiles.size()) {
-      return std::nullopt;
-    }
-    const auto profile = effective_profiles[static_cast<std::size_t>(owner.value - 1U)];
-    const auto rank = profile ? profile_rank(*profile) : std::nullopt;
+    const auto profile = effective_profile_for_vertex(effective_profiles, owner);
+    const auto rank = profile ? profile_semantic_rank(*profile) : std::nullopt;
     if (!profile || !rank) {
       return std::nullopt;
     }

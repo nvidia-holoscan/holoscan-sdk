@@ -57,6 +57,9 @@ struct TemporalInputRecord {
   std::chrono::nanoseconds reuse_max_age{};
 };
 
+// Authoring fields remain grouped by semantic responsibility and are hashed by name; reordering
+// this cold record solely to minimize padding would obscure its contract structure.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
 struct TemporalTriggerRecord {
   TemporalTriggerKind kind{TemporalTriggerKind::kNone};
   std::string port_name;
@@ -93,6 +96,7 @@ struct TemporalContractSnapshot {
   TemporalTriggerRecord trigger;
   std::vector<TemporalInputRecord> inputs;
   std::size_t connected_input_count{};
+  std::optional<ComputeCalls> compute_calls;
   std::optional<std::chrono::nanoseconds> deadline;
   ParamDurationDependency deadline_dependency{};
   std::optional<OnViolation> violation;

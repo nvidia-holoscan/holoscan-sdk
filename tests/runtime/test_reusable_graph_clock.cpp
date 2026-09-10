@@ -20,6 +20,7 @@
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "runtime/graph_exec.hpp"
+#include "runtime/runtime_rate_state.hpp"
 #include "runtime/runtime_test_access.hpp"
 
 namespace holoscan {
@@ -177,6 +178,24 @@ class ReusableClockWrapperGraph final : public Graph {
   ClockKey unused_clock_import_;
 };
 
+class ReusableClockConversionGraph final : public Graph {
+ public:
+  [[nodiscard]] ClockKey source_import() const noexcept { return source_import_; }
+  [[nodiscard]] ClockKey target_import() const noexcept { return target_import_; }
+
+ protected:
+  void compose() override {
+    source_import_ = import_clock("source");
+    target_import_ = import_clock("target");
+    set_default_clock(target_import_);
+    add_clock_conversion(source_import_, target_import_, AffineClockConversion{.offset_ns = 5});
+  }
+
+ private:
+  ClockKey source_import_;
+  ClockKey target_import_;
+};
+
 [[nodiscard]] ExecutionPlan reusable_clock_plan() {
   Graph graph{"reusable-clock-runtime"};
   auto source = graph.op<ReusableClockSource>("source");
@@ -204,7 +223,7 @@ TEST(ReusableGraphClockTest, ReconstructsAndReplaysExplicitClockImportBindings) 
     session.request_stop();
     session.wait();
 
-    ASSERT_TRUE(observed);
+    ASSERT_TRUE(observed) << plan.json();
     EXPECT_EQ(session.termination(), RunTermination::kStopped);
     EXPECT_TRUE(session.diagnostics().empty());
     const auto values = ReusableClockProbe::snapshot();
@@ -239,6 +258,25 @@ TEST(ReusableGraphClockTest, ReconstructsRepeatedReusableOperatorLocalNames) {
 
   const ExecutionPlan plan = compile(graph);
   ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_FALSE(plan.interface_port_bindings().empty());
+
+  // Reusable-Graph interface vertices exist only in the immutable plan. Their presence makes the
+  // canonical VertexId sequence sparse relative to reconstructed OperatorInstanceId values, so
+  // Runtime rate-state construction must bind operator ports through the replayed instances.
+  auto reconstructed = detail::GraphExec::reconstruct(detail::ExecutionPlanAccess::retain(plan),
+                                                      RunGenerationId{31U});
+  ASSERT_TRUE(reconstructed) << reconstructed.error().message;
+  auto rates = detail::RuntimeRateState::create(
+      (*reconstructed)->plan(), (*reconstructed)->operators(), RunGenerationId{31U}, 1U);
+  ASSERT_TRUE(rates) << rates.error().message;
+
+  // A process-group worker replays only its local Operator subset against the same complete plan.
+  // Remote Operator ports and reusable-Graph interface aliases remain plan-visible but have no
+  // process-local declaration or owner binding in this RuntimeRateState.
+  ASSERT_GT((*reconstructed)->operators().size(), 1U);
+  auto local_rates = detail::RuntimeRateState::create(
+      (*reconstructed)->plan(), (*reconstructed)->operators().first(1U), RunGenerationId{32U}, 1U);
+  ASSERT_TRUE(local_rates) << local_rates.error().message;
 
   ReusableClockProbe::reset();
   RunSession session = run_async(plan);
@@ -246,13 +284,39 @@ TEST(ReusableGraphClockTest, ReconstructsRepeatedReusableOperatorLocalNames) {
   session.request_stop();
   session.wait();
 
-  ASSERT_TRUE(observed);
+  ASSERT_TRUE(observed) << plan.json();
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty());
   const auto values = ReusableClockProbe::snapshot();
   ASSERT_GE(values.size(), 2U);
   EXPECT_EQ(values[0], 1U);
   EXPECT_EQ(values[1], 1U);
+}
+
+// REQ: RUNTIME-027
+TEST(ReusableGraphClockTest, ReplaysCanonicalEquivalentClockConversionsAtColdStart) {
+  Graph graph{"canonical-equivalent-clock-conversions"};
+  auto first = graph.embed<ReusableClockConversionGraph>("first");
+  auto second = graph.embed<ReusableClockConversionGraph>("second");
+  const ClockKey source = graph.add_clock<RealtimeClock>("source");
+  const ClockKey target = graph.add_clock<RealtimeClock>("target");
+  graph.set_default_clock(target);
+  graph.bind_clock(first, first->source_import(), source);
+  graph.bind_clock(first, first->target_import(), target);
+  graph.bind_clock(second, second->source_import(), source);
+  graph.bind_clock(second, second->target_import(), target);
+
+  // Key setup: two authored conversions resolve to one canonical parent-clock pair.
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.clock_conversions().size(), 1U);
+
+  // Key assertion: Runtime replays that canonical projection instead of requiring positional
+  // parity with both authored declarations.
+  RunSession session = run_async(plan);
+  session.wait();
+  EXPECT_NE(session.termination(), RunTermination::kFailed);
+  EXPECT_TRUE(session.diagnostics().empty());
 }
 
 // REQ: RUNTIME-027

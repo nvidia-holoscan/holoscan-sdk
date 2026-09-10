@@ -49,6 +49,9 @@ struct ValidatedTensorLayout {
   }
 }
 
+// Layout validation is one bounded arithmetic proof whose ordered checks prevent intermediate
+// overflow and partial acceptance; splitting it would duplicate that state.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] inline expected<ValidatedTensorLayout, Error> validate_tensor_layout(
     const std::span<const std::int64_t> shape, const DLDataType dtype,
     const std::optional<std::span<const std::int64_t>> strides,
@@ -60,7 +63,7 @@ struct ValidatedTensorLayout {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
 
-  bool has_zero_extent = false;
+  auto has_zero_extent = false;
   for (const std::int64_t extent : shape) {
     if (extent < 0) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});

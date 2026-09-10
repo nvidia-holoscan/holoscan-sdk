@@ -69,7 +69,7 @@ cmake --build build
 If the SDK is not in a default location, point CMake at it:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S . -DCMAKE_PREFIX_PATH=<install-prefix>
 ```
 
 ## Run

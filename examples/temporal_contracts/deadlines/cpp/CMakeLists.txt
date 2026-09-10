@@ -11,9 +11,7 @@ endif()
 add_executable(contract_deadlines contract_deadlines.cpp)
 target_compile_features(contract_deadlines PRIVATE cxx_std_20)
 target_link_libraries(contract_deadlines PRIVATE holoscan::core Threads::Threads)
-holoscan_configure_example_install(contract_deadlines
-    INSTALL_RPATH "$ORIGIN/../../../../lib"
-)
+holoscan_configure_example_install(contract_deadlines)
 
 if(BUILD_TESTING)
     # REQ: SYSTEM-013
@@ -39,6 +37,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS contract_deadlines
-    RUNTIME DESTINATION examples/temporal_contracts/deadlines/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/temporal_contracts/deadlines/cpp"
     COMPONENT holoscan-examples
 )

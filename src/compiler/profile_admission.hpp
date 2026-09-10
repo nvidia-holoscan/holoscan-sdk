@@ -25,6 +25,12 @@ enum class ParameterMutationProfileDisposition : std::uint8_t {
   kFrozenOnly = 1,           ///< Only immutable generation-zero values are admitted.
 };
 
+/// @brief State whether rate-aware sizing needs bounded-arrival evidence for one vertex.
+enum class RateBoundedEvidenceRequirement : std::uint8_t {
+  kNotRequired = 0,
+  kRequired = 1,
+};
+
 inline constexpr std::string_view kProfileValueUnknownToken = "PROFILE_VALUE_UNKNOWN";
 inline constexpr std::string_view kProfileRegionLoosensGraphToken = "PROFILE_REGION_LOOSENS_GRAPH";
 inline constexpr std::string_view kProfileRealTimeEvidenceMissingToken =
@@ -42,6 +48,7 @@ struct ProfileAdmissionResult {
   ProfileManifest manifest;
   std::vector<std::optional<Profile>> effective_vertex_profiles;
   std::vector<std::vector<RegionId>> contributing_regions_by_vertex;
+  std::vector<RateBoundedEvidenceRequirement> rate_evidence_requirements_by_vertex;
   std::vector<std::string> error_tokens;
 
   [[nodiscard]] bool accepted() const noexcept {
@@ -63,6 +70,12 @@ struct ProfileAdmissionResult {
       return std::nullopt;
     }
     return effective_vertex_profiles[static_cast<std::size_t>(vertex.value - 1U)];
+  }
+
+  /// Return the canonical per-vertex bounded-rate-evidence policy for downstream lowerers.
+  [[nodiscard]] std::span<const RateBoundedEvidenceRequirement> rate_evidence_requirements()
+      const noexcept {
+    return std::span<const RateBoundedEvidenceRequirement>{rate_evidence_requirements_by_vertex};
   }
 };
 

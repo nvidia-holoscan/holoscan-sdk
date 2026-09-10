@@ -5,13 +5,10 @@ add_executable(channel_schema_benchmark
     channel_schema_benchmark.cpp
     ../common/channel_benchmark_common.hpp
 )
-add_dependencies(channel_schema_benchmark holoscan_flatbuffer_schemas_generated)
+if(TARGET holoscan_flatbuffer_schemas_generated)
+    add_dependencies(channel_schema_benchmark holoscan_flatbuffer_schemas_generated)
+endif()
 add_dependencies(holoscan-benchmark-targets channel_schema_benchmark)
-
-target_include_directories(channel_schema_benchmark
-    PRIVATE
-        "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
-)
 
 target_link_libraries(channel_schema_benchmark
     PRIVATE
@@ -21,6 +18,7 @@ target_link_libraries(channel_schema_benchmark
         holomq::holomq
         holoscan::core
         holoscan::schema
+        holoscan::sensor_io
 )
 
 if(BUILD_TESTING)

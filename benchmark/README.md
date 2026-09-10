@@ -247,16 +247,21 @@ sudo ./public/benchmark/configure_cpu_performance.sh \
   apply /tmp/holoscan-cpu-performance.state
 ```
 
-Ask the helper for eight online logical CPUs backed by distinct physical cores
-on one socket:
+Ask the helper for up to eight online logical CPUs backed by distinct physical
+cores on one socket:
 
 ```sh
 CPUS=$(./public/benchmark/configure_cpu_performance.sh recommend 8)
 ```
 
-The recommendation is deterministic and topology-based; it does not chase
-transient CPU utilization. Run on an otherwise quiet machine and inspect a
-short utilization sample before collecting a baseline:
+When `/sys/devices/system/cpu/isolated` is non-empty, the helper selects only
+from that isolated CPU set; otherwise, it considers every online CPU. When the
+selected socket or isolated set exposes fewer physical cores than requested,
+the helper returns all of them and reports the reduction on stderr. It does not
+silently add housekeeping CPUs to a short isolated set. The recommendation is
+deterministic and topology-based; it does not chase transient CPU utilization.
+Run on an otherwise quiet machine and inspect a short utilization sample before
+collecting a baseline:
 
 ```sh
 mpstat -P "$CPUS" 1 5
@@ -264,8 +269,9 @@ mpstat -P "$CPUS" 1 5
 
 Selected CPUs should remain close to 100% idle before the benchmark starts.
 For stricter isolation, reserve a stable CPU set through the deployment's
-cpuset or kernel-isolation policy and pass one logical CPU from each physical
-core explicitly.
+cpuset or kernel-isolation policy. The helper automatically honors the kernel
+isolated-CPU mask; pass an explicit list when using a cpuset that is not exposed
+through that mask.
 
 Then run the balanced suite from the SDK development container. This preset
 uses three repetitions and p99-capable sample counts so routine full-suite
@@ -289,6 +295,14 @@ HOLOSCAN_CUDA_MAJOR_VERSION=13 ./public/run launch build-cu13-x86_64 \
     --preset balanced \
     --cpus $CPUS"
 ```
+
+The docs preset accepts four or more selected physical cores. It records rows
+whose operator and support-thread roles do not fit as topology-based skips:
+a four-core run completes 17 rows, a six-core run completes 34, and an
+eight-core run completes all 40. The generic suite summaries and
+`core-runtime-tables.md` contain every completed row and state when the run is
+partial. Updating the public documentation with `--update-doc` still requires
+the complete eight-core, 40-row result.
 
 To regenerate only the tables on the Core Runtime benchmark documentation
 page, use the production-quality `docs-core-runtime` preset. It selects the
@@ -344,7 +358,7 @@ Without `--update-doc`, the summarizer still writes
 Use `--preset production` for seven repetitions and at least 10,000 latency
 samples where stable p999 evidence is required. Use `--preset smoke` for a
 short functional run and `--groups` for a comma-separated subset. `--skip-gpu`
-omits standalone HoloMQ and Graph device rows; the existing Channel matrix
+omits direct HoloMQ and Graph device rows; the existing Channel matrix
 still includes its maintained device-storage cases. Use `--dry-run --no-build`
 to generate `commands.sh` and `suite_manifest.json` without running anything.
 After an interrupted run, pass `--resume --no-build` with the original
@@ -377,7 +391,11 @@ Delivery distinguishes `direct_retained`, `holomq_inline`,
 serialized and concurrent endpoint work from shared, separate, and
 per-subscriber Runtime lanes. Geometry includes fanout, relay count, queue and
 pool bounds, process count, and the three byte-accounting dimensions. Graph
-rows report notification-source capacity separately from edge queue depth.
+rows report notification-source capacity separately from edge queue depth and
+freeze each subscriber's queue policy independently. The diagnostic
+`--mixed-policy-fanout` row is limited to one shared-lane POD output feeding
+one blocking and one drop-oldest subscriber so its eventless and forced-wake
+variants retain identical authored graph topology.
 Bulk rows also report pool slots, release capacity, publication-backpressure
 capacity, and the maximum retained fanout release streams.
 `native_benchmark` retains the exact producer-specific row name, while each

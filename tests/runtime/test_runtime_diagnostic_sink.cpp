@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -115,6 +116,147 @@ TEST(RuntimeDiagnosticBufferTest, PreservesCallerSelectedDeadlineSeverity) {
   ASSERT_EQ(buffer.diagnostics().size(), 1U);
   EXPECT_EQ(buffer.diagnostics().front().token, "DEADLINE_MISS");
   EXPECT_EQ(buffer.diagnostics().front().severity, ::holoscan::DiagnosticSeverity::kWarning);
+}
+
+// REQ: RUNTIME-047
+// REQ: RUNTIME-049
+TEST(RuntimeDiagnosticBufferTest, RetainsBoundedManagedSignalEvidenceInParallelDetail) {
+  constexpr GraphGeneration kGraphGeneration = 43U;
+  RuntimeDiagnosticBuffer buffer{
+      DiagnosticId{225U},
+      DiagnosticSource{.graph_generation = kGraphGeneration},
+  };
+  const RuntimeDiagnosticDetail detail{
+      .managed_signal =
+          RuntimeManagedSignalDiagnostic{
+              .present = true,
+              .phase = RuntimeManagedSignalPhase::kAcceptSignal,
+              .signal = RuntimeManagedSignal::kSigInt,
+              .occurrence = RuntimeManagedSignalOccurrence::kFirst,
+              .prior_disposition = RuntimeManagedSignalDisposition::kCustom,
+              .census_reason = RuntimeManagedSignalCensusReason::kNone,
+              .originally_blocked = true,
+              .domain_generation = 7U,
+              .binding_generation = 11U,
+              .observed_thread_count = 1U,
+              .os_error = 0,
+          },
+  };
+
+  buffer.append(DiagnosticId{290U},
+                "RUNTIME_MANAGED_SIGNAL_RECEIVED",
+                DiagnosticSource{.graph_generation = kGraphGeneration},
+                {},
+                &detail,
+                {},
+                {},
+                ::holoscan::DiagnosticSeverity::kWarning);
+
+  ASSERT_EQ(buffer.diagnostics().size(), 1U);
+  ASSERT_EQ(buffer.details().size(), 1U);
+  EXPECT_EQ(buffer.diagnostics().front().id, DiagnosticId{290U});
+  EXPECT_EQ(buffer.diagnostics().front().token, "RUNTIME_MANAGED_SIGNAL_RECEIVED");
+  EXPECT_EQ(buffer.diagnostics().front().severity, ::holoscan::DiagnosticSeverity::kWarning);
+  EXPECT_EQ(buffer.diagnostics().front().source.graph_generation, kGraphGeneration);
+  const RuntimeManagedSignalDiagnostic& observed = buffer.details().front().managed_signal;
+  EXPECT_TRUE(observed.present);
+  EXPECT_EQ(observed.phase, RuntimeManagedSignalPhase::kAcceptSignal);
+  EXPECT_EQ(observed.signal, RuntimeManagedSignal::kSigInt);
+  EXPECT_EQ(observed.occurrence, RuntimeManagedSignalOccurrence::kFirst);
+  EXPECT_EQ(observed.prior_disposition, RuntimeManagedSignalDisposition::kCustom);
+  EXPECT_TRUE(observed.originally_blocked);
+  EXPECT_EQ(observed.domain_generation, 7U);
+  EXPECT_EQ(observed.binding_generation, 11U);
+  EXPECT_EQ(observed.observed_thread_count, 1U);
+  EXPECT_EQ(observed.os_error, 0);
+}
+
+// REQ: RUNTIME-047
+// REQ: RUNTIME-049
+TEST(RuntimeDiagnosticBufferTest, RetainsAllManagedSignalIdentifiersWithTypedDetails) {
+  struct Case {
+    DiagnosticId id;
+    const char* token;
+    ::holoscan::DiagnosticSeverity severity;
+    RuntimeManagedSignalDiagnostic detail;
+  };
+  const std::array cases{
+      Case{DiagnosticId{290U},
+           "RUNTIME_MANAGED_SIGNAL_RECEIVED",
+           ::holoscan::DiagnosticSeverity::kWarning,
+           {.present = true,
+            .phase = RuntimeManagedSignalPhase::kAcceptSignal,
+            .signal = RuntimeManagedSignal::kSigInt,
+            .occurrence = RuntimeManagedSignalOccurrence::kFirst,
+            .prior_disposition = RuntimeManagedSignalDisposition::kCustom,
+            .domain_generation = 3U,
+            .binding_generation = 4U}},
+      Case{DiagnosticId{291U},
+           "RUNTIME_MANAGED_SIGNAL_OWNER_BUSY",
+           ::holoscan::DiagnosticSeverity::kError,
+           {.present = true,
+            .phase = RuntimeManagedSignalPhase::kAcquireBinding,
+            .domain_generation = 3U,
+            .binding_generation = 4U}},
+      Case{DiagnosticId{292U},
+           "RUNTIME_MANAGED_SIGNAL_DOMAIN_REQUIRED",
+           ::holoscan::DiagnosticSeverity::kError,
+           {.present = true,
+            .phase = RuntimeManagedSignalPhase::kThreadCensus,
+            .census_reason = RuntimeManagedSignalCensusReason::kMultipleThreads,
+            .observed_thread_count = 2U}},
+      Case{DiagnosticId{293U},
+           "RUNTIME_MANAGED_SIGNAL_INSTALL_FAILED",
+           ::holoscan::DiagnosticSeverity::kError,
+           {.present = true, .phase = RuntimeManagedSignalPhase::kSnapshotMask, .os_error = 5}},
+      Case{DiagnosticId{294U},
+           "RUNTIME_MANAGED_SIGNAL_WAIT_FAILED",
+           ::holoscan::DiagnosticSeverity::kError,
+           {.present = true,
+            .phase = RuntimeManagedSignalPhase::kPoll,
+            .domain_generation = 3U,
+            .binding_generation = 4U,
+            .os_error = 5}},
+      Case{DiagnosticId{295U},
+           "RUNTIME_MANAGED_SIGNAL_RESTORE_FAILED",
+           ::holoscan::DiagnosticSeverity::kError,
+           {.present = true,
+            .phase = RuntimeManagedSignalPhase::kRestoreMask,
+            .domain_generation = 3U,
+            .binding_generation = 4U,
+            .os_error = 5}},
+      Case{DiagnosticId{296U},
+           "RUNTIME_MANAGED_SIGNAL_ESCALATED",
+           ::holoscan::DiagnosticSeverity::kWarning,
+           {.present = true,
+            .phase = RuntimeManagedSignalPhase::kDelegateSignal,
+            .signal = RuntimeManagedSignal::kSigTerm,
+            .occurrence = RuntimeManagedSignalOccurrence::kSecond,
+            .prior_disposition = RuntimeManagedSignalDisposition::kIgnored,
+            .domain_generation = 3U,
+            .binding_generation = 4U}},
+  };
+  RuntimeDiagnosticBuffer buffer{DiagnosticId{225U}, {}};
+  for (const Case& test_case : cases) {
+    const RuntimeDiagnosticDetail detail{
+        .present = true,
+        .managed_signal = test_case.detail,
+    };
+    buffer.append(test_case.id, test_case.token, {}, {}, &detail, {}, {}, test_case.severity);
+  }
+  ASSERT_EQ(buffer.diagnostics().size(), cases.size());
+  ASSERT_EQ(buffer.details().size(), cases.size());
+  for (std::size_t index = 0U; index < cases.size(); ++index) {
+    EXPECT_EQ(buffer.diagnostics()[index].id, cases[index].id);
+    EXPECT_EQ(buffer.diagnostics()[index].token, cases[index].token);
+    EXPECT_EQ(buffer.diagnostics()[index].severity, cases[index].severity);
+    EXPECT_EQ(buffer.details()[index].managed_signal.phase, cases[index].detail.phase);
+    EXPECT_EQ(buffer.details()[index].managed_signal.signal, cases[index].detail.signal);
+    EXPECT_EQ(buffer.details()[index].managed_signal.occurrence, cases[index].detail.occurrence);
+    EXPECT_EQ(buffer.details()[index].managed_signal.census_reason,
+              cases[index].detail.census_reason);
+    EXPECT_EQ(buffer.details()[index].managed_signal.os_error, cases[index].detail.os_error);
+  }
 }
 
 #if GTEST_HAS_DEATH_TEST && (defined(__cpp_exceptions) || defined(_CPPUNWIND))

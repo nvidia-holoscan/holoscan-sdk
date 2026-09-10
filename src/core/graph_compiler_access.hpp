@@ -32,6 +32,7 @@ namespace graph_compiler_access_detail {
 struct PendingOperatorFactory {
   VertexId authored_vertex{};
   std::shared_ptr<OperatorFactoryBase> factory;
+  std::optional<std::size_t> root_operator_index;
 };
 
 struct AuthoredGraphLookup {
@@ -195,6 +196,7 @@ struct AuthoredVertexLookup {
         .operator_id = static_cast<OperatorInstanceId>(result.operators.size() + 1U),
         .factory = std::move(factory),
         .lifecycle_callbacks = {},
+        .root_operator_index = pending->root_operator_index,
     });
   }
   return result;
@@ -262,7 +264,7 @@ class GraphCompilerAccess {
     std::vector<SchemaPackagePlanRecord> result;
     {
       const std::shared_ptr<GraphState>& state = graph.state_;
-      std::lock_guard lock(state->mutex_);
+      const std::lock_guard lock(state->mutex_);
       if (state->generation_ != canonical.generation) {
         throw RuntimeError{Error{ErrorCode::kIncompatible, "GRAPH_MUTATED_DURING_COMPILE"}};
       }
@@ -308,7 +310,7 @@ class GraphCompilerAccess {
     std::vector<graph_compiler_access_detail::PendingOperatorFactory> pending_operators;
     {
       const std::shared_ptr<GraphState>& state = graph.state_;
-      std::lock_guard lock(state->mutex_);
+      const std::lock_guard lock(state->mutex_);
       if (state->generation_ != canonical.generation) {
         throw RuntimeError{Error{ErrorCode::kIncompatible, "GRAPH_MUTATED_DURING_COMPILE"}};
       }
@@ -320,13 +322,14 @@ class GraphCompilerAccess {
       authored_vertices = state->vertices_;
       pending_operators.reserve(state->operators_.size() +
                                 state->embedded_operator_mappings_.size());
-      for (const auto& op : state->operators_) {
+      for (std::size_t index = 0U; index < state->operators_.size(); ++index) {
+        const auto& op = state->operators_[index];
         pending_operators.push_back(
-            graph_compiler_access_detail::PendingOperatorFactory{op.vertex, op.factory});
+            graph_compiler_access_detail::PendingOperatorFactory{op.vertex, op.factory, index});
       }
       for (const auto& mapping : state->embedded_operator_mappings_) {
-        pending_operators.push_back(
-            graph_compiler_access_detail::PendingOperatorFactory{mapping.vertex, mapping.factory});
+        pending_operators.push_back(graph_compiler_access_detail::PendingOperatorFactory{
+            mapping.vertex, mapping.factory, std::nullopt});
       }
     }
     return graph_compiler_access_detail::make_selected_factory_inventory(
@@ -345,6 +348,9 @@ class GraphCompilerAccess {
   /// @throws std::bad_alloc when cold factory or identity storage cannot be allocated.
   /// @note The inventory is process-local executable state. It never enters serialized
   /// artifacts, digests, diagnostics, GraphView, or transport records.
+  // Factory capture authenticates root and embedded ownership in one cold transaction before any
+  // executable inventory is published.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] static ExecutableFactoryInventory executable_factories(
       const Graph& graph, const GraphSnapshotData& canonical) {
     struct PendingClock {
@@ -359,7 +365,7 @@ class GraphCompilerAccess {
     std::vector<PendingClock> pending_clocks;
     {
       const std::shared_ptr<GraphState>& state = graph.state_;
-      std::lock_guard lock(state->mutex_);
+      const std::lock_guard lock(state->mutex_);
       if (state->generation_ != canonical.generation) {
         throw RuntimeError{Error{ErrorCode::kIncompatible, "GRAPH_MUTATED_DURING_COMPILE"}};
       }
@@ -371,13 +377,14 @@ class GraphCompilerAccess {
       authored_vertices = state->vertices_;
       pending_operators.reserve(state->operators_.size() +
                                 state->embedded_operator_mappings_.size());
-      for (const auto& op : state->operators_) {
+      for (std::size_t index = 0U; index < state->operators_.size(); ++index) {
+        const auto& op = state->operators_[index];
         pending_operators.push_back(
-            graph_compiler_access_detail::PendingOperatorFactory{op.vertex, op.factory});
+            graph_compiler_access_detail::PendingOperatorFactory{op.vertex, op.factory, index});
       }
       for (const auto& mapping : state->embedded_operator_mappings_) {
-        pending_operators.push_back(
-            graph_compiler_access_detail::PendingOperatorFactory{mapping.vertex, mapping.factory});
+        pending_operators.push_back(graph_compiler_access_detail::PendingOperatorFactory{
+            mapping.vertex, mapping.factory, std::nullopt});
       }
       pending_clocks.reserve(state->clocks_.size());
       for (const auto& clock : state->clocks_) {
@@ -460,6 +467,7 @@ class GraphCompilerAccess {
           .operator_id = 0U,
           .factory = std::move(factory),
           .lifecycle_callbacks = std::move(lifecycle_callbacks),
+          .root_operator_index = pending.root_operator_index,
       });
     }
     std::ranges::sort(result.operators, [](const auto& lhs, const auto& rhs) {
@@ -507,7 +515,7 @@ class GraphCompilerAccess {
     std::vector<std::shared_ptr<OperatorFactoryBase>> factories;
     {
       const std::shared_ptr<GraphState>& state = graph.state_;
-      std::lock_guard lock(state->mutex_);
+      const std::lock_guard lock(state->mutex_);
       factories.reserve(state->operators_.size() + state->embedded_operator_mappings_.size());
       for (const auto& op : state->operators_)
         factories.push_back(op.factory);
@@ -547,7 +555,7 @@ class GraphCompilerAccess {
     std::size_t shared_count = 0;
     {
       const std::shared_ptr<GraphState>& state = graph.state_;
-      std::lock_guard lock(state->mutex_);
+      const std::lock_guard lock(state->mutex_);
       factories.reserve(state->clocks_.size());
       for (const auto& clock : state->clocks_) {
         if (clock.factory)
@@ -574,7 +582,7 @@ class GraphCompilerAccess {
   [[nodiscard]] static std::optional<GraphCompositionDiagnostic> composition_diagnostic(
       const Graph& graph) {
     const std::shared_ptr<GraphState>& state = graph.state_;
-    std::lock_guard lock(state->mutex_);
+    const std::lock_guard lock(state->mutex_);
     return state->composition_diagnostic_;
   }
 
@@ -605,7 +613,7 @@ class GraphCompilerAccess {
   /// unless a test explicitly arms it.
   static void fail_mutation_after(Graph& graph, std::size_t checkpoints) {
     const std::shared_ptr<GraphState>& state = graph.state_;
-    std::lock_guard lock(state->mutex_);
+    const std::lock_guard lock(state->mutex_);
     state->mutation_fault_countdown_ = checkpoints;
   }
 
@@ -614,7 +622,7 @@ class GraphCompilerAccess {
   /// @note This source-tree-only seam proves terminal publication remains allocation-safe.
   static void fail_composition_diagnostic_capture(Graph& graph) {
     const std::shared_ptr<GraphState>& state = graph.state_;
-    std::lock_guard lock(state->mutex_);
+    const std::lock_guard lock(state->mutex_);
     state->fail_composition_diagnostic_capture_ = true;
   }
 
@@ -623,7 +631,7 @@ class GraphCompilerAccess {
   /// @return True when the dense-ID invariant and operator indexes are consistent.
   [[nodiscard]] static bool dense_ids_valid(const Graph& graph) noexcept {
     const std::shared_ptr<GraphState>& state = graph.state_;
-    std::lock_guard lock(state->mutex_);
+    const std::lock_guard lock(state->mutex_);
     return state->dense_ids_valid();
   }
 };

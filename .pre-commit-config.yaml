@@ -22,19 +22,20 @@ repos:
       - id: check-json
         exclude: ^.*\.patch$
       - id: check-added-large-files
-        exclude: ^.*\.patch$|^modules/holomq/abi/.*\.exports\.baseline\.txt$
+        exclude: ^.*\.patch$|^ci/abi/holomq\.exports\.baseline\.txt$
 
-  # Copyright header check (NVIDIA SPDX)
+  # Repository-local validation and regression hooks
   - repo: local
     hooks:
       - id: check-copyright
         name: Check copyright headers
-        # Commit: staged paths only. ``--all-files``: auto-intersect vs main/release/latest refs
-        # when present; else all matching files. Override baseline: HOLOSCAN_COPYRIGHT_BASE_REF or
-        # ``--intersect-since-ref REF`` when invoking ``check_copyright.py`` (see ``--help``).
-        # Full tree: ``python3 scripts/check_copyright.py . --git-modified-only <ref>``.
+        # Commits check staged paths. Wide lists from ``--all-files`` are narrowed to the
+        # main/release diff unless an explicit base is supplied. Use the script's ``--full-scan``
+        # option for a deliberate full-tree audit.
         entry: python3 scripts/check_copyright.py
         args:
+          - --reject-nvidia-proprietary-path
+          - ^.*
           - --exclude
           - CodeCoverage.cmake
           - --exclude
@@ -57,12 +58,7 @@ repos:
           - --exclude
           - docs/fern/dist/
           - --exclude
-          - ^modules/holomq/abi/.*\.exports\.baseline\.txt$
-          # Fast DDS upstream examples (eProsima copyright); NVIDIA SPDX check does not apply.
-          - --exclude
-          - ^modules/holomq/examples/fastdds_benchmark/
-          - --exclude
-          - ^modules/holomq/examples/fastdds_example/
+          - ^ci/abi/holomq\.exports\.baseline\.txt$
           - --update-current-year
         language: system
         pass_filenames: true
@@ -76,12 +72,35 @@ repos:
         pass_filenames: false
         files: ^scripts/(check_copyright|test_check_copyright)\.py$
 
+      # run is a bootstrap entry point used before CMake/CTest exists.
+      # Use the host Python, Bash, and Git; the test has no third-party Python dependencies.
+      - id: test-run-script
+        name: Test run script git integration
+        entry: python3 scripts/test_run_script.py
+        language: system
+        pass_filenames: false
+        files: ^(run|scripts/test_run_script\.py)$
+
+      - id: check-doc-source-links
+        name: Check documentation source links
+        entry: python3 docs/scripts/render_source_links.py --docs-root docs --write
+        language: system
+        pass_filenames: true
+        files: ^docs/.*\.mdx?$
+
       - id: check-doc-links
         name: Check documentation links
         entry: python3 docs/scripts/check_doc_links.py
         language: system
         pass_filenames: false
         files: ^docs/
+
+      - id: check-local-markdown-links
+        name: Check local Markdown file links
+        entry: python3 docs/scripts/check_doc_links.py --local-files-only
+        language: system
+        pass_filenames: false
+        files: ^
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.6
@@ -116,7 +135,7 @@ repos:
         files: ^
         exclude: ^docs/fern/dist/
         args:
-          - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch,*modules/holomq/abi/*.exports.baseline.txt
+          - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch,*ci/abi/holomq.exports.baseline.txt
           - --ignore-regex=.*codespell-ignore$
           - --toml=.codespell.toml
           - --write-changes

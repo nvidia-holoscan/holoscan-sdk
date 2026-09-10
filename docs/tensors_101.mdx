@@ -15,8 +15,8 @@ lifetime contract, foreign DLPack tensors, fanout — waits in
 **Complete C++ example:** [`examples/tensors_101/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/tensors_101/cpp)
 
 <Note title="You will learn">
-  - How to declare tensor ports with `produces_tensor()`, `tensor_allocation()`,
-    and `expects_tensor()`
+  - How to declare Tensor ports with direction-specific
+    `produces_tensor()` and `expects_tensor()` contracts
   - The producer lifecycle: `allocate_tensor()` → `write()` → fill → `commit()` →
     `emit()`
   - Why stream ordering is automatic — and why you must never call
@@ -29,22 +29,18 @@ lifetime contract, foreign DLPack tensors, fanout — waits in
 ## Declaring tensor ports
 
 Tensor ports follow the same three-declaration model as every operator: structure
-belongs in `setup()`. Two things are declared per port:
-
-- **Layout** — a `TensorPortLayout` value with three *optional* fields:
-  `memory_kind`, `dtype`, and `rank`. An absent field means "not constrained here."
-  Outputs declare it with `produces_tensor(layout)`, inputs with
-  `expects_tensor(layout)`.
-- **Allocation bounds** (producer only) — `tensor_allocation(bounds)` opts the
-  output into a runtime-owned tensor pool. `max_rank` and `max_byte_span` are hard
-  caps the compiler uses to size that pool.
+belongs in `setup()`. A `TensorInputSpec` groups consumer requirements, while
+a `TensorOutputSpec` groups producer promises, finite bounds, and storage
+intent. Both use `TensorRepresentation` for memory kind, dtype, rank, and stride
+facts. Omit the entire directional contract for an unconstrained pass-through
+port; a present contract must say something meaningful.
 
 Here is the camera source and fusion consumer from the running example
-(`ea1_camera_imu_control`):
+(`camera_imu_control`):
 
 ```cpp
 constexpr DLDataType kByteDtype{kDLUInt, 8U, 1U};
-constexpr holoscan::TensorPortLayout kHostByteFrame{
+constexpr holoscan::TensorRepresentation kHostByteFrame{
     .memory_kind = holoscan::MemoryKind::kHost,
     .dtype = kByteDtype,
     .rank = 1U,
@@ -53,12 +49,16 @@ constexpr holoscan::TensorPortLayout kHostByteFrame{
 // CameraSource::setup() — the producer side
 spec.output(frame, "frame")
     .max_emits_per_compute(1U)
-    .produces_tensor(kHostByteFrame)
-    .tensor_allocation(
-        holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 64U});
+    .produces_tensor(holoscan::TensorOutputSpec{
+        .representation = kHostByteFrame,
+        .bounds = holoscan::tensor_bounds(64U),
+        .storage = holoscan::TensorOutputStorage::kRuntimePool,
+    });
 
 // WindowFusion::setup() — the consumer side
-spec.input(camera, "camera").queue_depth(4U).expects_tensor(kHostByteFrame);
+spec.input(camera, "camera")
+    .queue_depth(4U)
+    .expects_tensor(holoscan::TensorInputSpec{.representation = kHostByteFrame});
 ```
 
 When both endpoints of an edge explicitly constrain the same layout field with
@@ -66,8 +66,8 @@ incompatible values, `compile()` rejects the plan — one more check that runs
 [before anything executes](/holoscan/sdk-user-guide/getting-started/compile-and-check).
 
 <Warning>
-  A **zero** allocation bound means *reject allocation*, not "unbounded." If you
-  want a pool, both `max_rank` and `max_byte_span` must be nonzero.
+  A runtime-pool contract needs finite metadata and byte capacities. Exact rank
+  supplies the metadata capacity here; `tensor_bounds(64U)` supplies the byte cap.
 </Warning>
 
 ## Producing a tensor: the hot path
@@ -263,7 +263,7 @@ becomes real: `CameraSource` borrows a frame-sized slot each activation, fills i
 commits, and emits it with a capture timestamp; `WindowFusion` anchors its temporal
 window on the camera input, brackets the high-rate IMU samples around each frame,
 and reads frame metadata (`frame->data.nbytes()`) without ever copying the payload.
-The complete program is the `ea1_camera_imu_control` example application.
+The complete program is the `camera_imu_control` example application.
 
 ## Going deeper
 
@@ -276,8 +276,9 @@ multi-consumer fanout limits.
 
 ## Recap
 
-- Declare tensor structure in `setup()`: `produces_tensor(layout)` plus
-  `tensor_allocation(bounds)` on outputs, `expects_tensor(layout)` on inputs.
+- Declare Tensor structure in `setup()`: `produces_tensor(TensorOutputSpec)`
+  on outputs and `expects_tensor(TensorInputSpec)` on inputs. Put finite
+  bounds and `kRuntimePool` storage intent in the output spec.
 - Produce with `allocate_tensor()` → `write(ctx.cuda_stream())` → fill →
   `commit()` → `emit()`; the fused `write_and_commit()` covers the single-fill
   case.

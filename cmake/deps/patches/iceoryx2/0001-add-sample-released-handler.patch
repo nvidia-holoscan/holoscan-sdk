@@ -1,8 +1,24 @@
+From fcbb117119b6aa1c53e553f0c9dabf4b22286c88 Mon Sep 17 00:00:00 2001
+From: Gil Shapira <gshapira@nvidia.com>
+Date: Fri, 5 Jun 2026 15:19:49 -0700
+Subject: [PATCH] Add publisher callback for fully released samples
+
+Expose an optional publisher callback immediately before the transport
+returns a fully released shared-memory bucket to its pool. The callback
+receives borrowed views of the sample user header and payload, allowing
+external lifetime managers to reclaim associated resources at the exact
+final-release boundary.
+
+Propagate the callback through the Rust publisher builder, C FFI, and
+C++ API while retaining callback ownership in the created publisher.
+
+Upstream-Status: Pending [upstream submission not yet prepared]
+
 diff --git a/iceoryx2-cal/src/resizable_shared_memory/dynamic.rs b/iceoryx2-cal/src/resizable_shared_memory/dynamic.rs
-index 962ace22a..a0421f182 100644
+index e26e0bdb..10f6adc3 100644
 --- a/iceoryx2-cal/src/resizable_shared_memory/dynamic.rs
 +++ b/iceoryx2-cal/src/resizable_shared_memory/dynamic.rs
-@@ -723,6 +723,19 @@ where
+@@ -764,6 +764,19 @@ where
                          segment_id),
          }
      }
@@ -23,10 +39,10 @@ index 962ace22a..a0421f182 100644
  
  impl<Allocator: ShmAllocator, Shm: SharedMemory<Allocator>> ResizableSharedMemory<Allocator, Shm>
 diff --git a/iceoryx2-cal/src/resizable_shared_memory/mod.rs b/iceoryx2-cal/src/resizable_shared_memory/mod.rs
-index f7dee6861..190424fb8 100644
+index 8ef8e6c1..1a3c3e66 100644
 --- a/iceoryx2-cal/src/resizable_shared_memory/mod.rs
 +++ b/iceoryx2-cal/src/resizable_shared_memory/mod.rs
-@@ -257,4 +257,8 @@ pub trait ResizableSharedMemoryForPoolAllocator<Shm: SharedMemory<PoolAllocator>
+@@ -258,4 +258,8 @@ pub trait ResizableSharedMemoryForPoolAllocator<Shm: SharedMemory<PoolAllocator>
  
      /// Returns the bucket size of the corresponding [`PoolAllocator`]
      fn bucket_size(&self, segment_id: SegmentId) -> usize;
@@ -36,7 +52,7 @@ index f7dee6861..190424fb8 100644
 +    fn bucket_chunk_header_ptr(&self, offset: PointerOffset) -> *const u8;
  }
 diff --git a/iceoryx2-cxx/include/iox2/iceoryx2.hpp b/iceoryx2-cxx/include/iox2/iceoryx2.hpp
-index c938eeab3..a69e9008c 100644
+index 756c668a..3ce8bf8c 100644
 --- a/iceoryx2-cxx/include/iox2/iceoryx2.hpp
 +++ b/iceoryx2-cxx/include/iox2/iceoryx2.hpp
 @@ -89,6 +89,7 @@
@@ -48,17 +64,15 @@ index c938eeab3..a69e9008c 100644
  #include "iox2/server_details.hpp"
  #include "iox2/server_error.hpp"
 diff --git a/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp b/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp
-index d91e68ed9..8298c6913 100644
+index 961461b5..29001d23 100644
 --- a/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp
 +++ b/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp
-@@ -21,11 +21,13 @@
+@@ -23,9 +23,11 @@
  #include "iox2/internal/callback_context.hpp"
  #include "iox2/internal/iceoryx2.hpp"
  #include "iox2/publisher.hpp"
 +#include "iox2/sample_released_handler.hpp"
  #include "iox2/service_type.hpp"
- #include "iox2/unable_to_deliver_handler.hpp"
- #include "iox2/unable_to_deliver_strategy.hpp"
  
  #include <cstdint>
 +#include <memory>
@@ -67,7 +81,7 @@ index d91e68ed9..8298c6913 100644
  /// Factory to create a new [`Publisher`] port/endpoint for
 @@ -98,6 +100,13 @@ class PortFactoryPublisher {
      /// data
-     auto set_unable_to_deliver_handler(UnableToDeliverHandler* handler) && -> PortFactoryPublisher&&;
+     auto set_backpressure_handler(BackpressureHandler* handler) && -> PortFactoryPublisher&&;
  
 +    /// Sets a [`SampleReleasedHandler`] invoked when a loaned sample's shared-memory bucket is
 +    /// fully released on the publisher and is about to be returned to the pool.
@@ -82,12 +96,12 @@ index d91e68ed9..8298c6913 100644
 @@ -113,6 +122,7 @@ class PortFactoryPublisher {
      bb::Optional<OverridePreallocationCallback> m_override_preallocation_callback;
      bb::Optional<DegradationHandler* const> m_degradation_handler;
-     bb::Optional<UnableToDeliverHandler* const> m_unable_to_deliver_handler;
+     bb::Optional<BackpressureHandler* const> m_backpressure_handler;
 +    bb::Optional<SampleReleasedHandler> m_sample_released_handler;
  };
  
  template <ServiceType S, typename Payload, typename UserHeader>
-@@ -157,6 +167,13 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::set_unable_to_deliver_
+@@ -157,6 +167,13 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::set_backpressure_handl
      return std::move(*this);
  }
  
@@ -101,8 +115,8 @@ index d91e68ed9..8298c6913 100644
  template <ServiceType S, typename Payload, typename UserHeader>
  inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Expected<Publisher<S, Payload, UserHeader>,
                                                                                        PublisherCreateError> {
-@@ -190,6 +207,16 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Exp
-             static_cast<void*>(m_unable_to_deliver_handler.value()));
+@@ -187,6 +204,16 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Exp
+             &m_handle, detail::backpressure_handler_delegate, static_cast<void*>(m_backpressure_handler.value()));
      }
  
 +    std::unique_ptr<SampleReleasedHandler> owned_sample_released_handler;
@@ -118,7 +132,7 @@ index d91e68ed9..8298c6913 100644
      if (m_override_preallocation_callback.has_value()) {
          // NOLINTNEXTLINE(cppcoreguidelines-owning-memory) must be a raw pointer - crosses FFI boundary
          auto* callback = new OverridePreallocationCallback(m_override_preallocation_callback.value());
-@@ -205,7 +232,7 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Exp
+@@ -202,7 +229,7 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Exp
      auto result = iox2_port_factory_publisher_builder_create(m_handle, nullptr, &pub_handle);
  
      if (result == IOX2_OK) {
@@ -128,7 +142,7 @@ index d91e68ed9..8298c6913 100644
  
      return bb::err(bb::into<PublisherCreateError>(result));
 diff --git a/iceoryx2-cxx/include/iox2/publisher.hpp b/iceoryx2-cxx/include/iox2/publisher.hpp
-index be32dbefd..48a1d6c98 100644
+index 2665cd5a..39494d7b 100644
 --- a/iceoryx2-cxx/include/iox2/publisher.hpp
 +++ b/iceoryx2-cxx/include/iox2/publisher.hpp
 @@ -22,10 +22,12 @@
@@ -177,7 +191,7 @@ index be32dbefd..48a1d6c98 100644
  
 diff --git a/iceoryx2-cxx/include/iox2/sample_released_handler.hpp b/iceoryx2-cxx/include/iox2/sample_released_handler.hpp
 new file mode 100644
-index 000000000..7a987b457
+index 00000000..7a987b45
 --- /dev/null
 +++ b/iceoryx2-cxx/include/iox2/sample_released_handler.hpp
 @@ -0,0 +1,74 @@
@@ -256,10 +270,10 @@ index 000000000..7a987b457
 +
 +#endif // IOX2_SAMPLE_RELEASED_HANDLER_HPP
 diff --git a/iceoryx2-ffi/c/src/api/mod.rs b/iceoryx2-ffi/c/src/api/mod.rs
-index 68c770a26..e803c8c70 100644
+index ea886b8e..3f8c41d1 100644
 --- a/iceoryx2-ffi/c/src/api/mod.rs
 +++ b/iceoryx2-ffi/c/src/api/mod.rs
-@@ -70,6 +70,7 @@ mod response_header;
+@@ -72,6 +72,7 @@ mod response_header;
  mod response_mut;
  mod sample;
  mod sample_mut;
@@ -267,7 +281,7 @@ index 68c770a26..e803c8c70 100644
  mod server;
  mod server_details;
  mod service;
-@@ -154,6 +155,7 @@ pub use response_header::*;
+@@ -157,6 +158,7 @@ pub use response_header::*;
  pub use response_mut::*;
  pub use sample::*;
  pub use sample_mut::*;
@@ -276,16 +290,16 @@ index 68c770a26..e803c8c70 100644
  pub use server_details::*;
  pub use service::*;
 diff --git a/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs b/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs
-index d1130dd2d..4c996cf2d 100644
+index c61f5af8..06862b50 100644
 --- a/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs
 +++ b/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs
 @@ -16,9 +16,12 @@ use crate::api::{
      AssertNonNullHandle, HandleToType, IOX2_OK, IntoCInt, PayloadFfi, PublisherUnion,
-     UnsafeCallbackContextSendWorkaround, UserHeaderFfi, c_size_t, degradation_info_cast,
-     iox2_callback_context, iox2_degradation_handler, iox2_publisher_h, iox2_publisher_t,
--    iox2_service_type_e, iox2_unable_to_deliver_handler, unable_to_deliver_info_cast,
+     UnsafeCallbackContextSendWorkaround, UserHeaderFfi, backpressure_info_cast, c_size_t,
+     degradation_info_cast, iox2_backpressure_handler, iox2_callback_context,
+-    iox2_degradation_handler, iox2_publisher_h, iox2_publisher_t, iox2_service_type_e,
++    iox2_degradation_handler, iox2_publisher_h, iox2_publisher_t,
 +    iox2_sample_released_handler, iox2_sample_released_info_t, iox2_service_type_e,
-+    iox2_unable_to_deliver_handler, unable_to_deliver_info_cast,
  };
  
 +use iceoryx2::port::SampleReleasedInfo;
@@ -293,7 +307,10 @@ index d1130dd2d..4c996cf2d 100644
  use iceoryx2::port::publisher::PublisherCreateError;
  use iceoryx2::prelude::*;
  use iceoryx2::service::port_factory::publisher::PortFactoryPublisher;
-@@ -142,7 +145,10 @@ impl PortFactoryPublisherBuilderUnion {
+@@ -143,10 +146,13 @@ impl PortFactoryPublisherBuilderUnion {
+     }
+ }
+ 
 +const _: [(); 272] =
 +    [(); core::mem::size_of::<Option<PortFactoryPublisherBuilderUnion>>()];
 +
@@ -305,7 +322,7 @@ index d1130dd2d..4c996cf2d 100644
  }
  
  #[repr(C)]
-@@ -436,6 +439,65 @@ pub unsafe extern "C" fn iox2_port_factory_publisher_builder_set_unable_to_deliv
+@@ -440,6 +446,65 @@ pub unsafe extern "C" fn iox2_port_factory_publisher_builder_set_backpressure_ha
      }
  }
  
@@ -373,7 +390,7 @@ index d1130dd2d..4c996cf2d 100644
  /// # Arguments
 diff --git a/iceoryx2-ffi/c/src/api/sample_released_handler.rs b/iceoryx2-ffi/c/src/api/sample_released_handler.rs
 new file mode 100644
-index 000000000..7dc383dd5
+index 00000000..7dc383dd
 --- /dev/null
 +++ b/iceoryx2-ffi/c/src/api/sample_released_handler.rs
 @@ -0,0 +1,39 @@
@@ -417,22 +434,22 @@ index 000000000..7dc383dd5
 +pub type iox2_sample_released_handler =
 +    extern "C" fn(*const iox2_sample_released_info_t, iox2_callback_context);
 diff --git a/iceoryx2/src/port/client.rs b/iceoryx2/src/port/client.rs
-index 6f6bd94e8..fe02b3ac8 100644
+index a89b244c..c09e480f 100644
 --- a/iceoryx2/src/port/client.rs
 +++ b/iceoryx2/src/port/client.rs
-@@ -427,6 +427,7 @@ impl<
+@@ -480,6 +480,7 @@ impl<
              enable_safe_overflow: static_config.enable_safe_overflow_for_requests,
              degradation_handler: client_factory.request_degradation_handler,
-             unable_to_deliver_handler: client_factory.unable_to_deliver_handler,
+             backpressure_handler: client_factory.backpressure_handler,
 +            sample_released_handler: None,
              number_of_samples: number_of_requests,
              max_number_of_segments,
              service_state: service.clone(),
 diff --git a/iceoryx2/src/port/details/data_segment.rs b/iceoryx2/src/port/details/data_segment.rs
-index d852a763a..f61f44f59 100644
+index 33d39a88..34715111 100644
 --- a/iceoryx2/src/port/details/data_segment.rs
 +++ b/iceoryx2/src/port/details/data_segment.rs
-@@ -165,6 +165,16 @@ impl<Service: service::Service> DataSegment<Service> {
+@@ -182,6 +182,16 @@ impl<Service: service::Service> DataSegment<Service> {
          }
      }
  
@@ -450,31 +467,31 @@ index d852a763a..f61f44f59 100644
          match data_segment_type {
              DataSegmentType::Static => 1,
 diff --git a/iceoryx2/src/port/details/sender.rs b/iceoryx2/src/port/details/sender.rs
-index ae369736e..b44cc96c5 100644
+index 178d4b40..e7f65891 100644
 --- a/iceoryx2/src/port/details/sender.rs
 +++ b/iceoryx2/src/port/details/sender.rs
-@@ -32,10 +32,11 @@ use iceoryx2_log::{error, fail, fatal_panic, warn};
+@@ -34,10 +34,11 @@ use iceoryx2_log::{error, fail, fatal_panic, warn};
  use crate::node::SharedNode;
  use crate::port::{
-     DegradationAction, DegradationCause, DegradationHandler, DegradationInfo, LoanError, SendError,
--    UnableToDeliverHandler, UnableToDeliverInfo,
-+    SampleReleasedHandler, SampleReleasedInfo, UnableToDeliverHandler, UnableToDeliverInfo,
+     BackpressureHandler, BackpressureInfo, DegradationAction, DegradationCause, DegradationHandler,
+-    DegradationInfo, LoanError, SendError,
++    DegradationInfo, LoanError, SampleReleasedHandler, SampleReleasedInfo, SendError,
  };
- use crate::prelude::UnableToDeliverStrategy;
+ use crate::prelude::BackpressureStrategy;
  use crate::service::config_scheme::connection_config;
 +use crate::service::header::publish_subscribe::Header as PublishSubscribeHeader;
  use crate::service::static_config::message_type_details::{MessageTypeDetails, TypeVariant};
- use crate::service::{NoResource, ServiceState};
+ use crate::service::{NoResource, SharedServiceState};
  use crate::{service, service::naming_scheme::connection_name};
-@@ -119,6 +120,7 @@ pub(crate) struct Sender<Service: service::Service> {
+@@ -132,6 +133,7 @@ pub(crate) struct Sender<Service: service::Service> {
      pub(crate) max_number_of_segments: u8,
      pub(crate) degradation_handler: DegradationHandler<'static>,
-     pub(crate) unable_to_deliver_handler: Option<UnableToDeliverHandler<'static>>,
+     pub(crate) backpressure_handler: Option<BackpressureHandler<'static>>,
 +    pub(crate) sample_released_handler: Option<SampleReleasedHandler<'static>>,
-     pub(crate) service_state: Arc<ServiceState<Service, NoResource>>,
+     pub(crate) service_state: SharedServiceState<Service, NoResource>,
      pub(crate) tagger: CyclicTagger,
      pub(crate) loan_counter: AtomicUsize,
-@@ -481,6 +483,30 @@ impl<Service: service::Service> Sender<Service> {
+@@ -513,6 +515,30 @@ impl<Service: service::Service> Sender<Service> {
          if self.segment_states[offset.segment_id().value() as usize].release_sample(offset.offset())
              == 1
          {
@@ -506,10 +523,10 @@ index ae369736e..b44cc96c5 100644
                  self.data_segment.deallocate_bucket(offset);
              }
 diff --git a/iceoryx2/src/port/mod.rs b/iceoryx2/src/port/mod.rs
-index 60b0f629f..0e5baa3a5 100644
+index 772f7db2..63cba064 100644
 --- a/iceoryx2/src/port/mod.rs
 +++ b/iceoryx2/src/port/mod.rs
-@@ -132,6 +132,44 @@ impl UnableToDeliverHandler<'_> {
+@@ -130,6 +130,44 @@ impl BackpressureHandler<'_> {
      }
  }
  
@@ -555,85 +572,85 @@ index 60b0f629f..0e5baa3a5 100644
  /// data cannot be delivered, or when the system is corrupted and files are modified by
  /// non-iceoryx2 instances. Is used as return value of the [`DegradationHandler`] to define a
 diff --git a/iceoryx2/src/port/publisher.rs b/iceoryx2/src/port/publisher.rs
-index 4d57f68e5..f99a28352 100644
+index 0306097b..449a2aff 100644
 --- a/iceoryx2/src/port/publisher.rs
 +++ b/iceoryx2/src/port/publisher.rs
-@@ -454,6 +454,7 @@ impl<
+@@ -510,6 +510,7 @@ impl<
                      max_number_of_segments,
                      degradation_handler: publisher_factory.degradation_handler,
-                     unable_to_deliver_handler: publisher_factory.unable_to_deliver_handler,
+                     backpressure_handler: publisher_factory.backpressure_handler,
 +                    sample_released_handler: publisher_factory.sample_released_handler,
                      service_state: service.clone(),
                      tagger: CyclicTagger::new(),
                      loan_counter: AtomicUsize::new(0),
 diff --git a/iceoryx2/src/port/server.rs b/iceoryx2/src/port/server.rs
-index 7f097fb9b..4e8554c5a 100644
+index 2e84184a..7d472d41 100644
 --- a/iceoryx2/src/port/server.rs
 +++ b/iceoryx2/src/port/server.rs
-@@ -405,6 +405,7 @@ impl<
+@@ -461,6 +461,7 @@ impl<
              max_number_of_segments,
              degradation_handler: server_factory.response_degradation_handler,
-             unable_to_deliver_handler: server_factory.unable_to_deliver_handler,
+             backpressure_handler: server_factory.backpressure_handler,
 +            sample_released_handler: None,
              service_state: service.clone(),
              tagger: CyclicTagger::new(),
              loan_counter: AtomicUsize::new(0),
 diff --git a/iceoryx2/src/prelude.rs b/iceoryx2/src/prelude.rs
-index 5a9b83488..06f39f9ff 100644
+index 0307d3ac..5958db2f 100644
 --- a/iceoryx2/src/prelude.rs
 +++ b/iceoryx2/src/prelude.rs
 @@ -12,7 +12,10 @@
  
  pub use crate::config::Config;
  pub use crate::node::{Node, NodeBuilder, NodeState, node_name::NodeName};
--pub use crate::port::{event_id::EventId, unable_to_deliver_strategy::UnableToDeliverStrategy};
+-pub use crate::port::{backpressure_strategy::BackpressureStrategy, event_id::EventId};
 +pub use crate::port::{
-+    event_id::EventId, unable_to_deliver_strategy::UnableToDeliverStrategy, SampleReleasedHandler,
-+    SampleReleasedInfo,
++    SampleReleasedHandler, SampleReleasedInfo, backpressure_strategy::BackpressureStrategy,
++    event_id::EventId,
 +};
  pub use crate::service::messaging_pattern::MessagingPattern;
  pub use crate::service::{
      Service, ServiceDetails, attribute::AttributeSet, attribute::AttributeSpecifier,
 diff --git a/iceoryx2/src/service/port_factory/publisher.rs b/iceoryx2/src/service/port_factory/publisher.rs
-index 8ebf45947..931c5608f 100644
+index 3d3d16eb..6b519578 100644
 --- a/iceoryx2/src/service/port_factory/publisher.rs
 +++ b/iceoryx2/src/service/port_factory/publisher.rs
-@@ -56,8 +56,8 @@
- 
+@@ -57,7 +57,7 @@
  use crate::{
      port::{
--        DegradationAction, DegradationFn, DegradationHandler, UnableToDeliverFn,
--        UnableToDeliverHandler,
-+        DegradationAction, DegradationFn, DegradationHandler, SampleReleasedFn,
-+        SampleReleasedHandler, UnableToDeliverFn, UnableToDeliverHandler,
+         BackpressureFn, BackpressureHandler, DegradationAction, DegradationFn, DegradationHandler,
+-        backpressure_strategy::BackpressureStrategy,
++        SampleReleasedFn, SampleReleasedHandler, backpressure_strategy::BackpressureStrategy,
          publisher::{Publisher, PublisherCreateError},
-         unable_to_deliver_strategy::UnableToDeliverStrategy,
      },
-@@ -115,6 +115,7 @@ pub struct PortFactoryPublisher<
+     service,
+@@ -114,6 +114,7 @@ pub struct PortFactoryPublisher<
      pub(crate) config: LocalPublisherConfig,
      pub(crate) degradation_handler: DegradationHandler<'static>,
-     pub(crate) unable_to_deliver_handler: Option<UnableToDeliverHandler<'static>>,
+     pub(crate) backpressure_handler: Option<BackpressureHandler<'static>>,
 +    pub(crate) sample_released_handler: Option<SampleReleasedHandler<'static>>,
      pub(crate) preallocate_number_of_samples_override: PreallocatedSamplesOverride<'static>,
      pub(crate) factory: &'factory PortFactory<Service, Payload, UserHeader>,
  }
-@@ -143,6 +144,7 @@ impl<
+@@ -142,6 +143,8 @@ impl<
              factory: self.factory,
              degradation_handler: DegradationHandler::new_with(DegradationAction::Warn),
-             unable_to_deliver_handler: None,
+             backpressure_handler: None,
++            backpressure_handler: None,
 +            sample_released_handler: None,
              preallocate_number_of_samples_override: PreallocatedSamplesOverride::new(|v| v),
          }
      }
-@@ -172,6 +174,7 @@ impl<
+@@ -171,6 +174,8 @@ impl<
              },
              degradation_handler: DegradationHandler::new_with(DegradationAction::Warn),
-             unable_to_deliver_handler: None,
+             backpressure_handler: None,
++            backpressure_handler: None,
 +            sample_released_handler: None,
              preallocate_number_of_samples_override: PreallocatedSamplesOverride::new(|v| v),
              factory,
          }
-@@ -237,6 +240,17 @@ impl<
+@@ -233,6 +238,17 @@ impl<
          self
      }
  

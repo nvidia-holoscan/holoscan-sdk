@@ -213,7 +213,7 @@ void print_stats(std::string_view label, const SelectorStats& stats) {
 int main() {
   SelectorObservation::reset();
 
-  holoscan::Graph graph{"ea1-contract-selectors"};
+  holoscan::Graph graph{"holoscan-contract-selectors"};
   const auto stream = graph.op<PeriodicSource>("stream", kStreamPeriod);
   const auto exact = graph.op<ExactConsumer>("exact");
   const auto latest = graph.op<LatestWithinConsumer>("latest_within");

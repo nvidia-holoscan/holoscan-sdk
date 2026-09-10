@@ -29,6 +29,7 @@
 #include <holoscan/core/payload_options.hpp>
 #include <holoscan/core/port.hpp>
 #include <holoscan/core/predicate_input_view.hpp>
+#include <holoscan/core/rate.hpp>
 #include <holoscan/core/tensor_field.hpp>
 #include <holoscan/time/clock_registry.hpp>
 
@@ -43,11 +44,38 @@ class OperatorSpec;
 class TensorFieldInputSpecBuilder;
 class TensorFieldOutputSpecBuilder;
 
+/// @brief Derive Tensor slot capacity from one owning Operator input's finite compiled capacity.
+/// @param input Input declaration from the same Operator setup pass as the derived output.
+/// @return Compile-resolved input-capacity expression.
+/// @note The connected producer must have a finite runtime-pool allocation or be an imported
+/// external Tensor boundary. Embedded-Graph interface aliases are resolved to their concrete
+/// producer before capacity evaluation. A generic unbounded pass-through producer is rejected at
+/// compile.
+[[nodiscard]] inline TensorByteSpanExpression input_max_byte_span(const InputBase& input) {
+  return detail_make_input_max_byte_span(&input);
+}
+
 namespace detail {
 class SyntheticOperatorBinding;
 class OperatorSpecCompilerAccess;
 class OperatorSpecRuntimeAccess;
 class OperatorSpecTestAccess;
+
+/// @brief Retain one setup-time rate declaration before Graph canonicalization.
+///
+/// The follows pointer is cold process-local evidence only. Graph replaces it with an owner-local
+/// canonical port identity before any snapshot, plan, diagnostic, or artifact is published.
+struct AuthoredPortRate {
+  PortRateKind kind{PortRateKind::kUnspecified};
+  std::optional<Rate> nominal_rate;
+  std::optional<Rate> expected_rate;
+  const InputBase* follows_input{};
+  std::optional<RateRatio> follows_ratio;
+  std::optional<LifecycleStage> lifecycle_binding_stage;
+  std::optional<Rate> max_nominal_rate;
+  Error error{ErrorCode::kSuccess};
+  std::string_view error_token;
+};
 
 /// @brief Provide a bounded process-local discriminator for one admitted port payload type.
 ///
@@ -277,12 +305,54 @@ template <PublishedPayload T>
   return result;
 }
 
+/// @brief Return whether producer options author Tensor transfer policy rather than schema alone.
+[[nodiscard]] inline bool payload_options_carry_tensor_transfer(
+    const PayloadOptionsRecord& options) noexcept {
+  return options.interface_tensor_emit_policy != InterfaceTensorEmitPolicy::kRequireExportable ||
+         options.max_inline_bytes.has_value() || options.max_tensor_byte_span.has_value();
+}
+
+/// @brief Project allocation bounds guaranteed by a normalized runtime-pool contract.
+[[nodiscard]] inline TensorPoolBounds normalized_tensor_pool_bounds(
+    const TensorContractRecord& contract) noexcept {
+  // Runtime-pool normalization guarantees both values; keep that invariant explicit here instead
+  // of scattering unchecked optional accesses across each authoring builder.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
+  return TensorPoolBounds{
+      .max_rank = contract.max_rank.value(),
+      .max_byte_span = static_cast<std::size_t>(contract.max_byte_span.value()),
+  };
+  // NOLINTEND(bugprone-unchecked-optional-access)
+}
+
+/// @brief Return transfer policy already proven present by the caller's normalized-contract gate.
+[[nodiscard]] inline const TensorTransferPolicy& normalized_tensor_transfer(
+    const TensorContractRecord& contract) noexcept {
+  // Callers first establish that normalized transfer policy is present.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  return contract.transfer.value();
+}
+
 /// Cold-only field declaration plus its process-local schema-type discriminator.
 struct AuthoredTensorFieldConfiguration {
   TensorFieldConfigurationRecord configuration;
+  std::optional<TensorByteSpanExpression> tensor_byte_span_expression;
   const void* schema_type_token{};
   bool selector_valid{};
 };
+
+/// @brief Add the selected field identity to a common Tensor-contract diagnostic.
+[[nodiscard]] inline Error tensor_field_contract_error(
+    Error error, const TensorFieldConfigurationRecord& field) {
+  if (!error.message.empty()) {
+    error.message.append(" (field_id=");
+    error.message.append(std::to_string(field.field_id));
+    error.message.append(", tensor_index=");
+    error.message.append(std::to_string(field.tensor_index));
+    error.message.push_back(')');
+  }
+  return error;
+}
 }  // namespace detail
 
 /// @brief Register sparse lifecycle callbacks and ordering facts during Operator setup.
@@ -307,7 +377,7 @@ class HOLOSCAN_CORE_EXPORT LifecycleBuilder {
   /// @brief Register one optional callback for a lifecycle stage.
   ///
   /// Optional means callback absence is permitted. A registered callback returning failure still
-  /// fails the transition, and EA1 attempts it exactly once.
+  /// fails the transition, and baseline attempts it exactly once.
   /// @tparam T Exact concrete Operator type registered with the owning Graph.
   /// @param stage Exact logical checkpoint whose callback is registered.
   /// @param method Non-throwing member callback invoked when present.
@@ -355,6 +425,11 @@ class InputSpecBuilder {
     return *this;
   }
 
+  /// @brief Declare an advisory expected nominal input rate.
+  /// @param rate Exact positive rational samples per second.
+  /// @return This builder after retaining the normalized declaration or first error.
+  HOLOSCAN_CORE_EXPORT InputSpecBuilder& expected_rate(Rate rate);
+
   /// @brief Record an alternate diagnostic display name.
   /// @param alias Display-only name copied into cold metadata.
   /// @return This builder for fluent cold-path configuration.
@@ -366,27 +441,28 @@ class InputSpecBuilder {
     return *this;
   }
 
-  /// @brief Record logical Tensor requirements carried by this input.
-  /// @param layout Optional memory, dtype, and rank requirements.
+  /// @brief Record one normalized consumer Tensor spec carried by this input.
+  /// @param spec Representation, finite bounds, and optional conversion requirements.
   /// @return This builder for fluent cold-path configuration.
-  InputSpecBuilder& expects_tensor(TensorPortLayout layout) noexcept {
-    tensor_layout_ = layout;
+  InputSpecBuilder& expects_tensor(const TensorInputSpec& spec) {
+    auto normalized = detail::normalize_tensor_input_spec(spec);
+    if (!normalized) {
+      if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+        tensor_contract_error_ = std::move(normalized.error());
+      }
+      return *this;
+    }
+    tensor_layout_ = detail::tensor_representation(*normalized);
+    memory_conversion_ = normalized->memory_conversion;
+    tensor_contract_ = std::move(*normalized);
     return *this;
   }
 
-  /// @brief Record schema and interface Tensor requirements carried by this input.
+  /// @brief Record schema identity and payload options carried by this input.
   /// @param options Complete payload options copied into this builder.
   /// @return This builder for fluent cold-path configuration.
   InputSpecBuilder& payload_options(PayloadOptions options) {
     payload_options_ = detail::copy_payload_options(options);
-    return *this;
-  }
-
-  /// @brief Record the port-default memory-conversion request.
-  /// @param policy Closed conversion policy applied below edge-specific overrides.
-  /// @return This builder for fluent cold-path configuration.
-  InputSpecBuilder& memory_conversion(MemoryConversionPolicy policy) noexcept {
-    memory_conversion_ = policy;
     return *this;
   }
 
@@ -399,44 +475,41 @@ class InputSpecBuilder {
   [[nodiscard]] inline TensorFieldInputSpecBuilder tensor_field(
       TensorFieldSelector<SchemaT> selector);
 
-  /// @brief Declare one Tensor field from a direction-specific input contract.
+  /// @brief Declare one Tensor field from a direction-specific input spec.
   /// @tparam SchemaT Owning generated descriptor-backed schema type.
   /// @param selector Generated schema-typed field token.
-  /// @param contract Logical and conversion requirements copied into this declaration.
+  /// @param spec Logical and conversion requirements copied into this declaration.
   /// @return This input builder.
   /// @throws std::bad_alloc if field-record storage cannot be allocated.
   template <typename SchemaT>
   InputSpecBuilder& tensor_field(TensorFieldSelector<SchemaT> selector,
-                                 const TensorFieldInputContract& contract);
+                                 const TensorInputSpec& spec);
 
-  /// @brief Apply one input contract to a statically listed set of Tensor fields.
+  /// @brief Apply one input spec to a statically listed set of Tensor fields.
   /// @tparam SchemaT Owning generated descriptor-backed schema type.
   /// @tparam N Number of listed selectors.
   /// @param selectors Generated schema-typed field tokens.
-  /// @param contract Shared logical and conversion requirements.
+  /// @param spec Shared logical and conversion requirements.
   /// @return This input builder.
   /// @throws std::bad_alloc if field-record storage cannot be allocated.
   template <typename SchemaT, std::size_t N>
   InputSpecBuilder& tensor_fields(const std::array<TensorFieldSelector<SchemaT>, N>& selectors,
-                                  const TensorFieldInputContract& contract);
+                                  const TensorInputSpec& spec);
 
-  /// @brief Declare a heterogeneous set of input Tensor-field compatibility constraints.
-  /// @tparam SchemaT Owning generated descriptor-backed schema type.
-  /// @tparam N Static number of field-contract entries.
-  /// @param fields Generated selectors and input contracts for the fields to constrain. Fields
-  /// omitted from this array retain the existing unconstrained-input behavior.
-  /// @return This input builder.
-  /// @throws std::bad_alloc if field-record storage cannot be allocated.
+  /// @brief Declare heterogeneous common input specs for selected fields.
   template <typename SchemaT, std::size_t N>
   InputSpecBuilder& tensor_fields(
-      const std::array<TensorFieldInputContractEntry<SchemaT>, N>& fields);
+      const std::array<std::pair<TensorFieldSelector<SchemaT>, TensorInputSpec>, N>& fields);
 
  private:
-  std::uint32_t queue_depth_{1};
+  std::optional<std::uint32_t> queue_depth_;
+  detail::AuthoredPortRate rate_;
   std::string diagnostic_alias_;
-  std::optional<TensorPortLayout> tensor_layout_;
+  std::optional<TensorRepresentation> tensor_layout_;
   std::optional<MemoryConversionPolicy> memory_conversion_;
   std::optional<PayloadOptionsRecord> payload_options_;
+  std::optional<TensorContractRecord> tensor_contract_;
+  Error tensor_contract_error_{ErrorCode::kSuccess};
   std::uint16_t descriptor_tensor_field_count_{};
   std::vector<detail::AuthoredTensorFieldConfiguration> tensor_fields_;
 
@@ -454,6 +527,21 @@ class InputSpecBuilder {
 /// descriptor-backed Tensor schema output.
 class OutputSpecBuilder {
  public:
+  /// @brief Declare one fixed nominal output rate.
+  HOLOSCAN_CORE_EXPORT OutputSpecBuilder& nominal_rate(Rate rate);
+
+  /// @brief Declare the forward lifecycle stage that selects this output's nominal rate.
+  HOLOSCAN_CORE_EXPORT OutputSpecBuilder& lifecycle_nominal_rate(LifecycleStage bind_stage);
+
+  /// @brief Declare the maximum selectable nominal average for a lifecycle-selected output.
+  HOLOSCAN_CORE_EXPORT OutputSpecBuilder& max_nominal_rate(Rate rate);
+
+  /// @brief Derive this output's nominal rate from one input owned by the same Operator.
+  template <PublishedPayload U>
+  OutputSpecBuilder& follows(const Input<U>& input, RateRatio ratio = {}) {
+    return follows_input(input, ratio);
+  }
+
   /// @brief Set the maximum publications admitted from one compute activation.
   /// @param count Positive finite burst bound; the declaration default is one.
   /// @return This builder for fluent cold-path configuration.
@@ -480,28 +568,88 @@ class OutputSpecBuilder {
     return *this;
   }
 
-  /// @brief Record logical Tensor facts produced by this output or carrier.
-  /// @param layout Optional memory, dtype, and rank facts.
+  /// @brief Record one normalized pass-through producer Tensor spec.
+  /// @param spec Representation, finite bounds, and transfer promises.
   /// @return This builder for fluent cold-path configuration.
-  OutputSpecBuilder& produces_tensor(TensorPortLayout layout) noexcept {
-    tensor_layout_ = layout;
+  /// @note Ordinary carrier outputs reject runtime-pool storage intent.
+  OutputSpecBuilder& produces_tensor(const TensorOutputSpec& spec) {
+    auto normalized = detail::normalize_tensor_output_spec(spec);
+    if (!normalized) {
+      if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+        tensor_contract_error_ = std::move(normalized.error());
+      }
+      return *this;
+    }
+    if (!tensor_contract_ && payload_options_ &&
+        detail::payload_options_carry_tensor_transfer(*payload_options_)) {
+      if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+        tensor_contract_error_ =
+            Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT"};
+      }
+      return *this;
+    }
+    if (normalized->storage != TensorOutputStorage::kPassThrough) {
+      if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+        tensor_contract_error_ =
+            Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_ALLOCATION_UNSUPPORTED"};
+      }
+      return *this;
+    }
+    tensor_layout_ = detail::tensor_representation(*normalized);
+    std::optional<SchemaIdentityRecord> schema;
+    if (payload_options_) {
+      schema = std::move(payload_options_->schema);
+    }
+    payload_options_.reset();
+    if (normalized->transfer || schema) {
+      PayloadOptionsRecord options{.schema = std::move(schema)};
+      if (normalized->transfer) {
+        const auto& transfer = detail::normalized_tensor_transfer(*normalized);
+        options.max_inline_bytes =
+            transfer.max_inline_bytes
+                ? std::optional{static_cast<std::uint32_t>(*transfer.max_inline_bytes)}
+                : std::nullopt;
+        options.max_tensor_byte_span = transfer.max_staging_byte_span;
+        options.interface_tensor_emit_policy = transfer.foreign_emit_policy;
+      }
+      payload_options_ = std::move(options);
+    }
+    tensor_contract_ = std::move(*normalized);
     return *this;
   }
 
-  /// @brief Record schema and interface Tensor materialization intent.
-  /// @param options Complete producer payload options copied into this builder.
+  /// @brief Record schema identity and payload options carried by this output.
+  /// @param options Complete payload options copied into this builder.
   /// @return This builder for fluent cold-path configuration.
   OutputSpecBuilder& payload_options(PayloadOptions options) {
-    payload_options_ = detail::copy_payload_options(options);
+    PayloadOptionsRecord copied = detail::copy_payload_options(options);
+    if (tensor_contract_ && detail::payload_options_carry_tensor_transfer(copied)) {
+      if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+        tensor_contract_error_ =
+            Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT"};
+      }
+      return *this;
+    }
+    if (tensor_contract_ && payload_options_) {
+      copied.max_inline_bytes = payload_options_->max_inline_bytes;
+      copied.max_tensor_byte_span = payload_options_->max_tensor_byte_span;
+      copied.interface_tensor_emit_policy = payload_options_->interface_tensor_emit_policy;
+    }
+    payload_options_ = std::move(copied);
     return *this;
   }
 
  private:
+  HOLOSCAN_CORE_EXPORT OutputSpecBuilder& follows_input(const InputBase& input, RateRatio ratio);
+
   std::uint32_t max_emits_per_compute_{1};
   std::uint32_t late_joiner_history_depth_{};
   std::string diagnostic_alias_;
-  std::optional<TensorPortLayout> tensor_layout_;
+  std::optional<TensorRepresentation> tensor_layout_;
   std::optional<PayloadOptionsRecord> payload_options_;
+  std::optional<TensorContractRecord> tensor_contract_;
+  Error tensor_contract_error_{ErrorCode::kSuccess};
+  detail::AuthoredPortRate rate_;
 
   friend class OperatorSpec;
   friend class detail::OperatorSpecCompilerAccess;
@@ -510,11 +658,26 @@ class OutputSpecBuilder {
 
 /// @brief Configure a Tensor or descriptor-backed Tensor schema output.
 ///
-/// Every common output method preserves this specialized fluent type so call order cannot hide
-/// `tensor_allocation`. Recording bounds does not itself create a pool; compilation must admit and
-/// materialize physical placement in a later component.
+/// Every common output method preserves this specialized fluent type. Runtime-pool intent and its
+/// finite bounds are declared together in TensorOutputSpec; compilation admits and
+/// materializes physical placement in a later component.
 class TensorOutputSpecBuilder {
  public:
+  /// @brief Declare one fixed nominal output rate.
+  HOLOSCAN_CORE_EXPORT TensorOutputSpecBuilder& nominal_rate(Rate rate);
+
+  /// @brief Declare the forward lifecycle stage that selects this output's nominal rate.
+  HOLOSCAN_CORE_EXPORT TensorOutputSpecBuilder& lifecycle_nominal_rate(LifecycleStage bind_stage);
+
+  /// @brief Declare the maximum selectable nominal average for a lifecycle-selected output.
+  HOLOSCAN_CORE_EXPORT TensorOutputSpecBuilder& max_nominal_rate(Rate rate);
+
+  /// @brief Derive this output's nominal rate from one input owned by the same Operator.
+  template <PublishedPayload U>
+  TensorOutputSpecBuilder& follows(const Input<U>& input, RateRatio ratio = {}) {
+    return follows_input(input, ratio);
+  }
+
   /// @brief Set the maximum publications admitted from one compute activation.
   /// @param count Positive finite burst bound; the declaration default is one.
   /// @return This specialized builder.
@@ -541,28 +704,139 @@ class TensorOutputSpecBuilder {
     return *this;
   }
 
-  /// @brief Record logical Tensor facts produced by this Tensor-backed output.
-  /// @param layout Optional memory, dtype, and rank facts.
+  /// @brief Record one normalized producer Tensor spec.
+  /// @param spec Representation, finite bounds, storage intent, and transfer policy.
   /// @return This specialized builder.
-  TensorOutputSpecBuilder& produces_tensor(TensorPortLayout layout) noexcept {
-    tensor_layout_ = layout;
+  TensorOutputSpecBuilder& produces_tensor(const TensorOutputSpec& spec) {
+    if (tensor_byte_span_expression_) {
+      if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+        tensor_contract_error_ =
+            Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_SOURCE_CONFLICT"};
+      }
+      return *this;
+    }
+    auto normalized = detail::normalize_tensor_output_spec(spec);
+    if (!normalized) {
+      if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+        tensor_contract_error_ = std::move(normalized.error());
+      }
+      return *this;
+    }
+    if (!tensor_contract_ && payload_options_ &&
+        detail::payload_options_carry_tensor_transfer(*payload_options_)) {
+      if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+        tensor_contract_error_ =
+            Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT"};
+      }
+      return *this;
+    }
+    tensor_layout_ = detail::tensor_representation(*normalized);
+    if (normalized->storage == TensorOutputStorage::kRuntimePool) {
+      tensor_allocation_ = detail::normalized_tensor_pool_bounds(*normalized);
+      has_tensor_allocation_ = true;
+    } else {
+      tensor_allocation_ = {};
+      has_tensor_allocation_ = false;
+    }
+    std::optional<SchemaIdentityRecord> schema;
+    if (payload_options_) {
+      schema = std::move(payload_options_->schema);
+    }
+    payload_options_.reset();
+    if (normalized->transfer || schema) {
+      PayloadOptionsRecord options{.schema = std::move(schema)};
+      std::optional<std::uint64_t> schema_tensor_staging_byte_span;
+      if (normalized->transfer) {
+        const auto& transfer = detail::normalized_tensor_transfer(*normalized);
+        options.max_inline_bytes =
+            transfer.max_inline_bytes
+                ? std::optional{static_cast<std::uint32_t>(*transfer.max_inline_bytes)}
+                : std::nullopt;
+        options.interface_tensor_emit_policy = transfer.foreign_emit_policy;
+        if (descriptor_tensor_schema_) {
+          schema_tensor_staging_byte_span = transfer.max_staging_byte_span;
+        }
+      }
+      options.max_tensor_byte_span = schema_tensor_staging_byte_span;
+      payload_options_ = std::move(options);
+    }
+    tensor_contract_ = std::move(*normalized);
     return *this;
   }
 
-  /// @brief Record schema and interface Tensor materialization intent.
-  /// @param options Complete producer payload options copied into this builder.
+  /// @brief Record a runtime-pool Tensor spec with compile-derived slot byte capacity.
+  /// @param spec Runtime-pool representation, rank capacity, and optional transfer policy.
+  /// @param byte_span Immutable scalar expression resolved from generation-zero dependencies.
+  /// @return This specialized builder.
+  /// @note A literal maximum byte span and a derived expression are mutually exclusive. Changing
+  /// a recompile-required Parameter requires compiling a new plan, not rebuilding the binary.
+  TensorOutputSpecBuilder& produces_tensor(const TensorOutputSpec& spec,
+                                           TensorByteSpanExpression byte_span) {
+    if (descriptor_tensor_schema_) {
+      record_contract_error("GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID");
+      return *this;
+    }
+    if (tensor_contract_ || tensor_byte_span_expression_) {
+      record_contract_error("GRAPH_TENSOR_BYTE_SPAN_SOURCE_CONFLICT");
+      return *this;
+    }
+    if (byte_span.invalid_reason_ != TensorByteSpanExpressionInvalidReason::kNone ||
+        byte_span.nodes_.empty()) {
+      record_contract_error("GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID");
+      return *this;
+    }
+    if (payload_options_ && detail::payload_options_carry_tensor_transfer(*payload_options_)) {
+      record_contract_error("GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+      return *this;
+    }
+    auto normalized = detail::normalize_tensor_output_spec_with_derived_byte_span(spec);
+    if (!normalized) {
+      record_contract_error(std::move(normalized.error()));
+      return *this;
+    }
+    tensor_layout_ = detail::tensor_representation(*normalized);
+    tensor_allocation_ = {};
+    has_tensor_allocation_ = false;
+    std::optional<SchemaIdentityRecord> schema;
+    if (payload_options_) {
+      schema = std::move(payload_options_->schema);
+    }
+    payload_options_.reset();
+    if (normalized->transfer || schema) {
+      PayloadOptionsRecord options{.schema = std::move(schema)};
+      if (normalized->transfer) {
+        const auto& transfer = detail::normalized_tensor_transfer(*normalized);
+        options.max_inline_bytes =
+            transfer.max_inline_bytes
+                ? std::optional{static_cast<std::uint32_t>(*transfer.max_inline_bytes)}
+                : std::nullopt;
+        options.interface_tensor_emit_policy = transfer.foreign_emit_policy;
+      }
+      payload_options_ = std::move(options);
+    }
+    tensor_contract_ = std::move(*normalized);
+    tensor_byte_span_expression_ = std::move(byte_span);
+    return *this;
+  }
+
+  /// @brief Record schema identity and payload options carried by this output.
+  /// @param options Complete payload options copied into this builder.
   /// @return This specialized builder.
   TensorOutputSpecBuilder& payload_options(PayloadOptions options) {
-    payload_options_ = detail::copy_payload_options(options);
-    return *this;
-  }
-
-  /// @brief Opt this Tensor-backed output into bounded shaped allocation.
-  /// @param bounds Positive maximum rank and byte span admitted during compilation.
-  /// @return This specialized builder.
-  TensorOutputSpecBuilder& tensor_allocation(TensorAllocationBounds bounds) noexcept {
-    tensor_allocation_ = bounds;
-    has_tensor_allocation_ = true;
+    PayloadOptionsRecord copied = detail::copy_payload_options(options);
+    if (tensor_contract_ && detail::payload_options_carry_tensor_transfer(copied)) {
+      if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+        tensor_contract_error_ =
+            Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT"};
+      }
+      return *this;
+    }
+    if (tensor_contract_ && payload_options_) {
+      copied.max_inline_bytes = payload_options_->max_inline_bytes;
+      copied.max_tensor_byte_span = payload_options_->max_tensor_byte_span;
+      copied.interface_tensor_emit_policy = payload_options_->interface_tensor_emit_policy;
+    }
+    payload_options_ = std::move(copied);
     return *this;
   }
 
@@ -575,48 +849,71 @@ class TensorOutputSpecBuilder {
   [[nodiscard]] inline TensorFieldOutputSpecBuilder tensor_field(
       TensorFieldSelector<SchemaT> selector);
 
-  /// @brief Declare one Tensor field from a direction-specific output contract.
+  /// @brief Declare one Tensor field from a direction-specific output spec.
   /// @tparam SchemaT Owning generated descriptor-backed schema type.
   /// @param selector Generated schema-typed field token.
-  /// @param contract Logical, allocation, and optional materialization facts.
+  /// @param spec Logical, allocation, and optional materialization facts.
   /// @return This output builder.
   /// @throws std::bad_alloc if field-record storage cannot be allocated.
   template <typename SchemaT>
   TensorOutputSpecBuilder& tensor_field(TensorFieldSelector<SchemaT> selector,
-                                        const TensorFieldOutputContract& contract);
+                                        const TensorOutputSpec& spec);
 
-  /// @brief Apply one output contract to a statically listed set of Tensor fields.
+  /// @brief Declare one Tensor field with compile-derived slot byte capacity.
+  /// @tparam SchemaT Owning generated descriptor-backed schema type.
+  /// @param selector Generated schema-typed field token.
+  /// @param spec Runtime-pool representation, rank capacity, and transfer policy.
+  /// @param byte_span Immutable scalar expression resolved from generation-zero dependencies.
+  /// @return This output builder.
+  template <typename SchemaT>
+  TensorOutputSpecBuilder& tensor_field(TensorFieldSelector<SchemaT> selector,
+                                        const TensorOutputSpec& spec,
+                                        TensorByteSpanExpression byte_span);
+
+  /// @brief Apply one output spec to a statically listed set of Tensor fields.
   /// @tparam SchemaT Owning generated descriptor-backed schema type.
   /// @tparam N Number of listed selectors.
   /// @param selectors Generated schema-typed field tokens.
-  /// @param contract Shared logical, allocation, and optional materialization facts.
+  /// @param spec Shared logical, allocation, and optional materialization facts.
   /// @return This output builder.
   /// @throws std::bad_alloc if field-record storage cannot be allocated.
   template <typename SchemaT, std::size_t N>
   TensorOutputSpecBuilder& tensor_fields(
-      const std::array<TensorFieldSelector<SchemaT>, N>& selectors,
-      const TensorFieldOutputContract& contract);
+      const std::array<TensorFieldSelector<SchemaT>, N>& selectors, const TensorOutputSpec& spec);
 
-  /// @brief Declare a complete heterogeneous output Tensor-field inventory.
-  /// @tparam SchemaT Owning generated descriptor-backed schema type.
-  /// @tparam N Static number of field-contract entries.
-  /// @param fields One generated selector and output contract per schema Tensor field.
-  /// @return This output builder.
-  /// @throws std::bad_alloc if field-record storage cannot be allocated.
+  /// @brief Declare a complete heterogeneous common output field inventory.
   template <typename SchemaT, std::size_t N>
   TensorOutputSpecBuilder& tensor_fields(
-      const std::array<TensorFieldOutputContractEntry<SchemaT>, N>& fields);
+      const std::array<std::pair<TensorFieldSelector<SchemaT>, TensorOutputSpec>, N>& fields);
 
  private:
+  HOLOSCAN_CORE_EXPORT TensorOutputSpecBuilder& follows_input(const InputBase& input,
+                                                              RateRatio ratio);
+
+  void record_contract_error(std::string_view token) {
+    record_contract_error(Error{ErrorCode::kInvalidArgument, std::string{token}});
+  }
+
+  void record_contract_error(Error error) {
+    if (tensor_contract_error_.code == ErrorCode::kSuccess) {
+      tensor_contract_error_ = std::move(error);
+    }
+  }
+
   std::uint32_t max_emits_per_compute_{1};
   std::uint32_t late_joiner_history_depth_{};
   std::string diagnostic_alias_;
-  std::optional<TensorPortLayout> tensor_layout_;
+  std::optional<TensorRepresentation> tensor_layout_;
   std::optional<PayloadOptionsRecord> payload_options_;
-  TensorAllocationBounds tensor_allocation_{};
+  TensorPoolBounds tensor_allocation_{};
   bool has_tensor_allocation_{};
+  std::optional<TensorContractRecord> tensor_contract_;
+  std::optional<TensorByteSpanExpression> tensor_byte_span_expression_;
+  Error tensor_contract_error_{ErrorCode::kSuccess};
   std::uint16_t descriptor_tensor_field_count_{};
+  bool descriptor_tensor_schema_{};
   std::vector<detail::AuthoredTensorFieldConfiguration> tensor_fields_;
+  detail::AuthoredPortRate rate_;
 
   friend class OperatorSpec;
   friend class TensorFieldOutputSpecBuilder;
@@ -632,27 +929,21 @@ class TensorFieldInputSpecBuilder {
   TensorFieldInputSpecBuilder(TensorFieldInputSpecBuilder&&) = delete;
   TensorFieldInputSpecBuilder& operator=(TensorFieldInputSpecBuilder&&) = delete;
 
-  /// @brief Record logical Tensor requirements for the selected field.
-  /// @param layout Optional memory, dtype, and rank requirements.
+  /// @brief Record a normalized consumer spec for the selected field.
+  /// @param spec Representation, finite bounds, and conversion requirements.
   /// @return This field-scoped builder.
-  TensorFieldInputSpecBuilder& expects_tensor(TensorPortLayout layout) noexcept {
-    record().tensor_layout = layout;
-    return *this;
-  }
-
-  /// @brief Record materialization policy for the selected field.
-  /// @param options Field-only policy; schema identity remains port-wide.
-  /// @return This field-scoped builder.
-  TensorFieldInputSpecBuilder& payload_options(TensorFieldPayloadOptions options) noexcept {
-    record().payload_options = std::move(options);
-    return *this;
-  }
-
-  /// @brief Record the selected field's memory-conversion request.
-  /// @param policy Closed conversion policy for this field.
-  /// @return This field-scoped builder.
-  TensorFieldInputSpecBuilder& memory_conversion(MemoryConversionPolicy policy) noexcept {
-    record().memory_conversion = policy;
+  TensorFieldInputSpecBuilder& expects_tensor(const TensorInputSpec& spec) {
+    auto normalized = detail::normalize_tensor_input_spec(spec);
+    if (!normalized) {
+      if (parent_->tensor_contract_error_.code == ErrorCode::kSuccess) {
+        parent_->tensor_contract_error_ =
+            detail::tensor_field_contract_error(std::move(normalized.error()), record());
+      }
+      return *this;
+    }
+    record().tensor_layout = detail::tensor_representation(*normalized);
+    record().memory_conversion = normalized->memory_conversion;
+    record().tensor_contract = std::move(*normalized);
     return *this;
   }
 
@@ -678,27 +969,77 @@ class TensorFieldOutputSpecBuilder {
   TensorFieldOutputSpecBuilder(TensorFieldOutputSpecBuilder&&) = delete;
   TensorFieldOutputSpecBuilder& operator=(TensorFieldOutputSpecBuilder&&) = delete;
 
-  /// @brief Record logical Tensor facts for the selected field.
-  /// @param layout Optional memory, dtype, and rank facts.
+  /// @brief Record a normalized producer spec for the selected field.
+  /// @param spec Representation, finite bounds, storage intent, and transfer policy.
   /// @return This field-scoped builder.
-  TensorFieldOutputSpecBuilder& produces_tensor(TensorPortLayout layout) noexcept {
-    record().tensor_layout = layout;
+  TensorFieldOutputSpecBuilder& produces_tensor(const TensorOutputSpec& spec) {
+    if (authored_record().tensor_byte_span_expression) {
+      record_error("GRAPH_TENSOR_BYTE_SPAN_SOURCE_CONFLICT");
+      return *this;
+    }
+    auto normalized = detail::normalize_tensor_output_spec(spec);
+    if (!normalized) {
+      if (parent_->tensor_contract_error_.code == ErrorCode::kSuccess) {
+        parent_->tensor_contract_error_ =
+            detail::tensor_field_contract_error(std::move(normalized.error()), record());
+      }
+      return *this;
+    }
+    record().tensor_layout = detail::tensor_representation(*normalized);
+    if (normalized->storage == TensorOutputStorage::kRuntimePool) {
+      record().tensor_allocation = detail::normalized_tensor_pool_bounds(*normalized);
+    } else {
+      record().tensor_allocation.reset();
+    }
+    record().payload_options.reset();
+    if (normalized->transfer) {
+      const auto& transfer = detail::normalized_tensor_transfer(*normalized);
+      record().payload_options = TensorFieldTransferRecord{
+          .max_inline_bytes = transfer.max_inline_bytes,
+          .max_tensor_byte_span = transfer.max_staging_byte_span,
+          .interface_tensor_emit_policy = transfer.foreign_emit_policy,
+      };
+    }
+    record().tensor_contract = std::move(*normalized);
     return *this;
   }
 
-  /// @brief Record materialization policy for the selected field.
-  /// @param options Field-only policy; schema identity remains port-wide.
+  /// @brief Record a runtime-pool field spec with compile-derived slot byte capacity.
+  /// @param spec Runtime-pool representation, rank capacity, and optional transfer policy.
+  /// @param byte_span Immutable scalar expression resolved from generation-zero dependencies.
   /// @return This field-scoped builder.
-  TensorFieldOutputSpecBuilder& payload_options(TensorFieldPayloadOptions options) noexcept {
-    record().payload_options = std::move(options);
-    return *this;
-  }
-
-  /// @brief Record positive allocation bounds for the selected field pool.
-  /// @param bounds Maximum rank and byte span for this field.
-  /// @return This field-scoped builder.
-  TensorFieldOutputSpecBuilder& tensor_allocation(TensorAllocationBounds bounds) noexcept {
-    record().tensor_allocation = bounds;
+  TensorFieldOutputSpecBuilder& produces_tensor(const TensorOutputSpec& spec,
+                                                TensorByteSpanExpression byte_span) {
+    if (record().tensor_contract || authored_record().tensor_byte_span_expression) {
+      record_error("GRAPH_TENSOR_BYTE_SPAN_SOURCE_CONFLICT");
+      return *this;
+    }
+    if (byte_span.invalid_reason_ != TensorByteSpanExpressionInvalidReason::kNone ||
+        byte_span.nodes_.empty()) {
+      record_error("GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID");
+      return *this;
+    }
+    auto normalized = detail::normalize_tensor_output_spec_with_derived_byte_span(spec);
+    if (!normalized) {
+      if (parent_->tensor_contract_error_.code == ErrorCode::kSuccess) {
+        parent_->tensor_contract_error_ =
+            detail::tensor_field_contract_error(std::move(normalized.error()), record());
+      }
+      return *this;
+    }
+    record().tensor_layout = detail::tensor_representation(*normalized);
+    record().tensor_allocation.reset();
+    record().payload_options.reset();
+    if (normalized->transfer) {
+      const auto& transfer = detail::normalized_tensor_transfer(*normalized);
+      record().payload_options = TensorFieldTransferRecord{
+          .max_inline_bytes = transfer.max_inline_bytes,
+          .max_tensor_byte_span = transfer.max_staging_byte_span,
+          .interface_tensor_emit_policy = transfer.foreign_emit_policy,
+      };
+    }
+    record().tensor_contract = std::move(*normalized);
+    authored_record().tensor_byte_span_expression = std::move(byte_span);
     return *this;
   }
 
@@ -708,6 +1049,17 @@ class TensorFieldOutputSpecBuilder {
 
   TensorFieldConfigurationRecord& record() noexcept {
     return parent_->tensor_fields_[index_].configuration;
+  }
+
+  detail::AuthoredTensorFieldConfiguration& authored_record() noexcept {
+    return parent_->tensor_fields_[index_];
+  }
+
+  void record_error(std::string_view token) {
+    if (parent_->tensor_contract_error_.code == ErrorCode::kSuccess) {
+      parent_->tensor_contract_error_ = detail::tensor_field_contract_error(
+          Error{ErrorCode::kInvalidArgument, std::string{token}}, record());
+    }
   }
 
   TensorOutputSpecBuilder* parent_{};
@@ -720,11 +1072,12 @@ template <typename SchemaT>
 TensorFieldInputSpecBuilder InputSpecBuilder::tensor_field(
     const TensorFieldSelector<SchemaT> selector) {
   constexpr bool descriptor_schema = detail::HasDescriptorTensorSchemaNativeTraits<SchemaT>;
-  const auto expected_field_id = [&]() -> std::optional<std::uint16_t> {
+  const bool selector_valid = [&]() {
     if constexpr (descriptor_schema) {
-      return detail::descriptor_tensor_schema_field_id_at<SchemaT>(selector.tensor_index);
+      return detail::descriptor_tensor_schema_field_selector_matches<SchemaT>(
+          selector.field_id, selector.tensor_index);
     } else {
-      return std::nullopt;
+      return false;
     }
   }();
   tensor_fields_.push_back(detail::AuthoredTensorFieldConfiguration{
@@ -734,41 +1087,37 @@ TensorFieldInputSpecBuilder InputSpecBuilder::tensor_field(
               .tensor_index = selector.tensor_index,
           },
       .schema_type_token = &detail::kOperatorSpecLocalTypeToken<SchemaT>,
-      .selector_valid = expected_field_id.has_value() && *expected_field_id == selector.field_id,
+      .selector_valid = selector_valid,
   });
   return TensorFieldInputSpecBuilder{this, tensor_fields_.size() - 1U};
 }
 
 template <typename SchemaT>
 InputSpecBuilder& InputSpecBuilder::tensor_field(const TensorFieldSelector<SchemaT> selector,
-                                                 const TensorFieldInputContract& contract) {
+                                                 const TensorInputSpec& spec) {
   auto field_builder = tensor_field(selector);
-  field_builder.expects_tensor(contract.layout);
-  if (contract.memory_conversion) {
-    field_builder.memory_conversion(*contract.memory_conversion);
-  }
+  field_builder.expects_tensor(spec);
   return *this;
 }
 
 template <typename SchemaT, std::size_t N>
 InputSpecBuilder& InputSpecBuilder::tensor_fields(
-    const std::array<TensorFieldSelector<SchemaT>, N>& selectors,
-    const TensorFieldInputContract& contract) {
+    const std::array<TensorFieldSelector<SchemaT>, N>& selectors, const TensorInputSpec& spec) {
   for (const auto selector : selectors) {
-    tensor_field(selector, contract);
+    tensor_field(selector, spec);
   }
   return *this;
 }
 
 template <typename SchemaT, std::size_t N>
 InputSpecBuilder& InputSpecBuilder::tensor_fields(
-    const std::array<TensorFieldInputContractEntry<SchemaT>, N>& fields) {
+    const std::array<std::pair<TensorFieldSelector<SchemaT>, TensorInputSpec>, N>& fields) {
   static_assert(detail::HasDescriptorTensorSchemaNativeTraits<SchemaT>,
-                "Tensor field contracts require descriptor Tensor schema traits");
+                "Tensor field specs require descriptor Tensor schema traits");
   static_assert(N <= detail::descriptor_tensor_schema_tensor_count_v<SchemaT>,
-                "aggregate input contracts cannot exceed the schema Tensor field count");
-  for (const auto& field : fields) {
-    tensor_field(field.field, field.contract);
+                "aggregate input specs cannot exceed the schema Tensor field count");
+  for (const auto& [field, spec] : fields) {
+    tensor_field(field, spec);
   }
   return *this;
 }
@@ -777,11 +1126,12 @@ template <typename SchemaT>
 TensorFieldOutputSpecBuilder TensorOutputSpecBuilder::tensor_field(
     const TensorFieldSelector<SchemaT> selector) {
   constexpr bool descriptor_schema = detail::HasDescriptorTensorSchemaNativeTraits<SchemaT>;
-  const auto expected_field_id = [&]() -> std::optional<std::uint16_t> {
+  const bool selector_valid = [&]() {
     if constexpr (descriptor_schema) {
-      return detail::descriptor_tensor_schema_field_id_at<SchemaT>(selector.tensor_index);
+      return detail::descriptor_tensor_schema_field_selector_matches<SchemaT>(
+          selector.field_id, selector.tensor_index);
     } else {
-      return std::nullopt;
+      return false;
     }
   }();
   tensor_fields_.push_back(detail::AuthoredTensorFieldConfiguration{
@@ -791,52 +1141,46 @@ TensorFieldOutputSpecBuilder TensorOutputSpecBuilder::tensor_field(
               .tensor_index = selector.tensor_index,
           },
       .schema_type_token = &detail::kOperatorSpecLocalTypeToken<SchemaT>,
-      .selector_valid = expected_field_id.has_value() && *expected_field_id == selector.field_id,
+      .selector_valid = selector_valid,
   });
   return TensorFieldOutputSpecBuilder{this, tensor_fields_.size() - 1U};
 }
 
 template <typename SchemaT>
 TensorOutputSpecBuilder& TensorOutputSpecBuilder::tensor_field(
-    const TensorFieldSelector<SchemaT> selector, const TensorFieldOutputContract& contract) {
+    const TensorFieldSelector<SchemaT> selector, const TensorOutputSpec& spec) {
   auto field_builder = tensor_field(selector);
-  field_builder.produces_tensor(contract.layout)
-      .tensor_allocation(TensorAllocationBounds{
-          .max_rank = contract.max_rank.value_or(
-              contract.layout.rank ? (*contract.layout.rank == 0U ? 1U : *contract.layout.rank)
-                                   : 0U),
-          .max_byte_span = contract.max_byte_span,
-      });
-  if (contract.payload_options) {
-    TensorFieldPayloadOptions options = *contract.payload_options;
-    if (options.interface_tensor_emit_policy == InterfaceTensorEmitPolicy::kCopyIfNeeded &&
-        !options.max_tensor_byte_span) {
-      options.max_tensor_byte_span = contract.max_byte_span;
-    }
-    field_builder.payload_options(std::move(options));
-  }
+  field_builder.produces_tensor(spec);
+  return *this;
+}
+
+template <typename SchemaT>
+TensorOutputSpecBuilder& TensorOutputSpecBuilder::tensor_field(
+    const TensorFieldSelector<SchemaT> selector, const TensorOutputSpec& spec,
+    TensorByteSpanExpression byte_span) {
+  auto field_builder = tensor_field(selector);
+  field_builder.produces_tensor(spec, std::move(byte_span));
   return *this;
 }
 
 template <typename SchemaT, std::size_t N>
 TensorOutputSpecBuilder& TensorOutputSpecBuilder::tensor_fields(
-    const std::array<TensorFieldSelector<SchemaT>, N>& selectors,
-    const TensorFieldOutputContract& contract) {
+    const std::array<TensorFieldSelector<SchemaT>, N>& selectors, const TensorOutputSpec& spec) {
   for (const auto selector : selectors) {
-    tensor_field(selector, contract);
+    tensor_field(selector, spec);
   }
   return *this;
 }
 
 template <typename SchemaT, std::size_t N>
 TensorOutputSpecBuilder& TensorOutputSpecBuilder::tensor_fields(
-    const std::array<TensorFieldOutputContractEntry<SchemaT>, N>& fields) {
+    const std::array<std::pair<TensorFieldSelector<SchemaT>, TensorOutputSpec>, N>& fields) {
   static_assert(detail::HasDescriptorTensorSchemaNativeTraits<SchemaT>,
-                "Tensor field contracts require descriptor Tensor schema traits");
+                "Tensor field specs require descriptor Tensor schema traits");
   static_assert(N == detail::descriptor_tensor_schema_tensor_count_v<SchemaT>,
-                "aggregate output contracts require one entry per schema Tensor field");
-  for (const auto& field : fields) {
-    tensor_field(field.field, field.contract);
+                "aggregate output specs require one entry per schema Tensor field");
+  for (const auto& [field, spec] : fields) {
+    tensor_field(field, spec);
   }
   return *this;
 }
@@ -1045,6 +1389,7 @@ class HOLOSCAN_CORE_EXPORT OperatorSpec {
                                        detail::runtime_port_type_ops<T>());
     builder.descriptor_tensor_field_count_ =
         detail::operator_spec_descriptor_tensor_field_count<T>();
+    builder.descriptor_tensor_schema_ = true;
     return builder;
   }
 
@@ -1064,6 +1409,7 @@ class HOLOSCAN_CORE_EXPORT OperatorSpec {
                                        detail::runtime_port_type_ops<T>());
     builder.descriptor_tensor_field_count_ =
         detail::operator_spec_descriptor_tensor_field_count<T>();
+    builder.descriptor_tensor_schema_ = true;
     return builder;
   }
 
@@ -1251,7 +1597,7 @@ class HOLOSCAN_CORE_EXPORT OperatorSpec {
                                    bool required) {
     static_assert(std::is_class_v<T>);
     const auto stage_value = static_cast<std::uint8_t>(stage);
-    if (stage_value > static_cast<std::uint8_t>(LifecycleStage::kRelease) || method == nullptr) {
+    if (!is_valid_lifecycle_stage(stage) || method == nullptr) {
       if (declaration_error_.code == ErrorCode::kSuccess) {
         declaration_error_ =
             Error{ErrorCode::kInvalidArgument, "operator lifecycle callback is invalid"};

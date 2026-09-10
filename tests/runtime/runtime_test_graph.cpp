@@ -5,9 +5,19 @@
 
 #include "runtime_test_graph.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
+
+#if defined(__linux__)
+#include <unistd.h>
+#endif
+
+#include "channel/process_identity.hpp"
+#include "runtime/runtime_test_access.hpp"
 
 namespace holoscan {
 [[nodiscard]] expected<std::vector<std::byte>, Error> PredicateConfigCodec<
@@ -23,6 +33,21 @@ namespace holoscan {
 }  // namespace holoscan
 
 namespace holoscan::test {
+namespace {
+
+// Runtime-materializing tests publish into the host-wide HoloMQ namespace. Give every invocation
+// its own graph identity so concurrent CTest processes and SDK containers cannot derive the same
+// process-local Channel service names.
+[[nodiscard]] std::string unique_runtime_compute_call_graph_name() {
+  static std::atomic<std::uint64_t> ordinal{};
+  const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  return std::string("runtime-compute-call-completion-channel-") +
+         std::to_string(channel_internal::current_process_identity()) + "-" +
+         std::to_string(timestamp) + "-" +
+         std::to_string(ordinal.fetch_add(1U, std::memory_order_relaxed));
+}
+
+}  // namespace
 
 std::mutex RuntimeProbeState::mutex{};
 
@@ -68,11 +93,22 @@ std::atomic<RunSession*> RuntimeProbeState::callback_session{};
 
 std::atomic_bool RuntimeProbeState::callback_session_action_returned{};
 
+std::atomic<std::int64_t> RuntimeProbeState::stop_observed_time_ns{};
+
+std::atomic<std::int64_t> RuntimeProbeState::callback_return_time_ns{};
+
+std::atomic<int> RuntimeProbeState::external_ready_fd{-1};
+
+std::atomic<int> RuntimeProbeState::external_stop_gate_fd{-1};
+
 std::mutex RuntimeClockProbeState::mutex{};
 
 std::condition_variable RuntimeClockProbeState::cv{};
 
 std::atomic<std::size_t> RuntimeClockProbeState::compute_count{};
+
+std::atomic<RuntimeClockProbeState::TerminationRequestMode>
+    RuntimeClockProbeState::termination_request_mode{};
 
 std::array<Tag, RuntimeClockProbeState::kRecordedActivations> RuntimeClockProbeState::tags{};
 
@@ -232,6 +268,14 @@ std::atomic<RuntimeWindowChannelScript> RuntimeWindowChannelProbeState::script{
 
 std::atomic<std::size_t> RuntimeWindowChannelProbeState::compute_count{};
 
+std::atomic<std::size_t> RuntimeWindowChannelProbeState::safe_default_end_of_stream_count{};
+
+std::atomic<std::size_t> RuntimeWindowChannelProbeState::downstream_count{};
+
+std::array<Tag, 2U> RuntimeWindowChannelProbeState::terminal_tags{};
+
+std::array<TagTime, 2U> RuntimeWindowChannelProbeState::terminal_tag_times{};
+
 std::atomic<InputState> RuntimeWindowChannelProbeState::selection_state{InputState::kNotSelected};
 
 std::atomic<SelectionReason> RuntimeWindowChannelProbeState::selection_reason{
@@ -308,7 +352,19 @@ void RuntimeProbeState::reset(RuntimeProbeMode requested_mode) {
   clocks_constructed.store(0U, std::memory_order_relaxed);
   callback_session.store(nullptr, std::memory_order_relaxed);
   callback_session_action_returned.store(false, std::memory_order_relaxed);
+  stop_observed_time_ns.store(0, std::memory_order_relaxed);
+  callback_return_time_ns.store(0, std::memory_order_relaxed);
+  external_ready_fd.store(-1, std::memory_order_relaxed);
+  external_stop_gate_fd.store(-1, std::memory_order_relaxed);
   mode.store(requested_mode, std::memory_order_relaxed);
+}
+
+void RuntimeProbeState::bind_external_ready_fd(const int fd) noexcept {
+  external_ready_fd.store(fd, std::memory_order_release);
+}
+
+void RuntimeProbeState::bind_external_stop_gate_fd(const int fd) noexcept {
+  external_stop_gate_fd.store(fd, std::memory_order_release);
 }
 
 void RuntimeProbeState::bind_callback_session(RunSession* session) noexcept {
@@ -369,6 +425,7 @@ void RuntimeProbeState::record(std::int32_t value) {
 
 void RuntimeClockProbeState::reset() noexcept {
   compute_count.store(0U, std::memory_order_relaxed);
+  termination_request_mode.store(TerminationRequestMode::kNone, std::memory_order_relaxed);
   tags.fill({});
   tag_times.fill({});
   activation_times.fill({});
@@ -570,6 +627,16 @@ void RuntimeProbeOperator::start() {
       callback_mode == RuntimeProbeMode::kDestroyFromCompute) {
     RuntimeProbeState::invoke_session_action_from_callback(callback_mode);
   }
+  if (callback_mode == RuntimeProbeMode::kRequestStop ||
+      callback_mode == RuntimeProbeMode::kRequestStopTwice) {
+    context.request_stop();
+    if (callback_mode == RuntimeProbeMode::kRequestStopTwice) {
+      context.request_stop();
+    }
+  }
+  if (callback_mode == RuntimeProbeMode::kRequestCompletionThenWaitForStop) {
+    context.request_completion();
+  }
   const ClockRef clock = context.clock();
   const ClockCapabilities capabilities = clock.capabilities();
   const TimePoint activation_time = context.activation_time();
@@ -597,21 +664,66 @@ void RuntimeProbeOperator::start() {
                                      maximum, now_active, std::memory_order_relaxed)) {
   }
   RuntimeProbeState::compute_entered.store(true, std::memory_order_release);
+#if defined(__linux__)
+  if (const int ready_fd =
+          RuntimeProbeState::external_ready_fd.exchange(-1, std::memory_order_acq_rel);
+      ready_fd >= 0) {
+    const std::uint8_t ready{1U};
+    [[maybe_unused]] const ssize_t written = write(ready_fd, &ready, sizeof(ready));
+  }
+#endif
   RuntimeProbeState::record(identity_ * 10 + 2);
 
   const RuntimeProbeMode mode = RuntimeProbeState::mode.load(std::memory_order_relaxed);
-  if (mode == RuntimeProbeMode::kWaitForStop) {
-    while (!context.cancellation().stop_requested()) {
-      std::this_thread::yield();
+  if (mode == RuntimeProbeMode::kWaitForStop || mode == RuntimeProbeMode::kPollForStop ||
+      mode == RuntimeProbeMode::kIgnoreStopUntilReleased ||
+      mode == RuntimeProbeMode::kWaitForExternalRelease ||
+      mode == RuntimeProbeMode::kWaitForStopThenFail ||
+      mode == RuntimeProbeMode::kRequestCompletionThenWaitForStop) {
+#if defined(__linux__)
+    const int gate_fd =
+        RuntimeProbeState::external_stop_gate_fd.exchange(-1, std::memory_order_acq_rel);
+    if ((mode == RuntimeProbeMode::kIgnoreStopUntilReleased ||
+         mode == RuntimeProbeMode::kWaitForExternalRelease) &&
+        gate_fd >= 0) {
+      std::uint8_t release{};
+      [[maybe_unused]] const ssize_t read_count = read(gate_fd, &release, sizeof(release));
     }
+#endif
+    if (mode != RuntimeProbeMode::kWaitForExternalRelease) {
+      while (!context.cancellation().stop_requested()) {
+        if (mode == RuntimeProbeMode::kPollForStop) {
+          std::this_thread::sleep_for(std::chrono::milliseconds{2});
+        } else {
+          std::this_thread::yield();
+        }
+      }
+      RuntimeProbeState::stop_observed_time_ns.store(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now().time_since_epoch())
+              .count(),
+          std::memory_order_release);
+    }
+#if defined(__linux__)
+    if (mode != RuntimeProbeMode::kIgnoreStopUntilReleased &&
+        mode != RuntimeProbeMode::kWaitForExternalRelease && gate_fd >= 0) {
+      std::uint8_t release{};
+      [[maybe_unused]] const ssize_t read_count = read(gate_fd, &release, sizeof(release));
+    }
+#endif
   }
   RuntimeProbeState::active.fetch_sub(1, std::memory_order_acq_rel);
+  RuntimeProbeState::callback_return_time_ns.store(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count(),
+      std::memory_order_release);
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   if (mode == RuntimeProbeMode::kThrowCompute) {
     throw std::runtime_error{"runtime test compute failure"};
   }
 #endif
-  if (mode == RuntimeProbeMode::kFail) {
+  if (mode == RuntimeProbeMode::kFail || mode == RuntimeProbeMode::kWaitForStopThenFail) {
     return make_unexpected(Error{ErrorCode::kFailure, "RUNTIME_TEST_COMPUTE_FAILED"});
   }
   return {};
@@ -1034,6 +1146,28 @@ void RuntimeClockProbeOperator::setup(OperatorSpec&) {}
 }
 
 [[nodiscard]] expected<void, Error> RuntimeClockProbeOperator::compute(ExecutionContext& context) {
+  switch (RuntimeClockProbeState::termination_request_mode.exchange(
+      RuntimeClockProbeState::TerminationRequestMode::kNone, std::memory_order_acq_rel)) {
+    case RuntimeClockProbeState::TerminationRequestMode::kCompletion:
+      context.request_completion();
+      break;
+    case RuntimeClockProbeState::TerminationRequestMode::kStop:
+      context.request_stop();
+      break;
+    case RuntimeClockProbeState::TerminationRequestMode::kCompletionThenStop:
+      context.request_completion();
+      context.request_stop();
+      break;
+    case RuntimeClockProbeState::TerminationRequestMode::kStopThenCompletion:
+      context.request_stop();
+      context.request_completion();
+      break;
+    case RuntimeClockProbeState::TerminationRequestMode::kCompletionThenFailure:
+      context.request_completion();
+      return make_unexpected(Error{ErrorCode::kFailure, "intentional termination request failure"});
+    case RuntimeClockProbeState::TerminationRequestMode::kNone:
+      break;
+  }
   // The deterministic-serial Runtime guarantees one active callback at a
   // time. Publish the fixed evidence prefix before the release-store so the
   // external test can request stop without a mutex in this hot callback.
@@ -1428,6 +1562,10 @@ void RuntimeWindowChannelProbeState::reset(RuntimeWindowChannelScript requested)
   std::lock_guard lock(mutex);
   script.store(requested, std::memory_order_relaxed);
   compute_count.store(0U, std::memory_order_relaxed);
+  safe_default_end_of_stream_count.store(0U, std::memory_order_relaxed);
+  downstream_count.store(0U, std::memory_order_relaxed);
+  terminal_tags = {};
+  terminal_tag_times = {};
   selection_state.store(InputState::kNotSelected, std::memory_order_relaxed);
   selection_reason.store(SelectionReason::kNotSelectedForActivation, std::memory_order_relaxed);
   anchor_capture_ns.store(0, std::memory_order_relaxed);
@@ -1444,11 +1582,25 @@ void RuntimeWindowChannelProbeState::reset(RuntimeWindowChannelScript requested)
   });
 }
 
+[[nodiscard]] bool RuntimeWindowChannelProbeState::wait_for_compute_count(std::size_t expected) {
+  std::unique_lock lock(mutex);
+  return cv.wait_for(lock, std::chrono::seconds{5}, [expected] {
+    return compute_count.load(std::memory_order_acquire) >= expected &&
+           downstream_count.load(std::memory_order_acquire) >= expected;
+  });
+}
+
 void RuntimeWindowChannelProbeState::record(InputSelection selection,
                                             const Sample<std::uint32_t>& anchor_sample,
-                                            TimePoint activation_time, std::size_t selected_size,
+                                            TimePoint activation_time, Tag tag, TagTime tag_time,
+                                            std::size_t selected_size,
                                             std::int64_t first_capture_ns,
                                             std::int64_t last_capture_ns) {
+  const std::size_t index = compute_count.load(std::memory_order_relaxed);
+  if (index < terminal_tags.size()) {
+    terminal_tags[index] = tag;
+    terminal_tag_times[index] = tag_time;
+  }
   selection_state.store(selection.state, std::memory_order_relaxed);
   selection_reason.store(selection.reason, std::memory_order_relaxed);
   anchor_capture_ns.store(anchor_sample.metadata.capture_timestamp_ns, std::memory_order_relaxed);
@@ -1456,18 +1608,29 @@ void RuntimeWindowChannelProbeState::record(InputSelection selection,
   batch_size.store(selected_size, std::memory_order_relaxed);
   batch_first_capture_ns.store(first_capture_ns, std::memory_order_relaxed);
   batch_last_capture_ns.store(last_capture_ns, std::memory_order_relaxed);
+  if (selection.state == InputState::kSafeDefault &&
+      selection.reason == SelectionReason::kEndOfStream) {
+    safe_default_end_of_stream_count.fetch_add(1U, std::memory_order_relaxed);
+  }
   compute_count.fetch_add(1U, std::memory_order_release);
   cv.notify_all();
 }
 
 void RuntimeWindowChannelSourceOperator::setup(OperatorSpec& spec) {
-  spec.output(anchor, "anchor").max_emits_per_compute(2U);
+  spec.output(anchor, "anchor").max_emits_per_compute(3U);
   spec.output(windowed, "windowed").max_emits_per_compute(5U);
 }
 
 [[nodiscard]] Contract RuntimeWindowChannelSourceOperator::contract() const {
   Contract result;
-  result.trigger(OnClock{.period = std::chrono::seconds{30}});
+  const bool terminal_drain =
+      RuntimeWindowChannelProbeState::script.load(std::memory_order_relaxed) ==
+      RuntimeWindowChannelScript::kEndOfStreamDrain;
+  result.trigger(
+      OnClock{.period = terminal_drain ? std::chrono::milliseconds{1} : std::chrono::seconds{30}});
+  if (terminal_drain) {
+    result.complete_after(ComputeCalls{3U});
+  }
   return result;
 }
 
@@ -1486,6 +1649,18 @@ void RuntimeWindowChannelSourceOperator::setup(OperatorSpec& spec) {
         });
       };
   const std::int64_t base = activation_time.timestamp_ns;
+  if (RuntimeWindowChannelProbeState::script.load(std::memory_order_relaxed) ==
+      RuntimeWindowChannelScript::kEndOfStreamDrain) {
+    if (next_terminal_anchor_ > 30U) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    const std::uint32_t value = next_terminal_anchor_;
+    auto emitted = emit_captured(anchor, value, base + value);
+    if (emitted) {
+      next_terminal_anchor_ += 10U;
+    }
+    return emitted;
+  }
   auto emitted = emit_captured(windowed, 5U, base + 5);
   if (!emitted) {
     return emitted;
@@ -1514,16 +1689,42 @@ void RuntimeWindowChannelSourceOperator::setup(OperatorSpec& spec) {
   return emit_captured(windowed, 25U, base + 25);
 }
 
+void RuntimeWindowChannelRelayOperator::setup(OperatorSpec& spec) {
+  spec.input(input, "input").queue_depth(2U);
+  spec.output(anchor, "anchor").max_emits_per_compute(1U);
+  spec.output(windowed, "windowed").max_emits_per_compute(1U);
+}
+
+[[nodiscard]] Contract RuntimeWindowChannelRelayOperator::contract() const {
+  Contract result;
+  result.trigger(OnEach{input});
+  return result;
+}
+
+[[nodiscard]] expected<void, Error> RuntimeWindowChannelRelayOperator::compute(ExecutionContext&) {
+  auto sample = input.receive();
+  if (!sample) {
+    return make_unexpected(std::move(sample.error()));
+  }
+  return anchor.emit(std::move(*sample));
+}
+
 void RuntimeWindowChannelSinkOperator::setup(OperatorSpec& spec) {
   spec.input(anchor, "anchor").queue_depth(8U);
   spec.input(windowed, "windowed").queue_depth(16U);
+  spec.output(output, "output").max_emits_per_compute(1U);
 }
 
 [[nodiscard]] Contract RuntimeWindowChannelSinkOperator::contract() const {
   Contract result;
+  const bool terminal_drain =
+      RuntimeWindowChannelProbeState::script.load(std::memory_order_relaxed) ==
+      RuntimeWindowChannelScript::kEndOfStreamDrain;
   result
       .trigger(OnWindow{
-          .anchor = anchor, .max_wait = std::chrono::milliseconds{5}, .max_pending_windows = 2U})
+          .anchor = anchor,
+          .max_wait = terminal_drain ? std::chrono::seconds{30} : std::chrono::milliseconds{5},
+          .max_pending_windows = 2U})
       .input(anchor, Exact{})
       .input(windowed, BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 5U})
       .on_missing(windowed, SafeDefault{});
@@ -1554,9 +1755,35 @@ void RuntimeWindowChannelSinkOperator::setup(OperatorSpec& spec) {
   RuntimeWindowChannelProbeState::record(selection,
                                          *anchor_sample,
                                          context.activation_time(),
+                                         context.tag(),
+                                         context.tag_time(),
                                          selected_size,
                                          first_capture_ns,
                                          last_capture_ns);
+  if (RuntimeWindowChannelProbeState::script.load(std::memory_order_relaxed) !=
+      RuntimeWindowChannelScript::kEndOfStreamDrain) {
+    return {};
+  }
+  return output.emit(anchor_sample->data);
+}
+
+void RuntimeWindowChannelDrainOperator::setup(OperatorSpec& spec) {
+  spec.input(input, "input").queue_depth(2U);
+}
+
+[[nodiscard]] Contract RuntimeWindowChannelDrainOperator::contract() const {
+  Contract result;
+  result.trigger(OnEach{input});
+  return result;
+}
+
+[[nodiscard]] expected<void, Error> RuntimeWindowChannelDrainOperator::compute(ExecutionContext&) {
+  auto sample = input.receive();
+  if (!sample) {
+    return make_unexpected(std::move(sample.error()));
+  }
+  RuntimeWindowChannelProbeState::downstream_count.fetch_add(1U, std::memory_order_release);
+  RuntimeWindowChannelProbeState::cv.notify_all();
   return {};
 }
 
@@ -1969,6 +2196,246 @@ void RuntimeInputPredicateChannelSinkOperator::setup(OperatorSpec& spec) {
   return {};
 }
 
+std::mutex RuntimeComputeCallChannelProbeState::mutex{};
+std::condition_variable RuntimeComputeCallChannelProbeState::cv{};
+std::atomic<std::size_t> RuntimeComputeCallChannelProbeState::source_count{};
+std::atomic<std::size_t> RuntimeComputeCallChannelProbeState::transform_count{};
+std::atomic<std::size_t> RuntimeComputeCallChannelProbeState::sink_compute_count{};
+std::atomic<std::size_t> RuntimeComputeCallChannelProbeState::sink_count{};
+std::atomic<std::uint32_t> RuntimeComputeCallChannelProbeState::first_value{};
+std::atomic<std::uint32_t> RuntimeComputeCallChannelProbeState::second_value{};
+std::atomic_bool RuntimeComputeCallChannelProbeState::restart_accepted{};
+std::atomic<ErrorCode> RuntimeComputeCallChannelProbeState::restart_error{};
+std::atomic<std::uint64_t>
+    RuntimeComputeCallChannelProbeState::successful_compute_calls_before_restart{};
+std::atomic<std::size_t> RuntimeComputeCallChannelProbeState::restart_forward_start_count{};
+std::atomic<std::size_t> RuntimeComputeCallChannelProbeState::restore_old_start_count{};
+bool RuntimeComputeCallChannelProbeState::hold_source{};
+bool RuntimeComputeCallChannelProbeState::source_entered{};
+bool RuntimeComputeCallChannelProbeState::release_source{};
+
+void RuntimeComputeCallChannelProbeState::reset(const bool hold_first_compute) noexcept {
+  const std::lock_guard lock(mutex);
+  source_count.store(0U, std::memory_order_relaxed);
+  transform_count.store(0U, std::memory_order_relaxed);
+  sink_compute_count.store(0U, std::memory_order_relaxed);
+  sink_count.store(0U, std::memory_order_relaxed);
+  first_value.store(0U, std::memory_order_relaxed);
+  second_value.store(0U, std::memory_order_relaxed);
+  restart_accepted.store(false, std::memory_order_relaxed);
+  restart_error.store(ErrorCode::kSuccess, std::memory_order_relaxed);
+  successful_compute_calls_before_restart.store(0U, std::memory_order_relaxed);
+  restart_forward_start_count.store(0U, std::memory_order_relaxed);
+  restore_old_start_count.store(0U, std::memory_order_relaxed);
+  hold_source = hold_first_compute;
+  source_entered = false;
+  release_source = false;
+  RuntimeProbeState::runtime_clock_ns.store(0, std::memory_order_relaxed);
+}
+
+[[nodiscard]] std::size_t RuntimeComputeCallChannelProbeState::enter_source_compute() {
+  const std::size_t call = source_count.fetch_add(1U, std::memory_order_relaxed) + 1U;
+  std::unique_lock lock(mutex);
+  source_entered = true;
+  cv.notify_all();
+  if (hold_source) {
+    cv.wait_for(lock, std::chrono::seconds{5}, [] { return release_source; });
+  }
+  return call;
+}
+
+[[nodiscard]] bool RuntimeComputeCallChannelProbeState::wait_until_source_compute() {
+  std::unique_lock lock(mutex);
+  return cv.wait_for(lock, std::chrono::seconds{5}, [] { return source_entered; });
+}
+
+void RuntimeComputeCallChannelProbeState::release_source_compute() {
+  {
+    const std::lock_guard lock(mutex);
+    release_source = true;
+  }
+  cv.notify_all();
+}
+
+void RuntimeComputeCallChannelProbeState::record_sink(const std::uint32_t value) noexcept {
+  const std::size_t index = sink_count.fetch_add(1U, std::memory_order_release);
+  if (index == 0U) {
+    first_value.store(value, std::memory_order_relaxed);
+  } else if (index == 1U) {
+    second_value.store(value, std::memory_order_relaxed);
+  }
+}
+
+RuntimeComputeCallSourceOperator::RuntimeComputeCallSourceOperator(
+    const std::uint64_t limit, const RuntimeComputeCallAction action,
+    const std::uint64_t restart_after_successful_compute_calls) noexcept
+    : limit_(limit),
+      action_(action),
+      restart_after_successful_compute_calls_(restart_after_successful_compute_calls) {}
+
+void RuntimeComputeCallSourceOperator::setup(OperatorSpec& spec) {
+  spec.output(output, "output").max_emits_per_compute(1U);
+  if (action_ == RuntimeComputeCallAction::kRestartAfterComputeCalls ||
+      action_ == RuntimeComputeCallAction::kRestartRollbackAfterFirst) {
+    spec.lifecycle().stage(LifecycleStage::kStart, &RuntimeComputeCallSourceOperator::start_stage);
+  }
+}
+
+[[nodiscard]] Contract RuntimeComputeCallSourceOperator::contract() const {
+  Contract result;
+  result.trigger(OnClock{.period = std::chrono::milliseconds{1}})
+      .complete_after(ComputeCalls{.limit = limit_});
+  return result;
+}
+
+[[nodiscard]] expected<void, Error> RuntimeComputeCallSourceOperator::compute(
+    ExecutionContext& context) {
+  const std::size_t call = RuntimeComputeCallChannelProbeState::enter_source_compute();
+  if (action_ == RuntimeComputeCallAction::kFailOnSecond && call == 2U) {
+    return make_unexpected(Error{ErrorCode::kFailure});
+  }
+  auto emitted = output.emit(static_cast<std::uint32_t>(76U + call));
+  if (!emitted) {
+    return make_unexpected(std::move(emitted).error());
+  }
+  if (action_ == RuntimeComputeCallAction::kFailPublicationOnFirst && call == 1U) {
+    return output.emit(999U);
+  }
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  if (action_ == RuntimeComputeCallAction::kThrowOnFirst && call == 1U) {
+    throw std::runtime_error{"intentional compute-call completion failure"};
+  }
+#endif
+  const bool action_due = action_ == RuntimeComputeCallAction::kRestartAfterComputeCalls
+                              ? call == restart_after_successful_compute_calls_
+                              : call == 1U;
+  if (action_due) {
+    switch (action_) {
+      case RuntimeComputeCallAction::kRequestStopAfterFirst:
+        context.request_stop();
+        break;
+      case RuntimeComputeCallAction::kRequestCompletionAfterFirst:
+        context.request_completion();
+        break;
+      case RuntimeComputeCallAction::kRestartAfterFirst:
+      case RuntimeComputeCallAction::kRestartAfterComputeCalls:
+      case RuntimeComputeCallAction::kRestartRollbackAfterFirst: {
+        auto receipt = context.request_restart();
+        if (receipt) {
+          RuntimeComputeCallChannelProbeState::restart_accepted.store(true,
+                                                                      std::memory_order_release);
+        } else {
+          RuntimeComputeCallChannelProbeState::restart_error.store(receipt.error().code,
+                                                                   std::memory_order_relaxed);
+        }
+        break;
+      }
+      case RuntimeComputeCallAction::kNone:
+      case RuntimeComputeCallAction::kFailOnSecond:
+      case RuntimeComputeCallAction::kFailPublicationOnFirst:
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+      case RuntimeComputeCallAction::kThrowOnFirst:
+#endif
+        break;
+    }
+  }
+  RuntimeProbeState::runtime_clock_ns.fetch_add(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::milliseconds{1}).count(),
+      std::memory_order_relaxed);
+  return {};
+}
+
+LifecycleStatus RuntimeComputeCallSourceOperator::start_stage(LifecycleContext& context) noexcept {
+  if (context.transition_phase() == LifecycleTransitionPhase::kRestartForward) {
+    RuntimeComputeCallChannelProbeState::successful_compute_calls_before_restart.store(
+        RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+        std::memory_order_release);
+    RuntimeComputeCallChannelProbeState::restart_forward_start_count.fetch_add(
+        1U, std::memory_order_relaxed);
+    if (action_ == RuntimeComputeCallAction::kRestartRollbackAfterFirst) {
+      return LifecycleStatus::kFatalFailure;
+    }
+  } else if (context.transition_phase() == LifecycleTransitionPhase::kRestoreOld) {
+    RuntimeComputeCallChannelProbeState::restore_old_start_count.fetch_add(
+        1U, std::memory_order_relaxed);
+  }
+  return LifecycleStatus::kOk;
+}
+
+RuntimeDormantComputeCallSourceOperator::RuntimeDormantComputeCallSourceOperator(
+    const std::uint64_t limit) noexcept
+    : limit_(limit) {}
+
+void RuntimeDormantComputeCallSourceOperator::setup(OperatorSpec& spec) {
+  spec.output(output, "output").max_emits_per_compute(1U);
+  spec.notification_source(notification_, "notification")
+      .capacity(1U)
+      .sender_reference_capacity(1U);
+  spec.lifecycle().stage(LifecycleStage::kArm, &RuntimeDormantComputeCallSourceOperator::arm);
+}
+
+[[nodiscard]] Contract RuntimeDormantComputeCallSourceOperator::contract() const {
+  Contract result;
+  result.trigger(OnNotified{.event = notification_}).complete_after(ComputeCalls{.limit = limit_});
+  return result;
+}
+
+[[nodiscard]] expected<void, Error> RuntimeDormantComputeCallSourceOperator::compute(
+    ExecutionContext&) {
+  RuntimeComputeCallChannelProbeState::source_count.fetch_add(1U, std::memory_order_relaxed);
+  return output.emit(1U);
+}
+
+LifecycleStatus RuntimeDormantComputeCallSourceOperator::arm(LifecycleContext& context) noexcept {
+  auto sender = context.notification_sender(notification_);
+  if (!sender) {
+    return LifecycleStatus::kFatalFailure;
+  }
+  sender_ = std::move(*sender);
+  return LifecycleStatus::kOk;
+}
+
+void RuntimeComputeCallTransformOperator::setup(OperatorSpec& spec) {
+  spec.input(input, "input").queue_depth(1U);
+  spec.output(output, "output").max_emits_per_compute(1U);
+}
+
+[[nodiscard]] Contract RuntimeComputeCallTransformOperator::contract() const {
+  Contract result;
+  result.trigger(OnEach{input});
+  return result;
+}
+
+[[nodiscard]] expected<void, Error> RuntimeComputeCallTransformOperator::compute(
+    ExecutionContext&) {
+  RuntimeComputeCallChannelProbeState::transform_count.fetch_add(1U, std::memory_order_relaxed);
+  auto sample = input.receive();
+  if (!sample) {
+    return make_unexpected(std::move(sample).error());
+  }
+  return output.emit(sample->data);
+}
+
+void RuntimeComputeCallSinkOperator::setup(OperatorSpec& spec) {
+  spec.input(input, "input").queue_depth(1U);
+}
+
+[[nodiscard]] Contract RuntimeComputeCallSinkOperator::contract() const {
+  Contract result;
+  result.trigger(OnEach{input});
+  return result;
+}
+
+[[nodiscard]] expected<void, Error> RuntimeComputeCallSinkOperator::compute(ExecutionContext&) {
+  RuntimeComputeCallChannelProbeState::sink_compute_count.fetch_add(1U, std::memory_order_relaxed);
+  auto sample = input.receive();
+  if (!sample) {
+    return make_unexpected(std::move(sample).error());
+  }
+  RuntimeComputeCallChannelProbeState::record_sink(sample->data);
+  return {};
+}
+
 [[nodiscard]] expected<bool, Error> runtime_input_predicate_result(
     RuntimeInputPredicatePattern pattern, std::uint32_t evaluation, std::uint32_t driver_value,
     std::uint32_t minimum_driver_value) {
@@ -2231,9 +2698,79 @@ void RuntimeInputPredicateChannelSinkOperator::setup(OperatorSpec& spec) {
   graph.add_flow(source->additional, predicate->additional, ConnectionOptions{.queue_depth = 8U});
   graph.add_flow(
       source->compute_only, predicate->compute_only, ConnectionOptions{.queue_depth = 8U});
-  const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
+  const ClockKey default_clock = graph.add_clock<RuntimeProbeClock>("runtime-test-clock");
   graph.set_default_clock(default_clock);
   return compile(graph);
+}
+
+[[nodiscard]] ExecutionPlan make_runtime_compute_call_channel_plan(
+    const std::uint64_t limit, const RuntimeComputeCallAction action,
+    const std::uint64_t restart_after_successful_compute_calls) {
+  Graph graph{unique_runtime_compute_call_graph_name()};
+  const auto source = graph.op<RuntimeComputeCallSourceOperator>(
+      "source", limit, action, restart_after_successful_compute_calls);
+  const auto first = graph.op<RuntimeComputeCallSinkOperator>("first");
+  const auto second = graph.op<RuntimeComputeCallSinkOperator>("second");
+  graph.partition("runtime-compute-call-source").add(source);
+  graph.partition("runtime-compute-call-first").add(first);
+  graph.partition("runtime-compute-call-second").add(second);
+  graph.add_flow(source->output, first->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(source->output, second->input, ConnectionOptions{.queue_depth = 1U});
+  if (action == RuntimeComputeCallAction::kRestartAfterFirst ||
+      action == RuntimeComputeCallAction::kRestartAfterComputeCalls ||
+      action == RuntimeComputeCallAction::kRestartRollbackAfterFirst) {
+    graph.lifecycle().allow_self_restart(source);
+  }
+  const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
+  graph.set_default_clock(default_clock);
+  CompileOptions options;
+  if (action == RuntimeComputeCallAction::kRestartAfterFirst ||
+      action == RuntimeComputeCallAction::kRestartAfterComputeCalls ||
+      action == RuntimeComputeCallAction::kRestartRollbackAfterFirst) {
+    options.lifecycle_transactions = LifecycleTransactionOptions{
+        .max_pending_requests = 64U,
+        .max_pending_transactions = 64U,
+        .max_receipts = 128U,
+        .max_fenced_operators = 64U,
+        .max_candidate_generations = 64U,
+        .max_events = 1024U,
+        .max_audit_records = 128U,
+        .max_quiesce_records = 256U,
+        .max_rollback_records = 256U,
+    };
+  }
+  const ExecutionPlan compiled = compile(graph, std::move(options));
+  return compiled;
+}
+
+[[nodiscard]] ExecutionPlan make_runtime_compute_call_chain_plan(const std::uint64_t limit) {
+  Graph graph{unique_runtime_compute_call_graph_name()};
+  const auto source =
+      graph.op<RuntimeComputeCallSourceOperator>("source", limit, RuntimeComputeCallAction::kNone);
+  const auto transform = graph.op<RuntimeComputeCallTransformOperator>("transform");
+  const auto sink = graph.op<RuntimeComputeCallSinkOperator>("sink");
+  graph.partition("runtime-compute-call-chain-source").add(source);
+  graph.partition("runtime-compute-call-chain-transform").add(transform);
+  graph.partition("runtime-compute-call-chain-sink").add(sink);
+  graph.add_flow(source->output, transform->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(transform->output, sink->input, ConnectionOptions{.queue_depth = 1U});
+  const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
+  graph.set_default_clock(default_clock);
+
+  return compile(graph);
+}
+
+[[nodiscard]] ExecutionPlan make_runtime_dormant_compute_call_plan(const std::uint64_t limit) {
+  Graph graph{"runtime-dormant-compute-call-completion"};
+  const auto source = graph.op<RuntimeDormantComputeCallSourceOperator>("source", limit);
+  graph.partition("runtime-dormant-compute-call-source").add(source);
+  const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
+  graph.set_default_clock(default_clock);
+  CompileOptions options;
+  options.deployment.bind_thread_placement(
+      "runtime-dormant-compute-call-source",
+      ThreadPlacement{.wake_mode = WakeMode::kSleepingWaitset});
+  return compile(graph, std::move(options));
 }
 
 [[nodiscard]] ExecutionPlan make_runtime_input_trigger_replay_plan(
@@ -2249,15 +2786,34 @@ void RuntimeInputPredicateChannelSinkOperator::setup(OperatorSpec& spec) {
   return compile(graph);
 }
 
-[[nodiscard]] ExecutionPlan make_runtime_aligned_channel_plan() {
+[[nodiscard]] ExecutionPlan make_runtime_aligned_channel_plan(bool complete_manual_cover) {
   Graph graph{"runtime-aligned-channel"};
   auto source = graph.op<RuntimeAlignedChannelSourceOperator>("source");
   auto sink = graph.op<RuntimeAlignedChannelSinkOperator>("sink");
   graph.add_flow(source->first, sink->first, ConnectionOptions{.queue_depth = 8U});
   graph.add_flow(source->second, sink->second, ConnectionOptions{.queue_depth = 8U});
+  if (complete_manual_cover) {
+    graph.partition("runtime-aligned-channel").include_all();
+  }
   const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
   graph.set_default_clock(default_clock);
   return compile(graph);
+}
+
+[[nodiscard]] ExecutionPlan make_runtime_hybrid_aligned_channel_plan() {
+  Graph graph{"runtime-hybrid-aligned-channel"};
+  auto source = graph.op<RuntimeAlignedChannelSourceOperator>("source");
+  auto sink = graph.op<RuntimeAlignedChannelSinkOperator>("sink");
+  graph.add_flow(source->first, sink->first, ConnectionOptions{.queue_depth = 8U});
+  graph.add_flow(source->second, sink->second, ConnectionOptions{.queue_depth = 8U});
+  graph.partition("runtime-aligned-anchor").add(source);
+  graph.auto_partition_remaining();
+  const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
+  graph.set_default_clock(default_clock);
+  CompileOptions options;
+  options.deployment.bind_thread_placement("runtime-aligned-anchor",
+                                           ThreadPlacement{.wake_mode = WakeMode::kBusyPoll});
+  return compile(graph, std::move(options));
 }
 
 [[nodiscard]] ExecutionPlan make_runtime_mixed_channel_unconnected_port_plan() {
@@ -2278,11 +2834,17 @@ void RuntimeInputPredicateChannelSinkOperator::setup(OperatorSpec& spec) {
   Graph graph{"runtime-activation-cut-order"};
   auto source = graph.op<RuntimeActivationCutSourceOperator>("source");
   auto later = graph.op<RuntimeActivationCutSinkOperator>("a-later");
+  auto later_copy = graph.op<RuntimeActivationCutSinkOperator>("b-later-copy");
   auto earlier = graph.op<RuntimeActivationCutSinkOperator>("z-earlier");
+  auto earlier_copy = graph.op<RuntimeActivationCutSinkOperator>("y-earlier-copy");
   // Edge declaration order deliberately opposes capture-time order. The process-local subscriber
-  // scan sees `later` before `earlier`, while global activation order must still choose t+5 first.
+  // scan sees both `later` recipients before both `earlier` recipients, while global activation
+  // order must still choose t+5 first.
   graph.add_flow(source->later, later->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(source->later, later_copy->input, ConnectionOptions{.queue_depth = 1U});
   graph.add_flow(source->earlier, earlier->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(source->earlier, earlier_copy->input, ConnectionOptions{.queue_depth = 1U});
+  graph.partition("runtime-activation-cut-order").include_all();
   const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
   graph.set_default_clock(default_clock);
   return compile(graph);
@@ -2292,12 +2854,30 @@ void RuntimeInputPredicateChannelSinkOperator::setup(OperatorSpec& spec) {
   Graph graph{"runtime-window-channel"};
   auto source = graph.op<RuntimeWindowChannelSourceOperator>("source");
   auto sink = graph.op<RuntimeWindowChannelSinkOperator>("sink");
-  if (separate_execution_partitions) {
-    graph.partition("runtime-window-source").add(source);
-    graph.partition("runtime-window-sink").add(sink);
+  const bool terminal_drain =
+      RuntimeWindowChannelProbeState::script.load(std::memory_order_relaxed) ==
+      RuntimeWindowChannelScript::kEndOfStreamDrain;
+  if (terminal_drain) {
+    auto relay = graph.op<RuntimeWindowChannelRelayOperator>("relay");
+    auto drain = graph.op<RuntimeWindowChannelDrainOperator>("drain");
+    if (separate_execution_partitions) {
+      graph.partition("runtime-window-source").add(source);
+      graph.partition("runtime-window-relay").add(relay);
+      graph.partition("runtime-window-sink").add(sink);
+      graph.partition("runtime-window-drain").add(drain);
+    }
+    graph.add_flow(source->anchor, relay->input, ConnectionOptions{.queue_depth = 2U});
+    graph.add_flow(relay->anchor, sink->anchor, ConnectionOptions{.queue_depth = 8U});
+    graph.add_flow(relay->windowed, sink->windowed, ConnectionOptions{.queue_depth = 16U});
+    graph.add_flow(sink->output, drain->input, ConnectionOptions{.queue_depth = 2U});
+  } else {
+    if (separate_execution_partitions) {
+      graph.partition("runtime-window-source").add(source);
+      graph.partition("runtime-window-sink").add(sink);
+    }
+    graph.add_flow(source->anchor, sink->anchor, ConnectionOptions{.queue_depth = 8U});
+    graph.add_flow(source->windowed, sink->windowed, ConnectionOptions{.queue_depth = 16U});
   }
-  graph.add_flow(source->anchor, sink->anchor, ConnectionOptions{.queue_depth = 8U});
-  graph.add_flow(source->windowed, sink->windowed, ConnectionOptions{.queue_depth = 16U});
   const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
   graph.set_default_clock(default_clock);
   return compile(graph);

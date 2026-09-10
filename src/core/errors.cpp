@@ -5,11 +5,17 @@
 
 #include <fmt/format.h>
 #include <holoscan/core/errors.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include <string>
 #include <string_view>
 
 namespace holoscan {
+
+std::string_view error_code_name(const ErrorCode code) noexcept {
+  const std::string_view name = magic_enum::enum_name(code);
+  return name.empty() ? std::string_view{"unknown"} : name;
+}
 
 Error make_publication_partial_error(const std::uint32_t delivered_recipient_count,
                                      const std::uint32_t expected_recipient_count) noexcept {

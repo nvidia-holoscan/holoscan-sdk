@@ -3,8 +3,6 @@
 
 cmake_minimum_required(VERSION 4.0)
 
-set(HOLOSCAN_PACKAGE_NAME holoscan)
-
 # ##############################################################################
 # # Options
 # ##############################################################################
@@ -14,6 +12,9 @@ option(HOLOSCAN_BUILD_PYTHON "Build Holoscan SDK Python Bindings" ON)
 option(HOLOSCAN_DOWNLOAD_DATASETS "Download SDK Datasets" ON)
 option(HOLOSCAN_BUILD_TESTS "Build Holoscan SDK Tests" ON)
 option(HOLOSCAN_BUILD_BENCHMARKS "Build Holoscan SDK Benchmarks" ON)
+option(HOLOSCAN_BUILD_VISUALIZATION "Build the Holoscan Visualization module" ON)
+option(HOLOSCAN_BUILD_VISION "Build the Holoscan Vision module" ON)
+option(HOLOSCAN_BUILD_INFERENCE "Build the HoloInfer inference module and operator" ON)
 option(HOLOSCAN_USE_SCCACHE "Use sccache for building Holoscan SDK" ON)
 option(HOLOSCAN_INSTALL_EXAMPLE_SOURCE "Install the example source code" ON)
 option(HOLOSCAN_ENABLE_CLANG_TIDY "Enable use of clang-tidy" OFF)
@@ -26,29 +27,20 @@ if(HOLOSCAN_BUILD_CONFIG_IO AND NOT HOLOSCAN_BUILD_CONFIG)
   message(FATAL_ERROR "HOLOSCAN_BUILD_CONFIG_IO requires HOLOSCAN_BUILD_CONFIG")
 endif()
 include(cmake/HoloscanToolingMetadata.cmake)
-# Core always builds and links HoloMQ, but keep cache options so SDK builds can
-# drive the embedded module's tests, examples, benchmarks, Python bindings, and
-# default backend with the same switches HoloMQ uses when built standalone.
-option(HOLOMQ_BUILD_TESTS "Build HoloMQ tests" ${HOLOSCAN_BUILD_TESTS})
-option(HOLOMQ_BUILD_EXAMPLES "Build HoloMQ examples" ${HOLOSCAN_BUILD_EXAMPLES})
-option(HOLOMQ_BUILD_BENCHMARKS "Build HoloMQ benchmarks" ${HOLOSCAN_BUILD_BENCHMARKS})
-option(HOLOMQ_BUILD_PYTHON "Build HoloMQ Python bindings" ${HOLOSCAN_BUILD_PYTHON})
+# Core always builds and links HoloMQ. Its tests, examples, and benchmarks
+# follow the corresponding SDK build options.
 set(HOLOSCAN_MQ_BACKEND "iceoryx2" CACHE STRING "Default HoloMQ runtime backend for SDK integration")
 set_property(CACHE HOLOSCAN_MQ_BACKEND PROPERTY STRINGS iceoryx2)
-option(HOLOSCAN_ALLOW_SYSTEM_INSTALL "Allow installation to system directories" OFF)
 
 # ##############################################################################
 # # Prerequisite statements
 # ##############################################################################
 
-# Set the top-level directory of the project
-set(HOLOSCAN_TOP "${CMAKE_CURRENT_LIST_DIR}")
-
 # Append local cmake module path for CMAKE_MODULE_PATH
-list(APPEND CMAKE_MODULE_PATH "${HOLOSCAN_TOP}/cmake/modules")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/modules")
 
 # Append local cmake dependency path CMAKE_PREFIX_PATH
-list(APPEND CMAKE_PREFIX_PATH "${HOLOSCAN_TOP}/cmake/deps")
+list(APPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/deps")
 
 # Setup rapids-cmake
 include(SetupRapidsCMake)
@@ -61,13 +53,17 @@ include(HoloscanTargetConfiguration)
 
 # Set HOLOSCAN_BUILD_VERSION from 'VERSION' file
 unset(HOLOSCAN_BUILD_VERSION CACHE)
-file(STRINGS ${HOLOSCAN_TOP}/VERSION HOLOSCAN_BUILD_VERSION)
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" HOLOSCAN_BUILD_VERSION)
 
-project(${HOLOSCAN_PACKAGE_NAME}
+project(holoscan
     VERSION ${HOLOSCAN_BUILD_VERSION}
     DESCRIPTION "Holoscan SDK"
     LANGUAGES C CXX
 )
+
+# Stable package identity used for exported target and package names.
+set(HOLOSCAN_PACKAGE_NAME holoscan)
+include(GNUInstallDirs)
 include(SetupCUDA) # CUDA Language enabled there after additional setup
 
 # If enabling google sanitizer
@@ -102,8 +98,8 @@ endif()
 
 # Setting the default paths for the build tree
 # Libraries (shared and static) are put by default in the lib directory
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${holoscan_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${holoscan_BINARY_DIR}/lib)
 
 # `$ORIGIN` is an ELF loader convention. The common policy keeps it out of native MSVC, clang-cl,
 # and other package metadata whose runtime-library placement follows a different contract.
@@ -116,16 +112,18 @@ set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME "holoscan-dependencies")
 # configure the include paths for IntelliSense
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Create a symbolic link for compile_commands.json in the source tree when building out of source
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+# Create a symbolic link for compile_commands.json in the source tree when Holoscan is the
+# top-level project and is building out of source. CMake writes one compile database for the
+# complete build at CMAKE_BINARY_DIR, including when Holoscan is a subproject.
+if(holoscan_IS_TOP_LEVEL AND holoscan_SOURCE_DIR STREQUAL holoscan_BINARY_DIR)
     message(STATUS "Skipping compile_commands.json symlink because this is an in-source build.")
-else()
+elseif(holoscan_IS_TOP_LEVEL)
     # Clangd searches parent directories and 'build/' folders for compile_commands.json.
     # To ensure Clangd can find it, we create a symlink in the source directory.
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E create_symlink
                 ${CMAKE_BINARY_DIR}/compile_commands.json
-                ${CMAKE_SOURCE_DIR}/compile_commands.json
+                ${holoscan_SOURCE_DIR}/compile_commands.json
         RESULT_VARIABLE result
         ERROR_VARIABLE error
     )
@@ -157,9 +155,9 @@ rapids_cmake_build_type(release)
 # information of the calling project
 rapids_cmake_write_version_file(include/holoscan/version_config.hpp PREFIX HOLOSCAN)
 
-# Get install lib dir
-# (https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_cmake_install_lib_dir.html)
-rapids_cmake_install_lib_dir(HOLOSCAN_INSTALL_LIB_DIR)
+# Keep every SDK-owned install rule on GNUInstallDirs. RAPIDS export generation
+# uses the value below when emitting the installed package metadata.
+set(HOLOSCAN_INSTALL_LIB_DIR "${CMAKE_INSTALL_LIBDIR}")
 
 # ##############################################################################
 # # Setup Cache
@@ -167,7 +165,7 @@ rapids_cmake_install_lib_dir(HOLOSCAN_INSTALL_LIB_DIR)
 
 option(HOLOSCAN_USE_CACHE_DIR "Use CPM and compiler cache directory (set OFF for e.g. OpenEmbedded)" ON)
 set(HOLOSCAN_CACHE_DIR ".cache" CACHE PATH "Directory for CPM and compiler caches (used when HOLOSCAN_USE_CACHE_DIR is ON).\
-                                            If relative, it is relative to the source directory (CMAKE_SOURCE_DIR).")
+                                            If relative, it is relative to the Holoscan source directory.")
 mark_as_advanced(HOLOSCAN_CACHE_DIR)
 
 # HOLOSCAN_USE_SCCACHE_SKIPPED will be set to TRUE by 'include(SetupCache)'
@@ -210,6 +208,12 @@ if(HOLOSCAN_BUILD_TESTS AND BUILD_TESTING)
             -B "${CMAKE_CURRENT_BINARY_DIR}/cmake-tests/target-configuration-clang-cl"
             -DHOLOSCAN_MODULE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules
             -DHOLOSCAN_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    add_test(NAME CMAKE_PATCHES.ordered_series
+        COMMAND ${CMAKE_COMMAND}
+            "-DHOLOSCAN_APPLY_PATCHES_MODULE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/HoloscanApplyPatches.cmake"
+            "-DHOLOSCAN_PATCH_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cmake-tests/apply-patches"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/tests/apply_patches.cmake"
     )
 endif()
 
@@ -306,16 +310,23 @@ if(HOLOSCAN_ENABLE_CLANG_TIDY)
   endif()
   string(JOIN "," CLANG_TIDY_CHECKS ${_HOLOSCAN_CLANG_TIDY_CHECK_LIST})
   unset(_HOLOSCAN_CLANG_TIDY_CHECK_LIST)
+  # Keep the function score and threshold diagnostic while omitting one note for every increment.
+  set(_HOLOSCAN_CLANG_TIDY_CONFIG
+      "{CheckOptions: {readability-function-cognitive-complexity.DescribeBasicIncrements: false}}"
+  )
 
   if(HOLOSCAN_CLANG_TIDY_CHECK_HEADERS)
-    # Header filter to check project headers while excluding third-party code.
+    # Check public, Python, generated, and SDK-private headers while excluding dependency trees.
     # Note: --exclude-header-filter is not available until clang-tidy>=19.0, so we use
     # a positive regex that explicitly matches the directories we want to check.
-    set(CLANG_TIDY_HEADER_FILTER ".*/include/holoscan/.*|.*/python/holoscan/.*")
+    set(CLANG_TIDY_HEADER_FILTER
+        "^${CMAKE_CURRENT_SOURCE_DIR}/(include/holoscan|python/holoscan|src)/.*|^${CMAKE_CURRENT_BINARY_DIR}/include/holoscan/.*"
+    )
     set(CMAKE_CXX_CLANG_TIDY
         "${_HOLOSCAN_CLANG_TIDY_EXECUTABLE}"
         "--header-filter=${CLANG_TIDY_HEADER_FILTER}"
         "--checks=${CLANG_TIDY_CHECKS}"
+        "--config=${_HOLOSCAN_CLANG_TIDY_CONFIG}"
         "--extra-arg=-std=c++20"
     )
   else()
@@ -323,9 +334,11 @@ if(HOLOSCAN_ENABLE_CLANG_TIDY)
     set(CMAKE_CXX_CLANG_TIDY
         "${_HOLOSCAN_CLANG_TIDY_EXECUTABLE}"
         "--checks=${CLANG_TIDY_CHECKS}"
+        "--config=${_HOLOSCAN_CLANG_TIDY_CONFIG}"
         "--extra-arg=-std=c++20"
     )
   endif()
+  unset(_HOLOSCAN_CLANG_TIDY_CONFIG)
   unset(_HOLOSCAN_CLANG_TIDY_EXECUTABLE)
   unset(_HOLOSCAN_CLANG_TIDY_VERSION_ERROR)
   unset(_HOLOSCAN_CLANG_TIDY_VERSION_OUTPUT)
@@ -351,12 +364,14 @@ holoscan_add_dependency(iceoryx2)
 # Core library dependencies.
 holoscan_add_dependency(expected_rapids)
 holoscan_add_dependency(fmt_rapids)
-# magic_enum backs error_code_name() (enum -> name) in core/errors.hpp; header-only.
+# magic_enum backs the out-of-line error_code_name() implementation; header-only.
 holoscan_add_dependency(magic_enum)
 # DLPack needed for Tensor interop
 holoscan_add_dependency(dlpack_rapids)
 # CCCL provides <cuda/stream> (cuda::stream_ref) used by the Tensor stream-aware API.
 holoscan_add_dependency(cccl COMPONENT holoscan-dependencies)
+# NVTX C++ wrappers used by public profiler helpers. Pin separately from CUDA Toolkit NVTX headers.
+holoscan_add_dependency(nvtx3)
 # spdlog backs the holoscan logger; built static with header-only fmt (see cmake/deps/spdlog.cmake).
 holoscan_add_dependency(spdlog)
 # FlatBuffers provides flatc (schema codegen) + the runtime lib for schema-backed Tensor
@@ -589,6 +604,7 @@ add_library(core
     src/channel/channel_common.cpp
     src/channel/channel_descriptor.cpp
     src/channel/channel_inline_payload.cpp
+    src/channel/channel_subscriber_wait_context.cpp
     src/channel/channel_tensor.cpp
     src/channel/channel_tensor_loan.cpp
     src/channel/channel_tensor_schema_payload.cpp
@@ -600,7 +616,10 @@ add_library(core
     src/channel/process_identity.cpp
     src/compiler/compile.cpp
     src/compiler/artifact_emitter.cpp
+    src/compiler/partition_cover_lowering.cpp
     src/compiler/partition_plan_lowering.cpp
+    src/compiler/partition_problem_lowering.cpp
+    src/core/diagnostic.cpp
     src/core/errors.cpp
     src/core/execution_context.cpp
     src/core/execution_plan.cpp
@@ -610,15 +629,19 @@ add_library(core
     src/core/operator_spec.cpp
     src/core/parameter.cpp
     src/core/parameter_catalog.cpp
+    src/core/rate.cpp
+    src/core/rate_queue_inspection.cpp
     src/core/temporal_contract.cpp
     src/core/temporal_contract_lowering.cpp
     src/core/temporal_contract_records.cpp
+    src/core/tensor_contract.cpp
     src/core/tensor_output_loan.cpp
     src/core/tensor_port_type_ops.cpp
     src/core/domain/tensor.cpp
     src/core/domain/dlpack_utils.cpp
     src/cuda_execution/cuda_event_pool.cpp
     src/cuda_execution/cuda_green_context.cpp
+    src/cuda_execution/cuda_green_context_driver.cpp
     src/cuda_execution/cuda_green_context_pool.cpp
     src/cuda_execution/cuda_stream_pool.cpp
     src/memory/block_memory_pool.cpp
@@ -631,16 +654,42 @@ add_library(core
     src/runtime/endpoint_clock_health_runtime.cpp
     src/runtime/lifecycle_control_state.cpp
     src/runtime/lifecycle_executor.cpp
+    src/runtime/managed_shutdown_signals.cpp
     src/runtime/physical_readiness_binding.cpp
     src/runtime/runtime_notification_source.cpp
     src/runtime/runtime_callback_context.cpp
+    src/runtime/runtime_channel_activation.cpp
     src/runtime/runtime_channel_binding.cpp
+    src/runtime/runtime_channel_ingress.cpp
+    src/runtime/runtime_channel_materialization.cpp
+    src/runtime/runtime_channel_output.cpp
+    src/runtime/runtime_channel_plan_binding.cpp
+    src/runtime/runtime_channel_restart.cpp
+    src/runtime/runtime_channel_storage.cpp
+    src/runtime/runtime_clock_reconstruction.cpp
+    src/runtime/runtime_cuda_execution_resources.cpp
     src/runtime/runtime_materialization.cpp
+    src/runtime/runtime_rate_state.cpp
+    src/runtime/runtime_operator_reconstruction.cpp
+    src/runtime/runtime_operator_plan_validation.cpp
+    src/runtime/runtime_partition_plan_validation.cpp
+    src/runtime/runtime_operator_replay_validation.cpp
     src/runtime/runtime_tensor_resources.cpp
+    src/runtime/runtime_tensor_output_pool.cpp
+    src/runtime/runtime_tensor_output_plan.cpp
+    src/runtime/runtime_tensor_resource_materialization.cpp
     src/runtime/parameter_catalog_projection.cpp
     src/runtime/parameter_control_state.cpp
     src/runtime/parameter_update_coordinator.cpp
     src/runtime/run_session.cpp
+    src/runtime/run_session_activation.cpp
+    src/runtime/run_session_managed_shutdown.cpp
+    src/runtime/run_session_readiness.cpp
+    src/runtime/run_session_rate_materialization.cpp
+    src/runtime/run_session_restart.cpp
+    src/runtime/run_session_startup.cpp
+    src/runtime/run_session_worker.cpp
+    src/runtime/run_session_port_bindings.cpp
     src/runtime/scheduling/deterministic_serial_ready_policy.cpp
     src/runtime/scheduling/ready_policy_catalog.cpp
     src/runtime/execution_lane.cpp
@@ -656,8 +705,8 @@ holoscan_apply_logging_policy(core)
 target_include_directories(core
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/modules/holomq/include
-        ${CMAKE_CURRENT_BINARY_DIR}/modules/holomq/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_BINARY_DIR}/include
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
@@ -669,7 +718,7 @@ target_link_libraries(core
         CUDA::cuda_driver
         CUDA::cudart
         dlpack::dlpack
-        magic_enum::magic_enum
+        nvtx3::nvtx3-cpp
         tl::expected
         # memory/memory_buffer.hpp exposes fmt in its public API, so fmt is a public compile
         # dependency of core (matching 4.x and the logger DSO). fmt-header-only is an INTERFACE
@@ -680,6 +729,7 @@ target_link_libraries(core
         # 4.x where logging is part of the public API. It is a holoscan export-set target.
         holoscan::logger
     PRIVATE
+        magic_enum::magic_enum
         Threads::Threads
 )
 target_compile_definitions(core
@@ -709,13 +759,102 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS core)
 add_subdirectory(schemas)
 list(APPEND HOLOSCAN_INSTALL_TARGETS holoscan_schema)
 
+# Sensor I/O acquisition support, declared alongside the other runtime libraries and following the
+# same shape as holoscan::config: its own target, its own install list, and its own package
+# component, but not part of holoscan_core. Only code that acquires from a device needs the
+# lifecycle guards, clock discipline, and sequence tracking, so obliging every consumer of the
+# runtime to carry them would be a cost with no matching benefit.
+#
+# Wire form for the sensor payload schemas. Declared before the library so the include directories
+# it advertises exist when the library links it.
+add_subdirectory(src/sensor_io/schemas)
+
+# A shared library rather than the INTERFACE target this used to be. The lifecycle guards, clock
+# discipline, sequence tracking, and provenance surface remain header-only, but image.fbs moved here
+# from Core and brought its metadata helper and port type ops with it, and those are translation
+# units. The consequence is worth stating plainly because it reverses a property this library was
+# described by: linking holoscan::sensor_io now links a .so.
+add_library(sensor_io
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/sensor_io/image_metadata.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/sensor_io/image_port_type_ops.cpp"
+)
+add_library(${HOLOSCAN_PACKAGE_NAME}::sensor_io ALIAS sensor_io)
+add_dependencies(sensor_io sensor_io_sensor_schemas_generated)
+holoscan_configure_cxx20_target(sensor_io PUBLIC)
+target_include_directories(sensor_io
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+# holoscan::schema as well as holoscan::core: the image metadata path uses Core's tensor
+# materialization and the generated header.fbs and tensor.fbs code, which only holoscan::schema puts
+# on the include path. Still one-directional -- sensor_io to schema to core -- so Core remains unaware
+# this library exists, which is what keeps the split meaningful. A consumer that adds this one
+# dependency gets Image and Imu without naming a second.
+target_link_libraries(sensor_io
+    PUBLIC
+        CUDA::cudart
+        ${HOLOSCAN_PACKAGE_NAME}::core
+        ${HOLOSCAN_PACKAGE_NAME}::schema
+        sensor_io_schemas
+    PRIVATE
+        flatbuffers::flatbuffers
+        fmt::fmt-header-only
+)
+target_compile_definitions(sensor_io
+    PUBLIC $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:HOLOSCAN_SENSOR_IO_STATIC_DEFINE>
+)
+generate_export_header(sensor_io
+    BASE_NAME HOLOSCAN_SENSOR_IO
+    EXPORT_MACRO_NAME HOLOSCAN_SENSOR_IO_EXPORT
+    NO_EXPORT_MACRO_NAME HOLOSCAN_SENSOR_IO_NO_EXPORT
+    DEPRECATED_MACRO_NAME HOLOSCAN_SENSOR_IO_DEPRECATED
+    STATIC_DEFINE HOLOSCAN_SENSOR_IO_STATIC_DEFINE
+    INCLUDE_GUARD_NAME HOLOSCAN_SENSOR_IO_EXPORT_H_GENERATED
+    EXPORT_FILE_NAME
+        "${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/holoscan_sensor_io_export.h"
+)
+set_target_properties(sensor_io PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    EXPORT_NAME sensor_io
+    OUTPUT_NAME holoscan_sensor_io
+    POSITION_INDEPENDENT_CODE ON
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    VERSION ${PROJECT_VERSION}
+    VISIBILITY_INLINES_HIDDEN YES
+)
+if(HOLOSCAN_ENABLE_CLANG_TIDY AND CMAKE_CXX_CLANG_TIDY)
+    # FlatBuffers generates declarations with short parameter names such as _fbb and _o.
+    set(_holoscan_sensor_io_clang_tidy_checks
+        "${CLANG_TIDY_CHECKS},-readability-inconsistent-declaration-parameter-name"
+    )
+    set_target_properties(sensor_io
+        PROPERTIES
+            CXX_CLANG_TIDY
+                "${CMAKE_CXX_CLANG_TIDY};--checks=${_holoscan_sensor_io_clang_tidy_checks}"
+    )
+    unset(_holoscan_sensor_io_clang_tidy_checks)
+endif()
+holoscan_configure_linux_shared_link(sensor_io)
+
+install(FILES
+    "${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/holoscan_sensor_io_export.h"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
+    COMPONENT holoscan-sensor-io
+)
+
+# Exported so an out-of-tree consumer can link what an in-tree consumer links; without this the
+# installed package would offer headers with no target that supplies them.
+list(APPEND HOLOSCAN_SENSOR_IO_INSTALL_TARGETS sensor_io sensor_io_schemas)
+
 if(NOT DEFINED HOLOMQ_DEFAULT_BACKEND)
     set(HOLOMQ_DEFAULT_BACKEND "${HOLOSCAN_MQ_BACKEND}" CACHE STRING "Default HoloMQ runtime backend")
     set_property(CACHE HOLOMQ_DEFAULT_BACKEND PROPERTY STRINGS iceoryx2)
 endif()
-# RAPIDS CPM must be initialized (via SetupRapidsCMake above) before this
-# subdirectory is processed. HoloMQ dependency helpers call rapids_cpm_find().
-add_subdirectory(modules/holomq)
+# RAPIDS CPM is initialized before the SDK-owned HoloMQ target is configured.
+include(cmake/HoloMQ.cmake)
 include(${rapids-cmake-dir}/export/package.cmake)
 if(NOT BUILD_SHARED_LIBS)
     # Static archives retain private libraries as link-only usage requirements. Register the
@@ -733,24 +872,56 @@ target_compile_definitions(core
         HOLOMQ_TRANSPORT_IOX2=1
 )
 
+# Holoscan Visualization module: the holoviz::rhi RHI (Vulkan backend) plus the header-only
+# layer-declaration API and the RenderBackend/PresentBackend interface contracts. Not yet
+# linked into core — that wiring lands with the operator + concrete renderer.
+if(HOLOSCAN_BUILD_VISUALIZATION)
+    add_subdirectory(modules/visualization)
+endif()
+
+if(HOLOSCAN_BUILD_VISION)
+    add_subdirectory(modules/vision)
+endif()
+
 # The compiler conformance tests exercise private lowering seams without exporting
 # those seams from holoscan::core. Compile the shared implementation once and add
 # the resulting objects to both core and compile_test; this avoids independently
 # compiling the same translation units with potentially divergent flags.
 add_library(holoscan_compiler_private_objects OBJECT
+    src/core/parameter_catalog_digest_internal.cpp
+    src/compiler/channel_service_lowering.cpp
+    src/compiler/clock_readiness_lowering.cpp
     src/compiler/closed_island_activation_plan.cpp
     src/compiler/compile_platform.cpp
+    src/compiler/cuda_execution_plan_validation.cpp
+    src/compiler/cuda_service_stream_plan.cpp
     src/compiler/deployment_plan_lowering.cpp
+    src/compiler/endpoint_catalog_lowering.cpp
+    src/compiler/endpoint_clock_health_lowering.cpp
+    src/compiler/external_channel_lowering.cpp
+    src/compiler/execution_plan_lookup.cpp
     src/compiler/inline_partition_execution_plan.cpp
+    src/compiler/partition_authority_validation.cpp
     src/compiler/partition_runner_plan.cpp
-    src/compiler/plan_artifact_lowering.cpp
+    src/compiler/plan_generation.cpp
+    src/compiler/plan_artifact_rate_serialization.cpp
+    src/compiler/plan_artifact_serialization.cpp
+    src/compiler/plan_artifact_tensor_serialization.cpp
+    src/compiler/parameter_identity.cpp
     src/compiler/parameter_plan_lowering.cpp
     src/compiler/physical_plan_lowering.cpp
+    src/compiler/physical_plan_rate_validation.cpp
+    src/compiler/pool_capacity_plan_lowering.cpp
+    src/compiler/rate_plan_lowering.cpp
+    src/compiler/tensor_byte_span_derivation.cpp
+    src/compiler/physical_resource_lowering.cpp
+    src/compiler/physical_topology_lowering.cpp
     src/compiler/process_local_channel_plan_validation.cpp
     src/compiler/process_plan_lowering.cpp
     src/compiler/profile_admission.cpp
     src/compiler/profile_manifest_lowering.cpp
     src/compiler/runtime_package_capabilities.cpp
+    src/compiler/tensor_storage_lowering.cpp
     src/runtime/runtime_package_capability.cpp
     src/compiler/temporal_plan_lowering.cpp
     src/threading/linux_thread_controller.cpp
@@ -766,8 +937,8 @@ target_include_directories(holoscan_compiler_private_objects
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/modules/holomq/include
-        ${CMAKE_CURRENT_BINARY_DIR}/modules/holomq/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_BINARY_DIR}/include
         ${CMAKE_CURRENT_BINARY_DIR}/include
 )
 target_link_libraries(holoscan_compiler_private_objects
@@ -776,7 +947,6 @@ target_link_libraries(holoscan_compiler_private_objects
         CUDA::cuda_driver
         CUDA::cudart
         dlpack::dlpack
-        magic_enum::magic_enum
         tl::expected
         fmt::fmt-header-only
         holoscan::logger
@@ -808,8 +978,8 @@ target_include_directories(holoscan_lifecycle_plan_private_objects
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/modules/holomq/include
-        ${CMAKE_CURRENT_BINARY_DIR}/modules/holomq/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_BINARY_DIR}/include
         ${CMAKE_CURRENT_BINARY_DIR}/include
 )
 target_link_libraries(holoscan_lifecycle_plan_private_objects
@@ -818,7 +988,6 @@ target_link_libraries(holoscan_lifecycle_plan_private_objects
         CUDA::cuda_driver
         CUDA::cudart
         dlpack::dlpack
-        magic_enum::magic_enum
         tl::expected
         fmt::fmt-header-only
         holoscan::logger
@@ -842,6 +1011,22 @@ target_sources(core PRIVATE
 
 include(cmake/HoloscanParameterTools.cmake)
 
+# InferenceOp + HoloInfer module. This TensorRT-only feature is independently configurable so
+# module-dependent examples and tests can follow the same public build option.
+if(HOLOSCAN_BUILD_INFERENCE)
+    # holoinfer/holoinfer_utils need yaml-cpp for standalone model-config YAML parsing. This is
+    # independent of holoscan::config_io's private yaml-cpp usage; guard against double-add when
+    # HOLOSCAN_BUILD_CONFIG_IO already brought in the target.
+    if(NOT TARGET yaml-cpp::yaml-cpp)
+        holoscan_add_dependency(yaml-cpp_rapids)
+    endif()
+    # TensorRT is provisioned as a system package in the SDK build container (see Dockerfile); it
+    # is located via the classic find-module path rather than CPM.
+    find_package(TensorRT 10 MODULE REQUIRED)
+
+    add_subdirectory(modules/inference)
+endif()
+
 if(HOLOSCAN_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
@@ -854,12 +1039,12 @@ endif()
 # previous build with the opposite BUILD_SHARED_LIBS value, remove that stale Core artifact.
 if(BUILD_SHARED_LIBS)
     install(CODE
-        "file(REMOVE \"\${CMAKE_INSTALL_PREFIX}/${HOLOSCAN_INSTALL_LIB_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}holoscan_core${CMAKE_STATIC_LIBRARY_SUFFIX}\")"
+        "file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${HOLOSCAN_INSTALL_LIB_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}holoscan_core${CMAKE_STATIC_LIBRARY_SUFFIX}\")"
     )
 else()
     install(CODE
         "file(GLOB _holoscan_core_shared_libraries
-            \"\${CMAKE_INSTALL_PREFIX}/${HOLOSCAN_INSTALL_LIB_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}holoscan_core${CMAKE_SHARED_LIBRARY_SUFFIX}*\"
+            \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${HOLOSCAN_INSTALL_LIB_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}holoscan_core${CMAKE_SHARED_LIBRARY_SUFFIX}*\"
         )
         file(REMOVE \${_holoscan_core_shared_libraries})"
     )
@@ -869,6 +1054,41 @@ install(TARGETS ${HOLOSCAN_INSTALL_TARGETS}
     DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}
     EXPORT ${HOLOSCAN_PACKAGE_NAME}-exports
     COMPONENT holoscan-core
+)
+
+# HoloMQ is an SDK-owned public library. Its headers and generated export
+# declaration share the Holoscan core installation component and package.
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holomq"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    COMPONENT holoscan-core
+    FILES_MATCHING PATTERN "*.hpp"
+)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/holomq/holomq_export.h"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holomq
+    COMPONENT holoscan-core
+)
+
+# Its own export set, following holoscan::config and holoscan::params, because a component
+# advertised as omittable has to actually be omittable. In the shared holoscan-exports set the
+# generated import file declared holoscan::sensor_io unconditionally and asserted that
+# libholoscan_sensor_io exists, so a prefix installed without holoscan-sensor-io failed
+# find_package(holoscan) outright -- for every consumer, including one that never names a
+# sensor type. With a set of its own, a core-only prefix ships no sensor import file at all.
+#
+# Attributability to holoscan-sensor-io is kept, and so is resolution without a second
+# component argument: holoscan-config.cmake.in includes the file below whenever it is present,
+# so an unqualified find_package(holoscan) against a prefix that has the component still
+# yields holoscan::sensor_io.
+install(TARGETS ${HOLOSCAN_SENSOR_IO_INSTALL_TARGETS}
+    DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}
+    EXPORT ${HOLOSCAN_PACKAGE_NAME}-sensor-io-exports
+    COMPONENT holoscan-sensor-io
+)
+install(EXPORT ${HOLOSCAN_PACKAGE_NAME}-sensor-io-exports
+    FILE ${HOLOSCAN_PACKAGE_NAME}-sensor-io-targets.cmake
+    NAMESPACE ${HOLOSCAN_PACKAGE_NAME}::
+    DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}/cmake/${HOLOSCAN_PACKAGE_NAME}
+    COMPONENT holoscan-sensor-io
 )
 
 if(HOLOSCAN_BUILD_CONFIG)
@@ -886,7 +1106,7 @@ if(HOLOSCAN_BUILD_CONFIG)
   # The lightweight component is independently installable and therefore carries its sole public
   # checked-result dependency instead of requiring the aggregate dependency component.
   install(DIRECTORY "${tl-expected_SOURCE_DIR}/include/tl"
-      DESTINATION include
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
       COMPONENT holoscan-config
   )
   install(FILES
@@ -924,40 +1144,40 @@ endif()
 
 # Copy version file
 install(FILES ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/version_config.hpp
-    DESTINATION include/holoscan
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
 )
 
 install(FILES ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/holoscan_core_export.h
-    DESTINATION include/holoscan
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
 )
 
 install(FILES ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/holoscan_logger_export.h
-    DESTINATION include/holoscan
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
 )
 
 if(HOLOSCAN_BUILD_CONFIG)
   install(FILES ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/holoscan_config_export.h
-      DESTINATION include/holoscan
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
       COMPONENT holoscan-config
   )
   install(FILES
       "${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/config/document.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/config/codec.hpp"
-      DESTINATION include/holoscan/config
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan/config
       COMPONENT holoscan-config
   )
 endif()
 
 if(HOLOSCAN_BUILD_CONFIG_IO)
   install(FILES ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/holoscan_config_io_export.h
-      DESTINATION include/holoscan
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
       COMPONENT holoscan-config-io
   )
   install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/config/io.hpp"
-      DESTINATION include/holoscan/config
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan/config
       COMPONENT holoscan-config-io
   )
 endif()
@@ -965,69 +1185,86 @@ endif()
 # Public logger header (the holoscan::logger / HOLOSCAN_LOG_* logging API). Installed so consumers can
 # log against the installed SDK. spdlog_logger.hpp is the spdlog-backed implementation detail and is
 # intentionally not part of the public install surface.
-install(FILES "${CMAKE_SOURCE_DIR}/include/holoscan/logger/logger.hpp"
-    DESTINATION include/holoscan/logger
+install(FILES "${holoscan_SOURCE_DIR}/include/holoscan/logger/logger.hpp"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan/logger
     COMPONENT holoscan-core
 )
 
-install(FILES "${CMAKE_SOURCE_DIR}/include/holoscan/holoscan.hpp"
-    DESTINATION include/holoscan
+install(FILES "${holoscan_SOURCE_DIR}/include/holoscan/holoscan.hpp"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
+)
+
+# Public profiler headers. Installed so consumers can use NVTX profiling helpers against the
+# installed SDK.
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holoscan/profiler"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
+    COMPONENT holoscan-core
+    FILES_MATCHING PATTERN "*.hpp"
 )
 
 # Public channel headers. Installed so consumers can use typed Channel APIs and schema payload
 # wrappers from the installed SDK.
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/holoscan/channel"
-    DESTINATION include/holoscan
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holoscan/channel"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
     FILES_MATCHING PATTERN "*.hpp"
 )
 
 # Public core headers (the expected<T, Error> error-handling API). Installed so consumers can use
 # holoscan::expected / Error / error_code_name against the installed SDK.
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/holoscan/core"
-    DESTINATION include/holoscan
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holoscan/core"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
     FILES_MATCHING PATTERN "*.hpp"
 )
 
 # Public CUDA execution headers. Installed so consumers can use stream, event, and green-context
 # pool APIs against the installed SDK.
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/holoscan/cuda_execution"
-    DESTINATION include/holoscan
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holoscan/cuda_execution"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
     FILES_MATCHING PATTERN "*.hpp"
 )
 
 # Public memory headers. Installed so consumers can use allocator and tensor storage APIs against
 # the installed SDK.
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/holoscan/memory"
-    DESTINATION include/holoscan
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holoscan/memory"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
+    FILES_MATCHING PATTERN "*.hpp"
+)
+
+# Public sensor I/O headers. Installed so out-of-tree sensor operators can compose the same
+# lifecycle guards, registration, and timestamp discipline as in-tree ones. Attributed to
+# holoscan-sensor-io rather than holoscan-core: they are the interface of a distinct library, and
+# a deployment that does no device acquisition should be able to leave them out.
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holoscan/sensor_io"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
+    COMPONENT holoscan-sensor-io
     FILES_MATCHING PATTERN "*.hpp"
 )
 
 # Public threading headers (the ThreadPlacement value API). Installed so consumers can configure
 # thread affinity and scheduling against the installed SDK.
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/holoscan/threading"
-    DESTINATION include/holoscan
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holoscan/threading"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
     FILES_MATCHING PATTERN "*.hpp"
 )
 
 # Public clock headers. Installed so consumers can use clock APIs against the installed SDK.
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/holoscan/time"
-    DESTINATION include/holoscan
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holoscan/time"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
     FILES_MATCHING PATTERN "*.hpp"
 )
 
 # Apache 2.0 license at install prefix root
-install(FILES "${CMAKE_SOURCE_DIR}/LICENSE.txt"
+install(FILES "${holoscan_SOURCE_DIR}/LICENSE.txt"
     DESTINATION .
     COMPONENT holoscan-core
 )
-
 if(HOLOSCAN_BUILD_PYTHON)
     add_subdirectory(python/holoscan)
 endif()
@@ -1041,23 +1278,36 @@ if(HOLOSCAN_BUILD_TESTS AND BUILD_TESTING)
 endif()
 
 # Install CMake scripts to download data from NGC so it can be reused by HoloHub
-install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/HoloscanDownloadData.cmake"
+install(FILES "${holoscan_SOURCE_DIR}/cmake/modules/HoloscanDownloadData.cmake"
 DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
 COMPONENT "holoscan-core"
 )
 # FindTinyXML2.cmake: used by holoscan-config.cmake when TinyXML2Config.cmake is absent
 # (e.g. Debian libtinyxml2-dev). Must live next to holoscan-config.cmake on CMAKE_MODULE_PATH.
-install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/FindTinyXML2.cmake"
+install(FILES "${holoscan_SOURCE_DIR}/cmake/modules/FindTinyXML2.cmake"
         DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
         COMPONENT "holoscan-core"
 )
 # Shipped examples are independent package consumers but retain the SDK's build-configuration
 # logging matrix. Install only that narrow caller policy, not the complete in-tree target policy.
-install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/HoloscanLoggingPolicy.cmake"
+install(FILES "${holoscan_SOURCE_DIR}/cmake/modules/HoloscanLoggingPolicy.cmake"
         DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
         COMPONENT "holoscan-core"
 )
-install(FILES "${CMAKE_SOURCE_DIR}/cmake/HoloscanGraphArtifacts.cmake"
+set(_holoscan_apply_patches_install_components holoscan holoscan-core)
+if(HOLOSCAN_BUILD_CONFIG)
+    list(APPEND _holoscan_apply_patches_install_components holoscan-config)
+endif()
+foreach(_holoscan_apply_patches_install_component
+        IN LISTS _holoscan_apply_patches_install_components)
+    install(FILES "${holoscan_SOURCE_DIR}/cmake/modules/HoloscanApplyPatches.cmake"
+            DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
+            COMPONENT "${_holoscan_apply_patches_install_component}"
+    )
+endforeach()
+unset(_holoscan_apply_patches_install_component)
+unset(_holoscan_apply_patches_install_components)
+install(FILES "${holoscan_SOURCE_DIR}/cmake/HoloscanGraphArtifacts.cmake"
         DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
         COMPONENT "holoscan"
 )
@@ -1125,6 +1375,7 @@ set(_holoscan_install_packages
     tl-expected
     fmt
     magic_enum
+    nvtx3
     dlpack
     CCCL
     Flatbuffers
@@ -1169,7 +1420,7 @@ rapids_export(
 # config targets and their public checked-result dependency.
 include(CMakePackageConfigHelpers)
 set(_holoscan_rapids_package_dir
-    "${PROJECT_BINARY_DIR}/rapids-cmake/${HOLOSCAN_PACKAGE_NAME}/export/${HOLOSCAN_PACKAGE_NAME}"
+    "${holoscan_BINARY_DIR}/rapids-cmake/${HOLOSCAN_PACKAGE_NAME}/export/${HOLOSCAN_PACKAGE_NAME}"
 )
 set(_holoscan_rapids_config
     "${_holoscan_rapids_package_dir}/${HOLOSCAN_PACKAGE_NAME}-config.cmake"

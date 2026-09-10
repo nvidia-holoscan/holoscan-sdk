@@ -147,7 +147,7 @@ def device_list(selection: str) -> list[torch.device]:
     if torch.cuda.is_available():
         try:
             cuda_device = torch.cuda.current_device()
-        except RuntimeError:
+        except (RuntimeError, torch.cuda.DeferredCudaCallError):
             # Heterogeneous Tegra systems can expose a CUDA ordinal that the
             # installed PyTorch build cannot initialize. Keep the automatic
             # benchmark useful for CPU coverage on those systems.

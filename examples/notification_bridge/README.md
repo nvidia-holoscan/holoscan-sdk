@@ -48,7 +48,7 @@ flowchart LR
 From this example's `cpp/` directory:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 
@@ -132,7 +132,7 @@ This example uses the shipped generic foreign-thread capability:
 `NotificationSender`. It does **not** claim that Core already has public typed
 fd/eventfd, RDMA completion-queue, CUDA-event, or arbitrary-predicate provider
 adapters. Those provider surfaces, including typed support-thread placement,
-are experimental follow-ups in EA1-026 and EA1-027. Until then, applications
+are experimental follow-ups in HSDK5-026 and HSDK5-027. Until then, applications
 own these bounded bridge threads and convert their readiness into
 `NotificationSender::post()` explicitly.
 

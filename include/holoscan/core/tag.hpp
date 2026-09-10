@@ -26,7 +26,7 @@ namespace holoscan {
 struct Tag {
   std::uint64_t sequence{};    ///< Nonzero candidate sequence within `generation`.
   std::uint32_t generation{};  ///< Nonzero successfully published Operator execution generation.
-  std::uint32_t reserved{};    ///< Record-version reservation; must be zero in EA1.
+  std::uint32_t reserved{};    ///< Record-version reservation; must be zero in baseline.
 
   /// @brief Return whether all fields form a supported activation identity.
   ///
@@ -47,13 +47,13 @@ struct Tag {
 
 /// @brief Represent the deterministic logical order of local activation candidates.
 ///
-/// Unlike \ref Tag, \ref TagTime is an ordering coordinate. Valid EA1 records order
+/// Unlike \ref Tag, \ref TagTime is an ordering coordinate. Valid baseline records order
 /// lexicographically by \ref logical_ns and then \ref microstep. The zero record is a valid
 /// coordinate; absence, when required
 /// by a containing contract, must use a separate validity mechanism. Reserved bits never
-/// participate in ordering and must be zero for an EA1-supported record. Ordering remains a strict
-/// weak relation for every bit pattern so generic ordered algorithms remain well-defined even when
-/// a malformed or future-version record is inspected before validation.
+/// participate in ordering and must be zero for a baseline-supported record. Ordering remains a
+/// strict weak relation for every bit pattern so generic ordered algorithms remain well-defined
+/// even when a malformed or future-version record is inspected before validation.
 ///
 /// `TagTime` is a fixed-size, standard-layout, trivially copyable record. It is local ordering
 /// evidence, not physical or capture time. It owns no resources, performs no allocation, and is
@@ -61,9 +61,9 @@ struct Tag {
 struct TagTime {
   std::int64_t logical_ns{};  ///< Signed logical nanosecond coordinate.
   std::uint32_t microstep{};  ///< Deterministic order among candidates at `logical_ns`.
-  std::uint32_t reserved{};   ///< Record-version reservation; must be zero in EA1.
+  std::uint32_t reserved{};   ///< Record-version reservation; must be zero in baseline.
 
-  /// @brief Return whether this record uses the supported EA1 representation.
+  /// @brief Return whether this record uses the supported baseline representation.
   ///
   /// @return \c true when \ref reserved is zero; otherwise \c false.
   [[nodiscard]] constexpr bool valid() const noexcept { return reserved == 0; }
@@ -82,20 +82,20 @@ struct TagTime {
   /// @return \c true when \p lhs has an earlier logical nanosecond than \p rhs, or when their
   /// logical nanoseconds match and \p lhs has the earlier microstep.
   /// @note Reserved fields never affect ordering. Call \ref valid separately before accepting a
-  /// record as the supported EA1 representation.
+  /// record as the supported baseline representation.
   friend constexpr bool operator<(TagTime lhs, TagTime rhs) noexcept {
     return lhs.logical_ns < rhs.logical_ns ||
            (lhs.logical_ns == rhs.logical_ns && lhs.microstep < rhs.microstep);
   }
 };
 
-static_assert(sizeof(Tag) == 16, "Tag is part of the fixed EA1 record layout");
+static_assert(sizeof(Tag) == 16, "Tag is part of the fixed baseline record layout");
 static_assert(offsetof(Tag, sequence) == 0);
 static_assert(offsetof(Tag, generation) == 8);
 static_assert(offsetof(Tag, reserved) == 12);
 static_assert(std::is_standard_layout_v<Tag>);
 static_assert(std::is_trivially_copyable_v<Tag>);
-static_assert(sizeof(TagTime) == 16, "TagTime is part of the fixed EA1 record layout");
+static_assert(sizeof(TagTime) == 16, "TagTime is part of the fixed baseline record layout");
 static_assert(offsetof(TagTime, logical_ns) == 0);
 static_assert(offsetof(TagTime, microstep) == 8);
 static_assert(offsetof(TagTime, reserved) == 12);

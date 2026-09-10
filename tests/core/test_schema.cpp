@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <span>
@@ -25,8 +26,9 @@
 #include "core/domain/tensor_access.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/schema/flatbuffer_schema_package.hpp"
-#include "holoscan/schema/image_metadata.hpp"
 #include "holoscan/schema/tensor_materialization.hpp"
+#include "holoscan/sensor_io/image_metadata.hpp"
+#include "holoscan/sensor_io/sensor_schema_package.hpp"
 
 #include "header_generated.h"
 #include "image_generated.h"
@@ -36,6 +38,17 @@
 #include "time_generated.h"
 
 namespace holoscan {
+
+using DescriptorTensorAssign =
+    decltype(detail::RuntimePortTypeOps{}.assign_descriptor_tensors_sample);
+static_assert(std::is_invocable_r_v<expected<void, Error>, DescriptorTensorAssign, void*,
+                                    std::span<const std::byte>, std::span<Tensor>,
+                                    detail::DescriptorTensorWireMetadata,
+                                    detail::DescriptorTensorSampleMetadata>);
+static_assert(!std::is_invocable_r_v<expected<void, Error>, DescriptorTensorAssign, void*,
+                                     std::span<const std::byte>, std::span<Tensor>,
+                                     detail::DescriptorTensorSampleMetadata,
+                                     detail::DescriptorTensorWireMetadata>);
 
 struct IndexedDescriptorSchemaNative {
   std::array<std::shared_ptr<Tensor>, 3U> tensors;
@@ -130,7 +143,7 @@ TEST(Schema, HeaderSchemaRoundTrips) {
   flatbuffers::FlatBufferBuilder builder;
   const auto stamp = schema::CreateTime(builder, 100, 200);
   const auto frame_id = builder.CreateString("camera_0");
-  builder.Finish(schema::CreateHeader(builder, stamp, frame_id));
+  builder.Finish(schema::CreateHeader(builder, stamp, frame_id, 300, 5U));
 
   flatbuffers::Verifier verifier(builder.GetBufferPointer(), builder.GetSize());
   ASSERT_TRUE(schema::VerifyHeaderBuffer(verifier));
@@ -139,6 +152,8 @@ TEST(Schema, HeaderSchemaRoundTrips) {
   ASSERT_NE(header, nullptr);
   ASSERT_NE(header->stamp(), nullptr);
   EXPECT_EQ(header->stamp()->time_ns(), 100);
+  EXPECT_EQ(header->capture_timestamp_ns(), 300);
+  EXPECT_EQ(header->device_sequence(), 5U);
   ASSERT_NE(header->frame_id(), nullptr);
   EXPECT_EQ(header->frame_id()->string_view(), std::string_view("camera_0"));
 }
@@ -148,7 +163,7 @@ TEST(Schema, ImuSchemaRoundTrips) {
   const auto stamp = schema::CreateTime(builder, 1, 2);
   const auto frame_id = builder.CreateString("imu_link");
   const auto header = schema::CreateHeader(builder, stamp, frame_id);
-  const schema::Quaternionf orientation{1.0F, 0.0F, 0.0F, 0.0F};
+  const schema::Quaternionf orientation{0.0F, 0.0F, 0.0F, 1.0F};
   const schema::Vector3f angular_velocity{0.1F, 0.2F, 0.3F};
   const schema::Vector3f linear_acceleration{9.8F, 0.0F, -0.1F};
   builder.Finish(
@@ -333,11 +348,13 @@ TEST(Schema, IndexedDescriptorTraitsExposeThreeTensorTypeOps) {
                    : detail::descriptor_tensor_schema_tensor_at(
                          *static_cast<const IndexedDescriptorSchemaNative*>(payload), index);
       },
-      .assign_descriptor_tensors_sample = [](void* storage,
-                                             std::span<const std::byte>,
-                                             std::span<Tensor>
-                                                 tensors,
-                                             SampleMetadata) noexcept -> expected<void, Error> {
+      .assign_descriptor_tensors_sample =
+          [](void* storage,
+             std::span<const std::byte>,
+             std::span<Tensor>
+                 tensors,
+             detail::DescriptorTensorWireMetadata,
+             detail::DescriptorTensorSampleMetadata) noexcept -> expected<void, Error> {
         if (storage == nullptr || tensors.size() != 3U) {
           return make_unexpected(Error{ErrorCode::kInvalidArgument});
         }
@@ -364,7 +381,11 @@ TEST(Schema, IndexedDescriptorTraitsExposeThreeTensorTypeOps) {
 
   IndexedDescriptorSchemaNative destination{};
   std::array<Tensor, 3U> assigned_tensors{};
-  auto assigned = ops.assign_descriptor_tensors_sample(&destination, {}, assigned_tensors, {});
+  auto assigned = ops.assign_descriptor_tensors_sample(&destination,
+                                                       {},
+                                                       assigned_tensors,
+                                                       detail::DescriptorTensorWireMetadata{},
+                                                       detail::DescriptorTensorSampleMetadata{});
   ASSERT_TRUE(assigned) << runtime_error_message(assigned.error());
   for (const auto& tensor : destination.tensors) {
     EXPECT_NE(tensor, nullptr);
@@ -535,6 +556,72 @@ Tensor make_cpu_tensor_2x3() {
   return Tensor(std::move(context));
 }
 
+// A 1-D uint8 CPU tensor of the requested byte length, backed by storage that outlives the caller.
+//
+// The shape a multi-planar producer actually publishes. Plane records are byte ranges inside one
+// allocation, so the Tensor an Image carries has to span the bytes those ranges name; a Tensor
+// sized for something else cannot contain them and is rejected. A deque because each tensor holds
+// a pointer into its own element and deque never relocates the elements already in it.
+Tensor make_cpu_byte_tensor(const std::int64_t byte_count) {
+  static std::deque<std::vector<std::uint8_t>> storage;
+  auto& bytes = storage.emplace_back(static_cast<std::size_t>(byte_count), std::uint8_t{0});
+  auto context = std::make_shared<DLManagedTensorContext>();
+  context->dl_shape = {byte_count};
+  context->tensor.dl_tensor.data = bytes.data();
+  context->tensor.dl_tensor.device = DLDevice{.device_type = kDLCPU, .device_id = 0};
+  context->tensor.dl_tensor.ndim = 1;
+  context->tensor.dl_tensor.dtype = DLDataType{.code = kDLUInt, .bits = 8, .lanes = 1};
+  context->tensor.dl_tensor.shape = context->dl_shape.data();
+  context->tensor.dl_tensor.strides = nullptr;
+  context->tensor.dl_tensor.byte_offset = 0;
+  return Tensor(std::move(context));
+}
+
+// A 1-D uint16 CPU tensor spanning the requested byte length, backed by storage that outlives the
+// caller.
+//
+// The carriage a producer uses for an encoding whose container is wider than a byte. Alongside
+// make_cpu_byte_tensor it is what distinguishes the two admissible carriages -- a typed view and an
+// opaque byte buffer -- from an element type that contradicts the encoding outright.
+Tensor make_cpu_uint16_tensor(const std::int64_t byte_count) {
+  static std::deque<std::vector<std::uint16_t>> storage;
+  auto& elements = storage.emplace_back(
+      static_cast<std::size_t>(byte_count) / sizeof(std::uint16_t), std::uint16_t{0});
+  auto context = std::make_shared<DLManagedTensorContext>();
+  context->dl_shape = {static_cast<std::int64_t>(elements.size())};
+  context->tensor.dl_tensor.data = elements.data();
+  context->tensor.dl_tensor.device = DLDevice{.device_type = kDLCPU, .device_id = 0};
+  context->tensor.dl_tensor.ndim = 1;
+  context->tensor.dl_tensor.dtype = DLDataType{.code = kDLUInt, .bits = 16, .lanes = 1};
+  context->tensor.dl_tensor.shape = context->dl_shape.data();
+  context->tensor.dl_tensor.strides = nullptr;
+  context->tensor.dl_tensor.byte_offset = 0;
+  return Tensor(std::move(context));
+}
+
+// A 1-D uint8 CPU tensor whose element groups the requested number of lanes, backed by storage that
+// outlives the caller.
+//
+// The carriage the Image element rule refuses: a vectorized element states a component organization
+// the encoding has already fixed. Sized in elements rather than bytes so the caller controls the
+// span independently of the lane count, which is what lets a case reject on the lane rule instead
+// of on a frame that does not fit.
+Tensor make_cpu_lane_tensor(const std::int64_t element_count, const std::uint16_t lanes) {
+  static std::deque<std::vector<std::uint8_t>> storage;
+  auto& bytes =
+      storage.emplace_back(static_cast<std::size_t>(element_count) * lanes, std::uint8_t{0});
+  auto context = std::make_shared<DLManagedTensorContext>();
+  context->dl_shape = {element_count};
+  context->tensor.dl_tensor.data = bytes.data();
+  context->tensor.dl_tensor.device = DLDevice{.device_type = kDLCPU, .device_id = 0};
+  context->tensor.dl_tensor.ndim = 1;
+  context->tensor.dl_tensor.dtype = DLDataType{.code = kDLUInt, .bits = 8, .lanes = lanes};
+  context->tensor.dl_tensor.shape = context->dl_shape.data();
+  context->tensor.dl_tensor.strides = nullptr;
+  context->tensor.dl_tensor.byte_offset = 0;
+  return Tensor(std::move(context));
+}
+
 // A 3x2 float32 CPU tensor with explicit row strides {4, 1} backed by static storage.
 Tensor make_strided_cpu_tensor_3x2() {
   static std::vector<float> data{1.0F, 2.0F, 0.0F, 0.0F, 3.0F, 4.0F, 0.0F, 0.0F, 5.0F, 6.0F};
@@ -684,15 +771,26 @@ TEST(Schema, StandardDescriptorTensorAdapterOwnsCommonLifecycle) {
   auto stale_metadata = ops->descriptor_tensor_sample_metadata(wire, 0U, kEndpointGeneration + 1U);
   ASSERT_FALSE(stale_metadata);
   EXPECT_EQ(stale_metadata.error().code, ErrorCode::kProtocolError);
-  auto assigned =
-      ops->assign_descriptor_tensor_sample(storage.data(), wire, make_cpu_tensor_2x3(), metadata);
+  SampleMetadata normalized_metadata = metadata;
+  normalized_metadata.capture_timestamp_ns = 123U;
+  normalized_metadata.source_clock_id = ClockId{9U};
+  auto assigned = ops->assign_descriptor_tensor_sample(
+      storage.data(),
+      wire,
+      make_cpu_tensor_2x3(),
+      detail::DescriptorTensorWireMetadata{metadata},
+      detail::DescriptorTensorSampleMetadata{normalized_metadata});
   ASSERT_TRUE(assigned) << runtime_error_message(assigned.error());
   EXPECT_EQ(sample->data.sequence, 42U);
   EXPECT_EQ(sample->data.source, "third-party-camera");
   EXPECT_DOUBLE_EQ(sample->data.scale, 2.5);
   EXPECT_EQ(sample->data.data.get(), retained_tensor_holder);
   EXPECT_EQ(sample->data.data->shape(), (std::vector<std::int64_t>{2, 3}));
+  // Key assertion: singular assignment validates against wire metadata while exposing the
+  // independently normalized plan-clock coordinate.
   EXPECT_EQ(sample->metadata.sequence, 19U);
+  EXPECT_EQ(sample->metadata.capture_timestamp_ns, 123U);
+  EXPECT_EQ(sample->metadata.source_clock_id, ClockId{9U});
 
   ops->reset_sample_storage(storage.data());
   EXPECT_EQ(sample->data.data.get(), retained_tensor_holder);
@@ -726,8 +824,12 @@ TEST(Schema, StandardDescriptorTensorAdapterRejectsMismatchBeforeAssignment) {
   alignas(Sample<Native>) std::array<std::byte, sizeof(Sample<Native>)> storage{};
   ASSERT_TRUE(ops->prepare_sample_storage(storage.data()));
   auto* sample = reinterpret_cast<Sample<Native>*>(storage.data());
-  auto assigned = ops->assign_descriptor_tensor_sample(
-      storage.data(), wire, make_strided_cpu_tensor_3x2(), metadata);
+  auto assigned =
+      ops->assign_descriptor_tensor_sample(storage.data(),
+                                           wire,
+                                           make_strided_cpu_tensor_3x2(),
+                                           detail::DescriptorTensorWireMetadata{metadata},
+                                           detail::DescriptorTensorSampleMetadata{metadata});
   ASSERT_FALSE(assigned);
   EXPECT_EQ(assigned.error().code, ErrorCode::kProtocolError);
   EXPECT_EQ(sample->data.sequence, 0U);
@@ -923,6 +1025,66 @@ TEST(Schema, TensorUnpackRejectsInconsistentWireMetadata) {
   }
 }
 
+// Embedded Tensor.data must cover the storage span implied by shape/dtype/strides. Undersized
+// payloads would otherwise produce a Tensor whose nbytes()/strided indexing reads out of bounds.
+TEST(Schema, TensorUnpackRejectsUndersizedDataForLayout) {
+  flatbuffers::FlatBufferBuilder builder;
+  const std::array<std::uint8_t, 1U> data{0U};  // far smaller than a 2x3 uint8 span
+  const std::array<int64_t, 2U> shape{2, 3};
+  const auto data_offset = builder.CreateVector(data.data(), data.size());
+  const auto shape_offset = builder.CreateVector(shape.data(), shape.size());
+  const schema::DLDataType dtype{schema::DLDataTypeCode_kDLUInt, 8U, 1U};
+  const schema::DLDevice device{schema::DLDeviceType_kDLCPU, 0};
+  schema::FinishTensorBuffer(
+      builder,
+      schema::CreateTensor(
+          builder, data_offset, shape_offset, &dtype, &device, /*ndim=*/2U, /*strides=*/0));
+
+  flatbuffers::Verifier verifier(builder.GetBufferPointer(), builder.GetSize());
+  ASSERT_TRUE(schema::VerifyTensorBuffer(verifier));
+  const schema::Tensor* packed = schema::GetTensor(builder.GetBufferPointer());
+  ASSERT_NE(packed, nullptr);
+
+  Tensor unpacked;
+  try {
+    packed->UnPackTo(&unpacked);
+    FAIL() << "expected undersized Tensor data to be rejected";
+  } catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string_view{error.what()},
+              "cannot unpack FlatBuffer Tensor whose data size is smaller than the layout span");
+  }
+  EXPECT_FALSE(detail::TensorAccess::context(unpacked));
+}
+
+TEST(Schema, TensorUnpackRejectsInvalidLayoutMetadata) {
+  flatbuffers::FlatBufferBuilder builder;
+  const std::array<std::uint8_t, 6U> data{1U, 2U, 3U, 4U, 5U, 6U};
+  const std::array<int64_t, 2U> shape{2, -3};  // negative extent
+  const auto data_offset = builder.CreateVector(data.data(), data.size());
+  const auto shape_offset = builder.CreateVector(shape.data(), shape.size());
+  const schema::DLDataType dtype{schema::DLDataTypeCode_kDLUInt, 8U, 1U};
+  const schema::DLDevice device{schema::DLDeviceType_kDLCPU, 0};
+  schema::FinishTensorBuffer(
+      builder,
+      schema::CreateTensor(
+          builder, data_offset, shape_offset, &dtype, &device, /*ndim=*/2U, /*strides=*/0));
+
+  flatbuffers::Verifier verifier(builder.GetBufferPointer(), builder.GetSize());
+  ASSERT_TRUE(schema::VerifyTensorBuffer(verifier));
+  const schema::Tensor* packed = schema::GetTensor(builder.GetBufferPointer());
+  ASSERT_NE(packed, nullptr);
+
+  Tensor unpacked;
+  try {
+    packed->UnPackTo(&unpacked);
+    FAIL() << "expected invalid Tensor layout to be rejected";
+  } catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string_view{error.what()},
+              "cannot unpack FlatBuffer Tensor with invalid layout metadata");
+  }
+  EXPECT_FALSE(detail::TensorAccess::context(unpacked));
+}
+
 // WithTensorGather materializes only tensors strictly smaller than the byte threshold.
 TEST(Schema, TensorGatherRespectsSizeThreshold) {
   const Tensor tensor = make_cpu_tensor_2x3();  // 24 bytes
@@ -954,8 +1116,7 @@ TEST(Schema, ImageMetadataHelperRoundTrips) {
   const schema::ImageMetadataOptions options{.height = 3,
                                              .width = 2,
                                              .encoding = schema::ImageEncoding_MONO32F,
-                                             .time_ns = 987654321,
-                                             .acqtime_ns = 987654399,
+                                             .capture_timestamp_ns = 987654321,
                                              .frame_id = "imu_camera_frame"};
 
   auto metadata = schema::build_image_metadata(tensor, options);
@@ -970,9 +1131,7 @@ TEST(Schema, ImageMetadataHelperRoundTrips) {
   EXPECT_EQ(image->width(), 2);
   EXPECT_EQ(image->encoding(), schema::ImageEncoding_MONO32F);
   ASSERT_NE(image->header(), nullptr);
-  ASSERT_NE(image->header()->stamp(), nullptr);
-  EXPECT_EQ(image->header()->stamp()->time_ns(), 987654321);
-  EXPECT_EQ(image->header()->stamp()->acqtime_ns(), 987654399);
+  EXPECT_EQ(image->header()->capture_timestamp_ns(), 987654321);
   ASSERT_NE(image->header()->frame_id(), nullptr);
   EXPECT_EQ(image->header()->frame_id()->string_view(), std::string_view("imu_camera_frame"));
 
@@ -990,6 +1149,102 @@ TEST(Schema, ImageMetadataHelperRoundTrips) {
   }
 }
 
+// Round-trip coverage for the descriptor fields that complete the camera contract. The round-trip
+// above covers geometry, header times, and Tensor layout; these are the fields a consumer needs in
+// order to interpret the samples, and each is read back through parse_image_metadata so that a
+// field missed by either the encoder or the decoder fails here rather than silently arriving as
+// zero at a consumer.
+//
+// sequence and significant_bits are exercised only here. Both are unsigned on the wire with no
+// reserved range, so unlike the fields in the two rejection tests further down there is no bad
+// value for them to refuse, and round-tripping is the whole contract.
+TEST(Schema, ImageMetadataHelperRoundTripsTheCameraDescriptorFields) {
+  // Spans the two planes below, since a Tensor that cannot contain them is rejected before any
+  // field reaches the wire to be read back.
+  const Tensor tensor = make_cpu_byte_tensor(192);
+  // P010 because a plane layout is only meaningful against a multi-planar encoding: a luma plane
+  // followed by an interleaved chroma plane at half height. It is also the encoding
+  // significant_bits exists for, carrying 10 bits of precision in a 16-bit container, so the two
+  // fields under test here are exercised against an encoding that admits both rather than against
+  // one where 10 bits would not fit the component.
+  const schema::ImageMetadataOptions options{
+      .height = 2,
+      .width = 3,
+      .encoding = schema::ImageEncoding_P010,
+      .device_sequence = 4242U,
+      .color_space = schema::ColorSpace_REC2020_PQ,
+      .significant_bits = 10U,
+      .roi_offset_x = 16,
+      .roi_offset_y = 480,
+      .plane_layouts = {schema::ImagePlaneLayout{0U, 64U, 128U},
+                        schema::ImagePlaneLayout{128U, 64U, 64U}},
+      .exposure_time_ns = 8'000'000,
+      .gain = 2.5F};
+
+  auto metadata = schema::build_image_metadata(tensor, options);
+  ASSERT_TRUE(metadata.has_value());
+  auto parsed =
+      schema::parse_image_metadata(std::span<const std::byte>(metadata->data(), metadata->size()));
+  ASSERT_TRUE(parsed.has_value());
+  const schema::Image* image = parsed->image;
+  ASSERT_NE(image, nullptr);
+
+  EXPECT_EQ(image->encoding(), schema::ImageEncoding_P010);
+  EXPECT_EQ(image->color_space(), schema::ColorSpace_REC2020_PQ);
+  EXPECT_EQ(image->significant_bits(), 10U);
+  EXPECT_EQ(image->roi_offset_x(), 16);
+  EXPECT_EQ(image->roi_offset_y(), 480);
+  EXPECT_EQ(image->exposure_time_ns(), 8'000'000);
+  EXPECT_FLOAT_EQ(image->gain(), 2.5F);
+  // The device counter moved to the Header, so it reads back from there rather than off the Image.
+  ASSERT_NE(image->header(), nullptr);
+  EXPECT_EQ(image->header()->device_sequence(), 4242U);
+  // Each plane has to survive as a whole: an offset that round-tripped without its extent would
+  // still leave a consumer unable to bound its reads.
+  ASSERT_NE(image->plane_layouts(), nullptr);
+  ASSERT_EQ(image->plane_layouts()->size(), 2U);
+  EXPECT_EQ(image->plane_layouts()->Get(0)->offset_bytes(), 0U);
+  EXPECT_EQ(image->plane_layouts()->Get(0)->row_stride_bytes(), 64U);
+  EXPECT_EQ(image->plane_layouts()->Get(0)->size_bytes(), 128U);
+  EXPECT_EQ(image->plane_layouts()->Get(1)->offset_bytes(), 128U);
+  EXPECT_EQ(image->plane_layouts()->Get(1)->row_stride_bytes(), 64U);
+  EXPECT_EQ(image->plane_layouts()->Get(1)->size_bytes(), 64U);
+}
+
+// A producer that reports none of the optional descriptor facts must be distinguishable from one
+// that reported zeros, and an absent plane layout vector must stay absent. This is the half a
+// round-trip test cannot show on its own: a decoder that fabricates a default would satisfy the
+// test above.
+TEST(Schema, ImageMetadataHelperLeavesUnreportedCameraFieldsAbsent) {
+  const Tensor tensor = make_cpu_tensor_2x3();
+  // MONO32F rather than MONO16, because the Tensor is float32 and a known encoding may not
+  // contradict the element type carrying it.
+  const schema::ImageMetadataOptions options{
+      .height = 2, .width = 3, .encoding = schema::ImageEncoding_MONO32F};
+
+  auto metadata = schema::build_image_metadata(tensor, options);
+  ASSERT_TRUE(metadata.has_value());
+  auto parsed =
+      schema::parse_image_metadata(std::span<const std::byte>(metadata->data(), metadata->size()));
+  ASSERT_TRUE(parsed.has_value());
+  const schema::Image* image = parsed->image;
+  ASSERT_NE(image, nullptr);
+
+  EXPECT_EQ(image->color_space(), schema::ColorSpace_UNSPECIFIED);
+  EXPECT_EQ(image->significant_bits(), 0U);
+  EXPECT_EQ(image->roi_offset_x(), 0);
+  EXPECT_EQ(image->roi_offset_y(), 0);
+  EXPECT_EQ(image->exposure_time_ns(), 0);
+  EXPECT_FLOAT_EQ(image->gain(), 0.0F);
+  ASSERT_NE(image->header(), nullptr);
+  EXPECT_EQ(image->header()->device_sequence(), 0U);
+  // An empty vector is not encoded at all, so the field is genuinely missing rather than present
+  // and empty. Either reads as "no pitches", so both are accepted.
+  if (image->plane_layouts() != nullptr) {
+    EXPECT_EQ(image->plane_layouts()->size(), 0U);
+  }
+}
+
 // The descriptor-backed Image encoder is independent of the opt-in object-API materialization
 // scopes. Pixel bytes remain in the separately retained Tensor even when ordinary Tensor::Pack
 // calls in the same thread would gather them into a FlatBuffer.
@@ -999,8 +1254,7 @@ TEST(Schema, ImageMetadataHelperIgnoresAmbientTensorMaterialization) {
   const schema::ImageMetadataOptions options{.height = 2,
                                              .width = 3,
                                              .encoding = schema::ImageEncoding_MONO32F,
-                                             .time_ns = 1234,
-                                             .acqtime_ns = 1240,
+                                             .capture_timestamp_ns = 1234,
                                              .frame_id = "bounded_camera"};
 
   const auto assert_metadata_only = [&](const expected<std::vector<std::byte>, Error>& metadata) {
@@ -1010,8 +1264,7 @@ TEST(Schema, ImageMetadataHelperIgnoresAmbientTensorMaterialization) {
     ASSERT_NE(parsed->image->data(), nullptr);
     EXPECT_EQ(parsed->image->data()->data(), nullptr);
     ASSERT_NE(parsed->image->header(), nullptr);
-    ASSERT_NE(parsed->image->header()->stamp(), nullptr);
-    EXPECT_EQ(parsed->image->header()->stamp()->time_ns(), options.time_ns);
+    EXPECT_EQ(parsed->image->header()->capture_timestamp_ns(), options.capture_timestamp_ns);
     ASSERT_NE(parsed->image->header()->frame_id(), nullptr);
     EXPECT_EQ(parsed->image->header()->frame_id()->string_view(), options.frame_id);
   };
@@ -1047,11 +1300,31 @@ TEST(Schema, DescriptorImageMetadataCodecIsBoundedAndRejectsMissingTensor) {
 // rejected before a descriptor-backed Tensor view can be exposed.
 // REQ: TENSOR-SCHEMA-005
 TEST(Schema, ImageMetadataRejectsMalformedAndMismatchedTensorMetadata) {
-  // Key setup: 8 zero bytes cannot form a valid FlatBuffer; parse must return kCodecError.
-  const std::array<std::byte, 8U> malformed{};
+  // Key setup: 8 zero bytes cannot form a valid FlatBuffer; parse must return kCodecError. Aligned
+  // so the content is what fails: std::byte has no alignment of its own, and an unaligned automatic
+  // array would be refused before verification and pass this test for the wrong reason.
+  alignas(std::max_align_t) const std::array<std::byte, 8U> malformed{};
   auto malformed_result = schema::parse_image_metadata(malformed);
   ASSERT_FALSE(malformed_result);
   EXPECT_EQ(malformed_result.error().code, ErrorCode::kCodecError);
+
+  // Key setup: a correctly formed metadata buffer offset by one byte. Verification would accept the
+  // same bytes at an aligned address, so this is the caller mistake the guard exists for.
+  auto well_formed = schema::build_image_metadata(
+      make_cpu_tensor_2x3(),
+      schema::ImageMetadataOptions{
+          .height = 2, .width = 3, .encoding = schema::ImageEncoding_MONO32F});
+  ASSERT_TRUE(well_formed) << runtime_error_message(well_formed.error());
+  alignas(std::max_align_t) std::array<std::byte, 512U> shifted{};
+  ASSERT_LT(well_formed->size() + 1U, shifted.size());
+  std::memcpy(shifted.data() + 1U, well_formed->data(), well_formed->size());
+  auto unaligned_result = schema::parse_image_metadata(
+      std::span<const std::byte>{shifted.data() + 1U, well_formed->size()});
+  ASSERT_FALSE(unaligned_result);
+  EXPECT_EQ(unaligned_result.error().code, ErrorCode::kInvalidArgument);
+  // The same bytes at an aligned address parse, so the rejection above is the alignment and not the
+  // content.
+  EXPECT_TRUE(schema::parse_image_metadata(*well_formed).has_value());
 
   // Key setup: construct a valid FlatBuffer with ndim=3 but a 2-element shape vector so that
   //            image_tensor_metadata detects the rank/shape disagreement and returns kCodecError.
@@ -1138,6 +1411,816 @@ TEST(Schema, ImageMetadataHelperRejectsInvalidDimensions) {
   auto metadata = schema::build_image_metadata(tensor, options);
   ASSERT_FALSE(metadata.has_value());
   EXPECT_EQ(metadata.error().code, ErrorCode::kInvalidArgument);
+}
+
+// The signed and enumerated descriptor fields can each hold a state the schema gives no meaning
+// to. The receive path copies them through verbatim, so a value rejected here is one that would
+// otherwise reach a consumer looking exactly like a measurement.
+TEST(Schema, ImageMetadataHelperRejectsFieldsTheSchemaGivesNoMeaning) {
+  const Tensor tensor = make_cpu_tensor_2x3();
+  const auto rejects = [&tensor](const schema::ImageMetadataOptions& options) {
+    auto metadata = schema::build_image_metadata(tensor, options);
+    ASSERT_FALSE(metadata.has_value());
+    EXPECT_EQ(metadata.error().code, ErrorCode::kInvalidArgument);
+  };
+
+  rejects({.height = 2,
+           .width = 3,
+           .color_space = static_cast<schema::ColorSpace>(schema::ColorSpace_MAX + 1)});
+  rejects({.height = 2, .width = 3, .roi_offset_x = -1});
+  rejects({.height = 2, .width = 3, .roi_offset_y = -1});
+  rejects({.height = 2, .width = 3, .exposure_time_ns = -1});
+  rejects({.height = 2, .width = 3, .gain = -1.0F});
+  // A gain that is not a real number compares false against every bound, so the check has to be
+  // ordered to catch it rather than to let it fall through as though it were in range.
+  rejects({.height = 2, .width = 3, .gain = std::numeric_limits<float>::quiet_NaN()});
+  rejects({.height = 2, .width = 3, .gain = std::numeric_limits<float>::infinity()});
+  // Every case here carries the default CUSTOM encoding, which states no component organization
+  // for a figure to contradict. What remains is the bound that holds without one: no component of
+  // any element type is wider than 64 bits, so a larger figure describes no sample anywhere. The
+  // per-encoding bounds are the subject of their own test below.
+  rejects({.height = 2, .width = 3, .significant_bits = 65U});
+  rejects({.height = 2, .width = 3, .significant_bits = 255U});
+
+  const auto admits = [&tensor](const schema::ImageMetadataOptions& options) {
+    EXPECT_TRUE(schema::build_image_metadata(tensor, options).has_value());
+  };
+  admits({.height = 2, .width = 3, .significant_bits = 10U});
+  admits({.height = 2, .width = 3, .significant_bits = 64U});
+  // Zero stays the way a producer says the precision equals the container width.
+  admits({.height = 2, .width = 3, .significant_bits = 0U});
+}
+
+// significant_bits is precision inside a container, so the container bounds it. The bound has to be
+// the one the encoding names rather than the Tensor element type: P010 is defined to carry 10-bit
+// samples in 16-bit words and is routinely delivered as a flat byte buffer, so measuring against
+// the element type would cap the encoding at 8 and reject its own definition. Measuring against the
+// widest component any type provides, which is what this used to do, bounds nothing in practice and
+// accepts 64 bits of precision in an 8-bit component.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperBoundsSignificantBitsByTheEncodingsComponent) {
+  const auto build = [](const Tensor& tensor,
+                        const schema::ImageEncoding encoding,
+                        const std::uint8_t significant_bits) {
+    return schema::build_image_metadata(tensor,
+                                        schema::ImageMetadataOptions{
+                                            .height = 2,
+                                            .width = 3,
+                                            .encoding = encoding,
+                                            .significant_bits = significant_bits,
+                                        });
+  };
+  const auto rejects = [&build](const Tensor& tensor,
+                                const schema::ImageEncoding encoding,
+                                const std::uint8_t significant_bits) {
+    auto result = build(tensor, encoding, significant_bits);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+  };
+
+  // An 8-bit encoding cannot hold nine bits of precision, whatever the producer reports.
+  const Tensor bytes = make_cpu_byte_tensor(64);
+  EXPECT_TRUE(build(bytes, schema::ImageEncoding_MONO8, 8U).has_value());
+  rejects(bytes, schema::ImageEncoding_MONO8, 9U);
+  // The 16-bit MONO entry admits what the 8-bit one refuses, so the bound follows the encoding and
+  // is not one constant shared by the family.
+  EXPECT_TRUE(build(bytes, schema::ImageEncoding_MONO16, 16U).has_value());
+  rejects(bytes, schema::ImageEncoding_MONO16, 17U);
+
+  // The case the encoding-relative bound exists for. P010's samples are 16-bit and its carriage
+  // here is a byte buffer, so a bound read off the element type would have stopped at 8.
+  const std::vector<schema::ImagePlaneLayout> p010_planes{schema::ImagePlaneLayout{0U, 12U, 24U},
+                                                          schema::ImagePlaneLayout{24U, 12U, 12U}};
+  const auto build_p010 = [&bytes, &p010_planes](const std::uint8_t significant_bits) {
+    schema::ImageMetadataOptions options{.height = 2,
+                                         .width = 3,
+                                         .encoding = schema::ImageEncoding_P010,
+                                         .significant_bits = significant_bits};
+    options.plane_layouts = p010_planes;
+    return schema::build_image_metadata(bytes, options);
+  };
+  EXPECT_TRUE(build_p010(10U).has_value());
+  EXPECT_TRUE(build_p010(16U).has_value());
+  auto beyond_container = build_p010(17U);
+  ASSERT_FALSE(beyond_container.has_value());
+  EXPECT_EQ(beyond_container.error().code, ErrorCode::kInvalidArgument);
+
+  // No component of a 10:10:10:2 word is wider than ten bits, so the bound is the component and not
+  // the 32-bit word the four of them are packed into.
+  EXPECT_TRUE(build(bytes, schema::ImageEncoding_RGBA1010102, 10U).has_value());
+  rejects(bytes, schema::ImageEncoding_RGBA1010102, 11U);
+
+  // A Bayer encoding states no container and takes the Tensor's, so the same figure is admissible
+  // against a 16-bit element type and not against an 8-bit one.
+  EXPECT_TRUE(build(make_cpu_uint16_tensor(64), schema::ImageEncoding_BAYER_RGGB, 12U).has_value());
+  rejects(bytes, schema::ImageEncoding_BAYER_RGGB, 12U);
+}
+
+namespace {
+
+constexpr std::uint64_t kConsecutivePlaneBytes = 64U;
+
+/// @brief One plane starting where the previous one ended, so a count test never trips the
+/// overlap rule it is not testing.
+[[nodiscard]] std::vector<schema::ImagePlaneLayout> consecutive_planes(const std::size_t count) {
+  std::vector<schema::ImagePlaneLayout> layouts;
+  layouts.reserve(count);
+  for (std::size_t plane = 0U; plane < count; ++plane) {
+    layouts.emplace_back(plane * kConsecutivePlaneBytes, 32U, kConsecutivePlaneBytes);
+  }
+  return layouts;
+}
+
+/// @brief Bytes a Tensor needs to contain \p count consecutive planes, so a count test never trips
+/// the containment bound it is not testing either.
+[[nodiscard]] constexpr std::int64_t consecutive_planes_span_bytes(const std::size_t count) {
+  return static_cast<std::int64_t>(count * kConsecutivePlaneBytes);
+}
+
+}  // namespace
+
+// A plane layout is meaningful only against the encoding's plane count, so the two have to agree.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperRejectsPlaneLayoutsContradictingTheEncoding) {
+  // Large enough to contain the most planes any case below declares, so every rejection here is
+  // the count rule this test is about rather than the containment bound.
+  const Tensor tensor = make_cpu_byte_tensor(consecutive_planes_span_bytes(4U));
+  const auto build = [&tensor](const schema::ImageEncoding encoding, const std::size_t planes) {
+    schema::ImageMetadataOptions options{.height = 2, .width = 3, .encoding = encoding};
+    options.plane_layouts = consecutive_planes(planes);
+    return schema::build_image_metadata(tensor, options);
+  };
+
+  // A single-plane encoding has no second plane to describe; the Tensor strides are authoritative.
+  auto single_plane = build(schema::ImageEncoding_RGB8, 1U);
+  ASSERT_FALSE(single_plane.has_value());
+  EXPECT_EQ(single_plane.error().code, ErrorCode::kInvalidArgument);
+
+  // Two-plane NV12 given three layouts names a plane that does not exist.
+  auto wrong_count = build(schema::ImageEncoding_NV12, 3U);
+  ASSERT_FALSE(wrong_count.has_value());
+  EXPECT_EQ(wrong_count.error().code, ErrorCode::kInvalidArgument);
+
+  EXPECT_TRUE(build(schema::ImageEncoding_NV12, 2U).has_value());
+  EXPECT_TRUE(build(schema::ImageEncoding_I420, 3U).has_value());
+  EXPECT_TRUE(build(schema::ImageEncoding_RGB8, 0U).has_value());
+  // A custom encoding names no layout, so no plane count can contradict it.
+  EXPECT_TRUE(build(schema::ImageEncoding_CUSTOM, 2U).has_value());
+}
+
+// A multi-planar encoding cannot decline to describe its planes. Omitting the vector used to mean
+// that the Tensor strides were authoritative instead, which cannot be true of more than one plane:
+// one Tensor has one base address, so the offsets the deferral promised were never anywhere.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperRequiresPlaneLayoutsForEveryMultiPlanarEncoding) {
+  const Tensor tensor = make_cpu_tensor_2x3();
+  const auto build_without_layouts = [&tensor](const schema::ImageEncoding encoding) {
+    const schema::ImageMetadataOptions options{.height = 2, .width = 3, .encoding = encoding};
+    return schema::build_image_metadata(tensor, options);
+  };
+
+  for (const schema::ImageEncoding encoding : {schema::ImageEncoding_NV12,
+                                               schema::ImageEncoding_I420,
+                                               schema::ImageEncoding_P010,
+                                               schema::ImageEncoding_R8_G8_B8,
+                                               schema::ImageEncoding_B8_G8_R8}) {
+    auto result = build_without_layouts(encoding);
+    ASSERT_FALSE(result.has_value()) << "encoding " << static_cast<int>(encoding);
+    EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+  }
+
+  // A single-plane encoding describes its one plane through the Tensor, and a custom encoding
+  // states no plane count for an empty vector to contradict. MONO32F because the Tensor here is
+  // float32 and a single-plane encoding has to agree with the element type carrying it.
+  EXPECT_TRUE(build_without_layouts(schema::ImageEncoding_MONO32F).has_value());
+  EXPECT_TRUE(build_without_layouts(schema::ImageEncoding_CUSTOM).has_value());
+}
+
+// A plane's packed row width follows from the top-level width, the encoding, and the plane index,
+// so a stride that cannot reach the end of a row and an extent that cannot reach the last row are
+// both derivable errors rather than something to leave for the consumer to discover by reading past
+// the plane.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperRejectsPlanesTooSmallForTheEncodedGeometry) {
+  // Sized for the padded case at the end, which reserves the most. Every rejection below is then a
+  // geometry minimum rather than the containment bound, which the dedicated test covers.
+  const Tensor tensor = make_cpu_byte_tensor(1536);
+  const auto build =
+      [&tensor](
+          const schema::ImageEncoding encoding, std::vector<schema::ImagePlaneLayout> layouts) {
+        // 6x4 so that every plane of every encoding below has an even extent, keeping this test
+        // about the minimums rather than about the rounding rule the next test covers.
+        schema::ImageMetadataOptions options{.height = 4, .width = 6, .encoding = encoding};
+        options.plane_layouts = std::move(layouts);
+        return schema::build_image_metadata(tensor, options);
+      };
+  const auto rejects =
+      [&build](
+          const schema::ImageEncoding encoding, std::vector<schema::ImagePlaneLayout> layouts) {
+        auto result = build(encoding, std::move(layouts));
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+      };
+
+  // NV12 at 6x4: a 6-byte luma row over 4 rows, then a chroma row of 3 U/V pairs over 2 rows. The
+  // exact minimum is a stride of 6 and extents of 3 * 6 + 6 and 1 * 6 + 6.
+  EXPECT_TRUE(build(schema::ImageEncoding_NV12,
+                    {schema::ImagePlaneLayout{0U, 6U, 24U}, schema::ImagePlaneLayout{24U, 6U, 12U}})
+                  .has_value());
+  // One byte short of a luma row.
+  rejects(schema::ImageEncoding_NV12,
+          {schema::ImagePlaneLayout{0U, 5U, 24U}, schema::ImagePlaneLayout{24U, 6U, 12U}});
+  // One byte short of the last luma row.
+  rejects(schema::ImageEncoding_NV12,
+          {schema::ImagePlaneLayout{0U, 6U, 23U}, schema::ImagePlaneLayout{24U, 6U, 12U}});
+  // One byte short of a chroma row, which is twice the chroma column count and not the luma width.
+  rejects(schema::ImageEncoding_NV12,
+          {schema::ImagePlaneLayout{0U, 6U, 24U}, schema::ImagePlaneLayout{24U, 5U, 12U}});
+  // One byte short of the last chroma row.
+  rejects(schema::ImageEncoding_NV12,
+          {schema::ImagePlaneLayout{0U, 6U, 24U}, schema::ImagePlaneLayout{24U, 6U, 11U}});
+
+  // I420 at 6x4 splits the chroma into two planes of 3 bytes over 2 rows each.
+  EXPECT_TRUE(build(schema::ImageEncoding_I420,
+                    {schema::ImagePlaneLayout{0U, 6U, 24U},
+                     schema::ImagePlaneLayout{24U, 3U, 6U},
+                     schema::ImagePlaneLayout{30U, 3U, 6U}})
+                  .has_value());
+  rejects(schema::ImageEncoding_I420,
+          {schema::ImagePlaneLayout{0U, 6U, 24U},
+           schema::ImagePlaneLayout{24U, 2U, 6U},
+           schema::ImagePlaneLayout{30U, 3U, 6U}});
+
+  // P010 carries every sample in a 16-bit container, so each row is twice as wide as NV12's. A
+  // layout sized for NV12 is therefore rejected, which is the case a check on the plane count
+  // alone could never have caught.
+  EXPECT_TRUE(
+      build(schema::ImageEncoding_P010,
+            {schema::ImagePlaneLayout{0U, 12U, 48U}, schema::ImagePlaneLayout{48U, 12U, 24U}})
+          .has_value());
+  rejects(schema::ImageEncoding_P010,
+          {schema::ImagePlaneLayout{0U, 6U, 24U}, schema::ImagePlaneLayout{24U, 6U, 12U}});
+
+  // Three co-sited full-frame planes, with no subsampling to reason about.
+  EXPECT_TRUE(build(schema::ImageEncoding_R8_G8_B8,
+                    {schema::ImagePlaneLayout{0U, 6U, 24U},
+                     schema::ImagePlaneLayout{24U, 6U, 24U},
+                     schema::ImagePlaneLayout{48U, 6U, 24U}})
+                  .has_value());
+  rejects(schema::ImageEncoding_R8_G8_B8,
+          {schema::ImagePlaneLayout{0U, 6U, 24U},
+           schema::ImagePlaneLayout{24U, 6U, 24U},
+           schema::ImagePlaneLayout{48U, 6U, 18U}});
+
+  // A generously padded layout stays admissible: the minimums are lower bounds, and a producer
+  // aligning its rows or reserving trailing padding owes no justification for either.
+  EXPECT_TRUE(build(schema::ImageEncoding_NV12,
+                    {schema::ImagePlaneLayout{0U, 256U, 1024U},
+                     schema::ImagePlaneLayout{1024U, 256U, 512U}})
+                  .has_value());
+}
+
+// image.fbs fixes the odd-extent rule for a subsampled plane as rounding up, so a 5x3 NV12 frame
+// has a chroma plane of three U/V columns over two rows. Validation has to apply the same rule: had
+// it rounded down, a producer following the schema would be rejected for declaring the plane that
+// describes the last luma column and row, and one that dropped those samples would be accepted.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperRoundsSubsampledChromaExtentsUp) {
+  const Tensor tensor = make_cpu_byte_tensor(64);
+  const auto build = [&tensor](std::vector<schema::ImagePlaneLayout> layouts) {
+    schema::ImageMetadataOptions options{
+        .height = 3, .width = 5, .encoding = schema::ImageEncoding_NV12};
+    options.plane_layouts = std::move(layouts);
+    return schema::build_image_metadata(tensor, options);
+  };
+
+  // Luma: 5 bytes over 3 rows. Chroma: ceil(5 / 2) = 3 U/V pairs, so 6 bytes, over
+  // ceil(3 / 2) = 2 rows.
+  EXPECT_TRUE(build({schema::ImagePlaneLayout{0U, 5U, 15U}, schema::ImagePlaneLayout{15U, 6U, 12U}})
+                  .has_value());
+
+  // A chroma row sized as though the width had been rounded down to two U/V pairs.
+  auto narrow_chroma =
+      build({schema::ImagePlaneLayout{0U, 5U, 15U}, schema::ImagePlaneLayout{15U, 4U, 12U}});
+  ASSERT_FALSE(narrow_chroma.has_value());
+  EXPECT_EQ(narrow_chroma.error().code, ErrorCode::kInvalidArgument);
+
+  // A chroma extent sized as though the height had been rounded down to one row.
+  auto short_chroma =
+      build({schema::ImagePlaneLayout{0U, 5U, 15U}, schema::ImagePlaneLayout{15U, 6U, 6U}});
+  ASSERT_FALSE(short_chroma.has_value());
+  EXPECT_EQ(short_chroma.error().code, ErrorCode::kInvalidArgument);
+}
+
+// The count rule above is about the encoding. These are about the layout itself, and so hold for
+// ImageEncoding_CUSTOM too: a producer-defined layout is still a claim about bytes, and none of
+// these states is a claim at all. The receive path copies the vector through verbatim, so a
+// consumer that trusted one of them would compute an address from nothing.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperRejectsPlaneLayoutsThatDescribeNoMemory) {
+  // Wide enough for the gapped pair below, which reaches furthest, so every rejection here is the
+  // layout rule it names rather than the containment bound.
+  const Tensor tensor = make_cpu_byte_tensor(512);
+  const auto build = [&tensor](std::vector<schema::ImagePlaneLayout> layouts) {
+    schema::ImageMetadataOptions options{
+        .height = 2, .width = 3, .encoding = schema::ImageEncoding_CUSTOM};
+    options.plane_layouts = std::move(layouts);
+    return schema::build_image_metadata(tensor, options);
+  };
+  const auto rejects = [&build](std::vector<schema::ImagePlaneLayout> layouts) {
+    auto result = build(std::move(layouts));
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+  };
+
+  // A stride of zero advances through no rows, so the plane holds at most one.
+  rejects({schema::ImagePlaneLayout{0U, 0U, 64U}});
+  // An extent of zero reserves nothing, which no consumer can bound a read against.
+  rejects({schema::ImagePlaneLayout{0U, 32U, 0U}});
+  // An offset plus an extent that wraps names no range at all.
+  rejects({schema::ImagePlaneLayout{std::numeric_limits<std::uint64_t>::max(), 32U, 64U}});
+  // Two planes cannot both own the same bytes: a consumer told to write one would corrupt the
+  // other, and nothing on the wire says which claim was the intended one.
+  rejects({schema::ImagePlaneLayout{0U, 32U, 128U}, schema::ImagePlaneLayout{64U, 32U, 128U}});
+  // Overlap is rejected regardless of declaration order, so a producer need not sort its planes.
+  rejects({schema::ImagePlaneLayout{64U, 32U, 128U}, schema::ImagePlaneLayout{0U, 32U, 128U}});
+  // More planes than the receive path reserves capacity for; a layout that builds must decode.
+  rejects(consecutive_planes(schema::kMaximumImagePlanes + 1U));
+
+  // Abutting planes are not overlapping: the second begins exactly where the first ends.
+  EXPECT_TRUE(
+      build({schema::ImagePlaneLayout{0U, 32U, 64U}, schema::ImagePlaneLayout{64U, 32U, 64U}})
+          .has_value());
+  // A gap between planes is the producer's to leave, for alignment it does not have to justify.
+  EXPECT_TRUE(
+      build({schema::ImagePlaneLayout{0U, 32U, 64U}, schema::ImagePlaneLayout{256U, 32U, 64U}})
+          .has_value());
+  // The bound itself is inclusive.
+  EXPECT_TRUE(build(consecutive_planes(schema::kMaximumImagePlanes)).has_value());
+}
+
+// image.fbs states containment in the single allocation backing Image.data as a restriction on the
+// format, so a plane reaching past the Tensor is a descriptor the schema gives no meaning to rather
+// than one a careful consumer works around: the Image carries one Tensor and therefore one base
+// address, and no offset from it names a second allocation. The tensor here holds 24 bytes.
+//
+// Both paths take this verdict from one function, so what this pins for the authoring encoder holds
+// for the receive assignment too, and a descriptor one accepts is one the other accepts.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperBoundsPlaneExtentsAgainstTheTensor) {
+  const Tensor tensor = make_cpu_byte_tensor(24);
+  const auto build = [&tensor](std::vector<schema::ImagePlaneLayout> layouts) {
+    schema::ImageMetadataOptions options{
+        .height = 2, .width = 3, .encoding = schema::ImageEncoding_CUSTOM};
+    options.plane_layouts = std::move(layouts);
+    return schema::build_image_metadata(tensor, options);
+  };
+  const auto rejects = [&build](std::vector<schema::ImagePlaneLayout> layouts) {
+    auto result = build(std::move(layouts));
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+  };
+
+  // The last row ends on the Tensor's final byte. An exact fit is inside, not one past: the bound
+  // is on the end of the extent, so treating this as a violation would reject the ordinary case of
+  // a plane that occupies its allocation exactly.
+  EXPECT_TRUE(build({schema::ImagePlaneLayout{0U, 12U, 24U}}).has_value());
+  // One byte beyond that end. The case worth pinning, because it is the off-by-one a producer
+  // computing its own extents actually makes, and the only difference from the line above.
+  rejects({schema::ImagePlaneLayout{0U, 12U, 25U}});
+  // A plane beginning past the Tensor entirely, which addresses none of it.
+  rejects({schema::ImagePlaneLayout{1024U, 12U, 24U}});
+  // Contained on its own, but carried past the end by its offset. Neither field is out of range by
+  // itself, so this is the case a bound on either one alone would miss.
+  rejects({schema::ImagePlaneLayout{16U, 12U, 16U}});
+  // An offset plus an extent that wraps is reported as the overflow it is rather than as a plane
+  // outside the Tensor, so the diagnostic still names the arithmetic that failed.
+  rejects({schema::ImagePlaneLayout{std::numeric_limits<std::uint64_t>::max(), 12U, 24U}});
+  // Every plane is bounded, not just the first: a second plane that leaves the Tensor is rejected
+  // even where the first is contained and the two do not overlap.
+  rejects({schema::ImagePlaneLayout{0U, 12U, 12U}, schema::ImagePlaneLayout{12U, 12U, 64U}});
+}
+
+// The bound is the Tensor's addressable extent and not the product of its extents, and the two
+// differ for exactly the layouts plane records exist to describe. A producer that pads its rows
+// has a backing wider than its logical size, and bounding against the logical size would reject
+// the aligned images the multi-planar encodings advertise.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperBoundsPlaneExtentsAgainstTheStrideAwareTensorSpan) {
+  // 3x2 float32 with explicit element strides {4, 1}: 24 logical bytes, but the row padding puts
+  // the last addressable byte at (3 - 1) * 16 + (2 - 1) * 4 + 4 = 40.
+  const Tensor tensor = make_strided_cpu_tensor_3x2();
+  const auto build = [&tensor](std::vector<schema::ImagePlaneLayout> layouts) {
+    schema::ImageMetadataOptions options{
+        .height = 3, .width = 2, .encoding = schema::ImageEncoding_CUSTOM};
+    options.plane_layouts = std::move(layouts);
+    return schema::build_image_metadata(tensor, options);
+  };
+
+  // Past the 24 logical bytes and inside the 40 addressable ones. Admitted, which is the whole
+  // point: a padded backing is bounded by what it can address.
+  EXPECT_TRUE(build({schema::ImagePlaneLayout{0U, 16U, 40U}}).has_value());
+  // One byte past the addressable extent is still rejected, so the wider bound is a different
+  // bound and not an absent one.
+  auto beyond = build({schema::ImagePlaneLayout{0U, 16U, 41U}});
+  ASSERT_FALSE(beyond.has_value());
+  EXPECT_EQ(beyond.error().code, ErrorCode::kInvalidArgument);
+}
+
+// A single-plane encoding is required to declare no plane records, so the containment loop above
+// never runs for one and its geometry would otherwise never meet the Tensor at all. Where the
+// encoding also fixes its bytes per pixel the frame's minimum size follows from the extent alone,
+// and a backing too small to hold it makes the descriptor self-contradictory rather than merely
+// unusual: a consumer is told the encoding determines the byte organization, so it computes
+// addresses from the validated geometry and reaches past the allocation.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperBoundsFixedEncodingFramesAgainstTheTensor) {
+  const auto build = [](const Tensor& tensor,
+                        const std::int32_t height,
+                        const std::int32_t width,
+                        const schema::ImageEncoding encoding) {
+    return schema::build_image_metadata(
+        tensor,
+        schema::ImageMetadataOptions{.height = height, .width = width, .encoding = encoding});
+  };
+  const auto rejects = [&build](const Tensor& tensor,
+                                const std::int32_t height,
+                                const std::int32_t width,
+                                const schema::ImageEncoding encoding) {
+    auto result = build(tensor, height, width, encoding);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+  };
+
+  // The case the bound exists for: three bytes per pixel across 4096x4096 needs 48 MiB, and the
+  // descriptor offers one byte of backing to hold it.
+  rejects(make_cpu_byte_tensor(1), 4096, 4096, schema::ImageEncoding_RGB8);
+  // A frame that occupies its allocation exactly is inside the bound, not one past it.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(18), 2, 3, schema::ImageEncoding_RGB8).has_value());
+  // One byte short of that, which is the off-by-one a producer sizing its own buffer makes.
+  rejects(make_cpu_byte_tensor(17), 2, 3, schema::ImageEncoding_RGB8);
+  // The bound is on the minimum: a backing larger than a packed frame needs stays admissible,
+  // because row padding is a producer's choice and not a contradiction.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(64), 2, 3, schema::ImageEncoding_RGB8).has_value());
+  // The component count is part of the derivation and not a constant: the same extent that fits in
+  // 18 bytes as RGB8 needs 24 as RGBA8.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(24), 2, 3, schema::ImageEncoding_RGBA8).has_value());
+  rejects(make_cpu_byte_tensor(23), 2, 3, schema::ImageEncoding_RGBA8);
+  // So is the component width, which the floating-point encodings carry at four bytes each.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(72), 2, 3, schema::ImageEncoding_RGB32F).has_value());
+  rejects(make_cpu_byte_tensor(71), 2, 3, schema::ImageEncoding_RGB32F);
+  // Packed 4:2:2 rounds an odd width up to a whole chroma group rather than truncating it, so a
+  // three-wide YUYV row is two four-byte groups and not one and a half.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(16), 2, 3, schema::ImageEncoding_YUYV).has_value());
+  rejects(make_cpu_byte_tensor(15), 2, 3, schema::ImageEncoding_YUYV);
+  // An extent whose byte count does not fit a uint64 is the frame being unrepresentable. It has to
+  // be reported as exceeding the Tensor rather than wrapping to a small figure that fits inside it.
+  rejects(make_cpu_byte_tensor(24),
+          std::numeric_limits<std::int32_t>::max(),
+          std::numeric_limits<std::int32_t>::max(),
+          schema::ImageEncoding_RGBA32F);
+}
+
+// A Bayer encoding states no sample width of its own, but the Image carries one: image.fbs defers
+// the container to the Tensor element type, so the width is stated somewhere and the frame bound
+// can be reached through it. Resolving it is what keeps the deferral from behaving like an absence
+// of any claim, which is how a 16-mebibyte mosaic in a one-byte allocation used to be admitted.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperResolvesDeferredSampleWidthsFromTheTensor) {
+  const auto build = [](const Tensor& tensor,
+                        const std::int32_t height,
+                        const std::int32_t width,
+                        const schema::ImageEncoding encoding) {
+    return schema::build_image_metadata(
+        tensor,
+        schema::ImageMetadataOptions{.height = height, .width = width, .encoding = encoding});
+  };
+  const auto rejects = [&build](const Tensor& tensor,
+                                const std::int32_t height,
+                                const std::int32_t width,
+                                const schema::ImageEncoding encoding) {
+    auto result = build(tensor, height, width, encoding);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+  };
+
+  // One byte per pixel once the element type is read, so a 4096x4096 mosaic needs 16 MiB and gets
+  // one byte.
+  rejects(make_cpu_byte_tensor(1), 4096, 4096, schema::ImageEncoding_BAYER_RGGB);
+  EXPECT_TRUE(build(make_cpu_byte_tensor(6), 2, 3, schema::ImageEncoding_BAYER_RGGB).has_value());
+  rejects(make_cpu_byte_tensor(5), 2, 3, schema::ImageEncoding_BAYER_GBRG);
+  // The same extent against a wider element type needs twice the bytes, which is the whole point of
+  // resolving the width rather than assuming one.
+  EXPECT_TRUE(
+      build(make_cpu_uint16_tensor(12), 2, 3, schema::ImageEncoding_BAYER_BGGR).has_value());
+  rejects(make_cpu_uint16_tensor(10), 2, 3, schema::ImageEncoding_BAYER_GRBG);
+
+  // Each MONO entry names its own width, so none of them defers and all of them are bounded. This
+  // is the half of the schema text that was wrong: MONO8 and MONO16 differ by exactly the width
+  // they were said to leave to the Tensor. Every width is listed rather than a representative one,
+  // because the bound is derived per entry and a new entry added to the wrong group would otherwise
+  // be unbounded silently.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(6), 2, 3, schema::ImageEncoding_MONO8).has_value());
+  rejects(make_cpu_byte_tensor(5), 2, 3, schema::ImageEncoding_MONO8);
+  EXPECT_TRUE(build(make_cpu_byte_tensor(12), 2, 3, schema::ImageEncoding_MONO16).has_value());
+  rejects(make_cpu_byte_tensor(11), 2, 3, schema::ImageEncoding_MONO16);
+  // The two 32-bit entries carry the same width and differ only in how a component is interpreted,
+  // so they reach an identical bound here. Which element types may carry them is a separate rule
+  // with its own coverage; a byte buffer is the opaque carriage both admit.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(24), 2, 3, schema::ImageEncoding_MONO32).has_value());
+  rejects(make_cpu_byte_tensor(23), 2, 3, schema::ImageEncoding_MONO32);
+  EXPECT_TRUE(build(make_cpu_byte_tensor(24), 2, 3, schema::ImageEncoding_MONO32F).has_value());
+  rejects(make_cpu_byte_tensor(23), 2, 3, schema::ImageEncoding_MONO32F);
+
+  // CUSTOM is the one encoding left unbounded, because it is the one that genuinely states no
+  // organization for a bound to be derived from. Pinned so that stays a deliberate scope.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(1), 4096, 4096, schema::ImageEncoding_CUSTOM).has_value());
+}
+
+// Two carriages are admissible for an encoding that names its own element type, and they are the
+// two a producer has: the typed view a consumer indexes directly, and the opaque byte buffer it
+// casts. An element type that is neither states the sample organization twice and states it
+// differently, and nothing downstream can decide which of the two claims to believe.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperRejectsElementTypesContradictingTheEncoding) {
+  const auto build = [](const Tensor& tensor, const schema::ImageEncoding encoding) {
+    return schema::build_image_metadata(
+        tensor, schema::ImageMetadataOptions{.height = 2, .width = 3, .encoding = encoding});
+  };
+  const auto rejects = [&build](const Tensor& tensor, const schema::ImageEncoding encoding) {
+    auto result = build(tensor, encoding);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+  };
+
+  // The contradiction from the review: MONO16 is one unsigned 16-bit component and the Tensor
+  // carrying it is float32.
+  rejects(make_cpu_tensor_2x3(), schema::ImageEncoding_MONO16);
+  // The typed carriage of the same encoding.
+  EXPECT_TRUE(build(make_cpu_uint16_tensor(12), schema::ImageEncoding_MONO16).has_value());
+  // The byte carriage of it, where the Tensor claims a length and nothing about the samples.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(12), schema::ImageEncoding_MONO16).has_value());
+  // The converse pairing, so the rule is agreement between the two and not a preference for
+  // integers: a float encoding rejects the unsigned element type that MONO16 requires.
+  rejects(make_cpu_uint16_tensor(24), schema::ImageEncoding_MONO32F);
+  EXPECT_TRUE(build(make_cpu_tensor_2x3(), schema::ImageEncoding_MONO32F).has_value());
+
+  // A Bayer encoding defers its container, so no element type can contradict it and both widths
+  // are admissible.
+  EXPECT_TRUE(build(make_cpu_byte_tensor(6), schema::ImageEncoding_BAYER_RGGB).has_value());
+  EXPECT_TRUE(build(make_cpu_uint16_tensor(12), schema::ImageEncoding_BAYER_RGGB).has_value());
+  // CUSTOM states no organization at all.
+  EXPECT_TRUE(build(make_cpu_tensor_2x3(), schema::ImageEncoding_CUSTOM).has_value());
+
+  // A multi-planar encoding is exempt, because for it the Tensor is a byte-addressed backing that
+  // plane_layouts carves up rather than a typed view of the samples. Accepting a float32 Tensor
+  // here is what lets P010's 16-bit samples travel in a flat buffer at all.
+  schema::ImageMetadataOptions p010{
+      .height = 2, .width = 3, .encoding = schema::ImageEncoding_P010};
+  p010.plane_layouts = {schema::ImagePlaneLayout{0U, 6U, 12U},
+                        schema::ImagePlaneLayout{12U, 8U, 8U}};
+  EXPECT_TRUE(schema::build_image_metadata(make_cpu_tensor_2x3(), p010).has_value());
+}
+
+// The same contradiction reached through the lane count instead of the type. Every encoding but
+// CUSTOM already fixes the component organization of a sample, so a vectorized element states it a
+// second time and nothing in the descriptor relates the two: a four-lane uint8 element labelled
+// RGB8 leaves both the frame width and the meaning of those lanes undecided. Channels are a
+// trailing shape axis in this format, which is the form the frame and plane bounds are derived
+// against. REQ: SENSOR-IO-008
+TEST(Schema, ImageMetadataHelperRejectsVectorizedElementsForOrganizedEncodings) {
+  const auto build = [](const Tensor& tensor, const schema::ImageEncoding encoding) {
+    return schema::build_image_metadata(
+        tensor, schema::ImageMetadataOptions{.height = 2, .width = 3, .encoding = encoding});
+  };
+  const auto rejects = [&build](const Tensor& tensor, const schema::ImageEncoding encoding) {
+    auto result = build(tensor, encoding);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+  };
+
+  // Six four-lane elements span 24 bytes and a 2x3 RGB8 frame needs 18, so the frame fits and the
+  // lane count is what the refusal is about.
+  rejects(make_cpu_lane_tensor(6, 4), schema::ImageEncoding_RGB8);
+  // The scalar element of the same width is the admissible carriage.
+  EXPECT_TRUE(build(make_cpu_lane_tensor(24, 1), schema::ImageEncoding_RGB8).has_value());
+
+  // An encoding that defers its sample width defers it to a container, and a vector of containers
+  // is not one, so the deferral has no single answer to read.
+  rejects(make_cpu_lane_tensor(6, 2), schema::ImageEncoding_BAYER_RGGB);
+  // A multi-planar encoding states organization too, even though no element type contradicts it.
+  schema::ImageMetadataOptions nv12{
+      .height = 2, .width = 3, .encoding = schema::ImageEncoding_NV12};
+  nv12.plane_layouts = {schema::ImagePlaneLayout{0U, 3U, 6U}, schema::ImagePlaneLayout{6U, 4U, 4U}};
+  auto vectorized_nv12 = schema::build_image_metadata(make_cpu_lane_tensor(6, 4), nv12);
+  ASSERT_FALSE(vectorized_nv12.has_value());
+  EXPECT_EQ(vectorized_nv12.error().code, ErrorCode::kInvalidArgument);
+
+  // CUSTOM states no organization for a lane count to contradict, and keeps the latitude it already
+  // has over plane count and frame extent.
+  EXPECT_TRUE(build(make_cpu_lane_tensor(6, 4), schema::ImageEncoding_CUSTOM).has_value());
+
+  // Bytes were never what was at stake. A vectorized element counts at its full width, so six
+  // four-lane elements address 24 bytes and not six. Read through CUSTOM's plane records, the one
+  // place a lane count survives to reach a bound at all.
+  schema::ImageMetadataOptions custom_plane{
+      .height = 2, .width = 3, .encoding = schema::ImageEncoding_CUSTOM};
+  custom_plane.plane_layouts = {schema::ImagePlaneLayout{0U, 12U, 24U}};
+  EXPECT_TRUE(schema::build_image_metadata(make_cpu_lane_tensor(6, 4), custom_plane).has_value());
+  custom_plane.plane_layouts = {schema::ImagePlaneLayout{0U, 12U, 25U}};
+  EXPECT_FALSE(schema::build_image_metadata(make_cpu_lane_tensor(6, 4), custom_plane).has_value());
+}
+
+namespace {
+
+using ReceivedImagePayload = schema::DescriptorFlatBufferPayload<
+    schema::Image, schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>;
+
+/// @brief Wire layout the descriptor-backed Image port type ops encode into.
+struct ReceivedImageEnvelope {
+  SampleMetadata metadata{};
+  ReceivedImagePayload payload{};
+};
+
+/// @brief Image fields a forged peer message sets, defaulted to values the schema admits.
+///
+/// MONO32F because every message here is carried by the 2x3 float32 Tensor below, and a known
+/// encoding has to agree with the element type carrying it. A default that did not would make each
+/// case below fail on the element type before reaching the field it is about.
+struct ForgedImageFields {
+  std::int32_t height = 2;
+  std::int32_t width = 3;
+  schema::ImageEncoding encoding = schema::ImageEncoding_MONO32F;
+  schema::ColorSpace color_space = schema::ColorSpace_SRGB;
+  std::uint8_t significant_bits = 0;
+  std::int32_t roi_offset_x = 0;
+  std::int32_t roi_offset_y = 0;
+  std::int64_t exposure_time_ns = 0;
+  float gain = 1.0F;
+  std::vector<schema::ImagePlaneLayout> plane_layouts;
+};
+
+/// @brief Serialize one Image root the way a producer outside this SDK would.
+///
+/// build_image_metadata refuses every value these receive-path tests are about, which is the point
+/// of the authoring checks and the reason the forgery cannot go through it. CreateImage writes
+/// whatever it is handed, so this stands in for a peer that never ran the encoder.
+[[nodiscard]] std::vector<std::byte> forge_image_metadata(const Tensor& tensor,
+                                                          const ForgedImageFields& fields) {
+  flatbuffers::FlatBufferBuilder builder;
+  auto tensor_metadata = schema::create_tensor_metadata(builder, tensor);
+  EXPECT_TRUE(tensor_metadata);
+  const auto tensor_offset =
+      tensor_metadata ? *tensor_metadata : flatbuffers::Offset<schema::Tensor>{};
+  const auto plane_layouts =
+      fields.plane_layouts.empty()
+          ? flatbuffers::Offset<flatbuffers::Vector<const schema::ImagePlaneLayout*>>{}
+          : builder.CreateVectorOfStructs(fields.plane_layouts);
+  schema::FinishImageBuffer(builder,
+                            schema::CreateImage(builder,
+                                                /*header=*/0,
+                                                fields.height,
+                                                fields.width,
+                                                fields.encoding,
+                                                tensor_offset,
+                                                fields.color_space,
+                                                fields.significant_bits,
+                                                fields.roi_offset_x,
+                                                fields.roi_offset_y,
+                                                plane_layouts,
+                                                fields.exposure_time_ns,
+                                                fields.gain));
+  const auto* bytes = reinterpret_cast<const std::byte*>(builder.GetBufferPointer());
+  return {bytes, bytes + builder.GetSize()};
+}
+
+/// @brief Replace an encoded envelope's metadata region with peer-supplied Image bytes.
+///
+/// The surrounding envelope stays exactly as the local encoder wrote it -- same schema identity,
+/// same endpoint generation, same sample metadata, same Tensor descriptor -- so the only thing
+/// under test is what the assignment hook does with a verifier-valid root it did not produce.
+void splice_forged_metadata(const std::span<std::byte> wire,
+                            const std::span<const std::byte> forged) {
+  ReceivedImageEnvelope envelope{};
+  ASSERT_EQ(wire.size(), sizeof(envelope));
+  std::memcpy(&envelope, wire.data(), sizeof(envelope));
+  ASSERT_LE(forged.size(), envelope.payload.metadata.size());
+  envelope.payload.metadata.fill(std::byte{});
+  std::memcpy(envelope.payload.metadata.data(), forged.data(), forged.size());
+  envelope.payload.metadata_size = static_cast<std::uint32_t>(forged.size());
+  std::memcpy(wire.data(), &envelope, sizeof(envelope));
+}
+
+}  // namespace
+
+// FlatBuffers verification proves an envelope is structurally an Image and says nothing about
+// whether its values mean anything, so the receive path has to take the same semantic verdict the
+// encoder takes. Each case below is a state a Channel or external producer can put on the wire and
+// no consumer can interpret, and each has to be refused before the sample slot is touched: a
+// half-updated slot is one a consumer reads as a measurement.
+// REQ: SENSOR-IO-008
+TEST(Schema, ImageReceivePathRejectsDescriptorFieldsTheSchemaGivesNoMeaning) {
+  const detail::RuntimePortTypeOps* const ops = detail::runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(ops, nullptr);
+
+  schema::ImageT source{};
+  source.height = 2;
+  source.width = 3;
+  source.encoding = schema::ImageEncoding_MONO32F;
+  source.data = std::make_shared<Tensor>(make_cpu_tensor_2x3());
+  const SampleMetadata metadata{.sequence = 11U, .byte_size = 24U};
+  alignas(std::max_align_t) std::array<std::byte, sizeof(ReceivedImageEnvelope)> wire{};
+  auto encoded = ops->encode_descriptor_tensor_sample(&source, metadata, 1U, wire);
+  ASSERT_TRUE(encoded) << runtime_error_message(encoded.error());
+
+  alignas(Sample<schema::ImageT>) std::array<std::byte, sizeof(Sample<schema::ImageT>)> storage{};
+  auto prepared = ops->prepare_sample_storage(storage.data());
+  ASSERT_TRUE(prepared) << runtime_error_message(prepared.error());
+  auto* sample = reinterpret_cast<Sample<schema::ImageT>*>(storage.data());
+
+  const auto rejects = [&](const ForgedImageFields& fields) {
+    alignas(std::max_align_t) std::array<std::byte, sizeof(ReceivedImageEnvelope)> forged_wire{};
+    std::memcpy(forged_wire.data(), wire.data(), wire.size());
+    splice_forged_metadata(forged_wire, forge_image_metadata(make_cpu_tensor_2x3(), fields));
+    // The wire metadata is the envelope's own, so a rejection below is the semantic Image verdict
+    // and not the envelope-match check refusing metadata the encoder never wrote.
+    auto assigned =
+        ops->assign_descriptor_tensor_sample(storage.data(),
+                                             forged_wire,
+                                             make_cpu_tensor_2x3(),
+                                             detail::DescriptorTensorWireMetadata{metadata},
+                                             detail::DescriptorTensorSampleMetadata{metadata});
+    ASSERT_FALSE(assigned);
+    EXPECT_EQ(assigned.error().code, ErrorCode::kProtocolError);
+    // Key assertion: the slot still holds what reset left in it, so nothing partial is observable.
+    EXPECT_EQ(sample->data.height, 0);
+    EXPECT_EQ(sample->data.width, 0);
+    EXPECT_EQ(sample->metadata.sequence, 0U);
+  };
+
+  rejects({.height = -2});
+  rejects({.width = 0});
+  rejects({.encoding = static_cast<schema::ImageEncoding>(schema::ImageEncoding_MAX + 1)});
+  rejects({.color_space = static_cast<schema::ColorSpace>(schema::ColorSpace_MAX + 1)});
+  rejects({.roi_offset_x = -1});
+  rejects({.roi_offset_y = -1});
+  rejects({.exposure_time_ns = -1});
+  rejects({.gain = -1.0F});
+  rejects({.gain = std::numeric_limits<float>::quiet_NaN()});
+  rejects({.gain = std::numeric_limits<float>::infinity()});
+  // A multi-planar encoding whose planes are described nowhere.
+  rejects({.encoding = schema::ImageEncoding_NV12});
+  // A fixed-organization single-plane encoding whose extent needs more bytes than the Tensor the
+  // envelope carries. The peer declares no planes, so this is refused by the frame bound rather
+  // than by plane containment, and refusing it here is what makes that bound a property of the
+  // wire and not just of the local encoder.
+  rejects({.height = 64, .width = 64, .encoding = schema::ImageEncoding_RGB8});
+  // A known encoding contradicting the element type of the Tensor this message resolved to. The
+  // peer states the sample organization twice and states it differently, and the receive path is
+  // the only place that can be caught for a producer that never ran the local encoder.
+  rejects({.encoding = schema::ImageEncoding_MONO16});
+  // A Bayer encoding takes its container from that same element type, so what it cannot do is
+  // report more precision than the container holds. Four bytes per pixel here covers the frame, so
+  // the refusal is the precision and not the extent.
+  rejects({.encoding = schema::ImageEncoding_BAYER_RGGB, .significant_bits = 33U});
+  // A single-plane encoding carrying a layout that contradicts the Tensor it defers to. Kept inside
+  // the 24-byte Tensor so the rejection is that contradiction and not the containment bound.
+  rejects({.encoding = schema::ImageEncoding_MONO32F,
+           .plane_layouts = {schema::ImagePlaneLayout{0U, 12U, 24U}}});
+  // A luma stride that cannot reach the end of one 3-byte row, likewise contained so that the
+  // stride is what fails.
+  rejects({.encoding = schema::ImageEncoding_NV12,
+           .plane_layouts = {schema::ImagePlaneLayout{0U, 2U, 6U},
+                             schema::ImagePlaneLayout{6U, 4U, 4U}}});
+  // A plane reaching one byte past the Tensor this message resolved to. The receive path is where
+  // containment earns its keep: a peer that computed its offsets against a different allocation
+  // than the one it sent cannot be caught any later than here, and the sample would otherwise
+  // carry an unreadable range to a consumer looking exactly like a measurement.
+  rejects({.encoding = schema::ImageEncoding_CUSTOM,
+           .plane_layouts = {schema::ImagePlaneLayout{0U, 12U, 25U}}});
+  // More planes than the slot reserved capacity for, which the assignment loop must never reach.
+  rejects({.encoding = schema::ImageEncoding_CUSTOM,
+           .plane_layouts = consecutive_planes(schema::kMaximumImagePlanes + 1U)});
+
+  // The same forged envelope with admissible fields is accepted, so the rejections above are the
+  // semantic checks and not an artifact of splicing the metadata region.
+  alignas(std::max_align_t) std::array<std::byte, sizeof(ReceivedImageEnvelope)> accepted_wire{};
+  std::memcpy(accepted_wire.data(), wire.data(), wire.size());
+  splice_forged_metadata(accepted_wire,
+                         forge_image_metadata(make_cpu_tensor_2x3(), ForgedImageFields{}));
+  auto assigned =
+      ops->assign_descriptor_tensor_sample(storage.data(),
+                                           accepted_wire,
+                                           make_cpu_tensor_2x3(),
+                                           detail::DescriptorTensorWireMetadata{metadata},
+                                           detail::DescriptorTensorSampleMetadata{metadata});
+  ASSERT_TRUE(assigned) << runtime_error_message(assigned.error());
+  EXPECT_EQ(sample->data.height, 2);
+  EXPECT_EQ(sample->data.width, 3);
+  EXPECT_EQ(sample->data.color_space, schema::ColorSpace_SRGB);
+  EXPECT_FLOAT_EQ(sample->data.gain, 1.0F);
+  EXPECT_EQ(sample->metadata.sequence, 11U);
+  ops->destroy_sample(storage.data());
 }
 
 // The embedded Tensor follows the same materialization rule as a root Tensor: metadata-only by

@@ -22,11 +22,15 @@
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/graph.hpp>
 #include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "core/graph_compiler_access.hpp"
+#include "core/operator_spec_compiler_access.hpp"
 
 #include "graph_test_support.hpp"
 
+// GTest fatal assertions establish optional preconditions that clang-tidy does not model.
+// NOLINTBEGIN(bugprone-unchecked-optional-access)
 namespace holoscan {
 
 using GraphSchemaPayload = schema::StringT;
@@ -63,6 +67,11 @@ struct MultiTensorGraphSchema {
 struct MultiTensorMissingFieldIds {};
 struct MultiTensorShortFieldIds {};
 struct MultiTensorOutOfRangeFieldIds {};
+
+// Legacy third-party singular descriptor schema whose traits predate canonical field inventories.
+struct LegacySingularDescriptorSchema {
+  std::shared_ptr<Tensor> tensor;
+};
 
 struct MultiTensorGraphFields {
   static constexpr TensorFieldSelector<MultiTensorGraphSchema> left{1U, 0U};
@@ -102,6 +111,11 @@ consteval SchemaIdentity schema_identity<GraphSchemaEvidenceSecond>() {
 
 template <>
 consteval SchemaIdentity schema_identity<MultiTensorGraphSchema>() {
+  return schema_identity<schema::ImageT>();
+}
+
+template <>
+consteval SchemaIdentity schema_identity<LegacySingularDescriptorSchema>() {
   return schema_identity<schema::ImageT>();
 }
 
@@ -163,10 +177,41 @@ struct DescriptorTensorSchemaNativeTraits<MultiTensorOutOfRangeFieldIds> {
   }
 };
 
+template <>
+struct DescriptorTensorSchemaNativeTraits<LegacySingularDescriptorSchema> {
+  using root_type = schema::Image;
+  static constexpr std::size_t metadata_capacity =
+      schema::flatbuffer_default_descriptor_metadata_capacity_v<root_type>;
+
+  [[nodiscard]] static const Tensor* tensor(const LegacySingularDescriptorSchema& value) noexcept {
+    return value.tensor.get();
+  }
+};
+
+namespace detail {
+
+template <>
+[[nodiscard]] const RuntimePortTypeOps*
+runtime_port_type_ops<LegacySingularDescriptorSchema>() noexcept {
+  return runtime_port_type_ops<schema::ImageT>();
+}
+
+}  // namespace detail
+
 static_assert(detail::HasDescriptorTensorSchemaNativeTraits<MultiTensorGraphSchema>);
 static_assert(!detail::HasDescriptorTensorSchemaNativeTraits<MultiTensorMissingFieldIds>);
 static_assert(!detail::HasDescriptorTensorSchemaNativeTraits<MultiTensorShortFieldIds>);
 static_assert(!detail::HasDescriptorTensorSchemaNativeTraits<MultiTensorOutOfRangeFieldIds>);
+static_assert(detail::HasDescriptorTensorSchemaNativeTraits<LegacySingularDescriptorSchema>);
+
+template <typename ContractT, typename SelectorT>
+concept AcceptsDescriptorTopicField =
+    requires(ContractT contract, SelectorT selector) { contract.field(selector); };
+
+static_assert(AcceptsDescriptorTopicField<DescriptorTensorTopicContract<MultiTensorGraphSchema>,
+                                          TensorFieldSelector<MultiTensorGraphSchema>>);
+static_assert(!AcceptsDescriptorTopicField<DescriptorTensorTopicContract<MultiTensorGraphSchema>,
+                                           TensorFieldSelector<schema::ImageT>>);
 
 template <>
 struct GeneratedSchemaNativeTraits<GraphSmallCapacitySchema> {
@@ -304,6 +349,59 @@ namespace {
 
 using namespace test::graph_support;
 
+// Authors a raw Tensor output whose pool capacity comes from a byte-span expression.
+// Used by TensorConfiguratorPreservesDerivedAllocationForPassThroughRefinement.
+class DerivedTensorOutputOp final : public Operator<> {
+ public:
+  explicit DerivedTensorOutputOp(std::uint64_t bytes = 4096U) : bytes_(bytes) {}
+
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .produces_tensor(
+            TensorOutputSpec{
+                .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+                .storage = TensorOutputStorage::kRuntimePool,
+            },
+            tensor_byte_span(bytes_));
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<Tensor> output;
+
+ private:
+  std::uint64_t bytes_;
+};
+
+// Authors field-scoped derived capacities for a two-Tensor descriptor schema.
+// Used by TensorConfiguratorRequiresFieldScopeForDerivedMultiTensorOutput.
+class DerivedMultiTensorOutputOp final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    auto& builder = spec.output(output, "output");
+    builder.tensor_field(MultiTensorGraphFields::left)
+        .produces_tensor(
+            TensorOutputSpec{
+                .representation = {.memory_kind = MemoryKind::kHost, .rank = 2U},
+                .storage = TensorOutputStorage::kRuntimePool,
+            },
+            tensor_byte_span(1024U));
+    builder.tensor_field(MultiTensorGraphFields::right)
+        .produces_tensor(
+            TensorOutputSpec{
+                .representation = {.memory_kind = MemoryKind::kCudaDevice, .rank = 2U},
+                .storage = TensorOutputStorage::kRuntimePool,
+            },
+            tensor_byte_span(2048U));
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<MultiTensorGraphSchema> output;
+};
+
+// Passes a descriptor-backed Image schema through an ordinary typed edge.
+// Used by DescriptorTensorImageComposesAsTypedGraphFlow.
 class ImagePassOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -317,27 +415,59 @@ class ImagePassOp : public Operator<> {
   Output<schema::ImageT> output;
 };
 
+// Raw Tensor pass-through authored through the shared directional contracts.
+// Representative test: CommonTensorContractsNormalizeIntoOwnedPortRecords.
+class CommonTensorPassOp : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    constexpr std::array<std::int64_t, 2U> shape{16, 8};
+    const TensorRepresentation representation{
+        .memory_kind = MemoryKind::kCudaDevice,
+        .dtype = DLDataType{kDLUInt, 8U, 1U},
+        .rank = 2U,
+    };
+    spec.input(input, "input")
+        .expects_tensor(TensorInputSpec{
+            .representation = representation,
+            .bounds = tensor_bounds(shape),
+            .memory_conversion = MemoryConversionPolicy::kDisable,
+        });
+    spec.output(output, "output")
+        .produces_tensor(TensorOutputSpec{
+            .representation = representation,
+            .bounds = tensor_bounds(shape),
+        });
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<Tensor> input;
+  Output<Tensor> output;
+};
+
 // Single-Tensor Image pass-through that exercises every unqualified Tensor port configurator.
 // Representative test: SingleTensorSchemaPreservesUnqualifiedFieldAuthoring.
 class SingleTensorUnqualifiedPassOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
-    const TensorPortLayout layout{
+    const TensorRepresentation layout{
         .memory_kind = MemoryKind::kHost,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 2U,
     };
-    PayloadOptions options;
-    options.schema = schema_identity<schema::ImageT>();
-    options.max_tensor_byte_span = 4096U;
-    options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
     spec.input(input, "input")
-        .expects_tensor(layout)
-        .memory_conversion(MemoryConversionPolicy::kDisable);
+        .expects_tensor(TensorInputSpec{
+            .representation = layout,
+            .memory_conversion = MemoryConversionPolicy::kDisable,
+        });
     spec.output(output, "output")
-        .produces_tensor(layout)
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 4096U})
-        .payload_options(options);
+        .produces_tensor(TensorOutputSpec{
+            .representation = layout,
+            .bounds = tensor_bounds(4096U),
+            .storage = TensorOutputStorage::kRuntimePool,
+            .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                                 InterfaceTensorEmitPolicy::kCopyIfNeeded},
+        });
   }
 
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
@@ -351,7 +481,7 @@ class SingleTensorUnqualifiedPassOp : public Operator<> {
 class SingleTensorQualifiedPassOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
-    const TensorPortLayout layout{
+    const TensorRepresentation layout{
         .memory_kind = MemoryKind::kHost,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 2U,
@@ -359,15 +489,18 @@ class SingleTensorQualifiedPassOp : public Operator<> {
     constexpr TensorFieldSelector<schema::ImageT> kData{4U, 0U};
     spec.input(input, "input")
         .tensor_field(kData)
-        .expects_tensor(layout)
-        .memory_conversion(MemoryConversionPolicy::kDisable);
+        .expects_tensor(TensorInputSpec{
+            .representation = layout,
+            .memory_conversion = MemoryConversionPolicy::kDisable,
+        });
     spec.output(output, "output")
         .tensor_field(kData)
-        .produces_tensor(layout)
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 4096U})
-        .payload_options(TensorFieldPayloadOptions{
-            .max_tensor_byte_span = 4096U,
-            .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+        .produces_tensor(TensorOutputSpec{
+            .representation = layout,
+            .bounds = tensor_bounds(4096U),
+            .storage = TensorOutputStorage::kRuntimePool,
+            .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                                 InterfaceTensorEmitPolicy::kCopyIfNeeded},
         });
   }
 
@@ -384,9 +517,13 @@ class InvalidSingleTensorMixedScopeOp : public Operator<> {
   void setup(OperatorSpec& spec) override {
     constexpr TensorFieldSelector<schema::ImageT> kData{4U, 0U};
     spec.output(output, "output")
-        .produces_tensor(TensorPortLayout{.memory_kind = MemoryKind::kHost})
+        .produces_tensor(TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kHost}})
         .tensor_field(kData)
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 4096U});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost, .rank = 2U},
+            .bounds = tensor_bounds(4096U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
@@ -399,41 +536,48 @@ class InvalidSingleTensorMixedScopeOp : public Operator<> {
 class MultiTensorFieldPassOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
-    const TensorPortLayout host_image{
+    const TensorRepresentation host_image{
         .memory_kind = MemoryKind::kHost, .dtype = DLDataType{kDLUInt, 8U, 1U}, .rank = 2U};
-    const TensorPortLayout device_image{
+    const TensorRepresentation device_image{
         .memory_kind = MemoryKind::kCudaDevice, .dtype = DLDataType{kDLUInt, 8U, 1U}, .rank = 2U};
-    const TensorPortLayout calibration{
+    const TensorRepresentation calibration{
         .memory_kind = MemoryKind::kPinnedHost, .dtype = DLDataType{kDLFloat, 32U, 1U}, .rank = 1U};
 
     auto& input_builder = spec.input(input, "input");
-    input_builder.tensor_field(MultiTensorGraphFields::left).expects_tensor(host_image);
-    input_builder.tensor_field(MultiTensorGraphFields::right).expects_tensor(device_image);
+    input_builder.tensor_field(MultiTensorGraphFields::left)
+        .expects_tensor(TensorInputSpec{.representation = host_image});
+    input_builder.tensor_field(MultiTensorGraphFields::right)
+        .expects_tensor(TensorInputSpec{.representation = device_image});
     input_builder.tensor_field(MultiTensorGraphFields::calibration)
-        .expects_tensor(calibration)
-        .memory_conversion(MemoryConversionPolicy::kDisable);
+        .expects_tensor(TensorInputSpec{
+            .representation = calibration,
+            .memory_conversion = MemoryConversionPolicy::kDisable,
+        });
 
     auto& output_builder = spec.output(output, "output");
     output_builder.tensor_field(MultiTensorGraphFields::left)
-        .produces_tensor(host_image)
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 4096U})
-        .payload_options(TensorFieldPayloadOptions{
-            .max_tensor_byte_span = 4096U,
-            .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+        .produces_tensor(TensorOutputSpec{
+            .representation = host_image,
+            .bounds = tensor_bounds(4096U),
+            .storage = TensorOutputStorage::kRuntimePool,
+            .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                                 InterfaceTensorEmitPolicy::kCopyIfNeeded},
         });
     output_builder.tensor_field(MultiTensorGraphFields::right)
-        .produces_tensor(device_image)
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 8192U})
-        .payload_options(TensorFieldPayloadOptions{
-            .max_tensor_byte_span = 8192U,
-            .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+        .produces_tensor(TensorOutputSpec{
+            .representation = device_image,
+            .bounds = tensor_bounds(8192U),
+            .storage = TensorOutputStorage::kRuntimePool,
+            .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                                 InterfaceTensorEmitPolicy::kCopyIfNeeded},
         });
     output_builder.tensor_field(MultiTensorGraphFields::calibration)
-        .produces_tensor(calibration)
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 256U})
-        .payload_options(TensorFieldPayloadOptions{
-            .max_tensor_byte_span = 256U,
-            .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+        .produces_tensor(TensorOutputSpec{
+            .representation = calibration,
+            .bounds = tensor_bounds(256U),
+            .storage = TensorOutputStorage::kRuntimePool,
+            .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                                 InterfaceTensorEmitPolicy::kCopyIfNeeded},
         });
   }
 
@@ -449,41 +593,40 @@ class MultiTensorContractPassOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
     constexpr std::array kImageFields{MultiTensorGraphFields::left, MultiTensorGraphFields::right};
-    const TensorPortLayout image_layout{
+    const TensorRepresentation image_representation{
         .memory_kind = MemoryKind::kCudaDevice,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 2U,
     };
-    const TensorPortLayout calibration_layout{
+    const TensorRepresentation calibration_representation{
         .memory_kind = MemoryKind::kHost,
         .dtype = DLDataType{kDLFloat, 32U, 1U},
         .rank = 0U,
     };
+    const TensorInputSpec image_input{
+        .representation = image_representation,
+        .memory_conversion = MemoryConversionPolicy::kDisable,
+    };
+    const TensorOutputSpec image_output{
+        .representation = image_representation,
+        .bounds = tensor_bounds(4096U),
+        .storage = TensorOutputStorage::kRuntimePool,
+        .transfer =
+            TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
+    };
 
     auto& input_builder = spec.input(input, "input");
-    input_builder.tensor_fields(kImageFields,
-                                TensorFieldInputContract{
-                                    .layout = image_layout,
-                                    .memory_conversion = MemoryConversionPolicy::kDisable,
-                                });
+    input_builder.tensor_fields(kImageFields, image_input);
     input_builder.tensor_field(MultiTensorGraphFields::calibration,
-                               TensorFieldInputContract{.layout = calibration_layout});
+                               TensorInputSpec{.representation = calibration_representation});
 
     auto& output_builder = spec.output(output, "output");
-    output_builder.tensor_fields(
-        kImageFields,
-        TensorFieldOutputContract{
-            .layout = image_layout,
-            .max_byte_span = 4096U,
-            .payload_options =
-                TensorFieldPayloadOptions{
-                    .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
-                },
-        });
+    output_builder.tensor_fields(kImageFields, image_output);
     output_builder.tensor_field(MultiTensorGraphFields::calibration,
-                                TensorFieldOutputContract{
-                                    .layout = calibration_layout,
-                                    .max_byte_span = 256U,
+                                TensorOutputSpec{
+                                    .representation = calibration_representation,
+                                    .bounds = tensor_bounds(256U),
+                                    .storage = TensorOutputStorage::kRuntimePool,
                                 });
   }
 
@@ -498,12 +641,12 @@ class MultiTensorContractPassOp : public Operator<> {
 class MultiTensorFluentContractPassOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
-    const TensorPortLayout image_layout{
+    const TensorRepresentation image_representation{
         .memory_kind = MemoryKind::kCudaDevice,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 2U,
     };
-    const TensorPortLayout calibration_layout{
+    const TensorRepresentation calibration_representation{
         .memory_kind = MemoryKind::kHost,
         .dtype = DLDataType{kDLFloat, 32U, 1U},
         .rank = 0U,
@@ -511,26 +654,30 @@ class MultiTensorFluentContractPassOp : public Operator<> {
 
     auto& input_builder = spec.input(input, "input");
     for (const auto field : {MultiTensorGraphFields::left, MultiTensorGraphFields::right}) {
-      input_builder.tensor_field(field)
-          .expects_tensor(image_layout)
-          .memory_conversion(MemoryConversionPolicy::kDisable);
+      input_builder.tensor_field(field).expects_tensor(TensorInputSpec{
+          .representation = image_representation,
+          .memory_conversion = MemoryConversionPolicy::kDisable,
+      });
     }
     input_builder.tensor_field(MultiTensorGraphFields::calibration)
-        .expects_tensor(calibration_layout);
+        .expects_tensor(TensorInputSpec{.representation = calibration_representation});
 
     auto& output_builder = spec.output(output, "output");
     for (const auto field : {MultiTensorGraphFields::left, MultiTensorGraphFields::right}) {
-      output_builder.tensor_field(field)
-          .produces_tensor(image_layout)
-          .tensor_allocation(TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 4096U})
-          .payload_options(TensorFieldPayloadOptions{
-              .max_tensor_byte_span = 4096U,
-              .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
-          });
+      output_builder.tensor_field(field).produces_tensor(TensorOutputSpec{
+          .representation = image_representation,
+          .bounds = tensor_bounds(4096U),
+          .storage = TensorOutputStorage::kRuntimePool,
+          .transfer =
+              TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
+      });
     }
     output_builder.tensor_field(MultiTensorGraphFields::calibration)
-        .produces_tensor(calibration_layout)
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 256U});
+        .produces_tensor(TensorOutputSpec{
+            .representation = calibration_representation,
+            .bounds = tensor_bounds(256U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
@@ -544,28 +691,30 @@ class MultiTensorFluentContractPassOp : public Operator<> {
 class MultiTensorAggregateContractPassOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
-    const TensorPortLayout image_layout{
+    const TensorRepresentation image_layout{
         .memory_kind = MemoryKind::kCudaDevice,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 2U,
     };
-    const TensorPortLayout calibration_layout{
+    const TensorRepresentation calibration_layout{
         .memory_kind = MemoryKind::kHost,
         .dtype = DLDataType{kDLFloat, 32U, 1U},
         .rank = 1U,
     };
-    const TensorFieldInputContract image_input{.layout = image_layout};
-    const TensorFieldInputContract calibration_input{
-        .layout = calibration_layout,
+    const TensorInputSpec image_input{.representation = image_layout};
+    const TensorInputSpec calibration_input{
+        .representation = calibration_layout,
         .memory_conversion = MemoryConversionPolicy::kDisable,
     };
-    const TensorFieldOutputContract image_output{
-        .layout = image_layout,
-        .max_byte_span = 4096U,
+    const TensorOutputSpec image_output{
+        .representation = image_layout,
+        .bounds = tensor_bounds(4096U),
+        .storage = TensorOutputStorage::kRuntimePool,
     };
-    const TensorFieldOutputContract calibration_output{
-        .layout = calibration_layout,
-        .max_byte_span = 256U,
+    const TensorOutputSpec calibration_output{
+        .representation = calibration_layout,
+        .bounds = tensor_bounds(256U),
+        .storage = TensorOutputStorage::kRuntimePool,
     };
 
     spec.input(input, "input")
@@ -604,6 +753,7 @@ enum class InvalidMultiTensorDeclarationKind : std::uint8_t {
 // Configurable malformed declaration model. Each case isolates one authoring error so the
 // parameterized test below retains a separate, named diagnostic identity without duplicating
 // eleven Operator classes.
+// Used by InvalidMultiTensorDeclarationTest.RejectsBeforeGraphPublication.
 // REQ: OPERATOR-036
 class InvalidMultiTensorDeclarationOp : public Operator<> {
  public:
@@ -612,9 +762,10 @@ class InvalidMultiTensorDeclarationOp : public Operator<> {
   void setup(OperatorSpec& spec) override {
     switch (kind_) {
       case InvalidMultiTensorDeclarationKind::kDuplicateAggregateSelector: {
-        const TensorFieldOutputContract contract{
-            .layout = TensorPortLayout{.memory_kind = MemoryKind::kHost, .rank = 1U},
-            .max_byte_span = 256U,
+        const TensorOutputSpec contract{
+            .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+            .bounds = tensor_bounds(256U),
+            .storage = TensorOutputStorage::kRuntimePool,
         };
         spec.output(output, "output")
             .tensor_fields(std::array{
@@ -626,61 +777,78 @@ class InvalidMultiTensorDeclarationOp : public Operator<> {
       }
       case InvalidMultiTensorDeclarationKind::kUnqualifiedField:
         spec.output(output, "output")
-            .produces_tensor(TensorPortLayout{.memory_kind = MemoryKind::kHost});
+            .produces_tensor(
+                TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kHost}});
         break;
       case InvalidMultiTensorDeclarationKind::kForeignSelector:
         spec.output(output, "output")
             .tensor_field(TensorFieldSelector<schema::ImageT>{4U, 0U})
-            .produces_tensor(TensorPortLayout{.memory_kind = MemoryKind::kHost});
+            .produces_tensor(
+                TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kHost}});
         break;
       case InvalidMultiTensorDeclarationKind::kDuplicateSelector: {
         auto& builder = spec.output(output, "output");
         builder.tensor_field(MultiTensorGraphFields::left)
-            .produces_tensor(TensorPortLayout{.memory_kind = MemoryKind::kHost});
+            .produces_tensor(
+                TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kHost}});
         builder.tensor_field(MultiTensorGraphFields::left)
-            .produces_tensor(TensorPortLayout{.memory_kind = MemoryKind::kHost});
+            .produces_tensor(
+                TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kHost}});
         break;
       }
       case InvalidMultiTensorDeclarationKind::kUnknownField:
         spec.output(output, "output")
             .tensor_field(TensorFieldSelector<MultiTensorGraphSchema>{9U, 1U})
-            .produces_tensor(TensorPortLayout{.memory_kind = MemoryKind::kHost});
+            .produces_tensor(
+                TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kHost}});
         break;
       case InvalidMultiTensorDeclarationKind::kInvalidDtype:
         spec.output(output, "output")
             .tensor_field(MultiTensorGraphFields::left)
-            .produces_tensor(TensorPortLayout{.dtype = DLDataType{kDLUInt, 0U, 1U}});
+            .produces_tensor(
+                TensorOutputSpec{.representation = {.dtype = DLDataType{kDLUInt, 0U, 1U}}});
         break;
       case InvalidMultiTensorDeclarationKind::kInvalidAllocation:
         spec.output(output, "output")
             .tensor_field(MultiTensorGraphFields::left)
-            .tensor_allocation(TensorAllocationBounds{.max_rank = 0U, .max_byte_span = 4096U});
+            .produces_tensor(TensorOutputSpec{
+                .representation = {.memory_kind = MemoryKind::kHost},
+                .bounds = TensorBounds{.max_rank = 0U, .max_byte_span = 4096U},
+                .storage = TensorOutputStorage::kRuntimePool,
+            });
         break;
       case InvalidMultiTensorDeclarationKind::kUnresolvedRank:
         spec.output(output, "output")
             .tensor_field(MultiTensorGraphFields::left,
-                          TensorFieldOutputContract{
-                              .layout = TensorPortLayout{.memory_kind = MemoryKind::kHost},
-                              .max_byte_span = 4096U,
+                          TensorOutputSpec{
+                              .representation = {.memory_kind = MemoryKind::kHost},
+                              .bounds = tensor_bounds(4096U),
+                              .storage = TensorOutputStorage::kRuntimePool,
                           });
         break;
       case InvalidMultiTensorDeclarationKind::kZeroInlineBytes:
       case InvalidMultiTensorDeclarationKind::kZeroTensorSpan:
       case InvalidMultiTensorDeclarationKind::kInconsistentInlineSpan: {
-        TensorFieldPayloadOptions options;
+        TensorTransferPolicy transfer;
         if (kind_ == InvalidMultiTensorDeclarationKind::kZeroInlineBytes) {
-          options.max_inline_bytes = 0U;
-          options.interface_tensor_emit_policy =
+          transfer.max_inline_bytes = 0U;
+          transfer.foreign_emit_policy =
               InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
         } else if (kind_ == InvalidMultiTensorDeclarationKind::kZeroTensorSpan) {
-          options.max_tensor_byte_span = 0U;
+          transfer.max_staging_byte_span = 0U;
+          transfer.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
         } else {
-          options.max_inline_bytes = 64U;
-          options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+          transfer.max_inline_bytes = 64U;
+          transfer.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
         }
         spec.output(output, "output")
             .tensor_field(MultiTensorGraphFields::left)
-            .payload_options(options);
+            .produces_tensor(TensorOutputSpec{
+                .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+                .bounds = tensor_bounds(256U),
+                .storage = TensorOutputStorage::kRuntimePool,
+                .transfer = transfer,
+            });
         break;
       }
     }
@@ -734,15 +902,30 @@ class SchemaEvidenceOutputOp final : public Operator<> {
 class TensorCarrierOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
-    const TensorPortLayout layout{
+    const TensorRepresentation layout{
         .memory_kind = MemoryKind::kHost, .dtype = DLDataType{kDLUInt, 8, 1}, .rank = 1};
     PayloadOptions options;
     options.schema = schema_identity<GraphSchemaPayload>();
     options.interface_tensor_emit_policy =
         InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
     options.max_inline_bytes = 256;
-    spec.input(input, "input").expects_tensor(layout).payload_options(options);
-    spec.output(output, "output").produces_tensor(layout).payload_options(options);
+    PayloadOptions output_options;
+    output_options.schema = schema_identity<GraphSchemaPayload>();
+    spec.input(input, "input")
+        .expects_tensor(TensorInputSpec{.representation = layout})
+        .payload_options(options);
+    spec.output(output, "output")
+        .produces_tensor(TensorOutputSpec{
+            .representation = layout,
+            .bounds = tensor_bounds(4096U),
+            .transfer =
+                TensorTransferPolicy{
+                    .foreign_emit_policy =
+                        InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
+                    .max_inline_bytes = 256U,
+                },
+        })
+        .payload_options(output_options);
   }
 
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
@@ -811,12 +994,15 @@ EdgePorts single_edge_ports(const GraphView& view) {
 }
 template <typename T>
 concept HasTensorAllocationConfigurator = requires(Graph& graph, Output<T>& output) {
-  graph.configure(output).tensor_allocation(
-      TensorAllocationBounds{.max_rank = 1, .max_byte_span = 1});
+  graph.configure(output).tensor_allocation(TensorPoolBounds{.max_rank = 1, .max_byte_span = 1});
 };
 template <typename Port>
 concept HasTensorAllocation = requires(Port& port, TensorLoanRequest request) {
   { port.allocate_tensor(request) } -> std::same_as<expected<TensorOutputLoan, Error>>;
+};
+template <typename Port>
+concept HasTensorShapeAllocation = requires(Port& port, TensorShapeView shape) {
+  { port.allocate_tensor(shape) } -> std::same_as<expected<TensorOutputLoan, Error>>;
 };
 template <typename Port, typename Descriptor>
 concept HasDescriptorTensorEmit =
@@ -842,17 +1028,19 @@ concept HasTensorBundleEmit =
     requires(Port& port, TensorSchemaOutputLoan<Schema> loan, const Schema& descriptor) {
       { port.emit_tensors(std::move(loan), descriptor) } -> std::same_as<expected<void, Error>>;
     };
-static_assert(HasTensorAllocationConfigurator<Tensor>);
+static_assert(!HasTensorAllocationConfigurator<Tensor>);
 // REQ: OPERATOR-031
 // REQ: OPERATOR-035
-static_assert(HasTensorAllocationConfigurator<schema::ImageT>);
+static_assert(!HasTensorAllocationConfigurator<schema::ImageT>);
 static_assert(HasTensorAllocation<Output<schema::ImageT>>);
+static_assert(HasTensorShapeAllocation<Output<schema::ImageT>>);
 static_assert(HasDescriptorTensorEmit<Output<schema::ImageT>, schema::ImageT>);
-static_assert(HasTensorAllocationConfigurator<schema::TensorPacketT>);
+static_assert(!HasTensorAllocationConfigurator<schema::TensorPacketT>);
 static_assert(HasTensorAllocation<Output<schema::TensorPacketT>>);
 static_assert(HasDescriptorTensorEmit<Output<schema::TensorPacketT>, schema::TensorPacketT>);
 static_assert(!HasDescriptorTensorEmit<Output<Tensor>, Tensor>);
 static_assert(!HasTensorAllocation<Output<std::uint32_t>>);
+static_assert(!HasTensorShapeAllocation<Output<std::uint32_t>>);
 static_assert(!HasDescriptorTensorEmit<Output<std::uint32_t>, std::uint32_t>);
 static_assert(!HasTensorAllocationConfigurator<std::uint32_t>);
 // REQ: OPERATOR-037
@@ -866,6 +1054,7 @@ static_assert(!HasTensorBundleAllocation<Output<schema::ImageT>, schema::ImageT>
 static_assert(!HasTensorShapeBundleAllocation<Output<schema::ImageT>, schema::ImageT>);
 static_assert(!HasTensorBundleEmit<Output<schema::ImageT>, schema::ImageT>);
 static_assert(!HasTensorBundleAllocation<Output<Tensor>, Tensor>);
+static_assert(HasTensorShapeAllocation<Output<Tensor>>);
 static_assert(!HasTensorBundleEmit<Output<std::uint32_t>, std::uint32_t>);
 static_assert(std::is_nothrow_move_constructible_v<TensorSchemaOutputLoan<MultiTensorGraphSchema>>);
 static_assert(!std::is_copy_constructible_v<TensorSchemaOutputLoan<MultiTensorGraphSchema>>);
@@ -968,6 +1157,9 @@ TEST(RuntimePortBindingAccess, TensorShapeRequestsRejectUnpinnedFieldDtype) {
 // REQ: GRAPH-009
 // REQ: GRAPH-010
 // REQ: GRAPH-011
+// Graph topology:
+//   holomq://schema --> imported schema port
+//   exported POD port --> holomq://pod
 TEST(GraphComposition, SnapshotsDeepOwnNamesSchemaAndPodIdentityAfterGraphDestruction) {
   GraphView saved;
   {
@@ -997,6 +1189,9 @@ TEST(GraphComposition, SnapshotsDeepOwnNamesSchemaAndPodIdentityAfterGraphDestru
 // REQ: GRAPH-024
 // REQ: CHAN-075
 // REQ: CHAN-120
+// Graph topologies:
+//   holomq://capacity --> small imported schema port
+//   holomq://capacity --> large imported schema port
 TEST(GraphComposition, ExternalSchemaCapacityParticipatesInCanonicalHash) {
   Graph small{"same"};
   (void)small.import_topic<GraphSmallCapacitySchema>("holomq://capacity");
@@ -1022,6 +1217,8 @@ TEST(GraphComposition, ExternalSchemaCapacityParticipatesInCanonicalHash) {
 // REQ: GRAPH-024
 // REQ: CHAN-075
 // REQ: CHAN-120
+// Graph topology:
+//   holomq://capacity-overflow -X-> imported schema port
 TEST(GraphComposition, ExternalSchemaCapacityMustFitSampleMetadata) {
   Graph graph{"schema-capacity-bound"};
   const Error error = graph_error_from(
@@ -1032,11 +1229,12 @@ TEST(GraphComposition, ExternalSchemaCapacityMustFitSampleMetadata) {
 // REQ: GRAPH-009
 // REQ: GRAPH-012
 // REQ: GRAPH-014
+// Graph topology:
+//   holomq://tensor --> imported raw Tensor port
 TEST(GraphComposition, ExternalTensorOptionsAreDeepOwnedAndFailClosed) {
   Graph graph{"root"};
-  const std::array<TensorAxisBounds, 2> axes{
-      TensorAxisBounds{.max_extent = 1920, .max_abs_stride_bytes = 4},
-      TensorAxisBounds{.max_extent = 1080, .max_abs_stride_bytes = 7680}};
+  std::array<std::int64_t, 2U> shape{1920, 1080};
+  std::array<std::uint64_t, 2U> strides{4U, 7680U};
   TopicOptions options;
   options.endpoint_name = "tensor";
   options.memory_conversion = MemoryConversionPolicy::kAllowIfSafe;
@@ -1045,13 +1243,22 @@ TEST(GraphComposition, ExternalTensorOptionsAreDeepOwnedAndFailClosed) {
       .requirement = ClockHealthRequirement::kFreshHealthyReport,
       .max_report_age = std::chrono::milliseconds{10},
   };
-  options.tensor = LogicalTensorRequirements{
-      .memory_kind = MemoryKind::kCudaDevice,
-      .logical_bounds =
-          LogicalTensorBounds{.max_rank = 2, .max_byte_span = 8 * 1024 * 1024, .axes = axes},
-      .strides = TensorStridePolicy::kBoundedStrided,
+  options.tensor = TensorBoundaryContract{
+      .representation =
+          TensorRepresentation{
+              .memory_kind = MemoryKind::kCudaDevice,
+              .dtype = DLDataType{kDLUInt, 8U, 1U},
+              .rank = 2U,
+          },
+      .bounds = tensor_bounds(shape,
+                              TensorBoundsOptions{
+                                  .max_byte_span = 8U * 1024U * 1024U,
+                                  .max_abs_byte_strides = strides,
+                              }),
   };
   (void)graph.import_topic<Tensor>("holomq://tensor", options);
+  shape.fill(1);
+  strides.fill(1U);
   const GraphView view = graph.view();
   ASSERT_EQ(view.external_topics().size(), 1);
   ASSERT_TRUE(view.external_topics()[0].tensor);
@@ -1059,6 +1266,7 @@ TEST(GraphComposition, ExternalTensorOptionsAreDeepOwnedAndFailClosed) {
   // NOLINTBEGIN(bugprone-unchecked-optional-access)
   EXPECT_EQ(view.external_topics()[0].tensor.value().axes.size(), 2);
   EXPECT_EQ(view.external_topics()[0].tensor.value().axes[1].max_extent, 1080);
+  EXPECT_EQ(view.external_topics()[0].tensor.value().axes[1].max_abs_stride_bytes, 7680U);
   // NOLINTEND(bugprone-unchecked-optional-access)
 
   TopicOptions invalid_health;
@@ -1070,13 +1278,20 @@ TEST(GraphComposition, ExternalTensorOptionsAreDeepOwnedAndFailClosed) {
                RuntimeError);
 
   TopicOptions irrelevant;
-  irrelevant.tensor = LogicalTensorRequirements{};
+  irrelevant.tensor = TensorBoundaryContract{};
   EXPECT_THROW((void)graph.import_topic<std::uint32_t>("holomq://not_tensor", irrelevant),
                RuntimeError);
 
   TopicOptions invalid_dtype;
-  invalid_dtype.tensor =
-      LogicalTensorRequirements{.dtype = DLDataType{static_cast<std::uint8_t>(0xFF), 8, 1}};
+  invalid_dtype.tensor = TensorBoundaryContract{
+      .representation =
+          holoscan::TensorRepresentation{
+              .memory_kind = MemoryKind::kHost,
+              .dtype = DLDataType{static_cast<std::uint8_t>(0xFF), 8, 1},
+              .rank = 1U,
+          },
+      .bounds = TensorBounds{.max_byte_span = 8U},
+  };
   EXPECT_EQ(graph_error_from([&] {
               (void)graph.import_topic<Tensor>("holomq://invalid-dtype", invalid_dtype);
             }).message,
@@ -1084,6 +1299,264 @@ TEST(GraphComposition, ExternalTensorOptionsAreDeepOwnedAndFailClosed) {
 }
 
 // REQ: GRAPH-012
+// REQ: EXTERNAL-010
+// Graph topology:
+//   holomq://multi-tensor --> imported three-field descriptor port
+TEST(GraphComposition, ExternalDescriptorTensorFieldsAreCanonicalAndDeepOwned) {
+  constexpr DLDataType kByte{.code = kDLUInt, .bits = 8U, .lanes = 1U};
+  std::array<std::int64_t, 1U> calibration_shape{64};
+  DescriptorTensorTopicContract<MultiTensorGraphSchema> tensors;
+  tensors
+      .field(MultiTensorGraphFields::calibration,
+             TensorBoundaryContract{
+                 .representation = {.memory_kind = MemoryKind::kHost, .dtype = kByte, .rank = 1U},
+                 .bounds = tensor_bounds(calibration_shape),
+             })
+      .field(MultiTensorGraphFields::left,
+             TensorBoundaryContract{
+                 .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                    .dtype = kByte,
+                                    .rank = 2U},
+                 .bounds = TensorBounds{.max_rank = 2U, .max_byte_span = 4096U},
+             })
+      .field(MultiTensorGraphFields::right,
+             TensorBoundaryContract{
+                 .representation = {.memory_kind = MemoryKind::kPinnedHost,
+                                    .dtype = kByte,
+                                    .rank = 1U},
+                 .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 1024U},
+                 .transfer =
+                     TensorTransferPolicy{
+                         .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+                     },
+             });
+
+  // Key setup: move a complete three-field contract into graph authoring, then mutate the
+  // caller-owned axis storage to expose any borrowed-view or noncanonical ordering bug.
+  Graph graph;
+  (void)graph.import_topic<MultiTensorGraphSchema>(
+      "holomq://multi-tensor", TopicOptions{}, std::move(tensors));
+  calibration_shape[0] = 1;
+
+  // Key assertion: the graph owns a canonical field-id inventory and retains the original axis
+  // bound independently of the caller's mutated storage.
+  const GraphView view = graph.view();
+  ASSERT_EQ(view.external_topics().size(), 1U);
+  ASSERT_EQ(view.ports().size(), 1U);
+  const auto& topic = view.external_topics().front();
+  EXPECT_EQ(topic.serialized_payload_capacity_bytes,
+            detail::runtime_port_type_ops<MultiTensorGraphSchema>()->wire_capacity);
+  ASSERT_EQ(topic.tensor_fields.size(), 3U);
+  EXPECT_EQ(topic.tensor_fields[0].field_id, MultiTensorGraphFields::left.field_id);
+  EXPECT_EQ(topic.tensor_fields[0].tensor_index, 0U);
+  EXPECT_EQ(topic.tensor_fields[0].tensor.memory_kind, MemoryKind::kCudaDevice);
+  EXPECT_EQ(topic.tensor_fields[1].field_id, MultiTensorGraphFields::right.field_id);
+  EXPECT_EQ(topic.tensor_fields[1].tensor_index, 1U);
+  EXPECT_EQ(topic.tensor_fields[1].tensor.foreign_emit_policy,
+            InterfaceTensorEmitPolicy::kCopyIfNeeded);
+  EXPECT_EQ(topic.tensor_fields[2].field_id, MultiTensorGraphFields::calibration.field_id);
+  EXPECT_EQ(topic.tensor_fields[2].tensor_index, 2U);
+  ASSERT_EQ(topic.tensor_fields[2].tensor.axes.size(), 1U);
+  EXPECT_EQ(topic.tensor_fields[2].tensor.axes[0].max_extent, 64U);
+  EXPECT_EQ(view.ports().front().descriptor_tensor_field_count, 3U);
+}
+
+// REQ: GRAPH-012
+// REQ: EXTERNAL-010
+// Graph topology:
+//   exported Image port --> holomq://image
+TEST(GraphComposition, ExternalSingularDescriptorTensorUsesTheSameFieldInventory) {
+  constexpr TensorFieldSelector<schema::ImageT> kImageData{4U, 0U};
+  DescriptorTensorTopicContract<schema::ImageT> tensors;
+  tensors.field(kImageData,
+                TensorBoundaryContract{
+                    .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                       .dtype = DLDataType{kDLUInt, 8U, 1U},
+                                       .rank = 3U},
+                    .bounds = TensorBounds{.max_rank = 3U, .max_byte_span = 8U * 1024U * 1024U},
+                });
+
+  // Key setup: author the singular Image schema through the same explicit field inventory used
+  // by multi-Tensor schemas rather than the legacy implicit Tensor path.
+  Graph graph;
+  (void)graph.export_topic<schema::ImageT>("holomq://image", TopicOptions{}, std::move(tensors));
+
+  // Key assertion: the singular contract retains its selector identity and finite byte bound in
+  // the external topic's canonical Tensor-field inventory.
+  const GraphView view = graph.view();
+  ASSERT_EQ(view.external_topics().size(), 1U);
+  ASSERT_EQ(view.ports().size(), 1U);
+  const auto& topic = view.external_topics().front();
+  EXPECT_EQ(topic.serialized_payload_capacity_bytes,
+            detail::runtime_port_type_ops<schema::ImageT>()->wire_capacity);
+  ASSERT_EQ(topic.tensor_fields.size(), 1U);
+  EXPECT_EQ(topic.tensor_fields.front().field_id, kImageData.field_id);
+  EXPECT_EQ(topic.tensor_fields.front().tensor_index, 0U);
+  EXPECT_EQ(topic.tensor_fields.front().tensor.max_byte_span, 8U * 1024U * 1024U);
+}
+
+// REQ: GRAPH-012
+// REQ: EXTERNAL-010
+// Graph topology:
+//   holomq://legacy-image --> imported singular descriptor port
+TEST(GraphComposition, ExternalLegacySingularDescriptorAcceptsCanonicalFieldIdZero) {
+  constexpr TensorFieldSelector<LegacySingularDescriptorSchema> kImageData{0U, 0U};
+  DescriptorTensorTopicContract<LegacySingularDescriptorSchema> tensors;
+  tensors.field(kImageData,
+                TensorBoundaryContract{
+                    .representation = {.memory_kind = MemoryKind::kHost,
+                                       .dtype = DLDataType{kDLUInt, 8U, 1U},
+                                       .rank = 3U},
+                    .bounds = TensorBounds{.max_rank = 3U, .max_byte_span = 4096U},
+                });
+
+  // Key setup: use the legacy singular descriptor schema's canonical field ID zero, which must
+  // remain a valid authored selector rather than being mistaken for an unset sentinel.
+  Graph graph;
+  (void)graph.import_topic<LegacySingularDescriptorSchema>(
+      "holomq://legacy-image", TopicOptions{}, std::move(tensors));
+
+  // Key assertion: field ID zero is preserved and the singular contract is also projected into
+  // the legacy port layout, allocation, and payload-option records.
+  const GraphView view = graph.view();
+  ASSERT_EQ(view.external_topics().size(), 1U);
+  const auto& topic = view.external_topics().front();
+  ASSERT_EQ(topic.tensor_fields.size(), 1U);
+  EXPECT_EQ(topic.tensor_fields.front().field_id, kImageData.field_id);
+  EXPECT_EQ(topic.tensor_fields.front().tensor_index, 0U);
+  EXPECT_EQ(topic.tensor_fields.front().tensor.max_byte_span, 4096U);
+  const auto& port = view.ports().front();
+  EXPECT_TRUE(port.setup.tensor_fields.empty());
+  ASSERT_TRUE(port.setup.tensor_layout);
+  EXPECT_EQ(port.setup.tensor_layout->memory_kind, MemoryKind::kHost);
+  EXPECT_EQ(port.setup.tensor_layout->rank, 3U);
+  ASSERT_TRUE(port.setup.tensor_allocation);
+  EXPECT_EQ(port.setup.tensor_allocation->max_rank, 3U);
+  EXPECT_EQ(port.setup.tensor_allocation->max_byte_span, 4096U);
+  ASSERT_TRUE(port.setup.payload_options);
+  EXPECT_EQ(port.setup.payload_options->max_tensor_byte_span, 4096U);
+}
+
+// REQ: GRAPH-012
+// REQ: EXTERNAL-010
+// Graph topology:
+//   holomq://legacy-image-invalid -X-> imported singular descriptor port
+TEST(GraphComposition, ExternalLegacySingularDescriptorRejectsNoncanonicalFieldId) {
+  constexpr TensorFieldSelector<LegacySingularDescriptorSchema> kNoncanonicalImageData{9U, 0U};
+  DescriptorTensorTopicContract<LegacySingularDescriptorSchema> tensors;
+  tensors.field(kNoncanonicalImageData,
+                TensorBoundaryContract{
+                    .representation = {.memory_kind = MemoryKind::kHost,
+                                       .dtype = DLDataType{kDLUInt, 8U, 1U},
+                                       .rank = 3U},
+                    .bounds = TensorBounds{.max_rank = 3U, .max_byte_span = 4096U},
+                });
+
+  // Key setup: present a noncanonical selector for a legacy singular descriptor schema whose
+  // only valid Tensor field is ID zero.
+  Graph graph;
+  const Error error = graph_error_from([&] {
+    (void)graph.import_topic<LegacySingularDescriptorSchema>(
+        "holomq://legacy-image-invalid", TopicOptions{}, std::move(tensors));
+  });
+
+  // Key assertion: authoring rejects the exact field/index mismatch without mutating graph state.
+  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(error.message,
+            "GRAPH_DESCRIPTOR_TENSOR_TOPIC_SELECTOR_INVALID (field_id=9, tensor_index=0)");
+  EXPECT_TRUE(graph.view().external_topics().empty());
+}
+
+// REQ: GRAPH-012
+// REQ: EXTERNAL-010
+// Graph topologies:
+//   holomq://missing -X-> incomplete imported descriptor port
+//   duplicate exported descriptor port -X-> holomq://duplicate
+TEST(GraphComposition, ExternalDescriptorTensorFieldsRejectIncompleteAndDuplicateInventories) {
+  const TensorBoundaryContract contract{
+      .representation = {.memory_kind = MemoryKind::kHost,
+                         .dtype = DLDataType{kDLUInt, 8U, 1U},
+                         .rank = 1U},
+      .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 64U},
+  };
+
+  // Key setup: author one inventory missing a required field and another repeating a field while
+  // omitting its sibling, covering both completeness and uniqueness validation.
+  Graph incomplete;
+  DescriptorTensorTopicContract<MultiTensorGraphSchema> missing;
+  missing.field(MultiTensorGraphFields::left, contract)
+      .field(MultiTensorGraphFields::right, contract);
+  const Error missing_error = graph_error_from([&] {
+    (void)incomplete.import_topic<MultiTensorGraphSchema>(
+        "holomq://missing", TopicOptions{}, std::move(missing));
+  });
+  // Key assertion: both invalid inventories fail with their specific diagnostic and leave no
+  // external-topic record behind.
+  EXPECT_EQ(missing_error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(missing_error.message, "GRAPH_DESCRIPTOR_TENSOR_TOPIC_INVENTORY_INCOMPLETE");
+  EXPECT_TRUE(incomplete.view().external_topics().empty());
+
+  Graph duplicate;
+  DescriptorTensorTopicContract<MultiTensorGraphSchema> repeated;
+  repeated.field(MultiTensorGraphFields::left, contract)
+      .field(MultiTensorGraphFields::left, contract)
+      .field(MultiTensorGraphFields::calibration, contract);
+  const Error duplicate_error = graph_error_from([&] {
+    (void)duplicate.export_topic<MultiTensorGraphSchema>(
+        "holomq://duplicate", TopicOptions{}, std::move(repeated));
+  });
+  EXPECT_EQ(duplicate_error.code, ErrorCode::kDuplicateName);
+  EXPECT_EQ(duplicate_error.message,
+            "GRAPH_DESCRIPTOR_TENSOR_TOPIC_FIELD_DUPLICATE (field_id=1, tensor_index=0)");
+  EXPECT_TRUE(duplicate.view().external_topics().empty());
+}
+
+// REQ: GRAPH-025
+//   producer(CommonTensorPassOp) --[output→input]--> consumer(CommonTensorPassOp)
+TEST(GraphComposition, CommonTensorContractsNormalizeIntoOwnedPortRecords) {
+  // Key setup: both ends use role-specific shared contracts whose maximum-shape views are local to
+  //            Operator setup, then compose one ordinary Tensor edge.
+  Graph graph;
+  auto producer = graph.op<CommonTensorPassOp>("producer");
+  auto consumer = graph.op<CommonTensorPassOp>("consumer");
+  auto flow = graph.add_flow(producer->output, consumer->input);
+  const GraphView accepted = graph.view();
+  const auto [source, target] = single_edge_ports(accepted);
+  ASSERT_NE(source, nullptr);
+  ASSERT_NE(target, nullptr);
+  ASSERT_TRUE(source->setup.tensor_contract);
+  ASSERT_TRUE(target->setup.tensor_contract);
+
+  // Key assertion: both role contracts own identical derived C-order bounds after setup returns,
+  //                and a rejected common-contract override leaves the graph identity unchanged.
+  EXPECT_EQ(source->setup.tensor_contract->max_byte_span, 128U);
+  ASSERT_EQ(source->setup.tensor_contract->axes.size(), 2U);
+  EXPECT_EQ(source->setup.tensor_contract->axes[0].max_abs_stride_bytes, 8U);
+  EXPECT_EQ(source->setup.tensor_contract->axes[1].max_abs_stride_bytes, 1U);
+  EXPECT_EQ(target->setup.tensor_contract->memory_conversion, MemoryConversionPolicy::kDisable);
+
+  const auto accepted_hash = accepted.identity().hash;
+  const Error conflict = graph_error_from([&] {
+    graph.configure(consumer->input)
+        .expects_tensor(TensorInputSpec{
+            .representation =
+                TensorRepresentation{
+                    .memory_kind = MemoryKind::kCudaDevice,
+                    .dtype = DLDataType{kDLFloat, 32U, 1U},
+                    .rank = 2U,
+                },
+        });
+  });
+  EXPECT_EQ(conflict.code, ErrorCode::kIncompatible);
+  EXPECT_EQ(conflict.message, "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT");
+  EXPECT_EQ(graph.view().identity().hash, accepted_hash);
+  EXPECT_TRUE(flow.graph_valid());
+}
+
+// REQ: GRAPH-012
+// Graph topology:
+//   holomq://contiguous --> imported raw Tensor port
+//   invalid rank or stride evidence -X-> additional imported ports
 TEST(GraphComposition, TensorLogicalBoundsAcceptContiguousEvidenceAndRejectIncompleteBounds) {
   Graph graph;
   const std::array<TensorAxisBounds, 2> axes{
@@ -1091,15 +1564,16 @@ TEST(GraphComposition, TensorLogicalBoundsAcceptContiguousEvidenceAndRejectIncom
       TensorAxisBounds{.max_extent = 8, .max_abs_stride_bytes = 64},
   };
   TopicOptions contiguous;
-  contiguous.tensor = LogicalTensorRequirements{
-      .rank = 2,
-      .logical_bounds = LogicalTensorBounds{.max_rank = 2, .max_byte_span = 512, .axes = axes},
-      .strides = TensorStridePolicy::kContiguousOnly,
+  contiguous.tensor = TensorBoundaryContract{
+      .representation = {.memory_kind = MemoryKind::kHost,
+                         .rank = 2U,
+                         .strides = TensorStridePolicy::kContiguousOnly},
+      .bounds = TensorBounds{.max_rank = 2U, .max_byte_span = 512U, .axes = axes},
   };
   EXPECT_NO_THROW((void)graph.import_topic<Tensor>("holomq://contiguous", contiguous));
 
   TopicOptions rank_too_large = contiguous;
-  rank_too_large.tensor->rank = 3;
+  rank_too_large.tensor->representation.rank = 3;
   EXPECT_EQ(graph_error_from([&] {
               (void)graph.import_topic<Tensor>("holomq://rank", rank_too_large);
             }).message,
@@ -1108,10 +1582,10 @@ TEST(GraphComposition, TensorLogicalBoundsAcceptContiguousEvidenceAndRejectIncom
   const std::array<TensorAxisBounds, 1> incomplete_axes{
       TensorAxisBounds{.max_extent = 16, .max_abs_stride_bytes = 4}};
   TopicOptions incomplete;
-  incomplete.tensor = LogicalTensorRequirements{
-      .logical_bounds =
-          LogicalTensorBounds{.max_rank = 2, .max_byte_span = 512, .axes = incomplete_axes},
-      .strides = TensorStridePolicy::kBoundedStrided,
+  incomplete.tensor = TensorBoundaryContract{
+      .representation = {.memory_kind = MemoryKind::kHost,
+                         .strides = TensorStridePolicy::kBoundedStrided},
+      .bounds = TensorBounds{.max_rank = 2U, .max_byte_span = 512U, .axes = incomplete_axes},
   };
   EXPECT_EQ(graph_error_from([&] {
               (void)graph.import_topic<Tensor>("holomq://incomplete-strides", incomplete);
@@ -1129,13 +1603,17 @@ TEST(GraphComposition, TensorPayloadPolicyIsNormalizedAcrossProducerAndBoundary)
   static constexpr std::array axes{
       TensorAxisBounds{.max_extent = 128U, .max_abs_stride_bytes = 1U}};
   TopicOptions boundary_options;
-  boundary_options.tensor = LogicalTensorRequirements{
-      .dtype = DLDataType{kDLUInt, 8U, 1U},
-      .rank = 1U,
-      .logical_bounds = LogicalTensorBounds{.max_rank = 1U, .max_byte_span = 128U, .axes = axes},
-      .strides = TensorStridePolicy::kContiguousOnly,
-      .foreign_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
-      .max_inline_bytes = 256,
+  boundary_options.tensor = TensorBoundaryContract{
+      .representation = {.memory_kind = MemoryKind::kHost,
+                         .dtype = DLDataType{kDLUInt, 8U, 1U},
+                         .rank = 1U,
+                         .strides = TensorStridePolicy::kContiguousOnly},
+      .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 128U, .axes = axes},
+      .transfer =
+          TensorTransferPolicy{
+              .foreign_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
+              .max_inline_bytes = 256U,
+          },
   };
   auto boundary = graph.export_topic<Tensor>("holomq://tensor-export", boundary_options);
   auto flow = graph.add_flow(producer->output, boundary.input());
@@ -1170,6 +1648,7 @@ TEST(GraphComposition, TensorPayloadPolicyIsNormalizedAcrossProducerAndBoundary)
 
 // REQ: GRAPH-006
 // REQ: GRAPH-018
+// REQ: GRAPH-031
 //   producer(TensorPassOp) --[output→boundary.input()]--> holomq://layout-export
 //   scalar_source(PassOp) --[output→input]--> scalar_target(PassOp)
 //   Non-Tensor layout/memory-conversion mutations on scalar/POD ports are rejected.
@@ -1177,14 +1656,22 @@ TEST(GraphComposition, TensorLayoutMutationRecomputesEdgesAndRejectsNonTensorMut
   Graph graph;
   auto producer = graph.op<TensorPassOp>("producer");
   TopicOptions boundary_options;
-  boundary_options.tensor =
-      LogicalTensorRequirements{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded};
+  boundary_options.tensor = TensorBoundaryContract{
+      .representation = TensorRepresentation{.memory_kind = MemoryKind::kPinnedHost},
+      .bounds = TensorBounds{.max_rank = 4U, .max_byte_span = 4096U},
+      .transfer =
+          TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
+  };
+  graph.configure(producer->output)
+      .produces_tensor(
+          TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kPinnedHost}});
   auto boundary = graph.export_topic<Tensor>("holomq://layout-export", boundary_options);
   auto tensor_flow = graph.add_flow(producer->output, boundary.input());
 
   graph.configure(producer->output)
-      .produces_tensor(TensorPortLayout{
-          .memory_kind = MemoryKind::kPinnedHost, .dtype = DLDataType{kDLUInt, 8, 1}, .rank = 2});
+      .produces_tensor(TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kPinnedHost,
+                                                           .dtype = DLDataType{kDLUInt, 8, 1},
+                                                           .rank = 2}});
   const GraphView updated = graph.view();
   ASSERT_EQ(updated.edges().size(), 1);
   const auto& updated_payload = updated.edges()[0].effective_tensor_payload;
@@ -1198,9 +1685,9 @@ TEST(GraphComposition, TensorLayoutMutationRecomputesEdgesAndRejectsNonTensorMut
   const auto prior_hash = updated.identity().hash;
   const Error invalid_layout = graph_error_from([&] {
     graph.configure(producer->output)
-        .produces_tensor(TensorPortLayout{.dtype = DLDataType{kDLUInt, 0, 1}});
+        .produces_tensor(TensorOutputSpec{.representation = {.dtype = DLDataType{kDLUInt, 0, 1}}});
   });
-  EXPECT_EQ(invalid_layout.message, "GRAPH_TENSOR_LAYOUT_INVALID");
+  EXPECT_EQ(invalid_layout.message, "GRAPH_TENSOR_DTYPE_INVALID");
   const GraphView after_invalid = graph.view();
   EXPECT_EQ(after_invalid.identity().hash, prior_hash);
   const auto& retained_payload = after_invalid.edges()[0].effective_tensor_payload;
@@ -1216,18 +1703,15 @@ TEST(GraphComposition, TensorLayoutMutationRecomputesEdgesAndRejectsNonTensorMut
   auto scalar_target = graph.op<PassOp>("scalar_target");
   auto scalar_flow = graph.add_flow(scalar_source->output, scalar_target->input);
   EXPECT_EQ(graph_error_from([&] {
-              graph.configure(scalar_source->output).produces_tensor(TensorPortLayout{});
+              graph.configure(scalar_source->output)
+                  .produces_tensor(TensorOutputSpec{.representation = {.rank = 1U}});
             }).message,
             "GRAPH_NON_TENSOR_LAYOUT_MUTATION");
   EXPECT_EQ(graph_error_from([&] {
-              graph.configure(scalar_target->input).expects_tensor(TensorPortLayout{});
+              graph.configure(scalar_target->input)
+                  .expects_tensor(TensorInputSpec{.representation = {.rank = 1U}});
             }).message,
             "GRAPH_NON_TENSOR_LAYOUT_MUTATION");
-  EXPECT_EQ(
-      graph_error_from([&] {
-        graph.configure(scalar_target->input).memory_conversion(MemoryConversionPolicy::kDisable);
-      }).message,
-      "GRAPH_NON_TENSOR_MEMORY_CONVERSION");
   EXPECT_EQ(graph_error_from([&] {
               graph.configure(scalar_flow).memory_conversion(MemoryConversionPolicy::kDisable);
             }).message,
@@ -1235,12 +1719,14 @@ TEST(GraphComposition, TensorLayoutMutationRecomputesEdgesAndRejectsNonTensorMut
 
   auto pod_source = graph.op<PodSourceOp>("pod_source");
   EXPECT_EQ(graph_error_from([&] {
-              graph.configure(pod_source->output).produces_tensor(TensorPortLayout{});
+              graph.configure(pod_source->output)
+                  .produces_tensor(TensorOutputSpec{.representation = {.rank = 1U}});
             }).message,
             "GRAPH_NON_TENSOR_LAYOUT_MUTATION");
   auto carrier = graph.op<UnmarkedCarrierOp>("unmarked_carrier");
   EXPECT_EQ(graph_error_from([&] {
-              graph.configure(carrier->output).produces_tensor(TensorPortLayout{});
+              graph.configure(carrier->output)
+                  .produces_tensor(TensorOutputSpec{.representation = {.rank = 1U}});
             }).message,
             "GRAPH_NON_TENSOR_LAYOUT_MUTATION");
 }
@@ -1249,22 +1735,40 @@ TEST(GraphComposition, TensorLayoutMutationRecomputesEdgesAndRejectsNonTensorMut
 // initial authoring and a later override reject conflicts without mutating the accepted Graph.
 // REQ: GRAPH-025
 //   producer(TensorOp) --[output→input]--> consumer(TensorPassOp)
-//   Conflicting layout on consumer input (memory/dtype/rank) is rejected atomically; the
+//   Conflicting layout on consumer input (memory/dtype/rank/strides) is rejected atomically; the
 //   accepted graph identity and edge count are unchanged after the rejection.
-TEST(GraphComposition, TensorEdgeLayoutsRejectMemoryDtypeAndRankConflictsAtomically) {
-  const auto expect_conflict = [](const TensorPortLayout& accepted,
-                                  const TensorPortLayout& conflicting) {
+TEST(GraphComposition, TensorEdgeLayoutsRejectRepresentationConflictsAtomically) {
+  constexpr std::array bounded_axes{
+      TensorAxisBounds{.max_extent = 16U, .max_abs_stride_bytes = 1U}};
+  const auto output_contract = [&](const TensorRepresentation& representation) {
+    TensorOutputSpec contract{.representation = representation};
+    if (representation.strides == TensorStridePolicy::kBoundedStrided) {
+      contract.bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 16U, .axes = bounded_axes};
+    }
+    return contract;
+  };
+  const auto input_contract = [&](const TensorRepresentation& representation) {
+    TensorInputSpec contract{.representation = representation};
+    if (representation.strides == TensorStridePolicy::kBoundedStrided) {
+      contract.bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 16U, .axes = bounded_axes};
+    }
+    return contract;
+  };
+  const auto expect_conflict = [](const TensorRepresentation& accepted,
+                                  const TensorRepresentation& conflicting,
+                                  const auto& output_contract,
+                                  const auto& input_contract) {
     // Key setup: producer and consumer both declare the accepted layout before the flow is added.
     Graph graph;
     auto producer = graph.op<TensorOp>("producer");
     auto consumer = graph.op<TensorPassOp>("consumer");
-    graph.configure(producer->output).produces_tensor(accepted);
-    graph.configure(consumer->input).expects_tensor(accepted);
+    graph.configure(producer->output).produces_tensor(output_contract(accepted));
+    graph.configure(consumer->input).expects_tensor(input_contract(accepted));
     auto flow = graph.add_flow(producer->output, consumer->input);
 
     const auto accepted_identity = graph.view().identity();
-    const Error mutation_error =
-        graph_error_from([&] { graph.configure(consumer->input).expects_tensor(conflicting); });
+    const Error mutation_error = graph_error_from(
+        [&] { graph.configure(consumer->input).expects_tensor(input_contract(conflicting)); });
     // Key assertion: conflicting layout is rejected with GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT
     //                and the graph identity is unchanged after the failed mutation.
     EXPECT_EQ(mutation_error.code, ErrorCode::kIncompatible);
@@ -1275,8 +1779,8 @@ TEST(GraphComposition, TensorEdgeLayoutsRejectMemoryDtypeAndRankConflictsAtomica
     Graph rejected;
     auto rejected_producer = rejected.op<TensorOp>("producer");
     auto rejected_consumer = rejected.op<TensorPassOp>("consumer");
-    rejected.configure(rejected_producer->output).produces_tensor(accepted);
-    rejected.configure(rejected_consumer->input).expects_tensor(conflicting);
+    rejected.configure(rejected_producer->output).produces_tensor(output_contract(accepted));
+    rejected.configure(rejected_consumer->input).expects_tensor(input_contract(conflicting));
     const auto before_flow = rejected.view().identity();
     const Error flow_error = graph_error_from(
         [&] { (void)rejected.add_flow(rejected_producer->output, rejected_consumer->input); });
@@ -1287,11 +1791,124 @@ TEST(GraphComposition, TensorEdgeLayoutsRejectMemoryDtypeAndRankConflictsAtomica
     EXPECT_TRUE(after_flow.edges().empty());
   };
 
-  const TensorPortLayout accepted{
+  const TensorRepresentation accepted{
       .memory_kind = MemoryKind::kHost, .dtype = DLDataType{kDLUInt, 8U, 1U}, .rank = 1U};
-  expect_conflict(accepted, TensorPortLayout{.memory_kind = MemoryKind::kCudaDevice});
-  expect_conflict(accepted, TensorPortLayout{.dtype = DLDataType{kDLFloat, 8U, 1U}});
-  expect_conflict(accepted, TensorPortLayout{.rank = 2U});
+  expect_conflict(accepted,
+                  TensorRepresentation{.memory_kind = MemoryKind::kCudaDevice},
+                  output_contract,
+                  input_contract);
+  expect_conflict(accepted,
+                  TensorRepresentation{.dtype = DLDataType{kDLFloat, 8U, 1U}},
+                  output_contract,
+                  input_contract);
+  expect_conflict(accepted, TensorRepresentation{.rank = 2U}, output_contract, input_contract);
+  expect_conflict(TensorRepresentation{.memory_kind = MemoryKind::kHost,
+                                       .dtype = DLDataType{kDLUInt, 8U, 1U},
+                                       .rank = 1U,
+                                       .strides = TensorStridePolicy::kContiguousOnly},
+                  TensorRepresentation{.strides = TensorStridePolicy::kBoundedStrided},
+                  output_contract,
+                  input_contract);
+}
+
+// REQ: OPERATOR-041
+// REQ: OPERATOR-046
+// REQ: GRAPH-030
+// Graph topology for each case:
+//   producer --[incompatible raw Tensor bounds]--X-> consumer
+TEST(GraphComposition, TensorEdgesRejectProducerBoundsAboveConsumerRequirements) {
+  const auto expect_conflict = [](const TensorOutputSpec& output_contract,
+                                  const TensorInputSpec& input_contract) {
+    Graph graph;
+    auto producer = graph.op<TensorOp>("producer");
+    auto consumer = graph.op<TensorPassOp>("consumer");
+    graph.configure(producer->output).produces_tensor(output_contract);
+    graph.configure(consumer->input).expects_tensor(input_contract);
+
+    const Error error =
+        graph_error_from([&] { (void)graph.add_flow(producer->output, consumer->input); });
+    EXPECT_EQ(error.code, ErrorCode::kIncompatible);
+    EXPECT_EQ(error.message, "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT");
+    EXPECT_TRUE(graph.view().edges().empty());
+  };
+  const TensorRepresentation rank_one{
+      .memory_kind = MemoryKind::kCudaDevice,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = 1U,
+  };
+
+  {
+    SCOPED_TRACE("maximum byte span");
+    expect_conflict(
+        TensorOutputSpec{
+            .representation = rank_one,
+            .bounds = tensor_bounds(2048U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        },
+        TensorInputSpec{
+            .representation = rank_one,
+            .bounds = tensor_bounds(1024U),
+        });
+  }
+
+  constexpr std::array<std::int64_t, 2U> producer_shape{3, 2};
+  constexpr std::array<std::int64_t, 2U> consumer_shape{2, 3};
+  const TensorRepresentation rank_two{
+      .memory_kind = MemoryKind::kCudaDevice,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = 2U,
+  };
+  {
+    SCOPED_TRACE("maximum axis extent");
+    expect_conflict(
+        TensorOutputSpec{
+            .representation = rank_two,
+            .bounds = tensor_bounds(producer_shape),
+            .storage = TensorOutputStorage::kRuntimePool,
+        },
+        TensorInputSpec{
+            .representation = rank_two,
+            .bounds = tensor_bounds(consumer_shape),
+        });
+  }
+
+  constexpr std::array producer_axes{
+      TensorAxisBounds{.max_extent = 2U, .max_abs_stride_bytes = 3U},
+      TensorAxisBounds{.max_extent = 2U, .max_abs_stride_bytes = 1U},
+  };
+  constexpr std::array consumer_axes{
+      TensorAxisBounds{.max_extent = 2U, .max_abs_stride_bytes = 2U},
+      TensorAxisBounds{.max_extent = 2U, .max_abs_stride_bytes = 1U},
+  };
+  const TensorRepresentation bounded_rank_two{
+      .memory_kind = MemoryKind::kCudaDevice,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = 2U,
+      .strides = TensorStridePolicy::kBoundedStrided,
+  };
+  {
+    SCOPED_TRACE("maximum per-axis stride");
+    expect_conflict(
+        TensorOutputSpec{
+            .representation = bounded_rank_two,
+            .bounds =
+                TensorBounds{
+                    .max_rank = 2U,
+                    .max_byte_span = 5U,
+                    .axes = producer_axes,
+                },
+            .storage = TensorOutputStorage::kRuntimePool,
+        },
+        TensorInputSpec{
+            .representation = bounded_rank_two,
+            .bounds =
+                TensorBounds{
+                    .max_rank = 2U,
+                    .max_byte_span = 5U,
+                    .axes = consumer_axes,
+                },
+        });
+  }
 }
 
 // REQ: CHAN-075
@@ -1357,7 +1974,8 @@ TEST(GraphComposition, DescriptorTensorImageComposesAsTypedGraphFlow) {
   EXPECT_TRUE(flow.graph_valid());
 }
 
-// REQ: OPERATOR-036
+// REQ: OPERATOR-043
+// REQ: OPERATOR-047
 //   producer(SingleTensorUnqualifiedPassOp)
 //       --[descriptor-backed ImageT]--> consumer(SingleTensorUnqualifiedPassOp)
 TEST(GraphComposition, SingleTensorSchemaPreservesUnqualifiedFieldAuthoring) {
@@ -1393,7 +2011,8 @@ TEST(GraphComposition, SingleTensorSchemaPreservesUnqualifiedFieldAuthoring) {
   EXPECT_TRUE(flow.graph_valid());
 }
 
-// REQ: OPERATOR-036
+// REQ: OPERATOR-043
+// REQ: OPERATOR-047
 //   producer(SingleTensorQualifiedPassOp)
 //       --[descriptor-backed ImageT]--> consumer(SingleTensorQualifiedPassOp)
 TEST(GraphComposition, SingleTensorQualifiedFieldNormalizesToLegacyPortContract) {
@@ -1421,7 +2040,8 @@ TEST(GraphComposition, SingleTensorQualifiedFieldNormalizesToLegacyPortContract)
   EXPECT_TRUE(flow.graph_valid());
 }
 
-// REQ: OPERATOR-036
+// REQ: OPERATOR-043
+// REQ: OPERATOR-047
 //   invalid(InvalidSingleTensorMixedScopeOp) --X [mixed selector scopes]--> graph admission
 TEST(GraphComposition, SingleTensorQualifiedFieldRejectsMixedScope) {
   // Key setup: combine the typed N=1 field selector with a legacy port-wide Tensor declaration.
@@ -1435,7 +2055,8 @@ TEST(GraphComposition, SingleTensorQualifiedFieldRejectsMixedScope) {
   EXPECT_TRUE(graph.view().vertices().empty());
 }
 
-// REQ: OPERATOR-036
+// REQ: OPERATOR-043
+// REQ: OPERATOR-047
 //   producer(MultiTensorFieldPassOp)
 //       --[left, right, calibration]--> consumer(MultiTensorFieldPassOp)
 TEST(GraphComposition, MultiTensorFieldsPreserveCanonicalTypedContracts) {
@@ -1630,27 +2251,27 @@ INSTANTIATE_TEST_SUITE_P(
         InvalidMultiTensorDeclarationCase{
             InvalidMultiTensorDeclarationKind::kInvalidDtype,
             "InvalidDtype",
-            "GRAPH_TENSOR_FIELD_DTYPE_INVALID (field_id=1, tensor_index=0)"},
+            "GRAPH_TENSOR_DTYPE_INVALID (field_id=1, tensor_index=0)"},
         InvalidMultiTensorDeclarationCase{
             InvalidMultiTensorDeclarationKind::kInvalidAllocation,
             "InvalidAllocation",
-            "GRAPH_TENSOR_FIELD_ALLOCATION_INVALID (field_id=1, tensor_index=0)"},
+            "GRAPH_TENSOR_LOGICAL_BOUNDS_INVALID (field_id=1, tensor_index=0)"},
         InvalidMultiTensorDeclarationCase{
             InvalidMultiTensorDeclarationKind::kUnresolvedRank,
             "UnresolvedRank",
-            "GRAPH_TENSOR_FIELD_RANK_BOUND_UNRESOLVED (field_id=1, tensor_index=0)"},
+            "GRAPH_TENSOR_ALLOCATION_INVALID (field_id=1, tensor_index=0)"},
         InvalidMultiTensorDeclarationCase{
             InvalidMultiTensorDeclarationKind::kZeroInlineBytes,
             "ZeroInlineBytes",
-            "GRAPH_TENSOR_FIELD_ENUM_INVALID (field_id=1, tensor_index=0)"},
+            "GRAPH_TENSOR_INLINE_POLICY_INVALID (field_id=1, tensor_index=0)"},
         InvalidMultiTensorDeclarationCase{
             InvalidMultiTensorDeclarationKind::kZeroTensorSpan,
             "ZeroTensorSpan",
-            "GRAPH_TENSOR_FIELD_ENUM_INVALID (field_id=1, tensor_index=0)"},
+            "GRAPH_TENSOR_STAGING_POLICY_INVALID (field_id=1, tensor_index=0)"},
         InvalidMultiTensorDeclarationCase{
             InvalidMultiTensorDeclarationKind::kInconsistentInlineSpan,
             "InconsistentInlineSpan",
-            "GRAPH_TENSOR_FIELD_ENUM_INVALID (field_id=1, tensor_index=0)"}),
+            "GRAPH_TENSOR_INLINE_POLICY_INVALID (field_id=1, tensor_index=0)"}),
     [](const testing::TestParamInfo<InvalidMultiTensorDeclarationCase>& info) {
       return info.param.name;
     });
@@ -1686,6 +2307,8 @@ TEST(GraphComposition, TensorBearingSchemaCarrierPreservesExactPayloadOptions) {
 
 // REQ: GRAPH-006
 // REQ: GRAPH-018
+// Graph topologies:
+//   scalar | carrier | pod (each an isolated invalid Operator)
 TEST(GraphComposition, PayloadOptionsRejectScalarAndUnmarkedCarrierProvenance) {
   Graph scalar;
   EXPECT_EQ(
@@ -1703,22 +2326,355 @@ TEST(GraphComposition, PayloadOptionsRejectScalarAndUnmarkedCarrierProvenance) {
             "GRAPH_NON_TENSOR_PAYLOAD_OPTIONS");
 }
 
+// REQ: OPERATOR-039
+// REQ: OPERATOR-045
+TEST(TensorOperatorSpec, DescriptorOutputRejectsASecondTensorTransferSource) {
+  OperatorSpec spec;
+  Output<schema::ImageT> output;
+  PayloadOptions options;
+  options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  options.max_tensor_byte_span = 1024U;
+
+  spec.output(output, "output")
+      .produces_tensor(TensorOutputSpec{
+          .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+          .bounds = tensor_bounds(2048U),
+          .transfer =
+              TensorTransferPolicy{
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              },
+      })
+      .payload_options(options);
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(metadata.tensor_contract_error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+  ASSERT_TRUE(metadata.payload_options);
+  EXPECT_EQ(metadata.payload_options->max_tensor_byte_span, 2048U);
+}
+
+// REQ: OPERATOR-039
+// REQ: OPERATOR-045
+TEST(TensorOperatorSpec, DescriptorOutputRejectsTransferAuthoredBeforeTensorContract) {
+  OperatorSpec spec;
+  Output<schema::ImageT> output;
+  PayloadOptions options;
+  options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  options.max_tensor_byte_span = 1024U;
+
+  spec.output(output, "output")
+      .payload_options(options)
+      .produces_tensor(TensorOutputSpec{
+          .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+          .bounds = tensor_bounds(2048U),
+          .transfer =
+              TensorTransferPolicy{
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              },
+      });
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(metadata.tensor_contract_error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+  EXPECT_FALSE(metadata.tensor_contract);
+  ASSERT_TRUE(metadata.payload_options);
+  EXPECT_EQ(metadata.payload_options->max_tensor_byte_span, 1024U);
+}
+
+TEST(TensorOperatorSpec, DescriptorOutputPreservesSchemaOptionsAcrossContractAuthoring) {
+  OperatorSpec spec;
+  Output<schema::ImageT> output;
+  PayloadOptions options;
+  options.schema = schema_identity<GraphSchemaPayload>();
+
+  spec.output(output, "output")
+      .payload_options(options)
+      .produces_tensor(TensorOutputSpec{
+          .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+          .bounds = tensor_bounds(2048U),
+      });
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kSuccess);
+  ASSERT_TRUE(metadata.payload_options);
+  ASSERT_TRUE(metadata.payload_options->schema);
+  EXPECT_EQ(metadata.payload_options->schema->canonical_name,
+            schema_identity<GraphSchemaPayload>().canonical_name);
+  EXPECT_EQ(metadata.payload_options->schema->version,
+            schema_identity<GraphSchemaPayload>().version);
+}
+
+TEST(TensorOperatorSpec, DescriptorOutputCombinesSchemaOptionsWithContractTransferPolicy) {
+  OperatorSpec spec;
+  Output<schema::ImageT> output;
+  PayloadOptions options;
+  options.schema = schema_identity<GraphSchemaPayload>();
+
+  spec.output(output, "output")
+      .produces_tensor(TensorOutputSpec{
+          .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+          .bounds = tensor_bounds(2048U),
+          .transfer =
+              TensorTransferPolicy{
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              },
+      })
+      .payload_options(options);
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kSuccess);
+  ASSERT_TRUE(metadata.payload_options);
+  ASSERT_TRUE(metadata.payload_options->schema);
+  EXPECT_EQ(metadata.payload_options->schema->canonical_name,
+            schema_identity<GraphSchemaPayload>().canonical_name);
+  EXPECT_EQ(metadata.payload_options->interface_tensor_emit_policy,
+            InterfaceTensorEmitPolicy::kCopyIfNeeded);
+  EXPECT_EQ(metadata.payload_options->max_tensor_byte_span, 2048U);
+}
+
 // REQ: GRAPH-008
+// REQ: GRAPH-031
+// Graph topology:
+//   tensor (isolated configurable raw Tensor output)
 TEST(GraphComposition, TensorConfiguratorIsStableAndOnlyTightensDeclaredAllocation) {
   Graph graph{"root"};
   auto tensor = graph.op<TensorOp>("tensor");
   auto& first = graph.configure(tensor->output);
   auto& second = graph.configure(tensor->output);
   EXPECT_EQ(&first, &second);
-  first.tensor_allocation(TensorAllocationBounds{.max_rank = 2, .max_byte_span = 1024});
+  first.produces_tensor(TensorOutputSpec{
+      .representation = {.memory_kind = MemoryKind::kHost, .rank = 2U},
+      .bounds = tensor_bounds(1024U),
+      .storage = TensorOutputStorage::kRuntimePool,
+  });
   EXPECT_THROW(first.late_joiner_history_depth(0), RuntimeError);
-  EXPECT_THROW(
-      first.tensor_allocation(TensorAllocationBounds{.max_rank = 4, .max_byte_span = 8192}),
-      RuntimeError);
+  EXPECT_THROW(first.produces_tensor(TensorOutputSpec{
+                   .representation = {.memory_kind = MemoryKind::kHost, .rank = 4U},
+                   .bounds = tensor_bounds(8192U),
+                   .storage = TensorOutputStorage::kRuntimePool,
+               }),
+               RuntimeError);
+
+  first.produces_tensor(TensorOutputSpec{
+      .representation = {.memory_kind = MemoryKind::kHost, .rank = 2U},
+  });
+  const GraphView pass_through = graph.view();
+  ASSERT_EQ(pass_through.ports().size(), 1U);
+  ASSERT_TRUE(pass_through.ports()[0].graph_override.tensor_contract);
+  EXPECT_EQ(pass_through.ports()[0].graph_override.tensor_contract->storage,
+            TensorOutputStorage::kPassThrough);
+  EXPECT_FALSE(pass_through.ports()[0].graph_override.tensor_allocation);
+}
+
+// REQ: COMPILE-067
+// Graph topology:
+//   source (isolated derived raw Tensor output)
+TEST(GraphComposition, TensorConfiguratorPreservesDerivedAllocationForPassThroughRefinement) {
+  Graph graph{"derived-output-override"};
+  auto source = graph.op<DerivedTensorOutputOp>("source");
+  const GraphView before = graph.view();
+
+  // Key setup: attempt one pool replacement and one compatible logical refinement.
+  const Error error = graph_error_from([&] {
+    graph.configure(source->output)
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+            .bounds = tensor_bounds(2048U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  });
+
+  graph.configure(source->output)
+      .produces_tensor(TensorOutputSpec{
+          .storage = TensorOutputStorage::kPassThrough,
+          .transfer =
+              TensorTransferPolicy{
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+                  .max_staging_byte_span = 512U,
+              },
+      });
+
+  // Key assertion: capacity replacement fails while the logical refinement retains derivation.
+  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(error.message, "GRAPH_TENSOR_DERIVED_ALLOCATION_OVERRIDE_INVALID");
+  const GraphView after = graph.view();
+  EXPECT_NE(after.identity(), before.identity());
+  ASSERT_EQ(after.ports().size(), 1U);
+  EXPECT_TRUE(after.ports()[0].setup.tensor_byte_span_expression);
+  ASSERT_TRUE(after.ports()[0].graph_override.tensor_contract);
+  EXPECT_EQ(after.ports()[0].graph_override.tensor_contract->storage,
+            TensorOutputStorage::kPassThrough);
+  ASSERT_TRUE(after.ports()[0].graph_override.tensor_contract->transfer);
+  EXPECT_EQ(after.ports()[0].graph_override.tensor_contract->transfer->max_staging_byte_span, 512U);
+  EXPECT_FALSE(after.ports()[0].graph_override.tensor_allocation);
+}
+
+// REQ: COMPILE-067
+// Graph topology:
+//   source (isolated derived raw Tensor output)
+TEST(GraphComposition, DerivedOutputRejectsGraphPayloadTransferAuthority) {
+  Graph graph{"derived-payload-transfer"};
+  const auto source = graph.op<DerivedTensorOutputOp>("source");
+  PayloadOptions options;
+  options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  options.max_tensor_byte_span = 1024U;
+
+  // Key setup: generic Graph payload options try to become a second transfer authority.
+  const Error error =
+      graph_error_from([&] { graph.configure(source->output).payload_options(options); });
+
+  // Key assertion: derived outputs require transfer refinement through produces_tensor().
+  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+  const GraphView view = graph.view();
+  ASSERT_EQ(view.ports().size(), 1U);
+  EXPECT_FALSE(view.ports().front().graph_override.payload_options);
+}
+
+// REQ: COMPILE-067
+// Graph topology:
+//   source (isolated two-field descriptor output)
+TEST(GraphComposition, TensorConfiguratorRequiresFieldScopeForDerivedMultiTensorOutput) {
+  Graph graph{"derived-multi-output-override"};
+  const auto source = graph.op<DerivedMultiTensorOutputOp>("source");
+
+  // Key setup: the public Graph configurator can address only the aggregate output port.
+  const Error error = graph_error_from([&] {
+    graph.configure(source->output)
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost, .rank = 2U},
+            .storage = TensorOutputStorage::kPassThrough,
+        });
+  });
+
+  // Key assertion: field-derived authority cannot be silently replaced at aggregate scope.
+  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(error.message, "GRAPH_TENSOR_FIELD_SCOPE_REQUIRED");
+  const GraphView view = graph.view();
+  ASSERT_EQ(view.ports().size(), 1U);
+  EXPECT_FALSE(view.ports().front().graph_override.tensor_contract);
+}
+
+// REQ: COMPILE-067
+// Graph topologies:
+//   first:  source (1024-byte derived expression)
+//   second: source (2048-byte derived expression)
+TEST(GraphComposition, TensorByteSpanExpressionStructureContributesToGraphIdentity) {
+  Graph first{"derived-expression-identity"};
+  (void)first.op<DerivedTensorOutputOp>("source", 1024U);
+  Graph second{"derived-expression-identity"};
+  (void)second.op<DerivedTensorOutputOp>("source", 2048U);
+
+  // Key assertion: stable expression structure is graph identity, unlike its resolved values.
+  EXPECT_NE(first.view().identity().hash, second.view().identity().hash);
+}
+
+// REQ: GRAPH-029
+// REQ: GRAPH-031
+// Graph topologies:
+//   payload-first:  tensor (isolated configurable output)
+//   contract-first: tensor (isolated configurable output)
+TEST(GraphComposition, TensorConfiguratorsRejectTransferSourcesInEitherOrder) {
+  PayloadOptions options;
+  options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  options.max_tensor_byte_span = 1024U;
+  const TensorOutputSpec contract{
+      .representation = {.memory_kind = MemoryKind::kCudaDevice, .rank = 2U},
+      .bounds = tensor_bounds(2048U),
+      .storage = TensorOutputStorage::kRuntimePool,
+      .transfer =
+          TensorTransferPolicy{
+              .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+          },
+  };
+
+  {
+    Graph graph{"payload-first"};
+    auto tensor = graph.op<TensorOp>("tensor");
+    auto& configure = graph.configure(tensor->output);
+    configure.payload_options(options);
+    const Error error = graph_error_from([&] { configure.produces_tensor(contract); });
+    EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+
+    const GraphView view = graph.view();
+    ASSERT_EQ(view.ports().size(), 1U);
+    EXPECT_FALSE(view.ports()[0].graph_override.tensor_contract);
+    ASSERT_TRUE(view.ports()[0].graph_override.payload_options);
+    EXPECT_EQ(view.ports()[0].graph_override.payload_options->max_tensor_byte_span, 1024U);
+  }
+
+  {
+    Graph graph{"contract-first"};
+    auto tensor = graph.op<TensorOp>("tensor");
+    auto& configure = graph.configure(tensor->output);
+    configure.produces_tensor(contract);
+    const Error error = graph_error_from([&] { configure.payload_options(options); });
+    EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+
+    const GraphView view = graph.view();
+    ASSERT_EQ(view.ports().size(), 1U);
+    ASSERT_TRUE(view.ports()[0].graph_override.tensor_contract);
+    ASSERT_TRUE(view.ports()[0].graph_override.tensor_contract->transfer);
+    EXPECT_EQ(view.ports()[0].graph_override.tensor_contract->transfer->max_staging_byte_span,
+              2048U);
+  }
+}
+
+// REQ: GRAPH-008
+// REQ: GRAPH-031
+// REQ: OPERATOR-036
+// Graph topology:
+//   producer --[descriptor-backed Image]--> consumer
+TEST(GraphComposition, CommonContractTightensSingularDescriptorAllocation) {
+  Graph graph{"root"};
+  auto producer = graph.op<SingleTensorUnqualifiedPassOp>("producer");
+  auto consumer = graph.op<SingleTensorUnqualifiedPassOp>("consumer");
+  const auto flow = graph.add_flow(producer->output, consumer->input);
+  const TensorOutputSpec contract{
+      .representation =
+          TensorRepresentation{
+              .memory_kind = MemoryKind::kHost,
+              .dtype = DLDataType{kDLUInt, 8U, 1U},
+              .rank = 2U,
+          },
+      .bounds = tensor_bounds(2048U),
+      .storage = TensorOutputStorage::kRuntimePool,
+      .transfer =
+          TensorTransferPolicy{
+              .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              .max_staging_byte_span = 1024U,
+          },
+  };
+
+  // Key setup: tighten an ImageT output's setup-time pool and staging bounds through the common
+  // Graph-level Tensor contract.
+  graph.configure(producer->output).produces_tensor(contract);
+  const GraphView view = graph.view();
+  const auto [source, target] = single_edge_ports(view);
+
+  // Key assertion: the N = 1 descriptor uses the same normalized allocation and transfer facts as
+  // a raw Tensor output, while retaining its generated schema identity.
+  ASSERT_NE(source, nullptr);
+  ASSERT_NE(target, nullptr);
+  ASSERT_TRUE(source->graph_override.tensor_contract);
+  ASSERT_TRUE(source->graph_override.tensor_allocation);
+  ASSERT_TRUE(source->graph_override.payload_options);
+  ASSERT_TRUE(source->graph_override.payload_options->schema);
+  EXPECT_EQ(source->graph_override.tensor_allocation->max_rank, 2U);
+  EXPECT_EQ(source->graph_override.tensor_allocation->max_byte_span, 2048U);
+  EXPECT_EQ(source->graph_override.payload_options->max_tensor_byte_span, 1024U);
+  EXPECT_EQ(source->graph_override.payload_options->schema->id,
+            schema_identity<schema::ImageT>().id);
+  EXPECT_TRUE(flow.graph_valid());
 }
 
 // REQ: GRAPH-008
 // REQ: GRAPH-020
+// REQ: GRAPH-031
+// Graph topology:
+//   tensor (isolated configurable raw Tensor output)
 TEST(GraphComposition, TensorTryConfigureMapsConfiguratorAllocationFailure) {
   Graph graph{"root"};
   auto tensor = graph.op<TensorOp>("tensor");
@@ -1737,3 +2693,4 @@ TEST(GraphComposition, TensorTryConfigureMapsConfiguratorAllocationFailure) {
 
 }  // namespace
 }  // namespace holoscan
+// NOLINTEND(bugprone-unchecked-optional-access)

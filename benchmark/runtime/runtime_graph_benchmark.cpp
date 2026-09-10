@@ -20,8 +20,10 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <numeric>
 #include <optional>
 #include <ostream>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -32,6 +34,11 @@
 #include <vector>
 
 #include <cuda_runtime_api.h>
+#include <fmt/format.h>
+
+#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+#include <intrin.h>
+#endif
 
 #if defined(_WIN32)
 #include <process.h>
@@ -48,11 +55,14 @@
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/run.hpp>
+#include <holoscan/logger/logger.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
 #include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "runtime_multi_tensor_benchmark_traits.hpp"
+#include "runtime_third_party_benchmark_traits.hpp"
 
 #include "../common/benchmark_pod.hpp"
 #include "common/allocation_counter.hpp"
@@ -69,6 +79,7 @@ using BenchmarkClock = std::chrono::steady_clock;
 using benchmarking::benchmark_thread_identity;
 using benchmarking::BenchmarkSupportThreadControl;
 using benchmarking::emit_optional_cpu;
+using benchmarking::emit_runtime_thread_usage;
 using benchmarking::emit_support_thread_evidence;
 using benchmarking::json_escape;
 using benchmarking::kDescriptorBackedImagePayloadBytes;
@@ -77,8 +88,10 @@ using benchmarking::kMaximumTensorBytes;
 using benchmarking::kTensorByteDtype;
 using benchmarking::kTensorTransportPayloadBytes;
 using benchmarking::make_placement;
+using benchmarking::make_preinitialized_byte_tensor;
 using benchmarking::payload_validation_name;
 using benchmarking::PayloadValidation;
+using benchmarking::PreinitializedTensorStorage;
 using benchmarking::SupportThreadBinding;
 using benchmarking::SupportThreadRole;
 using benchmarking::tensor_descriptor_matches;
@@ -88,23 +101,33 @@ using benchmarking::TensorStorage;
 using benchmarking::validation_timing_name;
 using MultiTensorMessage = runtime_benchmark::MultiTensorMessageT;
 using MultiTensorFields = runtime_benchmark::MultiTensorMessageTensorFields;
+using ThirdPartyTelemetry = task30_benchmark::TelemetryT;
 
 constexpr std::uint32_t kMaximumRelayCount = 64U;
-constexpr std::uint32_t kMaximumFanout = 8U;
+constexpr std::uint32_t kMaximumFanout = 32U;
 constexpr std::size_t kMaximumRuntimePhaseTraceRecords = 2'000'000U;
 constexpr std::size_t kBenchmarkCacheLineBytes = 64U;
 constexpr std::size_t kMaximumImageSinkComputeAllocations = 6U;
 constexpr std::size_t kMaximumMultiTensorSinkComputeAllocations = 4U;
-// Seven activation/callback checkpoints plus bounded readiness, Channel, and controller wake
+// Ten activation/callback checkpoints plus bounded readiness, Channel, and controller wake
 // evidence. The capacity is deliberately conservative because parked execution partitions can
 // append controller park/return records between otherwise complete activations.
-constexpr std::uint64_t kTraceRecordsPerExpectedActivation = 14U;
+// Independently owned fan-out lanes add scheduler-dependent controller park/return and Channel
+// wait records. Reserve one additional record per expected activation as proportional
+// control-plane headroom so phase evidence cannot truncate a valid run.
+constexpr std::uint64_t kTraceRecordsPerExpectedActivation = 19U;
 constexpr std::uint64_t kTensorTraceRecordsPerPublication = 5U;
 constexpr std::uint64_t kInlinePayloadTraceRecordsPerPublication = 5U;
+constexpr std::uint32_t kMaximumOfferedRateHz = 1'000'000U;
+constexpr std::uint32_t kMaximumOfferedBurstSize = 64U;
+constexpr std::uint32_t kMaximumTestTensorPoolRetries = 16U;
+constexpr double kMaximumOfferedRateRelativeError = 0.02;
 constexpr int kSkipped = 77;
 constexpr std::uint8_t kSignalPayload = 0xA5U;
 constexpr std::uint8_t kImagePayloadByte = 0x3CU;
 constexpr std::uint8_t kMultiTensorPayloadByte = 0xA5U;
+constexpr std::uint8_t kMultiTensorModePayloadByte = 0x6DU;
+constexpr std::array<std::uint32_t, 5U> kSupportedCallbackWorkUs{0U, 1U, 5U, 20U, 100U};
 
 enum class Workload { kLatency, kNotificationLatency, kSaturated };
 enum class BulkWorkProfile { kFullWrite, kDescriptorOnly };
@@ -114,11 +137,30 @@ enum class Scenario {
   kSignal,
   kSampleForward,
   kSchema,
+  kThirdPartySchema,
   kTensor,
   kImage,
-  kMultiTensor
+  kMultiTensor,
+  kMultiTensorLoan,
+  kMultiTensorStaging,
 };
 enum class OperatorLaneMode { kSeparate, kShared, kPerSink };
+enum class PartitionCover { kLegacy, kAutomatic, kIncludeAll, kHybrid };
+enum class GreenContextLayout {
+  kNone,
+  kSamePartition,
+  kDedicatedToDedicated,
+  kDedicatedToResidual
+};
+
+[[nodiscard]] constexpr bool multi_tensor_scenario(const Scenario scenario) noexcept {
+  return scenario == Scenario::kMultiTensorLoan || scenario == Scenario::kMultiTensorStaging;
+}
+
+[[nodiscard]] constexpr bool tensor_backed_scenario(const Scenario scenario) noexcept {
+  return scenario == Scenario::kTensor || scenario == Scenario::kImage ||
+         scenario == Scenario::kMultiTensor || multi_tensor_scenario(scenario);
+}
 
 struct Options {
   PayloadValidation validation{PayloadValidation::kFinal};
@@ -128,15 +170,30 @@ struct Options {
   TensorStorage tensor_storage{TensorStorage::kPageableHost};
   BulkWorkProfile bulk_work_profile{BulkWorkProfile::kFullWrite};
   OperatorLaneMode operator_lanes{OperatorLaneMode::kSeparate};
+  PartitionCover partition_cover{PartitionCover::kLegacy};
+  GreenContextLayout green_context_layout{GreenContextLayout::kNone};
   std::size_t tensor_bytes{1U << 20U};
   int tensor_device{0};
+  std::uint32_t green_context_sm_count{};
   std::uint64_t samples{100'000U};
   std::uint64_t warmup{1'000U};
   std::uint32_t queue_depth{1U};
+  std::vector<std::uint32_t> sink_queue_depths;
   std::uint32_t relay_count{1U};
   std::uint32_t fanout{1U};
+  // Authors the POD two-output/two-sink applicability rows.
+  bool multi_output{};
+  // Authors the POD two-output/one-two-input-sink applicability rows.
+  bool multi_input{};
+  // Authors one POD output split across blocking and drop-oldest HoloMQ services.
+  bool mixed_policy_fanout{};
   std::uint32_t notification_capacity{1U};
+  // Enables controlled POD drop-oldest fanout rows; zero keeps completion-driven pacing.
+  std::uint32_t offered_rate_hz{};
+  // Bounds publications emitted by each fixed-rate clock activation.
+  std::uint32_t offered_burst_size{1U};
   std::uint32_t publisher_period_us{1'000U};
+  std::uint32_t callback_work_us{};
   std::uint32_t timeout_ms{30'000U};
   int source_cpu{-1};
   int relay_cpu{-1};
@@ -147,31 +204,112 @@ struct Options {
   int notification_driver_cpu{-1};
   bool busy_poll{};
   bool runtime_phase_counters{};
+  bool cuda_resource_counters{};
   bool disable_direct_continuation_elision{};
   bool disable_closed_island_composite{};
   bool force_holomq_process_local_inline{};
+  // Selects matched forced-wake rows without changing the active Graph topology.
+  bool force_holomq_event_wake{};
+  // Retains only the Runtime pump on an otherwise pump-free all-eventless HoloMQ process.
+  bool force_process_local_channel_pump{};
   bool test_fail_sink_after_relay_pressure{};
+  std::uint32_t test_source_tensor_pool_in_activation_retries{};
+  bool test_gate_pod_sink_for_pressure{};
   std::string output_path;
+  std::string plan_output_path;
+};
+
+struct BenchmarkLifecycleTiming {
+  std::uint64_t compile_ns{};
+  std::uint64_t run_async_return_ns{};
+  std::uint64_t run_async_to_first_callback_ns{};
+  std::uint64_t terminal_wait_ns{};
 };
 
 [[nodiscard]] constexpr bool direct_retained_scenario(const Scenario scenario) noexcept {
   return scenario == Scenario::kPod || scenario == Scenario::kSignal ||
          scenario == Scenario::kSampleForward || scenario == Scenario::kSchema ||
-         scenario == Scenario::kTensor || scenario == Scenario::kImage ||
-         scenario == Scenario::kMultiTensor;
+         scenario == Scenario::kThirdPartySchema || tensor_backed_scenario(scenario);
 }
 
 [[nodiscard]] constexpr bool fanout_scenario(const Scenario scenario) noexcept {
-  return scenario == Scenario::kPod || scenario == Scenario::kSchema;
+  return scenario == Scenario::kPod || scenario == Scenario::kSchema ||
+         scenario == Scenario::kThirdPartySchema || scenario == Scenario::kTensor ||
+         scenario == Scenario::kImage || multi_tensor_scenario(scenario);
+}
+
+[[nodiscard]] std::uint32_t subscriber_queue_depth(const Options& options,
+                                                   const std::uint32_t sink_index) noexcept {
+  return options.sink_queue_depths.empty() ? options.queue_depth
+                                           : options.sink_queue_depths[sink_index];
+}
+
+[[nodiscard]] constexpr QueuePolicy subscriber_queue_policy(
+    const Options& options, const std::uint32_t sink_index) noexcept {
+  return options.mixed_policy_fanout && sink_index == 1U ? QueuePolicy::kDropOldest
+                                                         : options.queue_policy;
+}
+
+[[nodiscard]] constexpr std::uint32_t source_output_count(const Options& options) noexcept {
+  return options.scenario == Scenario::kSourceOnly
+             ? 0U
+             : (options.multi_output || options.multi_input ? 2U : 1U);
+}
+
+[[nodiscard]] constexpr std::uint32_t subscribers_per_output(const Options& options) noexcept {
+  return options.scenario == Scenario::kSourceOnly
+             ? 0U
+             : (options.multi_output || options.multi_input ? 1U : options.fanout);
+}
+
+[[nodiscard]] constexpr std::uint32_t source_emit_count(const Options& options) noexcept {
+  return options.multi_output || options.multi_input ? 2U : 1U;
+}
+
+[[nodiscard]] constexpr std::uint32_t sink_operator_count(const Options& options) noexcept {
+  return options.scenario == Scenario::kSourceOnly ? 0U
+                                                   : (options.multi_input ? 1U : options.fanout);
+}
+
+[[nodiscard]] constexpr std::uint32_t inputs_per_sink(const Options& options) noexcept {
+  return options.scenario == Scenario::kSourceOnly ? 0U : (options.multi_input ? 2U : 1U);
+}
+
+[[nodiscard]] constexpr bool holomq_event_wake_control_scenario(const Scenario scenario) noexcept {
+  return scenario == Scenario::kPod || scenario == Scenario::kSchema ||
+         scenario == Scenario::kThirdPartySchema || tensor_backed_scenario(scenario);
 }
 
 [[nodiscard]] constexpr bool lossy_queue_policy(const QueuePolicy policy) noexcept {
   return policy == QueuePolicy::kDropOldest;
 }
 
+[[nodiscard]] constexpr bool lossy_subscriber(const Options& options,
+                                              const std::uint32_t sink_index) noexcept {
+  return lossy_queue_policy(subscriber_queue_policy(options, sink_index));
+}
+
+[[nodiscard]] constexpr bool has_lossy_subscriber(const Options& options) noexcept {
+  for (std::uint32_t index = 0U; index < sink_operator_count(options); ++index) {
+    if (lossy_subscriber(options, index)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+[[nodiscard]] constexpr bool offered_rate_mode(const Options& options) noexcept {
+  return options.offered_rate_hz != 0U;
+}
+
+[[nodiscard]] std::chrono::nanoseconds offered_period(const Options& options) noexcept {
+  return std::chrono::nanoseconds{1'000'000'000ULL / options.offered_rate_hz};
+}
+
 [[nodiscard]] constexpr bool lossy_scenario_supported(const Scenario scenario) noexcept {
   return scenario == Scenario::kPod || scenario == Scenario::kSchema ||
-         scenario == Scenario::kTensor || scenario == Scenario::kImage;
+         scenario == Scenario::kThirdPartySchema || scenario == Scenario::kTensor ||
+         scenario == Scenario::kImage || multi_tensor_scenario(scenario);
 }
 
 [[nodiscard]] constexpr const char* queue_policy_name(const QueuePolicy policy) noexcept {
@@ -185,22 +323,29 @@ struct Options {
   }
 }
 
-[[nodiscard]] constexpr bool uses_channel_pump(const Options& options) noexcept {
+[[nodiscard]] constexpr bool uses_holomq(const Options& options) noexcept {
   return direct_retained_scenario(options.scenario) &&
          (options.force_holomq_process_local_inline || options.fanout > 1U);
+}
+
+[[nodiscard]] constexpr bool uses_channel_pump(const Options& options) noexcept {
+  return uses_holomq(options) &&
+         (options.force_process_local_channel_pump || options.force_holomq_event_wake ||
+          options.operator_lanes != OperatorLaneMode::kShared);
 }
 
 [[nodiscard]] constexpr const char* process_local_delivery_name(const Options& options) noexcept {
   if (!direct_retained_scenario(options.scenario)) {
     return "not_applicable";
   }
-  return uses_channel_pump(options) ? "holomq" : "direct_retained";
+  return uses_holomq(options) ? "holomq" : "direct_retained";
 }
 
 struct Percentiles {
   std::uint64_t minimum{};
   std::uint64_t p50{};
   std::uint64_t p90{};
+  std::uint64_t p95{};
   std::uint64_t p99{};
   std::optional<std::uint64_t> p999;
   std::uint64_t maximum{};
@@ -211,15 +356,22 @@ struct RuntimePhaseReceiverSummary {
   bool source{};
   std::optional<std::uint32_t> downstream_index;
   std::uint64_t activations{};
+  std::vector<std::uint64_t> previous_cut_to_candidate;
   std::vector<std::uint64_t> previous_cut_to_readiness_poll_return;
   std::vector<std::uint64_t> readiness_poll_return_to_candidate;
+  std::vector<std::uint64_t> candidate_to_selection;
+  std::vector<std::uint64_t> selection_to_input_preparation;
+  std::vector<std::uint64_t> input_preparation_to_activation;
+  std::vector<std::uint64_t> activation_to_dispatch_start;
   std::vector<std::uint64_t> candidate_to_dispatch_start;
+  std::vector<std::uint64_t> dispatch_start_to_callback_entry;
+  std::vector<std::uint64_t> callback_entry_to_return;
+  std::vector<std::uint64_t> callback_return_to_dispatch_return;
   std::vector<std::uint64_t> compute_dispatch;
   std::vector<std::uint64_t> dispatch_return_to_retirement;
   std::vector<std::uint64_t> retirement_to_cut;
   std::vector<std::uint64_t> dispatch_return_to_cut;
   std::vector<std::uint64_t> callback_pre_return_to_dispatch_return;
-  std::vector<std::uint64_t> dispatch_start_to_callback_entry;
 };
 
 struct RuntimePhaseTraceSummary {
@@ -235,6 +387,7 @@ struct RuntimePhaseTraceSummary {
   std::uint64_t readiness_polls{};
   std::uint64_t unmatched_readiness_polls{};
   std::uint64_t complete_activations{};
+  std::uint64_t terminal_frozen_candidates{};
   std::uint64_t source_activation_runs{};
   std::uint64_t maximum_consecutive_source_activations{};
   std::uint64_t source_to_source_transitions{};
@@ -276,6 +429,10 @@ struct RuntimePhaseTraceSummary {
   return workload != Workload::kLatency;
 }
 
+[[nodiscard]] constexpr bool notification_driver_used(const Options& options) noexcept {
+  return is_notification_workload(options.workload) && !offered_rate_mode(options);
+}
+
 [[nodiscard]] const char* scenario_name(const Scenario scenario) noexcept {
   switch (scenario) {
     case Scenario::kSourceOnly:
@@ -288,12 +445,58 @@ struct RuntimePhaseTraceSummary {
       return "sample_forward";
     case Scenario::kSchema:
       return "schema";
+    case Scenario::kThirdPartySchema:
+      return "third_party_schema";
     case Scenario::kTensor:
       return "tensor";
     case Scenario::kImage:
       return "image";
     case Scenario::kMultiTensor:
       return "multi_tensor";
+    case Scenario::kMultiTensorLoan:
+      return "multi_tensor_loan";
+    case Scenario::kMultiTensorStaging:
+      return "multi_tensor_staging";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] const char* green_context_layout_name(const GreenContextLayout layout) noexcept {
+  switch (layout) {
+    case GreenContextLayout::kNone:
+      return "none";
+    case GreenContextLayout::kSamePartition:
+      return "same_partition";
+    case GreenContextLayout::kDedicatedToDedicated:
+      return "dedicated_to_dedicated";
+    case GreenContextLayout::kDedicatedToResidual:
+      return "dedicated_to_residual";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] const char* partition_cover_name(const PartitionCover cover) noexcept {
+  switch (cover) {
+    case PartitionCover::kLegacy:
+      return "legacy";
+    case PartitionCover::kAutomatic:
+      return "automatic";
+    case PartitionCover::kIncludeAll:
+      return "include_all";
+    case PartitionCover::kHybrid:
+      return "hybrid";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] const char* partitioning_mode_name(const PartitioningMode mode) noexcept {
+  switch (mode) {
+    case PartitioningMode::kAutomatic:
+      return "automatic";
+    case PartitioningMode::kConstrainedAutomatic:
+      return "constrained_automatic";
+    case PartitioningMode::kManual:
+      return "manual";
   }
   return "unknown";
 }
@@ -305,7 +508,11 @@ struct RuntimePhaseTraceSummary {
       result = "runtime_graph_source_activation";
       break;
     case Scenario::kPod:
-      result = "runtime_graph_pod_1to" + std::to_string(options.fanout);
+      result =
+          options.multi_input
+              ? "runtime_graph_pod_2to1"
+              : (options.multi_output ? "runtime_graph_pod_2x1"
+                                      : "runtime_graph_pod_1to" + std::to_string(options.fanout));
       break;
     case Scenario::kSignal:
       result = "runtime_graph_signal_1to1";
@@ -316,14 +523,23 @@ struct RuntimePhaseTraceSummary {
     case Scenario::kSchema:
       result = "runtime_graph_schema_time_1to" + std::to_string(options.fanout);
       break;
+    case Scenario::kThirdPartySchema:
+      result = "runtime_graph_third_party_telemetry_1to" + std::to_string(options.fanout);
+      break;
     case Scenario::kTensor:
-      result = "runtime_graph_tensor_1to1";
+      result = "runtime_graph_tensor_1to" + std::to_string(options.fanout);
       break;
     case Scenario::kImage:
-      result = "runtime_graph_image_1to1";
+      result = "runtime_graph_image_1to" + std::to_string(options.fanout);
       break;
     case Scenario::kMultiTensor:
       result = "runtime_graph_multi_tensor_1to1";
+      break;
+    case Scenario::kMultiTensorLoan:
+      result = "runtime_graph_multi_tensor_loan_1to" + std::to_string(options.fanout);
+      break;
+    case Scenario::kMultiTensorStaging:
+      result = "runtime_graph_multi_tensor_staging_1to" + std::to_string(options.fanout);
       break;
   }
   if (result.empty()) {
@@ -332,9 +548,22 @@ struct RuntimePhaseTraceSummary {
   if (options.force_holomq_process_local_inline) {
     result += "_holomq_fallback";
   }
+  if (options.force_holomq_event_wake) {
+    result += "_event_wake_control";
+  }
+  if (options.force_process_local_channel_pump) {
+    result += "_channel_pump_control";
+  }
+  if (options.mixed_policy_fanout) {
+    result += "_mixed_policy";
+  }
   if (options.queue_policy != QueuePolicy::kBlocking) {
     result += "_";
     result += queue_policy_name(options.queue_policy);
+  }
+  if (offered_rate_mode(options)) {
+    result += "_offered_" + std::to_string(options.offered_rate_hz) + "hz_burst" +
+              std::to_string(options.offered_burst_size);
   }
   if (options.workload == Workload::kSaturated) {
     result += "_saturated";
@@ -356,12 +585,18 @@ struct RuntimePhaseTraceSummary {
       return "metadata-preserving Sample<T> forwarding cost across a linear Operator chain";
     case Scenario::kSchema:
       return "production generated-schema encode, verify, materialize, and activation cost";
+    case Scenario::kThirdPartySchema:
+      return "third-party generated-schema encode, verify, materialize, and activation cost";
     case Scenario::kTensor:
       return "production direct Tensor loan, publish, readiness, receive, and retirement cost";
     case Scenario::kImage:
       return "production Image metadata and embedded Tensor retention cost";
     case Scenario::kMultiTensor:
       return "generated-schema metadata and two preallocated Tensor field retention cost";
+    case Scenario::kMultiTensorLoan:
+      return "production multi-Tensor schema bundle loan, publish, receive, and retirement cost";
+    case Scenario::kMultiTensorStaging:
+      return "production multi-Tensor schema staging, publish, receive, and retirement cost";
   }
   return "unknown benchmark claim";
 }
@@ -373,6 +608,9 @@ struct RuntimePhaseTraceSummary {
   if (options.scenario == Scenario::kSignal) {
     return sizeof(std::uint8_t);
   }
+  if (multi_tensor_scenario(options.scenario)) {
+    return options.tensor_bytes * 2U;
+  }
   if (options.scenario == Scenario::kTensor || options.scenario == Scenario::kImage) {
     return options.tensor_bytes;
   }
@@ -382,11 +620,14 @@ struct RuntimePhaseTraceSummary {
   if (options.scenario == Scenario::kSchema) {
     return sizeof(schema::TimeT);
   }
+  if (options.scenario == Scenario::kThirdPartySchema) {
+    return sizeof(ThirdPartyTelemetry);
+  }
   return sizeof(BenchmarkPOD64);
 }
 
 [[nodiscard]] std::optional<std::size_t> inline_transport_bytes(const Options& options) noexcept {
-  if (!uses_channel_pump(options)) {
+  if (!uses_holomq(options)) {
     return 0U;
   }
   if (options.scenario == Scenario::kTensor) {
@@ -395,10 +636,12 @@ struct RuntimePhaseTraceSummary {
   if (options.scenario == Scenario::kImage) {
     return kDescriptorBackedImagePayloadBytes;
   }
-  if (options.scenario == Scenario::kMultiTensor) {
+  if (options.scenario == Scenario::kMultiTensor || multi_tensor_scenario(options.scenario)) {
+    // Descriptor metadata uses a variable encoded prefix of the generated schema's bounded wire
+    // capacity. The Runtime does not expose the exact per-publication prefix length here.
     return std::nullopt;
   }
-  if (options.scenario == Scenario::kSchema) {
+  if (options.scenario == Scenario::kSchema || options.scenario == Scenario::kThirdPartySchema) {
     // Tensor and Image use the private channel_internal::TensorTransportPayload and
     // schema::DescriptorFlatBufferPayloadFor<schema::Image> types; the Channel benchmark
     // statically verifies the mirrored fixed sizes above. Generated schemas instead submit a
@@ -412,6 +655,9 @@ struct RuntimePhaseTraceSummary {
 [[nodiscard]] std::size_t external_buffer_bytes(const Options& options) noexcept {
   if (options.scenario == Scenario::kMultiTensor) {
     return 2U * options.tensor_bytes;
+  }
+  if (multi_tensor_scenario(options.scenario)) {
+    return options.tensor_bytes * 2U;
   }
   return options.scenario == Scenario::kTensor || options.scenario == Scenario::kImage
              ? options.tensor_bytes
@@ -434,6 +680,9 @@ struct RuntimePhaseTraceSummary {
       options.bulk_work_profile == BulkWorkProfile::kDescriptorOnly) {
     return "preinitialized_pool_backing";
   }
+  if (multi_tensor_scenario(options.scenario)) {
+    return "preinitialized_immutable_backing";
+  }
   return "full_payload_per_sample";
 }
 
@@ -442,7 +691,7 @@ struct RuntimePhaseTraceSummary {
     return options.bulk_work_profile == BulkWorkProfile::kDescriptorOnly ? "descriptor_only"
                                                                          : "full_write";
   }
-  if (options.scenario == Scenario::kImage) {
+  if (options.scenario == Scenario::kImage || multi_tensor_scenario(options.scenario)) {
     return "descriptor_only";
   }
   if (options.scenario == Scenario::kMultiTensor) {
@@ -450,6 +699,33 @@ struct RuntimePhaseTraceSummary {
                                                                          : "full_write";
   }
   return "not_applicable";
+}
+
+[[nodiscard]] const char* payload_name(const Scenario scenario) noexcept {
+  switch (scenario) {
+    case Scenario::kSourceOnly:
+      return "none";
+    case Scenario::kSignal:
+      return "trigger_token";
+    case Scenario::kTensor:
+      return "tensor";
+    case Scenario::kImage:
+      return "image";
+    case Scenario::kMultiTensor:
+      return "multi_tensor";
+    case Scenario::kMultiTensorLoan:
+      return "multi_tensor_loan";
+    case Scenario::kMultiTensorStaging:
+      return "multi_tensor_staging";
+    case Scenario::kSchema:
+      return "schema";
+    case Scenario::kThirdPartySchema:
+      return "third_party_schema";
+    case Scenario::kPod:
+    case Scenario::kSampleForward:
+      return "pod";
+  }
+  return "unknown";
 }
 
 [[nodiscard]] std::uint32_t edge_count(const Options& options) noexcept {
@@ -466,6 +742,28 @@ struct RuntimePhaseTraceSummary {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
              BenchmarkClock::now().time_since_epoch())
       .count();
+}
+
+inline void callback_work_pause() noexcept {
+#if defined(__i386__) || defined(__x86_64__)
+  __builtin_ia32_pause();
+#elif defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+  _mm_pause();
+#elif defined(__arm__) || defined(__aarch64__)
+  __asm__ __volatile__("yield");
+#else
+  std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
+}
+
+void run_controlled_callback_work(const std::uint32_t duration_us) noexcept {
+  if (duration_us == 0U) {
+    return;
+  }
+  const auto deadline = BenchmarkClock::now() + std::chrono::microseconds{duration_us};
+  while (BenchmarkClock::now() < deadline) {
+    callback_work_pause();
+  }
 }
 
 [[nodiscard]] BenchmarkPOD64 make_payload(const std::uint64_t sequence) noexcept {
@@ -487,6 +785,14 @@ template <typename Payload>
     return schema::TimeT{
         .time_ns = static_cast<std::int64_t>(sequence),
         .acqtime_ns = static_cast<std::int64_t>(sequence ^ 0x5A5A'5A5AU),
+    };
+  } else if constexpr (std::is_same_v<Payload, ThirdPartyTelemetry>) {
+    return ThirdPartyTelemetry{
+        .sequence = sequence,
+        .source_id = static_cast<std::uint32_t>(sequence) ^ 0xC001'C0DEU,
+        .status = static_cast<std::uint16_t>(sequence ^ 0x5A5AU),
+        .valid = true,
+        .reading = static_cast<double>(sequence) * 0.25,
     };
   } else {
     static_assert(std::is_same_v<Payload, std::uint8_t>);
@@ -514,6 +820,13 @@ template <typename Payload>
   const std::uint64_t sequence = static_cast<std::uint64_t>(payload.time_ns);
   return payload.time_ns >= 0 &&
          payload.acqtime_ns == static_cast<std::int64_t>(sequence ^ 0x5A5A'5A5AU);
+}
+
+[[nodiscard]] bool payload_valid(const ThirdPartyTelemetry& payload) noexcept {
+  return payload.sequence != 0U &&
+         payload.source_id == (static_cast<std::uint32_t>(payload.sequence) ^ 0xC001'C0DEU) &&
+         payload.status == static_cast<std::uint16_t>(payload.sequence ^ 0x5A5AU) &&
+         payload.valid && payload.reading == static_cast<double>(payload.sequence) * 0.25;
 }
 
 // Field order groups state by benchmark phase and cache-line ownership. Reordering for minimum
@@ -555,6 +868,22 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
             options_.workload == Workload::kNotificationLatency ? options_.samples : 0U),
         sink_deliveries_(options_.fanout, 0U),
         sink_final_sequences_(options_.fanout, 0U),
+        sink_callback_tids_by_index_(
+            options_.runtime_phase_counters
+                ? std::make_unique<std::atomic<std::uint64_t>[]>(sink_operator_count(options_))
+                : nullptr),
+        sink_callback_identity_is_native_by_index_(
+            options_.runtime_phase_counters
+                ? std::make_unique<std::atomic_bool[]>(sink_operator_count(options_))
+                : nullptr),
+        sink_callback_native_tid_syscall_unavailable_by_index_(
+            options_.runtime_phase_counters
+                ? std::make_unique<std::atomic_bool[]>(sink_operator_count(options_))
+                : nullptr),
+        sink_callback_multiple_threads_by_index_(
+            options_.runtime_phase_counters
+                ? std::make_unique<std::atomic_bool[]>(sink_operator_count(options_))
+                : nullptr),
         sequence_sink_delivery_count_(options_.fanout > 1U ? final_sequence() + 1U : 0U),
         sequence_sink_deliveries_(
             sequence_sink_delivery_count_ == 0U
@@ -568,13 +897,17 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
                       std::atomic<std::uintptr_t>[]>(  // NOLINT(cppcoreguidelines-avoid-c-arrays)
                       final_sequence() + 1U)
                 : nullptr),
-        tensor_validation_buffer_(options_.scenario == Scenario::kTensor ||
-                                          options_.scenario == Scenario::kImage ||
-                                          options_.scenario == Scenario::kMultiTensor
-                                      ? options_.tensor_bytes
-                                      : 0U),
-        image_backing_(options_.scenario == Scenario::kImage ? options_.tensor_bytes : 0U,
-                       kImagePayloadByte) {
+        multi_tensor_source_pointers_{
+            multi_tensor_scenario(options_.scenario)
+                ? std::make_unique<std::atomic<std::uintptr_t>[]>(  // NOLINT
+                      final_sequence() + 1U)
+                : nullptr,
+            multi_tensor_scenario(options_.scenario)
+                ? std::make_unique<std::atomic<std::uintptr_t>[]>(  // NOLINT
+                      final_sequence() + 1U)
+                : nullptr},
+        tensor_validation_buffer_(tensor_backed_scenario(options_.scenario) ? options_.tensor_bytes
+                                                                            : 0U) {
     for (std::size_t index = 0U; index < sequence_sink_delivery_count_; ++index) {
       sequence_sink_deliveries_[index].store(0U, std::memory_order_relaxed);
     }
@@ -594,21 +927,17 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     if (options_.scenario != Scenario::kImage) {
       return {};
     }
-    const std::array<std::int64_t, 1U> shape{static_cast<std::int64_t>(options_.tensor_bytes)};
-    auto tensor = make_tensor(shape,
-                              kTensorByteDtype,
-                              TensorByteStridesView{std::nullopt},
-                              MemoryStorageType::kSystem,
-                              image_backing_.data(),
-                              static_cast<MemoryBuffer::release_function_t>(nullptr));
+    auto tensor = make_preinitialized_byte_tensor(options_.tensor_bytes,
+                                                  options_.tensor_storage,
+                                                  options_.tensor_device,
+                                                  kImagePayloadByte,
+                                                  image_storage_,
+                                                  options_.fanout);
     if (!tensor) {
       return make_unexpected(std::move(tensor.error()));
     }
-    try {
-      image_tensor_ = std::make_shared<Tensor>(std::move(*tensor));
-    } catch (const std::bad_alloc&) {
-      return make_unexpected(Error{ErrorCode::kResourceExhausted});
-    }
+    image_tensor_ = std::move(*tensor);
+    record_descriptor_backing_initialization(0U);
     return {};
   }
 
@@ -635,7 +964,7 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   }
 
   [[nodiscard]] bool notification_driven() const noexcept {
-    return is_notification_workload(options_.workload);
+    return notification_driver_used(options_);
   }
 
   [[nodiscard]] std::uint64_t allocation_probe_sequence() const noexcept {
@@ -650,13 +979,35 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     return first_measured_sequence() + options_.samples - 1U;
   }
 
+  // Fixed-rate drop-oldest rows clock bursts while preserving the per-publication offer rate.
   [[nodiscard]] std::chrono::nanoseconds source_period() const noexcept {
+    if (offered_rate_mode(options_)) {
+      return offered_period(options_) * options_.offered_burst_size;
+    }
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::microseconds{options_.publisher_period_us});
   }
 
   [[nodiscard]] bool measured(const std::uint64_t sequence) const noexcept {
     return sequence >= first_measured_sequence() && sequence <= final_sequence();
+  }
+
+  // Bounded-burst rows count clock activations; other rows emit at most once per callback.
+  [[nodiscard]] std::uint64_t expected_source_callbacks() const noexcept {
+    if (!offered_rate_mode(options_)) {
+      return final_sequence() + source_backpressure_count();
+    }
+    const auto callbacks_for = [&](const std::uint64_t publications) {
+      return (publications + options_.offered_burst_size - 1U) / options_.offered_burst_size;
+    };
+    return callbacks_for(allocation_probe_sequence()) + callbacks_for(options_.samples);
+  }
+
+  [[nodiscard]] std::uint64_t expected_measured_source_callbacks() const noexcept {
+    if (!offered_rate_mode(options_)) {
+      return options_.samples;
+    }
+    return (options_.samples + options_.offered_burst_size - 1U) / options_.offered_burst_size;
   }
 
   [[nodiscard]] bool source_timestamp_required(const std::uint64_t sequence) const noexcept {
@@ -695,12 +1046,26 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     }
   }
 
-  void record_source_compute_entry() noexcept {
+  void record_source_compute_entry(const bool terminal) noexcept {
+    if (first_callback_entry_ns_.load(std::memory_order_relaxed) == 0) {
+      std::int64_t expected{};
+      static_cast<void>(first_callback_entry_ns_.compare_exchange_strong(
+          expected, now_ns(), std::memory_order_relaxed, std::memory_order_relaxed));
+    }
     record_callback_thread(source_callback_tid_,
                            source_callback_identity_is_native_,
                            source_callback_native_tid_syscall_unavailable_,
                            source_callback_multiple_threads_);
     source_compute_entries_.fetch_add(1U, std::memory_order_relaxed);
+    // A periodic candidate may already be frozen while the final fanout sample retires. Report
+    // that no-op drain activation explicitly instead of assuming a platform-independent count.
+    if (terminal) {
+      source_terminal_compute_entries_.fetch_add(1U, std::memory_order_relaxed);
+    }
+  }
+
+  [[nodiscard]] std::int64_t first_callback_entry_ns() const noexcept {
+    return first_callback_entry_ns_.load(std::memory_order_relaxed);
   }
 
   void record_relay_callback() noexcept {
@@ -711,11 +1076,19 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     ++relay_callbacks_;
   }
 
-  void record_sink_callback() noexcept {
+  void record_sink_callback() noexcept { record_sink_callback(0U); }
+
+  void record_sink_callback(const std::uint32_t sink_index) noexcept {
     record_callback_thread(sink_callback_tid_,
                            sink_callback_identity_is_native_,
                            sink_callback_native_tid_syscall_unavailable_,
                            sink_callback_multiple_threads_);
+    if (sink_callback_tids_by_index_ && sink_index < sink_operator_count(options_)) {
+      record_callback_thread(sink_callback_tids_by_index_[sink_index],
+                             sink_callback_identity_is_native_by_index_[sink_index],
+                             sink_callback_native_tid_syscall_unavailable_by_index_[sink_index],
+                             sink_callback_multiple_threads_by_index_[sink_index]);
+    }
     sink_callbacks_.fetch_add(1U, std::memory_order_relaxed);
   }
 
@@ -726,6 +1099,15 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   void record_source_backpressure() noexcept {
     source_backpressure_count_.fetch_add(1U, std::memory_order_relaxed);
     record_backpressure();
+  }
+
+  // Raw-Tensor rows distinguish asynchronous pool-retirement retries from emit backpressure.
+  void record_source_tensor_pool_retry() noexcept {
+    source_tensor_pool_retries_.fetch_add(1U, std::memory_order_relaxed);
+  }
+
+  void record_source_tensor_pool_in_activation_retry() noexcept {
+    source_tensor_pool_in_activation_retries_.fetch_add(1U, std::memory_order_relaxed);
   }
 
   void record_source_allocation_probe(const std::size_t count) noexcept {
@@ -798,10 +1180,38 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     }
   }
 
+  // Fixed-rate drop-oldest rows measure accepted offers independently of sink progress.
+  void record_publication_offer(const std::uint64_t sequence,
+                                const std::int64_t timestamp) noexcept {
+    if (!measured(sequence)) {
+      return;
+    }
+    if (sequence == first_measured_sequence()) {
+      publication_offer_start_ns_ = timestamp;
+    } else {
+      const std::int64_t expected_timestamp =
+          publication_offer_start_ns_ +
+          static_cast<std::int64_t>((sequence - first_measured_sequence()) /
+                                    options_.offered_burst_size) *
+              source_period().count();
+      if (timestamp > expected_timestamp) {
+        maximum_publication_offer_lateness_ns_ =
+            std::max(maximum_publication_offer_lateness_ns_,
+                     static_cast<std::uint64_t>(timestamp - expected_timestamp));
+      }
+    }
+    if (sequence == final_sequence()) {
+      publication_offer_end_ns_ = timestamp;
+    }
+  }
+
   void record_publication(const std::uint64_t sequence,
                           const std::int64_t post_emit_timestamp) noexcept {
     if (source_post_emit_timestamp_required(sequence)) {
       source_post_emit_timestamps_[measured_index(sequence)] = post_emit_timestamp;
+    }
+    if (offered_rate_mode(options_)) {
+      record_publication_offer(sequence, now_ns());
     }
     publications_.fetch_add(1U, std::memory_order_relaxed);
     if (sequence == final_sequence()) {
@@ -894,8 +1304,14 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
 
   [[nodiscard]] bool tensor_pointer_matches(const std::uint64_t sequence,
                                             const void* pointer) const noexcept {
-    return tensor_source_pointers_[sequence].load(std::memory_order_acquire) ==
-           reinterpret_cast<std::uintptr_t>(pointer);
+    return tensor_source_pointer(sequence) == reinterpret_cast<std::uintptr_t>(pointer);
+  }
+
+  [[nodiscard]] std::uintptr_t tensor_source_pointer(const std::uint64_t sequence) const noexcept {
+    if (tensor_source_pointers_ == nullptr || sequence > final_sequence()) {
+      return 0U;
+    }
+    return tensor_source_pointers_[sequence].load(std::memory_order_acquire);
   }
 
   void record_multi_tensor_source_pointer(const std::size_t field, const std::uint64_t sequence,
@@ -959,6 +1375,13 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     final_tensor_expected_byte_ = expected;
   }
 
+  void retain_final_multi_tensors(Tensor first, Tensor second, const std::uint8_t expected) {
+    const std::lock_guard lock(completion_mutex_);
+    final_multi_tensors_[0].emplace(std::move(first));
+    final_multi_tensors_[1].emplace(std::move(second));
+    final_tensor_expected_byte_ = expected;
+  }
+
   void record_tensor_consumer_stream(cudaStream_t stream) noexcept {
     tensor_consumer_stream_.store(reinterpret_cast<std::uintptr_t>(stream),
                                   std::memory_order_release);
@@ -996,7 +1419,38 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
       final_second_tensor_.reset();
       expected = final_tensor_expected_byte_;
     }
-    return validate_tensor_bytes(*first, expected) && validate_tensor_bytes(*second, expected);
+    const auto stream =
+        reinterpret_cast<cudaStream_t>(tensor_consumer_stream_.load(std::memory_order_acquire));
+    return validate_tensor_bytes(*first, expected, stream) &&
+           validate_tensor_bytes(*second, expected, stream);
+  }
+
+  [[nodiscard]] bool validate_retained_multi_tensors() noexcept {
+    std::array<std::optional<Tensor>, 2U> retained;
+    std::uint8_t expected{};
+    {
+      const std::lock_guard lock(completion_mutex_);
+      if (!final_multi_tensors_[0].has_value() || !final_multi_tensors_[1].has_value()) {
+        return false;
+      }
+      retained[0].emplace(std::move(*final_multi_tensors_[0]));
+      retained[1].emplace(std::move(*final_multi_tensors_[1]));
+      final_multi_tensors_[0].reset();
+      final_multi_tensors_[1].reset();
+      expected = final_tensor_expected_byte_;
+    }
+    const auto stream =
+        reinterpret_cast<cudaStream_t>(tensor_consumer_stream_.load(std::memory_order_acquire));
+    const bool first_valid = validate_tensor_bytes(*retained[0], expected, stream);
+    const bool second_valid = validate_tensor_bytes(*retained[1], expected, stream);
+    if (!first_valid || !second_valid) {
+      HOLOSCAN_LOG_ERROR(
+          "retained multi-Tensor validation failed: expected={} first_valid={} second_valid={}",
+          static_cast<unsigned int>(expected),
+          first_valid,
+          second_valid);
+    }
+    return first_valid && second_valid;
   }
 
   void fail(const ErrorCode code) noexcept {
@@ -1030,13 +1484,40 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     return std::exchange(notification_sender_, std::nullopt);
   }
 
+  void publish_pressure_gate_notification_sender(NotificationSender sender) {
+    {
+      const std::lock_guard lock(completion_mutex_);
+      pressure_gate_notification_sender_.emplace(std::move(sender));
+    }
+    completion_cv_.notify_all();
+  }
+
+  [[nodiscard]] std::optional<NotificationSender> take_pressure_gate_notification_sender() {
+    std::unique_lock lock(completion_mutex_);
+    const bool ready =
+        completion_cv_.wait_for(lock, std::chrono::milliseconds{options_.timeout_ms}, [this] {
+          return pressure_gate_notification_sender_.has_value() || failed_;
+        });
+    if (!ready || !pressure_gate_notification_sender_.has_value()) {
+      return std::nullopt;
+    }
+    return std::exchange(pressure_gate_notification_sender_, std::nullopt);
+  }
+
   void drive_notifications(const NotificationSender& sender) noexcept {
     while (!source_finished_.load(std::memory_order_acquire) &&
            first_error_.load(std::memory_order_relaxed) == ErrorCode::kSuccess) {
       const std::uint64_t accepted = notifications_accepted_.load(std::memory_order_acquire);
-      const std::uint64_t completed = lossy_queue_policy(options_.queue_policy)
-                                          ? source_compute_entries_.load(std::memory_order_acquire)
-                                          : activation_completions_.load(std::memory_order_acquire);
+      // Lossy measurement can begin only after every steady-state descriptor backing has
+      // circulated through a completed activation.
+      const bool descriptor_warmup_pending =
+          descriptor_warmup_slots_ != 0U &&
+          publications_.load(std::memory_order_acquire) < first_measured_sequence();
+      const std::uint64_t completed =
+          has_lossy_subscriber(options_) && !descriptor_warmup_pending
+              ? source_compute_entries_.load(std::memory_order_acquire)
+              : activation_completions_.load(std::memory_order_acquire) +
+                    source_tensor_pool_retries_.load(std::memory_order_acquire);
       if (accepted >= completed && accepted - completed >= options_.notification_capacity) {
         std::this_thread::yield();
         continue;
@@ -1064,6 +1545,183 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
       fail(posted.error().code);
       return;
     }
+  }
+
+  // The exact depth-one forced-HoloMQ diagnostic creates staged ingress without blocking an
+  // activation callback. It first publishes one captured sample, waits for the Channel readiness
+  // witness, and admits one independent sink gate. Only after that callback retires and establishes
+  // ReuseLast ownership does it drive the remaining source notifications with the gate withheld.
+  // A final one-at-a-time gate releases the newest survivor. The ordinary notification driver is a
+  // separate function so counters-off benchmark rows execute no recurring seam branch.
+  void drive_pressured_pod_diagnostic_notifications(
+      const NotificationSender& data_sender, const NotificationSender& gate_sender,
+      const detail::RuntimePhaseCounters& phase_counters) noexcept {
+    const auto deadline = BenchmarkClock::now() + std::chrono::milliseconds{options_.timeout_ms};
+    const auto phase_value = [&](const detail::RuntimePhaseCounter counter) {
+      const auto snapshot = phase_counters.snapshot();
+      return snapshot[detail::RuntimePhaseCounters::index(counter)];
+    };
+    const auto wait_until = [&](const auto& ready) {
+      while (first_error() == ErrorCode::kSuccess && !ready()) {
+        if (BenchmarkClock::now() >= deadline) {
+          fail(ErrorCode::kTimeout);
+          return false;
+        }
+        std::this_thread::yield();
+      }
+      return first_error() == ErrorCode::kSuccess;
+    };
+    const auto post_until_accepted = [&](const NotificationSender& sender, const bool data) {
+      while (first_error() == ErrorCode::kSuccess) {
+        if (BenchmarkClock::now() >= deadline) {
+          fail(ErrorCode::kTimeout);
+          return false;
+        }
+        (data ? notification_attempts_ : pressure_gate_notification_attempts_)
+            .fetch_add(1U, std::memory_order_relaxed);
+        auto posted = sender.post();
+        if (posted) {
+          (data ? notifications_accepted_ : pressure_gate_notifications_accepted_)
+              .fetch_add(1U, std::memory_order_relaxed);
+          return true;
+        }
+        if (posted.error().code == ErrorCode::kBackpressured) {
+          (data ? notification_backpressure_ : pressure_gate_notification_backpressure_)
+              .fetch_add(1U, std::memory_order_relaxed);
+          std::this_thread::yield();
+          continue;
+        }
+        if (posted.error().code == ErrorCode::kNotReady) {
+          (data ? notification_not_ready_ : pressure_gate_notification_not_ready_)
+              .fetch_add(1U, std::memory_order_relaxed);
+          std::this_thread::yield();
+          continue;
+        }
+        fail(posted.error().code);
+        return false;
+      }
+      return false;
+    };
+
+    const std::uint64_t initial_readiness =
+        phase_value(detail::RuntimePhaseCounter::kChannelReadinessPublished);
+    const std::uint64_t initial_witness_retired =
+        phase_value(detail::RuntimePhaseCounter::kChannelWitnessRetired);
+    if (!post_until_accepted(data_sender, true) ||
+        !wait_until([&] { return publications() >= 1U; }) || !wait_until([&] {
+          return phase_value(detail::RuntimePhaseCounter::kChannelReadinessPublished) >
+                 initial_readiness;
+        }) ||
+        !wait_until([&] {
+          return phase_value(detail::RuntimePhaseCounter::kChannelWitnessRetired) >
+                 initial_witness_retired;
+        })) {
+      return;
+    }
+    pressure_gate_first_readiness_published_.store(
+        phase_value(detail::RuntimePhaseCounter::kChannelReadinessPublished),
+        std::memory_order_relaxed);
+    pressure_gate_first_witness_retired_.store(
+        phase_value(detail::RuntimePhaseCounter::kChannelWitnessRetired),
+        std::memory_order_relaxed);
+
+    const std::uint64_t initial_activations_completed =
+        phase_value(detail::RuntimePhaseCounter::kActivationsCompleted);
+    if (!post_until_accepted(gate_sender, false) ||
+        !wait_until([&] { return deliveries() >= 1U && sink_final_sequence(0U) == 1U; }) ||
+        !wait_until([&] {
+          return phase_value(detail::RuntimePhaseCounter::kActivationsCompleted) >
+                 initial_activations_completed;
+        })) {
+      return;
+    }
+    pressure_gate_first_delivery_publications_.store(publications(), std::memory_order_relaxed);
+
+    const std::uint64_t initial_reuse_queries =
+        phase_value(detail::RuntimePhaseCounter::kTemporalReuseLastRetainedRecordQueries);
+    for (std::uint64_t sequence = 2U; sequence <= final_sequence(); ++sequence) {
+      const std::uint64_t prior_promotion_passes =
+          phase_value(detail::RuntimePhaseCounter::kChannelDirectIngressPromotionPasses);
+      const std::uint64_t prior_activations_completed =
+          phase_value(detail::RuntimePhaseCounter::kActivationsCompleted);
+      if (!post_until_accepted(data_sender, true) ||
+          !wait_until([&] { return publications() >= sequence; }) || !wait_until([&] {
+            return phase_value(detail::RuntimePhaseCounter::kChannelDirectIngressPromotionPasses) >
+                   prior_promotion_passes;
+          }) ||
+          !wait_until([&] {
+            return phase_value(detail::RuntimePhaseCounter::kActivationsCompleted) >
+                   prior_activations_completed;
+          })) {
+        return;
+      }
+      if (sequence == 2U && !wait_until([&] {
+            return phase_value(
+                       detail::RuntimePhaseCounter::kTemporalReuseLastRetainedRecordQueries) >
+                   initial_reuse_queries;
+          })) {
+        return;
+      }
+    }
+    if (!wait_until([&] { return source_finished(); })) {
+      return;
+    }
+    pressure_gate_source_completion_publications_.store(publications(), std::memory_order_relaxed);
+    pressure_gate_source_retirement_activations_completed_.store(
+        phase_value(detail::RuntimePhaseCounter::kActivationsCompleted), std::memory_order_relaxed);
+
+    while (sink_final_sequence(0U) != final_sequence() && first_error() == ErrorCode::kSuccess) {
+      const std::uint64_t prior_deliveries = deliveries();
+      if (!post_until_accepted(gate_sender, false) ||
+          !wait_until([&] { return deliveries() > prior_deliveries; })) {
+        return;
+      }
+      if (sink_final_sequence(0U) > final_sequence() || deliveries() > final_sequence()) {
+        fail(ErrorCode::kProtocolError);
+        return;
+      }
+    }
+  }
+
+  [[nodiscard]] bool source_finished() const noexcept {
+    return source_finished_.load(std::memory_order_acquire);
+  }
+
+  [[nodiscard]] std::uint64_t pressure_gate_first_readiness_published() const noexcept {
+    return pressure_gate_first_readiness_published_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t pressure_gate_first_witness_retired() const noexcept {
+    return pressure_gate_first_witness_retired_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t pressure_gate_first_delivery_publications() const noexcept {
+    return pressure_gate_first_delivery_publications_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t pressure_gate_source_completion_publications() const noexcept {
+    return pressure_gate_source_completion_publications_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t pressure_gate_source_retirement_activations_completed()
+      const noexcept {
+    return pressure_gate_source_retirement_activations_completed_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t pressure_gate_notification_attempts() const noexcept {
+    return pressure_gate_notification_attempts_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t pressure_gate_notifications_accepted() const noexcept {
+    return pressure_gate_notifications_accepted_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t pressure_gate_notification_backpressure() const noexcept {
+    return pressure_gate_notification_backpressure_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t pressure_gate_notification_not_ready() const noexcept {
+    return pressure_gate_notification_not_ready_.load(std::memory_order_relaxed);
   }
 
   void drive_notification_latency(const NotificationSender& sender) noexcept {
@@ -1099,11 +1757,9 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     }
   }
 
-  [[nodiscard]] bool wait() {
+  [[nodiscard]] bool wait_for(std::chrono::milliseconds timeout) {
     std::unique_lock lock(completion_mutex_);
-    return completion_cv_.wait_for(lock, std::chrono::milliseconds{options_.timeout_ms}, [this] {
-      return completed_ || failed_;
-    });
+    return completion_cv_.wait_for(lock, timeout, [this] { return completed_ || failed_; });
   }
 
   [[nodiscard]] bool completed() const noexcept {
@@ -1119,6 +1775,10 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
 
   [[nodiscard]] std::uint64_t source_compute_entries() const noexcept {
     return source_compute_entries_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t source_terminal_compute_entries() const noexcept {
+    return source_terminal_compute_entries_.load(std::memory_order_relaxed);
   }
 
   [[nodiscard]] std::uint64_t relay_callbacks() const noexcept { return relay_callbacks_; }
@@ -1175,6 +1835,17 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     return sink_callback_multiple_threads_.load(std::memory_order_relaxed);
   }
 
+  [[nodiscard]] std::uint64_t sink_callback_tid(const std::uint32_t sink_index) const noexcept {
+    return sink_callback_tids_by_index_ && sink_index < sink_operator_count(options_)
+               ? sink_callback_tids_by_index_[sink_index].load(std::memory_order_relaxed)
+               : 0U;
+  }
+
+  [[nodiscard]] bool sink_callback_multiple_threads(const std::uint32_t sink_index) const noexcept {
+    return sink_callback_multiple_threads_by_index_ && sink_index < sink_operator_count(options_) &&
+           sink_callback_multiple_threads_by_index_[sink_index].load(std::memory_order_relaxed);
+  }
+
   [[nodiscard]] std::uint64_t publications() const noexcept {
     return publications_.load(std::memory_order_relaxed);
   }
@@ -1193,13 +1864,13 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     return measured_deliveries_.load(std::memory_order_relaxed);
   }
 
+  // Lossy fanout rows contribute one accepted delivery opportunity per sink.
   [[nodiscard]] std::uint64_t consumer_visible_replacements() const noexcept {
-    if (!lossy_queue_policy(options_.queue_policy) || options_.fanout != 1U) {
-      return 0U;
+    std::uint64_t replacements{};
+    for (std::uint32_t index = 0U; index < options_.fanout; ++index) {
+      replacements += sink_replacements(index);
     }
-    const std::uint64_t accepted = publications();
-    const std::uint64_t observed = deliveries();
-    return accepted >= observed ? accepted - observed : 0U;
+    return replacements;
   }
 
   [[nodiscard]] std::uint64_t sink_deliveries(const std::uint32_t sink_index) const noexcept {
@@ -1210,16 +1881,45 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     return sink_final_sequences_[sink_index];
   }
 
+  [[nodiscard]] std::uint64_t sink_replacements(const std::uint32_t sink_index) const noexcept {
+    if (!lossy_subscriber(options_, sink_index)) {
+      return 0U;
+    }
+    const std::uint64_t observed = sink_deliveries(sink_index);
+    return publications() >= observed ? publications() - observed : 0U;
+  }
+
+  // Mixed-depth and lossy fanout rows require independent evidence from every leg.
   [[nodiscard]] bool sink_evidence_valid(const std::uint64_t expected_sequence,
                                          const std::uint64_t expected_deliveries) const noexcept {
-    return std::all_of(
-               sink_deliveries_.begin(),
-               sink_deliveries_.end(),
-               [expected_deliveries](const auto count) { return count == expected_deliveries; }) &&
-           std::all_of(
-               sink_final_sequences_.begin(),
-               sink_final_sequences_.end(),
-               [expected_sequence](const auto sequence) { return sequence == expected_sequence; });
+    std::uint64_t aggregate{};
+    for (std::uint32_t index = 0U; index < options_.fanout; ++index) {
+      const std::uint64_t count = sink_deliveries(index);
+      const bool count_valid = lossy_subscriber(options_, index)
+                                   ? count > 0U && count <= publications()
+                                   : count == expected_deliveries;
+      if (!count_valid || sink_final_sequence(index) != expected_sequence) {
+        return false;
+      }
+      aggregate += count;
+    }
+    return aggregate == deliveries();
+  }
+
+  [[nodiscard]] bool lossy_activation_completions_valid() const noexcept {
+    if (!has_lossy_subscriber(options_)) {
+      return true;
+    }
+    if (options_.fanout == 1U) {
+      return activation_completions() == deliveries();
+    }
+    const std::uint64_t minimum_deliveries = std::ranges::min(sink_deliveries_);
+    return activation_completions() > 0U && activation_completions() <= minimum_deliveries;
+  }
+
+  [[nodiscard]] bool every_sink_has_replacements() const noexcept {
+    return std::ranges::all_of(sink_deliveries_,
+                               [&](const std::uint64_t count) { return count < publications(); });
   }
 
   [[nodiscard]] std::uint64_t activation_completions() const noexcept {
@@ -1232,6 +1932,14 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
 
   [[nodiscard]] std::uint64_t source_backpressure_count() const noexcept {
     return source_backpressure_count_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t source_tensor_pool_retries() const noexcept {
+    return source_tensor_pool_retries_.load(std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] std::uint64_t source_tensor_pool_in_activation_retries() const noexcept {
+    return source_tensor_pool_in_activation_retries_.load(std::memory_order_relaxed);
   }
 
   [[nodiscard]] std::uint64_t validation_errors() const noexcept {
@@ -1252,6 +1960,28 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
 
   [[nodiscard]] std::uint64_t notification_not_ready() const noexcept {
     return notification_not_ready_.load(std::memory_order_relaxed);
+  }
+
+  // These fields supply the runner's fixed-rate drop-oldest schedule quality gate.
+  [[nodiscard]] std::int64_t publication_offer_start_ns() const noexcept {
+    return publication_offer_start_ns_;
+  }
+
+  [[nodiscard]] std::int64_t publication_offer_end_ns() const noexcept {
+    return publication_offer_end_ns_;
+  }
+
+  [[nodiscard]] std::uint64_t maximum_publication_offer_lateness_ns() const noexcept {
+    return maximum_publication_offer_lateness_ns_;
+  }
+
+  [[nodiscard]] double accepted_publication_offer_rate_per_second() const noexcept {
+    if (!offered_rate_mode(options_) || options_.samples <= options_.offered_burst_size ||
+        publication_offer_end_ns_ <= publication_offer_start_ns_) {
+      return 0.0;
+    }
+    return static_cast<double>(options_.samples - options_.offered_burst_size) * 1.0e9 /
+           static_cast<double>(publication_offer_end_ns_ - publication_offer_start_ns_);
   }
 
   [[nodiscard]] std::size_t source_probe_allocations() const noexcept {
@@ -1278,7 +2008,7 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
 
   [[nodiscard]] std::size_t sink_allocation_limit() const noexcept {
     if (options_.scenario == Scenario::kImage) {
-      return kMaximumImageSinkComputeAllocations;
+      return kMaximumImageSinkComputeAllocations * options_.fanout;
     }
     return options_.scenario == Scenario::kMultiTensor ? kMaximumMultiTensorSinkComputeAllocations
                                                        : 0U;
@@ -1527,8 +2257,14 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   std::vector<std::vector<std::int64_t>> sink_callback_timestamps_by_index_;
   std::vector<std::int64_t> notification_post_timestamps_;
   std::vector<std::int64_t> source_callback_timestamps_;
+  // Per-leg counts enable fanout, mixed-depth, and drop-oldest accounting rows.
   std::vector<std::uint64_t> sink_deliveries_;
   std::vector<std::uint64_t> sink_final_sequences_;
+  // Per-sink identities prove that fan-out partitions retain stable, distinct callback owners.
+  std::unique_ptr<std::atomic<std::uint64_t>[]> sink_callback_tids_by_index_;
+  std::unique_ptr<std::atomic_bool[]> sink_callback_identity_is_native_by_index_;
+  std::unique_ptr<std::atomic_bool[]> sink_callback_native_tid_syscall_unavailable_by_index_;
+  std::unique_ptr<std::atomic_bool[]> sink_callback_multiple_threads_by_index_;
   std::size_t sequence_sink_delivery_count_{};
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays)
   std::unique_ptr<std::atomic<std::uint32_t>[]> sequence_sink_deliveries_;
@@ -1537,11 +2273,13 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays)
   std::array<std::unique_ptr<std::atomic<std::uintptr_t>[]>, 2U> multi_tensor_source_pointers_;
   std::vector<std::uint8_t> tensor_validation_buffer_;
-  std::vector<std::uint8_t> image_backing_;
+  std::shared_ptr<PreinitializedTensorStorage> image_storage_;
   std::shared_ptr<Tensor> image_tensor_;
   std::atomic<std::uintptr_t> tensor_consumer_stream_{};
   std::uint64_t source_callbacks_{};
   std::atomic<std::uint64_t> source_compute_entries_{};
+  std::atomic<std::uint64_t> source_terminal_compute_entries_{};
+  std::atomic<std::int64_t> first_callback_entry_ns_{};
   std::uint64_t measured_source_callbacks_{};
   std::uint64_t relay_callbacks_{};
   alignas(kBenchmarkCacheLineBytes) std::atomic<std::uint64_t> sink_callbacks_{};
@@ -1566,6 +2304,9 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   std::atomic<std::uint64_t> source_backpressure_count_{};
   std::atomic<std::uint64_t> descriptor_backing_initializations_{};
   std::atomic<std::uint64_t> descriptor_backing_initializations_during_measurement_{};
+  // Device-backed raw-Tensor rows can temporarily lap the bounded backing pool.
+  std::atomic<std::uint64_t> source_tensor_pool_retries_{};
+  std::atomic<std::uint64_t> source_tensor_pool_in_activation_retries_{};
   std::atomic_bool relay_retry_observed_{};
   std::atomic<std::uint64_t> validation_errors_{};
   std::size_t source_probe_allocations_{};
@@ -1579,6 +2320,10 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   std::atomic<std::uint64_t> notifications_accepted_{};
   std::atomic<std::uint64_t> notification_backpressure_{};
   std::atomic<std::uint64_t> notification_not_ready_{};
+  // Accepted-offer timing is populated only by fixed-rate drop-oldest fanout rows.
+  std::int64_t publication_offer_start_ns_{};
+  std::int64_t publication_offer_end_ns_{};
+  std::uint64_t maximum_publication_offer_lateness_ns_{};
   mutable std::mutex completion_mutex_;
   std::condition_variable completion_cv_;
   bool completed_{};
@@ -1586,8 +2331,19 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   std::size_t descriptor_warmup_slots_{};
   std::optional<Tensor> final_tensor_;
   std::optional<Tensor> final_second_tensor_;
+  std::array<std::optional<Tensor>, 2U> final_multi_tensors_;
   std::uint8_t final_tensor_expected_byte_{};
   std::optional<NotificationSender> notification_sender_;
+  std::optional<NotificationSender> pressure_gate_notification_sender_;
+  std::atomic<std::uint64_t> pressure_gate_first_readiness_published_{};
+  std::atomic<std::uint64_t> pressure_gate_first_witness_retired_{};
+  std::atomic<std::uint64_t> pressure_gate_first_delivery_publications_{};
+  std::atomic<std::uint64_t> pressure_gate_source_completion_publications_{};
+  std::atomic<std::uint64_t> pressure_gate_source_retirement_activations_completed_{};
+  std::atomic<std::uint64_t> pressure_gate_notification_attempts_{};
+  std::atomic<std::uint64_t> pressure_gate_notifications_accepted_{};
+  std::atomic<std::uint64_t> pressure_gate_notification_backpressure_{};
+  std::atomic<std::uint64_t> pressure_gate_notification_not_ready_{};
 };
 
 [[nodiscard]] std::size_t runtime_phase_trace_capacity(const BenchmarkRunState& state) noexcept {
@@ -1599,7 +2355,7 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
                                                           : options.fanout);
   const std::uint64_t activations_per_sequence = 1U + downstream_activations;
   const std::uint64_t extra_source_activations =
-      is_notification_workload(options.workload) ? options.notification_capacity : 1U;
+      notification_driver_used(options) ? options.notification_capacity : 1U;
   if (state.final_sequence() >
       (std::numeric_limits<std::uint64_t>::max() - extra_source_activations) /
           activations_per_sequence) {
@@ -1623,7 +2379,8 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
       options.scenario == Scenario::kSampleForward
           ? options.relay_count + 1U
           : (options.scenario == Scenario::kPod || options.scenario == Scenario::kSignal ||
-                     options.scenario == Scenario::kSchema
+                     options.scenario == Scenario::kSchema ||
+                     options.scenario == Scenario::kThirdPartySchema
                  ? 1U
                  : 0U);
   const std::uint64_t inline_records_per_sequence =
@@ -1703,7 +2460,11 @@ void append_timestamp_delta(std::vector<std::uint64_t>& values, const std::int64
     std::uint64_t source_sequence{};
     std::optional<std::int64_t> readiness_poll_returned;
     std::optional<std::int64_t> readiness_preceding_cut;
+    std::optional<std::int64_t> preceding_cut;
     std::int64_t candidate_frozen{};
+    std::int64_t candidate_selected{};
+    std::int64_t input_selection_prepared{};
+    std::int64_t activation_prepared{};
     std::int64_t dispatch_started{};
     std::int64_t callback_entered{};
     std::int64_t callback_returned{};
@@ -1787,6 +2548,9 @@ void append_timestamp_delta(std::vector<std::uint64_t>& values, const std::int64
         activation.receiver_index = record.receiver_index;
         activation.source = record.source;
         activation.source_sequence = record.source_sequence;
+        if (previous_cut != 0) {
+          activation.preceding_cut = previous_cut;
+        }
         if (const auto pending =
                 std::find_if(pending_readiness_polls.begin(),
                              pending_readiness_polls.end(),
@@ -1800,8 +2564,42 @@ void append_timestamp_delta(std::vector<std::uint64_t>& values, const std::int64
         }
         activation.candidate_frozen = record.timestamp_ns;
         break;
+      case detail::RuntimePhaseTracePoint::kCandidateSelected:
+        if (activation.candidate_frozen == 0 || activation.candidate_selected != 0 ||
+            record.receiver_index != activation.receiver_index ||
+            record.source != activation.source ||
+            record.source_sequence != activation.source_sequence) {
+          summary.valid = false;
+          return summary;
+        }
+        activation.candidate_selected = record.timestamp_ns;
+        break;
+      case detail::RuntimePhaseTracePoint::kInputSelectionPrepared:
+        if (activation.candidate_selected == 0 || activation.input_selection_prepared != 0 ||
+            record.receiver_index != activation.receiver_index ||
+            record.source != activation.source ||
+            record.source_sequence != activation.source_sequence) {
+          summary.valid = false;
+          return summary;
+        }
+        activation.input_selection_prepared = record.timestamp_ns;
+        break;
+      case detail::RuntimePhaseTracePoint::kActivationPrepared:
+        if (activation.input_selection_prepared == 0 || activation.activation_prepared != 0 ||
+            record.receiver_index != activation.receiver_index ||
+            record.source != activation.source ||
+            record.source_sequence != activation.source_sequence) {
+          summary.valid = false;
+          return summary;
+        }
+        activation.activation_prepared = record.timestamp_ns;
+        break;
       case detail::RuntimePhaseTracePoint::kComputeDispatchStarted:
         if (activation.candidate_frozen == 0 || activation.dispatch_started != 0 ||
+            ((activation.candidate_selected != 0 || activation.input_selection_prepared != 0 ||
+              activation.activation_prepared != 0) &&
+             (activation.candidate_selected == 0 || activation.input_selection_prepared == 0 ||
+              activation.activation_prepared == 0)) ||
             record.receiver_index != activation.receiver_index ||
             record.source != activation.source ||
             record.source_sequence != activation.source_sequence) {
@@ -1884,9 +2682,45 @@ void append_timestamp_delta(std::vector<std::uint64_t>& values, const std::int64
           consecutive_source_activations = 0U;
         }
         previous_activation_source = receiver.source;
+        if (activation.preceding_cut.has_value()) {
+          append_timestamp_delta(receiver.previous_cut_to_candidate,
+                                 *activation.preceding_cut,
+                                 activation.candidate_frozen,
+                                 summary.valid);
+        }
+        if (activation.candidate_selected != 0) {
+          append_timestamp_delta(receiver.candidate_to_selection,
+                                 activation.candidate_frozen,
+                                 activation.candidate_selected,
+                                 summary.valid);
+          append_timestamp_delta(receiver.selection_to_input_preparation,
+                                 activation.candidate_selected,
+                                 activation.input_selection_prepared,
+                                 summary.valid);
+          append_timestamp_delta(receiver.input_preparation_to_activation,
+                                 activation.input_selection_prepared,
+                                 activation.activation_prepared,
+                                 summary.valid);
+          append_timestamp_delta(receiver.activation_to_dispatch_start,
+                                 activation.activation_prepared,
+                                 activation.dispatch_started,
+                                 summary.valid);
+        }
         append_timestamp_delta(receiver.candidate_to_dispatch_start,
                                activation.candidate_frozen,
                                activation.dispatch_started,
+                               summary.valid);
+        append_timestamp_delta(receiver.dispatch_start_to_callback_entry,
+                               activation.dispatch_started,
+                               activation.callback_entered,
+                               summary.valid);
+        append_timestamp_delta(receiver.callback_entry_to_return,
+                               activation.callback_entered,
+                               activation.callback_returned,
+                               summary.valid);
+        append_timestamp_delta(receiver.callback_return_to_dispatch_return,
+                               activation.callback_returned,
+                               activation.dispatch_returned,
                                summary.valid);
         append_timestamp_delta(receiver.compute_dispatch,
                                activation.dispatch_started,
@@ -1919,20 +2753,14 @@ void append_timestamp_delta(std::vector<std::uint64_t>& values, const std::int64
         if (receiver.source) {
           const std::int64_t pre_return =
               state.source_pre_return_timestamp(activation.source_sequence);
-          if (pre_return != 0) {
+          // Backpressure retries advance the Runtime activation sequence without advancing the
+          // benchmark publication sequence. Keep this optional attribution only while the two
+          // sequence domains still identify a timestamp inside the current callback.
+          if (pre_return >= activation.callback_entered &&
+              pre_return <= activation.callback_returned) {
             append_timestamp_delta(receiver.callback_pre_return_to_dispatch_return,
                                    pre_return,
                                    activation.dispatch_returned,
-                                   summary.valid);
-          }
-        } else if (receiver.downstream_index.has_value() &&
-                   fanout_scenario(state.options().scenario)) {
-          const std::int64_t callback_entry =
-              state.sink_callback_timestamp(*receiver.downstream_index, activation.source_sequence);
-          if (callback_entry != 0) {
-            append_timestamp_delta(receiver.dispatch_start_to_callback_entry,
-                                   activation.dispatch_started,
-                                   callback_entry,
                                    summary.valid);
           }
         }
@@ -1941,10 +2769,15 @@ void append_timestamp_delta(std::vector<std::uint64_t>& values, const std::int64
         break;
       }
       case detail::RuntimePhaseTracePoint::kTensorEmitStarted:
-        if (record.output_port_id == 0U || record.source_sequence == 0U ||
-            pending_tensor_emit(record) != pending_tensor_emits.end()) {
+        if (record.output_port_id == 0U || record.source_sequence == 0U) {
           summary.valid = false;
           return summary;
+        }
+        if (const auto pending = pending_tensor_emit(record);
+            pending != pending_tensor_emits.end()) {
+          // A recoverable backpressure return has no terminal emit trace point. Starting the same
+          // sequence again therefore closes that incomplete attempt before tracking the retry.
+          pending_tensor_emits.erase(pending);
         }
         pending_tensor_emits.push_back(PendingTensorEmit{
             .output_port_id = record.output_port_id,
@@ -2011,10 +2844,14 @@ void append_timestamp_delta(std::vector<std::uint64_t>& values, const std::int64
         break;
       }
       case detail::RuntimePhaseTracePoint::kInlinePayloadEmitStarted:
-        if (record.output_port_id == 0U || record.source_sequence == 0U ||
-            pending_inline_payload_emit(record) != pending_inline_payload_emits.end()) {
+        if (record.output_port_id == 0U || record.source_sequence == 0U) {
           summary.valid = false;
           return summary;
+        }
+        if (const auto pending = pending_inline_payload_emit(record);
+            pending != pending_inline_payload_emits.end()) {
+          // Inline payload emission has the same recoverable-backpressure trace shape as Tensor.
+          pending_inline_payload_emits.erase(pending);
         }
         pending_inline_payload_emits.push_back(PendingInlinePayloadEmit{
             .output_port_id = record.output_port_id,
@@ -2091,9 +2928,16 @@ void append_timestamp_delta(std::vector<std::uint64_t>& values, const std::int64
     }
   }
   summary.unmatched_readiness_polls += pending_readiness_polls.size();
-  summary.valid = activation.candidate_frozen == 0 && summary.dropped == 0U &&
-                  summary.unmatched_readiness_polls == 0U && pending_tensor_emits.empty() &&
-                  pending_inline_payload_emits.empty();
+  const bool terminal_frozen_candidate =
+      activation.candidate_frozen != 0 && activation.candidate_selected == 0 &&
+      activation.input_selection_prepared == 0 && activation.activation_prepared == 0 &&
+      activation.dispatch_started == 0 && activation.callback_entered == 0 &&
+      activation.callback_returned == 0 && activation.dispatch_returned == 0 &&
+      activation.retirement_completed == 0;
+  summary.terminal_frozen_candidates = terminal_frozen_candidate ? 1U : 0U;
+  summary.valid = (activation.candidate_frozen == 0 || terminal_frozen_candidate) &&
+                  summary.dropped == 0U && summary.unmatched_readiness_polls == 0U &&
+                  pending_tensor_emits.empty() && pending_inline_payload_emits.empty();
   return summary;
 }
 
@@ -2131,6 +2975,17 @@ BenchmarkRunState* g_run_state{};
   return LifecycleStatus::kOk;
 }
 
+[[nodiscard]] LifecycleStatus acquire_benchmark_pressure_gate_notification_sender(
+    LifecycleContext& context, NotificationSource& source) noexcept {
+  auto sender = context.notification_sender(source);
+  if (!sender) {
+    run_state().fail(sender.error().code);
+    return LifecycleStatus::kFatalFailure;
+  }
+  run_state().publish_pressure_gate_notification_sender(std::move(*sender));
+  return LifecycleStatus::kOk;
+}
+
 // Isolates the production notification, controller, Dispatcher, and one-lane callback path from
 // Channel endpoints, the Channel pump, and downstream input polling.
 class RuntimeBenchmarkSourceOnly final : public Operator<> {
@@ -2150,13 +3005,15 @@ class RuntimeBenchmarkSourceOnly final : public Operator<> {
 
   [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
     BenchmarkRunState& state = run_state();
-    state.record_source_compute_entry();
-    if (next_sequence_ > state.final_sequence()) {
+    const bool terminal = next_sequence_ > state.final_sequence();
+    state.record_source_compute_entry(terminal);
+    if (terminal) {
       return {};
     }
     const std::int64_t callback_timestamp =
         state.source_only_timestamp_required(next_sequence_) ? now_ns() : 0;
     state.record_source_callback(next_sequence_, callback_timestamp);
+    run_controlled_callback_work(state.options().callback_work_us);
     state.prepare_source_timestamp(next_sequence_, callback_timestamp);
     if (next_sequence_ == state.allocation_probe_sequence()) {
       const test::ScopedAllocationCounter allocations;
@@ -2176,11 +3033,18 @@ class RuntimeBenchmarkSourceOnly final : public Operator<> {
   std::uint64_t next_sequence_{1U};
 };
 
+// Drives POD, signal, generated-schema, third-party-schema, and chain-source rows. Only the
+// fixed-rate POD drop-oldest fanout row enables its bounded clock burst.
 template <typename Payload>
 class RuntimeBenchmarkSource final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
-    spec.output(output_, "output");
+    const Options& options = run_state().options();
+    spec.output(output_, "output")
+        .max_emits_per_compute(offered_rate_mode(options) ? options.offered_burst_size : 1U);
+    if (options.multi_output || options.multi_input) {
+      spec.output(second_output_, "second-output").max_emits_per_compute(1U);
+    }
     if (run_state().notification_driven()) {
       spec.notification_source(notification_, "benchmark-notification")
           .capacity(run_state().options().notification_capacity)
@@ -2199,18 +3063,49 @@ class RuntimeBenchmarkSource final : public Operator<> {
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     BenchmarkRunState& state = run_state();
-    state.record_source_compute_entry();
-    if (next_sequence_ > state.final_sequence()) {
+    const bool terminal = next_sequence_ > state.final_sequence();
+    state.record_source_compute_entry(terminal);
+    if (terminal) {
       return {};
     }
     const std::int64_t callback_timestamp =
         state.notification_latency() && state.measured(next_sequence_) ? now_ns() : 0;
     state.record_source_callback(next_sequence_, callback_timestamp);
+    run_controlled_callback_work(state.options().callback_work_us);
 
+    std::uint64_t emit_count =
+        offered_rate_mode(state.options()) ? state.options().offered_burst_size : 1U;
+    emit_count = std::min(emit_count, state.final_sequence() - next_sequence_ + 1U);
+    if (next_sequence_ <= state.allocation_probe_sequence() &&
+        next_sequence_ + emit_count - 1U > state.allocation_probe_sequence()) {
+      emit_count = state.allocation_probe_sequence() - next_sequence_ + 1U;
+    }
+    const std::optional<TimePoint> paired_capture_time =
+        state.options().multi_input ? std::optional{context.activation_time()} : std::nullopt;
+    for (std::uint64_t index = 0U; index < emit_count; ++index) {
+      auto emitted = publish_one(state, paired_capture_time);
+      if (!emitted) {
+        return make_unexpected(std::move(emitted.error()));
+      }
+      if (!*emitted) {
+        return {};
+      }
+    }
+    return {};
+  }
+
+  [[nodiscard]] LifecycleStatus arm(LifecycleContext& context) noexcept {
+    return acquire_benchmark_notification_sender(context, notification_);
+  }
+
+ private:
+  [[nodiscard]] expected<bool, Error> publish_one(
+      BenchmarkRunState& state, const std::optional<TimePoint>& paired_capture_time) {
     const Payload payload = make_benchmark_payload<Payload>(next_sequence_);
     const EmitOptions emit_options{
+        .capture_time = paired_capture_time,
         .frame_id = next_sequence_,
         .trace = TraceContext::root(next_sequence_),
         .flags = EmitFlags::kDegraded,
@@ -2218,9 +3113,102 @@ class RuntimeBenchmarkSource final : public Operator<> {
     const std::int64_t source_timestamp =
         state.source_timestamp_required(next_sequence_) ? now_ns() : 0;
 
+    const auto emit_payload = [&]() -> expected<void, Error> {
+      auto first = output_.emit(payload, emit_options);
+      if (!first || (!state.options().multi_output && !state.options().multi_input)) {
+        return first;
+      }
+      auto second = second_output_.emit(payload, emit_options);
+      if (!second && (second.error().code == ErrorCode::kBackpressured ||
+                      second.error().code == ErrorCode::kNotReady)) {
+        return make_unexpected(Error{ErrorCode::kPublicationIndeterminate,
+                                     "second output publication was not accepted"});
+      }
+      return second;
+    };
     expected<void, Error> emitted;
     state.prepare_source_pre_emit_timestamp(
         next_sequence_, state.source_timestamp_required(next_sequence_) ? now_ns() : 0);
+    if (next_sequence_ == state.allocation_probe_sequence()) {
+      const test::ScopedAllocationCounter allocations;
+      emitted = emit_payload();
+      state.record_source_allocation_probe(allocations.count());
+    } else {
+      emitted = emit_payload();
+    }
+    if (!emitted) {
+      if (emitted.error().code == ErrorCode::kBackpressured) {
+        state.record_source_backpressure();
+        return false;
+      }
+      state.fail(emitted.error().code);
+      return make_unexpected(std::move(emitted.error()));
+    }
+
+    const std::int64_t post_emit_timestamp =
+        state.source_post_emit_timestamp_required(next_sequence_) ? now_ns() : 0;
+    if (source_timestamp != 0) {
+      state.prepare_source_timestamp(next_sequence_, source_timestamp);
+    }
+    const std::uint64_t published_sequence = next_sequence_;
+    state.record_publication(published_sequence, post_emit_timestamp);
+    ++next_sequence_;
+    state.record_source_pre_return(
+        published_sequence,
+        state.source_post_emit_timestamp_required(published_sequence) ? now_ns() : 0);
+    return true;
+  }
+
+  Output<Payload> output_;
+  Output<Payload> second_output_;
+  NotificationSource notification_;
+  std::uint64_t next_sequence_{1U};
+
+  friend ExecutionPlan make_plan(const Options& options);
+};
+
+// The counter-enabled pressure diagnostic needs valid capture coordinates without adding that
+// behavior to the ordinary benchmark source. Its bounded driver posts exactly the requested data
+// notifications while the independently gated sink drains a production-shaped staged tail. This
+// stopped, nonterminal row proves exact final-data delivery; focused terminal tests own EOS.
+class RuntimeBenchmarkPressuredPODDiagnosticSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output_, "output").max_emits_per_compute(1U);
+    spec.notification_source(notification_, "benchmark-notification")
+        .capacity(run_state().options().notification_capacity)
+        .sender_reference_capacity(1U);
+    spec.lifecycle().stage(LifecycleStage::kArm,
+                           &RuntimeBenchmarkPressuredPODDiagnosticSource::arm);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnNotified{.event = notification_});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    BenchmarkRunState& state = run_state();
+    state.record_source_compute_entry(false);
+    const std::int64_t callback_timestamp =
+        state.notification_latency() && state.measured(next_sequence_) ? now_ns() : 0;
+    state.record_source_callback(next_sequence_, callback_timestamp);
+    run_controlled_callback_work(state.options().callback_work_us);
+
+    const BenchmarkPOD64 payload = make_benchmark_payload<BenchmarkPOD64>(next_sequence_);
+    const EmitOptions emit_options{
+        .capture_time = context.activation_time(),
+        .frame_id = next_sequence_,
+        .trace = TraceContext::root(next_sequence_),
+        .flags = EmitFlags::kDegraded,
+    };
+    const std::int64_t source_timestamp =
+        state.source_timestamp_required(next_sequence_) ? now_ns() : 0;
+    state.prepare_source_pre_emit_timestamp(
+        next_sequence_, state.source_timestamp_required(next_sequence_) ? now_ns() : 0);
+
+    expected<void, Error> emitted;
     if (next_sequence_ == state.allocation_probe_sequence()) {
       const test::ScopedAllocationCounter allocations;
       emitted = output_.emit(payload, emit_options);
@@ -2231,7 +3219,6 @@ class RuntimeBenchmarkSource final : public Operator<> {
     if (!emitted) {
       if (emitted.error().code == ErrorCode::kBackpressured) {
         state.record_source_backpressure();
-        return {};
       }
       state.fail(emitted.error().code);
       return make_unexpected(std::move(emitted.error()));
@@ -2256,20 +3243,22 @@ class RuntimeBenchmarkSource final : public Operator<> {
   }
 
  private:
-  Output<Payload> output_;
+  Output<BenchmarkPOD64> output_;
   NotificationSource notification_;
   std::uint64_t next_sequence_{1U};
 
   friend ExecutionPlan make_plan(const Options& options);
 };
 
+// Receives the scalar, POD, and generated-schema rows, including their per-leg lossy evidence.
 template <typename Payload>
 class RuntimeBenchmarkSink final : public Operator<> {
  public:
   explicit RuntimeBenchmarkSink(const std::uint32_t sink_index = 0U) : sink_index_(sink_index) {}
 
   void setup(OperatorSpec& spec) override {
-    spec.input(input_, "input").queue_depth(run_state().options().queue_depth);
+    const Options& options = run_state().options();
+    spec.input(input_, "input").queue_depth(subscriber_queue_depth(options, sink_index_));
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -2283,7 +3272,8 @@ class RuntimeBenchmarkSink final : public Operator<> {
     BenchmarkRunState& state = run_state();
     const std::int64_t callback_timestamp =
         is_latency_workload(state.options().workload) ? now_ns() : 0;
-    state.record_sink_callback();
+    state.record_sink_callback(sink_index_);
+    run_controlled_callback_work(state.options().callback_work_us);
 
     if (state.options().test_fail_sink_after_relay_pressure) {
       const auto deadline =
@@ -2327,12 +3317,14 @@ class RuntimeBenchmarkSink final : public Operator<> {
     const bool identity_valid =
         sequence != 0U && sequence >= next_sequence_ && sample->metadata.trace_id == sequence &&
         sample->metadata.degraded() &&
-        (lossy_queue_policy(state.options().queue_policy) || sequence == next_sequence_);
+        (lossy_subscriber(state.options(), sink_index_) || sequence == next_sequence_);
     const bool sequence_valid = [&sample, sequence] {
       if constexpr (std::is_same_v<Payload, BenchmarkPOD64>) {
         return sample->data.sequence == sequence;
       } else if constexpr (std::is_same_v<Payload, schema::TimeT>) {
         return sample->data.time_ns == static_cast<std::int64_t>(sequence);
+      } else if constexpr (std::is_same_v<Payload, ThirdPartyTelemetry>) {
+        return sample->data.sequence == sequence;
       } else {
         return true;
       }
@@ -2359,20 +3351,171 @@ class RuntimeBenchmarkSink final : public Operator<> {
   friend ExecutionPlan make_plan(const Options& options);
 };
 
+// Creates deterministic depth-one staged ingress without adding a seam branch to the ordinary
+// RuntimeBenchmarkSink callback measured by counters-off A/C rows. An independent notification
+// gate owns activation authority while arrivals populate LatestWithin retention. Every gate is
+// posted only after the driver has observed the preceding Channel/callback acknowledgement, so no
+// callback waits for another activation while the Runtime serial dispatch token is held.
+class RuntimeBenchmarkPressuredPODDiagnosticSink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input_, "input").queue_depth(1U);
+    spec.notification_source(pressure_gate_, "pressure-gate")
+        .capacity(1U)
+        .sender_reference_capacity(1U);
+    spec.lifecycle().stage(LifecycleStage::kArm, &RuntimeBenchmarkPressuredPODDiagnosticSink::arm);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnNotified{.event = pressure_gate_})
+        .input(input_, LatestWithin{.max_age = std::chrono::seconds{30}})
+        .on_missing(input_, ReuseLast{.max_age = std::chrono::seconds{30}});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    BenchmarkRunState& state = run_state();
+    state.record_sink_callback();
+    run_controlled_callback_work(state.options().callback_work_us);
+
+    expected<Sample<BenchmarkPOD64>, Error> sample = make_unexpected(Error{});
+    if (next_sequence_ == state.allocation_probe_sequence()) {
+      const test::ScopedAllocationCounter allocations;
+      sample = input_.receive();
+      state.record_sink_allocation_probe(allocations.count());
+    } else {
+      sample = input_.receive();
+    }
+    if (!sample) {
+      state.fail(sample.error().code);
+      return make_unexpected(std::move(sample.error()));
+    }
+
+    const std::uint64_t sequence = sample->metadata.frame_id;
+    state.record_sink_callback_entry(0U, sequence, 0);
+    const std::int64_t receive_timestamp = state.sink_timestamp_required(sequence) ? now_ns() : 0;
+    const bool validate_payload = state.options().validation == PayloadValidation::kAll ||
+                                  (state.options().validation == PayloadValidation::kFinal &&
+                                   sequence == state.final_sequence());
+    const bool valid = sequence != 0U && sequence >= next_sequence_ &&
+                       sample->metadata.trace_id == sequence && sample->metadata.degraded() &&
+                       sample->data.sequence == sequence &&
+                       (!validate_payload || payload_valid(sample->data));
+    if (!valid) {
+      state.record_validation_error();
+      state.fail(ErrorCode::kProtocolError);
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    state.record_delivery(0U, sequence, receive_timestamp);
+    next_sequence_ = sequence + 1U;
+    return {};
+  }
+
+  [[nodiscard]] LifecycleStatus arm(LifecycleContext& context) noexcept {
+    return acquire_benchmark_pressure_gate_notification_sender(context, pressure_gate_);
+  }
+
+ private:
+  Input<BenchmarkPOD64> input_;
+  NotificationSource pressure_gate_;
+  std::uint64_t next_sequence_{1U};
+
+  friend ExecutionPlan make_plan(const Options& options);
+};
+
+// Covers the two-output/one-target applicability row. One OnEach activation consumes both paired
+// POD samples, so the row distinguishes two input reads from one sink callback.
+class RuntimeBenchmarkMultiInputPODSink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    const Options& options = run_state().options();
+    spec.input(first_, "first").queue_depth(subscriber_queue_depth(options, 0U));
+    spec.input(second_, "second").queue_depth(subscriber_queue_depth(options, 1U));
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    // Canonical source-port order ingests `first_` before `second_`; triggering on the latter
+    // proves partial multi-input readiness is retained until the exact peer can be selected.
+    result.trigger(OnEach{second_}).input(first_, Exact{}).on_missing(first_, Skip{});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    BenchmarkRunState& state = run_state();
+    const std::int64_t callback_timestamp =
+        is_latency_workload(state.options().workload) ? now_ns() : 0;
+    state.record_sink_callback();
+    run_controlled_callback_work(state.options().callback_work_us);
+
+    expected<Sample<BenchmarkPOD64>, Error> first = make_unexpected(Error{});
+    expected<Sample<BenchmarkPOD64>, Error> second = make_unexpected(Error{});
+    if (next_sequence_ == state.allocation_probe_sequence()) {
+      const test::ScopedAllocationCounter allocations;
+      first = first_.receive();
+      second = second_.receive();
+      state.record_sink_allocation_probe(allocations.count());
+    } else {
+      first = first_.receive();
+      second = second_.receive();
+    }
+    if (!first || !second) {
+      Error error = !first ? std::move(first.error()) : std::move(second.error());
+      state.fail(error.code);
+      return make_unexpected(std::move(error));
+    }
+
+    const std::uint64_t sequence = first->metadata.frame_id;
+    const auto valid_sample = [&](const Sample<BenchmarkPOD64>& sample) {
+      return sample.metadata.frame_id == sequence && sample.metadata.trace_id == sequence &&
+             sample.metadata.degraded() && sample.data.sequence == sequence;
+    };
+    const bool validate_payload = state.options().validation == PayloadValidation::kAll ||
+                                  (state.options().validation == PayloadValidation::kFinal &&
+                                   sequence == state.final_sequence());
+    if (sequence == 0U || sequence != next_sequence_ || !valid_sample(*first) ||
+        !valid_sample(*second) ||
+        (validate_payload && (!payload_valid(first->data) || !payload_valid(second->data)))) {
+      state.record_validation_error();
+      state.fail(ErrorCode::kProtocolError);
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+
+    state.record_sink_callback_entry(0U, sequence, callback_timestamp);
+    state.record_sink_callback_entry(1U, sequence, callback_timestamp);
+    const std::int64_t first_timestamp = state.sink_timestamp_required(sequence) ? now_ns() : 0;
+    state.record_delivery(0U, sequence, first_timestamp);
+    const std::int64_t second_timestamp = state.sink_timestamp_required(sequence) ? now_ns() : 0;
+    state.record_delivery(1U, sequence, second_timestamp);
+    next_sequence_ = sequence + 1U;
+    return {};
+  }
+
+ private:
+  Input<BenchmarkPOD64> first_;
+  Input<BenchmarkPOD64> second_;
+  std::uint64_t next_sequence_{1U};
+
+  friend ExecutionPlan make_plan(const Options& options);
+};
+
+// Raw-Tensor rows add production loan/write timing and backing/stream lifetime evidence.
 class RuntimeTensorBenchmarkSource final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
     const Options& options = run_state().options();
     spec.output(output_, "output")
         .max_emits_per_compute(1U)
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = tensor_memory_kind(options.tensor_storage),
-            .dtype = kTensorByteDtype,
-            .rank = 1U,
-        })
-        .tensor_allocation(TensorAllocationBounds{
-            .max_rank = 1U,
-            .max_byte_span = options.tensor_bytes,
+        .produces_tensor(TensorOutputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = tensor_memory_kind(options.tensor_storage),
+                    .dtype = kTensorByteDtype,
+                    .rank = 1U,
+                },
+            .bounds = tensor_bounds(options.tensor_bytes),
+            .storage = TensorOutputStorage::kRuntimePool,
         });
     if (run_state().notification_driven()) {
       spec.notification_source(notification_, "benchmark-notification")
@@ -2392,30 +3535,56 @@ class RuntimeTensorBenchmarkSource final : public Operator<> {
     return result;
   }
 
-  void start() override { initialized_backings_.reserve(run_state().descriptor_warmup_slots()); }
+  void start() override {
+    initialized_backings_.reserve(run_state().descriptor_warmup_slots());
+    injected_pool_retries_remaining_ =
+        run_state().options().test_source_tensor_pool_in_activation_retries;
+  }
 
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     BenchmarkRunState& state = run_state();
-    state.record_source_compute_entry();
-    if (next_sequence_ > state.final_sequence()) {
+    const bool terminal = next_sequence_ > state.final_sequence();
+    state.record_source_compute_entry(terminal);
+    if (terminal) {
       return {};
     }
-    const std::int64_t callback_timestamp =
-        state.notification_latency() && state.measured(next_sequence_) ? now_ns() : 0;
-    state.record_source_callback(next_sequence_, callback_timestamp);
-    const std::int64_t source_timestamp =
-        state.source_timestamp_required(next_sequence_) ? now_ns() : 0;
+    std::int64_t source_timestamp{};
+    std::int64_t callback_timestamp{};
+    bool callback_started{};
+    bool callback_recorded{};
+    bool tensor_pool_exhausted{};
     const std::array<std::int64_t, 1U> shape{
         static_cast<std::int64_t>(state.options().tensor_bytes)};
 
     const auto publish = [&]() -> expected<void, Error> {
+      tensor_pool_exhausted = false;
+      if (!callback_started) {
+        callback_timestamp =
+            state.notification_latency() && state.measured(next_sequence_) ? now_ns() : 0;
+        run_controlled_callback_work(state.options().callback_work_us);
+        callback_started = true;
+      }
+      source_timestamp = state.source_timestamp_required(next_sequence_) ? now_ns() : 0;
+      if (injected_pool_retries_remaining_ != 0U) {
+        --injected_pool_retries_remaining_;
+        tensor_pool_exhausted = true;
+        return make_unexpected(Error{ErrorCode::kResourceExhausted});
+      }
       auto loan =
           output_.allocate_tensor(TensorLoanRequest{.shape = shape, .dtype = kTensorByteDtype});
+      const std::int64_t loan_acquired_timestamp = source_timestamp != 0 ? now_ns() : 0;
       if (!loan) {
+        tensor_pool_exhausted = loan.error().code == ErrorCode::kResourceExhausted;
         return make_unexpected(std::move(loan.error()));
       }
-      const std::int64_t loan_acquired_timestamp = source_timestamp != 0 ? now_ns() : 0;
+      // A notification-driven activation can retry publication while a bounded Tensor backing
+      // retires. The retry remains part of this compute callback and must not be counted as a
+      // second callback or repeat the controlled callback workload.
+      if (!callback_recorded) {
+        state.record_source_callback(next_sequence_, callback_timestamp);
+        callback_recorded = true;
+      }
       void* pointer{};
       bool initialized_backing{};
       const bool descriptor_only =
@@ -2482,8 +3651,29 @@ class RuntimeTensorBenchmarkSource final : public Operator<> {
     } else {
       emitted = publish();
     }
+    while (!emitted && state.notification_driven() &&
+           (emitted.error().code == ErrorCode::kBackpressured ||
+            emitted.error().code == ErrorCode::kNotReady ||
+            emitted.error().code == ErrorCode::kResourceExhausted)) {
+      if (emitted.error().code == ErrorCode::kResourceExhausted && tensor_pool_exhausted) {
+        state.record_source_tensor_pool_in_activation_retry();
+      } else {
+        state.record_backpressure();
+      }
+      if (context.cancellation().stop_requested()) {
+        return make_unexpected(Error{ErrorCode::kClosed});
+      }
+      std::this_thread::yield();
+      emitted = publish();
+    }
     if (!emitted) {
-      if (emitted.error().code == ErrorCode::kBackpressured) {
+      if (emitted.error().code == ErrorCode::kResourceExhausted && tensor_pool_exhausted) {
+        state.record_source_tensor_pool_retry();
+        return {};
+      }
+      if (emitted.error().code == ErrorCode::kBackpressured ||
+          emitted.error().code == ErrorCode::kNotReady ||
+          emitted.error().code == ErrorCode::kResourceExhausted) {
         state.record_source_backpressure();
         return {};
       }
@@ -2512,6 +3702,7 @@ class RuntimeTensorBenchmarkSource final : public Operator<> {
   Output<Tensor> output_;
   NotificationSource notification_;
   std::uint64_t next_sequence_{1U};
+  std::uint32_t injected_pool_retries_remaining_{};
   std::vector<void*> initialized_backings_;
 
   friend ExecutionPlan make_plan(const Options& options);
@@ -2519,14 +3710,20 @@ class RuntimeTensorBenchmarkSource final : public Operator<> {
 
 class RuntimeTensorBenchmarkSink final : public Operator<> {
  public:
+  explicit RuntimeTensorBenchmarkSink(const std::uint32_t sink_index = 0U)
+      : sink_index_(sink_index) {}
+
   void setup(OperatorSpec& spec) override {
     const Options& options = run_state().options();
     spec.input(input_, "input")
-        .queue_depth(options.queue_depth)
-        .expects_tensor(TensorPortLayout{
-            .memory_kind = tensor_memory_kind(options.tensor_storage),
-            .dtype = kTensorByteDtype,
-            .rank = 1U,
+        .queue_depth(subscriber_queue_depth(options, sink_index_))
+        .expects_tensor(TensorInputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = tensor_memory_kind(options.tensor_storage),
+                    .dtype = kTensorByteDtype,
+                    .rank = 1U,
+                },
         });
   }
 
@@ -2538,7 +3735,7 @@ class RuntimeTensorBenchmarkSink final : public Operator<> {
 
   void start() override {
     const std::size_t warmup_slots = run_state().descriptor_warmup_slots();
-    retained_warmup_tensors_.reserve(run_state().options().queue_depth);
+    retained_warmup_tensors_.reserve(warmup_slots == 0U ? 0U : warmup_slots - 1U);
     observed_backings_.reserve(warmup_slots);
     pool_warmup_complete_ = warmup_slots == 0U;
   }
@@ -2546,13 +3743,12 @@ class RuntimeTensorBenchmarkSink final : public Operator<> {
   [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     BenchmarkRunState& state = run_state();
     const std::int64_t callback_timestamp =
-        state.sink_timestamp_required(next_sequence_) ? now_ns() : 0;
-    state.record_sink_callback();
-    state.record_sink_callback_entry(0U, next_sequence_, callback_timestamp);
+        is_latency_workload(state.options().workload) ? now_ns() : 0;
+    state.record_sink_callback(sink_index_);
+    run_controlled_callback_work(state.options().callback_work_us);
     expected<Sample<Tensor>, Error> sample = make_unexpected(Error{});
     const std::int64_t receive_start_timestamp =
         state.sink_timestamp_required(next_sequence_) ? now_ns() : 0;
-    state.prepare_tensor_receive_start_timestamp(next_sequence_, receive_start_timestamp);
     if (next_sequence_ == state.allocation_probe_sequence()) {
       const test::ScopedAllocationCounter allocations;
       sample = input_.receive();
@@ -2566,6 +3762,8 @@ class RuntimeTensorBenchmarkSink final : public Operator<> {
     }
 
     const std::uint64_t sequence = sample->metadata.frame_id;
+    state.record_sink_callback_entry(sink_index_, sequence, callback_timestamp);
+    state.prepare_tensor_receive_start_timestamp(sequence, receive_start_timestamp);
     const std::int64_t receive_timestamp = state.sink_timestamp_required(sequence) ? now_ns() : 0;
     const bool metadata_valid =
         sequence != 0U && sequence <= state.final_sequence() && sequence >= next_sequence_ &&
@@ -2591,7 +3789,32 @@ class RuntimeTensorBenchmarkSink final : public Operator<> {
          !state.validate_tensor_bytes(sample->data, expected, context.cuda_stream().get()))) {
       state.record_validation_error();
       state.fail(ErrorCode::kProtocolError);
-      return make_unexpected(Error{ErrorCode::kProtocolError});
+      const DLDevice actual_device = sample->data.device();
+      const std::string diagnostic = fmt::format(
+          "BENCHMARK_TENSOR_VALIDATION_FAILED "
+          "sequence={} "
+          "expected_sequence={} "
+          "metadata_valid={} "
+          "descriptor_valid={} "
+          "pointer_valid={} "
+          "source_pointer={} "
+          "received_pointer={} "
+          "rank={} "
+          "bytes={} "
+          "device_type={} "
+          "device_id={}",
+          sequence,                                               // sequence
+          next_sequence_,                                         // expected_sequence
+          static_cast<int>(metadata_valid),                       // metadata_valid
+          static_cast<int>(descriptor_valid),                     // descriptor_valid
+          static_cast<int>(pointer_valid),                        // pointer_valid
+          state.tensor_source_pointer(sequence),                  // source_pointer
+          reinterpret_cast<std::uintptr_t>(sample->data.data()),  // received_pointer
+          sample->data.ndim(),                                    // rank
+          sample->data.nbytes(),                                  // bytes
+          static_cast<int>(actual_device.device_type),            // device_type
+          actual_device.device_id);                               // device_id
+      return make_unexpected(Error{ErrorCode::kProtocolError, diagnostic});
     }
 
     if (state.options().validation == PayloadValidation::kFinal &&
@@ -2609,19 +3832,23 @@ class RuntimeTensorBenchmarkSink final : public Operator<> {
         retained_warmup_tensors_.clear();
         pool_warmup_complete_ = true;
       } else {
-        if (retained_warmup_tensors_.size() == state.options().queue_depth) {
+        // Keep backing ownership without retaining the finite Sample read claim.
+        const std::size_t retention_limit =
+            std::min(warmup_slots - 1U, static_cast<std::size_t>(state.options().queue_depth) + 1U);
+        if (retained_warmup_tensors_.size() == retention_limit) {
           retained_warmup_tensors_.erase(retained_warmup_tensors_.begin());
         }
         retained_warmup_tensors_.push_back(sample->data);
       }
     }
-    state.record_delivery(0U, sequence, receive_timestamp);
+    state.record_delivery(sink_index_, sequence, receive_timestamp);
     next_sequence_ = sequence + 1U;
     return {};
   }
 
  private:
   Input<Tensor> input_;
+  std::uint32_t sink_index_{};
   std::uint64_t next_sequence_{1U};
   bool pool_warmup_complete_{};
   std::vector<Tensor> retained_warmup_tensors_;
@@ -2634,18 +3861,17 @@ class RuntimeMultiTensorBenchmarkSource final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
     const Options& options = run_state().options();
-    const TensorFieldOutputContract field_contract{
-        .layout =
-            TensorPortLayout{
-                .memory_kind = MemoryKind::kHost,
+    const TensorOutputSpec field_contract{
+        .representation =
+            holoscan::TensorRepresentation{
+                .memory_kind = tensor_memory_kind(options.tensor_storage),
                 .dtype = kTensorByteDtype,
                 .rank = 1U,
             },
-        .max_byte_span = options.tensor_bytes,
-        .payload_options =
-            TensorFieldPayloadOptions{
-                .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
-            },
+        .bounds = tensor_bounds(options.tensor_bytes),
+        .storage = TensorOutputStorage::kRuntimePool,
+        .transfer =
+            TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
     };
     auto& builder = spec.output(output_, "output").max_emits_per_compute(1U);
     builder.tensor_fields(std::array{MultiTensorFields::first, MultiTensorFields::second},
@@ -2672,21 +3898,37 @@ class RuntimeMultiTensorBenchmarkSource final : public Operator<> {
     for (auto& inventory : initialized_backings_) {
       inventory.reserve(run_state().descriptor_warmup_slots());
     }
+    injected_pool_retries_remaining_ =
+        run_state().options().test_source_tensor_pool_in_activation_retries;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     BenchmarkRunState& state = run_state();
-    state.record_source_compute_entry();
-    if (next_sequence_ > state.final_sequence()) {
+    const bool terminal = next_sequence_ > state.final_sequence();
+    state.record_source_compute_entry(terminal);
+    if (terminal) {
       return {};
     }
-    const std::int64_t callback_timestamp =
-        state.notification_latency() && state.measured(next_sequence_) ? now_ns() : 0;
-    state.record_source_callback(next_sequence_, callback_timestamp);
-    const std::int64_t source_timestamp =
-        state.source_timestamp_required(next_sequence_) ? now_ns() : 0;
+    std::int64_t source_timestamp{};
+    std::int64_t callback_timestamp{};
+    bool callback_started{};
+    bool callback_recorded{};
+    bool tensor_pool_exhausted{};
 
     const auto publish = [&]() -> expected<void, Error> {
+      tensor_pool_exhausted = false;
+      if (!callback_started) {
+        callback_timestamp =
+            state.notification_latency() && state.measured(next_sequence_) ? now_ns() : 0;
+        run_controlled_callback_work(state.options().callback_work_us);
+        callback_started = true;
+      }
+      source_timestamp = state.source_timestamp_required(next_sequence_) ? now_ns() : 0;
+      if (injected_pool_retries_remaining_ != 0U) {
+        --injected_pool_retries_remaining_;
+        tensor_pool_exhausted = true;
+        return make_unexpected(Error{ErrorCode::kResourceExhausted});
+      }
       const std::array shape{static_cast<std::int64_t>(state.options().tensor_bytes)};
       const std::array requests{
           tensor_shape(MultiTensorFields::first, shape),
@@ -2694,7 +3936,14 @@ class RuntimeMultiTensorBenchmarkSource final : public Operator<> {
       };
       auto bundle = output_.allocate_tensors(requests);
       if (!bundle) {
+        tensor_pool_exhausted = bundle.error().code == ErrorCode::kResourceExhausted;
         return make_unexpected(std::move(bundle.error()));
+      }
+      // Acquiring a pooled bundle starts the publication attempt. Allocation exhaustion before
+      // this point is a retry, not a completed source callback.
+      if (!callback_recorded) {
+        state.record_source_callback(next_sequence_, callback_timestamp);
+        callback_recorded = true;
       }
       const bool descriptor_only =
           state.options().bulk_work_profile == BulkWorkProfile::kDescriptorOnly;
@@ -2703,19 +3952,40 @@ class RuntimeMultiTensorBenchmarkSource final : public Operator<> {
       std::array<void*, 2U> field_pointers{};
       std::array<bool, 2U> initialized_backing{};
       const auto write_field = [&](const std::size_t index) {
-        return [&, index](const TensorOutputWriteGuard& writer) {
+        return [&, index](const TensorOutputWriteGuard& writer) -> expected<void, Error> {
           field_pointers[index] = writer.data();
           initialized_backing[index] =
               descriptor_only && std::find(initialized_backings_[index].begin(),
                                            initialized_backings_[index].end(),
                                            writer.data()) == initialized_backings_[index].end();
           if (!descriptor_only || initialized_backing[index]) {
-            std::memset(writer.data(), static_cast<int>(fill), writer.byte_size());
+            if (state.options().tensor_storage == TensorStorage::kDevice) {
+              if (cudaMemsetAsync(writer.data(),
+                                  static_cast<int>(fill),
+                                  writer.byte_size(),
+                                  context.cuda_stream().get()) != cudaSuccess) {
+                return make_unexpected(Error{ErrorCode::kFailure, "cudaMemsetAsync failed"});
+              }
+            } else {
+              std::memset(writer.data(), static_cast<int>(fill), writer.byte_size());
+            }
           }
+          return {};
         };
       };
-      auto committed = bundle->write_all(host_field(MultiTensorFields::first, write_field(0U)),
-                                         host_field(MultiTensorFields::second, write_field(1U)));
+      expected<void, Error> committed;
+      if (state.options().tensor_storage == TensorStorage::kDevice) {
+        const ::cuda::stream_ref stream = context.cuda_stream();
+        if (stream.get() == nullptr) {
+          return make_unexpected(Error{ErrorCode::kNotReady});
+        }
+        committed =
+            bundle->write_all(device_field(MultiTensorFields::first, stream, write_field(0U)),
+                              device_field(MultiTensorFields::second, stream, write_field(1U)));
+      } else {
+        committed = bundle->write_all(host_field(MultiTensorFields::first, write_field(0U)),
+                                      host_field(MultiTensorFields::second, write_field(1U)));
+      }
       if (!committed) {
         return make_unexpected(std::move(committed.error()));
       }
@@ -2750,8 +4020,29 @@ class RuntimeMultiTensorBenchmarkSource final : public Operator<> {
     } else {
       emitted = publish();
     }
+    while (!emitted && state.notification_driven() &&
+           (emitted.error().code == ErrorCode::kBackpressured ||
+            emitted.error().code == ErrorCode::kNotReady ||
+            emitted.error().code == ErrorCode::kResourceExhausted)) {
+      if (emitted.error().code == ErrorCode::kResourceExhausted && tensor_pool_exhausted) {
+        state.record_source_tensor_pool_in_activation_retry();
+      } else {
+        state.record_backpressure();
+      }
+      if (context.cancellation().stop_requested()) {
+        return make_unexpected(Error{ErrorCode::kClosed});
+      }
+      std::this_thread::yield();
+      emitted = publish();
+    }
     if (!emitted) {
-      if (emitted.error().code == ErrorCode::kBackpressured) {
+      if (emitted.error().code == ErrorCode::kResourceExhausted && tensor_pool_exhausted) {
+        state.record_source_tensor_pool_retry();
+        return {};
+      }
+      if (emitted.error().code == ErrorCode::kBackpressured ||
+          emitted.error().code == ErrorCode::kNotReady ||
+          emitted.error().code == ErrorCode::kResourceExhausted) {
         state.record_source_backpressure();
         return {};
       }
@@ -2780,6 +4071,7 @@ class RuntimeMultiTensorBenchmarkSource final : public Operator<> {
   Output<MultiTensorMessage> output_;
   NotificationSource notification_;
   std::uint64_t next_sequence_{1U};
+  std::uint32_t injected_pool_retries_remaining_{};
   std::array<std::vector<void*>, 2U> initialized_backings_;
 
   friend ExecutionPlan make_plan(const Options& options);
@@ -2803,19 +4095,19 @@ class RuntimeMultiTensorBenchmarkSink final : public Operator<> {
 
   void start() override {
     const std::size_t warmup_slots = run_state().descriptor_warmup_slots();
-    retained_warmup_tensors_.reserve(run_state().options().queue_depth);
+    retained_warmup_tensors_.reserve(warmup_slots == 0U ? 0U : warmup_slots - 1U);
     for (auto& inventory : observed_backings_) {
       inventory.reserve(warmup_slots);
     }
     pool_warmup_complete_ = warmup_slots == 0U;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     BenchmarkRunState& state = run_state();
     const std::int64_t callback_timestamp =
         state.sink_timestamp_required(next_sequence_) ? now_ns() : 0;
     state.record_sink_callback();
-    state.record_sink_callback_entry(0U, next_sequence_, callback_timestamp);
+    run_controlled_callback_work(state.options().callback_work_us);
     expected<Sample<MultiTensorMessage>, Error> sample = make_unexpected(Error{});
     if (next_sequence_ == state.allocation_probe_sequence()) {
       const test::ScopedAllocationCounter allocations;
@@ -2830,6 +4122,10 @@ class RuntimeMultiTensorBenchmarkSink final : public Operator<> {
     }
 
     const std::uint64_t sequence = sample->metadata.frame_id;
+    if (state.options().tensor_storage == TensorStorage::kDevice) {
+      state.record_tensor_consumer_stream(context.cuda_stream().get());
+    }
+    state.record_sink_callback_entry(0U, sequence, callback_timestamp);
     const std::int64_t receive_timestamp = state.sink_timestamp_required(sequence) ? now_ns() : 0;
     const bool metadata_valid = sequence != 0U && sequence <= state.final_sequence() &&
                                 sequence == next_sequence_ && sample->data.sequence == sequence &&
@@ -2840,13 +4136,13 @@ class RuntimeMultiTensorBenchmarkSink final : public Operator<> {
         metadata_valid &&
         tensor_descriptor_matches(*sample->data.first,
                                   state.options().tensor_bytes,
-                                  TensorStorage::kPageableHost,
-                                  0,
+                                  state.options().tensor_storage,
+                                  state.options().tensor_device,
                                   false) &&
         tensor_descriptor_matches(*sample->data.second,
                                   state.options().tensor_bytes,
-                                  TensorStorage::kPageableHost,
-                                  0,
+                                  state.options().tensor_storage,
+                                  state.options().tensor_device,
                                   false) &&
         state.multi_tensor_pointer_matches(0U, sequence, sample->data.first->data()) &&
         state.multi_tensor_pointer_matches(1U, sequence, sample->data.second->data());
@@ -2856,8 +4152,10 @@ class RuntimeMultiTensorBenchmarkSink final : public Operator<> {
             ? kMultiTensorPayloadByte
             : static_cast<std::uint8_t>(sequence);
     if (!tensors_valid ||
-        (validate_payload && (!state.validate_tensor_bytes(*sample->data.first, expected) ||
-                              !state.validate_tensor_bytes(*sample->data.second, expected)))) {
+        (validate_payload && (!state.validate_tensor_bytes(
+                                  *sample->data.first, expected, context.cuda_stream().get()) ||
+                              !state.validate_tensor_bytes(
+                                  *sample->data.second, expected, context.cuda_stream().get())))) {
       state.record_validation_error();
       state.fail(ErrorCode::kProtocolError);
       return make_unexpected(Error{ErrorCode::kProtocolError});
@@ -2883,7 +4181,10 @@ class RuntimeMultiTensorBenchmarkSink final : public Operator<> {
         retained_warmup_tensors_.clear();
         pool_warmup_complete_ = true;
       } else {
-        if (retained_warmup_tensors_.size() == state.options().queue_depth) {
+        // Keep backing ownership without retaining the finite Sample read claim.
+        const std::size_t retention_limit =
+            std::min(warmup_slots - 1U, static_cast<std::size_t>(state.options().queue_depth) + 1U);
+        if (retained_warmup_tensors_.size() == retention_limit) {
           retained_warmup_tensors_.erase(retained_warmup_tensors_.begin());
         }
         retained_warmup_tensors_.push_back(
@@ -2896,11 +4197,14 @@ class RuntimeMultiTensorBenchmarkSink final : public Operator<> {
   }
 
  private:
-  static void configure_field(TensorFieldInputSpecBuilder& builder) {
-    builder.expects_tensor(TensorPortLayout{
-        .memory_kind = MemoryKind::kHost,
-        .dtype = kTensorByteDtype,
-        .rank = 1U,
+  void configure_field(TensorFieldInputSpecBuilder& builder) const {
+    builder.expects_tensor(TensorInputSpec{
+        .representation =
+            holoscan::TensorRepresentation{
+                .memory_kind = tensor_memory_kind(run_state().options().tensor_storage),
+                .dtype = kTensorByteDtype,
+                .rank = 1U,
+            },
     });
   }
 
@@ -2913,10 +4217,25 @@ class RuntimeMultiTensorBenchmarkSink final : public Operator<> {
   friend ExecutionPlan make_plan(const Options& options);
 };
 
+// Image rows isolate descriptor publication while reusing one preinitialized Tensor backing.
 class RuntimeImageBenchmarkSource final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
-    spec.output(output_, "output");
+    const Options& options = run_state().options();
+    spec.output(output_, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = tensor_memory_kind(options.tensor_storage),
+                    .dtype = kTensorByteDtype,
+                    .rank = 1U,
+                },
+            .bounds = tensor_bounds(options.tensor_bytes),
+            .storage = TensorOutputStorage::kRuntimePool,
+            .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                                 InterfaceTensorEmitPolicy::kCopyIfNeeded},
+        });
     if (run_state().notification_driven()) {
       spec.notification_source(notification_, "benchmark-notification")
           .capacity(run_state().options().notification_capacity)
@@ -2937,13 +4256,15 @@ class RuntimeImageBenchmarkSource final : public Operator<> {
 
   [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
     BenchmarkRunState& state = run_state();
-    state.record_source_compute_entry();
-    if (next_sequence_ > state.final_sequence()) {
+    const bool terminal = next_sequence_ > state.final_sequence();
+    state.record_source_compute_entry(terminal);
+    if (terminal) {
       return {};
     }
     const std::int64_t callback_timestamp =
         state.notification_latency() && state.measured(next_sequence_) ? now_ns() : 0;
     state.record_source_callback(next_sequence_, callback_timestamp);
+    run_controlled_callback_work(state.options().callback_work_us);
     const std::int64_t source_timestamp =
         state.source_timestamp_required(next_sequence_) ? now_ns() : 0;
 
@@ -3007,8 +4328,21 @@ class RuntimeImageBenchmarkSource final : public Operator<> {
 
 class RuntimeImageBenchmarkSink final : public Operator<> {
  public:
+  explicit RuntimeImageBenchmarkSink(const std::uint32_t sink_index = 0U)
+      : sink_index_(sink_index) {}
+
   void setup(OperatorSpec& spec) override {
-    spec.input(input_, "input").queue_depth(run_state().options().queue_depth);
+    const Options& options = run_state().options();
+    spec.input(input_, "input")
+        .queue_depth(subscriber_queue_depth(options, sink_index_))
+        .expects_tensor(TensorInputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = tensor_memory_kind(options.tensor_storage),
+                    .dtype = kTensorByteDtype,
+                    .rank = 1U,
+                },
+        });
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -3017,12 +4351,12 @@ class RuntimeImageBenchmarkSink final : public Operator<> {
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     BenchmarkRunState& state = run_state();
     const std::int64_t callback_timestamp =
-        state.sink_timestamp_required(next_sequence_) ? now_ns() : 0;
-    state.record_sink_callback();
-    state.record_sink_callback_entry(0U, next_sequence_, callback_timestamp);
+        is_latency_workload(state.options().workload) ? now_ns() : 0;
+    state.record_sink_callback(sink_index_);
+    run_controlled_callback_work(state.options().callback_work_us);
     expected<Sample<schema::ImageT>, Error> sample = make_unexpected(Error{});
     if (next_sequence_ == state.allocation_probe_sequence()) {
       const test::ScopedAllocationCounter allocations;
@@ -3037,6 +4371,10 @@ class RuntimeImageBenchmarkSink final : public Operator<> {
     }
 
     const std::uint64_t sequence = sample->metadata.frame_id;
+    if (state.options().tensor_storage == TensorStorage::kDevice) {
+      state.record_tensor_consumer_stream(context.cuda_stream().get());
+    }
+    state.record_sink_callback_entry(sink_index_, sequence, callback_timestamp);
     const std::int64_t receive_timestamp = state.sink_timestamp_required(sequence) ? now_ns() : 0;
     const Tensor* tensor = sample->data.data.get();
     const bool metadata_valid =
@@ -3050,14 +4388,17 @@ class RuntimeImageBenchmarkSink final : public Operator<> {
         sample->data.encoding == schema::ImageEncoding_CUSTOM && tensor != nullptr;
     bool tensor_valid = image_valid;
     if (tensor_valid) {
-      tensor_valid =
-          tensor_descriptor_matches(
-              *tensor, state.options().tensor_bytes, TensorStorage::kPageableHost, 0, false) &&
-          tensor->data() == state.image_tensor()->data();
+      tensor_valid = tensor_descriptor_matches(*tensor,
+                                               state.options().tensor_bytes,
+                                               state.options().tensor_storage,
+                                               state.options().tensor_device,
+                                               false) &&
+                     tensor->data() == state.image_tensor()->data();
     }
     const bool validate_payload = state.options().validation == PayloadValidation::kAll;
     if (!metadata_valid || !tensor_valid ||
-        (validate_payload && !state.validate_tensor_bytes(*tensor, kImagePayloadByte))) {
+        (validate_payload &&
+         !state.validate_tensor_bytes(*tensor, kImagePayloadByte, context.cuda_stream().get()))) {
       state.record_validation_error();
       state.fail(ErrorCode::kProtocolError);
       return make_unexpected(Error{ErrorCode::kProtocolError});
@@ -3067,18 +4408,442 @@ class RuntimeImageBenchmarkSink final : public Operator<> {
         sequence == state.final_sequence()) {
       state.retain_final_tensor(*tensor, kImagePayloadByte);
     }
-    state.record_delivery(0U, sequence, receive_timestamp);
+    state.record_delivery(sink_index_, sequence, receive_timestamp);
     next_sequence_ = sequence + 1U;
     return {};
   }
 
  private:
   Input<schema::ImageT> input_;
+  std::uint32_t sink_index_{};
   std::uint64_t next_sequence_{1U};
 
   friend ExecutionPlan make_plan(const Options& options);
 };
 
+// Multi-Tensor loan and staging rows share the same preallocated two-field backing geometry.
+class RuntimeMultiTensorModeBenchmarkSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    const Options& options = run_state().options();
+    const TensorOutputSpec field_contract{
+        .representation =
+            holoscan::TensorRepresentation{
+                .memory_kind = tensor_memory_kind(options.tensor_storage),
+                .dtype = kTensorByteDtype,
+                .rank = 1U,
+            },
+        .bounds = tensor_bounds(options.tensor_bytes),
+        .storage = TensorOutputStorage::kRuntimePool,
+        .transfer =
+            TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
+    };
+    auto& builder = spec.output(output_, "output").max_emits_per_compute(1U);
+    builder.tensor_fields(std::array{MultiTensorFields::first, MultiTensorFields::second},
+                          field_contract);
+    if (run_state().notification_driven()) {
+      spec.notification_source(notification_, "benchmark-notification")
+          .capacity(run_state().options().notification_capacity)
+          .sender_reference_capacity(1U);
+      spec.lifecycle().stage(LifecycleStage::kArm, &RuntimeMultiTensorModeBenchmarkSource::arm);
+    }
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    if (run_state().notification_driven()) {
+      result.trigger(OnNotified{.event = notification_});
+    } else {
+      result.trigger(OnClock{.period = run_state().source_period()});
+    }
+    return result;
+  }
+
+  void start() override {
+    for (auto& inventory : initialized_loan_backings_) {
+      inventory.reserve(kMaximumDescriptorTensorFieldPoolSlots);
+    }
+    if (run_state().options().scenario == Scenario::kMultiTensorStaging &&
+        !initialize_foreign_tensors()) {
+      run_state().fail(ErrorCode::kResourceExhausted);
+    }
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    BenchmarkRunState& state = run_state();
+    const bool terminal = next_sequence_ > state.final_sequence();
+    state.record_source_compute_entry(terminal);
+    if (terminal) {
+      return {};
+    }
+    const std::int64_t callback_timestamp =
+        state.notification_latency() && state.measured(next_sequence_) ? now_ns() : 0;
+    state.record_source_callback(next_sequence_, callback_timestamp);
+    run_controlled_callback_work(state.options().callback_work_us);
+    const std::int64_t source_timestamp =
+        state.source_timestamp_required(next_sequence_) ? now_ns() : 0;
+
+    const auto publish = [&]() {
+      return state.options().scenario == Scenario::kMultiTensorLoan ? publish_loan(context)
+                                                                    : publish_staged();
+    };
+    expected<void, Error> emitted;
+    if (next_sequence_ == state.allocation_probe_sequence()) {
+      const test::ScopedAllocationCounter allocations;
+      emitted = publish();
+      state.record_source_allocation_probe(allocations.count());
+    } else {
+      emitted = publish();
+    }
+    if (!emitted) {
+      if (emitted.error().code == ErrorCode::kBackpressured ||
+          emitted.error().code == ErrorCode::kNotReady ||
+          emitted.error().code == ErrorCode::kResourceExhausted) {
+        state.record_source_backpressure();
+        return {};
+      }
+      state.fail(emitted.error().code);
+      return make_unexpected(std::move(emitted.error()));
+    }
+    const std::int64_t post_emit_timestamp =
+        state.source_post_emit_timestamp_required(next_sequence_) ? now_ns() : 0;
+    if (source_timestamp != 0) {
+      state.prepare_source_timestamp(next_sequence_, source_timestamp);
+    }
+    const std::uint64_t published_sequence = next_sequence_;
+    state.record_publication(published_sequence, post_emit_timestamp);
+    ++next_sequence_;
+    state.record_source_pre_return(
+        published_sequence,
+        state.source_post_emit_timestamp_required(published_sequence) ? now_ns() : 0);
+    return {};
+  }
+
+  [[nodiscard]] LifecycleStatus arm(LifecycleContext& context) noexcept {
+    return acquire_benchmark_notification_sender(context, notification_);
+  }
+
+ private:
+  struct ForeignTensorSlot {
+    std::shared_ptr<PreinitializedTensorStorage> first_storage;
+    std::shared_ptr<PreinitializedTensorStorage> second_storage;
+    std::shared_ptr<Tensor> first;
+    std::shared_ptr<Tensor> second;
+  };
+
+  [[nodiscard]] bool initialize_foreign_tensors() {
+    try {
+      const std::size_t bytes = run_state().options().tensor_bytes;
+      const std::size_t slots =
+          static_cast<std::size_t>(run_state().options().queue_depth) * 2U + 3U;
+      foreign_slots_.resize(slots);
+      for (auto& slot : foreign_slots_) {
+        auto first = make_preinitialized_byte_tensor(bytes,
+                                                     run_state().options().tensor_storage,
+                                                     run_state().options().tensor_device,
+                                                     kMultiTensorModePayloadByte,
+                                                     slot.first_storage,
+                                                     run_state().options().fanout);
+        auto second = make_preinitialized_byte_tensor(bytes,
+                                                      run_state().options().tensor_storage,
+                                                      run_state().options().tensor_device,
+                                                      kMultiTensorModePayloadByte,
+                                                      slot.second_storage,
+                                                      run_state().options().fanout);
+        if (!first || !second) {
+          return false;
+        }
+        slot.first = std::move(*first);
+        slot.second = std::move(*second);
+        run_state().record_descriptor_backing_initialization(0U);
+        run_state().record_descriptor_backing_initialization(0U);
+      }
+      return true;
+    } catch (const std::bad_alloc&) {
+      return false;
+    }
+  }
+
+  [[nodiscard]] EmitOptions emit_options() const noexcept {
+    return EmitOptions{
+        .frame_id = next_sequence_,
+        .trace = TraceContext::root(next_sequence_),
+        .flags = EmitFlags::kDegraded,
+    };
+  }
+
+  [[nodiscard]] bool loan_backing_initialized(const std::size_t field, void* const backing) const {
+    const auto& inventory = initialized_loan_backings_[field];
+    return std::find(inventory.begin(), inventory.end(), backing) != inventory.end();
+  }
+
+  [[nodiscard]] expected<void, Error> publish_loan(ExecutionContext& context) {
+    BenchmarkRunState& state = run_state();
+    const std::array shape{static_cast<std::int64_t>(state.options().tensor_bytes)};
+    const std::array requests{
+        tensor_shape(MultiTensorFields::first, shape),
+        tensor_shape(MultiTensorFields::second, shape),
+    };
+    auto bundle = output_.allocate_tensors(requests);
+    if (!bundle) {
+      return make_unexpected(std::move(bundle.error()));
+    }
+    std::array<void*, 2U> new_backings{};
+    bool initialized_during_measurement = false;
+    const auto write_field = [&](const std::size_t field) {
+      return [&, field](const TensorOutputWriteGuard& writer) -> expected<void, Error> {
+        if (!loan_backing_initialized(field, writer.data())) {
+          if (state.options().tensor_storage == TensorStorage::kDevice) {
+            if (cudaMemsetAsync(writer.data(),
+                                static_cast<int>(kMultiTensorModePayloadByte),
+                                writer.byte_size(),
+                                context.cuda_stream().get()) != cudaSuccess) {
+              return make_unexpected(Error{ErrorCode::kFailure, "cudaMemsetAsync failed"});
+            }
+          } else {
+            std::memset(
+                writer.data(), static_cast<int>(kMultiTensorModePayloadByte), writer.byte_size());
+          }
+          new_backings[field] = writer.data();
+          initialized_during_measurement =
+              initialized_during_measurement || state.measured(next_sequence_);
+        }
+        state.record_multi_tensor_source_pointer(field, next_sequence_, writer.data());
+        return {};
+      };
+    };
+    expected<void, Error> committed;
+    if (state.options().tensor_storage == TensorStorage::kDevice) {
+      const ::cuda::stream_ref stream = context.cuda_stream();
+      if (stream.get() == nullptr) {
+        return make_unexpected(Error{ErrorCode::kNotReady});
+      }
+      committed =
+          bundle->write_all(device_field(MultiTensorFields::first, stream, write_field(0U)),
+                            device_field(MultiTensorFields::second, stream, write_field(1U)));
+    } else {
+      committed = bundle->write_all(host_field(MultiTensorFields::first, write_field(0U)),
+                                    host_field(MultiTensorFields::second, write_field(1U)));
+    }
+    if (!committed) {
+      return make_unexpected(std::move(committed.error()));
+    }
+    for (std::size_t field = 0U; field < new_backings.size(); ++field) {
+      if (new_backings[field] != nullptr) {
+        initialized_loan_backings_[field].push_back(new_backings[field]);
+        state.record_descriptor_backing_initialization(next_sequence_);
+      }
+    }
+    if (initialized_during_measurement) {
+      state.record_validation_error();
+      return make_unexpected(
+          Error{ErrorCode::kProtocolError, "multi-Tensor backing initialized during measurement"});
+    }
+    MultiTensorMessage message;
+    message.sequence = next_sequence_;
+    state.prepare_source_pre_emit_timestamp(
+        next_sequence_, state.source_timestamp_required(next_sequence_) ? now_ns() : 0);
+    return output_.emit_tensors(std::move(*bundle), std::move(message), emit_options());
+  }
+
+  [[nodiscard]] expected<void, Error> publish_staged() {
+    if (foreign_slots_.empty()) {
+      return make_unexpected(Error{ErrorCode::kNotReady});
+    }
+    ForeignTensorSlot& slot = foreign_slots_[(next_sequence_ - 1U) % foreign_slots_.size()];
+    BenchmarkRunState& state = run_state();
+    state.record_multi_tensor_source_pointer(0U, next_sequence_, slot.first->data());
+    state.record_multi_tensor_source_pointer(1U, next_sequence_, slot.second->data());
+    MultiTensorMessage message;
+    message.sequence = next_sequence_;
+    message.first = slot.first;
+    message.second = slot.second;
+    state.prepare_source_pre_emit_timestamp(
+        next_sequence_, state.source_timestamp_required(next_sequence_) ? now_ns() : 0);
+    return output_.emit(std::move(message), emit_options());
+  }
+
+  Output<MultiTensorMessage> output_;
+  NotificationSource notification_;
+  std::uint64_t next_sequence_{1U};
+  std::array<std::vector<void*>, 2U> initialized_loan_backings_;
+  std::vector<ForeignTensorSlot> foreign_slots_;
+
+  friend ExecutionPlan make_plan(const Options& options);
+};
+
+class RuntimeMultiTensorModeBenchmarkSink final : public Operator<> {
+ public:
+  explicit RuntimeMultiTensorModeBenchmarkSink(const std::uint32_t sink_index = 0U)
+      : sink_index_(sink_index) {}
+
+  void setup(OperatorSpec& spec) override {
+    const Options& options = run_state().options();
+    auto& builder =
+        spec.input(input_, "input").queue_depth(subscriber_queue_depth(options, sink_index_));
+    auto first = builder.tensor_field(MultiTensorFields::first);
+    auto second = builder.tensor_field(MultiTensorFields::second);
+    configure_field(first);
+    configure_field(second);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnAnyInput{}).input(input_, DrainAll{});
+    return result;
+  }
+
+  void start() override {
+    if (run_state().options().scenario != Scenario::kMultiTensorLoan) {
+      return;
+    }
+    const std::size_t warmup_slots = run_state().descriptor_warmup_slots();
+    // Keep all but one hot-path backing live so the allocator must circulate the full inventory.
+    warmup_retention_capacity_ = warmup_slots == 0U ? 0U : warmup_slots - 1U;
+    retained_warmup_tensors_.reserve(warmup_retention_capacity_);
+    for (auto& inventory : observed_backings_) {
+      inventory.reserve(warmup_slots);
+    }
+    pool_warmup_complete_ = warmup_slots == 0U;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    BenchmarkRunState& state = run_state();
+    const std::int64_t callback_timestamp =
+        is_latency_workload(state.options().workload) ? now_ns() : 0;
+    state.record_sink_callback(sink_index_);
+    run_controlled_callback_work(state.options().callback_work_us);
+    expected<SelectedBatchView<MultiTensorMessage>, Error> selected = make_unexpected(Error{});
+    if (next_sequence_ == state.allocation_probe_sequence()) {
+      const test::ScopedAllocationCounter allocations;
+      selected = input_.selected_batch();
+      state.record_sink_allocation_probe(allocations.count());
+    } else {
+      selected = input_.selected_batch();
+    }
+    if (!selected) {
+      state.fail(selected.error().code);
+      return make_unexpected(std::move(selected.error()));
+    }
+    if (selected->size() != 1U) {
+      state.record_validation_error();
+      state.fail(ErrorCode::kProtocolError);
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+
+    const Sample<MultiTensorMessage>& sample = selected->front();
+    const std::uint64_t sequence = sample.metadata.frame_id;
+    if (state.options().tensor_storage == TensorStorage::kDevice) {
+      state.record_tensor_consumer_stream(context.cuda_stream().get());
+    }
+    state.record_sink_callback_entry(sink_index_, sequence, callback_timestamp);
+    const std::int64_t receive_timestamp = state.sink_timestamp_required(sequence) ? now_ns() : 0;
+    const bool metadata_valid =
+        sequence != 0U && sequence <= state.final_sequence() && sequence >= next_sequence_ &&
+        sample.data.sequence == sequence && sample.metadata.sequence == sequence &&
+        sample.metadata.trace_id == sequence &&
+        (lossy_queue_policy(state.options().queue_policy) || sequence == next_sequence_) &&
+        sample.metadata.degraded() && sample.data.first != nullptr && sample.data.second != nullptr;
+    const bool descriptors_valid = metadata_valid &&
+                                   tensor_descriptor_matches(*sample.data.first,
+                                                             state.options().tensor_bytes,
+                                                             state.options().tensor_storage,
+                                                             state.options().tensor_device,
+                                                             false) &&
+                                   tensor_descriptor_matches(*sample.data.second,
+                                                             state.options().tensor_bytes,
+                                                             state.options().tensor_storage,
+                                                             state.options().tensor_device,
+                                                             false);
+    const bool first_pointer_valid =
+        descriptors_valid &&
+        state.multi_tensor_pointer_matches(0U, sequence, sample.data.first->data());
+    const bool second_pointer_valid =
+        descriptors_valid &&
+        state.multi_tensor_pointer_matches(1U, sequence, sample.data.second->data());
+    const bool validate_payload = state.options().validation == PayloadValidation::kAll;
+    constexpr auto expected = kMultiTensorModePayloadByte;
+    const bool first_payload_valid =
+        !validate_payload ||
+        state.validate_tensor_bytes(*sample.data.first, expected, context.cuda_stream().get());
+    const bool second_payload_valid =
+        !validate_payload ||
+        state.validate_tensor_bytes(*sample.data.second, expected, context.cuda_stream().get());
+    if (!first_pointer_valid || !second_pointer_valid || !first_payload_valid ||
+        !second_payload_valid) {
+      HOLOSCAN_LOG_ERROR(
+          "multi-Tensor validation failed: scenario={} sequence={} metadata={} descriptors={} "
+          "first_pointer={} second_pointer={} first_payload={} second_payload={}",
+          scenario_name(state.options().scenario),
+          sequence,
+          metadata_valid,
+          descriptors_valid,
+          first_pointer_valid,
+          second_pointer_valid,
+          first_payload_valid,
+          second_payload_valid);
+      state.record_validation_error();
+      state.fail(ErrorCode::kProtocolError);
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+
+    if (state.options().validation == PayloadValidation::kFinal &&
+        sequence == state.final_sequence()) {
+      state.retain_final_multi_tensors(*sample.data.first, *sample.data.second, expected);
+    }
+    const std::size_t warmup_slots = state.descriptor_warmup_slots();
+    if (state.options().scenario == Scenario::kMultiTensorLoan && !pool_warmup_complete_ &&
+        sequence <= state.options().warmup && warmup_slots != 0U) {
+      const std::array backings{sample.data.first->data(), sample.data.second->data()};
+      for (std::size_t field = 0U; field < backings.size(); ++field) {
+        auto& inventory = observed_backings_[field];
+        if (std::find(inventory.begin(), inventory.end(), backings[field]) == inventory.end()) {
+          inventory.push_back(backings[field]);
+        }
+      }
+      const bool inventory_complete = std::ranges::all_of(
+          observed_backings_,
+          [&](const auto& inventory) { return inventory.size() == warmup_slots; });
+      if (inventory_complete) {
+        retained_warmup_tensors_.clear();
+        pool_warmup_complete_ = true;
+      } else if (warmup_retention_capacity_ != 0U) {
+        if (retained_warmup_tensors_.size() == warmup_retention_capacity_) {
+          retained_warmup_tensors_.erase(retained_warmup_tensors_.begin());
+        }
+        retained_warmup_tensors_.push_back(
+            std::array<Tensor, 2U>{*sample.data.first, *sample.data.second});
+      }
+    }
+    state.record_delivery(sink_index_, sequence, receive_timestamp);
+    next_sequence_ = sequence + 1U;
+    return {};
+  }
+
+ private:
+  void configure_field(TensorFieldInputSpecBuilder& builder) const {
+    builder.expects_tensor(TensorInputSpec{
+        .representation =
+            holoscan::TensorRepresentation{
+                .memory_kind = tensor_memory_kind(run_state().options().tensor_storage),
+                .dtype = kTensorByteDtype,
+                .rank = 1U,
+            },
+    });
+  }
+
+  Input<MultiTensorMessage> input_;
+  std::uint32_t sink_index_{};
+  std::uint64_t next_sequence_{1U};
+  bool pool_warmup_complete_{};
+  std::size_t warmup_retention_capacity_{};
+  std::vector<std::array<Tensor, 2U>> retained_warmup_tensors_;
+  std::array<std::vector<const void*>, 2U> observed_backings_;
+
+  friend ExecutionPlan make_plan(const Options& options);
+};
+
+// Sample-forward rows insert one or more metadata-preserving POD relay operators.
 class RuntimeBenchmarkRelay final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -3095,6 +4860,7 @@ class RuntimeBenchmarkRelay final : public Operator<> {
   [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     BenchmarkRunState& state = run_state();
     state.record_relay_callback();
+    run_controlled_callback_work(state.options().callback_work_us);
 
     expected<Sample<BenchmarkPOD64>, Error> sample = make_unexpected(Error{});
     expected<void, Error> emitted;
@@ -3165,22 +4931,30 @@ class RuntimeBenchmarkRelay final : public Operator<> {
   graph_name += workload_name(options.workload);
   graph_name += "-" + std::to_string(process_id());
   Graph graph{std::move(graph_name)};
+  const bool legacy_cover = options.partition_cover == PartitionCover::kLegacy;
   std::optional<PartitionHandle> shared_partition;
-  if (options.operator_lanes == OperatorLaneMode::kShared) {
+  if (legacy_cover && options.operator_lanes == OperatorLaneMode::kShared) {
     shared_partition.emplace(graph.partition("runtime-graph-shared"));
   }
-  auto source_partition =
-      shared_partition ? *shared_partition : graph.partition("runtime-graph-source");
+  std::optional<PartitionHandle> source_partition;
+  if (shared_partition) {
+    source_partition = *shared_partition;
+  } else if (legacy_cover || options.partition_cover == PartitionCover::kHybrid) {
+    source_partition.emplace(graph.partition("runtime-graph-source"));
+  }
   std::optional<PartitionHandle> common_sink_partition;
-  if (!shared_partition && options.operator_lanes != OperatorLaneMode::kPerSink &&
+  if (legacy_cover && !shared_partition && options.operator_lanes != OperatorLaneMode::kPerSink &&
       options.scenario != Scenario::kSourceOnly && options.fanout == 1U) {
     common_sink_partition.emplace(graph.partition("runtime-graph-sink"));
   }
   std::optional<PartitionHandle> relay_partition;
-  if (!shared_partition && options.scenario == Scenario::kSampleForward) {
+  if (legacy_cover && !shared_partition && options.scenario == Scenario::kSampleForward) {
     relay_partition.emplace(graph.partition("runtime-graph-relay"));
   }
   const auto add_sink = [&](const auto& sink, const std::uint32_t index = 0U) {
+    if (!legacy_cover) {
+      return;
+    }
     if (shared_partition) {
       shared_partition->add(sink);
     } else if (options.operator_lanes == OperatorLaneMode::kPerSink || options.fanout > 1U) {
@@ -3193,18 +4967,31 @@ class RuntimeBenchmarkRelay final : public Operator<> {
       .queue_policy = options.queue_policy,
       .queue_depth = options.queue_depth,
   };
+  const auto sink_connection = [&](const std::uint32_t sink_index) {
+    return ConnectionOptions{
+        .queue_policy = subscriber_queue_policy(options, sink_index),
+        .queue_depth = subscriber_queue_depth(options, sink_index),
+    };
+  };
   if (options.scenario == Scenario::kSourceOnly) {
-    source_partition.add(graph.op<RuntimeBenchmarkSourceOnly>("source"));
+    auto source = graph.op<RuntimeBenchmarkSourceOnly>("source");
+    if (source_partition) {
+      source_partition->add(source);
+    }
   } else if (options.scenario == Scenario::kSignal) {
     auto source = graph.op<RuntimeBenchmarkSource<std::uint8_t>>("source");
     auto sink = graph.op<RuntimeBenchmarkSink<std::uint8_t>>("sink");
-    source_partition.add(source);
+    if (source_partition) {
+      source_partition->add(source);
+    }
     add_sink(sink);
     graph.add_flow(source->output_, sink->input_, connection);
   } else if (options.scenario == Scenario::kSampleForward) {
     auto source = graph.op<RuntimeBenchmarkSource<BenchmarkPOD64>>("source");
     auto sink = graph.op<RuntimeBenchmarkSink<BenchmarkPOD64>>("sink");
-    source_partition.add(source);
+    if (source_partition) {
+      source_partition->add(source);
+    }
     add_sink(sink);
     std::vector<OperatorHandle<RuntimeBenchmarkRelay>> relays;
     relays.reserve(options.relay_count);
@@ -3215,56 +5002,131 @@ class RuntimeBenchmarkRelay final : public Operator<> {
       } else {
         graph.add_flow(relays.back()->output_, relay->input_, connection);
       }
-      if (shared_partition) {
-        shared_partition->add(relay);
-      } else {
-        relay_partition->add(relay);
+      if (legacy_cover) {
+        if (shared_partition) {
+          shared_partition->add(relay);
+        } else {
+          relay_partition->add(relay);
+        }
       }
       relays.push_back(relay);
     }
     graph.add_flow(relays.back()->output_, sink->input_, connection);
   } else if (options.scenario == Scenario::kTensor) {
     auto source = graph.op<RuntimeTensorBenchmarkSource>("source");
-    auto sink = graph.op<RuntimeTensorBenchmarkSink>("sink");
-    source_partition.add(source);
-    add_sink(sink);
-    graph.add_flow(source->output_, sink->input_, connection);
+    if (source_partition) {
+      source_partition->add(source);
+    }
+    for (std::uint32_t index = 0U; index < options.fanout; ++index) {
+      const std::string name = options.fanout == 1U ? "sink" : "sink-" + std::to_string(index + 1U);
+      auto sink = graph.op<RuntimeTensorBenchmarkSink>(name, index);
+      add_sink(sink, index);
+      graph.add_flow(source->output_, sink->input_, sink_connection(index));
+    }
   } else if (options.scenario == Scenario::kSchema) {
     auto source = graph.op<RuntimeBenchmarkSource<schema::TimeT>>("source");
-    source_partition.add(source);
+    if (source_partition) {
+      source_partition->add(source);
+    }
     for (std::uint32_t index = 0U; index < options.fanout; ++index) {
       const std::string name = options.fanout == 1U ? "sink" : "sink-" + std::to_string(index + 1U);
       auto sink = graph.op<RuntimeBenchmarkSink<schema::TimeT>>(name, index);
       add_sink(sink, index);
-      graph.add_flow(source->output_, sink->input_, connection);
+      graph.add_flow(source->output_, sink->input_, sink_connection(index));
+    }
+  } else if (options.scenario == Scenario::kThirdPartySchema) {
+    auto source = graph.op<RuntimeBenchmarkSource<ThirdPartyTelemetry>>("source");
+    if (source_partition) {
+      source_partition->add(source);
+    }
+    for (std::uint32_t index = 0U; index < options.fanout; ++index) {
+      const std::string name = options.fanout == 1U ? "sink" : "sink-" + std::to_string(index + 1U);
+      auto sink = graph.op<RuntimeBenchmarkSink<ThirdPartyTelemetry>>(name, index);
+      add_sink(sink, index);
+      graph.add_flow(source->output_, sink->input_, sink_connection(index));
     }
   } else if (options.scenario == Scenario::kImage) {
     auto source = graph.op<RuntimeImageBenchmarkSource>("source");
-    auto sink = graph.op<RuntimeImageBenchmarkSink>("sink");
-    source_partition.add(source);
-    add_sink(sink);
-    graph.add_flow(source->output_, sink->input_, connection);
+    if (source_partition) {
+      source_partition->add(source);
+    }
+    for (std::uint32_t index = 0U; index < options.fanout; ++index) {
+      const std::string name = options.fanout == 1U ? "sink" : "sink-" + std::to_string(index + 1U);
+      auto sink = graph.op<RuntimeImageBenchmarkSink>(name, index);
+      add_sink(sink, index);
+      graph.add_flow(source->output_, sink->input_, sink_connection(index));
+    }
   } else if (options.scenario == Scenario::kMultiTensor) {
     auto source = graph.op<RuntimeMultiTensorBenchmarkSource>("source");
     auto sink = graph.op<RuntimeMultiTensorBenchmarkSink>("sink");
-    source_partition.add(source);
+    if (source_partition) {
+      source_partition->add(source);
+    }
     add_sink(sink);
     graph.add_flow(source->output_, sink->input_, connection);
-  } else {
-    auto source = graph.op<RuntimeBenchmarkSource<BenchmarkPOD64>>("source");
-    source_partition.add(source);
+  } else if (multi_tensor_scenario(options.scenario)) {
+    auto source = graph.op<RuntimeMultiTensorModeBenchmarkSource>("source");
+    if (source_partition) {
+      source_partition->add(source);
+    }
     for (std::uint32_t index = 0U; index < options.fanout; ++index) {
       const std::string name = options.fanout == 1U ? "sink" : "sink-" + std::to_string(index + 1U);
-      auto sink = graph.op<RuntimeBenchmarkSink<BenchmarkPOD64>>(name, index);
+      auto sink = graph.op<RuntimeMultiTensorModeBenchmarkSink>(name, index);
       add_sink(sink, index);
-      graph.add_flow(source->output_, sink->input_, connection);
+      graph.add_flow(source->output_, sink->input_, sink_connection(index));
     }
+  } else {
+    if (options.test_gate_pod_sink_for_pressure) {
+      auto source = graph.op<RuntimeBenchmarkPressuredPODDiagnosticSource>("source");
+      auto sink = graph.op<RuntimeBenchmarkPressuredPODDiagnosticSink>("sink");
+      if (source_partition) {
+        source_partition->add(source);
+      }
+      add_sink(sink);
+      graph.add_flow(source->output_, sink->input_, sink_connection(0U));
+    } else {
+      auto source = graph.op<RuntimeBenchmarkSource<BenchmarkPOD64>>("source");
+      if (source_partition) {
+        source_partition->add(source);
+      }
+      if (options.multi_input) {
+        auto sink = graph.op<RuntimeBenchmarkMultiInputPODSink>("sink");
+        add_sink(sink);
+        graph.add_flow(source->output_, sink->first_, sink_connection(0U));
+        graph.add_flow(source->second_output_, sink->second_, sink_connection(1U));
+      } else {
+        for (std::uint32_t index = 0U; index < options.fanout; ++index) {
+          const std::string name =
+              options.fanout == 1U ? "sink" : "sink-" + std::to_string(index + 1U);
+          auto sink = graph.op<RuntimeBenchmarkSink<BenchmarkPOD64>>(name, index);
+          add_sink(sink, index);
+          if (options.multi_output && index == 1U) {
+            graph.add_flow(source->second_output_, sink->input_, sink_connection(index));
+          } else {
+            graph.add_flow(source->output_, sink->input_, sink_connection(index));
+          }
+        }
+      }
+    }
+  }
+  if (options.partition_cover == PartitionCover::kIncludeAll) {
+    graph.partition("runtime-graph-all").include_all();
+  } else if (options.partition_cover == PartitionCover::kHybrid) {
+    graph.auto_partition_remaining();
   }
   const ClockKey clock = graph.add_clock<RealtimeClock>("benchmark-clock");
   graph.set_default_clock(clock);
 
   CompileOptions compile_options;
-  if (options.operator_lanes == OperatorLaneMode::kShared) {
+  if (options.partition_cover == PartitionCover::kIncludeAll) {
+    compile_options.deployment.bind_thread_placement(
+        "runtime-graph-all", make_placement(options.source_cpu, options.busy_poll));
+  } else if (options.partition_cover == PartitionCover::kHybrid) {
+    compile_options.deployment.bind_thread_placement(
+        "runtime-graph-source", make_placement(options.source_cpu, options.busy_poll));
+  } else if (options.partition_cover == PartitionCover::kAutomatic) {
+    // Automatic partitions have generated identities and cannot be bound by authored name.
+  } else if (options.operator_lanes == OperatorLaneMode::kShared) {
     compile_options.deployment.bind_thread_placement(
         "runtime-graph-shared", make_placement(options.source_cpu, options.busy_poll));
   } else {
@@ -3288,17 +5150,53 @@ class RuntimeBenchmarkRelay final : public Operator<> {
           "runtime-graph-sink", make_placement(options.sink_cpu, options.busy_poll));
     }
   }
-  if (options.scenario == Scenario::kTensor && options.tensor_storage == TensorStorage::kDevice) {
+  if ((options.scenario == Scenario::kTensor || options.scenario == Scenario::kImage ||
+       options.scenario == Scenario::kMultiTensor || multi_tensor_scenario(options.scenario)) &&
+      options.tensor_storage == TensorStorage::kDevice) {
     compile_options.deployment.bind_tensor_output_device(TensorOutputDevicePlacement{
         .operator_path = "source",
         .output_port = "output",
         .device = DeviceId{options.tensor_device},
     });
   }
-  if (!options.force_holomq_process_local_inline) {
-    return compile(graph, std::move(compile_options));
+  switch (options.green_context_layout) {
+    case GreenContextLayout::kNone:
+      break;
+    case GreenContextLayout::kSamePartition:
+      compile_options.deployment.bind_cuda_green_context(
+          options.partition_cover == PartitionCover::kIncludeAll ? "runtime-graph-all"
+                                                                 : "runtime-graph-shared",
+          {.device = DeviceId{options.tensor_device}, .sm_count = options.green_context_sm_count});
+      break;
+    case GreenContextLayout::kDedicatedToDedicated:
+      compile_options.deployment
+          .bind_cuda_green_context("runtime-graph-source",
+                                   {.device = DeviceId{options.tensor_device},
+                                    .sm_count = options.green_context_sm_count})
+          .bind_cuda_green_context("runtime-graph-sink",
+                                   {.device = DeviceId{options.tensor_device},
+                                    .sm_count = options.green_context_sm_count});
+      break;
+    case GreenContextLayout::kDedicatedToResidual:
+      compile_options.deployment.bind_cuda_green_context(
+          "runtime-graph-source",
+          {.device = DeviceId{options.tensor_device}, .sm_count = options.green_context_sm_count});
+      break;
   }
-  return detail::compile_with_process_local_holomq(graph, std::move(compile_options));
+  if (options.force_holomq_event_wake) {
+    return detail::compile_with_process_local_holomq_event_wake(graph, std::move(compile_options));
+  }
+  if (options.force_holomq_process_local_inline) {
+    return detail::compile_with_process_local_holomq(graph, std::move(compile_options));
+  }
+  return compile(graph, std::move(compile_options));
+}
+
+[[nodiscard]] bool process_local_event_wake(const ExecutionPlan& plan) noexcept {
+  const auto* const state = detail::ExecutionPlanAccess::state(plan);
+  return state != nullptr && std::any_of(state->process_local_channel_services.begin(),
+                                         state->process_local_channel_services.end(),
+                                         [](const auto& service) { return service.event_wake; });
 }
 
 [[nodiscard]] std::optional<Percentiles> summarize_latencies(std::vector<std::uint64_t> values,
@@ -3317,10 +5215,42 @@ class RuntimeBenchmarkRelay final : public Operator<> {
       .minimum = values.front(),
       .p50 = percentile(0.50L),
       .p90 = percentile(0.90L),
+      .p95 = percentile(0.95L),
       .p99 = percentile(0.99L),
       .p999 = include_p999 ? std::optional<std::uint64_t>{percentile(0.999L)} : std::nullopt,
       .maximum = values.back(),
   };
+}
+
+template <typename Allocation>
+[[nodiscard]] bool allocation_storage_matches(const Allocation& allocation,
+                                              const Options& options) noexcept {
+  const DeviceId expected_device{options.tensor_device};
+  const bool device_matches = options.tensor_storage != TensorStorage::kDevice
+                                  ? !allocation.device.valid()
+                                  : allocation.device == expected_device;
+  return allocation.memory_kind == tensor_memory_kind(options.tensor_storage) && device_matches &&
+         allocation.slot_count > 0U && allocation.release_capacity > 0U &&
+         allocation.bounds.max_byte_span == options.tensor_bytes && !allocation.pool_id.empty();
+}
+
+[[nodiscard]] bool tensor_plan_matches_options(const ExecutionPlan& plan,
+                                               const Options& options) noexcept {
+  if (!tensor_backed_scenario(options.scenario)) {
+    return plan.tensor_allocations().empty() && plan.tensor_field_allocations().empty();
+  }
+  const bool multi_tensor =
+      options.scenario == Scenario::kMultiTensor || multi_tensor_scenario(options.scenario);
+  if (!multi_tensor) {
+    const auto allocations = plan.tensor_allocations();
+    return allocations.size() == 1U && plan.tensor_field_allocations().empty() &&
+           allocation_storage_matches(allocations.front(), options);
+  }
+  const auto fields = plan.tensor_field_allocations();
+  return plan.tensor_allocations().empty() && fields.size() == 2U && fields[0].tensor_index == 0U &&
+         fields[1].tensor_index == 1U && fields[0].pool_id != fields[1].pool_id &&
+         allocation_storage_matches(fields[0], options) &&
+         allocation_storage_matches(fields[1], options);
 }
 
 void emit_optional_metric(std::ostream& output, const bool available, const double value) {
@@ -3345,6 +5275,30 @@ void emit_optional_cpu_array(std::ostream& output, const Options& options) {
     } else {
       emit_optional_cpu(output, options.sink_cpu);
     }
+  }
+  output << ']';
+}
+
+void emit_subscriber_queue_depths(std::ostream& output, const Options& options) {
+  output << '[';
+  const std::uint32_t count = options.scenario == Scenario::kSourceOnly ? 0U : options.fanout;
+  for (std::uint32_t index = 0U; index < count; ++index) {
+    if (index != 0U) {
+      output << ',';
+    }
+    output << subscriber_queue_depth(options, index);
+  }
+  output << ']';
+}
+
+void emit_subscriber_queue_policies(std::ostream& output, const Options& options) {
+  output << '[';
+  const std::uint32_t count = options.scenario == Scenario::kSourceOnly ? 0U : options.fanout;
+  for (std::uint32_t index = 0U; index < count; ++index) {
+    if (index != 0U) {
+      output << ',';
+    }
+    output << '"' << queue_policy_name(subscriber_queue_policy(options, index)) << '"';
   }
   output << ']';
 }
@@ -3378,6 +5332,21 @@ void emit_operator_partition_uses(std::ostream& output, const ExecutionPlan& pla
   output << ']';
 }
 
+[[nodiscard]] std::string partition_cover_signature(const ExecutionPlan& plan) {
+  std::string signature;
+  for (const auto& partition : plan.partitions()) {
+    signature += std::to_string(partition.operator_paths().size());
+    signature.push_back(':');
+    for (const std::string_view path : partition.operator_paths()) {
+      signature += std::to_string(path.size());
+      signature.push_back(':');
+      signature.append(path);
+    }
+    signature.push_back(';');
+  }
+  return signature;
+}
+
 void emit_percentiles(std::ostream& output, const std::vector<std::uint64_t>& samples,
                       const bool include_p999) {
   const std::optional<Percentiles> percentiles = summarize_latencies(samples, include_p999);
@@ -3387,7 +5356,7 @@ void emit_percentiles(std::ostream& output, const std::vector<std::uint64_t>& sa
   }
   output << "{\"samples\":" << samples.size() << ",\"min\":" << percentiles->minimum
          << ",\"p50\":" << percentiles->p50 << ",\"p90\":" << percentiles->p90
-         << ",\"p99\":" << percentiles->p99 << ",\"p999\":";
+         << ",\"p95\":" << percentiles->p95 << ",\"p99\":" << percentiles->p99 << ",\"p999\":";
   if (percentiles->p999.has_value()) {
     output << *percentiles->p999;
   } else {
@@ -3414,6 +5383,8 @@ void emit_percentiles(std::ostream& output, const std::vector<std::uint64_t>& sa
       return "running";
     case RunTermination::kCompleted:
       return "completed";
+    case RunTermination::kRequestedCompleted:
+      return "requested-completed";
     case RunTermination::kStopped:
       return "stopped";
     case RunTermination::kFailed:
@@ -3450,6 +5421,7 @@ void emit_algorithm_key(std::ostream& output, const std::optional<AlgorithmKey>&
          << '}';
 }
 
+// REQ: CHAN-128
 void emit_phase_counters(std::ostream& output, const detail::RuntimePhaseCounters* counters) {
   output << "  \"runtime_phase_counters\":{";
   if (counters == nullptr) {
@@ -3510,8 +5482,65 @@ void emit_phase_counters(std::ostream& output, const detail::RuntimePhaseCounter
       << value(detail::RuntimePhaseCounter::kChannelActivationCutDrains)
       << ",\"channel_activation_cut_skips\":"
       << value(detail::RuntimePhaseCounter::kChannelActivationCutSkips)
+      << ",\"channel_activation_cut_inventory_scans\":"
+      << value(detail::RuntimePhaseCounter::kChannelActivationCutInventoryScans)
+      << ",\"channel_activation_cut_subscriber_probes\":"
+      << value(detail::RuntimePhaseCounter::kChannelActivationCutSubscriberProbes)
+      << ",\"channel_activation_cut_transport_probes\":"
+      << value(detail::RuntimePhaseCounter::kChannelActivationCutTransportProbes)
+      << ",\"channel_activation_cut_materializations\":"
+      << value(detail::RuntimePhaseCounter::kChannelActivationCutMaterializations)
       << ",\"channel_receive_backpressured\":"
       << value(detail::RuntimePhaseCounter::kChannelReceiveBackpressured)
+      << ",\"channel_direct_ingress_promotion_passes\":"
+      << value(detail::RuntimePhaseCounter::kChannelDirectIngressPromotionPasses)
+      << ",\"channel_direct_ingress_promotions\":"
+      << value(detail::RuntimePhaseCounter::kChannelDirectIngressPromotions)
+      << ",\"channel_staged_evidence_sweep_visits\":"
+      << value(detail::RuntimePhaseCounter::kChannelStagedEvidenceSweepVisits)
+      << ",\"channel_protected_terminal_probes_with_pending_data\":"
+      << value(detail::RuntimePhaseCounter::kChannelProtectedTerminalProbesWithPendingData)
+      << ",\"channel_pre_witness_replacements\":"
+      << value(detail::RuntimePhaseCounter::kChannelPreWitnessReplacements)
+      << ",\"channel_freshness_reservation_release_deferred\":"
+      << value(detail::RuntimePhaseCounter::kChannelFreshnessReservationReleaseDeferred)
+      << ",\"channel_released_claim_refill_replacement_declined\":"
+      << value(detail::RuntimePhaseCounter::kChannelReleasedClaimRefillReplacementDeclined)
+      << ",\"channel_released_claim_refill_published\":"
+      << value(detail::RuntimePhaseCounter::kChannelReleasedClaimRefillPublished)
+      << ",\"temporal_retention_candidates\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionCandidates)
+      << ",\"temporal_retention_evictions\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionEvictions)
+      << ",\"temporal_retention_declined_not_superseded\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionDeclinedNotSuperseded)
+      << ",\"temporal_retention_declined_unbounded_round\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionDeclinedUnboundedRound)
+      << ",\"temporal_retention_declined_uncomparable_coordinate\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionDeclinedUncomparableCoordinate)
+      << ",\"temporal_retention_declined_above_floor\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionDeclinedAboveFloor)
+      << ",\"temporal_retention_declined_eviction_refused\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionDeclinedEvictionRefused)
+      << ",\"temporal_retention_floor_resolved\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionFloorResolved)
+      << ",\"temporal_retention_floor_absent\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionFloorAbsent)
+      << ",\"temporal_retention_eviction_promoted\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionEvictionPromoted)
+      << ",\"temporal_retention_eviction_promoted_nothing\":"
+      << value(detail::RuntimePhaseCounter::kTemporalRetentionEvictionPromotedNothing)
+      << ",\"temporal_reuse_last_retained_record_queries\":"
+      << value(detail::RuntimePhaseCounter::kTemporalReuseLastRetainedRecordQueries)
+      << ",\"temporal_reuse_last_comparator_calls\":"
+      << value(detail::RuntimePhaseCounter::kTemporalReuseLastComparatorCalls)
+      << ",\"candidate_source_lookup_probes\":"
+      << value(detail::RuntimePhaseCounter::kCandidateSourceLookupProbes)
+      << ",\"candidate_order_comparisons\":"
+      << value(detail::RuntimePhaseCounter::kCandidateOrderComparisons)
+      << ",\"candidate_order_moves\":" << value(detail::RuntimePhaseCounter::kCandidateOrderMoves)
+      << ",\"candidate_tag_time_reservations\":"
+      << value(detail::RuntimePhaseCounter::kCandidateTagTimeReservations)
       << ",\"lane_dispatches\":" << value(detail::RuntimePhaseCounter::kLaneDispatches)
       << ",\"lane_compute_dispatches\":"
       << value(detail::RuntimePhaseCounter::kLaneComputeDispatches)
@@ -3535,72 +5564,6 @@ void emit_phase_counters(std::ostream& output, const detail::RuntimePhaseCounter
       << value(detail::RuntimePhaseCounter::kLaneInlineOwnerInvocations) << "},\n";
 }
 
-[[nodiscard]] constexpr std::string_view thread_usage_role_name(
-    const detail::RuntimeThreadUsageRole role) noexcept {
-  switch (role) {
-    case detail::RuntimeThreadUsageRole::kController:
-      return "controller";
-    case detail::RuntimeThreadUsageRole::kExecutionLane:
-      return "execution_lanes";
-    case detail::RuntimeThreadUsageRole::kChannelPump:
-      return "channel_pump";
-    case detail::RuntimeThreadUsageRole::kNotificationDriver:
-      return "notification_driver";
-    case detail::RuntimeThreadUsageRole::kCount:
-      break;
-  }
-  return "unknown";
-}
-
-void emit_thread_usage(std::ostream& output, const detail::RuntimePhaseCounters* counters) {
-  output << "  \"runtime_thread_usage\":{";
-  if (counters == nullptr) {
-    output << "\"enabled\":false},\n";
-    return;
-  }
-  const auto usage = counters->thread_usage_snapshot();
-  detail::RuntimeThreadUsageRecord aggregate;
-  const auto add = [](std::uint64_t& target, const std::uint64_t value) {
-    target = value > std::numeric_limits<std::uint64_t>::max() - target
-                 ? std::numeric_limits<std::uint64_t>::max()
-                 : target + value;
-  };
-  for (const auto& record : usage) {
-    add(aggregate.samples, record.samples);
-    add(aggregate.user_cpu_ns, record.user_cpu_ns);
-    add(aggregate.system_cpu_ns, record.system_cpu_ns);
-    add(aggregate.voluntary_context_switches, record.voluntary_context_switches);
-    add(aggregate.involuntary_context_switches, record.involuntary_context_switches);
-    add(aggregate.minor_page_faults, record.minor_page_faults);
-    add(aggregate.major_page_faults, record.major_page_faults);
-  }
-  output << "\"enabled\":true,\"supported\":"
-         << (detail::runtime_thread_usage_detail::kSupported ? "true" : "false")
-         << ",\"scope\":\"whole_runtime_thread_lifetime_including_startup_and_teardown\""
-         << ",\"roles\":[";
-  for (std::size_t index = 0U; index < usage.size(); ++index) {
-    if (index != 0U) {
-      output << ',';
-    }
-    const auto& record = usage[index];
-    output << "{\"role\":\"" << thread_usage_role_name(record.role)
-           << "\",\"supported\":" << (record.supported ? "true" : "false")
-           << ",\"samples\":" << record.samples << ",\"user_cpu_ns\":" << record.user_cpu_ns
-           << ",\"system_cpu_ns\":" << record.system_cpu_ns
-           << ",\"voluntary_context_switches\":" << record.voluntary_context_switches
-           << ",\"involuntary_context_switches\":" << record.involuntary_context_switches
-           << ",\"minor_page_faults\":" << record.minor_page_faults
-           << ",\"major_page_faults\":" << record.major_page_faults << '}';
-  }
-  output << "],\"aggregate\":{\"scope\":\"sum_of_runtime_roles\""
-         << ",\"samples\":" << aggregate.samples << ",\"user_cpu_ns\":" << aggregate.user_cpu_ns
-         << ",\"system_cpu_ns\":" << aggregate.system_cpu_ns
-         << ",\"voluntary_context_switches\":" << aggregate.voluntary_context_switches
-         << ",\"involuntary_context_switches\":" << aggregate.involuntary_context_switches
-         << ",\"minor_page_faults\":" << aggregate.minor_page_faults
-         << ",\"major_page_faults\":" << aggregate.major_page_faults << "}},\n";
-}
-
 void emit_phase_trace(std::ostream& output, const RuntimePhaseTraceSummary& trace,
                       const bool include_p999) {
   output << "  \"runtime_phase_trace\":{";
@@ -3618,6 +5581,7 @@ void emit_phase_trace(std::ostream& output, const RuntimePhaseTraceSummary& trac
          << ",\"dropped\":" << trace.dropped << ",\"readiness_polls\":" << trace.readiness_polls
          << ",\"unmatched_readiness_polls\":" << trace.unmatched_readiness_polls
          << ",\"complete_activations\":" << trace.complete_activations
+         << ",\"terminal_frozen_candidates\":" << trace.terminal_frozen_candidates
          << ",\"source_activation_runs\":" << trace.source_activation_runs
          << ",\"maximum_consecutive_source_activations\":"
          << trace.maximum_consecutive_source_activations
@@ -3661,13 +5625,28 @@ void emit_phase_trace(std::ostream& output, const RuntimePhaseTraceSummary& trac
     } else {
       output << "null";
     }
-    output << ",\"activations\":" << receiver.activations
-           << ",\"previous_cut_to_readiness_poll_return_ns\":";
+    output << ",\"activations\":" << receiver.activations << ",\"previous_cut_to_candidate_ns\":";
+    emit_percentiles(output, receiver.previous_cut_to_candidate, include_p999);
+    output << ",\"previous_cut_to_readiness_poll_return_ns\":";
     emit_percentiles(output, receiver.previous_cut_to_readiness_poll_return, include_p999);
     output << ",\"readiness_poll_return_to_candidate_ns\":";
     emit_percentiles(output, receiver.readiness_poll_return_to_candidate, include_p999);
+    output << ",\"candidate_to_selection_ns\":";
+    emit_percentiles(output, receiver.candidate_to_selection, include_p999);
+    output << ",\"selection_to_input_preparation_ns\":";
+    emit_percentiles(output, receiver.selection_to_input_preparation, include_p999);
+    output << ",\"input_preparation_to_activation_ns\":";
+    emit_percentiles(output, receiver.input_preparation_to_activation, include_p999);
+    output << ",\"activation_to_dispatch_start_ns\":";
+    emit_percentiles(output, receiver.activation_to_dispatch_start, include_p999);
     output << ",\"candidate_to_dispatch_start_ns\":";
     emit_percentiles(output, receiver.candidate_to_dispatch_start, include_p999);
+    output << ",\"dispatch_start_to_callback_entry_ns\":";
+    emit_percentiles(output, receiver.dispatch_start_to_callback_entry, include_p999);
+    output << ",\"callback_entry_to_return_ns\":";
+    emit_percentiles(output, receiver.callback_entry_to_return, include_p999);
+    output << ",\"callback_return_to_dispatch_return_ns\":";
+    emit_percentiles(output, receiver.callback_return_to_dispatch_return, include_p999);
     output << ",\"compute_dispatch_ns\":";
     emit_percentiles(output, receiver.compute_dispatch, include_p999);
     output << ",\"dispatch_return_to_retirement_ns\":";
@@ -3678,8 +5657,6 @@ void emit_phase_trace(std::ostream& output, const RuntimePhaseTraceSummary& trac
     emit_percentiles(output, receiver.dispatch_return_to_cut, include_p999);
     output << ",\"callback_pre_return_to_dispatch_return_ns\":";
     emit_percentiles(output, receiver.callback_pre_return_to_dispatch_return, include_p999);
-    output << ",\"dispatch_start_to_callback_entry_ns\":";
-    emit_percentiles(output, receiver.dispatch_start_to_callback_entry, include_p999);
     output << '}';
   }
   output << "]},\n";
@@ -3688,6 +5665,7 @@ void emit_phase_trace(std::ostream& output, const RuntimePhaseTraceSummary& trac
 // Keep the stable evidence JSON fields together for review and downstream parsing.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState& state,
+                                   const ExecutionPlan& plan,
                                    const BenchmarkSupportThreadControl& thread_control) {
   const bool enabled = state.options().runtime_phase_counters;
   if (!enabled) {
@@ -3726,8 +5704,7 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
   std::optional<std::uint64_t> shared_tid;
   std::optional<bool> shared_identity_is_native;
   std::optional<bool> shared_native_tid_syscall_unavailable;
-  bool shared_lane_single_thread =
-      enabled && state.options().operator_lanes == OperatorLaneMode::kShared;
+  bool shared_lane_single_thread = enabled && plan.execution_partitions().size() == 1U;
   for (std::size_t index = 0U; index < callback_tids.size(); ++index) {
     if (callback_counts[index] == 0U) {
       continue;
@@ -3765,6 +5742,26 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
                                          : identity_kind_matches ? "std_thread_id_hash"
                                                                  : "mixed";
 
+  std::set<std::uint64_t> stable_sink_tids;
+  const std::uint32_t logical_sink_count = sink_operator_count(state.options());
+  for (std::uint32_t index = 0U; index < logical_sink_count; ++index) {
+    const std::uint64_t sink_tid = state.sink_callback_tid(index);
+    const bool multiple_threads = state.sink_callback_multiple_threads(index);
+    valid = valid && sink_tid != 0U && !multiple_threads;
+    stable_sink_tids.insert(sink_tid);
+  }
+  if (logical_sink_count != 0U) {
+    if (plan.execution_partitions().size() == 1U) {
+      const auto expected_owner_tid =
+          callbacks_on_partition_owner ? controller_native_tid : shared_tid;
+      valid = valid && stable_sink_tids.size() == 1U && expected_owner_tid.has_value() &&
+              *stable_sink_tids.begin() == *expected_owner_tid;
+    } else if (logical_sink_count > 1U) {
+      valid = valid && stable_sink_tids.size() == logical_sink_count && shared_tid.has_value() &&
+              !stable_sink_tids.contains(*shared_tid);
+    }
+  }
+
   output << "  \"callback_thread_evidence\":{\"enabled\":" << (enabled ? "true" : "false")
          << ",\"valid\":" << (valid ? "true" : "false") << ",\"thread_identity_kind\":\""
          << identity_kind << "\",\"native_tid_syscall_unavailable\":"
@@ -3792,6 +5789,15 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
     output << ",\"multiple_threads\":" << (callback_multiple_threads[index] ? "true" : "false")
            << '}';
   }
+  output << "],\"sink_roles\":[";
+  for (std::uint32_t index = 0U; index < logical_sink_count; ++index) {
+    if (index != 0U) {
+      output << ',';
+    }
+    output << "{\"index\":" << index << ",\"callbacks\":" << state.sink_deliveries(index)
+           << ",\"native_tid\":" << state.sink_callback_tid(index) << ",\"multiple_threads\":"
+           << (state.sink_callback_multiple_threads(index) ? "true" : "false") << '}';
+  }
   output << "]},\n";
 }
 
@@ -3806,19 +5812,25 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
   };
   const std::uint64_t expected_compute_dispatches =
       state.source_compute_entries() + state.relay_callbacks() + state.sink_callbacks();
-  const std::uint64_t expected_emit_attempts = state.source_callbacks() + state.relay_callbacks();
-  const std::uint64_t expected_accepted_emits = state.publications() + state.relay_publications();
-  const std::uint64_t expected_input_operations = state.relay_callbacks() + state.sink_callbacks();
+  // Tensor-pool retries occur before Channel emit and therefore do not contribute to either
+  // Channel emit-attempt or backpressure counters.
+  const std::uint64_t expected_source_emit_attempts =
+      (state.publications() + state.backpressure_count()) * source_emit_count(state.options());
+  const std::uint64_t expected_accepted_emits =
+      state.publications() * source_emit_count(state.options()) + state.relay_publications();
+  const std::uint64_t expected_input_operations =
+      state.relay_callbacks() + state.sink_callbacks() * inputs_per_sink(state.options());
   const std::uint64_t frozen = value(detail::RuntimePhaseCounter::kCandidatesFrozen);
-  const bool runtime_valid = frozen == expected_compute_dispatches &&
-                             value(detail::RuntimePhaseCounter::kCandidatesSelected) == frozen &&
-                             value(detail::RuntimePhaseCounter::kComputeDispatches) == frozen &&
-                             value(detail::RuntimePhaseCounter::kActivationsCompleted) == frozen &&
-                             value(detail::RuntimePhaseCounter::kWakeReturns) +
-                                     value(detail::RuntimePhaseCounter::kTimeoutReturns) ==
-                                 value(detail::RuntimePhaseCounter::kWaitCalls) &&
-                             value(detail::RuntimePhaseCounter::kNoProgressScans) <=
-                                 value(detail::RuntimePhaseCounter::kReadinessScans);
+  const bool runtime_valid =
+      frozen >= expected_compute_dispatches && frozen - expected_compute_dispatches <= 1U &&
+      value(detail::RuntimePhaseCounter::kCandidatesSelected) == expected_compute_dispatches &&
+      value(detail::RuntimePhaseCounter::kComputeDispatches) == expected_compute_dispatches &&
+      value(detail::RuntimePhaseCounter::kActivationsCompleted) == expected_compute_dispatches &&
+      value(detail::RuntimePhaseCounter::kWakeReturns) +
+              value(detail::RuntimePhaseCounter::kTimeoutReturns) ==
+          value(detail::RuntimePhaseCounter::kWaitCalls) &&
+      value(detail::RuntimePhaseCounter::kNoProgressScans) <=
+          value(detail::RuntimePhaseCounter::kReadinessScans);
   if (!runtime_valid) {
     return false;
   }
@@ -3908,25 +5920,57 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
       value(detail::RuntimePhaseCounter::kChannelActivationCutDrains);
   const std::uint64_t activation_cut_skips =
       value(detail::RuntimePhaseCounter::kChannelActivationCutSkips);
+  const std::uint64_t activation_cuts = value(detail::RuntimePhaseCounter::kChannelActivationCuts);
+  const std::uint64_t receive_backpressured =
+      value(detail::RuntimePhaseCounter::kChannelReceiveBackpressured);
+  const std::uint64_t retry_cut_budget =
+      uses_channel_pump(state.options()) ? 0U : receive_backpressured;
   const bool activation_cut_valid =
-      uses_channel_pump(state.options())
-          ? activation_cut_drains + activation_cut_skips == expected_compute_dispatches
-          : activation_cut_drains == 0U && activation_cut_skips == 0U;
-  const std::uint64_t expected_activation_cuts =
-      uses_channel_pump(state.options()) ? expected_compute_dispatches : 0U;
+      uses_holomq(state.options())
+          ? activation_cuts == activation_cut_drains + activation_cut_skips &&
+                activation_cuts >= expected_compute_dispatches &&
+                activation_cuts - expected_compute_dispatches <= retry_cut_budget
+          : activation_cuts == 0U && activation_cut_drains == 0U && activation_cut_skips == 0U;
+  const std::uint64_t samples_received =
+      value(detail::RuntimePhaseCounter::kChannelSamplesReceived);
+  const std::uint64_t readiness_published =
+      value(detail::RuntimePhaseCounter::kChannelReadinessPublished);
+  const std::uint64_t accepted_delivery_opportunities =
+      expected_accepted_emits * subscribers_per_output(state.options());
+  const bool retained_counts_valid = has_lossy_subscriber(state.options())
+                                         ? samples_received == readiness_published &&
+                                               samples_received >= expected_input_operations &&
+                                               samples_received <= accepted_delivery_opportunities
+                                         : samples_received == expected_input_operations &&
+                                               readiness_published == expected_input_operations;
   return value(detail::RuntimePhaseCounter::kChannelPrepareCalls) == expected_compute_dispatches &&
-         value(detail::RuntimePhaseCounter::kChannelEmitAttempts) == expected_emit_attempts &&
+         value(detail::RuntimePhaseCounter::kChannelEmitAttempts) ==
+             expected_source_emit_attempts + state.relay_callbacks() &&
          value(detail::RuntimePhaseCounter::kChannelEmitAccepted) == expected_accepted_emits &&
          value(detail::RuntimePhaseCounter::kChannelEmitBackpressured) ==
              state.backpressure_count() &&
-         value(detail::RuntimePhaseCounter::kChannelSamplesReceived) == expected_input_operations &&
-         value(detail::RuntimePhaseCounter::kChannelReadinessPublished) ==
-             expected_input_operations &&
+         retained_counts_valid &&
          value(detail::RuntimePhaseCounter::kChannelInputReads) == expected_input_operations &&
          value(detail::RuntimePhaseCounter::kChannelWitnessRetired) == expected_input_operations &&
          value(detail::RuntimePhaseCounter::kChannelRetireCalls) == expected_compute_dispatches &&
-         value(detail::RuntimePhaseCounter::kChannelActivationCuts) == expected_activation_cuts &&
          activation_cut_valid;
+}
+
+[[nodiscard]] bool terminal_phase_state_valid(
+    const RuntimePhaseTraceSummary& phase_trace,
+    const detail::RuntimePhaseCounters* phase_counters) noexcept {
+  if (!phase_trace.enabled || !phase_trace.activation_trace_applicable) {
+    return phase_trace.terminal_frozen_candidates == 0U;
+  }
+  if (phase_counters == nullptr) {
+    return false;
+  }
+  const auto snapshot = phase_counters->snapshot();
+  const std::uint64_t frozen =
+      snapshot[detail::RuntimePhaseCounters::index(detail::RuntimePhaseCounter::kCandidatesFrozen)];
+  const std::uint64_t selected = snapshot[detail::RuntimePhaseCounters::index(
+      detail::RuntimePhaseCounter::kCandidatesSelected)];
+  return frozen >= selected && frozen - selected == phase_trace.terminal_frozen_candidates;
 }
 
 // Keep the benchmark's stable JSON schema visible in one emitter.
@@ -3935,7 +5979,10 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
                  const RunSession& session, const BenchmarkSupportThreadControl& thread_control,
                  const detail::RuntimePhaseCounters* phase_counters,
                  const RuntimePhaseTraceSummary& phase_trace,
-                 const std::optional<std::uint64_t> final_validation_ns) {
+                 const std::optional<std::uint64_t> final_validation_ns,
+                 const BenchmarkLifecycleTiming& lifecycle_timing,
+                 const std::optional<detail::RuntimeTensorOutputTestControl::PoolSnapshot>&
+                     cuda_resource_counters) {
   const Options& options = state.options();
   const std::int64_t start_ns = state.measured_start_ns();
   const std::int64_t end_ns = state.measured_end_ns();
@@ -3955,10 +6002,11 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
   const double aggregate_payload_bytes_per_second =
       aggregate_deliveries_per_second * static_cast<double>(payload_size(options));
   const std::uint64_t consumer_visible_replacements = state.consumer_visible_replacements();
-  const double replacement_rate = state.publications() == 0U
+  const std::uint64_t delivery_opportunities = state.publications() * options.fanout;
+  const double replacement_rate = delivery_opportunities == 0U
                                       ? 0.0
                                       : static_cast<double>(consumer_visible_replacements) /
-                                            static_cast<double>(state.publications());
+                                            static_cast<double>(delivery_opportunities);
   const bool throughput_metrics_available = options.workload == Workload::kSaturated;
   const double configured_publication_rate_per_second =
       is_latency_workload(options.workload)
@@ -3991,36 +6039,52 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
       state.publication_to_receive_latencies();
   const bool include_p999 = options.samples >= 10'000U;
   const std::vector<std::uint64_t> timestamp_read_pair_overhead = calibrate_timestamp_read_pairs();
+  const std::uint64_t device_pool_capacity_bytes =
+      std::accumulate(plan.tensor_allocations().begin(),
+                      plan.tensor_allocations().end(),
+                      std::uint64_t{},
+                      [](const std::uint64_t total, const TensorAllocationPlanRecord& allocation) {
+                        return total + (allocation.memory_kind == MemoryKind::kCudaDevice
+                                            ? allocation.aggregate_byte_capacity
+                                            : 0U);
+                      });
 
+  output << "{\n"
+         << "  \"schema\":\"holoscan.test.runtime-benchmark/v1\",\n"
+         << "  \"benchmark\":\"" << benchmark_name(options) << "\",\n"
+         << "  \"answers\":\"" << benchmark_answer(options.scenario) << "\",\n"
+         << "  \"scenario\":\"" << scenario_name(options.scenario) << "\",\n"
+         << "  \"process_local_inline_delivery\":\"" << process_local_delivery_name(options)
+         << "\",\n"
+         << "  \"runtime_controls\":{\"direct_continuation_elision_disabled\":"
+         << (options.disable_direct_continuation_elision ? "true" : "false")
+         << ",\"closed_island_composite_disabled\":"
+         << (options.disable_closed_island_composite ? "true" : "false")
+         << ",\"holomq_event_wake_forced\":" << (options.force_holomq_event_wake ? "true" : "false")
+         << ",\"process_local_channel_pump_forced\":"
+         << (options.force_process_local_channel_pump ? "true" : "false");
+  if (options.test_gate_pod_sink_for_pressure) {
+    output << ",\"pod_sink_pressure_gate\":{\"first_readiness_published\":"
+           << state.pressure_gate_first_readiness_published()
+           << ",\"first_witness_retired\":" << state.pressure_gate_first_witness_retired()
+           << ",\"first_delivery_publications\":"
+           << state.pressure_gate_first_delivery_publications()
+           << ",\"source_completion_publications\":"
+           << state.pressure_gate_source_completion_publications()
+           << ",\"source_retirement_activations_completed\":"
+           << state.pressure_gate_source_retirement_activations_completed()
+           << ",\"notification_attempts\":" << state.pressure_gate_notification_attempts()
+           << ",\"notifications_accepted\":" << state.pressure_gate_notifications_accepted()
+           << ",\"notification_backpressure\":" << state.pressure_gate_notification_backpressure()
+           << ",\"notification_not_ready\":" << state.pressure_gate_notification_not_ready() << '}';
+  }
   output
-      << "{\n"
-      << "  \"schema\":\"holoscan.ea1.runtime-benchmark/v1\",\n"
-      << "  \"benchmark\":\"" << benchmark_name(options) << "\",\n"
-      << "  \"answers\":\"" << benchmark_answer(options.scenario) << "\",\n"
-      << "  \"scenario\":\"" << scenario_name(options.scenario) << "\",\n"
-      << "  \"process_local_inline_delivery\":\"" << process_local_delivery_name(options) << "\",\n"
-      << "  \"runtime_controls\":{\"direct_continuation_elision_disabled\":"
-      << (options.disable_direct_continuation_elision ? "true" : "false")
-      << ",\"closed_island_composite_disabled\":"
-      << (options.disable_closed_island_composite ? "true" : "false") << "},\n"
+      << "},\n"
       << "  \"queue_policy\":\"" << queue_policy_name(options.queue_policy) << "\",\n"
-      << "  \"payload\":\""
-      << (options.scenario == Scenario::kSourceOnly
-              ? "none"
-              : (options.scenario == Scenario::kSignal
-                     ? "trigger_token"
-                     : (options.scenario == Scenario::kTensor
-                            ? "tensor"
-                            : (options.scenario == Scenario::kImage
-                                   ? "image"
-                                   : (options.scenario == Scenario::kMultiTensor
-                                          ? "multi_tensor"
-                                          : (options.scenario == Scenario::kSchema ? "schema"
-                                                                                   : "pod"))))))
-      << "\",\n"
+      << "  \"payload\":\"" << payload_name(options.scenario) << "\",\n"
       << "  \"workload\":\"" << workload_name(options.workload) << "\",\n"
-      << "  \"source_trigger\":\""
-      << (is_notification_workload(options.workload) ? "notification" : "clock") << "\",\n"
+      << "  \"source_trigger\":\"" << (notification_driver_used(options) ? "notification" : "clock")
+      << "\",\n"
       << "  \"process_id\":" << process_id() << ",\n"
       << "  \"clock\":{\"source\":\"std::chrono::steady_clock\",\"steady\":"
       << (BenchmarkClock::is_steady ? "true" : "false") << ",\"scope\":\"single_process\"},\n"
@@ -4034,31 +6098,69 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
       plan.tensor_allocations().empty() ? nullptr : &plan.tensor_allocations().front();
   const TensorFieldAllocationPlanRecord* tensor_field_allocation =
       plan.tensor_field_allocations().empty() ? nullptr : &plan.tensor_field_allocations().front();
-  const bool bulk_payload = options.scenario == Scenario::kTensor ||
-                            options.scenario == Scenario::kImage ||
-                            options.scenario == Scenario::kMultiTensor;
-  const std::uint32_t bulk_pool_slots =
+  const bool bulk_payload = tensor_backed_scenario(options.scenario);
+  const bool multi_tensor_payload =
+      options.scenario == Scenario::kMultiTensor || multi_tensor_scenario(options.scenario);
+  const auto multi_tensor_capacity = [&](const auto projection) {
+    std::uint64_t result{};
+    for (const auto& allocation : plan.tensor_field_allocations()) {
+      result += projection(allocation);
+    }
+    return result;
+  };
+  const std::uint64_t bulk_pool_slots =
       tensor_allocation != nullptr
           ? tensor_allocation->slot_count
-          : (tensor_field_allocation != nullptr ? tensor_field_allocation->slot_count
-                                                : (bulk_payload ? 1U : 0U));
-  const std::uint32_t bulk_release_capacity =
+          : (multi_tensor_payload
+                 ? multi_tensor_capacity([](const auto& record) { return record.slot_count; })
+                 : (tensor_field_allocation != nullptr ? tensor_field_allocation->slot_count
+                                                       : (bulk_payload ? 1U : 0U)));
+  const std::uint64_t bulk_release_capacity =
       tensor_allocation != nullptr
           ? tensor_allocation->release_capacity
-          : (tensor_field_allocation != nullptr ? tensor_field_allocation->release_capacity
-                                                : (bulk_payload ? 1U : 0U));
+          : (multi_tensor_payload
+                 ? multi_tensor_capacity([](const auto& record) { return record.release_capacity; })
+                 : (tensor_field_allocation != nullptr ? tensor_field_allocation->release_capacity
+                                                       : (bulk_payload ? 1U : 0U)));
   emit_algorithm_key(output, partitioning.requested_algorithm);
   output << ",\"accepted_algorithm\":";
   emit_algorithm_key(output, partitioning.accepted_algorithm);
   output << ",\"selection_source\":\""
-         << partition_selection_source_name(partitioning.selection_source) << "\"},\n"
+         << partition_selection_source_name(partitioning.selection_source) << "\",\"authoring\":\""
+         << partition_cover_name(options.partition_cover) << "\",\"mode\":\""
+         << partitioning_mode_name(partitioning.mode)
+         << "\",\"partition_count\":" << plan.partitions().size()
+         << ",\"authored_partition_count\":" << plan.partitions().authored_count()
+         << ",\"automatic_partition_count\":" << plan.partitions().automatic_count()
+         << ",\"cover_signature\":\"" << json_escape(partition_cover_signature(plan)) << "\"},\n"
          << "  \"geometry\":{\"samples\":" << options.samples << ",\"warmup\":" << options.warmup
          << ",\"allocation_probe_samples\":1" << ",\"queue_depth\":" << options.queue_depth
-         << ",\"notification_capacity\":"
-         << (is_notification_workload(options.workload) ? options.notification_capacity : 0U)
+         << ",\"subscriber_queue_depths\":";
+  emit_subscriber_queue_depths(output, options);
+  output << ",\"subscriber_queue_policies\":";
+  emit_subscriber_queue_policies(output, options);
+  output << ",\"notification_capacity\":"
+         << (notification_driver_used(options) ? options.notification_capacity : 0U)
+         << ",\"offered_publication_rate_per_second\":";
+  if (offered_rate_mode(options)) {
+    output << options.offered_rate_hz;
+  } else {
+    output << "null";
+  }
+  output << ",\"offered_publication_period_ns\":";
+  if (offered_rate_mode(options)) {
+    output << offered_period(options).count();
+  } else {
+    output << "null";
+  }
+  output << ",\"offered_burst_size\":" << options.offered_burst_size
+         << ",\"callback_work_us\":" << options.callback_work_us
          << ",\"publication_backpressure_capacity\":" << options.queue_depth
          << ",\"fanout\":" << (options.scenario == Scenario::kSourceOnly ? 0U : options.fanout)
-         << ",\"relay_count\":"
+         << ",\"source_outputs\":" << source_output_count(options)
+         << ",\"subscribers_per_output\":" << subscribers_per_output(options)
+         << ",\"sink_operators\":" << sink_operator_count(options)
+         << ",\"inputs_per_sink\":" << inputs_per_sink(options) << ",\"relay_count\":"
          << (options.scenario == Scenario::kSampleForward ? options.relay_count : 0U)
          << ",\"pipeline_edges\":" << edge_count(options)
          << ",\"payload_bytes\":" << payload_size(options)
@@ -4096,7 +6198,7 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
     output << "null";
   }
   output << ",\"source_trigger_period_ns\":";
-  if (options.workload == Workload::kLatency) {
+  if (!notification_driver_used(options)) {
     output << state.source_period().count();
   } else {
     output << "null";
@@ -4104,45 +6206,100 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
   output << "},\n"
          << "  \"tensor\":{";
   if (bulk_payload) {
-    const bool fused_linear_stream =
-        std::any_of(plan.tensor_device_resources().begin(),
-                    plan.tensor_device_resources().end(),
-                    [](const TensorDeviceResourcePlanRecord& resource) {
-                      return !resource.fused_linear_edges.empty();
-                    });
-    output << "\"storage\":\""
-           << tensor_storage_name(options.scenario == Scenario::kImage ||
-                                          options.scenario == Scenario::kMultiTensor
-                                      ? TensorStorage::kPageableHost
-                                      : options.tensor_storage)
-           << "\",\"device\":"
-           << (options.scenario == Scenario::kImage || options.scenario == Scenario::kMultiTensor
-                   ? 0
-                   : options.tensor_device)
-           << ",\"direct_allocation_records\":"
-           << (options.scenario == Scenario::kMultiTensor ? plan.tensor_field_allocations().size()
-                                                          : plan.tensor_allocations().size())
+    const bool is_multi_tensor =
+        options.scenario == Scenario::kMultiTensor || multi_tensor_scenario(options.scenario);
+    const bool fused_linear_stream = std::any_of(plan.cuda_compute_streams().begin(),
+                                                 plan.cuda_compute_streams().end(),
+                                                 [](const CudaComputeStreamPlanRecord& stream) {
+                                                   return !stream.fused_linear_edges.empty();
+                                                 });
+    const bool plan_storage_matches = tensor_plan_matches_options(plan, options);
+    output << "\"storage\":\"" << tensor_storage_name(options.tensor_storage)
+           << "\",\"device\":" << options.tensor_device << ",\"direct_allocation_records\":"
+           << (is_multi_tensor ? plan.tensor_field_allocations().size()
+                               : plan.tensor_allocations().size())
+           << ",\"memory_kind_plan_match\":" << (plan_storage_matches ? "true" : "false")
+           << ",\"observed_storage_checked\":true"
            << ",\"device_resource_records\":" << plan.tensor_device_resources().size()
            << ",\"fused_linear_stream\":" << (fused_linear_stream ? "true" : "false")
            << ",\"pointer_identity_checked\":true,\"descriptor_schema\":"
-           << (options.scenario == Scenario::kImage || options.scenario == Scenario::kMultiTensor
-                   ? "true"
-                   : "false");
-    if (options.scenario == Scenario::kMultiTensor) {
+           << (options.scenario == Scenario::kImage || is_multi_tensor ? "true" : "false");
+    if (is_multi_tensor) {
+      const auto fields = plan.tensor_field_allocations();
       output << ",\"native_type\":\"runtime_benchmark::MultiTensorMessageT\""
-             << ",\"field_count\":2,\"fields\":["
-             << "{\"name\":\"first\",\"dtype\":\"uint8\",\"rank\":1,\"bytes\":"
-             << options.tensor_bytes << "},"
-             << "{\"name\":\"second\",\"dtype\":\"uint8\",\"rank\":1,\"bytes\":"
-             << options.tensor_bytes << "}]";
+             << ",\"field_count\":2,\"field_pools_distinct\":"
+             << (fields.size() == 2U && fields[0].pool_id != fields[1].pool_id ? "true" : "false")
+             << ",\"fields\":[";
+      constexpr std::array field_names{"first", "second"};
+      for (std::size_t index = 0U; index < field_names.size(); ++index) {
+        if (index != 0U) {
+          output << ',';
+        }
+        output << "{\"name\":\"" << field_names[index]
+               << "\",\"dtype\":\"uint8\",\"rank\":1,\"bytes\":" << options.tensor_bytes;
+        if (fields.size() == field_names.size()) {
+          output << ",\"tensor_index\":" << fields[index].tensor_index << ",\"pool_id\":\""
+                 << json_escape(fields[index].pool_id)
+                 << "\",\"pool_slots\":" << fields[index].slot_count
+                 << ",\"release_capacity\":" << fields[index].release_capacity;
+        }
+        output << '}';
+      }
+      output << ']';
+    }
+    if (multi_tensor_scenario(options.scenario)) {
+      output << ",\"emission_mode\":\""
+             << (options.scenario == Scenario::kMultiTensorLoan ? "loan" : "staging")
+             << "\",\"source_pointer_contract\":\"preserved\"";
     }
   }
   output << "},\n"
-         << "  \"wake\":{\"event_wake\":" << (uses_channel_pump(options) ? "true" : "false")
+         << "  \"green_context\":{\"layout\":\""
+         << green_context_layout_name(options.green_context_layout) << "\",\"enabled\":"
+         << (options.green_context_layout == GreenContextLayout::kNone ? "false" : "true")
+         << ",\"requested_sm_count\":" << options.green_context_sm_count
+         << ",\"pool_records\":" << plan.cuda_green_context_pools().size()
+         << ",\"resource_records\":" << plan.cuda_green_context_resources().size()
+         << ",\"stream_records\":" << plan.cuda_compute_streams().size()
+         << ",\"device_memory_pool_capacity_bytes\":" << device_pool_capacity_bytes;
+  if (plan.cuda_green_context_pools().empty()) {
+    output << ",\"deployment_device_id\":null,\"device_sm_count\":null"
+           << ",\"structured_sm_quantum\":null,\"unprovisioned_sm_count\":null";
+  } else {
+    const auto& pool = plan.cuda_green_context_pools().front();
+    output << ",\"deployment_device_id\":\"" << json_escape(pool.deployment_device_id)
+           << "\",\"device_sm_count\":" << pool.device_sm_count
+           << ",\"structured_sm_quantum\":" << pool.structured_sm_quantum
+           << ",\"unprovisioned_sm_count\":" << pool.unprovisioned_sm_count;
+  }
+  output << "},\n"
+         << "  \"cold_timing_ns\":{\"compile\":" << lifecycle_timing.compile_ns
+         << ",\"run_async_return\":" << lifecycle_timing.run_async_return_ns
+         << ",\"run_async_to_first_callback\":" << lifecycle_timing.run_async_to_first_callback_ns
+         << ",\"terminal_wait\":" << lifecycle_timing.terminal_wait_ns << "},\n"
+         << "  \"cuda_resource_counters\":{\"enabled\":"
+         << (cuda_resource_counters.has_value() ? "true" : "false");
+  if (cuda_resource_counters.has_value()) {
+    const auto& counters = *cuda_resource_counters;
+    output << ",\"streams_created\":" << counters.cuda_streams_created
+           << ",\"streams_destroyed\":" << counters.cuda_streams_destroyed
+           << ",\"events_created\":" << counters.cuda_events_created
+           << ",\"events_destroyed\":" << counters.cuda_events_destroyed
+           << ",\"readiness_records\":" << counters.cuda_readiness_records
+           << ",\"readiness_record_elisions\":" << counters.cuda_readiness_record_elisions
+           << ",\"stream_waits\":" << counters.cuda_stream_waits
+           << ",\"stream_wait_elisions\":" << counters.cuda_stream_wait_elisions
+           << ",\"release_records\":" << counters.cuda_release_records
+           << ",\"retirement_queries\":" << counters.cuda_retirement_queries
+           << ",\"stream_quiesce_ns\":" << counters.cuda_stream_quiesce_ns;
+  }
+  output << "},\n"
+         << "  \"wake\":{\"event_wake\":" << (process_local_event_wake(plan) ? "true" : "false")
          << ",\"busy_poll\":" << (options.busy_poll ? "true" : "false")
          << ",\"receive_polling\":false},\n"
          << "  \"placement\":{\"wake_mode\":\""
          << (options.busy_poll ? "busy_poll" : "sleeping_waitset") << "\",\"operator_lanes\":\""
+         << operator_lane_mode_name(options.operator_lanes) << "\",\"requested_operator_lanes\":\""
          << operator_lane_mode_name(options.operator_lanes)
          << "\",\"operator_lane_count\":" << plan.execution_lanes().size()
          << ",\"source_compile_accepted_cpu\":";
@@ -4177,6 +6334,27 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
          << ",\"configured_publication_rate_per_second\":";
   emit_optional_metric(
       output, is_latency_workload(options.workload), configured_publication_rate_per_second);
+  output << ",\"accepted_publication_offer_rate_per_second\":";
+  emit_optional_metric(
+      output, offered_rate_mode(options), state.accepted_publication_offer_rate_per_second());
+  output << ",\"publication_offer_start_ns\":";
+  if (offered_rate_mode(options)) {
+    output << state.publication_offer_start_ns();
+  } else {
+    output << "null";
+  }
+  output << ",\"publication_offer_end_ns\":";
+  if (offered_rate_mode(options)) {
+    output << state.publication_offer_end_ns();
+  } else {
+    output << "null";
+  }
+  output << ",\"maximum_publication_offer_lateness_ns\":";
+  if (offered_rate_mode(options)) {
+    output << state.maximum_publication_offer_lateness_ns();
+  } else {
+    output << "null";
+  }
   output << ",\"logical_publications_per_second\":";
   emit_optional_metric(output, throughput_metrics_available, publications_per_second);
   output << ",\"aggregate_deliveries_per_second\":";
@@ -4260,6 +6438,7 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
   output << "},\n"
          << "  \"counts\":{\"source_callbacks\":" << state.source_callbacks()
          << ",\"source_compute_entries\":" << state.source_compute_entries()
+         << ",\"source_terminal_compute_entries\":" << state.source_terminal_compute_entries()
          << ",\"measured_source_callbacks\":" << state.measured_source_callbacks()
          << ",\"relay_callbacks\":" << state.relay_callbacks()
          << ",\"sink_callbacks\":" << state.sink_callbacks()
@@ -4274,6 +6453,9 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
          << ",\"descriptor_backing_initializations\":" << state.descriptor_backing_initializations()
          << ",\"descriptor_backing_initializations_during_measurement\":"
          << state.descriptor_backing_initializations_during_measurement()
+         << ",\"source_tensor_pool_retries\":" << state.source_tensor_pool_retries()
+         << ",\"source_tensor_pool_in_activation_retries\":"
+         << state.source_tensor_pool_in_activation_retries()
          << ",\"notification_post_attempts\":" << state.notification_attempts()
          << ",\"notifications_accepted\":" << state.notifications_accepted()
          << ",\"notification_backpressure\":" << state.notification_backpressure()
@@ -4285,8 +6467,15 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
     if (index != 0U) {
       output << ',';
     }
+    const std::uint64_t sink_replacements = state.sink_replacements(index);
+    const double sink_replacement_rate =
+        state.publications() == 0U
+            ? 0.0
+            : static_cast<double>(sink_replacements) / static_cast<double>(state.publications());
     output << "{\"index\":" << index << ",\"deliveries\":" << state.sink_deliveries(index)
-           << ",\"final_sequence\":" << state.sink_final_sequence(index) << '}';
+           << ",\"final_sequence\":" << state.sink_final_sequence(index)
+           << ",\"replacements\":" << sink_replacements
+           << ",\"replacement_rate\":" << sink_replacement_rate << '}';
   }
   output << "]},\n"
          << "  \"allocation_probe\":{\"excluded_from_measurement\":true"
@@ -4297,9 +6486,9 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
          << ",\"sink_compute_allocations\":" << state.sink_probe_allocations()
          << ",\"sink_compute_allocation_limit\":" << state.sink_allocation_limit() << "},\n";
   emit_phase_counters(output, phase_counters);
-  emit_thread_usage(output, phase_counters);
+  emit_runtime_thread_usage(output, phase_counters);
   emit_phase_trace(output, phase_trace, include_p999);
-  emit_callback_thread_evidence(output, state, thread_control);
+  emit_callback_thread_evidence(output, state, plan, thread_control);
   output << "  \"validation\":{\"mode\":\"" << payload_validation_name(options.validation)
          << "\",\"timing\":\"" << validation_timing_name(options.validation)
          << "\",\"passed\":" << (state.validation_errors() == 0U ? "true" : "false")
@@ -4335,22 +6524,27 @@ template <typename Integer>
   return error == std::errc() && position == end;
 }
 
-[[nodiscard]] bool parse_cpu_list(std::string_view text, std::vector<int>& output) {
+template <typename Integer>
+[[nodiscard]] bool parse_integer_list(std::string_view text, std::vector<Integer>& output) {
   output.clear();
   while (!text.empty()) {
     const std::size_t separator = text.find(',');
     const std::string_view token = text.substr(0U, separator);
-    int cpu{};
-    if (token.empty() || !parse_integer(token, cpu)) {
+    Integer item{};
+    if (token.empty() || !parse_integer(token, item)) {
       return false;
     }
-    output.push_back(cpu);
+    output.push_back(item);
     if (separator == std::string_view::npos) {
       return true;
     }
     text.remove_prefix(separator + 1U);
   }
   return false;
+}
+
+[[nodiscard]] bool parse_cpu_list(const std::string_view text, std::vector<int>& output) {
+  return parse_integer_list(text, output);
 }
 
 [[nodiscard]] bool consume_value(const int argc, char** argv, int& index, std::string_view& value) {
@@ -4362,38 +6556,55 @@ template <typename Integer>
 }
 
 void print_usage(std::ostream& output) {
-  output
-      << "runtime_graph_benchmark [options]\n\n"
-      << "  --workload <latency|notification_latency|saturated>\n"
-      << "  --scenario <source_only|pod|signal|sample_forward|schema|tensor|image|multi_tensor>\n"
-      << "  --operator-lanes <separate|shared|per_sink>\n"
-      << "  --tensor-storage <pageable_host|pinned_host|device>\n"
-      << "  --bulk-work-profile <full_write|descriptor_only>\n"
-      << "  --tensor-bytes <n>\n"
-      << "  --tensor-device <n>\n"
-      << "  --samples <n>\n"
-      << "  --warmup <n>\n"
-      << "  --queue-policy <blocking|drop_oldest>\n"
-      << "  --queue-depth <n>\n"
-      << "  --relay-count <n>\n"
-      << "  --fanout <n>\n"
-      << "  --notification-capacity <n>\n"
-      << "  --publisher-period-us <n>\n"
-      << "  --payload-validation <none|final|all>\n"
-      << "  --source-cpu <n>\n"
-      << "  --relay-cpu <n>\n"
-      << "  --sink-cpu <n>\n"
-      << "  --sink-cpus <n,n,...>\n"
-      << "  --controller-cpu <n>\n"
-      << "  --channel-pump-cpu <n>\n"
-      << "  --notification-driver-cpu <n>\n"
-      << "  --busy-poll\n"
-      << "  --runtime-phase-counters\n"
-      << "  --disable-direct-continuation-elision\n"
-      << "  --disable-closed-island-composite\n"
-      << "  --force-holomq-process-local-inline\n"
-      << "  --timeout-ms <n>\n"
-      << "  --output <path>\n";
+  output << "runtime_graph_benchmark [options]\n\n"
+         << "  --workload <latency|notification_latency|saturated>\n"
+         << "  --scenario <source_only|pod|signal|sample_forward|schema|third_party_schema|tensor|"
+            "image|multi_tensor|multi_tensor_loan|multi_tensor_staging>\n"
+         << "  --operator-lanes <separate|shared|per_sink>\n"
+         << "  --partition-cover <legacy|automatic|include_all|hybrid>\n"
+         << "  --green-context-layout <none|same_partition|dedicated_to_dedicated|"
+            "dedicated_to_residual>\n"
+         << "  --green-context-sm-count <n>\n"
+         << "  --tensor-storage <pageable_host|pinned_host|device>\n"
+         << "  --bulk-work-profile <full_write|descriptor_only>\n"
+         << "  --tensor-bytes <n>\n"
+         << "  --tensor-device <n>\n"
+         << "  --samples <n>\n"
+         << "  --warmup <n>\n"
+         << "  --queue-policy <blocking|drop_oldest>\n"
+         << "  --queue-depth <n>\n"
+         << "  --sink-queue-depths <n,n,...>\n"
+         << "  --relay-count <n>\n"
+         << "  --fanout <n>\n"
+         << "  --multi-output\n"
+         << "  --multi-input\n"
+         << "  --mixed-policy-fanout\n"
+         << "  --notification-capacity <n>\n"
+         << "  --offered-rate-hz <n>\n"
+         << "  --offered-burst-size <n>\n"
+         << "  --publisher-period-us <n>\n"
+         << "  --callback-work-us <0|1|5|20|100>\n"
+         << "  --payload-validation <none|final|all>\n"
+         << "  --source-cpu <n>\n"
+         << "  --relay-cpu <n>\n"
+         << "  --sink-cpu <n>\n"
+         << "  --sink-cpus <n,n,...>\n"
+         << "  --controller-cpu <n>\n"
+         << "  --channel-pump-cpu <n>\n"
+         << "  --notification-driver-cpu <n>\n"
+         << "  --busy-poll\n"
+         << "  --runtime-phase-counters\n"
+         << "  --cuda-resource-counters\n"
+         << "  --disable-direct-continuation-elision\n"
+         << "  --disable-closed-island-composite\n"
+         << "  --force-holomq-process-local-inline\n"
+         << "  --force-holomq-event-wake\n"
+         << "  --force-process-local-channel-pump\n"
+         << "  --test-gate-pod-sink-for-pressure\n"
+         << "  --test-source-tensor-pool-in-activation-retries <n>\n"
+         << "  --timeout-ms <n>\n"
+         << "  --output <path>\n"
+         << "  --plan-output <path>\n";
 }
 
 // Keep command-line validation adjacent to each option's parsing branch.
@@ -4414,6 +6625,10 @@ void print_usage(std::ostream& output) {
       options.runtime_phase_counters = true;
       continue;
     }
+    if (argument == "--cuda-resource-counters") {
+      options.cuda_resource_counters = true;
+      continue;
+    }
     if (argument == "--disable-direct-continuation-elision") {
       options.disable_direct_continuation_elision = true;
       continue;
@@ -4426,8 +6641,32 @@ void print_usage(std::ostream& output) {
       options.force_holomq_process_local_inline = true;
       continue;
     }
+    if (argument == "--force-holomq-event-wake") {
+      options.force_holomq_event_wake = true;
+      continue;
+    }
+    if (argument == "--force-process-local-channel-pump") {
+      options.force_process_local_channel_pump = true;
+      continue;
+    }
+    if (argument == "--multi-output") {
+      options.multi_output = true;
+      continue;
+    }
+    if (argument == "--multi-input") {
+      options.multi_input = true;
+      continue;
+    }
+    if (argument == "--mixed-policy-fanout") {
+      options.mixed_policy_fanout = true;
+      continue;
+    }
     if (argument == "--test-fail-sink-after-relay-pressure") {
       options.test_fail_sink_after_relay_pressure = true;
+      continue;
+    }
+    if (argument == "--test-gate-pod-sink-for-pressure") {
+      options.test_gate_pod_sink_for_pressure = true;
       continue;
     }
 
@@ -4458,15 +6697,22 @@ void print_usage(std::ostream& output) {
         options.scenario = Scenario::kSampleForward;
       } else if (value == "schema") {
         options.scenario = Scenario::kSchema;
+      } else if (value == "third_party_schema") {
+        options.scenario = Scenario::kThirdPartySchema;
       } else if (value == "tensor") {
         options.scenario = Scenario::kTensor;
       } else if (value == "image") {
         options.scenario = Scenario::kImage;
       } else if (value == "multi_tensor") {
         options.scenario = Scenario::kMultiTensor;
+      } else if (value == "multi_tensor_loan") {
+        options.scenario = Scenario::kMultiTensorLoan;
+      } else if (value == "multi_tensor_staging") {
+        options.scenario = Scenario::kMultiTensorStaging;
       } else {
-        std::cerr << "--scenario must be source_only, pod, signal, sample_forward, schema, tensor, "
-                     "image, or multi_tensor\n";
+        std::cerr << "--scenario must be source_only, pod, signal, sample_forward, schema, "
+                     "third_party_schema, tensor, image, multi_tensor, multi_tensor_loan, or "
+                     "multi_tensor_staging\n";
         return std::nullopt;
       }
     } else if (argument == "--queue-policy") {
@@ -4487,6 +6733,37 @@ void print_usage(std::ostream& output) {
         options.operator_lanes = OperatorLaneMode::kPerSink;
       } else {
         std::cerr << "--operator-lanes must be separate, shared, or per_sink\n";
+        return std::nullopt;
+      }
+    } else if (argument == "--partition-cover") {
+      if (value == "legacy") {
+        options.partition_cover = PartitionCover::kLegacy;
+      } else if (value == "automatic") {
+        options.partition_cover = PartitionCover::kAutomatic;
+      } else if (value == "include_all") {
+        options.partition_cover = PartitionCover::kIncludeAll;
+      } else if (value == "hybrid") {
+        options.partition_cover = PartitionCover::kHybrid;
+      } else {
+        std::cerr << "--partition-cover must be legacy, automatic, include_all, or hybrid\n";
+        return std::nullopt;
+      }
+    } else if (argument == "--green-context-layout") {
+      if (value == "none") {
+        options.green_context_layout = GreenContextLayout::kNone;
+      } else if (value == "same_partition") {
+        options.green_context_layout = GreenContextLayout::kSamePartition;
+      } else if (value == "dedicated_to_dedicated") {
+        options.green_context_layout = GreenContextLayout::kDedicatedToDedicated;
+      } else if (value == "dedicated_to_residual") {
+        options.green_context_layout = GreenContextLayout::kDedicatedToResidual;
+      } else {
+        std::cerr << "--green-context-layout has an unsupported value\n";
+        return std::nullopt;
+      }
+    } else if (argument == "--green-context-sm-count") {
+      if (!parse_integer(value, options.green_context_sm_count)) {
+        std::cerr << "--green-context-sm-count must be a nonnegative integer\n";
         return std::nullopt;
       }
     } else if (argument == "--tensor-storage") {
@@ -4534,6 +6811,11 @@ void print_usage(std::ostream& output) {
         std::cerr << "--queue-depth must be an integer\n";
         return std::nullopt;
       }
+    } else if (argument == "--sink-queue-depths") {
+      if (!parse_integer_list(value, options.sink_queue_depths)) {
+        std::cerr << "--sink-queue-depths must be a comma-separated integer list\n";
+        return std::nullopt;
+      }
     } else if (argument == "--relay-count") {
       if (!parse_integer(value, options.relay_count)) {
         std::cerr << "--relay-count must be an integer\n";
@@ -4549,9 +6831,29 @@ void print_usage(std::ostream& output) {
         std::cerr << "--notification-capacity must be an integer\n";
         return std::nullopt;
       }
+    } else if (argument == "--offered-rate-hz") {
+      if (!parse_integer(value, options.offered_rate_hz)) {
+        std::cerr << "--offered-rate-hz must be an integer\n";
+        return std::nullopt;
+      }
+    } else if (argument == "--offered-burst-size") {
+      if (!parse_integer(value, options.offered_burst_size)) {
+        std::cerr << "--offered-burst-size must be an integer\n";
+        return std::nullopt;
+      }
     } else if (argument == "--publisher-period-us") {
       if (!parse_integer(value, options.publisher_period_us)) {
         std::cerr << "--publisher-period-us must be an integer\n";
+        return std::nullopt;
+      }
+    } else if (argument == "--callback-work-us") {
+      if (!parse_integer(value, options.callback_work_us)) {
+        std::cerr << "--callback-work-us must be an integer\n";
+        return std::nullopt;
+      }
+    } else if (argument == "--test-source-tensor-pool-in-activation-retries") {
+      if (!parse_integer(value, options.test_source_tensor_pool_in_activation_retries)) {
+        std::cerr << "--test-source-tensor-pool-in-activation-retries must be an integer\n";
         return std::nullopt;
       }
     } else if (argument == "--timeout-ms") {
@@ -4607,6 +6909,8 @@ void print_usage(std::ostream& output) {
       }
     } else if (argument == "--output") {
       options.output_path = value;
+    } else if (argument == "--plan-output") {
+      options.plan_output_path = value;
     } else {
       std::cerr << "unknown option: " << argument << '\n';
       return std::nullopt;
@@ -4626,12 +6930,20 @@ void print_usage(std::ostream& output) {
     std::cerr << "--queue-depth must be positive\n";
     return std::nullopt;
   }
-  if (lossy_queue_policy(options.queue_policy) && !lossy_scenario_supported(options.scenario)) {
-    std::cerr << "--queue-policy drop_oldest supports --scenario pod, schema, tensor, or image\n";
+  if (std::find(kSupportedCallbackWorkUs.begin(),
+                kSupportedCallbackWorkUs.end(),
+                options.callback_work_us) == kSupportedCallbackWorkUs.end()) {
+    std::cerr << "--callback-work-us must be 0, 1, 5, 20, or 100\n";
     return std::nullopt;
   }
-  if (lossy_queue_policy(options.queue_policy) && options.fanout != 1U) {
-    std::cerr << "--queue-policy drop_oldest currently requires --fanout 1\n";
+  if (lossy_queue_policy(options.queue_policy) && !lossy_scenario_supported(options.scenario)) {
+    std::cerr << "--queue-policy drop_oldest supports --scenario pod, schema, third_party_schema, "
+                 "tensor, image, multi_tensor_loan, or multi_tensor_staging\n";
+    return std::nullopt;
+  }
+  if (lossy_queue_policy(options.queue_policy) && options.fanout != 1U &&
+      !offered_rate_mode(options)) {
+    std::cerr << "--queue-policy drop_oldest fanout requires --offered-rate-hz\n";
     return std::nullopt;
   }
   if (options.relay_count == 0U || options.relay_count > kMaximumRelayCount) {
@@ -4646,16 +6958,123 @@ void print_usage(std::ostream& output) {
     std::cerr << "--test-fail-sink-after-relay-pressure requires --scenario sample_forward\n";
     return std::nullopt;
   }
+  if (options.test_gate_pod_sink_for_pressure &&
+      (options.partition_cover != PartitionCover::kLegacy ||
+       options.workload != Workload::kSaturated || options.scenario != Scenario::kPod ||
+       options.operator_lanes != OperatorLaneMode::kSeparate ||
+       options.queue_policy != QueuePolicy::kDropOldest || options.queue_depth != 1U ||
+       !options.sink_queue_depths.empty() || options.fanout != 1U || options.multi_output ||
+       options.multi_input || options.mixed_policy_fanout || options.notification_capacity != 1U ||
+       offered_rate_mode(options) || options.callback_work_us != 0U ||
+       !options.force_holomq_process_local_inline || options.force_holomq_event_wake ||
+       options.force_process_local_channel_pump || !options.runtime_phase_counters)) {
+    std::cerr << "--test-gate-pod-sink-for-pressure requires the counter-enabled saturated "
+                 "separate-lane POD DropOldest depth-one fanout-one forced-HoloMQ diagnostic row\n";
+    return std::nullopt;
+  }
+  if (options.test_source_tensor_pool_in_activation_retries != 0U &&
+      (options.test_source_tensor_pool_in_activation_retries > kMaximumTestTensorPoolRetries ||
+       (options.scenario != Scenario::kTensor && options.scenario != Scenario::kMultiTensor) ||
+       !notification_driver_used(options))) {
+    std::cerr << "--test-source-tensor-pool-in-activation-retries requires a notification-driven "
+                 "Tensor or multi-Tensor scenario and must not exceed "
+              << kMaximumTestTensorPoolRetries << '\n';
+    return std::nullopt;
+  }
   if (options.fanout == 0U || options.fanout > kMaximumFanout) {
     std::cerr << "--fanout must be between 1 and " << kMaximumFanout << '\n';
     return std::nullopt;
   }
-  if (!fanout_scenario(options.scenario) && options.fanout != 1U) {
-    std::cerr << "--fanout greater than one requires --scenario pod or schema\n";
+  if (options.fanout > 8U && options.scenario != Scenario::kPod &&
+      options.scenario != Scenario::kSchema && options.scenario != Scenario::kThirdPartySchema) {
+    std::cerr << "--fanout greater than 8 requires --scenario pod, schema, or third_party_schema\n";
     return std::nullopt;
+  }
+  if (!fanout_scenario(options.scenario) && options.fanout != 1U) {
+    std::cerr << "--fanout greater than one requires --scenario pod, schema, "
+                 "third_party_schema, tensor, image, multi_tensor_loan, or "
+                 "multi_tensor_staging\n";
+    return std::nullopt;
+  }
+  if (options.multi_output && options.multi_input) {
+    std::cerr << "--multi-output and --multi-input are mutually exclusive\n";
+    return std::nullopt;
+  }
+  if (options.mixed_policy_fanout &&
+      (options.scenario != Scenario::kPod || options.fanout != 2U ||
+       options.operator_lanes != OperatorLaneMode::kShared ||
+       options.queue_policy != QueuePolicy::kBlocking || options.multi_output ||
+       options.multi_input || offered_rate_mode(options))) {
+    std::cerr << "--mixed-policy-fanout requires shared-lane blocking POD --fanout 2 "
+                 "without multi-output, multi-input, or an offered rate\n";
+    return std::nullopt;
+  }
+  if ((options.multi_output || options.multi_input) &&
+      (options.scenario != Scenario::kPod || options.fanout != 2U ||
+       options.operator_lanes != OperatorLaneMode::kShared ||
+       options.queue_policy != QueuePolicy::kBlocking || offered_rate_mode(options) ||
+       !options.force_holomq_process_local_inline)) {
+    std::cerr << "--multi-output/--multi-input requires shared-lane blocking POD --fanout 2 "
+                 "--force-holomq-process-local-inline without an offered rate\n";
+    return std::nullopt;
+  }
+  if (!options.sink_queue_depths.empty()) {
+    if (!fanout_scenario(options.scenario) || options.fanout <= 1U) {
+      std::cerr << "--sink-queue-depths requires supported --fanout greater than one\n";
+      return std::nullopt;
+    }
+    if (options.sink_queue_depths.size() != options.fanout) {
+      std::cerr << "--sink-queue-depths must provide exactly one depth per fanout sink\n";
+      return std::nullopt;
+    }
+    if (std::ranges::any_of(options.sink_queue_depths,
+                            [](const std::uint32_t depth) { return depth == 0U; })) {
+      std::cerr << "--sink-queue-depths values must be positive\n";
+      return std::nullopt;
+    }
+    if (std::ranges::max(options.sink_queue_depths) != options.queue_depth) {
+      std::cerr << "maximum --sink-queue-depths value must equal --queue-depth\n";
+      return std::nullopt;
+    }
+    if ((options.multi_output || options.multi_input) &&
+        std::ranges::any_of(options.sink_queue_depths, [&](const std::uint32_t depth) {
+          return depth != options.sink_queue_depths.front();
+        })) {
+      std::cerr << "--multi-output/--multi-input requires equal sink queue depths\n";
+      return std::nullopt;
+    }
   }
   if (options.notification_capacity == 0U) {
     std::cerr << "--notification-capacity must be positive\n";
+    return std::nullopt;
+  }
+  if (offered_rate_mode(options)) {
+    if (options.offered_rate_hz > kMaximumOfferedRateHz) {
+      std::cerr << "--offered-rate-hz must not exceed " << kMaximumOfferedRateHz << '\n';
+      return std::nullopt;
+    }
+    if (options.workload != Workload::kSaturated || !lossy_queue_policy(options.queue_policy) ||
+        options.fanout <= 1U || options.scenario != Scenario::kPod ||
+        options.operator_lanes != OperatorLaneMode::kShared) {
+      std::cerr << "--offered-rate-hz requires shared-lane saturated POD drop_oldest fanout\n";
+      return std::nullopt;
+    }
+    if (options.offered_burst_size <= options.queue_depth ||
+        options.offered_burst_size > kMaximumOfferedBurstSize) {
+      std::cerr << "--offered-burst-size must exceed queue depth and not exceed "
+                << kMaximumOfferedBurstSize << '\n';
+      return std::nullopt;
+    }
+    if (options.samples < options.offered_burst_size * 2U) {
+      std::cerr << "--offered-rate-hz requires at least two complete bursts\n";
+      return std::nullopt;
+    }
+    if (options.samples % options.offered_burst_size != 0U) {
+      std::cerr << "--offered-rate-hz requires --samples to contain only complete bursts\n";
+      return std::nullopt;
+    }
+  } else if (options.offered_burst_size != 1U) {
+    std::cerr << "--offered-burst-size requires --offered-rate-hz\n";
     return std::nullopt;
   }
   if (options.timeout_ms == 0U) {
@@ -4676,26 +7095,80 @@ void print_usage(std::ostream& output) {
     std::cerr << "--relay-cpu requires --scenario sample_forward\n";
     return std::nullopt;
   }
+  if (options.partition_cover == PartitionCover::kAutomatic &&
+      (options.operator_lanes != OperatorLaneMode::kSeparate || options.source_cpu >= 0 ||
+       options.relay_cpu >= 0 || options.sink_cpu >= 0 || !options.sink_cpus.empty() ||
+       options.busy_poll || options.green_context_layout != GreenContextLayout::kNone)) {
+    std::cerr << "automatic partition-cover rows require --operator-lanes separate and cannot bind "
+                 "generated names to placement or Green Context requests\n";
+    return std::nullopt;
+  }
+  if (options.partition_cover == PartitionCover::kAutomatic &&
+      options.force_holomq_process_local_inline) {
+    std::cerr << "automatic partition-cover rows cannot force HoloMQ because compiler-derived "
+                 "ownership is authoritative\n";
+    return std::nullopt;
+  }
+  if (options.partition_cover == PartitionCover::kAutomatic && options.runtime_phase_counters &&
+      options.fanout == 1U) {
+    std::cerr << "automatic partition-cover rows without explicit fan-out cannot use "
+                 "--runtime-phase-counters\n";
+    return std::nullopt;
+  }
+  if (options.partition_cover == PartitionCover::kIncludeAll &&
+      (options.operator_lanes != OperatorLaneMode::kShared || options.relay_cpu >= 0 ||
+       options.sink_cpu >= 0 || !options.sink_cpus.empty())) {
+    std::cerr << "include_all partition-cover rows require shared operator lanes and only the "
+                 "source CPU placement\n";
+    return std::nullopt;
+  }
+  if (options.partition_cover == PartitionCover::kHybrid &&
+      (options.operator_lanes != OperatorLaneMode::kSeparate || options.relay_cpu >= 0 ||
+       options.sink_cpu >= 0 || !options.sink_cpus.empty() ||
+       (options.green_context_layout != GreenContextLayout::kNone &&
+        options.green_context_layout != GreenContextLayout::kDedicatedToResidual))) {
+    std::cerr << "hybrid partition-cover rows require separate lanes, source-only placement, and "
+                 "at most dedicated_to_residual Green Context placement\n";
+    return std::nullopt;
+  }
   if (options.scenario == Scenario::kSourceOnly && options.sink_cpu >= 0) {
     std::cerr << "--sink-cpu is not used by --scenario source_only\n";
     return std::nullopt;
   }
   if (!uses_channel_pump(options) && options.channel_pump_cpu >= 0) {
-    std::cerr << "--channel-pump-cpu requires a transport-backed scenario\n";
+    std::cerr << "--channel-pump-cpu requires an active channel pump\n";
     return std::nullopt;
   }
   if (options.force_holomq_process_local_inline && !direct_retained_scenario(options.scenario)) {
     std::cerr << "--force-holomq-process-local-inline requires pod, signal, sample_forward, "
-                 "schema, tensor, image, or multi_tensor\n";
+                 "schema, third_party_schema, tensor, image, multi_tensor, multi_tensor_loan, or "
+                 "multi_tensor_staging\n";
     return std::nullopt;
   }
-  if (options.force_holomq_process_local_inline && options.fanout != 1U) {
-    std::cerr << "--force-holomq-process-local-inline requires --fanout 1\n";
+  if (options.force_holomq_process_local_inline && options.fanout != 1U && !options.multi_output &&
+      !options.multi_input) {
+    std::cerr << "--force-holomq-process-local-inline requires --fanout 1, --multi-output, or "
+                 "--multi-input\n";
     return std::nullopt;
   }
-  if (options.disable_direct_continuation_elision && options.force_holomq_process_local_inline) {
-    std::cerr << "--disable-direct-continuation-elision and "
-                 "--force-holomq-process-local-inline are mutually exclusive\n";
+  const bool fanout_wake_control = fanout_scenario(options.scenario) && options.fanout > 1U;
+  const bool exact_wake_control =
+      options.force_holomq_process_local_inline &&
+      (options.fanout == 1U || options.multi_output || options.multi_input) &&
+      holomq_event_wake_control_scenario(options.scenario);
+  if (options.force_holomq_event_wake && ((!exact_wake_control && !fanout_wake_control) ||
+                                          options.operator_lanes != OperatorLaneMode::kShared)) {
+    std::cerr << "--force-holomq-event-wake requires a shared-lane POD, schema, "
+                 "third_party_schema, Tensor, Image, or multi-Tensor fanout or 1:1 POD, schema, "
+                 "third_party_schema, Tensor, Image, or multi-Tensor "
+                 "--force-holomq-process-local-inline row\n";
+    return std::nullopt;
+  }
+  if (options.force_process_local_channel_pump &&
+      (!uses_holomq(options) || options.operator_lanes != OperatorLaneMode::kShared ||
+       options.force_holomq_event_wake)) {
+    std::cerr << "--force-process-local-channel-pump requires an otherwise eventless shared-lane "
+                 "HoloMQ row without --force-holomq-event-wake\n";
     return std::nullopt;
   }
   if (options.operator_lanes == OperatorLaneMode::kShared && options.sink_cpu >= 0) {
@@ -4706,9 +7179,16 @@ void print_usage(std::ostream& output) {
     std::cerr << "--relay-cpu is not used with --operator-lanes shared\n";
     return std::nullopt;
   }
+  if ((options.scenario == Scenario::kTensor || options.scenario == Scenario::kImage ||
+       multi_tensor_scenario(options.scenario)) &&
+      options.fanout > 1U && options.operator_lanes != OperatorLaneMode::kShared) {
+    std::cerr << "Tensor, Image, and multi-Tensor fanout currently require --operator-lanes "
+                 "shared\n";
+    return std::nullopt;
+  }
   if (options.operator_lanes == OperatorLaneMode::kPerSink &&
       (!fanout_scenario(options.scenario) || options.fanout <= 1U)) {
-    std::cerr << "--operator-lanes per_sink requires pod or schema fanout greater than one\n";
+    std::cerr << "--operator-lanes per_sink requires supported fanout greater than one\n";
     return std::nullopt;
   }
   if (options.operator_lanes == OperatorLaneMode::kPerSink && options.sink_cpu >= 0) {
@@ -4733,11 +7213,11 @@ void print_usage(std::ostream& output) {
     std::cerr << "--scenario source_only requires a notification workload\n";
     return std::nullopt;
   }
-  if (!is_notification_workload(options.workload) && options.notification_driver_cpu >= 0) {
+  if (!notification_driver_used(options) && options.notification_driver_cpu >= 0) {
     std::cerr << "--notification-driver-cpu requires a notification workload\n";
     return std::nullopt;
   }
-  if (!is_notification_workload(options.workload) && options.notification_capacity != 1U) {
+  if (!notification_driver_used(options) && options.notification_capacity != 1U) {
     std::cerr << "--notification-capacity requires a notification workload\n";
     return std::nullopt;
   }
@@ -4762,7 +7242,7 @@ void print_usage(std::ostream& output) {
               options.operator_lanes == OperatorLaneMode::kSeparate
           ? options.relay_cpu
           : -1,
-      is_notification_workload(options.workload) ? options.notification_driver_cpu : -1};
+      notification_driver_used(options) ? options.notification_driver_cpu : -1};
   assigned_cpus.insert(assigned_cpus.end(), options.sink_cpus.begin(), options.sink_cpus.end());
   std::sort(assigned_cpus.begin(), assigned_cpus.end());
   const auto first_pinned = std::find_if(
@@ -4784,20 +7264,34 @@ void print_usage(std::ostream& output) {
     std::cerr << "--tensor-device must be nonnegative\n";
     return std::nullopt;
   }
-  if ((options.scenario == Scenario::kImage || options.scenario == Scenario::kMultiTensor) &&
-      options.tensor_storage != TensorStorage::kPageableHost) {
-    std::cerr << "--scenario image and multi_tensor currently require --tensor-storage "
-                 "pageable_host\n";
-    return std::nullopt;
-  }
-  if ((options.scenario == Scenario::kImage || options.scenario == Scenario::kMultiTensor) &&
-      options.tensor_device != 0) {
-    std::cerr << "--scenario image and multi_tensor currently require --tensor-device 0\n";
-    return std::nullopt;
-  }
   if (options.bulk_work_profile == BulkWorkProfile::kDescriptorOnly &&
       options.scenario != Scenario::kTensor && options.scenario != Scenario::kMultiTensor) {
     std::cerr << "--bulk-work-profile descriptor_only requires --scenario tensor or multi_tensor\n";
+    return std::nullopt;
+  }
+  if (options.green_context_layout != GreenContextLayout::kNone &&
+      (options.scenario != Scenario::kTensor || options.tensor_storage != TensorStorage::kDevice)) {
+    std::cerr << "--green-context-layout requires --scenario tensor --tensor-storage device\n";
+    return std::nullopt;
+  }
+  if (options.green_context_layout == GreenContextLayout::kSamePartition &&
+      options.operator_lanes != OperatorLaneMode::kShared) {
+    std::cerr << "--green-context-layout same_partition requires --operator-lanes shared\n";
+    return std::nullopt;
+  }
+  if (options.green_context_layout == GreenContextLayout::kNone &&
+      options.green_context_sm_count != 0U) {
+    std::cerr << "--green-context-sm-count requires a Green Context layout\n";
+    return std::nullopt;
+  }
+  if ((options.green_context_layout == GreenContextLayout::kDedicatedToDedicated ||
+       options.green_context_layout == GreenContextLayout::kDedicatedToResidual) &&
+      options.operator_lanes != OperatorLaneMode::kSeparate) {
+    std::cerr << "dedicated Green Context layouts require --operator-lanes separate\n";
+    return std::nullopt;
+  }
+  if (options.cuda_resource_counters && options.scenario != Scenario::kTensor) {
+    std::cerr << "--cuda-resource-counters requires --scenario tensor\n";
     return std::nullopt;
   }
   return options;
@@ -4806,8 +7300,9 @@ void print_usage(std::ostream& output) {
 // Benchmark setup is intentionally linear so every failure cleans up the same shared state.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] int run_benchmark(Options options) {
-  if (options.scenario == Scenario::kTensor &&
-      options.tensor_storage != TensorStorage::kPageableHost) {
+  if (tensor_backed_scenario(options.scenario) &&
+      (options.tensor_storage != TensorStorage::kPageableHost ||
+       (options.scenario == Scenario::kTensor && uses_holomq(options)))) {
     int device_count{};
     if (cudaGetDeviceCount(&device_count) != cudaSuccess || options.tensor_device >= device_count ||
         cudaSetDevice(options.tensor_device) != cudaSuccess || cudaFree(nullptr) != cudaSuccess) {
@@ -4815,6 +7310,32 @@ void print_usage(std::ostream& output) {
       std::cerr << "SKIP: requested CUDA Tensor storage is unavailable\n";
       return kSkipped;
     }
+  }
+  if (options.green_context_layout != GreenContextLayout::kNone) {
+    auto capability = query_cuda_green_context_capability(DeviceId{options.tensor_device});
+    if (!capability) {
+      std::cerr << "SKIP: CUDA Green Context capability is unavailable: "
+                << runtime_error_message(capability.error()) << '\n';
+      return kSkipped;
+    }
+    const std::uint32_t quantum = capability->structured_sm_quantum;
+    const std::uint32_t requested_sm_count =
+        options.green_context_sm_count == 0U ? quantum : options.green_context_sm_count;
+    const std::uint32_t dedicated_group_count =
+        options.green_context_layout == GreenContextLayout::kDedicatedToDedicated ? 2U : 1U;
+    // The Tensor benchmark always has a compiler-owned CUDA service obligation outside the
+    // application partition, including the fused same-partition layout.
+    const std::uint32_t residual_sm_count = quantum;
+    const std::uint64_t required_sm_count =
+        static_cast<std::uint64_t>(dedicated_group_count) * requested_sm_count + residual_sm_count;
+    const std::uint64_t structured_sm_capacity =
+        static_cast<std::uint64_t>(capability->max_structured_context_count) * quantum;
+    if (quantum == 0U || requested_sm_count == 0U || requested_sm_count % quantum != 0U ||
+        required_sm_count > structured_sm_capacity) {
+      std::cerr << "SKIP: device cannot provide the requested structured Green Context layout\n";
+      return kSkipped;
+    }
+    options.green_context_sm_count = requested_sm_count;
   }
   BenchmarkRunState state{std::move(options)};
   auto image_tensor = state.initialize_image_tensor();
@@ -4833,10 +7354,17 @@ void print_usage(std::ostream& output) {
            .required = uses_channel_pump(state.options())},
           {.role = SupportThreadRole::kNotificationDriver,
            .requested_cpu = state.options().notification_driver_cpu,
-           .required = state.options().workload != Workload::kLatency},
+           .required = state.notification_driven()},
       });
+  const std::int64_t compile_started_ns = now_ns();
   ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_support_thread_control(
       make_plan(state.options()), thread_control);
+  if (state.options().force_process_local_channel_pump) {
+    plan = detail::RuntimeTestPlanAccess::force_process_local_channel_pump_for_test(plan);
+  }
+  BenchmarkLifecycleTiming lifecycle_timing{
+      .compile_ns = static_cast<std::uint64_t>(now_ns() - compile_started_ns),
+  };
   if (state.options().disable_direct_continuation_elision) {
     plan = detail::RuntimeTestPlanAccess::disable_direct_continuation_elision_for_test(plan);
   }
@@ -4850,14 +7378,37 @@ void print_usage(std::ostream& output) {
     phase_counters = std::make_shared<detail::RuntimePhaseCounters>(std::span{phase_trace_storage});
     plan = detail::RuntimeTestPlanAccess::with_phase_counters(plan, phase_counters);
   }
+  std::shared_ptr<detail::RuntimeTensorOutputTestControl> cuda_resource_control;
+  if (state.options().cuda_resource_counters) {
+    cuda_resource_control = std::make_shared<detail::RuntimeTensorOutputTestControl>();
+    plan =
+        detail::RuntimeTestPlanAccess::with_tensor_output_test_control(plan, cuda_resource_control);
+  }
   if (!plan.ok()) {
     std::cerr << "failed to compile runtime Graph benchmark plan\n" << plan.json() << '\n';
     g_run_state = nullptr;
     return 2;
   }
-  if (state.options().bulk_work_profile == BulkWorkProfile::kDescriptorOnly &&
-      (state.options().scenario == Scenario::kTensor ||
-       state.options().scenario == Scenario::kMultiTensor)) {
+  if (!tensor_plan_matches_options(plan, state.options())) {
+    std::cerr << "compiled Tensor storage or field-pool evidence does not match the requested "
+                 "benchmark geometry\n";
+    g_run_state = nullptr;
+    return 2;
+  }
+  if (!state.options().plan_output_path.empty()) {
+    std::ofstream plan_output(state.options().plan_output_path, std::ios::out | std::ios::trunc);
+    if (!plan_output) {
+      std::cerr << "failed to open benchmark plan output: " << state.options().plan_output_path
+                << '\n';
+      g_run_state = nullptr;
+      return 2;
+    }
+    plan_output << plan.json() << '\n';
+  }
+  if ((state.options().bulk_work_profile == BulkWorkProfile::kDescriptorOnly &&
+       (state.options().scenario == Scenario::kTensor ||
+        state.options().scenario == Scenario::kMultiTensor)) ||
+      state.options().scenario == Scenario::kMultiTensorLoan) {
     std::size_t warmup_slots{};
     if (state.options().scenario == Scenario::kTensor) {
       const auto allocations = plan.tensor_allocations();
@@ -4883,19 +7434,39 @@ void print_usage(std::ostream& output) {
                                   2U * static_cast<std::size_t>(state.options().queue_depth));
     }
     if (warmup_slots == 0U || state.options().warmup < warmup_slots) {
-      std::cerr << "descriptor-only warmup cannot cover the hot-path Tensor slots\n";
+      std::cerr << "descriptor warmup cannot cover the hot-path Tensor slots\n";
+      g_run_state = nullptr;
+      return 2;
+    }
+    if (state.options().scenario == Scenario::kMultiTensor &&
+        warmup_slots > static_cast<std::size_t>(state.options().queue_depth) + 2U) {
+      std::cerr << "descriptor warmup cannot force full multi-Tensor field-pool circulation at "
+                   "this queue depth\n";
       g_run_state = nullptr;
       return 2;
     }
     state.set_descriptor_warmup_slots(warmup_slots);
   }
 
+  const std::int64_t run_async_started_ns = now_ns();
   RunSession session = run_async(plan);
+  lifecycle_timing.run_async_return_ns =
+      static_cast<std::uint64_t>(now_ns() - run_async_started_ns);
   std::thread notification_driver;
   if (state.notification_driven()) {
     auto sender = state.take_notification_sender();
-    if (sender.has_value()) {
-      notification_driver = std::thread([&state, thread_control, sender = std::move(*sender)]() {
+    auto pressure_gate_sender = state.options().test_gate_pod_sink_for_pressure
+                                    ? state.take_pressure_gate_notification_sender()
+                                    : std::optional<NotificationSender>{};
+    if (sender.has_value() &&
+        (!state.options().test_gate_pod_sink_for_pressure || pressure_gate_sender.has_value())) {
+      notification_driver = std::thread([&state,
+                                         thread_control,
+                                         phase_counters,
+                                         sender = std::move(*sender),
+                                         pressure_gate_sender = std::move(pressure_gate_sender)]() {
+        const detail::RuntimeThreadUsageScope thread_usage{
+            phase_counters.get(), detail::RuntimeThreadUsageRole::kNotificationDriver};
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
         try {
 #endif
@@ -4904,7 +7475,14 @@ void print_usage(std::ostream& output) {
             state.fail(entered.error().code);
             return;
           }
-          if (state.notification_latency()) {
+          if (state.options().test_gate_pod_sink_for_pressure) {
+            if (!phase_counters || !pressure_gate_sender) {
+              state.fail(ErrorCode::kProtocolError);
+              return;
+            }
+            state.drive_pressured_pod_diagnostic_notifications(
+                sender, *pressure_gate_sender, *phase_counters);
+          } else if (state.notification_latency()) {
             state.drive_notification_latency(sender);
           } else {
             state.drive_notifications(sender);
@@ -4919,26 +7497,44 @@ void print_usage(std::ostream& output) {
       state.fail(ErrorCode::kTimeout);
     }
   }
-  const bool signaled = state.wait();
+  const auto benchmark_deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds{state.options().timeout_ms};
+  bool signaled = false;
+  while (!signaled && session.termination() == RunTermination::kRunning &&
+         std::chrono::steady_clock::now() < benchmark_deadline) {
+    signaled = state.wait_for(std::chrono::milliseconds{10});
+  }
   if (!signaled) {
-    std::cerr << "runtime Graph benchmark timeout: notifications=" << state.notifications_accepted()
-              << " publications=" << state.publications() << " deliveries=" << state.deliveries()
-              << " completions=" << state.activation_completions() << '\n';
-    state.fail(ErrorCode::kTimeout);
+    if (session.termination() == RunTermination::kFailed) {
+      std::cerr << "runtime Graph benchmark session failed before completion";
+      if (!session.diagnostics().empty()) {
+        std::cerr << ": " << session.diagnostics().front().token;
+      }
+      std::cerr << '\n';
+      state.fail(ErrorCode::kFailure);
+    } else {
+      std::cerr << "runtime Graph benchmark timeout: notifications="
+                << state.notifications_accepted() << " publications=" << state.publications()
+                << " deliveries=" << state.deliveries()
+                << " completions=" << state.activation_completions() << '\n';
+      state.fail(ErrorCode::kTimeout);
+    }
   }
   if (notification_driver.joinable()) {
     notification_driver.join();
   }
   bool retained_tensor_valid = true;
   std::optional<std::uint64_t> final_validation_ns;
-  if ((state.options().scenario == Scenario::kTensor ||
-       state.options().scenario == Scenario::kImage ||
-       state.options().scenario == Scenario::kMultiTensor) &&
+  if (tensor_backed_scenario(state.options().scenario) &&
       state.options().validation == PayloadValidation::kFinal && signaled && state.completed()) {
     const std::int64_t validation_start_ns = now_ns();
-    retained_tensor_valid = state.options().scenario == Scenario::kMultiTensor
-                                ? state.validate_retained_multi_tensor()
-                                : state.validate_retained_tensor();
+    if (state.options().scenario == Scenario::kMultiTensor) {
+      retained_tensor_valid = state.validate_retained_multi_tensor();
+    } else if (multi_tensor_scenario(state.options().scenario)) {
+      retained_tensor_valid = state.validate_retained_multi_tensors();
+    } else {
+      retained_tensor_valid = state.validate_retained_tensor();
+    }
     final_validation_ns = static_cast<std::uint64_t>(now_ns() - validation_start_ns);
     if (!retained_tensor_valid) {
       state.record_validation_error();
@@ -4946,7 +7542,18 @@ void print_usage(std::ostream& output) {
     }
   }
   session.request_stop();
+  const std::int64_t terminal_wait_started_ns = now_ns();
   session.wait();
+  lifecycle_timing.terminal_wait_ns =
+      static_cast<std::uint64_t>(now_ns() - terminal_wait_started_ns);
+  const std::int64_t first_callback_entry_ns = state.first_callback_entry_ns();
+  lifecycle_timing.run_async_to_first_callback_ns =
+      first_callback_entry_ns > run_async_started_ns
+          ? static_cast<std::uint64_t>(first_callback_entry_ns - run_async_started_ns)
+          : 0U;
+  const std::optional<detail::RuntimeTensorOutputTestControl::PoolSnapshot> cuda_resource_counters =
+      cuda_resource_control != nullptr ? std::optional{cuda_resource_control->snapshot(0U)}
+                                       : std::nullopt;
   const RuntimePhaseTraceSummary phase_trace = summarize_phase_trace(state, phase_counters.get());
 
   std::ofstream output_file;
@@ -4967,19 +7574,23 @@ void print_usage(std::ostream& output) {
               *thread_control,
               phase_counters.get(),
               phase_trace,
-              final_validation_ns);
+              final_validation_ns,
+              lifecycle_timing,
+              cuda_resource_counters);
 
   const std::uint64_t expected_total = state.final_sequence();
   const bool source_only = state.options().scenario == Scenario::kSourceOnly;
-  const bool lossy = lossy_queue_policy(state.options().queue_policy);
+  const bool lossy = has_lossy_subscriber(state.options());
   const std::uint64_t expected_publications = source_only ? 0U : expected_total;
+  const std::uint64_t expected_delivery_opportunities =
+      expected_publications * state.options().fanout;
   const std::uint64_t expected_deliveries =
       source_only ? 0U : (lossy ? state.deliveries() : expected_total * state.options().fanout);
-  const std::uint64_t expected_deliveries_per_sink =
-      source_only || !lossy ? expected_total : expected_deliveries;
-  const std::uint64_t expected_sink_callbacks = expected_deliveries;
+  const std::uint64_t expected_deliveries_per_sink = source_only ? 0U : expected_total;
+  const std::uint64_t expected_sink_callbacks =
+      state.options().multi_input ? expected_publications : expected_deliveries;
   const std::uint64_t expected_activation_completions =
-      source_only || !lossy ? expected_total : expected_deliveries;
+      source_only || !lossy ? expected_total : state.activation_completions();
   const std::uint64_t expected_relay = state.options().scenario == Scenario::kSampleForward
                                            ? expected_total * state.options().relay_count
                                            : 0U;
@@ -4987,11 +7598,9 @@ void print_usage(std::ostream& output) {
       state.options().scenario == Scenario::kTensor ? expected_publications : 0U;
   const std::uint64_t expected_inline_payload_emits =
       state.options().scenario == Scenario::kSourceOnly ||
-              state.options().scenario == Scenario::kTensor ||
-              state.options().scenario == Scenario::kImage ||
-              state.options().scenario == Scenario::kMultiTensor
+              tensor_backed_scenario(state.options().scenario)
           ? 0U
-          : expected_publications + expected_relay;
+          : expected_publications * source_emit_count(state.options()) + expected_relay;
   const bool descriptor_initialization_valid =
       state.options().bulk_work_profile != BulkWorkProfile::kDescriptorOnly ||
       (state.descriptor_backing_initializations() >=
@@ -4999,32 +7608,52 @@ void print_usage(std::ostream& output) {
        state.descriptor_backing_initializations_during_measurement() == 0U);
   const bool notification_counts_valid =
       !state.notification_driven() ||
-      ((state.notification_latency() ? state.notifications_accepted() == expected_total
-                                     : state.notifications_accepted() >= expected_total) &&
-       state.notification_attempts() >= state.notifications_accepted());
+      (offered_rate_mode(state.options())
+           ? state.notifications_accepted() == expected_total &&
+                 state.notification_attempts() == expected_total &&
+                 state.notification_backpressure() == 0U && state.notification_not_ready() == 0U
+           : (state.notification_latency() ? state.notifications_accepted() == expected_total
+                                           : state.notifications_accepted() >= expected_total) &&
+                 state.notification_attempts() >= state.notifications_accepted());
   const bool timing_valid =
       state.measured_start_ns() > 0 && state.measured_end_ns() > state.measured_start_ns();
   const bool replacement_counts_valid =
-      !lossy ||
-      (state.deliveries() > 0U && state.deliveries() <= state.publications() &&
-       state.consumer_visible_replacements() + state.deliveries() == state.publications() &&
-       (state.options().workload == Workload::kSaturated ||
-        state.consumer_visible_replacements() == 0U));
-  // Aggregate backpressure also includes relay retries, which do not re-run the source.
-  const std::uint64_t expected_source_callbacks =
-      expected_total + state.source_backpressure_count();
+      !lossy || (state.deliveries() > 0U && state.deliveries() <= expected_delivery_opportunities &&
+                 state.consumer_visible_replacements() + state.deliveries() ==
+                     expected_delivery_opportunities &&
+                 (state.options().workload == Workload::kSaturated ||
+                  state.consumer_visible_replacements() == 0U));
+  const double accepted_offer_rate = state.accepted_publication_offer_rate_per_second();
+  const bool offered_rate_valid =
+      !offered_rate_mode(state.options()) ||
+      (accepted_offer_rate > 0.0 &&
+       std::abs(accepted_offer_rate - static_cast<double>(state.options().offered_rate_hz)) /
+               static_cast<double>(state.options().offered_rate_hz) <=
+           kMaximumOfferedRateRelativeError &&
+       state.every_sink_has_replacements());
+  const std::uint64_t expected_source_callbacks = state.expected_source_callbacks();
+  const std::uint64_t expected_measured_source_callbacks =
+      state.expected_measured_source_callbacks();
+  const bool measured_source_callbacks_valid =
+      offered_rate_mode(state.options())
+          ? state.measured_source_callbacks() == expected_measured_source_callbacks
+          : state.measured_source_callbacks() >= expected_measured_source_callbacks &&
+                state.measured_source_callbacks() <=
+                    expected_measured_source_callbacks + state.source_backpressure_count();
   const bool valid =
       signaled && state.completed() && state.first_error() == ErrorCode::kSuccess && timing_valid &&
       state.publications() == expected_publications && state.deliveries() == expected_deliveries &&
       state.activation_completions() == expected_activation_completions &&
-      state.source_callbacks() == expected_source_callbacks &&
+      state.source_callbacks() == expected_source_callbacks && measured_source_callbacks_valid &&
       state.relay_publications() == expected_relay && state.relay_callbacks() == expected_relay &&
       state.sink_callbacks() == expected_sink_callbacks && retained_tensor_valid &&
       (source_only || state.sink_evidence_valid(expected_total, expected_deliveries_per_sink)) &&
+      state.lossy_activation_completions_valid() && offered_rate_valid &&
       state.validation_errors() == 0U && state.allocation_probe_valid() &&
       descriptor_initialization_valid && replacement_counts_valid && notification_counts_valid &&
       thread_control->required_roles_entered() &&
       phase_counters_valid(state, phase_counters.get()) &&
+      terminal_phase_state_valid(phase_trace, phase_counters.get()) &&
       (!phase_trace.enabled ||
        (phase_trace.valid && phase_trace.dropped == 0U &&
         phase_trace.unmatched_readiness_polls == 0U &&
@@ -5042,10 +7671,22 @@ void print_usage(std::ostream& output) {
               << " relay_publications=" << state.relay_publications()
               << " deliveries=" << state.deliveries()
               << " source_callbacks=" << state.source_callbacks()
+              << " source_compute_entries=" << state.source_compute_entries()
+              << " source_terminal_compute_entries=" << state.source_terminal_compute_entries()
               << " backpressured_emits=" << state.backpressure_count()
               << " source_backpressured_emits=" << state.source_backpressure_count()
+              << " source_tensor_pool_retries=" << state.source_tensor_pool_retries()
+              << " source_tensor_pool_in_activation_retries="
+              << state.source_tensor_pool_in_activation_retries()
               << " expected_source_callbacks=" << expected_source_callbacks
-              << " completions=" << state.activation_completions() << " expected=" << expected_total
+              << " measured_source_callbacks=" << state.measured_source_callbacks()
+              << " expected_measured_source_callbacks=" << expected_measured_source_callbacks
+              << " activation_completions=" << state.activation_completions()
+              << " expected_activation_completions=" << expected_activation_completions
+              << " final_sequence=" << expected_total
+              << " offered_rate_valid=" << offered_rate_valid
+              << " accepted_offer_rate=" << accepted_offer_rate
+              << " configured_offer_rate=" << state.options().offered_rate_hz
               << " start_ns=" << state.measured_start_ns() << " end_ns=" << state.measured_end_ns()
               << " termination=" << termination_name(session.termination()) << '\n';
   }

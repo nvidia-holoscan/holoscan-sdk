@@ -19,8 +19,11 @@ Usage:
 
 recommend prints a comma-separated CPU list containing one online logical CPU
 per physical core. It keeps the selection on the socket with the most available
-cores and defaults to eight CPUs. The deterministic recommendation does not
-sample transient CPU utilization or interrupt activity.
+cores and returns up to COUNT CPUs (eight by default). When Linux exposes a
+non-empty isolated CPU list, recommend selects only from that list. If the
+selected socket has fewer cores, it returns every available core and reports
+the reduction on stderr. The deterministic recommendation does not sample
+transient CPU utilization or interrupt activity.
 
 apply saves every targeted idle-state disable value and CPU-frequency governor
 before changing anything. It then disables every exposed CPU idle state whose
@@ -45,6 +48,35 @@ die() {
 read_value() {
   local path="$1"
   tr -d '\n' < "$path"
+}
+
+parse_cpu_list() {
+  local cpu_list="$1"
+  local output_name="$2"
+  local field
+  local first
+  local last
+  local cpu
+  local -a fields
+  local -n output="$output_name"
+
+  IFS=',' read -r -a fields <<< "$cpu_list"
+  for field in "${fields[@]}"; do
+    if [[ "$field" =~ ^[0-9]+$ ]]; then
+      output[$((10#$field))]=1
+      continue
+    fi
+    if [[ "$field" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      first=$((10#${BASH_REMATCH[1]}))
+      last=$((10#${BASH_REMATCH[2]}))
+      ((first <= last)) || die "invalid descending CPU range: $field"
+      for ((cpu = first; cpu <= last; ++cpu)); do
+        output[$cpu]=1
+      done
+      continue
+    fi
+    die "invalid CPU list entry: $field"
+  done
 }
 
 collect_idle_paths() {
@@ -78,10 +110,22 @@ collect_core_candidates() {
   local cpu_dir
   local online
   local package
+  local siblings
   local key
+  local isolated_list=""
+  local isolated_only=0
   local -A core_cpus=()
   local -A core_ids=()
   local -A core_packages=()
+  local -A isolated_cpus=()
+
+  if [[ -r "$CPU_SYSFS_ROOT/isolated" ]]; then
+    isolated_list=$(read_value "$CPU_SYSFS_ROOT/isolated")
+    if [[ -n "$isolated_list" ]]; then
+      parse_cpu_list "$isolated_list" isolated_cpus
+      isolated_only=1
+    fi
+  fi
 
   for cpu_dir in "$CPU_SYSFS_ROOT"/cpu[0-9]*; do
     [[ -d "$cpu_dir" ]] || continue
@@ -91,13 +135,23 @@ collect_core_candidates() {
       online=$(read_value "$cpu_dir/online")
       [[ "$online" == "1" ]] || continue
     fi
+    if ((isolated_only)) && [[ -z "${isolated_cpus[$cpu]:-}" ]]; then
+      continue
+    fi
     package=0
     core=$cpu
     [[ -r "$cpu_dir/topology/physical_package_id" ]] &&
       package=$(read_value "$cpu_dir/topology/physical_package_id")
     [[ -r "$cpu_dir/topology/core_id" ]] &&
       core=$(read_value "$cpu_dir/topology/core_id")
-    key="$package:$core"
+    siblings=""
+    [[ -r "$cpu_dir/topology/thread_siblings_list" ]] &&
+      siblings=$(read_value "$cpu_dir/topology/thread_siblings_list")
+    if [[ -n "$siblings" ]]; then
+      key="$package:siblings:$siblings"
+    else
+      key="$package:core:$core"
+    fi
     if [[ -z "${core_cpus[$key]:-}" ]] || ((cpu < core_cpus[$key])); then
       core_cpus[$key]=$cpu
       core_ids[$key]=$core
@@ -117,6 +171,9 @@ recommend_cpus() {
   local cpu
   local selected_package=""
   local selected_count=0
+  local recommendation_count
+  local isolated_list=""
+  local isolated_only=0
   local -a candidates
   local -a selected
   local -A package_counts=()
@@ -125,14 +182,23 @@ recommend_cpus() {
   [[ "$requested" =~ ^[1-9][0-9]*$ ]] ||
     die "recommend COUNT must be a positive integer"
 
+  if [[ -r "$CPU_SYSFS_ROOT/isolated" ]]; then
+    isolated_list=$(read_value "$CPU_SYSFS_ROOT/isolated")
+    [[ -n "$isolated_list" ]] && isolated_only=1
+  fi
+
   while IFS=$'\t' read -r package core cpu; do
     [[ -n "$package" && -n "$core" && -n "$cpu" ]] || continue
     package_counts[$package]=$(( ${package_counts[$package]:-0} + 1 ))
     package_cpus[$package]+=" $cpu"
   done < <(collect_core_candidates)
 
-  ((${#package_counts[@]} > 0)) ||
+  if ((${#package_counts[@]} == 0)); then
+    if ((isolated_only)); then
+      die "no online isolated CPU topology found under $CPU_SYSFS_ROOT"
+    fi
     die "no online CPU topology found under $CPU_SYSFS_ROOT"
+  fi
   for package in "${!package_counts[@]}"; do
     if ((package_counts[$package] > selected_count)) ||
       { ((package_counts[$package] == selected_count)) &&
@@ -141,18 +207,32 @@ recommend_cpus() {
       selected_count=${package_counts[$package]}
     fi
   done
-  ((selected_count >= requested)) ||
-    die "socket $selected_package exposes only $selected_count distinct online cores"
+  recommendation_count=$requested
+  if ((selected_count < requested)); then
+    recommendation_count=$selected_count
+    if ((isolated_only)); then
+      printf 'Requested %d cores, but the isolated CPU set on socket %s exposes only %d distinct physical cores; using all available isolated cores\n' \
+        "$requested" "$selected_package" "$selected_count" >&2
+    else
+      printf 'Requested %d cores, but socket %s exposes only %d; using all available cores\n' \
+        "$requested" "$selected_package" "$selected_count" >&2
+    fi
+  fi
 
   read -r -a candidates <<< "${package_cpus[$selected_package]}"
   mapfile -t candidates < <(printf '%s\n' "${candidates[@]}" | sort -n)
-  selected=("${candidates[@]:0:requested}")
+  selected=("${candidates[@]:0:recommendation_count}")
   (
     IFS=,
     printf '%s\n' "${selected[*]}"
   )
-  printf 'Selected %d distinct physical cores on socket %s\n' \
-    "$requested" "$selected_package" >&2
+  if ((isolated_only)); then
+    printf 'Selected %d distinct isolated physical cores on socket %s\n' \
+      "$recommendation_count" "$selected_package" >&2
+  else
+    printf 'Selected %d distinct physical cores on socket %s\n' \
+      "$recommendation_count" "$selected_package" >&2
+  fi
 }
 
 require_writable() {

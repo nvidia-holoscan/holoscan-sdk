@@ -38,6 +38,7 @@ class DirectPortBinding final : public detail::PortBinding {
   [[nodiscard]] expected<std::size_t, Error> drain(
       std::span<detail::RuntimeEvent> destination) noexcept override;
   [[nodiscard]] SourceId source() const noexcept override { return restart_event_.source; }
+  void cancel() noexcept override;
   [[nodiscard]] expected<std::uint64_t, Error> advance_source_generation() noexcept override;
   [[nodiscard]] std::size_t capacity() const noexcept override { return storage_.size(); }
   [[nodiscard]] bool closed() const noexcept override { return closed_; }

@@ -1,0 +1,81 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "geometry.fbs";
+include "header.fbs";
+
+namespace holoscan.schema;
+
+// Per-sample conditions the producer is asserting. A clear bit means the producer is not making
+// that claim, so consumers must not read a clear bit as a denial.
+//
+// ROS expresses "no orientation" by setting orientation_covariance[0] to -1, which overloads a
+// variance with a sentinel and cannot express the other three conditions at all. An explicit flag
+// word says the same thing without spending a covariance element on it.
+//
+// flatc emits these as an unscoped C++ enum without bitwise operators, so combining two of them
+// needs a cast: static_cast<ImuFlags>(ImuFlags_ORIENTATION_VALID | ImuFlags_UNCALIBRATED).
+// Testing one needs none: (flags & ImuFlags_ORIENTATION_VALID) != 0.
+enum ImuFlags : ubyte (bit_flags) {
+  // orientation carries a real estimate. Clear on raw hardware sources, which measure angular
+  // velocity and acceleration only and leave orientation to a downstream fusion stage.
+  ORIENTATION_VALID,
+
+  // linear_acceleration clipped at the configured full-scale range, so the sample understates
+  // true acceleration and integrating through it accumulates error silently.
+  ACCELEROMETER_SATURATED,
+
+  // angular_velocity clipped at the configured full-scale range.
+  GYROSCOPE_SATURATED,
+
+  // Bias and scale correction have not been applied; the values are raw counts converted to
+  // engineering units, and a consumer that assumes calibrated input will drift.
+  UNCALIBRATED,
+}
+
+// Inertial measurement unit message. One sample per message; batching a window of samples is a
+// trigger-level concern (see the batched-window contract) and deliberately not a schema concern.
+//
+// The field set is deliberately the ROS sensor_msgs/Imu set: the three measurements, their three
+// covariances, and a header. Device-specific quantities do not belong here. A vendor that reports,
+// say, die temperature or a raw status word declares its own table carrying this one:
+//
+//   table ImuVectorNavVn {
+//     base: Imu;
+//     temperature_c: float;
+//   }
+//
+// Note that this composes rather than inherits — FlatBuffers has no inheritance — so the wrapper
+// is a distinct port type and does not connect to a port expecting an Imu. A pipeline that wants
+// both feeds the vendor table to vendor-aware consumers and publishes a plain Imu alongside it.
+table Imu {
+  // Frame, timestamps, and device sample number.
+  header: Header (id: 0);
+
+  // Inline orientation quaternion, order x, y, z, w. Only meaningful when
+  // ImuFlags.ORIENTATION_VALID is set: the inline representation cannot express absence on its
+  // own, and an all-zero quaternion has zero norm, so it is not a rotation and normalizing it
+  // yields NaN.
+  orientation: Quaternionf (id: 1, native_inline);
+
+  // Inline angular velocity about the sensor body axes, in radians per second.
+  angular_velocity: Vector3f (id: 2, native_inline);
+
+  // Inline linear acceleration along the sensor body axes, in meters per second squared, with
+  // gravity included.
+  linear_acceleration: Vector3f (id: 3, native_inline);
+
+  // Conditions asserted for this sample.
+  flags: ImuFlags = 0 (id: 4);
+
+  // Covariance of the orientation estimate, in radians squared, about the body axes.
+  orientation_covariance: Matrix3f (id: 5);
+
+  // Covariance of the angular velocity measurement, in radians squared per second squared.
+  angular_velocity_covariance: Matrix3f (id: 6);
+
+  // Covariance of the linear acceleration measurement, in meters squared per second to the fourth.
+  linear_acceleration_covariance: Matrix3f (id: 7);
+}
+
+root_type Imu;

@@ -38,17 +38,15 @@ namespace holoscan::detail::runtime_channel_binding_schema_tensor_test {
 using namespace std::chrono_literals;
 
 void ContractTensorSourceOperator::setup(OperatorSpec& spec) {
-  spec.output(output)
-      .max_emits_per_compute(8U)
-      .produces_tensor(TensorPortLayout{
-          .memory_kind = MemoryKind::kHost,
-          .dtype = DLDataType{kDLUInt, 8U, 1U},
-          .rank = 1U,
-      })
-      .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 16U})
-      .payload_options(PayloadOptions{
-          .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
-      });
+  spec.output(output).max_emits_per_compute(8U).produces_tensor(TensorOutputSpec{
+      .representation = {.memory_kind = MemoryKind::kHost,
+                         .dtype = DLDataType{kDLUInt, 8U, 1U},
+                         .rank = 1U},
+      .bounds = tensor_bounds(16U),
+      .storage = TensorOutputStorage::kRuntimePool,
+      .transfer =
+          TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
+  });
 }
 
 expected<void, Error> ContractTensorSourceOperator::compute(ExecutionContext&) {
@@ -56,17 +54,15 @@ expected<void, Error> ContractTensorSourceOperator::compute(ExecutionContext&) {
 }
 
 void DeviceContractTensorSourceOperator::setup(OperatorSpec& spec) {
-  spec.output(output)
-      .max_emits_per_compute(8U)
-      .produces_tensor(TensorPortLayout{
-          .memory_kind = MemoryKind::kCudaDevice,
-          .dtype = DLDataType{kDLUInt, 8U, 1U},
-          .rank = 1U,
-      })
-      .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 16U})
-      .payload_options(PayloadOptions{
-          .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
-      });
+  spec.output(output).max_emits_per_compute(8U).produces_tensor(TensorOutputSpec{
+      .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                         .dtype = DLDataType{kDLUInt, 8U, 1U},
+                         .rank = 1U},
+      .bounds = tensor_bounds(16U),
+      .storage = TensorOutputStorage::kRuntimePool,
+      .transfer =
+          TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
+  });
 }
 
 expected<void, Error> DeviceContractTensorSourceOperator::compute(ExecutionContext&) {
@@ -74,17 +70,13 @@ expected<void, Error> DeviceContractTensorSourceOperator::compute(ExecutionConte
 }
 
 void RequireExportableTensorSourceOperator::setup(OperatorSpec& spec) {
-  spec.output(output)
-      .max_emits_per_compute(8U)
-      .produces_tensor(TensorPortLayout{
-          .memory_kind = MemoryKind::kHost,
-          .dtype = DLDataType{kDLUInt, 8U, 1U},
-          .rank = 1U,
-      })
-      .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 16U})
-      .payload_options(PayloadOptions{
-          .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kRequireExportable,
-      });
+  spec.output(output).max_emits_per_compute(8U).produces_tensor(TensorOutputSpec{
+      .representation = {.memory_kind = MemoryKind::kHost,
+                         .dtype = DLDataType{kDLUInt, 8U, 1U},
+                         .rank = 1U},
+      .bounds = tensor_bounds(16U),
+      .storage = TensorOutputStorage::kRuntimePool,
+  });
 }
 
 expected<void, Error> RequireExportableTensorSourceOperator::compute(ExecutionContext&) {
@@ -107,8 +99,10 @@ expected<void, Error> RequireExportableTensorSourceOperator::compute(ExecutionCo
 GeneratedSchemaSessionFixture::GeneratedSchemaSessionFixture() {
   source.setup(source_spec);
   sink.setup(sink_spec);
+  second_sink.setup(second_sink_spec);
   const auto output = OperatorSpecCompilerAccess::port(source_spec, 0U);
   const auto input = OperatorSpecCompilerAccess::port(sink_spec, 0U);
+  const auto second_input = OperatorSpecCompilerAccess::port(second_sink_spec, 0U);
 
   auto& plan = base.plan;
   plan.ports[0].payload_identity = output.payload_identity;
@@ -138,7 +132,18 @@ GeneratedSchemaSessionFixture::GeneratedSchemaSessionFixture() {
           .declaration = const_cast<void*>(input.declaration),
           .type_ops = input.runtime_type_ops,
       },
+      RuntimeChannelPortReplayRecord{
+          .port = PortId{3U},
+          .owner = VertexId{3U},
+          .direction = PortDirection::kInput,
+          .declaration = const_cast<void*>(second_input.declaration),
+          .type_ops = second_input.runtime_type_ops,
+      },
   };
+}
+
+void GeneratedSchemaSessionFixture::add_blocking_fanout() {
+  base.add_blocking_fanout();
 }
 
 void GeneratedSchemaSessionFixture::use_cross_process_edge() {
@@ -214,7 +219,7 @@ void ImageSessionFixture::use_one_slot_blocking_transport() {
 void ImageSessionFixture::use_cross_process_staging(std::uint64_t max_byte_span,
                                                     MemoryKind memory_kind, DeviceId device) {
   base.use_cross_process_edge();
-  const TensorPortLayout layout{
+  const TensorRepresentation layout{
       .memory_kind = memory_kind,
       .dtype = DLDataType{kDLUInt, 64U, 1U},
       .rank = 1U,
@@ -273,7 +278,7 @@ TensorPacketSessionFixture::TensorPacketSessionFixture() {
 
 void TensorPacketSessionFixture::use_cross_process_staging(std::uint64_t max_byte_span) {
   base.use_cross_process_edge();
-  const TensorPortLayout layout{
+  const TensorRepresentation layout{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 64U, 1U},
       .rank = 1U,

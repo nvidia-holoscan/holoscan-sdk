@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# 01 - Single model on GPU tensors. See ../README.md for the full walkthrough.
+model_path_map:
+  model_a: ../models/identity_model.onnx
+input_map:
+  model_a: [tensor_in]
+output_map:
+  model_a: [tensor_out]
+parallel_inference: false

@@ -1,0 +1,17 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace task30_benchmark;
+
+// A benchmark-owned application schema exercises the public third-party package path without
+// SDK-owned schema traits or Tensor descriptor extensions.
+table Telemetry {
+  sequence:ulong;
+  source_id:uint;
+  status:ushort;
+  valid:bool;
+  reading:double;
+}
+
+root_type Telemetry;
+file_identifier "T30B";

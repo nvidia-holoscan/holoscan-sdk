@@ -481,7 +481,7 @@ class TestDLPackCExchange:
             pytest.skip("CUDA is not available")
         try:
             torch.cuda.init()
-        except RuntimeError as error:
+        except (RuntimeError, torch.cuda.DeferredCudaCallError) as error:
             pytest.skip(f"PyTorch could not initialize CUDA: {error}")
 
         # torch.cuda.Stream() creates a new non-default stream for the current CUDA device.

@@ -28,7 +28,7 @@ target_link_libraries(config_file
 )
 # essential/<name>/cpp nests one level deeper than examples/<name>/cpp, so the
 # installed binary needs one extra step up to reach lib/.
-holoscan_configure_example_install(config_file INSTALL_RPATH "$ORIGIN/../../../../lib")
+holoscan_configure_example_install(config_file)
 
 if(BUILD_TESTING)
     # REQ: SYSTEM-015
@@ -43,10 +43,10 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS config_file
-    RUNTIME DESTINATION examples/essential/config_file/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/essential/config_file/cpp"
     COMPONENT holoscan-examples
 )
 install(FILES detector.json detector.yaml
-    DESTINATION examples/essential/config_file/cpp
+    DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/essential/config_file/cpp"
     COMPONENT holoscan-examples
 )

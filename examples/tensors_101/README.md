@@ -16,10 +16,9 @@ flowchart LR
 
 ## What you will learn
 
-- Declaring a direct tensor output with
-  `.produces_tensor(TensorPortLayout{.memory_kind, .dtype, .rank})` and
-  opting into a bounded plan-owned pool with
-  `.tensor_allocation(TensorAllocationBounds{.max_rank, .max_byte_span})`.
+- Declaring a direct tensor output with one `TensorOutputSpec` that groups
+  its `TensorRepresentation`, finite `tensor_bounds(...)`, and
+  `TensorOutputStorage::kRuntimePool` intent.
 - The bounded loan lifecycle:
   `allocate_tensor(TensorLoanRequest{.shape, .dtype})` → either fused
   `write_host_and_commit(fill)` **or** explicit
@@ -33,7 +32,7 @@ flowchart LR
   `kPermissionDenied`) and why host access is explicit
   (`synchronize_for_host()` before reading `data_as<float>()`).
 - Declaring the matching consumer expectation with
-  `.expects_tensor(TensorPortLayout{...})`.
+  `.expects_tensor(TensorInputSpec{.representation = ...})`.
 
 ## Prerequisites
 
@@ -56,7 +55,7 @@ cmake --build build
 If the SDK is installed somewhere non-default, point CMake at it:
 
 ```sh
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S . -DCMAKE_PREFIX_PATH=<install-prefix>
 ```
 
 (`CMakeLists.min.txt` is the standalone-consumer variant of the build; the
@@ -102,13 +101,14 @@ tensors_101: exhaust demo complete (drops=3, code=kResourceExhausted)
 
 ### Why the pool is declared at setup, not created at runtime
 
-`produces_tensor` states the logical facts a consumer may rely on (host
-memory, `float32`, rank 1); `tensor_allocation` bounds the pool
-(`max_rank = 1`, `max_byte_span = 64`). Recording bounds does not itself
-create a pool — the compiler admits and materializes physical placement when
-`compile(graph)` builds the plan. That is why exhaustion is a *capacity*
-property of the compiled plan, never a hidden heap fallback: the hot path can
-never allocate more than what was declared cold.
+`produces_tensor` receives one `TensorOutputSpec`: its representation
+states the facts a consumer may rely on (host memory, `float32`, rank 1), its
+bounds cap the pool (`max_rank = 1`, `max_byte_span = 64`), and
+`storage = kRuntimePool` requests runtime-owned backing. Recording that
+contract does not itself create a pool — the compiler admits and materializes
+physical placement when `compile(graph)` builds the plan. That is why
+exhaustion is a *capacity* property of the compiled plan, never a hidden heap
+fallback: the hot path can never allocate more than what was declared cold.
 
 ### The bounded loan lifecycle
 
@@ -156,7 +156,7 @@ inspection/debug boundaries like this sink.
 
 | Concern | HSDK 4.x | HSDK 5.x (this example) |
 |---|---|---|
-| Buffer provisioning | `UnboundedAllocator` / `BlockMemoryPool` resource attached to the operator | `.tensor_allocation(TensorAllocationBounds{...})` on the output declaration; plan-owned pool |
+| Buffer provisioning | `UnboundedAllocator` / `BlockMemoryPool` resource attached to the operator | `TensorOutputSpec{.bounds, .storage = kRuntimePool}` on the output declaration; plan-owned pool |
 | Producing a tensor | Build a `TensorMap`, `op_output.emit(tensor_map)` | `allocate_tensor` → write guard → `commit()` → explicit `emit(loan)` |
 | Exhaustion behavior | Allocator-dependent; unbounded growth or failure at allocate | Immediate `kResourceExhausted`, operator-chosen drop-and-continue |
 | Consumer mutability | Received tensors mutable by convention | Read-only enforced: `mutable_data()` → `kPermissionDenied` |
@@ -179,13 +179,12 @@ not minutes into a run.
 
 | API | Role |
 |---|---|
-| `Output<Tensor>` + `produces_tensor(TensorPortLayout)` | Declare logical tensor facts on a producer port |
-| `tensor_allocation(TensorAllocationBounds)` | Opt into a bounded plan-owned pool |
+| `produces_tensor(TensorOutputSpec)` | Declare producer facts, finite bounds, and optional plan-owned pool intent |
 | `allocate_tensor(TensorLoanRequest)` | Borrow one pool slot (never blocks) |
 | `TensorOutputLoan::write_host_and_commit(fill)` | Fused fill + readiness commit |
 | `write_host()` / `TensorOutputWriteGuard::commit()` | Explicit staged fill + readiness commit |
 | `emit(std::move(*loan), EmitOptions{.capture_time})` | Explicit publication, separate from commit |
 | `ErrorCode::kResourceExhausted` | Immediate refusal when the pool has no free slot |
-| `Input<Tensor>` + `expects_tensor(TensorPortLayout)` | Declare consumer-side tensor expectations |
+| `expects_tensor(TensorInputSpec)` | Declare consumer-side Tensor expectations |
 | `Tensor::mutable_data()` → `kPermissionDenied` | Read-only reception guarantee |
 | `Tensor::synchronize_for_host()` | Explicit host-visibility barrier before reading |

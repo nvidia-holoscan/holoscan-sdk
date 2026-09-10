@@ -7,6 +7,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -20,8 +22,10 @@
 #include <holoscan/params/config.hpp>
 
 #include "compiler/execution_plan_state.hpp"
+#include "compiler/parameter_plan_lowering.hpp"
 #include "core/parameter_catalog_internal.hpp"
 #include "core/parameter_override_set_internal.hpp"
+#include "core/parameter_rebind_support.hpp"
 
 namespace holoscan::params::test {
 
@@ -41,6 +45,22 @@ HOLOSCAN_PARAM_SCHEMA(
 // No-op operator carrying PartialCodecParams. Used to register operators in provenance test
 // graphs without any real compute logic.
 class PartialCodecOperator final : public Operator<PartialCodecParams> {
+ public:
+  void setup(OperatorSpec&) override {}
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+struct ConfigProvenancePairParams {
+  std::uint32_t primary{1U};
+  std::uint32_t secondary{2U};
+};
+
+HOLOSCAN_PARAM_SCHEMA(ConfigProvenancePairParams,
+                      param_schema("holoscan.test.ConfigProvenancePairParams", 1),
+                      field<&ConfigProvenancePairParams::primary>("primary"),
+                      field<&ConfigProvenancePairParams::secondary>("secondary"));
+
+class ConfigProvenancePairOperator final : public Operator<ConfigProvenancePairParams> {
  public:
   void setup(OperatorSpec&) override {}
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
@@ -171,7 +191,9 @@ namespace {
       std::vector<ParamFieldCatalogRecord>{std::move(field)});
 }
 
+// REQ: COMPILE-072
 // REQ: PARAM-034
+// REQ: PARAM-037
 // Graph: graph["partial-config-binding"]
 //   └─ op<PartialCodecOperator>("op")
 TEST(ParameterConfigProvenance, PartialSchemaOverlayPreservesTypedUnmanagedBaseline) {
@@ -196,6 +218,8 @@ TEST(ParameterConfigProvenance, PartialSchemaOverlayPreservesTypedUnmanagedBasel
   EXPECT_EQ(value->local_only, "keep-local");
 
   ASSERT_EQ(decoded->provenance().config_fields.size(), 1U);
+  EXPECT_EQ(decoded->provenance().context_binding, ParamOverrideContextBinding::kCompile);
+  EXPECT_EQ(decoded->provenance().admission_context_digest, ParamSchemaHash{});
   const auto& source_field = decoded->provenance().config_fields.front();
   const auto source_digest = source.digest();
   EXPECT_EQ(source_field.document.semantic_digest, source_digest.semantic.sha256);
@@ -225,6 +249,7 @@ TEST(ParameterConfigProvenance, PartialSchemaOverlayPreservesTypedUnmanagedBasel
 }
 
 // REQ: PARAM-034
+// REQ: PARAM-037
 // Graph: graph["config-source-plan-generation"]
 //   └─ op<PartialCodecOperator>("op")
 // Compact and spaced JSON documents encode the same value but have different raw bytes,
@@ -266,11 +291,11 @@ TEST(ParameterConfigProvenance, ExactRawSourceIdentityChangesPlanGeneration) {
 }
 
 // REQ: PARAM-034
+// REQ: PARAM-037
 // Graph: graph["config-provenance-revalidation"]
 //   └─ op<PartialCodecOperator>("op")
-// Two sub-cases: stale digest (bit-flipped) and profile mismatch (Standard override in
-// Regulated compile context).
-TEST(ParameterConfigProvenance, CompilerRejectsStaleOverrideDigestAndProfileContext) {
+// A bit-flipped semantic digest must fail before any values are applied.
+TEST(ParameterConfigProvenance, CompilerRejectsStaleOverrideDigest) {
   // Key setup: stale case manually XORs the first byte of the override set's semantic_digest.
   Graph graph{"config-provenance-revalidation"};
   auto op = graph.op<PartialCodecOperator>("op");
@@ -283,22 +308,228 @@ TEST(ParameterConfigProvenance, CompilerRejectsStaleOverrideDigestAndProfileCont
   CompileOptions stale_options;
   stale_options.parameter_overrides = *stale;
   const ExecutionPlan stale_plan = compile(graph, std::move(stale_options));
-  // Key assertion: stale digest → RECONSTRUCTION_UNAVAILABLE; profile mismatch →
-  // ADMISSION_CONTEXT_MISMATCH.
+  // Key assertion: stale digest -> RECONSTRUCTION_UNAVAILABLE.
   EXPECT_FALSE(stale_plan.ok());
   EXPECT_TRUE(has_diagnostic(stale_plan, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE"));
-
-  auto profile_bound = decode_overrides(source, {bind(op, "/overlay")});
-  ASSERT_TRUE(profile_bound.has_value()) << profile_bound.error().token();
-  CompileOptions regulated;
-  regulated.profile = Profile::kRegulated;
-  regulated.parameter_overrides = *profile_bound;
-  const ExecutionPlan regulated_plan = compile(graph, std::move(regulated));
-  EXPECT_FALSE(regulated_plan.ok());
-  EXPECT_TRUE(has_diagnostic(regulated_plan, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
 }
 
-// REQ: PARAM-034
+// REQ: COMPILE-072
+// REQ: PARAM-037
+// Graph: graph["config-invalid-context-binding"]
+//   └─ op<PartialCodecOperator>("op")
+TEST(ParameterConfigProvenance, CompilerRejectsInvalidConfigContextBindingState) {
+  Graph graph{"config-invalid-context-binding"};
+  auto op = graph.op<PartialCodecOperator>("op");
+  const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
+  const auto captured = holoscan::detail::capture_parameter_rebind_graph(graph);
+  ASSERT_TRUE(captured.has_value()) << captured.error().message;
+  const ParamSchemaHash actual_context = captured->admission_context_digest;
+  ASSERT_NE(actual_context, ParamSchemaHash{});
+  const auto expect_rejected = [&](const char* case_name, const auto& mutate) {
+    SCOPED_TRACE(case_name);
+    auto decoded = decode_overrides(source, {bind(op, "/overlay")});
+    ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+    auto& state = const_cast<holoscan::detail::ParamOverrideSetState&>(
+        holoscan::detail::ParamOverrideSetAccess::state(*decoded));
+    mutate(state);
+    state.semantic_digest =
+        holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded);
+    ASSERT_EQ(state.semantic_digest,
+              holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded));
+
+    CompileOptions options;
+    options.parameter_overrides = *decoded;
+    const ExecutionPlan plan = compile(graph, std::move(options));
+    EXPECT_FALSE(plan.ok());
+    EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE"));
+  };
+
+  expect_rejected("unknown binding", [](auto& state) {
+    const auto unknown = static_cast<ParamOverrideContextBinding>(255U);
+    state.context_binding = unknown;
+    state.provenance.context_binding = unknown;
+  });
+  expect_rejected("state and provenance disagree", [](auto& state) {
+    state.provenance.context_binding = ParamOverrideContextBinding::kExact;
+  });
+  expect_rejected("compile-context digest is nonempty", [](auto& state) {
+    state.admission_context_digest.value.front() = std::byte{1U};
+    state.provenance.admission_context_digest = state.admission_context_digest;
+  });
+  expect_rejected("exact-context digest is empty", [](auto& state) {
+    state.context_binding = ParamOverrideContextBinding::kExact;
+    state.provenance.context_binding = ParamOverrideContextBinding::kExact;
+  });
+  expect_rejected("exact-context retains configuration provenance", [actual_context](auto& state) {
+    ASSERT_FALSE(state.provenance.config_fields.empty());
+    state.context_binding = ParamOverrideContextBinding::kExact;
+    state.provenance.context_binding = ParamOverrideContextBinding::kExact;
+    state.admission_context_digest = actual_context;
+    state.provenance.admission_context_digest = actual_context;
+  });
+}
+
+// REQ: COMPILE-072
+// REQ: PARAM-037
+// Graph: graph["config-unprovenanced-contribution"]
+//   └─ op<ConfigProvenancePairOperator>("op")
+TEST(ParameterConfigProvenance, CompilerRejectsUnprovenancedContributionInCompileContextOverride) {
+  Graph graph{"config-unprovenanced-contribution"};
+  auto op = graph.op<ConfigProvenancePairOperator>("op");
+  const config::Document source = parse_json(R"({"overlay":{"primary":3}})");
+  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+
+  auto& state = const_cast<holoscan::detail::ParamOverrideSetState&>(
+      holoscan::detail::ParamOverrideSetAccess::state(*decoded));
+  ASSERT_EQ(state.operators.size(), 1U);
+  ASSERT_EQ(state.provenance.config_fields.size(), 1U);
+  auto& override_record = state.operators.front();
+  ASSERT_EQ(override_record.contributions.size(), 1U);
+  ASSERT_EQ(override_record.contributions.front().config_provenance_index,
+            std::optional<std::uint32_t>{0U});
+  EXPECT_EQ(override_record.contributions.front().field,
+            state.provenance.config_fields.front().target_field_id);
+  EXPECT_EQ(override_record.contributions.front().full_id,
+            state.provenance.config_fields.front().target_full_id);
+  const auto* resolved =
+      static_cast<const ConfigProvenancePairParams*>(override_record.resolved_value.get());
+  ASSERT_NE(resolved, nullptr);
+  ConfigProvenancePairParams malformed = *resolved;
+  malformed.secondary = 99U;
+  override_record.resolved_value = std::make_shared<const ConfigProvenancePairParams>(malformed);
+
+  const ParamSchemaDescriptor* const schema = param_schema_descriptor<ConfigProvenancePairParams>();
+  ASSERT_NE(schema, nullptr);
+  const auto secondary = std::ranges::find_if(
+      schema->fields,
+      [](const ParamFieldDescriptor& field) { return field.canonical_name == "secondary"; });
+  ASSERT_NE(secondary, schema->fields.end());
+  const auto resolved_digest = holoscan::detail::parameter_value_digest(
+      param_type_descriptor<ConfigProvenancePairParams>(), schema, &malformed, false);
+  ASSERT_TRUE(resolved_digest.available());
+  override_record.resolved_value_digest = resolved_digest.digest;
+  override_record.contributions.push_back(holoscan::detail::ParamOverrideFieldOriginRecord{
+      .field = secondary->id,
+      .full_id = secondary->full_id,
+      .origin = holoscan::detail::ParamOverrideContributionOrigin::kCaptured,
+  });
+  state.semantic_digest =
+      holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded);
+  ASSERT_EQ(state.semantic_digest,
+            holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded));
+
+  CompileOptions options;
+  options.parameter_overrides = *decoded;
+  const ExecutionPlan plan = compile(graph, std::move(options));
+  ASSERT_FALSE(plan.ok());
+  EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH")) << plan.json();
+  const auto* plan_state = holoscan::detail::ExecutionPlanAccess::state(plan);
+  ASSERT_NE(plan_state, nullptr);
+  ASSERT_EQ(plan_state->executable_factories.operators.size(), 1U);
+  const auto* retained = static_cast<const ConfigProvenancePairParams*>(
+      plan_state->executable_factories.operators.front().factory->initial_parameter_value());
+  ASSERT_NE(retained, nullptr);
+  EXPECT_EQ(retained->primary, 1U);
+  EXPECT_EQ(retained->secondary, 2U);
+}
+
+// REQ: COMPILE-072
+// REQ: PARAM-037
+// Graph: graph["config-rebind-evidence"]
+//   └─ op<PartialCodecOperator>("op")
+TEST(ParameterConfigProvenance, CompilerRejectsRebindEvidenceInCompileContextOverride) {
+  Graph graph{"config-rebind-evidence"};
+  auto op = graph.op<PartialCodecOperator>("op");
+  const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
+  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+
+  auto& state = const_cast<holoscan::detail::ParamOverrideSetState&>(
+      holoscan::detail::ParamOverrideSetAccess::state(*decoded));
+  state.provenance.migrations.push_back(ParamRebindMigrationProvenance{
+      .from_schema_id = "source",
+      .from_schema_version = 1U,
+      .to_schema_id = "target",
+      .to_schema_version = 2U,
+  });
+  state.semantic_digest =
+      holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded);
+  ASSERT_EQ(state.semantic_digest,
+            holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded));
+
+  CompileOptions options;
+  options.parameter_overrides = *decoded;
+  const ExecutionPlan plan = compile(graph, std::move(options));
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE"));
+}
+
+// REQ: COMPILE-072
+// REQ: PARAM-037
+// Graph: graph["config-actual-profile"]
+//   └─ op<PartialCodecOperator>("op")
+TEST(ParameterConfigProvenance, ConfigOverrideUsesTheActualValidCompileProfile) {
+  Graph graph{"config-actual-profile"};
+  auto op = graph.op<PartialCodecOperator>("op");
+  const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
+  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+
+  CompileOptions standard;
+  standard.parameter_overrides = *decoded;
+  const ExecutionPlan standard_plan = compile(graph, std::move(standard));
+  ASSERT_TRUE(standard_plan.ok()) << standard_plan.json();
+
+  CompileOptions research;
+  research.profile = Profile::kResearch;
+  research.parameter_overrides = *decoded;
+  const ExecutionPlan research_plan = compile(graph, std::move(research));
+  EXPECT_TRUE(research_plan.ok()) << research_plan.json();
+}
+
+// REQ: COMPILE-072
+// REQ: PARAM-037
+// Graph: graph["config-actual-deployment"]
+//   └─ partition["worker"]
+//      └─ op<PartialCodecOperator>("op")
+TEST(ParameterConfigProvenance, ConfigOverrideUsesTheActualDeployment) {
+  Graph graph{"config-actual-deployment"};
+  auto op = graph.op<PartialCodecOperator>("op");
+  graph.partition("worker").add(op);
+  const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
+  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+
+  CompileOptions placed;
+  placed.deployment.bind_thread_placement("worker", ThreadPlacement{});
+  placed.parameter_overrides = *decoded;
+  const ExecutionPlan placed_plan = compile(graph, std::move(placed));
+  EXPECT_TRUE(placed_plan.ok()) << placed_plan.json();
+  EXPECT_FALSE(has_diagnostic(placed_plan, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
+}
+
+// REQ: COMPILE-072
+// REQ: PARAM-037
+// Graph: graph["config-actual-profile-rejection"]
+//   └─ op<PartialCodecOperator>("op")
+TEST(ParameterConfigProvenance, ActualProfileStillRejectsInvalidConfigOverride) {
+  Graph graph{"config-actual-profile-rejection"};
+  auto op = graph.op<PartialCodecOperator>("op");
+  const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
+  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+
+  CompileOptions regulated;
+  regulated.profile = Profile::kRegulated;
+  regulated.parameter_overrides = *decoded;
+  const ExecutionPlan regulated_plan = compile(graph, std::move(regulated));
+  EXPECT_FALSE(regulated_plan.ok());
+  EXPECT_TRUE(has_diagnostic(regulated_plan, "PARAMETER_SCHEMA_INCOMPLETE"));
+  EXPECT_FALSE(has_diagnostic(regulated_plan, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
+}
+
+// REQ: PARAM-037
 // Graph: graph["config-field-failures"]
 //   └─ op<PartialCodecOperator>("op")
 // Two failure sub-cases: unknown field in load-time decode, and unauthorized field

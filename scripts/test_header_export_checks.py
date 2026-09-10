@@ -61,23 +61,25 @@ class ExportMacroCheckTest(unittest.TestCase):
             errors = check_export_macros.check_file(header)
             assert any("detail" in error for error in errors)
 
-    def test_allows_holomq_module_public_header_to_include_detail(self) -> None:
+    def test_allows_holomq_public_header_to_include_detail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            header = (
-                Path(tmp_dir)
-                / "public"
-                / "modules"
-                / "holomq"
-                / "include"
-                / "holomq"
-                / "publisher_builder.hpp"
-            )
+            header = Path(tmp_dir) / "public" / "include" / "holomq" / "publisher_builder.hpp"
             header.parent.mkdir(parents=True)
             header.write_text(
                 "#pragma once\n#include <holomq/detail/transport/iox2/runtime.hpp>\n",
                 encoding="utf-8",
             )
             assert check_export_macros.check_file(header) == []
+
+    def test_allows_holomq_test_to_include_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source = Path(tmp_dir) / "public" / "tests" / "holomq" / "test_backend.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "#include <holomq/detail/transport/iox2/runtime.hpp>\n",
+                encoding="utf-8",
+            )
+            assert check_export_macros.check_file(source) == []
 
     def test_rejects_holomq_module_example_include_detail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -227,9 +229,9 @@ class ExportMacroSemanticCheckTest(unittest.TestCase):
         )
 
     def test_canonical_path_preserves_absolute_public_modules_prefix(self) -> None:
-        absolute_path = Path("/workspace/repo/public/modules/holomq/include/holomq/publisher.hpp")
+        absolute_path = Path("/workspace/repo/public/include/holomq/publisher.hpp")
         assert check_export_macro_semantics.canonical_header_path(absolute_path) == (
-            "public/modules/holomq/include/holomq/publisher.hpp"
+            "public/include/holomq/publisher.hpp"
         )
 
     def test_canonical_path_normalizes_absolute_public_root_include(self) -> None:
@@ -239,9 +241,9 @@ class ExportMacroSemanticCheckTest(unittest.TestCase):
         )
 
     def test_canonical_path_normalizes_absolute_public_root_module(self) -> None:
-        absolute_path = Path("/workspace/holoscan-sdk/modules/holomq/include/holomq/publisher.hpp")
+        absolute_path = Path("/workspace/holoscan-sdk/include/holomq/publisher.hpp")
         assert check_export_macro_semantics.canonical_header_path(absolute_path) == (
-            "public/modules/holomq/include/holomq/publisher.hpp"
+            "public/include/holomq/publisher.hpp"
         )
 
 

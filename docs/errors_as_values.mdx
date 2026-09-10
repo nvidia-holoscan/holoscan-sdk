@@ -144,7 +144,7 @@ if (auto r = out.emit(x); !r && r.error().code == holoscan::ErrorCode::kBackpres
 }
 ```
 
-In `ea1_camera_imu_control`, the bounded Channel client treats a successful
+In `camera_imu_control`, the bounded Channel client treats a successful
 publication result as delivered. It retries only pre-submit `kNotReady` or
 `kBackpressured`; partial and indeterminate publication outcomes are terminal,
 while other errors propagate for code-specific handling. The graph-side control

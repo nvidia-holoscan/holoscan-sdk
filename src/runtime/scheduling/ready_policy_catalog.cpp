@@ -94,7 +94,7 @@ expected<ReadyPolicyCatalog, Error> ReadyPolicyCatalog::create(
   return ReadyPolicyCatalog{std::move(entries), registrations.size()};
 }
 
-expected<ReadyPolicyCatalog, Error> ReadyPolicyCatalog::create_ea1_builtins() {
+expected<ReadyPolicyCatalog, Error> ReadyPolicyCatalog::create_default_builtins() {
   const DeterministicSerialReadyPolicy implementation;
   const std::array registrations{
       ReadyPolicyRegistration{implementation.descriptor(), &make_deterministic_serial_ready_policy},

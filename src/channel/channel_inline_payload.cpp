@@ -6,6 +6,7 @@
 #include "channel_inline_payload.hpp"
 
 #include <holomq/delivery_attribution.hpp>
+#include <holomq/detail/wait_set_runtime_access.hpp>
 #include <holomq/inbound_message.hpp>
 #include <holomq/outbound_message.hpp>
 #include <holomq/publisher.hpp>
@@ -42,8 +43,36 @@ struct ProtectedTerminalSubscriberBase<true> : ProtectedTerminalWaitSetSubscribe
 struct NoTerminalPublisher {};
 struct NoTerminalSubscriber {};
 struct NoTerminalAttachment {};
-struct NoPendingTerminal {};
 struct NoTerminalWaitHandle {};
+
+template <std::size_t Size, bool Enabled>
+class PendingTerminalStorage {
+ public:
+  [[nodiscard]] constexpr bool has_value() const noexcept { return false; }
+  void reset() noexcept {}
+};
+
+template <std::size_t Size>
+class PendingTerminalStorage<Size, true> {
+ public:
+  [[nodiscard]] bool has_value() const noexcept { return value_.has_value(); }
+  template <typename Value>
+  void emplace(Value&& value) {
+    value_.emplace(std::forward<Value>(value));
+  }
+  void reset() noexcept { value_.reset(); }
+  [[nodiscard]] InlinePayloadBucket<Size>* operator->() noexcept { return &*value_; }
+  [[nodiscard]] const InlinePayloadBucket<Size>* operator->() const noexcept { return &*value_; }
+  [[nodiscard]] InlinePayloadBucket<Size>& operator*() noexcept { return *value_; }
+  [[nodiscard]] const InlinePayloadBucket<Size>& operator*() const noexcept { return *value_; }
+
+ private:
+  std::optional<InlinePayloadBucket<Size>> value_;
+};
+
+static_assert(sizeof(PendingTerminalStorage<kMaximumInlinePayloadBytes, false>) == 1U);
+static_assert(sizeof(PendingTerminalStorage<kMaximumInlinePayloadBytes, true>) >=
+              kMaximumInlinePayloadBytes);
 
 template <std::size_t Size, bool Enabled>
 using TerminalPublisher =
@@ -57,10 +86,6 @@ using TerminalSubscriber =
 template <bool Enabled>
 using TerminalAttachment =
     std::conditional_t<Enabled, std::optional<holomq::WaitSetAttachment>, NoTerminalAttachment>;
-
-template <std::size_t Size, bool Enabled>
-using PendingTerminal =
-    std::conditional_t<Enabled, std::optional<InlinePayloadBucket<Size>>, NoPendingTerminal>;
 
 template <bool Enabled>
 using TerminalWaitHandle = std::conditional_t<Enabled, std::uint64_t, NoTerminalWaitHandle>;
@@ -335,14 +360,25 @@ class InlinePayloadPublisherImpl final : public InlinePayloadPublisher,
 };
 
 template <std::size_t Size, bool ProtectedTerminal>
-class InlinePayloadSubscriberImpl final
-    : public InlinePayloadSubscriber,
-      public ProtectedTerminalSubscriberBase<ProtectedTerminal> {
+class InlinePayloadSubscriberImpl final : public InlinePayloadSubscriber,
+                                          public ProtectedTerminalSubscriberBase<ProtectedTerminal>,
+                                          public StagedDataWaitSetSubscriber {
  public:
   explicit InlinePayloadSubscriberImpl(
-      holomq::Subscriber<InlinePayloadBucket<Size>>&& subscriber,
+      holomq::Context& context, holomq::Subscriber<InlinePayloadBucket<Size>>&& subscriber,
       TerminalSubscriber<Size, ProtectedTerminal>&& terminal_subscriber) noexcept
-      : terminal_subscriber_(std::move(terminal_subscriber)), subscriber_(std::move(subscriber)) {}
+      : terminal_subscriber_(std::move(terminal_subscriber)),
+        subscriber_(std::move(subscriber)),
+        context_(&context) {}
+
+  // Read from the port rather than a cached flag so this can never disagree with the transport.
+  [[nodiscard]] bool event_wake_enabled() const noexcept override {
+    return subscriber_.is_event_wake_enabled();
+  }
+
+  // The parent Channel runtime owns this transport context and outlives every endpoint created
+  // from it, so this borrow stays valid for the subscriber's lifetime.
+  [[nodiscard]] void* wait_context_runtime() noexcept override { return context_; }
 
   [[nodiscard]] expected<bool, Error> has_samples() const override {
     if (closed_) {
@@ -360,9 +396,9 @@ class InlinePayloadSubscriberImpl final
       if (!terminal) {
         return terminal;
       }
-      return *data || pending_terminal_.has_value() || *terminal;
+      return inbound_.has_value() || *data || pending_terminal_.has_value() || *terminal;
     } else {
-      return *data;
+      return inbound_.has_value() || pending_terminal_.has_value() || *data;
     }
   }
 
@@ -373,7 +409,8 @@ class InlinePayloadSubscriberImpl final
     return !closed_ && subscriber_.has_publishers();
   }
 
-  [[nodiscard]] expected<SampleMetadata, Error> receive(std::span<std::byte> payload) override {
+  [[nodiscard]] expected<InlinePayloadReceiveResult, Error> receive(
+      std::span<std::byte> payload) override {
     auto received = receive_borrowed();
     if (!received) {
       return make_unexpected(std::move(received).error());
@@ -382,20 +419,24 @@ class InlinePayloadSubscriberImpl final
       return make_unexpected(make_channel_error(
           ErrorCode::kInvalidArgument, "inline channel destination is smaller than its payload"));
     }
+    // Report the borrowed length, not metadata.byte_size. The bucket carries the two independently,
+    // so a short frame claiming the full width must remain distinguishable to the caller.
     std::memcpy(payload.data(), received->payload().data(), received->payload().size());
-    return received->metadata();
+    return InlinePayloadReceiveResult{.metadata = received->metadata(),
+                                      .payload_size = received->payload().size()};
   }
 
   [[nodiscard]] expected<InlinePayloadReceiveGuard, Error> receive_borrowed() override {
-    if (inbound_.has_value() || borrowed_terminal_) {
+    return receive_borrowed_if_data_accepted(true);
+  }
+
+  [[nodiscard]] expected<InlinePayloadReceiveGuard, Error> receive_borrowed_if_data_accepted(
+      const bool accept_data) override {
+    if (payload_loan_active_ || borrowed_terminal_) {
       return make_unexpected(
           make_channel_error(ErrorCode::kFailure, "inline channel already has an active loan"));
     }
-    auto data_ready = from_holomq_result(subscriber_.has_samples());
-    if (!data_ready) {
-      return make_unexpected(std::move(data_ready).error());
-    }
-    // The ProtectedTerminal specialization assigns this after its checked readiness probe.
+    // Keep the terminal mapping refreshed even while the data lane remains continuously ready.
     std::optional<bool> terminal_ready;  // NOLINT(misc-const-correctness)
     if constexpr (ProtectedTerminal) {
       auto ready = from_holomq_result(terminal_subscriber_.has_samples());
@@ -404,12 +445,30 @@ class InlinePayloadSubscriberImpl final
       }
       terminal_ready = *ready;
     }
-    if (*data_ready) {
+    if (!inbound_) {
       auto inbound = subscriber_.try_take();
-      if (!inbound) {
-        return make_unexpected(from_holomq_error(std::move(inbound).error()));
+      if (inbound) {
+        inbound_.emplace(std::move(inbound).value());
+      } else {
+        Error data_error = from_holomq_error(std::move(inbound).error());
+        if (data_error.code != ErrorCode::kNotReady) {
+          return make_unexpected(std::move(data_error));
+        }
       }
-      inbound_.emplace(std::move(inbound).value());
+    }
+    if constexpr (ProtectedTerminal) {
+      if (!pending_terminal_.has_value() && terminal_ready.value_or(false)) {
+        auto terminal_inbound = terminal_subscriber_.try_take();
+        if (!terminal_inbound) {
+          return make_unexpected(from_holomq_error(std::move(terminal_inbound).error()));
+        }
+        pending_terminal_.emplace(terminal_inbound->payload());
+      }
+    }
+    if (inbound_) {
+      if (!accept_data && inbound_->payload().operation == InlinePayloadOperation::kData) {
+        return make_unexpected(Error{ErrorCode::kBackpressured});
+      }
       return borrow_bucket(inbound_->payload());
     }
     if constexpr (!ProtectedTerminal) {
@@ -419,16 +478,19 @@ class InlinePayloadSubscriberImpl final
         if (!terminal_ready.value_or(false)) {
           return make_unexpected(Error{ErrorCode::kNotReady});
         }
-        auto inbound = terminal_subscriber_.try_take();
-        if (!inbound) {
-          return make_unexpected(from_holomq_error(std::move(inbound).error()));
+        auto terminal_inbound = terminal_subscriber_.try_take();
+        if (!terminal_inbound) {
+          return make_unexpected(from_holomq_error(std::move(terminal_inbound).error()));
         }
-        pending_terminal_.emplace(inbound->payload());
+        pending_terminal_.emplace(terminal_inbound->payload());
       }
       if (pending_terminal_->operation == InlinePayloadOperation::kEndOfStream) {
         closed_ = true;
         pending_terminal_.reset();
         return make_unexpected(Error{ErrorCode::kClosed});
+      }
+      if (!accept_data) {
+        return make_unexpected(Error{ErrorCode::kBackpressured});
       }
       borrowed_terminal_ = true;
       return borrow_bucket(*pending_terminal_);
@@ -436,13 +498,10 @@ class InlinePayloadSubscriberImpl final
   }
 
   void release_payload_loan() noexcept override {
-    inbound_.reset();
-    if constexpr (ProtectedTerminal) {
-      if (borrowed_terminal_) {
-        pending_terminal_.reset();
-        borrowed_terminal_ = false;
-      }
+    if (!payload_loan_active_) {
+      return;
     }
+    discard_staged_operation();
   }
 
   [[nodiscard]] expected<std::uint64_t, Error> attach_wait_set(void* wait_set) override {
@@ -472,7 +531,7 @@ class InlinePayloadSubscriberImpl final
     return handle;
   }
 
-  // Only the ProtectedTerminal=true specialization has the corresponding virtual base.
+  // Only the ProtectedTerminal=true specialization has the corresponding protected-lane base.
   // NOLINTNEXTLINE(clang-diagnostic-inconsistent-missing-override)
   [[nodiscard]] std::optional<std::uint64_t> protected_terminal_wait_handle() const noexcept {
     if constexpr (ProtectedTerminal) {
@@ -480,6 +539,28 @@ class InlinePayloadSubscriberImpl final
                                          : std::optional<std::uint64_t>{terminal_wait_handle_};
     }
     return std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<StagedDataState> staged_data_state() const noexcept override {
+    if (!inbound_ || inbound_->payload().operation != InlinePayloadOperation::kData ||
+        inbound_->payload().payload_size == 0U || inbound_->payload().payload_size > Size ||
+        inbound_->payload().metadata.sequence == 0U) {
+      return std::nullopt;
+    }
+    return StagedDataState{.sequence = inbound_->payload().metadata.sequence,
+                           .capture_time = inbound_->payload().metadata.capture_time()};
+  }
+
+  [[nodiscard]] std::optional<std::uint64_t> staged_terminal_sequence() const noexcept override {
+    if constexpr (!ProtectedTerminal) {
+      return std::nullopt;
+    } else {
+      return pending_terminal_.has_value() &&
+                     pending_terminal_->operation == InlinePayloadOperation::kEndOfStream &&
+                     pending_terminal_->metadata.sequence != 0U
+                 ? std::optional<std::uint64_t>{pending_terminal_->metadata.sequence}
+                 : std::nullopt;
+    }
   }
 
   [[nodiscard]] expected<void, Error> detach_wait_set() noexcept override {
@@ -492,29 +573,41 @@ class InlinePayloadSubscriberImpl final
   }
 
  private:
+  void discard_staged_operation() noexcept {
+    inbound_.reset();
+    if (borrowed_terminal_) {
+      pending_terminal_.reset();
+      borrowed_terminal_ = false;
+    }
+    payload_loan_active_ = false;
+  }
+
   [[nodiscard]] expected<InlinePayloadReceiveGuard, Error> borrow_bucket(
       const InlinePayloadBucket<Size>& bucket) {
     if (bucket.operation == InlinePayloadOperation::kEndOfStream) {
       closed_ = true;
-      release_payload_loan();
+      discard_staged_operation();
       return make_unexpected(Error{ErrorCode::kClosed});
     }
     if (bucket.operation != InlinePayloadOperation::kData || bucket.payload_size == 0U ||
         bucket.payload_size > Size) {
-      release_payload_loan();
+      discard_staged_operation();
       return make_unexpected(Error{ErrorCode::kProtocolError});
     }
     const auto payload = std::span<const std::byte>{bucket.bytes}.first(bucket.payload_size);
+    payload_loan_active_ = true;
     return InlinePayloadReceiveGuard{*this, payload, bucket.metadata};
   }
 
   [[no_unique_address]] TerminalSubscriber<Size, ProtectedTerminal> terminal_subscriber_;
   [[no_unique_address]] TerminalAttachment<ProtectedTerminal> terminal_attachment_;
-  [[no_unique_address]] PendingTerminal<Size, ProtectedTerminal> pending_terminal_;
+  [[no_unique_address]] PendingTerminalStorage<Size, ProtectedTerminal> pending_terminal_;
   [[no_unique_address]] TerminalWaitHandle<ProtectedTerminal> terminal_wait_handle_{};
   holomq::Subscriber<InlinePayloadBucket<Size>> subscriber_;
   std::optional<holomq::WaitSetAttachment> attachment_;
   std::optional<holomq::InboundMessage<InlinePayloadBucket<Size>>> inbound_;
+  holomq::Context* context_{};
+  bool payload_loan_active_{};
   bool borrowed_terminal_{};
   bool closed_{};
 };
@@ -535,7 +628,10 @@ class InlinePayloadWaitSetImpl final : public InlinePayloadWaitSet {
         .spin_duration = std::chrono::nanoseconds{0},
         .timeout = timeout,
     };
-    auto waited = wait_set_.wait(strategy);
+    // The Runtime pump drains every attached endpoint to its finite capacity after each wait,
+    // including timeouts. A publication racing the next block posts a kernel notification, so the
+    // public WaitSet precheck would only repeat the pump's just-completed O(N) readiness scan.
+    auto waited = holomq::detail::WaitSetRuntimeAccess::wait_assuming_no_ready(wait_set_, strategy);
     if (!waited) {
       return make_unexpected(from_holomq_error(std::move(waited).error()));
     }
@@ -655,11 +751,11 @@ create_inline_payload_subscriber_impl(holomq::Context& context, const std::strin
       return make_unexpected(from_holomq_error(
           std::move(created).error(), "failed to create protected inline terminal subscriber"));
     }
-    return std::make_unique<InlinePayloadSubscriberImpl<Size, true>>(std::move(subscriber).value(),
-                                                                     std::move(*created));
+    return std::make_unique<InlinePayloadSubscriberImpl<Size, true>>(
+        context, std::move(subscriber).value(), std::move(*created));
   }
-  return std::make_unique<InlinePayloadSubscriberImpl<Size, false>>(std::move(subscriber).value(),
-                                                                    NoTerminalSubscriber{});
+  return std::make_unique<InlinePayloadSubscriberImpl<Size, false>>(
+      context, std::move(subscriber).value(), NoTerminalSubscriber{});
 }
 
 template <bool GraphRetryBoundary>
@@ -694,7 +790,8 @@ template <typename Factory>
   if (!bucket_size.has_value()) {
     return make_unexpected(
         make_channel_error(ErrorCode::kInvalidArgument,
-                           "inline channel payload size must be in the range [1, 32768] bytes"));
+                           "inline channel payload size must be in the range [1, " +
+                               std::to_string(kMaximumInlinePayloadBytes) + "] bytes"));
   }
 
   switch (bucket_size.value()) {
@@ -722,8 +819,8 @@ template <typename Factory>
       return factory.template operator()<8192U>();
     case 16384U:
       return factory.template operator()<16384U>();
-    case 32768U:
-      return factory.template operator()<32768U>();
+    case kMaximumInlinePayloadBytes:
+      return factory.template operator()<kMaximumInlinePayloadBytes>();
     default:
       return make_unexpected(make_channel_error(ErrorCode::kInvalidArgument,
                                                 "unsupported inline channel payload bucket size"));

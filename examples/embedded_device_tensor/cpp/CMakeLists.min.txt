@@ -13,7 +13,6 @@ find_package(CUDAToolkit REQUIRED)
 find_package(Threads REQUIRED)
 find_package(holoscan REQUIRED CONFIG
     PATHS
-        "/opt/nvidia/holoscan"
         "/workspace/holoscan-sdk/install"
         "/workspace/holoscan-sdk/public/install-cu13-x86_64"
 )

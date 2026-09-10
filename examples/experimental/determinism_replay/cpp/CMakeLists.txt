@@ -10,9 +10,7 @@ endif()
 
 add_executable(determinism_replay determinism_replay.cpp)
 target_link_libraries(determinism_replay PRIVATE holoscan::core)
-holoscan_configure_example_install(determinism_replay
-    INSTALL_RPATH "$ORIGIN/../../../../lib"
-)
+holoscan_configure_example_install(determinism_replay)
 
 if(BUILD_TESTING)
     # REQ: SYSTEM-015
@@ -26,6 +24,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS determinism_replay
-    RUNTIME DESTINATION examples/experimental/determinism_replay/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/determinism_replay/cpp"
     COMPONENT holoscan-examples
 )

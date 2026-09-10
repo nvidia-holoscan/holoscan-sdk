@@ -36,8 +36,15 @@ A Holoscan program has three strictly separated phases:
    immutable snapshot of everything the compiler accepted or rejected.
 3. **Run.** `holoscan::run(plan)` blocks until the graph finishes;
    `holoscan::run_async(plan)` returns a `RunSession` that owns the running
-   graph and lets you stop it cooperatively. Inside the session, the runtime's
-   dispatcher drives operator activations according to the plan.
+   graph. External code may request a stop; an operator may request a stop or
+   immediate whole-run success from inside `compute()`. Inside the session,
+   the runtime's dispatcher drives operator activations according to the plan.
+
+   On Linux, plain blocking `run(plan)` manages SIGINT/SIGTERM and admits a
+   transient domain only when both process-task census reads observe exactly
+   one live task. Multithreaded embedding hosts should establish an early
+   managed domain or select caller-managed policy; see
+   [running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
 
 Each phase has its own failure style, and they never bleed into each other:
 
@@ -189,8 +196,13 @@ run starts. It is strict RAII: destroying a live session requests cooperative
 stop and joins all session-owned work — it never detaches a thread, never
 force-kills your code. `request_stop()` is nonblocking and idempotent;
 `wait()` joins; `termination()` reports the coarse outcome (`kRunning`,
-`kCompleted`, `kStopped`, `kFailed`). The blocking `run(plan)` is a convenience
-wrapper over the exact same path.
+`kCompleted`, `kRequestedCompleted`, `kStopped`, `kFailed`). The blocking
+`run(plan)` is a convenience wrapper over the exact same path.
+
+On Linux, that convenience wrapper also selects managed SIGINT/SIGTERM by
+default. Its early-domain, single-task admission, and caller-managed opt-out
+rules are documented in
+[running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
 
 <Warning>
   Because destruction joins, a `compute()` that never returns can block session

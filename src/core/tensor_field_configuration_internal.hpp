@@ -11,26 +11,25 @@
 
 #include <holoscan/core/tensor_field.hpp>
 
+#include "plan_record_contracts.hpp"
+
 namespace holoscan::detail {
 
-[[nodiscard]] inline bool tensor_layout_equal(const std::optional<TensorPortLayout>& lhs,
-                                              const std::optional<TensorPortLayout>& rhs) noexcept {
+[[nodiscard]] inline bool optional_tensor_contract_equal(
+    const std::optional<TensorContractRecord>& lhs,
+    const std::optional<TensorContractRecord>& rhs) noexcept {
   if (lhs.has_value() != rhs.has_value()) {
     return false;
   }
   if (!lhs) {
     return true;
   }
-  const bool dtype_equal = lhs->dtype.has_value() == rhs->dtype.has_value() &&
-                           (!lhs->dtype || (lhs->dtype->code == rhs->dtype->code &&
-                                            lhs->dtype->bits == rhs->dtype->bits &&
-                                            lhs->dtype->lanes == rhs->dtype->lanes));
-  return lhs->memory_kind == rhs->memory_kind && lhs->rank == rhs->rank && dtype_equal;
+  return tensor_contract_equal(*lhs, *rhs);
 }
 
 [[nodiscard]] inline bool tensor_field_payload_options_equal(
-    const std::optional<TensorFieldPayloadOptions>& lhs,
-    const std::optional<TensorFieldPayloadOptions>& rhs) noexcept {
+    const std::optional<TensorFieldTransferRecord>& lhs,
+    const std::optional<TensorFieldTransferRecord>& rhs) noexcept {
   return lhs.has_value() == rhs.has_value() &&
          (!lhs || (lhs->max_inline_bytes == rhs->max_inline_bytes &&
                    lhs->max_tensor_byte_span == rhs->max_tensor_byte_span &&
@@ -52,9 +51,11 @@ namespace holoscan::detail {
          (left.tensor_allocation->max_rank == right.tensor_allocation->max_rank &&
           left.tensor_allocation->max_byte_span == right.tensor_allocation->max_byte_span));
     if (left.field_id != right.field_id || left.tensor_index != right.tensor_index ||
-        !tensor_layout_equal(left.tensor_layout, right.tensor_layout) ||
+        !tensor_port_layout_exactly_equal(left.tensor_layout, right.tensor_layout) ||
         left.memory_conversion != right.memory_conversion || !allocation_equal ||
-        !tensor_field_payload_options_equal(left.payload_options, right.payload_options)) {
+        !tensor_field_payload_options_equal(left.payload_options, right.payload_options) ||
+        !optional_tensor_contract_equal(left.tensor_contract, right.tensor_contract) ||
+        left.tensor_byte_span_expression != right.tensor_byte_span_expression) {
       return false;
     }
   }

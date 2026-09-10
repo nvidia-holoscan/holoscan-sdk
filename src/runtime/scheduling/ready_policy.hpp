@@ -41,7 +41,7 @@ struct ReadyPolicyCapabilities {
                                    ReadyPolicyCapabilities) noexcept = default;
 };
 
-/// Return every READY-policy capability supplied by the EA1 runtime.
+/// Return every READY-policy capability supplied by the baseline runtime.
 [[nodiscard]] constexpr ReadyPolicyCapabilities all_ready_policy_capabilities() noexcept {
   ReadyPolicyCapabilities capabilities;
   capabilities.add(ReadyPolicyCapability::kDeterministicCandidateOrder);
@@ -75,8 +75,8 @@ struct SchedulerPlanView {
 /// Tag identity is intentionally outside this view. The Dispatcher reserves a Tag when it freezes
 /// the source/witness, before policy selection, but never exposes that identity to the policy, so
 /// it cannot accidentally become priority.
-/// Partition and vertex identities remain available for evidence and future policies, but the EA1
-/// deterministic-serial policy does not compare them.
+/// Partition and vertex identities remain available for evidence and future policies, but the
+/// baseline deterministic-serial policy does not compare them.
 struct ReadyCandidateView {
   ExecutionPartitionId partition;
   std::uint32_t execution_lane{};
@@ -106,7 +106,7 @@ struct ReadyCandidateIndex {
   friend constexpr bool operator==(ReadyCandidateIndex, ReadyCandidateIndex) noexcept = default;
 };
 
-/// Hold the complete bounded per-session state used by an EA1 READY policy.
+/// Hold the complete bounded per-session state used by a baseline READY policy.
 ///
 /// The state is initialized once from accepted plan maxima. It owns no container, string, graph,
 /// planner, catalog, or resource and therefore cannot allocate or grow on the selection path.

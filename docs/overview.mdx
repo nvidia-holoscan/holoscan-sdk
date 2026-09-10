@@ -86,6 +86,13 @@ int main() {
 }
 ```
 
+On Linux, plain blocking `run(plan)` owns SIGINT/SIGTERM by default and admits
+transient ownership only when both process-task census reads observe exactly
+one live task. Multithreaded hosts should establish an early
+`ManagedShutdownSignals` domain or choose
+`RunSignalPolicy::kCallerManaged`; see
+[Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
 Each phase has its own failure style: authoring mistakes throw while you
 compose, `compile()` returns rejected plans that explain what is infeasible,
 and a running pipeline fails closed. On the hot path the runtime is bounded by
@@ -97,12 +104,14 @@ model and
 [Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
 for the failure discipline.
 
-### Domain operator modules to come
+### Domain operator modules
 
-Today's SDK is a lean core: it ships no domain operators. Domain-specific
-operator libraries — inference, vision, multimedia, robotics, and others — are
-planned as separately installable operator modules in upcoming releases. Until
-they arrive, you write your own operators (see
+[Holoscan Vision](/holoscan/sdk-user-guide/advanced/holoscan-vision) provides
+eight C++ operators backed by CV-CUDA for image
+transformation, normalization, format conversion, and non-maximum suppression.
+Other domain-specific libraries — including inference, multimedia, and robotics
+modules — are planned as separately installable modules in upcoming releases.
+Until they arrive, you can write your own operators (see
 [Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator))
 and can browse community components through
 [HoloHub](/holoscan/sdk-user-guide/resources/holohub).
@@ -116,11 +125,15 @@ and can browse community components through
   [API stability](/holoscan/sdk-user-guide/introduction/api-stability) for what
   may still evolve. The generated
   [C++ API reference](/holoscan/sdk-user-guide/api-reference/holoscan)
-  documents every public type.
+  documents the core public API.
+- **Holoscan Vision.** C++ operators provide GPU-resident
+  resizing, cropping, borders, remapping, normalization, type conversion,
+  layout conversion, and non-maximum suppression. See the
+  [operator and tensor compatibility guide](/holoscan/sdk-user-guide/advanced/holoscan-vision).
 - **Examples.** A graded `hello_*` series (core runtime, logging, schemas,
   tensors, MatX and CCCL interop) plus fuller reference applications:
-  `ea1_camera_imu_control` (camera + IMU fusion driving a control output),
-  `ea1_slow_fast_fusion`, and `ea1_external_clients`.
+  `camera_imu_control` (camera + IMU fusion driving a control output),
+  `slow_fast_fusion`, and `external_clients`.
   [Holoscan by example](/holoscan/sdk-user-guide/examples/holoscan-by-example)
   walks through them, and the
   [camera + IMU pipeline](/holoscan/sdk-user-guide/examples/camera-imu-control)
@@ -157,11 +170,11 @@ and can browse community components through
   sensor pipelines with strict latency bounds, for robotics, medical imaging,
   and industrial inspection.
 - It is layered: the HoloMQ zero-copy transport underneath, an opinionated
-  periodic sensor-processing runtime on top, and domain operator modules
-  planned for upcoming releases.
+  periodic sensor-processing runtime on top, and separately installable domain
+  modules, including Holoscan Vision.
 - Every application follows **compose → compile → run**; timing is declared per
   operator in a temporal contract and validated before the pipeline starts.
-- Today the SDK ships a C++ API, a graded example set, and channel and runtime
-  benchmarks.
+- Today the SDK ships a C++ API, the Vision operators, a graded
+  example set, and channel and runtime benchmarks.
 - Next:
   [Highlights](/holoscan/sdk-user-guide/introduction/highlights).

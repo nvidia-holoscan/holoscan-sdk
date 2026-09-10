@@ -15,7 +15,10 @@
 #include <utility>
 #include <vector>
 
+#include <fmt/format.h>
+
 #include "../channel/endpoint_catalog_state.hpp"
+#include "../compiler/execution_plan_contracts.hpp"
 #include "../compiler/execution_plan_state.hpp"
 #include "../core/source_id_internal.hpp"
 #include "execution_lane.hpp"
@@ -33,10 +36,6 @@ constexpr std::uint8_t kStopReleaseMask = kStopMask | kReleaseMask;
 
 [[nodiscard]] bool bounded_token(std::string_view value) noexcept {
   return !value.empty() && value.size() <= kRuntimeMaterializationMaximumTokenBytes;
-}
-
-[[nodiscard]] bool valid_deadline(LifecycleStage stage) noexcept {
-  return static_cast<std::uint8_t>(stage) <= static_cast<std::uint8_t>(LifecycleStage::kStart);
 }
 
 [[nodiscard]] bool parse_unsigned_suffix(std::string_view value, std::string_view prefix,
@@ -57,11 +56,93 @@ template <typename Records, typename Predicate>
   return std::any_of(records.begin(), records.end(), std::move(predicate));
 }
 
+[[nodiscard]] bool valid_lifecycle_candidate_tensor_output_provider(
+    const ExecutionPlanState& plan, const RuntimeMaterializationRecord& record) noexcept {
+  if (record.complete_before_stage != LifecycleStage::kAllocate ||
+      std::ranges::count(plan.provider_allocation_plans,
+                         record.object_id,
+                         &ProviderAllocationPlanRecord::pool_id) != 1) {
+    return false;
+  }
+  const auto provider = std::ranges::find(
+      plan.provider_allocation_plans, record.object_id, &ProviderAllocationPlanRecord::pool_id);
+  if (provider == plan.provider_allocation_plans.end() ||
+      provider->allocation_kind != ProviderAllocationKind::kTensorOutput ||
+      provider->geometry_mode != AllocationGeometryMode::kLifecycleCandidate || !provider->output ||
+      provider->tensor_field_id || provider->tensor_index || provider->interface_topic ||
+      !provider->tensor_template || provider->complete_before != record.complete_before_stage ||
+      provider->disposition != PlanDisposition::kAccepted || provider->reason ||
+      !provider->first_sizing_dependency || provider->sizing_dependency_count == 0U) {
+    return false;
+  }
+  const auto& tensor_template = *provider->tensor_template;
+  if (tensor_template.allocator_root_id.empty() || !tensor_template.allocator_process_group ||
+      tensor_template.bounds.max_rank == 0U || tensor_template.bounds.max_byte_span == 0U ||
+      !tensor_template.layout || !tensor_template.layout->memory_kind ||
+      *tensor_template.layout->memory_kind != MemoryKind::kHost ||
+      tensor_template.memory_kind != MemoryKind::kHost || tensor_template.device.valid() ||
+      tensor_template.max_emits_per_compute == 0U ||
+      tensor_template.max_outstanding_loans != tensor_template.max_emits_per_compute ||
+      !tensor_template.fallback_rejected) {
+    return false;
+  }
+  bool found_direct_retained_service{};
+  for (const auto& service : plan.process_local_channel_services) {
+    if (service.source != *provider->output) {
+      continue;
+    }
+    if (service.delivery_kind != ProcessLocalChannelDeliveryKind::kDirectRetained ||
+        service.cross_process_transport || service.queue_policy != QueuePolicy::kBlocking) {
+      return false;
+    }
+    found_direct_retained_service = true;
+  }
+  if (!found_direct_retained_service ||
+      std::ranges::any_of(plan.cross_process_channel_services, [&](const auto& service) {
+        return service.source == *provider->output;
+      })) {
+    return false;
+  }
+  const auto dependencies =
+      provider_sizing_dependencies(plan.pool_capacity_dependencies, *provider);
+  if (!dependencies) {
+    return false;
+  }
+  bool lifecycle_queue_dependency = false;
+  for (const auto& dependency : *dependencies) {
+    if (dependency.source != PoolCapacityDependencySource::kQueueSizingRecipe) {
+      continue;
+    }
+    const auto recipe = std::ranges::find(plan.queue_sizing_recipes,
+                                          dependency.queue_sizing_recipe,
+                                          &QueueSizingRecipePlanRecord::id);
+    if (recipe == plan.queue_sizing_recipes.end() ||
+        recipe->geometry_mode != AllocationGeometryMode::kLifecycleCandidate ||
+        !recipe->latest_binding_stage ||
+        static_cast<std::uint8_t>(*recipe->latest_binding_stage) >
+            static_cast<std::uint8_t>(LifecycleStage::kDiscover)) {
+      return false;
+    }
+    lifecycle_queue_dependency = true;
+  }
+  return lifecycle_queue_dependency &&
+         std::ranges::none_of(plan.tensor_allocations, [&](const auto& allocation) {
+           return allocation.output == *provider->output && allocation.pool_id == provider->pool_id;
+         });
+}
+
 [[nodiscard]] std::string tensor_transfer_object_id(const TensorTransferPlanRecord& transfer) {
-  return "tensor-topic:" + std::to_string(transfer.topic.value) +
-         ":source:" + std::to_string(static_cast<std::uint32_t>(transfer.source_class)) +
-         ":bytes:" + std::to_string(transfer.min_logical_bytes) + '-' +
-         std::to_string(transfer.max_logical_bytes);
+  const std::string field_id =
+      transfer.field_id ? fmt::format("{}", *transfer.field_id) : std::string{"none"};
+  const std::string tensor_index =
+      transfer.tensor_index ? fmt::format("{}", *transfer.tensor_index) : std::string{"none"};
+  return fmt::format("tensor-topic:{}:field:{}:tensor:{}:source:{}:bytes:{}-{}",
+                     transfer.topic.value,
+                     field_id,
+                     tensor_index,
+                     static_cast<std::uint32_t>(transfer.source_class),
+                     transfer.min_logical_bytes,
+                     transfer.max_logical_bytes);
 }
 
 [[nodiscard]] bool canonical_obligation_order(const ProfileMaterializationObligationRecord& lhs,
@@ -80,7 +161,7 @@ template <typename Records, typename Predicate>
     const auto& obligation = obligations[index];
     if (!bounded_token(obligation.object_id) || !bounded_token(obligation.strategy_id) ||
         !bounded_token(obligation.evidence_id) ||
-        !valid_deadline(obligation.complete_before_stage) ||
+        !is_lifecycle_forward_stage(obligation.complete_before_stage) ||
         obligation.cleanup_stage_mask != kStopReleaseMask || obligation.max_cleanup_actions == 0U) {
       return false;
     }
@@ -170,33 +251,44 @@ bool RuntimeMaterializationState::verify_resource(
            });
   }
   if (record.strategy_id == "holoscan.runtime.tensor_output_pool/v1") {
-    return record.evidence_id == "holoscan.compile.tensor_pool_plan/v1" &&
-           contains_record(plan_->tensor_allocations, [&](const auto& pool) {
-             return pool.pool_id == record.object_id &&
-                    pool.materialize_before == record.complete_before_stage &&
-                    pool.disposition == PlanDisposition::kAccepted;
+    if (record.evidence_id != "holoscan.compile.tensor_pool_plan/v1") {
+      return false;
+    }
+    const bool compile_concrete = contains_record(plan_->tensor_allocations, [&](const auto& pool) {
+      return pool.pool_id == record.object_id &&
+             pool.materialize_before == record.complete_before_stage &&
+             pool.disposition == PlanDisposition::kAccepted;
+    });
+    const bool lifecycle_candidate =
+        valid_lifecycle_candidate_tensor_output_provider(*plan_, record);
+    return compile_concrete != lifecycle_candidate;
+  }
+  if (record.strategy_id == "holoscan.runtime.cuda_compute_stream/v1") {
+    return record.complete_before_stage == LifecycleStage::kArm &&
+           record.evidence_id == "holoscan.compile.cuda_compute_stream_plan/v1" &&
+           contains_record(plan_->cuda_compute_streams, [&](const auto& stream) {
+             return stream.plan_generation == plan_->plan_generation &&
+                    stream.run_generation == 0U && stream.process_group && stream.device.valid() &&
+                    !stream.owner_id.empty() && stream.stream_id == record.object_id &&
+                    stream.materialize_before == record.complete_before_stage;
            });
   }
-  if (record.strategy_id == "holoscan.runtime.tensor_device_stream/v1") {
+  if (record.strategy_id == "holoscan.runtime.cuda_green_context_pool/v1") {
     return record.complete_before_stage == LifecycleStage::kArm &&
-           record.evidence_id == "holoscan.compile.tensor_device_resource_plan/v1" &&
-           contains_record(plan_->tensor_device_resources, [&](const auto& resource) {
-             const bool stream_only_resource =
-                 resource.pool_count == 0U && resource.slot_capacity == 0U &&
-                 contains_record(plan_->cross_process_channel_services, [&](const auto& service) {
-                   return cross_process_tensor_service_requires_stream_for_device_in_group(
-                       service, resource.process_group, resource.device);
-                 });
+           record.evidence_id == "holoscan.compile.cuda_green_context_plan/v1" &&
+           contains_record(plan_->cuda_green_context_pools, [&](const auto& pool) {
+             return pool.plan_generation == plan_->plan_generation && pool.run_generation == 0U &&
+                    pool.process_group && pool.device.valid() && pool.pool_id == record.object_id &&
+                    pool.materialize_before == record.complete_before_stage;
+           });
+  }
+  if (record.strategy_id == "holoscan.runtime.cuda_green_context/v1") {
+    return record.complete_before_stage == LifecycleStage::kArm &&
+           record.evidence_id == "holoscan.compile.cuda_green_context_plan/v1" &&
+           contains_record(plan_->cuda_green_context_resources, [&](const auto& resource) {
              return resource.plan_generation == plan_->plan_generation &&
                     resource.run_generation == 0U && resource.process_group &&
-                    resource.device.valid() && !resource.allocator_root_id.empty() &&
-                    resource.stream_id == record.object_id &&
-                    ((resource.pool_count != 0U && resource.slot_capacity != 0U) ||
-                     stream_only_resource) &&
-                    resource.materialize_before == record.complete_before_stage &&
-                    !resource.per_partition_stream && !resource.per_partition_event &&
-                    !resource.per_partition_green_context &&
-                    !resource.gpu_resident_backend_selected && resource.fallback_rejected;
+                    resource.device.valid() && resource.green_context_id == record.object_id;
            });
   }
   if (record.strategy_id == "holoscan.runtime.tensor_interface_pool/v1") {

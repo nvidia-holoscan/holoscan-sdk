@@ -3,7 +3,9 @@
 
 add_executable(endpoint_catalog_benchmark endpoint_catalog_benchmark.cpp)
 add_dependencies(holoscan-benchmark-targets endpoint_catalog_benchmark)
-target_include_directories(endpoint_catalog_benchmark PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(endpoint_catalog_benchmark
+    PRIVATE ${holoscan_SOURCE_DIR}/src
+)
 target_link_libraries(endpoint_catalog_benchmark
     PRIVATE
         benchmark::benchmark_main

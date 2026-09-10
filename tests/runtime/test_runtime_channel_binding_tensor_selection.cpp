@@ -24,6 +24,7 @@
 #include "runtime/dispatcher.hpp"
 #include "runtime/predicate_evaluator.hpp"
 #include "runtime/runtime_channel_binding.hpp"
+#include "runtime/runtime_phase_counters.hpp"
 
 #include "runtime_channel_binding_schema_tensor_test_support.hpp"
 #include "runtime_channel_binding_test_support.hpp"
@@ -34,6 +35,70 @@ namespace {
 using namespace std::chrono_literals;
 using namespace runtime_channel_binding_test;
 using namespace runtime_channel_binding_schema_tensor_test;
+
+// Direct-retained raw Tensor delivery keeps the ordinary readiness path. Receipt bookkeeping does
+// not improve the production-sized path enough to justify touching Tensor publication.
+// REQ: CHAN-098
+// REQ: RUNTIME-019
+TEST(ChannelBindingParityTest, DirectRawTensorUsesOrdinaryReadinessInsteadOfContinuation) {
+  // Key setup: create an otherwise eligible exact shared-lane direct raw Tensor edge.
+  TensorSessionFixture fixture;
+  fixture.use_direct_retained_delivery();
+  const auto counters = std::make_shared<RuntimePhaseCounters>();
+  fixture.base.plan.executable_factories.phase_counters = counters;
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto binding =
+      (*session)->create_readiness_binding(VertexId{2U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.base.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(1U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 1U,
+                                           });
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+  EXPECT_FALSE((*session)->arm_direct_continuation(VertexId{1U}, 0U));
+
+  constexpr std::array<std::uint64_t, 1U> values{77U};
+  constexpr std::array<std::int64_t, 1U> capture_times{10};
+  auto script = publish_tensor_script(**session, **binding, fixture.source, values, capture_times);
+  ASSERT_TRUE(script) << runtime_error_message(script.error());
+  ASSERT_EQ(script->records.size(), 1U);
+  ASSERT_EQ(script->events.size(), 1U);
+  const std::array selection{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = InputSelection{InputState::kSelected, SelectionReason::kNone},
+      .samples = std::span<const TemporalSampleRecord>{script->records.data(), 1U},
+      .destructive = true,
+  }};
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, selection));
+  ASSERT_TRUE((*session)->prepare_tensor_access(VertexId{2U}, 1U, nullptr));
+
+  // Key assertion: ordinary polling publishes one readiness record while the typed slot remains
+  // the sole backing-lifetime authority through Tensor access and retirement.
+  {
+    auto received = fixture.sink.input.receive();
+    ASSERT_TRUE(received) << runtime_error_message(received.error());
+    EXPECT_EQ(received->data.data(), script->data.front());
+    EXPECT_EQ(*received->data.data_as<std::uint64_t>(), 77U);
+    EXPECT_EQ(script->releases.front()->load(std::memory_order_relaxed), 0U);
+  }
+  ASSERT_TRUE((*binding)->retire(script->events.front().source_sequence));
+  ASSERT_TRUE((*session)->retire_samples(PortId{2U}, selection.front().samples));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 1U, true));
+  EXPECT_EQ(script->releases.front()->load(std::memory_order_relaxed), 1U);
+
+  const auto snapshot = counters->snapshot();
+  EXPECT_EQ(snapshot[RuntimePhaseCounters::index(RuntimePhaseCounter::kChannelReadinessPublished)],
+            1U);
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
 
 // REQ: CHAN-083
 // REQ: TENSOR-STORAGE-010
@@ -243,7 +308,7 @@ TEST(ChannelBindingParityTest,
   auto catalog_contract = RuntimeChannelSessionTestAccess::set_external_tensor_contract(
       **session,
       PortId{2U},
-      LogicalTensorRequirementsRecord{
+      TensorBoundaryContractRecord{
           .memory_kind = MemoryKind::kHost,
           .max_byte_span = 1U,
           .strides = TensorStridePolicy::kContiguousOnly,
@@ -1536,8 +1601,10 @@ TEST(ChannelBindingParityTest, TensorSampleEmitPreservesMetadataAndExactPassThro
     EXPECT_EQ(received->metadata.sequence, record->source_sequence);
     EXPECT_EQ(received->metadata.capture_timestamp_ns, supplied.capture_timestamp_ns);
     EXPECT_EQ(received->metadata.source_clock_id, supplied.source_clock_id);
-    EXPECT_EQ(received->metadata.publish_timestamp_ns, supplied.publish_timestamp_ns);
-    EXPECT_EQ(received->metadata.publish_clock_id, supplied.publish_clock_id);
+    // Publication time is framework-owned, so the caller-supplied coordinate is discarded rather
+    // than forwarded. This session binds no publish clock, which leaves canonical absence.
+    EXPECT_EQ(received->metadata.publish_timestamp_ns, 0);
+    EXPECT_FALSE(received->metadata.publish_clock_id.valid());
     EXPECT_EQ(received->metadata.trace_id, supplied.trace_id);
     EXPECT_EQ(received->metadata.frame_id, supplied.frame_id);
     EXPECT_EQ(received->metadata.byte_size, sizeof(std::uint64_t));
@@ -1599,8 +1666,11 @@ TEST(ChannelBindingParityTest, TensorFanoutExceptionsRespectSubmissionBoundary) 
 // REQ: CHAN-102
 // REQ: TENSOR-STORAGE-010
 TEST(ChannelBindingParityTest, TensorFanoutReleasesBackingAfterTheFinalSubscriberClaim) {
+  // Key setup: publish one raw Tensor through a two-recipient eventless service and establish the
+  // ordinary activation cut before either subscriber reads its sidecar-backed view.
   TensorSessionFixture fixture;
   fixture.add_blocking_fanout();
+  fixture.base.use_same_partition_eventless_transport();
   auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
   ASSERT_TRUE(session) << runtime_error_message(session.error());
   const auto bind = [&](VertexId owner, SourceId source) {
@@ -1622,6 +1692,11 @@ TEST(ChannelBindingParityTest, TensorFanoutReleasesBackingAfterTheFinalSubscribe
   ASSERT_TRUE(second_binding) << runtime_error_message(second_binding.error());
   ASSERT_TRUE((*session)->refresh_connections());
   ASSERT_TRUE((*session)->arm());
+  auto indexes = RuntimeChannelSessionTestAccess::pump_index_state(**session);
+  ASSERT_TRUE(indexes) << runtime_error_message(indexes.error());
+  EXPECT_TRUE(indexes->exact);
+  EXPECT_EQ(indexes->wait_handle_count, 0U);
+  EXPECT_EQ(indexes->drain_subscriber_count, 2U);
 
   auto owned = make_owned_tensor_sample(0xCAFEU);
   ASSERT_TRUE(owned) << runtime_error_message(owned.error());
@@ -1633,6 +1708,7 @@ TEST(ChannelBindingParityTest, TensorFanoutReleasesBackingAfterTheFinalSubscribe
       SampleMetadata{.capture_timestamp_ns = 10, .source_clock_id = ClockId{1U}},
   }));
   ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_TRUE((*session)->flush_process_local_activation_cut());
 
   auto first_event = wait_for_event(**session, **first_binding);
   auto second_event = wait_for_event(**session, **second_binding);
@@ -1677,7 +1753,8 @@ TEST(ChannelBindingParityTest, TensorFanoutReleasesBackingAfterTheFinalSubscribe
       PortId{3U}, std::span<const TemporalSampleRecord>{&*second_record, 1U}));
   (*session)->cancel();
   ASSERT_TRUE((*session)->join());
-  // Key assertion: backing is released exactly once after the last subscriber leg retires.
+  // Key assertion: both eventless legs expose the same backing, which is released exactly once
+  // only after the final independent subscriber claim retires.
   EXPECT_EQ(releases->load(std::memory_order_relaxed), 1U);
 }
 
@@ -1888,9 +1965,11 @@ TEST(ChannelBindingParityTest, DirectDropOldestTensorDoesNotRecycleBackingUnderL
 // REQ: TENSOR-SCHEMA-005
 // REQ: TENSOR-STORAGE-010
 TEST(ChannelBindingParityTest, DescriptorTensorImageFanoutSharesBackingUntilBothLegsRetire) {
+  // Key setup: publish one Image through a two-recipient eventless descriptor-sidecar service and
+  // establish the ordinary activation cut before either subscriber reads its owning envelope.
   ImageSessionFixture fixture;
   fixture.add_blocking_fanout();
-  // Key assertion: fanout remains on HoloMQ and retains one sidecar claim per recipient.
+  fixture.base.use_same_partition_eventless_transport();
   EXPECT_EQ(fixture.base.plan.process_local_channel_services.front().delivery_kind,
             ProcessLocalChannelDeliveryKind::kHoloMQ);
   auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
@@ -1914,6 +1993,11 @@ TEST(ChannelBindingParityTest, DescriptorTensorImageFanoutSharesBackingUntilBoth
   ASSERT_TRUE(second_binding) << runtime_error_message(second_binding.error());
   ASSERT_TRUE((*session)->refresh_connections());
   ASSERT_TRUE((*session)->arm());
+  auto indexes = RuntimeChannelSessionTestAccess::pump_index_state(**session);
+  ASSERT_TRUE(indexes) << runtime_error_message(indexes.error());
+  EXPECT_TRUE(indexes->exact);
+  EXPECT_EQ(indexes->wait_handle_count, 0U);
+  EXPECT_EQ(indexes->drain_subscriber_count, 2U);
 
   auto owned = make_owned_tensor_sample(0xBEEFU);
   ASSERT_TRUE(owned) << runtime_error_message(owned.error());
@@ -1932,6 +2016,7 @@ TEST(ChannelBindingParityTest, DescriptorTensorImageFanoutSharesBackingUntilBoth
       SampleMetadata{.capture_timestamp_ns = 10, .source_clock_id = ClockId{1U}},
   }));
   ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_TRUE((*session)->flush_process_local_activation_cut());
 
   auto first_event = wait_for_event(**session, **first_binding);
   auto second_event = wait_for_event(**session, **second_binding);
@@ -1965,6 +2050,8 @@ TEST(ChannelBindingParityTest, DescriptorTensorImageFanoutSharesBackingUntilBoth
   receive_leg(VertexId{2U}, PortId{2U}, 1U, *first_record, fixture.sink);
   receive_leg(VertexId{3U}, PortId{3U}, 1U, *second_record, fixture.second_sink);
 
+  // Key assertion: both envelopes preserve the same sidecar backing, which is released exactly
+  // once only after the final subscriber retires its independent claim.
   ASSERT_TRUE((*first_binding)->retire(first_event->source_sequence));
   ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 1U, true));
   ASSERT_TRUE((*session)->retire_samples(

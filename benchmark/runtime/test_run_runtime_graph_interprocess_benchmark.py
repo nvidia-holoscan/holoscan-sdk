@@ -123,12 +123,12 @@ def validated_args(**overrides: Any) -> argparse.Namespace:
             "Tensor storage options require a Tensor-backed payload",
         ),
         (
-            {"payload": "multi_tensor_loan", "tensor_storage": "device"},
-            "multi-Tensor benchmark payloads currently require pageable_host",
-        ),
-        (
             {"payload": "multi_tensor_staging", "warmup": 0},
             "multi-Tensor benchmark payloads require warmup",
+        ),
+        (
+            {"payload": "multi_tensor_staging", "bulk_work_profile": "full_write"},
+            "multi-Tensor staging requires --bulk-work-profile descriptor_only",
         ),
         (
             {"relay_cpu": 4},
@@ -205,9 +205,9 @@ def test_main_skips_before_launching_workers_on_non_linux(
     assert runner.main() == 77
 
 
-def valid_records() -> tuple[dict[str, Any], dict[str, Any]]:
+def valid_records(*, runtime_phase_trace: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
     common = {
-        "schema": "holoscan.ea1.runtime-interprocess-benchmark/v1",
+        "schema": "holoscan.test.runtime-interprocess-benchmark/v1",
         "benchmark": "runtime_graph_interprocess_pod_1to1",
         "workload": "latency",
         "payload": "pod",
@@ -268,6 +268,8 @@ def valid_records() -> tuple[dict[str, Any], dict[str, Any]]:
         "counts": {
             "source_starts": 1,
             "consumer_starts": 0,
+            "source_callbacks": 10,
+            "relay_callbacks": 0,
             "publications": 10,
             "deliveries": 0,
         },
@@ -292,6 +294,9 @@ def valid_records() -> tuple[dict[str, Any], dict[str, Any]]:
                 "error": None,
             },
         ],
+        "runtime_thread_usage": {"enabled": False},
+        "runtime_phases": {"enabled": runtime_phase_trace},
+        "callback_thread_evidence": {"enabled": False},
         "ingress_wake_trace": {"enabled": False},
     }
     consumer = {
@@ -308,6 +313,8 @@ def valid_records() -> tuple[dict[str, Any], dict[str, Any]]:
         "counts": {
             "source_starts": 0,
             "consumer_starts": 1,
+            "source_callbacks": 0,
+            "relay_callbacks": 0,
             "publications": 0,
             "deliveries": 10,
             "final_sequence": 10,
@@ -337,8 +344,97 @@ def valid_records() -> tuple[dict[str, Any], dict[str, Any]]:
                 "error": None,
             },
         ],
+        "runtime_thread_usage": {"enabled": False},
+        "runtime_phases": {"enabled": runtime_phase_trace},
+        "callback_thread_evidence": {"enabled": False},
         "ingress_wake_trace": {"enabled": False},
     }
+    if runtime_phase_trace:
+
+        def runtime_phases(*, callback_count: int, input_count: int) -> dict[str, Any]:
+            return {
+                "enabled": True,
+                "readiness_scans": callback_count,
+                "no_progress_scans": 0,
+                "wait_calls": 1,
+                "wake_signals": 1,
+                "wake_returns": 1,
+                "timeout_returns": 0,
+                "channel_samples_received": input_count,
+                "channel_readiness_published": input_count,
+                "readiness_poll_dispatches": input_count,
+                "compute_dispatches": callback_count,
+            }
+
+        def runtime_usage(*, pump_samples: int) -> dict[str, Any]:
+            def usage_record(role: str, samples: int) -> dict[str, Any]:
+                return {
+                    "role": role,
+                    "supported": True,
+                    "samples": samples,
+                    "user_cpu_ns": 100 if samples else 0,
+                    "system_cpu_ns": 10 if samples else 0,
+                    "voluntary_context_switches": 1 if samples else 0,
+                    "involuntary_context_switches": 0,
+                    "minor_page_faults": 2 if samples else 0,
+                    "major_page_faults": 0,
+                }
+
+            roles = [
+                usage_record("controller", 1),
+                usage_record("execution_lanes", 0),
+                usage_record("channel_pump", pump_samples),
+                usage_record("notification_driver", 0),
+            ]
+            aggregate_fields = {
+                field: sum(record[field] for record in roles)
+                for field in (
+                    "samples",
+                    "user_cpu_ns",
+                    "system_cpu_ns",
+                    "voluntary_context_switches",
+                    "involuntary_context_switches",
+                    "minor_page_faults",
+                    "major_page_faults",
+                )
+            }
+            return {
+                "enabled": True,
+                "supported": True,
+                "scope": "whole_runtime_thread_lifetime_including_startup_and_teardown",
+                "roles": roles,
+                "aggregate": {"scope": "sum_of_runtime_roles", **aggregate_fields},
+            }
+
+        producer["runtime_phases"] = runtime_phases(callback_count=10, input_count=0)
+        producer["runtime_thread_usage"] = runtime_usage(pump_samples=0)
+        producer["callback_thread_evidence"] = {
+            "enabled": True,
+            "valid": True,
+            "thread_identity_kind": "native_tid",
+            "native_tid_syscall_unavailable": False,
+            "controller_native_tid": 1001,
+            "callback_role": "producer",
+            "callback_count": 10,
+            "callback_native_tid": 1001,
+            "multiple_threads": False,
+            "callbacks_on_partition_owner": True,
+        }
+        consumer["runtime_phases"] = runtime_phases(callback_count=10, input_count=10)
+        consumer["runtime_thread_usage"] = runtime_usage(pump_samples=1)
+        consumer["callback_thread_evidence"] = {
+            "enabled": True,
+            "valid": True,
+            "thread_identity_kind": "native_tid",
+            "native_tid_syscall_unavailable": False,
+            "controller_native_tid": 1002,
+            "callback_role": "consumer",
+            "callback_count": 10,
+            "callback_native_tid": 1002,
+            "multiple_threads": False,
+            "callbacks_on_partition_owner": True,
+        }
+        consumer["ingress_wake_trace"] = complete_ingress_wake_trace(readiness_poll_elided=True)
     return producer, consumer
 
 
@@ -369,7 +465,10 @@ def complete_ingress_wake_trace(*, readiness_poll_elided: bool) -> dict[str, Any
         "pump_wake_to_readiness_poll_ns": readiness_bucket,
         "pump_wake_to_controller_return_ns": ingress_latency_bucket(),
         "controller_return_to_readiness_poll_ns": readiness_bucket,
+        "controller_return_to_candidate_ns": ingress_latency_bucket(),
+        "readiness_poll_to_candidate_ns": readiness_bucket,
         "readiness_poll_to_compute_dispatch_ns": readiness_bucket,
+        "candidate_to_compute_dispatch_ns": ingress_latency_bucket(),
         "compute_dispatch_to_callback_entry_ns": ingress_latency_bucket(),
         "transport_wait_to_callback_entry_ns": ingress_latency_bucket(),
     }
@@ -392,7 +491,7 @@ def test_validate_results_accepts_tensor_plan_and_metadata_evidence() -> None:
         record["geometry"].update(
             payload_bytes=1 << 20,
             application_payload_bytes=1 << 20,
-            inline_transport_bytes=464,
+            inline_transport_bytes=472,
             external_buffer_bytes=1 << 20,
             payload_write_profile="full_buffer_write_per_sample",
             bulk_work_profile="full_write",
@@ -501,20 +600,30 @@ def test_validate_results_accepts_device_image_schema_evidence() -> None:
     runner.validate_results(args, producer, None, [consumer])
 
 
-@pytest.mark.parametrize("payload", sorted(runner.MULTI_TENSOR_PAYLOADS))
-def test_validate_results_accepts_allocation_free_multi_tensor_paths(payload: str) -> None:
-    # Key setup: both workers report two 1 MiB fields and one excluded zero-allocation probe.
+def multi_tensor_records(
+    payload: str,
+    tensor_storage: str,
+    bulk_work_profile: str,
+    source_allocation_limit: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     producer, consumer = valid_records()
+    payload_write_profile = (
+        "preinitialized_immutable_backing"
+        if bulk_work_profile == "descriptor_only"
+        else "full_buffer_write_per_sample"
+    )
     for role, record in (("producer", producer), ("consumer", consumer)):
         record["payload"] = payload
-        record["benchmark"] = f"runtime_graph_interprocess_{payload}"
+        record["benchmark"] = (
+            f"runtime_graph_interprocess_{payload}_1to1_{tensor_storage}_{bulk_work_profile}"
+        )
         record["geometry"].update(
             payload_bytes=2 << 20,
             application_payload_bytes=2 << 20,
             inline_transport_bytes=None,
             external_buffer_bytes=2 << 20,
-            payload_write_profile="full_buffer_write_per_sample",
-            bulk_work_profile="full_write",
+            payload_write_profile=payload_write_profile,
+            bulk_work_profile=bulk_work_profile,
             pool_slots=6,
             release_capacity=6,
         )
@@ -523,7 +632,7 @@ def test_validate_results_accepts_allocation_free_multi_tensor_paths(payload: st
             "wire_capacity": 1536,
         }
         record["tensor"] = {
-            "storage": "pageable_host",
+            "storage": tensor_storage,
             "device": 0,
             "descriptor_schema": True,
             "read_only_import_checked": True,
@@ -531,20 +640,89 @@ def test_validate_results_accepts_allocation_free_multi_tensor_paths(payload: st
             "direct_allocation_records": 2,
             "memory_kind_plan_match": True,
             "service_pool_bound": True,
+            "field_pools_distinct": True,
+            "fields": [
+                {
+                    "name": "first",
+                    "dtype": "uint8",
+                    "rank": 1,
+                    "bytes": 1 << 20,
+                    "tensor_index": 0,
+                    "pool_id": "field-first",
+                    "pool_slots": 3,
+                    "release_capacity": 3,
+                },
+                {
+                    "name": "second",
+                    "dtype": "uint8",
+                    "rank": 1,
+                    "bytes": 1 << 20,
+                    "tensor_index": 1,
+                    "pool_id": "field-second",
+                    "pool_slots": 3,
+                    "release_capacity": 3,
+                },
+            ],
         }
         record["allocation_probe"] = {
             "sequence": 2,
             "excluded_from_measurement": True,
             "sink_access": "selected_batch",
-            "source_compute_allocation_limit": 0,
+            "source_compute_allocation_limit": source_allocation_limit,
             "sink_compute_allocation_limit": 0,
-            "source_compute_allocations": 0 if role == "producer" else None,
+            "source_compute_allocations": source_allocation_limit if role == "producer" else None,
             "sink_compute_allocations": 0 if role == "consumer" else None,
         }
+    if bulk_work_profile == "descriptor_only":
+        producer["counts"]["descriptor_backing_initializations"] = 2
+        producer["counts"]["descriptor_backing_initializations_during_measurement"] = 0
+    return producer, consumer
 
-    # Key assertion: loan and staged-copy rows both prove allocation-free steady-state callbacks.
-    args = validated_args(payload=payload)
+
+@pytest.mark.parametrize(
+    ("payload", "tensor_storage", "source_allocation_limit"),
+    [
+        ("multi_tensor_loan", "pageable_host", 0),
+        ("multi_tensor_loan", "pinned_host", 0),
+        ("multi_tensor_loan", "device", 0),
+        ("multi_tensor_staging", "pageable_host", 1),
+        ("multi_tensor_staging", "pinned_host", 1),
+        ("multi_tensor_staging", "device", 1),
+    ],
+)
+def test_validate_results_accepts_multi_tensor_allocation_evidence(
+    payload: str, tensor_storage: str, source_allocation_limit: int
+) -> None:
+    # Key setup: both workers report two descriptor-only fields and the mode-specific excluded
+    # allocation probe.
+    args = validated_args(
+        payload=payload,
+        tensor_storage=tensor_storage,
+        bulk_work_profile="descriptor_only",
+    )
+    producer, consumer = multi_tensor_records(
+        payload, tensor_storage, args.bulk_work_profile, source_allocation_limit
+    )
+
+    # Key assertion: loan remains allocation-free, while staging admits only its one baseline
+    # failed-export fallback allocation; both sinks retain an allocation-free borrowed batch.
+    assert runner.expected_benchmark_name(args) == (
+        f"runtime_graph_interprocess_{payload}_1to1_{tensor_storage}_{args.bulk_work_profile}"
+    )
     runner.validate_results(args, producer, None, [consumer])
+    producer["allocation_probe"]["source_compute_allocations"] = source_allocation_limit + 1
+    with pytest.raises(RuntimeError, match="exceeded its schema callback allocation limit"):
+        runner.validate_results(args, producer, None, [consumer])
+    producer["allocation_probe"]["source_compute_allocations"] = source_allocation_limit
+    for record in (producer, consumer):
+        record["tensor"]["fields"][0]["pool_slots"] = True
+    with pytest.raises(RuntimeError, match="invalid Tensor plan or import evidence"):
+        runner.validate_results(args, producer, None, [consumer])
+    for record in (producer, consumer):
+        record["tensor"]["fields"][0]["pool_slots"] = 3
+        record["tensor"]["fields"][0]["release_capacity"] = True
+    with pytest.raises(RuntimeError, match="invalid Tensor plan or import evidence"):
+        runner.validate_results(args, producer, None, [consumer])
 
 
 def descriptor_only_tensor_records() -> tuple[dict[str, Any], dict[str, Any]]:
@@ -555,7 +733,7 @@ def descriptor_only_tensor_records() -> tuple[dict[str, Any], dict[str, Any]]:
         record["geometry"].update(
             payload_bytes=1 << 20,
             application_payload_bytes=1 << 20,
-            inline_transport_bytes=464,
+            inline_transport_bytes=472,
             external_buffer_bytes=1 << 20,
             payload_write_profile="preinitialized_immutable_backing",
             bulk_work_profile="descriptor_only",
@@ -572,16 +750,18 @@ def descriptor_only_tensor_records() -> tuple[dict[str, Any], dict[str, Any]]:
             "memory_kind_plan_match": True,
             "service_pool_bound": True,
         }
-    producer["counts"]["descriptor_backing_initializations"] = 1
+    producer["counts"]["descriptor_backing_initializations"] = 4
     producer["counts"]["descriptor_backing_initializations_during_measurement"] = 0
     return producer, consumer
 
 
 def test_validate_results_accepts_preinitialized_descriptor_only_tensor() -> None:
-    # Key setup: both workers report immutable backing and the producer initialized it pre-measure.
+    # Key setup: both workers report immutable backing and the producer initialized the hot-path
+    # minimum before measurement.
     producer, consumer = descriptor_only_tensor_records()
 
-    # Key assertion: the transport-only row is accepted only with pre-measure initialization.
+    # Key assertion: both the hot-path minimum and a fully circulated cold pool are valid when all
+    # initialization remains outside measurement.
     args = validated_args(
         payload="tensor",
         tensor_storage="device",
@@ -590,6 +770,8 @@ def test_validate_results_accepts_preinitialized_descriptor_only_tensor() -> Non
     assert runner.expected_benchmark_name(args) == (
         "runtime_graph_interprocess_tensor_1to1_device_descriptor_only"
     )
+    runner.validate_results(args, producer, None, [consumer])
+    producer["counts"]["descriptor_backing_initializations"] = 6
     runner.validate_results(args, producer, None, [consumer])
 
 
@@ -604,9 +786,15 @@ def test_validate_results_accepts_preinitialized_descriptor_only_tensor() -> Non
         ),
         (
             2,
-            1,
+            0,
             runner.DescriptorWarmupIncompleteError,
-            r"initialized backing during measurement .*total=2.*during_measurement=1",
+            r"did not initialize the hot-path inventory .*total=2.*hot_slots=3.*pool_slots=6",
+        ),
+        (
+            7,
+            0,
+            RuntimeError,
+            r"initialized more than the declared pool inventory .*total=7.*pool_slots=6",
         ),
     ],
 )
@@ -630,6 +818,105 @@ def test_validate_results_diagnoses_descriptor_only_initialization_phase(
         bulk_work_profile="descriptor_only",
     )
     with pytest.raises(error_type, match=message):
+        runner.validate_results(args, producer, None, [consumer])
+
+
+def test_validate_results_allows_unpublished_latency_first_touch() -> None:
+    # Key setup: the paced producer discovered one backing after warmup but canceled the loan
+    # before publishing it, so the measured latency samples remain uncontaminated.
+    producer, consumer = descriptor_only_tensor_records()
+    producer["counts"]["descriptor_backing_initializations_during_measurement"] = 1
+
+    # Key assertion: paced latency accepts the excluded first-touch callback.
+    args = validated_args(
+        payload="tensor",
+        tensor_storage="device",
+        bulk_work_profile="descriptor_only",
+    )
+    runner.validate_results(args, producer, None, [consumer])
+
+
+def test_validate_results_rejects_saturated_measurement_first_touch() -> None:
+    # Key setup: report the same late discovery inside a saturated throughput interval.
+    producer, consumer = descriptor_only_tensor_records()
+    for record in (producer, consumer):
+        record["workload"] = "saturated"
+    producer["counts"]["descriptor_backing_initializations_during_measurement"] = 1
+
+    # Key assertion: saturated throughput still requires all first-touch work before measurement.
+    args = validated_args(
+        payload="tensor",
+        tensor_storage="device",
+        bulk_work_profile="descriptor_only",
+        workload="saturated",
+        publisher_period_us=0,
+    )
+    with pytest.raises(
+        runner.DescriptorWarmupIncompleteError,
+        match=r"initialized backing during measurement .*total=4.*during_measurement=1",
+    ):
+        runner.validate_results(args, producer, None, [consumer])
+    producer["counts"]["descriptor_backing_initializations"] = 3
+    producer["counts"]["descriptor_backing_initializations_during_measurement"] = 0
+    with pytest.raises(
+        runner.DescriptorWarmupIncompleteError,
+        match=r"did not initialize the hot-path inventory .*total=3.*hot_slots=4.*pool_slots=6",
+    ):
+        runner.validate_results(args, producer, None, [consumer])
+
+
+def test_validate_results_requires_complete_saturated_multi_tensor_field_pools() -> None:
+    # Key setup: report two eight-slot field pools after an excluded saturated warmup.
+    producer, consumer = multi_tensor_records(
+        "multi_tensor_loan", "pageable_host", "descriptor_only", 0
+    )
+    for record in (producer, consumer):
+        record["workload"] = "saturated"
+        record["geometry"].update(
+            samples=8,
+            warmup=16,
+            queue_depth=2,
+            notification_capacity=2,
+            publication_backpressure_capacity=2,
+            payload_bytes=2 << 20,
+            application_payload_bytes=2 << 20,
+            inline_transport_bytes=None,
+            external_buffer_bytes=2 << 20,
+            payload_write_profile="preinitialized_immutable_backing",
+            bulk_work_profile="descriptor_only",
+            pool_slots=16,
+            release_capacity=16,
+            publisher_period_us=None,
+        )
+        for field in record["tensor"]["fields"]:
+            field.update(pool_slots=8, release_capacity=8)
+        record["allocation_probe"]["sequence"] = 16
+    producer["counts"].update(
+        source_callbacks=25,
+        publications=24,
+        descriptor_backing_initializations=16,
+        descriptor_backing_initializations_during_measurement=0,
+    )
+    consumer["counts"].update(deliveries=24, final_sequence=24)
+    args = validated_args(
+        payload="multi_tensor_loan",
+        tensor_storage="pageable_host",
+        bulk_work_profile="descriptor_only",
+        workload="saturated",
+        samples=8,
+        warmup=16,
+        queue_depth=2,
+        publisher_period_us=0,
+    )
+
+    # Key assertion: all 16 field-pool slots are required before measurement, so the exact CI
+    # signature with only 14 initialized slots is rejected even when none is reported late.
+    runner.validate_results(args, producer, None, [consumer])
+    producer["counts"]["descriptor_backing_initializations"] = 14
+    with pytest.raises(
+        runner.DescriptorWarmupIncompleteError,
+        match=r"did not initialize the saturated field-pool inventory .*total=14.*pool_slots=16",
+    ):
         runner.validate_results(args, producer, None, [consumer])
 
 
@@ -709,9 +996,56 @@ def test_validate_results_rejects_unapplied_support_thread_cpu() -> None:
         runner.validate_results(validated_args(consumer_pump_cpu=6), producer, None, [consumer])
 
 
+def test_validate_results_requires_phase_counters_disabled_without_trace() -> None:
+    # Key setup: label an ordinary interprocess worker as phase-instrumented even though the
+    # author command did not opt into the diagnostic trace.
+    producer, consumer = valid_records()
+    consumer["runtime_phases"] = {"enabled": True}
+
+    # Key assertion: an ordinary baseline cannot qualify if any worker attached phase counters.
+    with pytest.raises(RuntimeError, match="invalid Runtime phase-counter state"):
+        runner.validate_results(validated_args(), producer, None, [consumer])
+
+
+def test_validate_results_rejects_incomplete_runtime_phase_counters() -> None:
+    # Key setup: omit one counter from an otherwise enabled interprocess phase payload.
+    producer, consumer = valid_records(runtime_phase_trace=True)
+    consumer["runtime_phases"].pop("compute_dispatches")
+
+    # Key assertion: a partial phase payload cannot qualify the diagnostic run.
+    with pytest.raises(RuntimeError, match="incomplete Runtime phase counters"):
+        runner.validate_results(
+            validated_args(runtime_phase_trace=True), producer, None, [consumer]
+        )
+
+
+def test_validate_results_rejects_inconsistent_runtime_phase_samples() -> None:
+    # Key setup: report fewer readiness publications than received channel samples.
+    producer, consumer = valid_records(runtime_phase_trace=True)
+    consumer["runtime_phases"]["channel_readiness_published"] -= 1
+
+    # Key assertion: phase evidence must reconcile with itself and callback counts.
+    with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+        runner.validate_results(
+            validated_args(runtime_phase_trace=True), producer, None, [consumer]
+        )
+
+
+def test_validate_results_rejects_boolean_runtime_phase_counter() -> None:
+    # Key setup: substitute a Boolean for a numerically equal integer counter.
+    producer, consumer = valid_records(runtime_phase_trace=True)
+    consumer["runtime_phases"]["timeout_returns"] = False
+
+    # Key assertion: Boolean values do not satisfy the phase-counter integer contract.
+    with pytest.raises(RuntimeError, match="incomplete Runtime phase counters"):
+        runner.validate_results(
+            validated_args(runtime_phase_trace=True), producer, None, [consumer]
+        )
+
+
 def test_validate_results_requires_complete_ingress_wake_trace() -> None:
     # Key setup: request phase attribution but report one missing measured sample.
-    producer, consumer = valid_records()
+    producer, consumer = valid_records(runtime_phase_trace=True)
     consumer["ingress_wake_trace"] = {
         "enabled": True,
         "valid": True,
@@ -735,7 +1069,7 @@ def test_validate_results_requires_complete_ingress_wake_trace() -> None:
     ],
 )
 def test_validate_results_rejects_incomplete_ingress_phase_counts(field: str, value: int) -> None:
-    producer, consumer = valid_records()
+    producer, consumer = valid_records(runtime_phase_trace=True)
     consumer["ingress_wake_trace"] = {
         "enabled": True,
         "valid": True,
@@ -756,21 +1090,78 @@ def test_validate_results_rejects_incomplete_ingress_phase_counts(field: str, va
 
 
 def test_validate_results_accepts_complete_ingress_phase_counts() -> None:
-    producer, consumer = valid_records()
+    producer, consumer = valid_records(runtime_phase_trace=True)
     consumer["ingress_wake_trace"] = complete_ingress_wake_trace(readiness_poll_elided=True)
 
     runner.validate_results(validated_args(runtime_phase_trace=True), producer, None, [consumer])
 
 
+def test_validate_results_rejects_callback_off_partition_owner() -> None:
+    # Key setup: retain complete phase correlation but move the consumer callback to another TID.
+    producer, consumer = valid_records(runtime_phase_trace=True)
+    consumer["callback_thread_evidence"]["callback_native_tid"] = 1010
+
+    # Key assertion: eventful-path attribution requires callbacks on the planned partition owner.
+    with pytest.raises(RuntimeError, match="invalid callback-owner evidence"):
+        runner.validate_results(
+            validated_args(runtime_phase_trace=True), producer, None, [consumer]
+        )
+
+
+def test_validate_results_rejects_inconsistent_runtime_thread_usage() -> None:
+    # Key setup: corrupt the aggregate while retaining otherwise complete role-level counters.
+    producer, consumer = valid_records(runtime_phase_trace=True)
+    consumer["runtime_thread_usage"]["aggregate"]["voluntary_context_switches"] += 1
+
+    # Key assertion: CPU and context-switch evidence must reconcile across Runtime thread roles.
+    with pytest.raises(RuntimeError, match="inconsistent Runtime thread-usage aggregate"):
+        runner.validate_results(
+            validated_args(runtime_phase_trace=True), producer, None, [consumer]
+        )
+
+
+def test_runtime_thread_usage_requires_zero_samples_when_unsupported() -> None:
+    # Key setup: construct a structurally valid unsupported thread-usage payload.
+    _, consumer = valid_records(runtime_phase_trace=True)
+    usage = consumer["runtime_thread_usage"]
+    usage["supported"] = False
+    for record in usage["roles"]:
+        record["supported"] = False
+        record["samples"] = 0
+    usage["aggregate"]["samples"] = 0
+
+    runner.validate_runtime_thread_usage("consumer", usage, True)
+    usage["roles"][0]["samples"] = 1
+    usage["aggregate"]["samples"] = 1
+
+    # Key assertion: an unsupported platform cannot claim a collected role sample.
+    with pytest.raises(RuntimeError, match="invalid Runtime thread-usage samples"):
+        runner.validate_runtime_thread_usage("consumer", usage, True)
+
+
+@pytest.mark.parametrize("invalid_value", [False, 0.0])
+def test_runtime_thread_usage_rejects_noninteger_aggregate(
+    invalid_value: bool | float,
+) -> None:
+    # Key setup: use a value that compares equal to the valid zero aggregate.
+    _, consumer = valid_records(runtime_phase_trace=True)
+    usage = consumer["runtime_thread_usage"]
+    usage["aggregate"]["major_page_faults"] = invalid_value
+
+    # Key assertion: aggregate counters require exact non-Boolean integer types.
+    with pytest.raises(RuntimeError, match="inconsistent Runtime thread-usage aggregate"):
+        runner.validate_runtime_thread_usage("consumer", usage, True)
+
+
 def test_validate_results_accepts_explicit_readiness_poll_latency_buckets() -> None:
-    producer, consumer = valid_records()
+    producer, consumer = valid_records(runtime_phase_trace=True)
     consumer["ingress_wake_trace"] = complete_ingress_wake_trace(readiness_poll_elided=False)
 
     runner.validate_results(validated_args(runtime_phase_trace=True), producer, None, [consumer])
 
 
 def test_validate_results_rejects_wrong_readiness_poll_latency_bucket_shape() -> None:
-    producer, consumer = valid_records()
+    producer, consumer = valid_records(runtime_phase_trace=True)
     consumer["ingress_wake_trace"] = complete_ingress_wake_trace(readiness_poll_elided=False)
     consumer["ingress_wake_trace"]["readiness_poll_to_compute_dispatch_ns"] = (
         empty_ingress_latency_bucket()

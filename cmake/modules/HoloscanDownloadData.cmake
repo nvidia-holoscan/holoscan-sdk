@@ -25,8 +25,15 @@ function(holoscan_download_data dataname)
     list(APPEND extra_data_options --md5 ${DATA_URL_MD5})
   endif()
 
-  # Find the download_ngc_data script
-  find_program(DOWNLOAD_NGC_DATA_SCRIPT download_ngc_data ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_SOURCE_DIR}/scripts NO_CMAKE_FIND_ROOT_PATH)
+  # Find the script beside this module (legacy install layout), in the current
+  # install bin directory, or relative to this module in the source tree.
+  find_program(DOWNLOAD_NGC_DATA_SCRIPT download_ngc_data
+    HINTS
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}"
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../../bin"
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../scripts"
+    NO_CMAKE_FIND_ROOT_PATH
+  )
   if(NOT DOWNLOAD_NGC_DATA_SCRIPT)
     message(FATAL_ERROR "download_ngc_data not found")
   endif()

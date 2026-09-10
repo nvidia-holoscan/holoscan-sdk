@@ -17,9 +17,8 @@
 
 namespace holoscan::detail::partitioning {
 
-/// Carry compile-owned selector inputs after the process environment was captured exactly once.
+/// Carry compiler-private selector inputs; product compilation supplies no selector.
 struct PartitionSelectionInput {
-  std::optional<std::string_view> captured_environment_value;
   std::optional<AlgorithmKey> compiler_service_request;
   std::optional<AlgorithmKey> test_override_request;
   Profile root_profile{Profile::kStandard};

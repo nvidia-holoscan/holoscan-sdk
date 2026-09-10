@@ -6,123 +6,32 @@
 #include "compiler/process_local_channel_plan_validation.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include <fmt/format.h>
-
 #include <holoscan/core/tensor_schema_output_loan.hpp>
-#include <holoscan/schema/schema_package.hpp>
-
 #include "channel/channel_payload_limits.hpp"
+#include "compiler/channel_payload_contracts.hpp"
+#include "compiler/execution_plan_contracts.hpp"
+#include "compiler/execution_plan_identity.hpp"
+#include "compiler/execution_plan_lookup.hpp"
 #include "compiler/execution_plan_state.hpp"
+#include "core/plan_record_contracts.hpp"
+#include "runtime/tensor_boundary_contract_comparison.hpp"
 
 namespace holoscan::detail {
 namespace {
 
 constexpr std::string_view kGeneratedEndpointAlgorithm{"holoscan.auto_endpoint_name"};
 constexpr std::uint32_t kGeneratedEndpointAlgorithmVersion = 1U;
-
-[[nodiscard]] bool process_local_payload_equal(const PayloadIdentityRecord& left,
-                                               const PayloadIdentityRecord& right) noexcept {
-  if (left.kind != right.kind || left.payload_kind != right.payload_kind ||
-      left.scalar.has_value() != right.scalar.has_value() ||
-      left.schema.has_value() != right.schema.has_value() ||
-      left.pod.has_value() != right.pod.has_value()) {
-    return false;
-  }
-  if (left.scalar && left.scalar->kind != right.scalar->kind) {
-    return false;
-  }
-  if (left.schema && (left.schema->canonical_name != right.schema->canonical_name ||
-                      left.schema->version != right.schema->version ||
-                      left.schema->schema_sha256 != right.schema->schema_sha256 ||
-                      left.schema->id != right.schema->id)) {
-    return false;
-  }
-  if (!left.pod) {
-    return true;
-  }
-  if (left.pod->canonical_name != right.pod->canonical_name ||
-      left.pod->version != right.pod->version || left.pod->object_size != right.pod->object_size ||
-      left.pod->object_alignment != right.pod->object_alignment ||
-      left.pod->fields.size() != right.pod->fields.size()) {
-    return false;
-  }
-  for (std::size_t index = 0U; index < left.pod->fields.size(); ++index) {
-    const auto& left_field = left.pod->fields[index];
-    const auto& right_field = right.pod->fields[index];
-    if (left_field.name != right_field.name || left_field.byte_offset != right_field.byte_offset ||
-        left_field.scalar_kind != right_field.scalar_kind ||
-        left_field.element_count != right_field.element_count) {
-      return false;
-    }
-  }
-  return true;
-}
-
-[[nodiscard]] std::optional<std::uint64_t> channel_payload_size_bytes(
-    const PayloadIdentityRecord& identity, std::uint64_t serialized_payload_capacity_bytes,
-    const bool process_local_schema_envelope) noexcept {
-  if (identity.kind == PayloadIdentityKind::kSchema && identity.schema &&
-      serialized_payload_capacity_bytes != 0U) {
-    if (identity.payload_kind == PayloadKind::kDescriptorBacked) {
-      return serialized_payload_capacity_bytes;
-    }
-    if (identity.payload_kind != PayloadKind::kSerializedBytes) {
-      return std::nullopt;
-    }
-    if (!process_local_schema_envelope) {
-      return serialized_payload_capacity_bytes;
-    }
-    if (serialized_payload_capacity_bytes >
-        std::numeric_limits<std::uint64_t>::max() - kSchemaEnvelopeHeaderSize) {
-      return std::nullopt;
-    }
-    return serialized_payload_capacity_bytes + kSchemaEnvelopeHeaderSize;
-  }
-  if (identity.kind == PayloadIdentityKind::kPod && identity.pod &&
-      identity.pod->object_size != 0U) {
-    return identity.pod->object_size;
-  }
-  if (identity.kind != PayloadIdentityKind::kScalar || !identity.scalar) {
-    return std::nullopt;
-  }
-  switch (identity.scalar->kind) {
-    case ScalarIdentityKind::kBoolean:
-      return sizeof(bool);
-    case ScalarIdentityKind::kInt8:
-    case ScalarIdentityKind::kUInt8:
-      return 1U;
-    case ScalarIdentityKind::kInt16:
-    case ScalarIdentityKind::kUInt16:
-      return 2U;
-    case ScalarIdentityKind::kInt32:
-    case ScalarIdentityKind::kUInt32:
-    case ScalarIdentityKind::kFloat32:
-      return 4U;
-    case ScalarIdentityKind::kInt64:
-    case ScalarIdentityKind::kUInt64:
-    case ScalarIdentityKind::kFloat64:
-      return 8U;
-    case ScalarIdentityKind::kLocalEnum:
-      return std::nullopt;
-  }
-  return std::nullopt;
-}
-
-[[nodiscard]] std::string process_local_service_id(PlanGenerationId generation, PortId source,
-                                                   QueuePolicy policy) {
-  return "process-local-channel." + std::to_string(generation) + ".source." +
-         std::to_string(source.value()) + ".policy." +
-         std::to_string(static_cast<std::uint32_t>(policy));
-}
 
 [[nodiscard]] const PortPlanRecord* dense_port(const ExecutionPlanState& state,
                                                PortId id) noexcept {
@@ -164,6 +73,16 @@ struct ProcessLocalServiceDerivation {
   const ProcessLocalChannelPublisherPlanRecord* publisher{};
   std::uint32_t subscriber_count{};
   std::uint32_t maximum_queue_depth{};
+  ProcessLocalHoloMQEventWakeReason wake_reason{ProcessLocalHoloMQEventWakeReason::kUnclassified};
+};
+
+struct ProcessLocalSourceWakeDerivation {
+  std::uint64_t subscriber_count{};
+  std::uint32_t source_fanout{};
+  bool fanout_observed{};
+  bool fanout_ambiguous{};
+  bool has_holomq{};
+  ProcessLocalHoloMQEventWakeReason wake_reason{ProcessLocalHoloMQEventWakeReason::kSuppressed};
 };
 
 struct TensorServicePoolFacts {
@@ -180,26 +99,57 @@ struct TensorServicePoolLookup {
 
 [[nodiscard]] TensorServicePoolLookup tensor_service_pool(const ExecutionPlanState& state,
                                                           PortId source) noexcept {
-  const auto direct = std::find_if(state.tensor_allocations.begin(),
-                                   state.tensor_allocations.end(),
-                                   [&](const auto& pool) { return pool.output == source; });
-  const auto boundary = std::find_if(state.tensor_interface_pools.begin(),
-                                     state.tensor_interface_pools.end(),
-                                     [&](const auto& pool) { return pool.graph_port == source; });
-  const bool has_direct = direct != state.tensor_allocations.end();
-  const bool has_boundary = boundary != state.tensor_interface_pools.end();
-  if (has_direct && has_boundary) {
+  const auto matches_direct = [&](const auto& pool) { return pool.output == source; };
+  const auto matches_candidate = [&](const auto& provider) {
+    return provider.allocation_kind == ProviderAllocationKind::kTensorOutput &&
+           provider.geometry_mode == AllocationGeometryMode::kLifecycleCandidate &&
+           provider.output == source && provider.tensor_template.has_value() &&
+           provider.disposition == PlanDisposition::kAccepted;
+  };
+  const auto matches_boundary = [&](const auto& pool) { return pool.graph_port == source; };
+
+  const auto direct = std::find_if(
+      state.tensor_allocations.begin(), state.tensor_allocations.end(), matches_direct);
+  const auto candidate = std::find_if(state.provider_allocation_plans.begin(),
+                                      state.provider_allocation_plans.end(),
+                                      matches_candidate);
+  const auto boundary = std::find_if(
+      state.tensor_interface_pools.begin(), state.tensor_interface_pools.end(), matches_boundary);
+  const auto direct_count = std::count_if(
+      state.tensor_allocations.begin(), state.tensor_allocations.end(), matches_direct);
+  const auto candidate_count = std::count_if(state.provider_allocation_plans.begin(),
+                                             state.provider_allocation_plans.end(),
+                                             matches_candidate);
+  const auto boundary_count = std::count_if(
+      state.tensor_interface_pools.begin(), state.tensor_interface_pools.end(), matches_boundary);
+  if (direct_count > 1 || candidate_count > 1 || boundary_count > 1 ||
+      static_cast<std::uint32_t>(direct_count != 0) +
+              static_cast<std::uint32_t>(candidate_count != 0) +
+              static_cast<std::uint32_t>(boundary_count != 0) >
+          1U) {
     return TensorServicePoolLookup{.ambiguous = true};
   }
-  if (!has_direct && !has_boundary) {
+  if (direct_count == 0 && candidate_count == 0 && boundary_count == 0) {
     return {};
   }
-  if (has_direct) {
+  if (direct_count == 1) {
     return TensorServicePoolLookup{
         .facts = TensorServicePoolFacts{.pool_id = direct->pool_id,
                                         .max_byte_span = direct->bounds.max_byte_span,
                                         .memory_kind = direct->memory_kind,
                                         .device = direct->device}};
+  }
+  if (candidate_count == 1) {
+    const auto& provider = *candidate;
+    if (!provider.tensor_template.has_value()) {
+      return TensorServicePoolLookup{.ambiguous = true};
+    }
+    const auto& tensor_template = provider.tensor_template.value();
+    return TensorServicePoolLookup{
+        .facts = TensorServicePoolFacts{.pool_id = provider.pool_id,
+                                        .max_byte_span = tensor_template.bounds.max_byte_span,
+                                        .memory_kind = tensor_template.memory_kind,
+                                        .device = tensor_template.device}};
   }
   if (!boundary->logical.max_byte_span) {
     return {};
@@ -222,6 +172,171 @@ struct ExternalChannelDerivation {
   const PayloadEdgePlanRecord* edge{};
   PortId internal_port{};
 };
+
+[[nodiscard]] TensorBoundaryContractRecord resolved_descriptor_tensor_field_contract(
+    const ExecutionPlanState& state, const DescriptorTensorTopicFieldRecord& field,
+    PortId internal_port) noexcept {
+  TensorBoundaryContractRecord result = field.tensor;
+  const auto derivation = std::find_if(state.tensor_byte_span_derivations.begin(),
+                                       state.tensor_byte_span_derivations.end(),
+                                       [&](const auto& candidate) {
+                                         return candidate.output == internal_port &&
+                                                candidate.field_id == field.field_id &&
+                                                candidate.tensor_index == field.tensor_index;
+                                       });
+  if (derivation == state.tensor_byte_span_derivations.end()) {
+    return result;
+  }
+  result.max_byte_span = derivation->resolved_max_byte_span;
+  if (result.foreign_emit_policy != InterfaceTensorEmitPolicy::kRequireExportable) {
+    result.max_staging_byte_span =
+        derivation->resolved_max_staging_byte_span.value_or(derivation->resolved_max_byte_span);
+  }
+  return result;
+}
+
+// This proof intentionally validates the full cross-record inventory in one pass; splitting its
+// predicates would hide which service, pool, and transfer facts must agree atomically.
+[[nodiscard]] bool
+valid_descriptor_tensor_topic_evidence(  // NOLINT(readability-function-cognitive-complexity)
+    const ExecutionPlanState& state, const ExternalTopicRecord& topic, PortId internal_port) {
+  if (topic.tensor_fields.empty()) {
+    return false;
+  }
+  for (const auto& pool : state.tensor_interface_pools) {
+    if (pool.topic != topic.id) {
+      continue;
+    }
+    if (!pool.field_id || !pool.tensor_index ||
+        std::none_of(
+            topic.tensor_fields.begin(), topic.tensor_fields.end(), [&](const auto& field) {
+              return field.field_id == *pool.field_id && field.tensor_index == *pool.tensor_index;
+            })) {
+      return false;
+    }
+  }
+  for (const auto& transfer : state.tensor_transfer_plans) {
+    if (transfer.topic != topic.id) {
+      continue;
+    }
+    if (!transfer.field_id || !transfer.tensor_index ||
+        std::none_of(
+            topic.tensor_fields.begin(), topic.tensor_fields.end(), [&](const auto& field) {
+              return field.field_id == *transfer.field_id &&
+                     field.tensor_index == *transfer.tensor_index;
+            })) {
+      return false;
+    }
+  }
+
+  constexpr std::size_t kTensorSourceClassCount = 7U;
+  for (const auto& field : topic.tensor_fields) {
+    if (!field.tensor.max_byte_span || *field.tensor.max_byte_span == 0U) {
+      return false;
+    }
+    const TensorBoundaryContractRecord expected =
+        resolved_descriptor_tensor_field_contract(state, field, internal_port);
+    std::array<std::vector<const TensorTransferPlanRecord*>, kTensorSourceClassCount> by_source;
+    std::optional<ProcessGroupId> interface_process_group;
+    std::optional<DeviceId> interface_device;
+    for (const auto& transfer : state.tensor_transfer_plans) {
+      if (transfer.topic != topic.id || transfer.field_id != field.field_id ||
+          transfer.tensor_index != field.tensor_index) {
+        continue;
+      }
+      const auto source_index = static_cast<std::size_t>(transfer.source_class);
+      if (source_index >= by_source.size() ||
+          transfer.min_logical_bytes > transfer.max_logical_bytes ||
+          transfer.max_logical_bytes > *expected.max_byte_span ||
+          !transfer.interface_process_group ||
+          (interface_process_group &&
+           *interface_process_group != transfer.interface_process_group) ||
+          (interface_device && *interface_device != transfer.interface_device)) {
+        return false;
+      }
+      interface_process_group = transfer.interface_process_group;
+      interface_device = transfer.interface_device;
+      by_source[source_index].push_back(&transfer);
+    }
+    const bool device_required = field.tensor.memory_kind == MemoryKind::kPinnedHost ||
+                                 field.tensor.memory_kind == MemoryKind::kCudaDevice;
+    if (!interface_process_group || !interface_device ||
+        interface_device->valid() != device_required) {
+      return false;
+    }
+    for (auto& ranges : by_source) {
+      std::sort(ranges.begin(), ranges.end(), [](const auto* lhs, const auto* rhs) {
+        return lhs->min_logical_bytes < rhs->min_logical_bytes;
+      });
+      if (ranges.empty() || ranges.front()->min_logical_bytes != 0U ||
+          ranges.back()->max_logical_bytes != *expected.max_byte_span) {
+        return false;
+      }
+      for (std::size_t index = 1U; index < ranges.size(); ++index) {
+        if (ranges[index - 1U]->max_logical_bytes == std::numeric_limits<std::uint64_t>::max() ||
+            ranges[index]->min_logical_bytes != ranges[index - 1U]->max_logical_bytes + 1U) {
+          return false;
+        }
+      }
+    }
+
+    const auto pools = std::count_if(state.tensor_interface_pools.begin(),
+                                     state.tensor_interface_pools.end(),
+                                     [&](const auto& pool) {
+                                       return pool.topic == topic.id &&
+                                              pool.field_id == field.field_id &&
+                                              pool.tensor_index == field.tensor_index;
+                                     });
+    const bool requires_pool =
+        expected.foreign_emit_policy != InterfaceTensorEmitPolicy::kRequireExportable;
+    if (pools != static_cast<std::ptrdiff_t>(requires_pool ? 1U : 0U)) {
+      return false;
+    }
+    if (!requires_pool) {
+      continue;
+    }
+    const PortId graph_port{topic.graph_port.value};
+    const auto pool = std::find_if(state.tensor_interface_pools.begin(),
+                                   state.tensor_interface_pools.end(),
+                                   [&](const auto& row) {
+                                     return row.topic == topic.id &&
+                                            row.field_id == field.field_id &&
+                                            row.tensor_index == field.tensor_index;
+                                   });
+    if (pool == state.tensor_interface_pools.end() || pool->graph_port != graph_port ||
+        pool->imported != topic.imported || pool->memory_kind != expected.memory_kind ||
+        pool->allocator_process_group != *interface_process_group ||
+        pool->device != *interface_device || pool->emit_policy != expected.foreign_emit_policy ||
+        !tensor_boundary_contract_equal(pool->logical, expected) || pool->slot_count == 0U ||
+        pool->slot_count > std::numeric_limits<std::uint64_t>::max() / *expected.max_byte_span ||
+        pool->aggregate_byte_capacity != pool->slot_count * *expected.max_byte_span ||
+        pool->publisher_loan_capacity == 0U || pool->control_capacity < pool->slot_count ||
+        pool->readiness_capacity < pool->publisher_loan_capacity ||
+        pool->release_capacity < pool->slot_count || pool->retirement_capacity < pool->slot_count ||
+        pool->quarantine_capacity < pool->slot_count) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool descriptor_tensor_fields_match_resolved(
+    const ExecutionPlanState& state, std::span<const DescriptorTensorTopicFieldRecord> actual,
+    std::span<const DescriptorTensorTopicFieldRecord> authored, PortId internal_port) noexcept {
+  if (actual.size() != authored.size()) {
+    return false;
+  }
+  return std::equal(actual.begin(),
+                    actual.end(),
+                    authored.begin(),
+                    [&](const auto& observed, const auto& source) {
+                      const TensorBoundaryContractRecord expected =
+                          resolved_descriptor_tensor_field_contract(state, source, internal_port);
+                      return observed.field_id == source.field_id &&
+                             observed.tensor_index == source.tensor_index &&
+                             tensor_boundary_contract_equal(observed.tensor, expected);
+                    });
+}
 
 template <typename Record>
 [[nodiscard]] bool bind_external_record(std::vector<ExternalChannelDerivation>& derivations,
@@ -308,15 +423,7 @@ template <typename Record>
     const ExecutionPlanState& state, const PortId source,
     const std::vector<TensorFieldServiceStorageContract>& fields,
     const bool cross_process) noexcept {
-  std::vector<const TensorFieldAllocationPlanRecord*> allocations;
-  for (const auto& allocation : state.tensor_field_allocations) {
-    if (allocation.output == source) {
-      allocations.push_back(&allocation);
-    }
-  }
-  std::sort(allocations.begin(), allocations.end(), [](const auto* lhs, const auto* rhs) {
-    return lhs->field_id < rhs->field_id;
-  });
+  const auto allocations = tensor_field_allocations_by_output(state, source);
   if (allocations.empty()) {
     return fields.empty();
   }
@@ -326,7 +433,7 @@ template <typename Record>
   }
   for (std::size_t index = 0U; index < allocations.size(); ++index) {
     const auto& field = fields[index];
-    const auto& allocation = *allocations[index];
+    const auto& allocation = allocations[index];
     const auto layout = allocation.layout;
     std::optional<DLDataType> allocation_dtype;
     std::optional<std::uint32_t> allocation_rank;
@@ -335,18 +442,12 @@ template <typename Record>
       allocation_dtype = resolved_layout.dtype;
       allocation_rank = resolved_layout.rank;
     }
-    const DLDataType field_dtype = field.dtype.value_or(DLDataType{});
-    const DLDataType planned_dtype = allocation_dtype.value_or(DLDataType{});
-    const bool dtype_equal = field.dtype.has_value() == allocation_dtype.has_value() &&
-                             field_dtype.code == planned_dtype.code &&
-                             field_dtype.bits == planned_dtype.bits &&
-                             field_dtype.lanes == planned_dtype.lanes;
     // The service pool identifies transport staging; it is intentionally distinct from the
     // producer allocation pool. Compare the storage contract that staging must preserve.
     if (field.field_id != allocation.field_id || field.tensor_index != allocation.tensor_index ||
         field.max_byte_span != allocation.bounds.max_byte_span || field.rank != allocation_rank ||
-        !dtype_equal || field.memory_kind != allocation.memory_kind ||
-        field.device != allocation.device) {
+        !dl_data_type_exactly_equal(field.dtype, allocation_dtype) ||
+        field.memory_kind != allocation.memory_kind || field.device != allocation.device) {
       return false;
     }
   }
@@ -379,29 +480,20 @@ template <typename Record>
          service.tensor_emit_policy == InterfaceTensorEmitPolicy::kCopyIfNeeded;
 }
 
-[[nodiscard]] std::string cross_process_service_id(const ExecutionPlanState& state, PortId source,
-                                                   QueuePolicy policy, EdgeId anchor) {
-  return fmt::format("cross-process-channel.{}.source.{}.policy.{}.anchor.{}",
-                     state.plan_generation,
-                     source.value(),
-                     static_cast<std::uint32_t>(policy),
-                     anchor.value);
-}
-
 [[nodiscard]] bool valid_cross_process_service_member(
     const ExecutionPlanState& state, const PayloadEdgePlanRecord& edge,
     const PortPlanRecord& source, const PortPlanRecord& target,
     const CrossProcessChannelServicePlanRecord& service,
     const std::optional<std::uint64_t>& payload_size, const bool tensor) {
-  const std::string expected_service_id =
-      cross_process_service_id(state, edge.source, edge.queue_policy, service.edge);
+  const std::string expected_service_id = cross_process_channel_service_id(
+      state.plan_generation, edge.source, edge.queue_policy, service.edge);
   const bool descriptor_tensor_schema =
       edge.payload_identity.kind == PayloadIdentityKind::kSchema &&
       edge.payload_identity.payload_kind == PayloadKind::kDescriptorBacked;
   const ProcessGroupId source_group = vertex_process_group(state, source.owner);
   const ProcessGroupId target_group = vertex_process_group(state, target.owner);
   if (service.source != edge.source || service.service_id != expected_service_id ||
-      !process_local_payload_equal(service.payload_identity, edge.payload_identity) ||
+      !payload_identity_exactly_equal(service.payload_identity, edge.payload_identity) ||
       service.tensor_payload != (tensor || descriptor_tensor_schema) ||
       service.queue_policy != edge.queue_policy || service.max_subscribers == 0U ||
       service.max_subscriber_queue_depth < edge.queue_depth ||
@@ -482,10 +574,10 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
       return false;
     }
   }
-
   // Port IDs are dense and the queue-policy family is closed, so a two-slot
   // table per source gives an exact linear join without a service-by-edge scan.
   std::vector<ProcessLocalServiceDerivation> derivations(state.ports.size() * kQueuePolicyCount);
+  std::vector<ProcessLocalSourceWakeDerivation> source_wake_derivations(state.ports.size());
   const auto graph_edges = state.graph.edges();
   // Compiler-owned plans retain the Graph relation. A few private unit fixtures intentionally
   // exercise the transport constructor from a hand-authored record set without a GraphView; the
@@ -526,6 +618,14 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
     }
     derivations[slot].service = &service;
     derivations[slot].publisher = &publisher;
+    derivations[slot].wake_reason =
+        service.delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ
+            ? ProcessLocalHoloMQEventWakeReason::kSuppressed
+            : ProcessLocalHoloMQEventWakeReason::kNotHoloMQ;
+    if (service.delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ) {
+      source_wake_derivations[static_cast<std::size_t>(service.source.value() - 1U)].has_holomq =
+          true;
+    }
   }
 
   std::size_t subscriber_index = 0U;
@@ -572,8 +672,8 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
         policy >= kQueuePolicyCount || edge.queue_depth == 0U ||
         edge.producer_max_emits_per_compute == 0U ||
         source->max_emits_per_compute != edge.producer_max_emits_per_compute ||
-        !process_local_payload_equal(source->payload_identity, edge.payload_identity) ||
-        !process_local_payload_equal(target->payload_identity, edge.payload_identity)) {
+        !payload_identity_exactly_equal(source->payload_identity, edge.payload_identity) ||
+        !payload_identity_exactly_equal(target->payload_identity, edge.payload_identity)) {
       return false;
     }
     if (!graph_edge_by_id.empty()) {
@@ -612,16 +712,32 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
         eligible_delivery_kind != ProcessLocalChannelDeliveryKind::kDirectRetained) {
       return false;
     }
-    const bool expected_event_wake =
-        service.delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ;
-    const auto tensor_pool =
-        tensor ? tensor_service_pool(state, edge.source) : TensorServicePoolLookup{};
+    const auto member_wake_reason =
+        process_local_holomq_event_wake_reason(edge,
+                                               service.delivery_kind,
+                                               service.max_subscribers,
+                                               state.execution_partitions,
+                                               source->owner,
+                                               target->owner);
+    derived.wake_reason =
+        combine_process_local_holomq_event_wake_reasons(derived.wake_reason, member_wake_reason);
+    auto& source_wake = source_wake_derivations[static_cast<std::size_t>(edge.source.value() - 1U)];
+    ++source_wake.subscriber_count;
+    if (!source_wake.fanout_observed) {
+      source_wake.source_fanout = edge.fanout;
+      source_wake.fanout_observed = true;
+    } else if (source_wake.source_fanout != edge.fanout) {
+      source_wake.fanout_ambiguous = true;
+    }
+    const auto tensor_pool = tensor || descriptor_tensor_schema
+                                 ? tensor_service_pool(state, edge.source)
+                                 : TensorServicePoolLookup{};
     const std::string expected_service_id =
-        process_local_service_id(state.plan_generation, edge.source, edge.queue_policy);
+        process_local_channel_service_id(state.plan_generation, edge.source, edge.queue_policy);
     if (service.service_id != expected_service_id || service.source != edge.source ||
         service.queue_policy != edge.queue_policy ||
-        !process_local_payload_equal(service.payload_identity, edge.payload_identity) ||
-        service.publisher_history_depth != 0U || service.event_wake != expected_event_wake ||
+        !payload_identity_exactly_equal(service.payload_identity, edge.payload_identity) ||
+        service.cross_process_transport || service.publisher_history_depth != 0U ||
         publisher.max_loaned_samples != edge.producer_max_emits_per_compute ||
         publisher.replacement_attribution_required !=
             (edge.queue_policy != QueuePolicy::kBlocking)) {
@@ -646,11 +762,20 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
         return false;
       }
     } else if (descriptor_tensor_schema) {
+      const bool storage_matches =
+          !tensor_pool.ambiguous &&
+          (tensor_pool.facts
+               ? service.tensor_max_byte_span == tensor_pool.facts->max_byte_span &&
+                     service.tensor_pool_id == tensor_pool.facts->pool_id &&
+                     service.tensor_memory_kind == tensor_pool.facts->memory_kind &&
+                     service.tensor_device == tensor_pool.facts->device
+               : service.tensor_max_byte_span == 0U && service.tensor_pool_id.empty() &&
+                     service.tensor_memory_kind == MemoryKind::kUnknown &&
+                     !service.tensor_device.valid());
       if (!service.tensor_payload || !payload_size || service.payload_size_bytes != *payload_size ||
           (service.delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ &&
            service.payload_size_bytes > channel_internal::kMaximumInlinePayloadBytes) ||
-          service.tensor_max_byte_span != 0U || !service.tensor_pool_id.empty() ||
-          service.tensor_memory_kind != MemoryKind::kUnknown || service.tensor_device.valid() ||
+          !storage_matches ||
           (state.admitted && !valid_process_local_descriptor_tensor_fields(state, service))) {
         return false;
       }
@@ -669,7 +794,7 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
         subscriber.max_borrowed_samples != edge.queue_depth ||
         subscriber.cache_capacity != edge.cache_capacity ||
         subscriber.readiness_capacity != std::max(edge.queue_depth, edge.cache_capacity) ||
-        subscriber.event_wake != expected_event_wake ||
+        subscriber.event_wake != service.event_wake ||
         derived.subscriber_count == std::numeric_limits<std::uint32_t>::max()) {
       return false;
     }
@@ -681,15 +806,66 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
   }
 
   std::size_t derived_service_count = 0U;
-  for (const auto& derived : derivations) {
+  for (auto& derived : derivations) {
     if (derived.service == nullptr) {
       continue;
     }
     ++derived_service_count;
+    if (derived.service->max_subscribers != derived.subscriber_count) {
+      derived.wake_reason = combine_process_local_holomq_event_wake_reasons(
+          derived.wake_reason, ProcessLocalHoloMQEventWakeReason::kIncompleteServiceFanout);
+    }
     if (derived.subscriber_count == 0U ||
         derived.service->max_subscribers != derived.subscriber_count ||
         derived.service->max_subscriber_queue_depth != derived.maximum_queue_depth ||
         derived.service->max_subscriber_borrowed_samples != derived.maximum_queue_depth) {
+      return false;
+    }
+    if (derived.service->delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ) {
+      auto& source_wake =
+          source_wake_derivations[static_cast<std::size_t>(derived.service->source.value() - 1U)];
+      source_wake.wake_reason = combine_process_local_holomq_event_wake_reasons(
+          source_wake.wake_reason, derived.wake_reason);
+    }
+  }
+  for (auto& source_wake : source_wake_derivations) {
+    if (!source_wake.has_holomq) {
+      continue;
+    }
+    if (source_wake.fanout_ambiguous) {
+      source_wake.wake_reason = combine_process_local_holomq_event_wake_reasons(
+          source_wake.wake_reason, ProcessLocalHoloMQEventWakeReason::kReplayAmbiguity);
+    }
+    if (!source_wake.fanout_observed || source_wake.subscriber_count != source_wake.source_fanout) {
+      source_wake.wake_reason = combine_process_local_holomq_event_wake_reasons(
+          source_wake.wake_reason, ProcessLocalHoloMQEventWakeReason::kIncompleteServiceFanout);
+    }
+    if (state.force_process_local_holomq_event_wake &&
+        source_wake.wake_reason == ProcessLocalHoloMQEventWakeReason::kSuppressed) {
+      source_wake.wake_reason = ProcessLocalHoloMQEventWakeReason::kForcedControl;
+    }
+  }
+  for (const auto& derived : derivations) {
+    if (derived.service == nullptr) {
+      continue;
+    }
+    const auto expected_wake_reason =
+        derived.service->delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ
+            ? source_wake_derivations[static_cast<std::size_t>(derived.service->source.value() -
+                                                               1U)]
+                  .wake_reason
+            : ProcessLocalHoloMQEventWakeReason::kNotHoloMQ;
+    const bool expected_event_wake =
+        derived.service->delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ &&
+        expected_wake_reason != ProcessLocalHoloMQEventWakeReason::kSuppressed;
+    // Private graphless Runtime fixtures predate compiler-owned diagnostic evidence. They still
+    // replay the complete transport relation above; only those fixtures may omit the cold reason.
+    const bool graphless_fixture_without_reason =
+        graph_edges.empty() &&
+        derived.service->event_wake_reason == ProcessLocalHoloMQEventWakeReason::kUnclassified;
+    if (derived.service->event_wake != expected_event_wake ||
+        (!graphless_fixture_without_reason &&
+         derived.service->event_wake_reason != expected_wake_reason)) {
       return false;
     }
   }
@@ -725,7 +901,7 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
         port->owner_kind != graph_port.owner_kind || port->direction != graph_port.direction ||
         port->local_name != graph_port.name ||
         port->serialized_payload_capacity_bytes != graph_port.serialized_payload_capacity_bytes ||
-        !process_local_payload_equal(port->payload_identity, graph_port.payload_identity)) {
+        !payload_identity_exactly_equal(port->payload_identity, graph_port.payload_identity)) {
       return false;
     }
   }
@@ -748,8 +924,8 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
         internal_port->direction != binding.direction ||
         public_port->serialized_payload_capacity_bytes !=
             internal_port->serialized_payload_capacity_bytes ||
-        !process_local_payload_equal(public_port->payload_identity,
-                                     internal_port->payload_identity)) {
+        !payload_identity_exactly_equal(public_port->payload_identity,
+                                        internal_port->payload_identity)) {
       return false;
     }
     auto& indexed = binding_by_public[static_cast<std::size_t>(binding.public_port.value() - 1U)];
@@ -829,7 +1005,7 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
         (port->payload_identity.kind == PayloadIdentityKind::kSchema) !=
             (port->serialized_payload_capacity_bytes != 0U) ||
         port->serialized_payload_capacity_bytes != topic.serialized_payload_capacity_bytes ||
-        !process_local_payload_equal(port->payload_identity, topic.payload_identity)) {
+        !payload_identity_exactly_equal(port->payload_identity, topic.payload_identity)) {
       return false;
     }
     derived.topic = &topic;
@@ -922,10 +1098,10 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
             authored_port->serialized_payload_capacity_bytes ||
         authored_port->serialized_payload_capacity_bytes !=
             internal_port->serialized_payload_capacity_bytes ||
-        !process_local_payload_equal(authored_port->payload_identity,
-                                     derived->topic->payload_identity) ||
-        !process_local_payload_equal(internal_port->payload_identity,
-                                     derived->topic->payload_identity)) {
+        !payload_identity_exactly_equal(authored_port->payload_identity,
+                                        derived->topic->payload_identity) ||
+        !payload_identity_exactly_equal(internal_port->payload_identity,
+                                        derived->topic->payload_identity)) {
       return false;
     }
     derived->graph_edge = &edge;
@@ -1003,26 +1179,22 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
     const std::uint32_t graph_queue = derived.edge == nullptr ? 1U : derived.edge->queue_depth;
     const std::uint32_t graph_burst =
         derived.edge == nullptr ? 1U : derived.edge->producer_max_emits_per_compute;
-    const std::uint32_t publisher_loans =
-        topic.imported && topic.bounds.publisher && topic.bounds.publisher->max_loaned_samples
-            ? *topic.bounds.publisher->max_loaned_samples
-            : graph_burst;
-    const std::uint32_t subscriber_queue =
-        !topic.imported && topic.bounds.subscriber && topic.bounds.subscriber->queue_depth
-            ? *topic.bounds.subscriber->queue_depth
-            : graph_queue;
-    const std::uint32_t subscriber_borrows =
-        !topic.imported && topic.bounds.subscriber && topic.bounds.subscriber->max_borrowed_samples
-            ? *topic.bounds.subscriber->max_borrowed_samples
-            : subscriber_queue;
+    const auto bounds = resolve_external_topic_bounds(topic, graph_queue, graph_burst);
+    const std::uint32_t publisher_loans = bounds.publisher_max_loaned_samples;
+    const std::uint32_t subscriber_queue = bounds.subscriber_queue_depth;
+    const std::uint32_t subscriber_borrows = bounds.subscriber_max_borrowed_samples;
     const ChannelLocalityKind expected_locality = topic.imported
                                                       ? ChannelLocalityKind::kExternalImport
                                                       : ChannelLocalityKind::kExternalExport;
+    const bool descriptor_tensor_schema =
+        topic.payload_identity.kind == PayloadIdentityKind::kSchema &&
+        topic.payload_identity.payload_kind == PayloadKind::kDescriptorBacked &&
+        !topic.tensor_fields.empty();
     if (derived.edge != nullptr &&
         (derived.edge->locality != expected_locality ||
          derived.edge->disposition != PlanDisposition::kAccepted ||
          derived.edge->queue_depth == 0U || derived.edge->producer_max_emits_per_compute == 0U ||
-         !process_local_payload_equal(derived.edge->payload_identity, topic.payload_identity))) {
+         !payload_identity_exactly_equal(derived.edge->payload_identity, topic.payload_identity))) {
       return false;
     }
 
@@ -1049,9 +1221,15 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
         endpoint.serialized_payload_capacity_bytes != topic.serialized_payload_capacity_bytes ||
         endpoint.service_static.serialized_payload_capacity_bytes !=
             topic.serialized_payload_capacity_bytes ||
-        !process_local_payload_equal(endpoint.payload_identity, topic.payload_identity) ||
-        !process_local_payload_equal(endpoint.service_static.payload_identity,
-                                     topic.payload_identity)) {
+        !payload_identity_exactly_equal(endpoint.payload_identity, topic.payload_identity) ||
+        !payload_identity_exactly_equal(endpoint.service_static.payload_identity,
+                                        topic.payload_identity) ||
+        !descriptor_tensor_fields_match_resolved(
+            state, endpoint.tensor_fields, topic.tensor_fields, derived.internal_port) ||
+        !descriptor_tensor_fields_match_resolved(state,
+                                                 endpoint.service_static.tensor_fields,
+                                                 topic.tensor_fields,
+                                                 derived.internal_port)) {
       return false;
     }
 
@@ -1059,11 +1237,14 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
         publisher.topic != topic.id || publisher.service_id != endpoint.service ||
         subscriber.topic != topic.id || subscriber.service_id != endpoint.service ||
         service.queue_policy != queue_policy ||
-        !process_local_payload_equal(service.payload_identity, topic.payload_identity) ||
+        !payload_identity_exactly_equal(service.payload_identity, topic.payload_identity) ||
         service.max_subscriber_queue_depth != subscriber_queue ||
         service.max_subscriber_borrowed_samples != subscriber_borrows ||
         service.publisher_history_depth != 0U || !service.event_wake ||
-        service.tensor_payload != (topic.payload_identity.kind == PayloadIdentityKind::kTensor) ||
+        service.tensor_payload != (topic.payload_identity.kind == PayloadIdentityKind::kTensor ||
+                                   descriptor_tensor_schema) ||
+        !descriptor_tensor_fields_match_resolved(
+            state, service.tensor_fields, topic.tensor_fields, derived.internal_port) ||
         service.tensor_emit_policy != (topic.tensor
                                            ? topic.tensor->foreign_emit_policy
                                            : InterfaceTensorEmitPolicy::kRequireExportable) ||
@@ -1091,6 +1272,34 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
                *endpoint.bounds.subscriber->max_borrowed_samples != subscriber_borrows ||
                endpoint.subscriber_request->queue_depth != subscriber_queue ||
                endpoint.subscriber_request->max_borrowed_samples != subscriber_borrows) {
+      return false;
+    }
+    if (descriptor_tensor_schema &&
+        !valid_descriptor_tensor_topic_evidence(state, topic, derived.internal_port)) {
+      return false;
+    }
+  }
+  for (const auto& pool : state.tensor_interface_pools) {
+    const auto topic = std::find_if(
+        topics.begin(), topics.end(), [&](const auto& row) { return row.id == pool.topic; });
+    const bool descriptor_tensor_schema =
+        topic != topics.end() && topic->payload_identity.kind == PayloadIdentityKind::kSchema &&
+        topic->payload_identity.payload_kind == PayloadKind::kDescriptorBacked &&
+        !topic->tensor_fields.empty();
+    if (topic == topics.end() || descriptor_tensor_schema != pool.field_id.has_value() ||
+        pool.field_id.has_value() != pool.tensor_index.has_value()) {
+      return false;
+    }
+  }
+  for (const auto& transfer : state.tensor_transfer_plans) {
+    const auto topic = std::find_if(
+        topics.begin(), topics.end(), [&](const auto& row) { return row.id == transfer.topic; });
+    const bool descriptor_tensor_schema =
+        topic != topics.end() && topic->payload_identity.kind == PayloadIdentityKind::kSchema &&
+        topic->payload_identity.payload_kind == PayloadKind::kDescriptorBacked &&
+        !topic->tensor_fields.empty();
+    if (topic == topics.end() || descriptor_tensor_schema != transfer.field_id.has_value() ||
+        transfer.field_id.has_value() != transfer.tensor_index.has_value()) {
       return false;
     }
   }
@@ -1239,7 +1448,8 @@ bool valid_cross_process_channel_plan(const ExecutionPlanState& state) {
     }
 
     if (service.service_id !=
-        cross_process_service_id(state, service.source, service.queue_policy, service.edge)) {
+        cross_process_channel_service_id(
+            state.plan_generation, service.source, service.queue_policy, service.edge)) {
       return false;
     }
   }

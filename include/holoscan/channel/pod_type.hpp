@@ -37,7 +37,7 @@ struct ChannelTypeIdentity;
 /// the ordered fields to cover every object byte exactly once, with no gap,
 /// overlap, or tail padding. Distinct C++ types may interoperate when their
 /// canonical name, version, object size/alignment, and complete field layout
-/// are identical. EA1-013 adds the canonical layout digest and fieldwise codec.
+/// are identical. HSDK5-013 adds the canonical layout digest and fieldwise codec.
 ///
 /// @warning Raw POD payloads provide no schema evolution or compatibility tooling. A layout or
 /// semantic change requires a new \ref ChannelTypeIdentity version and coordinated rollout.
@@ -289,7 +289,7 @@ template <class Class, class Field>
       "experimental raw POD fields must be fixed-width integers, IEEE float/double, or fixed "
       "arrays of those types; bool, enums, pointers, nested structs, and strings are unsupported");
   if (byte_offset > UINT32_MAX) {
-    throw "POD field byte offset exceeds the EA1 uint32 representation";
+    throw "POD field byte offset exceeds the baseline uint32 representation";
   }
   return PodFieldDescriptor<Class, Field>{name,
                                           member,

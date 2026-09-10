@@ -138,7 +138,7 @@ The `OnClock` phase is captured at run start, where the fresh `ManualClock`
 already stands (t=0), so tick 0 fires without any advance. After that the
 harness advances exactly one period and then waits for exactly one more sink
 activation before touching the clock again. The discipline matters:
-`OnClock`'s EA1 tick policy is `kCoalesceLateTicks`, so jumping several
+`OnClock`'s baseline tick policy is `kCoalesceLateTicks`, so jumping several
 periods in one `advance_by()` yields one coalesced activation, not a burst.
 One period per step, one activation per step — that is what makes the second
 manual run land on identical `Tag` sequences and identical `TagTime`

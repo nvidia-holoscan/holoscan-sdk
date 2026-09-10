@@ -25,10 +25,12 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
 #include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "compiler/execution_plan_state.hpp"
 #include "runtime/predicate_evaluator.hpp"
 #include "runtime/runtime_channel_binding.hpp"
+#include "runtime/runtime_channel_binding_test_access.hpp"
 
 #include "runtime_channel_binding_test_support.hpp"
 
@@ -114,11 +116,14 @@ struct GeneratedSchemaSessionFixture {
   SessionFixture base;
   GeneratedSchemaSourceOperator source;
   GeneratedSchemaSinkOperator sink;
+  GeneratedSchemaSinkOperator second_sink;
   OperatorSpec source_spec;
   OperatorSpec sink_spec;
-  std::array<RuntimeChannelPortReplayRecord, 2> replay;
+  OperatorSpec second_sink_spec;
+  std::array<RuntimeChannelPortReplayRecord, 3> replay;
 
   GeneratedSchemaSessionFixture();
+  void add_blocking_fanout();
   void use_cross_process_edge();
 };
 

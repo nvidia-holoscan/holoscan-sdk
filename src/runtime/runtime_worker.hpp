@@ -5,12 +5,11 @@
 
 #pragma once
 
-#include <algorithm>
-
 #include <holoscan/holoscan_core_export.h>
 #include <holoscan/core/execution_plan.hpp>
 #include <holoscan/core/run_session.hpp>
 
+#include "../compiler/execution_plan_lookup.hpp"
 #include "../compiler/execution_plan_state.hpp"
 
 namespace holoscan::detail {
@@ -18,11 +17,8 @@ namespace holoscan::detail {
 /// Return the compile-admitted process group that owns a canonical vertex.
 [[nodiscard]] inline ProcessGroupId process_group_for(const ExecutionPlanState& plan,
                                                       VertexId vertex) noexcept {
-  const auto found =
-      std::find_if(plan.vertex_process_placements.begin(),
-                   plan.vertex_process_placements.end(),
-                   [&](const auto& placement) { return placement.vertex == vertex; });
-  return found == plan.vertex_process_placements.end() ? ProcessGroupId{} : found->process_group;
+  const auto* found = find_vertex_process_placement_by_vertex(plan, vertex);
+  return found == nullptr ? ProcessGroupId{} : found->process_group;
 }
 
 /// Return whether a canonical vertex belongs to the selected worker.

@@ -789,8 +789,9 @@ TEST(CompileLifecycle, SizesCapacityForCompatibleMultiTargetClosureUnion) {
   const ExecutionPlan plan = compile(graph, options);
 
   ASSERT_FALSE(plan.ok());
-  ASSERT_TRUE(plan.lifecycle_transaction_capacity());
-  const auto& required = plan.lifecycle_transaction_capacity()->required_minimum;
+  const auto capacity = plan.lifecycle_transaction_capacity();
+  ASSERT_TRUE(capacity);
+  const auto& required = capacity->required_minimum;
   // Key assertion: required fields are 2/4/4 — the union of the two single-
   //               operator closures, not just the max of one closure.
   EXPECT_EQ(required.max_fenced_operators, 2U);

@@ -12,36 +12,13 @@
 #include <utility>
 #include <vector>
 
+#include "partition_canonicalization.hpp"
+
 namespace holoscan::detail::partitioning {
 namespace {
 
 [[nodiscard]] unexpected<Error> planner_error(ErrorCode code, std::string_view token) {
   return make_unexpected(Error{code, std::string(token)});
-}
-
-void append_boundary_reasons(PartitionBoundaryMask mask,
-                             std::vector<PartitionDecisionReason>& reasons) {
-  if (mask.contains(PartitionBoundary::kProcess)) {
-    reasons.push_back(PartitionDecisionReason::kProcessBoundary);
-  }
-  if (mask.contains(PartitionBoundary::kExternalEndpoint)) {
-    reasons.push_back(PartitionDecisionReason::kExternalEndpointBoundary);
-  }
-  if (mask.contains(PartitionBoundary::kDeviceTransfer)) {
-    reasons.push_back(PartitionDecisionReason::kDeviceTransferIncompatibility);
-  }
-  if (mask.contains(PartitionBoundary::kRegionBackend)) {
-    reasons.push_back(PartitionDecisionReason::kRegionBackendAdmission);
-  }
-  if (mask.contains(PartitionBoundary::kExplicitThreadPlacement)) {
-    reasons.push_back(PartitionDecisionReason::kExplicitThreadPlacement);
-  }
-  if (mask.contains(PartitionBoundary::kLifecycle)) {
-    reasons.push_back(PartitionDecisionReason::kLifecycleIsolation);
-  }
-  if (mask.contains(PartitionBoundary::kReadiness)) {
-    reasons.push_back(PartitionDecisionReason::kReadinessIsolation);
-  }
 }
 
 }  // namespace

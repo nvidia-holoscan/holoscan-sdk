@@ -26,7 +26,7 @@
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "compile_test_graph.hpp"
-#include "compiler/plan_artifact_lowering.hpp"
+#include "compiler/clock_readiness_lowering.hpp"
 #include "compiler/profile_admission.hpp"
 #include "compiler/runtime_package_capabilities.hpp"
 #include "compiler/temporal_plan_lowering.hpp"
@@ -147,6 +147,19 @@ class TemporalSource final : public Operator<> {
   Output<std::uint32_t> second;
 };
 
+class RateAwareTemporalSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(first, "first").nominal_rate(Rate::hz(1U));
+    spec.output(second, "second").nominal_rate(Rate::hz(1U));
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<std::uint32_t> first;
+  Output<std::uint32_t> second;
+};
+
 class ImportedClockRelay final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -188,6 +201,28 @@ class ImportedClockRelayGraph final : public Graph {
   ClockKey clock_import_;
 };
 
+class ImportedClockConversionGraph final : public Graph {
+ public:
+  explicit ImportedClockConversionGraph(std::int64_t offset_ns) : offset_ns_(offset_ns) {}
+
+  [[nodiscard]] ClockKey source_import() const noexcept { return source_import_; }
+  [[nodiscard]] ClockKey target_import() const noexcept { return target_import_; }
+
+ protected:
+  void compose() override {
+    source_import_ = import_clock("source");
+    target_import_ = import_clock("target");
+    set_default_clock(target_import_);
+    add_clock_conversion(
+        source_import_, target_import_, AffineClockConversion{.offset_ns = offset_ns_});
+  }
+
+ private:
+  std::int64_t offset_ns_{};
+  ClockKey source_import_;
+  ClockKey target_import_;
+};
+
 enum class TriggerMode : std::uint8_t {
   kAny,
   kEach,
@@ -207,12 +242,17 @@ enum class TriggerMode : std::uint8_t {
 class TriggerMatrixOperator final : public Operator<> {
  public:
   explicit TriggerMatrixOperator(TriggerMode mode,
-                                 std::optional<OnViolation> violation = std::nullopt)
-      : mode_(mode), violation_(violation) {}
+                                 std::optional<OnViolation> violation = std::nullopt,
+                                 bool omit_setup_queue_depth = false)
+      : mode_(mode), violation_(violation), omit_setup_queue_depth_(omit_setup_queue_depth) {}
 
   void setup(OperatorSpec& spec) override {
-    spec.input(first, "first").queue_depth(8);
-    spec.input(second, "second").queue_depth(8);
+    auto& first_builder = spec.input(first, "first");
+    auto& second_builder = spec.input(second, "second");
+    if (!omit_setup_queue_depth_) {
+      first_builder.queue_depth(8);
+      second_builder.queue_depth(8);
+    }
     spec.readable_source(readable, "readable");
     spec.notification_source(notified, "notified").capacity(2).sender_reference_capacity(1);
     spec.doorbell_source(doorbell, "doorbell").capacity(2);
@@ -284,6 +324,186 @@ class TriggerMatrixOperator final : public Operator<> {
  private:
   TriggerMode mode_;
   std::optional<OnViolation> violation_;
+  bool omit_setup_queue_depth_{};
+};
+
+// Zero-input producer used to exercise every explicit trigger admitted for Operator-local
+// compute-call completion. Physical readiness declarations are authored only for the selected
+// trigger so each compilation isolates one supported placement.
+class CompletionSourceOperator final : public Operator<> {
+ public:
+  CompletionSourceOperator(TriggerMode mode, std::uint64_t limit) : mode_(mode), limit_(limit) {}
+
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output");
+    switch (mode_) {
+      case TriggerMode::kReadable:
+        spec.readable_source(readable, "readable");
+        break;
+      case TriggerMode::kNotified:
+        spec.notification_source(notified, "notified").capacity(2U).sender_reference_capacity(1U);
+        break;
+      case TriggerMode::kDoorbell:
+        spec.doorbell_source(doorbell, "doorbell").capacity(2U);
+        break;
+      case TriggerMode::kSpin:
+        spec.spin_source(spin, "spin");
+        break;
+      default:
+        break;
+    }
+  }
+
+  Contract contract() const override {
+    Contract result;
+    switch (mode_) {
+      case TriggerMode::kClock:
+        result.trigger(OnClock{.period = 1ms});
+        break;
+      case TriggerMode::kReadable:
+        result.trigger(OnReadable{readable});
+        break;
+      case TriggerMode::kNotified:
+        result.trigger(OnNotified{notified});
+        break;
+      case TriggerMode::kDoorbell:
+        result.trigger(OnDoorbell{doorbell});
+        break;
+      case TriggerMode::kSpin:
+        result.trigger(OnSpin{spin});
+        break;
+      default:
+        break;
+    }
+    result.complete_after(ComputeCalls{.limit = limit_});
+    return result;
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<std::uint32_t> output;
+  ReadableSource readable;
+  NotificationSource notified;
+  DoorbellSource doorbell;
+  SpinSource spin;
+
+ private:
+  TriggerMode mode_;
+  std::uint64_t limit_{};
+};
+
+// Embeds one finite source behind a Graph-interface output so the canonical Graph vertex and
+// dense executable-Operator identity spaces can be exercised independently.
+class CompletionSourceLeaf final : public Graph {
+ public:
+  Output<std::uint32_t> output{"output"};
+
+ protected:
+  void compose() override {
+    auto source = op<CompletionSourceOperator>("source", TriggerMode::kClock, 3U);
+    export_output(output, source->output);
+    const ClockKey clock = add_clock<ManualClock>("clock", std::int64_t{0});
+    set_default_clock(clock);
+  }
+};
+
+enum class UnsupportedCompletionShape : std::uint8_t {
+  kNoTrigger,
+  kInputful,
+  kSink,
+  kOutputless,
+  kPredicateTrigger,
+  kAnyInputTrigger,
+  kEachTrigger,
+  kAlignedTrigger,
+  kWindowTrigger,
+};
+
+// Authors one completion rule on each placement that EA2 deliberately rejects. The inputful and
+// sink forms retain otherwise valid clock-driven input selection. Every unsupported explicit
+// trigger is otherwise well-formed so the completion-placement diagnostic remains discriminating.
+class UnsupportedCompletionOperator final : public Operator<> {
+ public:
+  explicit UnsupportedCompletionOperator(UnsupportedCompletionShape shape) : shape_(shape) {}
+
+  void setup(OperatorSpec& spec) override {
+    if (shape_ == UnsupportedCompletionShape::kInputful ||
+        shape_ == UnsupportedCompletionShape::kSink ||
+        shape_ == UnsupportedCompletionShape::kAnyInputTrigger ||
+        shape_ == UnsupportedCompletionShape::kEachTrigger ||
+        shape_ == UnsupportedCompletionShape::kAlignedTrigger ||
+        shape_ == UnsupportedCompletionShape::kWindowTrigger) {
+      spec.input(input, "input").queue_depth(2U);
+    }
+    if (shape_ == UnsupportedCompletionShape::kAlignedTrigger ||
+        shape_ == UnsupportedCompletionShape::kWindowTrigger) {
+      spec.input(second, "second").queue_depth(2U);
+    }
+    if (shape_ == UnsupportedCompletionShape::kInputful ||
+        shape_ == UnsupportedCompletionShape::kPredicateTrigger ||
+        shape_ == UnsupportedCompletionShape::kNoTrigger ||
+        shape_ == UnsupportedCompletionShape::kAnyInputTrigger ||
+        shape_ == UnsupportedCompletionShape::kEachTrigger ||
+        shape_ == UnsupportedCompletionShape::kAlignedTrigger ||
+        shape_ == UnsupportedCompletionShape::kWindowTrigger) {
+      spec.output(output, "output");
+    }
+  }
+
+  Contract contract() const override {
+    Contract result;
+    switch (shape_) {
+      case UnsupportedCompletionShape::kNoTrigger:
+        break;
+      case UnsupportedCompletionShape::kPredicateTrigger: {
+        auto evaluator = predicate("unsupported-completion-predicate",
+                                   [](const PredicateEvaluationContext&) noexcept { return true; });
+        result.trigger(OnPredicate{
+            .evaluate_on = OnClock{.period = 1ms},
+            .predicate = std::move(evaluator),
+            .firing = PredicateFiring::kOnEveryTrueEvaluation,
+        });
+        break;
+      }
+      case UnsupportedCompletionShape::kAnyInputTrigger:
+        result.trigger(OnAnyInput{});
+        break;
+      case UnsupportedCompletionShape::kEachTrigger:
+        result.trigger(OnEach{input});
+        break;
+      case UnsupportedCompletionShape::kAlignedTrigger:
+        result.trigger(OnAligned{.ports = ports(input, second), .window = 1ms})
+            .input(input, Exact{})
+            .input(second, Exact{});
+        break;
+      case UnsupportedCompletionShape::kWindowTrigger:
+        result.trigger(OnWindow{.anchor = input, .max_wait = 2ms, .max_pending_windows = 2U})
+            .input(input, Exact{})
+            .input(second, BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 3U})
+            .on_missing(second, Skip{});
+        break;
+      case UnsupportedCompletionShape::kInputful:
+      case UnsupportedCompletionShape::kSink:
+      case UnsupportedCompletionShape::kOutputless:
+        result.trigger(OnClock{.period = 1ms});
+        break;
+    }
+    if (shape_ == UnsupportedCompletionShape::kInputful ||
+        shape_ == UnsupportedCompletionShape::kSink) {
+      result.input(input, Exact{}).on_missing(input, Skip{});
+    }
+    result.complete_after(ComputeCalls{.limit = 3U});
+    return result;
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<std::uint32_t> input;
+  Input<std::uint32_t> second;
+  Output<std::uint32_t> output;
+
+ private:
+  UnsupportedCompletionShape shape_;
 };
 
 // Minimal arrival-backed trigger fixture with no physical-readiness declarations.
@@ -626,7 +846,7 @@ struct InlinePredicateFunctor {
 };
 
 // Template operator that delegates predicate construction to an EvaluatorFactory type parameter,
-// enabling static/inline/bound dispatch in RecordsEveryEa1CallableDispatchForm.
+// enabling static/inline/bound dispatch in RecordsEveryCallableDispatchForm.
 template <typename EvaluatorFactory>
 class CallableFormPredicateOperator final : public Operator<> {
  public:
@@ -1092,6 +1312,216 @@ void add_default_realtime_clock(Graph& graph) {
   return compile(graph);
 }
 
+[[nodiscard]] ExecutionPlan compile_completion_pair(bool reverse_authoring, std::uint64_t a_limit,
+                                                    std::uint64_t z_limit) {
+  Graph graph{"operator-completion-pair"};
+  add_default_clock(graph);
+  if (reverse_authoring) {
+    auto z = graph.op<CompletionSourceOperator>("z-source", TriggerMode::kClock, z_limit);
+    auto a = graph.op<CompletionSourceOperator>("a-source", TriggerMode::kClock, a_limit);
+    graph.partition("a-source").add(a);
+    graph.partition("z-source").add(z);
+  } else {
+    auto a = graph.op<CompletionSourceOperator>("a-source", TriggerMode::kClock, a_limit);
+    auto z = graph.op<CompletionSourceOperator>("z-source", TriggerMode::kClock, z_limit);
+    graph.partition("a-source").add(a);
+    graph.partition("z-source").add(z);
+  }
+  return compile(graph);
+}
+
+// REQ: CONTRACT-020
+TEST(CompileOperatorCompletion, AcceptsEveryExplicitZeroInputProducerTrigger) {
+  constexpr std::array<TriggerMode, 5> kModes{
+      TriggerMode::kClock,
+      TriggerMode::kReadable,
+      TriggerMode::kNotified,
+      TriggerMode::kDoorbell,
+      TriggerMode::kSpin,
+  };
+
+  for (const TriggerMode mode : kModes) {
+    Graph graph{"operator-completion-trigger"};
+    auto source = graph.op<CompletionSourceOperator>("source", mode, 3U);
+    add_default_clock(graph);
+    graph.partition("source").add(source);
+
+    CompileOptions options;
+    if (mode == TriggerMode::kSpin) {
+      options.deployment.bind_thread_placement("source",
+                                               ThreadPlacement{.wake_mode = WakeMode::kBusyPoll});
+    }
+    const ExecutionPlan plan = compile(graph, options);
+
+    ASSERT_TRUE(plan.ok()) << static_cast<unsigned>(mode) << '\n' << plan.json();
+    ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+    const auto& completion = plan.operator_completion_rules().front();
+    EXPECT_TRUE(completion.owner.plan_bound());
+    EXPECT_EQ(completion.kind, OperatorCompletionRuleKind::kComputeCalls);
+    EXPECT_EQ(completion.limit, 3U);
+    ASSERT_EQ(plan.temporal_triggers().size(), 1U);
+    EXPECT_EQ(completion.owner, plan.temporal_triggers().front().owner);
+  }
+}
+
+// A root boundary sorts before Operators in a later embedded Graph. The completion record owns a
+// dense OperatorInstanceId, while port-shape validation must resolve that ID to the distinct
+// canonical VertexId through the executable-factory inventory.
+// REQ: CONTRACT-020
+TEST(CompileOperatorCompletion, ResolvesEmbeddedOwnerAcrossRootBoundaryIdentitySpace) {
+  Graph graph{"embedded-operator-completion"};
+  auto leaf = graph.embed<CompletionSourceLeaf>("leaf");
+  auto exported = graph.export_topic<std::uint32_t>("holomq://completion/embedded");
+  graph.add_flow(leaf->output, exported.input(), ConnectionOptions{.queue_depth = 2U});
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+  const auto& completion = plan.operator_completion_rules().front();
+  const auto source_vertex = std::find_if(
+      plan.graph().vertices().begin(), plan.graph().vertices().end(), [](const auto& v) {
+        return v.kind == VertexKind::kOperator && v.name == "source";
+      });
+  ASSERT_NE(source_vertex, plan.graph().vertices().end());
+  EXPECT_NE(source_vertex->id.value, completion.owner.id);
+  ASSERT_EQ(plan.temporal_triggers().size(), 1U);
+  EXPECT_EQ(plan.temporal_triggers().front().owner, completion.owner);
+}
+
+// REQ: CONTRACT-020
+TEST(CompileOperatorCompletion, ExposesZeroAndMaximumLimitsInSeparateCanonicalPlanRecords) {
+  const ExecutionPlan plan =
+      compile_completion_pair(false, 0U, std::numeric_limits<std::uint64_t>::max());
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.operator_completion_rules().size(), 2U);
+  ASSERT_EQ(plan.operator_parameters().size(), 2U);
+  ASSERT_EQ(plan.temporal_triggers().size(), 2U);
+  const auto rules = plan.operator_completion_rules();
+  for (std::size_t index = 0U; index < rules.size(); ++index) {
+    EXPECT_TRUE(rules[index].owner.plan_bound());
+    EXPECT_EQ(rules[index].kind, OperatorCompletionRuleKind::kComputeCalls);
+    EXPECT_EQ(rules[index].owner, plan.operator_parameters()[index].owner);
+    EXPECT_EQ(rules[index].owner, plan.temporal_triggers()[index].owner);
+  }
+  EXPECT_NE(plan.operator_parameters()[0].operator_path.find("a-source"), std::string::npos);
+  EXPECT_NE(plan.operator_parameters()[1].operator_path.find("z-source"), std::string::npos);
+  EXPECT_EQ(rules[0].limit, 0U);
+  EXPECT_EQ(rules[1].limit, std::numeric_limits<std::uint64_t>::max());
+  EXPECT_NE(plan.json().find("\"operator_completion_rules\":[{"), std::string_view::npos);
+}
+
+// REQ: CONTRACT-020
+TEST(CompileOperatorCompletion, RejectsEveryUnsupportedPlacementWithOneStableDiagnostic) {
+  constexpr std::array<UnsupportedCompletionShape, 8> kShapes{
+      UnsupportedCompletionShape::kInputful,
+      UnsupportedCompletionShape::kSink,
+      UnsupportedCompletionShape::kOutputless,
+      UnsupportedCompletionShape::kPredicateTrigger,
+      UnsupportedCompletionShape::kAnyInputTrigger,
+      UnsupportedCompletionShape::kEachTrigger,
+      UnsupportedCompletionShape::kAlignedTrigger,
+      UnsupportedCompletionShape::kWindowTrigger,
+  };
+
+  for (const UnsupportedCompletionShape shape : kShapes) {
+    Graph graph{"unsupported-operator-completion"};
+    auto target = graph.op<UnsupportedCompletionOperator>("target", shape);
+    add_default_clock(graph);
+    graph.partition("target").add(target);
+    const bool needs_first_input = shape == UnsupportedCompletionShape::kInputful ||
+                                   shape == UnsupportedCompletionShape::kSink ||
+                                   shape == UnsupportedCompletionShape::kAnyInputTrigger ||
+                                   shape == UnsupportedCompletionShape::kEachTrigger ||
+                                   shape == UnsupportedCompletionShape::kAlignedTrigger ||
+                                   shape == UnsupportedCompletionShape::kWindowTrigger;
+    if (needs_first_input) {
+      auto source = graph.op<TemporalSource>("source");
+      graph.add_flow(source->first, target->input, ConnectionOptions{.queue_depth = 2U});
+      if (shape == UnsupportedCompletionShape::kAlignedTrigger ||
+          shape == UnsupportedCompletionShape::kWindowTrigger) {
+        graph.add_flow(source->second, target->second, ConnectionOptions{.queue_depth = 2U});
+      }
+      graph.partition("source").add(source);
+    }
+
+    const ExecutionPlan plan = compile(graph);
+    ASSERT_FALSE(plan.ok()) << static_cast<unsigned>(shape) << '\n' << plan.json();
+    ASSERT_EQ(plan.diagnostics().size(), 1U) << static_cast<unsigned>(shape) << '\n' << plan.json();
+    EXPECT_TRUE(test::has_diagnostic(plan, "OPERATOR_COMPLETION_PLACEMENT_UNSUPPORTED"))
+        << static_cast<unsigned>(shape) << '\n'
+        << plan.json();
+  }
+}
+
+// Completion is explicit policy and therefore cannot supply the trigger that makes a zero-input
+// producer runnable. The contract is rejected before completion-placement lowering publishes any
+// partial temporal or completion record.
+// REQ: CONTRACT-020
+TEST(CompileOperatorCompletion, RejectsCompletionWithoutAnExplicitTriggerDuringAdmission) {
+  Graph graph{"missing-operator-completion-trigger"};
+  auto target =
+      graph.op<UnsupportedCompletionOperator>("target", UnsupportedCompletionShape::kNoTrigger);
+  graph.partition("target").add(target);
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_FALSE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.diagnostics().size(), 1U) << plan.json();
+  EXPECT_TRUE(test::has_diagnostic(plan, "TEMPORAL_CONTRACT_INVALID")) << plan.json();
+  EXPECT_TRUE(plan.operator_completion_rules().empty());
+  EXPECT_TRUE(plan.temporal_triggers().empty());
+}
+
+// REQ: CONTRACT-020
+TEST(CompileOperatorCompletion, CanonicalizesOwnerOrderAndHashesOwnerBoundLimits) {
+  const ExecutionPlan forward = compile_completion_pair(false, 2U, 7U);
+  const ExecutionPlan repeated = compile_completion_pair(false, 2U, 7U);
+  const ExecutionPlan reversed = compile_completion_pair(true, 2U, 7U);
+  const ExecutionPlan changed = compile_completion_pair(false, 7U, 2U);
+
+  ASSERT_TRUE(forward.ok()) << forward.json();
+  ASSERT_TRUE(repeated.ok()) << repeated.json();
+  ASSERT_TRUE(reversed.ok()) << reversed.json();
+  ASSERT_TRUE(changed.ok()) << changed.json();
+  ASSERT_EQ(forward.operator_completion_rules().size(), 2U);
+  ASSERT_EQ(repeated.operator_completion_rules().size(), 2U);
+  ASSERT_EQ(reversed.operator_completion_rules().size(), 2U);
+  ASSERT_EQ(changed.operator_completion_rules().size(), 2U);
+
+  EXPECT_TRUE(std::is_sorted(
+      forward.operator_completion_rules().begin(),
+      forward.operator_completion_rules().end(),
+      [](const auto& left, const auto& right) { return left.owner.id < right.owner.id; }));
+  EXPECT_TRUE(std::equal(forward.operator_completion_rules().begin(),
+                         forward.operator_completion_rules().end(),
+                         repeated.operator_completion_rules().begin(),
+                         repeated.operator_completion_rules().end()));
+  EXPECT_EQ(forward.json(), repeated.json());
+  EXPECT_EQ(forward.digest(), repeated.digest());
+  EXPECT_LT(reversed.operator_completion_rules()[0].owner.id,
+            reversed.operator_completion_rules()[1].owner.id);
+  EXPECT_EQ(forward.json(), reversed.json());
+  EXPECT_EQ(forward.digest(), reversed.digest());
+  for (std::size_t index = 0U; index < forward.operator_completion_rules().size(); ++index) {
+    EXPECT_EQ(forward.operator_completion_rules()[index].owner,
+              reversed.operator_completion_rules()[index].owner);
+    EXPECT_EQ(forward.operator_completion_rules()[index].limit,
+              reversed.operator_completion_rules()[index].limit);
+    EXPECT_EQ(forward.operator_completion_rules()[index].owner.id,
+              changed.operator_completion_rules()[index].owner.id);
+    EXPECT_NE(forward.operator_completion_rules()[index].owner.plan_generation,
+              changed.operator_completion_rules()[index].owner.plan_generation);
+  }
+  EXPECT_EQ(forward.operator_completion_rules()[0].limit, 2U);
+  EXPECT_EQ(forward.operator_completion_rules()[1].limit, 7U);
+  EXPECT_EQ(changed.operator_completion_rules()[0].limit, 7U);
+  EXPECT_EQ(changed.operator_completion_rules()[1].limit, 2U);
+  EXPECT_NE(forward.json(), changed.json());
+  EXPECT_NE(forward.digest(), changed.digest());
+}
+
 // Iterates over all TriggerMode values; each iteration compiles the same data-flow graph and
 // checks the mode-specific plan fields. A separate graph verifies that kWindow fails without
 // a realtime clock.
@@ -1411,6 +1841,56 @@ TEST(CompileTemporalTriggers, ResolvesExplicitReusableGraphClockImports) {
   EXPECT_FALSE(distinct_plan.ok());
   EXPECT_TRUE(test::has_diagnostic(distinct_plan, "TEMPORAL_SCHEDULING_DOMAIN_UNSUPPORTED"))
       << distinct_plan.json();
+}
+
+// REQ: COMPILE-053
+TEST(CompileTemporalTriggers, CanonicalizesDuplicateResolvedClockConversionPairs) {
+  const auto lower = [](const std::int64_t left_offset, const std::int64_t right_offset) {
+    Graph graph{"resolved-clock-conversion-pairs"};
+    auto left = graph.embed<ImportedClockConversionGraph>("left", left_offset);
+    auto right = graph.embed<ImportedClockConversionGraph>("right", right_offset);
+    const ClockKey source = graph.add_clock<ManualClock>("source", std::int64_t{0});
+    const ClockKey target = graph.add_clock<ManualClock>("target", std::int64_t{0});
+    graph.set_default_clock(target);
+    graph.bind_clock(left, left->source_import(), source);
+    graph.bind_clock(left, left->target_import(), target);
+    graph.bind_clock(right, right->source_import(), source);
+    graph.bind_clock(right, right->target_import(), target);
+    const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+    const std::vector<std::optional<Profile>> profiles(snapshot->vertices.size(),
+                                                       Profile::kStandard);
+    return detail::lower_clocks_and_readiness(*snapshot, PlanGenerationId{1U}, profiles);
+  };
+
+  // Key setup: two embedded declarations resolve to the same parent clock pair.
+  auto equivalent = lower(5, 5);
+  ASSERT_TRUE(equivalent);
+
+  // Key assertion: equivalent declarations publish one identity, while disagreement is rejected.
+  ASSERT_EQ(equivalent->clock_conversions.size(), 1U);
+  EXPECT_EQ(equivalent->clock_conversions.front().id, 1U);
+  auto conflicting = lower(5, 7);
+  ASSERT_FALSE(conflicting);
+  EXPECT_EQ(conflicting.error().code, ErrorCode::kIncompatible);
+  EXPECT_EQ(conflicting.error().message, "CLOCK_CONVERSION_CONFLICT");
+
+  Graph conflict_graph{"conflicting-resolved-clock-conversion-pairs"};
+  auto conflict_left = conflict_graph.embed<ImportedClockConversionGraph>("left", 5);
+  auto conflict_right = conflict_graph.embed<ImportedClockConversionGraph>("right", 7);
+  const ClockKey conflict_source = conflict_graph.add_clock<ManualClock>("source", std::int64_t{0});
+  const ClockKey conflict_target = conflict_graph.add_clock<ManualClock>("target", std::int64_t{0});
+  conflict_graph.set_default_clock(conflict_target);
+  conflict_graph.bind_clock(conflict_left, conflict_left->source_import(), conflict_source);
+  conflict_graph.bind_clock(conflict_left, conflict_left->target_import(), conflict_target);
+  conflict_graph.bind_clock(conflict_right, conflict_right->source_import(), conflict_source);
+  conflict_graph.bind_clock(conflict_right, conflict_right->target_import(), conflict_target);
+
+  // Key assertion: the public compile boundary retains the specific registered conflict token.
+  const ExecutionPlan conflict_plan = compile(conflict_graph);
+  EXPECT_FALSE(conflict_plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(conflict_plan, "CLOCK_CONVERSION_CONFLICT"))
+      << conflict_plan.json();
+  EXPECT_FALSE(test::has_diagnostic(conflict_plan, "COMPILER_DIAGNOSTIC_TOKEN_UNREGISTERED"));
 }
 
 // REQ: COMPILE-053
@@ -1989,13 +2469,13 @@ TEST(CompileTemporalTriggers, JoinsEmbeddedBoundaryOwnersThroughOperatorIdentity
 }
 
 // A contract-selected clock is an independent activation root even when the Operator also has an
-// upstream payload predecessor. Declaration-only readiness sources on the same test Operator stay
-// inert and must not affect which two roots are diagnosed.
+// upstream payload predecessor. Production automatic planning preserves that boundary as two
+// independently owned partitions.
 //
 //   source --[first, depth=2]--> clock-target
 //
-// REQ: COMPILE-058
-TEST(CompileTemporalTriggers, RejectsClockDrivenOperatorWithUpstreamPayloadAsSecondRoot) {
+// REQ: COMPILE-068
+TEST(CompileTemporalTriggers, AutomaticallySplitsClockDrivenOperatorWithUpstreamPayload) {
   Graph graph{"clock-source-with-upstream"};
   auto source = graph.op<TemporalSource>("source");
   auto target = graph.op<TriggerMatrixOperator>("clock-target", TriggerMode::kClock);
@@ -2003,9 +2483,10 @@ TEST(CompileTemporalTriggers, RejectsClockDrivenOperatorWithUpstreamPayloadAsSec
   add_default_clock(graph);
 
   const ExecutionPlan plan = compile(graph);
-  EXPECT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_MANUAL_AUTHORING_REQUIRED")) << plan.json();
-  EXPECT_FALSE(plan.partitioning_plan().accepted_algorithm.has_value());
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
+  EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, "holoscan.partition.source_chain");
+  EXPECT_EQ(plan.execution_partitions().size(), 2U);
 }
 
 // A contract-selected physical source has the same root semantics as a clock source: an upstream
@@ -2013,8 +2494,8 @@ TEST(CompileTemporalTriggers, RejectsClockDrivenOperatorWithUpstreamPayloadAsSec
 //
 //   source --[first, depth=2]--> readable-target
 //
-// REQ: COMPILE-058
-TEST(CompileTemporalTriggers, RejectsReadableOperatorWithUpstreamPayloadAsSecondRoot) {
+// REQ: COMPILE-068
+TEST(CompileTemporalTriggers, AutomaticallySplitsReadableOperatorWithUpstreamPayload) {
   Graph graph{"readable-source-with-upstream"};
   auto source = graph.op<TemporalSource>("source");
   auto target = graph.op<TriggerMatrixOperator>("readable-target", TriggerMode::kReadable);
@@ -2022,9 +2503,10 @@ TEST(CompileTemporalTriggers, RejectsReadableOperatorWithUpstreamPayloadAsSecond
   add_default_clock(graph);
 
   const ExecutionPlan plan = compile(graph);
-  EXPECT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_MANUAL_AUTHORING_REQUIRED")) << plan.json();
-  EXPECT_FALSE(plan.partitioning_plan().accepted_algorithm.has_value());
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
+  EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, "holoscan.partition.source_chain");
+  EXPECT_EQ(plan.execution_partitions().size(), 2U);
 }
 
 // Three inputs with distinct selectors; DrainAll max_selected_samples must equal the queue
@@ -2233,24 +2715,27 @@ TEST(CompileTemporalSelections, AdmitsRuntimeMutableDurationDependencyForAtomicU
 // REQ: COMPILE-017
 // REQ: CHAN-115
 // REQ: COMPILE-062
+// REQ: COMPILE-069
 TEST(CompileTemporalWindows, RejectsDropOldestAndInsufficientCompleteRetention) {
-  auto compile_window = [](QueuePolicy policy, std::uint32_t depth, bool realtime = false) {
-    Graph graph{"window-retention"};
-    auto source = graph.op<TemporalSource>("source");
-    auto target = graph.op<TriggerMatrixOperator>("target", TriggerMode::kWindow);
-    graph.add_flow(source->first, target->first, ConnectionOptions{.queue_depth = 8U});
-    graph.add_flow(source->second,
-                   target->second,
-                   ConnectionOptions{.queue_policy = policy, .queue_depth = depth});
-    if (realtime) {
-      add_default_realtime_clock(graph);
-    } else {
-      add_default_clock(graph);
-    }
-    graph.partition("window-source").add(source);
-    graph.partition("window-target").add(target);
-    return compile(graph);
-  };
+  auto compile_window =
+      [](QueuePolicy policy, std::optional<std::uint32_t> depth, bool realtime = false) {
+        Graph graph{"window-retention"};
+        auto source = graph.op<TemporalSource>("source");
+        auto target = graph.op<TriggerMatrixOperator>(
+            "target", TriggerMode::kWindow, std::optional<OnViolation>{}, true);
+        graph.add_flow(source->first, target->first, ConnectionOptions{.queue_depth = 8U});
+        graph.add_flow(source->second,
+                       target->second,
+                       ConnectionOptions{.queue_policy = policy, .queue_depth = depth});
+        if (realtime) {
+          add_default_realtime_clock(graph);
+        } else {
+          add_default_clock(graph);
+        }
+        graph.partition("window-source").add(source);
+        graph.partition("window-target").add(target);
+        return compile(graph);
+      };
 
   const ExecutionPlan drop_oldest = compile_window(QueuePolicy::kDropOldest, 8U);
   EXPECT_FALSE(drop_oldest.ok());
@@ -2292,6 +2777,46 @@ TEST(CompileTemporalWindows, RejectsDropOldestAndInsufficientCompleteRetention) 
   EXPECT_NE(admitted.json().find("\"holoscan.temporal.window-pending-limit.v1\""),
             std::string_view::npos);
   EXPECT_NE(admitted.json().find("\"payload_identity\""), std::string_view::npos);
+
+  const ExecutionPlan automatic = compile_window(QueuePolicy::kBlocking, std::nullopt, true);
+  ASSERT_TRUE(automatic.ok()) << automatic.json();
+  ASSERT_EQ(automatic.bracketed_windows().size(), 1U);
+  // Six retained window samples may coexist with one newly arriving sample. Automatic sizing
+  // therefore sums those distinct lifetimes while keeping alternative selector/window views in
+  // the same maximum-composed retention group.
+  EXPECT_EQ(automatic.bracketed_windows().front().queue_capacity, 7U);
+  EXPECT_EQ(automatic.bracketed_windows().front().cache_capacity, 7U);
+  EXPECT_EQ(automatic.bracketed_windows().front().retained_overlap_capacity, 7U);
+  const PortId automatic_input = automatic.bracketed_windows().front().input;
+  const auto automatic_edge =
+      std::ranges::find(automatic.payload_edges(), automatic_input, &PayloadEdgePlanRecord::target);
+  ASSERT_NE(automatic_edge, automatic.payload_edges().end());
+  EXPECT_EQ(automatic_edge->queue_depth, 7U);
+  const auto window_floor =
+      std::ranges::find_if(automatic.hard_floor_contributors(), [&](const auto& contributor) {
+        return contributor.edge == automatic_edge->edge &&
+               contributor.origin == HardFloorOrigin::kWindowRetention;
+      });
+  ASSERT_NE(window_floor, automatic.hard_floor_contributors().end());
+  EXPECT_EQ(window_floor->required_slots, 6U);
+
+  Graph rate_aware_graph{"rate-aware-window-retention"};
+  const auto rate_aware_source = rate_aware_graph.op<RateAwareTemporalSource>("source");
+  const auto rate_aware_target = rate_aware_graph.op<TriggerMatrixOperator>(
+      "target", TriggerMode::kWindow, std::optional<OnViolation>{}, true);
+  rate_aware_graph.add_flow(
+      rate_aware_source->first, rate_aware_target->first, ConnectionOptions{.queue_depth = 8U});
+  rate_aware_graph.add_flow(
+      rate_aware_source->second,
+      rate_aware_target->second,
+      ConnectionOptions{.queue_policy = QueuePolicy::kBlocking, .queue_depth = 6U});
+  add_default_realtime_clock(rate_aware_graph);
+  rate_aware_graph.partition("window-source").add(rate_aware_source);
+  rate_aware_graph.partition("window-target").add(rate_aware_target);
+  const ExecutionPlan rate_aware_insufficient = compile(rate_aware_graph);
+  EXPECT_FALSE(rate_aware_insufficient.ok());
+  EXPECT_TRUE(test::has_diagnostic(rate_aware_insufficient, "RATE_QUEUE_DEPTH_BELOW_HARD_FLOOR"))
+      << rate_aware_insufficient.json();
 }
 
 // Covers the full config-codec admission matrix: configless (no codec), explicitly empty,
@@ -2430,7 +2955,7 @@ TEST(CompilePredicatePlan, RecordsExactResultAndOwnedTypeErasureAdmissionFacts) 
 //   source --[first, depth=2]--> target->driver  (per factory variant)
 //
 // REQ: COMPILE-016
-TEST(CompilePredicatePlan, RecordsEveryEa1CallableDispatchForm) {
+TEST(CompilePredicatePlan, RecordsEveryCallableDispatchForm) {
   struct Expectation {
     ExecutionPlan (*compile_plan)();
     PredicateCallableKind kind;

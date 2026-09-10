@@ -177,14 +177,10 @@ class FrameSource final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
     spec.output(frame, "frame")
-        .produces_tensor(holoscan::TensorPortLayout{
-            .memory_kind = Kind,
-            .dtype = kByteDtype,
-            .rank = 1U,
-        })
-        .tensor_allocation(holoscan::TensorAllocationBounds{
-            .max_rank = 1U,
-            .max_byte_span = static_cast<std::uint64_t>(kFrameShape.front()),
+        .produces_tensor(holoscan::TensorOutputSpec{
+            .representation = {.memory_kind = Kind, .dtype = kByteDtype, .rank = 1U},
+            .bounds = holoscan::tensor_bounds(static_cast<std::uint64_t>(kFrameShape.front())),
+            .storage = holoscan::TensorOutputStorage::kRuntimePool,
         });
   }
 
@@ -266,17 +262,15 @@ class RetainedCompositor final : public holoscan::Operator<> {
   void setup(holoscan::OperatorSpec& spec) override {
     spec.input(frame, "frame")
         .queue_depth(1U)
-        .expects_tensor(holoscan::TensorPortLayout{
-            .memory_kind = FrameKind,
-            .dtype = kByteDtype,
-            .rank = 1U,
+        .expects_tensor(holoscan::TensorInputSpec{
+            .representation = {.memory_kind = FrameKind, .dtype = kByteDtype, .rank = 1U},
         });
     spec.input(overlay, "overlay")
         .queue_depth(2U)
-        .expects_tensor(holoscan::TensorPortLayout{
-            .memory_kind = holoscan::MemoryKind::kHost,
-            .dtype = kByteDtype,
-            .rank = 1U,
+        .expects_tensor(holoscan::TensorInputSpec{
+            .representation = {.memory_kind = holoscan::MemoryKind::kHost,
+                               .dtype = kByteDtype,
+                               .rank = 1U},
         });
     spec.input(control, "control").queue_depth(2U);
   }
@@ -420,18 +414,20 @@ template <holoscan::MemoryKind FrameKind>
   overlay_options.endpoint_name = arguments.overlay_endpoint;
   overlay_options.capture_time = holoscan::RequireCaptureTime{.clock = clock};
   overlay_options.bounds.publisher = holoscan::PublisherEndpointBounds{.max_loaned_samples = 1U};
-  overlay_options.tensor = holoscan::LogicalTensorRequirements{
-      .memory_kind = holoscan::MemoryKind::kHost,
-      .dtype = kByteDtype,
-      .rank = 1U,
-      .logical_bounds =
-          holoscan::LogicalTensorBounds{
+  overlay_options.tensor = holoscan::TensorBoundaryContract{
+      .representation = {.memory_kind = holoscan::MemoryKind::kHost,
+                         .dtype = kByteDtype,
+                         .rank = 1U,
+                         .strides = holoscan::TensorStridePolicy::kContiguousOnly},
+      .bounds =
+          holoscan::TensorBounds{
               .max_rank = 1U,
               .max_byte_span = static_cast<std::uint64_t>(kOverlayShape.front()),
               .axes = kOverlayAxes,
           },
-      .strides = holoscan::TensorStridePolicy::kContiguousOnly,
-      .foreign_emit_policy = holoscan::InterfaceTensorEmitPolicy::kCopyIfNeeded,
+      .transfer =
+          holoscan::TensorTransferPolicy{.foreign_emit_policy =
+                                             holoscan::InterfaceTensorEmitPolicy::kCopyIfNeeded},
   };
   const auto overlay =
       graph.import_topic<holoscan::Tensor>(arguments.route, std::move(overlay_options));

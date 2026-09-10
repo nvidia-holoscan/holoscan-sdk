@@ -725,12 +725,13 @@ class RuntimeClosedIslandTensorSourceOperator final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.output(output, "output")
         .max_emits_per_compute(1U)
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = MemoryKind::kHost,
-            .dtype = DLDataType{kDLUInt, 8U, 1U},
-            .rank = 1U,
-        })
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 8U});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U},
+            .bounds = tensor_bounds(8U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -750,10 +751,10 @@ class RuntimeClosedIslandTensorSinkOperator final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.input(input, "input")
         .queue_depth(1U)
-        .expects_tensor(TensorPortLayout{
-            .memory_kind = MemoryKind::kHost,
-            .dtype = DLDataType{kDLUInt, 8U, 1U},
-            .rank = 1U,
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U},
         });
   }
 
@@ -1241,7 +1242,7 @@ template <typename Sink>
   graph.add_flow(source->compute_only, sink->compute_only, ConnectionOptions{.queue_depth = 1U});
   const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
   graph.set_default_clock(default_clock);
-  return compile(graph);
+  return detail::compile_with_process_local_holomq(graph, CompileOptions{});
 }
 
 [[nodiscard]] expected<std::vector<DirectPredicateOutcome>, Error> run_direct_predicate_oracle(

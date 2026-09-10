@@ -12,10 +12,6 @@
 namespace holoscan {
 namespace {
 constexpr TraceContext kAbsentTrace{};
-
-[[nodiscard]] constexpr bool is_valid_restart_stage(LifecycleStage stage) noexcept {
-  return static_cast<std::uint8_t>(stage) <= static_cast<std::uint8_t>(LifecycleStage::kStart);
-}
 }  // namespace
 
 namespace detail {
@@ -102,7 +98,7 @@ ParamComputeControl ExecutionContext::param_control() const noexcept {
 
 expected<LifecycleRestartReceipt, Error> ExecutionContext::request_restart(
     LifecycleRestartOptions options) noexcept {
-  if (!is_valid_restart_stage(options.from_stage)) {
+  if (!is_lifecycle_forward_stage(options.from_stage)) {
     return make_unexpected(Error{ErrorCode::kLifecycleInvalidRestartStage});
   }
   if (state_ == nullptr || state_->request_restart == nullptr) {
@@ -116,7 +112,7 @@ expected<LifecycleRestartReceipt, Error> ExecutionContext::request_restart(
 
 expected<LifecycleRestartReceipt, Error> ExecutionContext::request_restart(
     OperatorRef target, LifecycleRestartOptions options) noexcept {
-  if (!is_valid_restart_stage(options.from_stage)) {
+  if (!is_lifecycle_forward_stage(options.from_stage)) {
     return make_unexpected(Error{ErrorCode::kLifecycleInvalidRestartStage});
   }
   if (state_ == nullptr || state_->request_restart == nullptr) {
@@ -126,6 +122,28 @@ expected<LifecycleRestartReceipt, Error> ExecutionContext::request_restart(
     return make_unexpected(Error{valid.error().code});
   }
   return state_->request_restart(state_->restart_state, target, options);
+}
+
+expected<PortRateView, Error> ExecutionContext::rate_port(const void* declaration,
+                                                          bool output) const noexcept {
+  if (state_ == nullptr || state_->resolve_rate == nullptr || declaration == nullptr) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  return state_->resolve_rate(state_->rate_state, declaration, output);
+}
+
+void ExecutionContext::request_completion() noexcept {
+  if (state_ != nullptr && state_->request_termination != nullptr) {
+    state_->request_termination(state_->termination_request_state,
+                                detail::TerminationRequest::kCompletion);
+  }
+}
+
+void ExecutionContext::request_stop() noexcept {
+  if (state_ != nullptr && state_->request_termination != nullptr) {
+    state_->request_termination(state_->termination_request_state,
+                                detail::TerminationRequest::kStop);
+  }
 }
 
 }  // namespace holoscan

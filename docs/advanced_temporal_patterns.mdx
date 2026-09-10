@@ -167,7 +167,7 @@ holoscan::Contract contract() const override {
 }
 ```
 
-This is the shape used by the `ea1_camera_imu_control` example: each camera
+This is the shape used by the `camera_imu_control` example: each camera
 frame opens a bounded window, and the activation delivers the IMU sample just
 before the frame, every sample during it, and the sample just after — enough
 to interpolate motion across the exposure. See the

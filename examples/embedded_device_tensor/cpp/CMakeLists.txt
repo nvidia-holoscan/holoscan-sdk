@@ -49,6 +49,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS embedded_device_tensor
-    RUNTIME DESTINATION examples/embedded_device_tensor/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/embedded_device_tensor/cpp"
     COMPONENT holoscan-examples
 )

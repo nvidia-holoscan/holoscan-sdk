@@ -3,6 +3,38 @@
 
 include(GoogleTest)
 
+add_executable(diagnostic_format_test test_diagnostic.cpp)
+holoscan_configure_test_clang_tidy(diagnostic_format_test)
+
+target_link_libraries(diagnostic_format_test
+    PRIVATE
+        holoscan::core
+        GTest::gtest_main
+)
+
+gtest_discover_tests(diagnostic_format_test
+    DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX DIAGNOSTIC_FORMAT.
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+)
+
+add_executable(canonical_text_encoding_test test_canonical_text_encoding.cpp)
+holoscan_configure_test_clang_tidy(canonical_text_encoding_test)
+
+target_include_directories(canonical_text_encoding_test PRIVATE ${holoscan_SOURCE_DIR}/src)
+
+target_link_libraries(canonical_text_encoding_test
+    PRIVATE
+        holoscan::core
+        GTest::gtest_main
+)
+
+gtest_discover_tests(canonical_text_encoding_test
+    DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX CANONICAL_TEXT_ENCODING.
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_executable(core_hello_test test_hello.cpp)
 holoscan_configure_test_clang_tidy(core_hello_test)
 
@@ -15,7 +47,7 @@ target_link_libraries(core_hello_test
 gtest_discover_tests(core_hello_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX CORE_HELLO.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(expected_test test_expected.cpp)
@@ -30,13 +62,13 @@ target_link_libraries(expected_test
 gtest_discover_tests(expected_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX EXPECTED.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(tag_test test_tag.cpp)
 holoscan_configure_test_clang_tidy(tag_test)
 
-target_include_directories(tag_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(tag_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 target_link_libraries(tag_test
     PRIVATE
@@ -47,31 +79,36 @@ target_link_libraries(tag_test
 gtest_discover_tests(tag_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX TAG.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
-# EA1-003 starts from the installed Core contract rather than from the private
+# HSDK5-003 starts from the installed Core contract rather than from the private
 # Channel endpoint wrappers.  Keeping the public-shape tests in one target
 # makes every translation unit include only the header it owns while the
 # synthetic binding test can additionally consume the non-installed runtime
 # seam from public/src.
 add_executable(operator_test
+    ../common/allocation_counter.cpp
     test_execution_context.cpp
     test_operator.cpp
     test_operator_binding.cpp
     test_operator_spec.cpp
     test_port.cpp
     test_predicate_input_view.cpp
+    test_rate.cpp
+    test_rate_math_internal.cpp
     test_readiness_source.cpp
     test_sample.cpp
     test_schema_identity.cpp
+    test_tensor_contract.cpp
+    test_pool_capacity_reducer.cpp
     test_tensor_output_loan.cpp
 )
 holoscan_configure_test_clang_tidy(operator_test)
 
 target_include_directories(operator_test
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${holoscan_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -84,10 +121,37 @@ target_link_libraries(operator_test
 gtest_discover_tests(operator_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX OPERATOR.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
-# EA1-008 keeps pointer-free lifecycle normalization and its pure bounded
+add_executable(rate_no_exceptions_test test_rate_no_exceptions.cpp)
+holoscan_configure_cxx20_target(rate_no_exceptions_test PRIVATE)
+target_include_directories(rate_no_exceptions_test
+    PRIVATE
+        ${holoscan_SOURCE_DIR}/include
+        ${holoscan_BINARY_DIR}/include
+        ${holoscan_SOURCE_DIR}/src
+)
+target_link_libraries(rate_no_exceptions_test PRIVATE holoscan::core)
+if(MSVC)
+  target_compile_options(rate_no_exceptions_test PRIVATE /EHs-c-)
+else()
+  target_compile_options(rate_no_exceptions_test PRIVATE -fno-exceptions)
+endif()
+if(HOLOSCAN_ENABLE_CLANG_TIDY AND CMAKE_CXX_CLANG_TIDY)
+  # clang-tidy parses every included header with the target's compile flags.  Permit exception
+  # syntax during analysis so unrelated, uninstantiated throw paths remain parseable while the
+  # real compiler invocation still proves this focused translation unit under -fno-exceptions.
+  set_target_properties(rate_no_exceptions_test PROPERTIES
+      CXX_CLANG_TIDY "${CMAKE_CXX_CLANG_TIDY};--extra-arg=-fexceptions"
+  )
+endif()
+add_test(NAME OPERATOR.RATE_NO_EXCEPTIONS COMMAND rate_no_exceptions_test)
+set_tests_properties(OPERATOR.RATE_NO_EXCEPTIONS PROPERTIES
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+)
+
+# HSDK5-008 keeps pointer-free lifecycle normalization and its pure bounded
 # execution kernel together in one focused component target. The public-value
 # and registration translation units also exercise the private source-tree
 # binding seams without exposing them through the installed package.
@@ -106,7 +170,7 @@ holoscan_apply_logging_policy(lifecycle_test)
 
 target_include_directories(lifecycle_test
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${holoscan_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -119,7 +183,7 @@ target_link_libraries(lifecycle_test
 gtest_discover_tests(lifecycle_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX LIFECYCLE.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(graph_test
@@ -128,25 +192,26 @@ add_executable(graph_test
 )
 holoscan_configure_test_clang_tidy(graph_test)
 
-target_include_directories(graph_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(graph_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 target_link_libraries(graph_test
     PRIVATE
         holoscan::core
         holoscan::schema
+        holoscan::sensor_io
         GTest::gtest_main
 )
 
 gtest_discover_tests(graph_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX GRAPH.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(subgraph_test test_subgraph.cpp)
 holoscan_configure_test_clang_tidy(subgraph_test)
 
-target_include_directories(subgraph_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(subgraph_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 target_link_libraries(subgraph_test
     PRIVATE
@@ -157,15 +222,15 @@ target_link_libraries(subgraph_test
 gtest_discover_tests(subgraph_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX SUBGRAPH.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_test(
     NAME GRAPH_PUBLIC_SURFACE.no_application_or_pipeline_class
     COMMAND ${CMAKE_COMMAND}
-        -DHOLOSCAN_PUBLIC_INCLUDE_DIR=${CMAKE_SOURCE_DIR}/include/holoscan
-        -DHOLOSCAN_PUBLIC_SOURCE_ROOT=${CMAKE_SOURCE_DIR}
-        -DHOLOSCAN_BUILD_ROOT=${CMAKE_BINARY_DIR}
+        -DHOLOSCAN_PUBLIC_INCLUDE_DIR=${holoscan_SOURCE_DIR}/include/holoscan
+        -DHOLOSCAN_PUBLIC_SOURCE_ROOT=${holoscan_SOURCE_DIR}
+        -DHOLOSCAN_BUILD_ROOT=${holoscan_BINARY_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_graph_public_surface.cmake
 )
 
@@ -203,7 +268,7 @@ holoscan_configure_test_clang_tidy(temporal_contract_test)
 
 target_include_directories(temporal_contract_test
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${holoscan_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -216,7 +281,7 @@ target_link_libraries(temporal_contract_test
 gtest_discover_tests(temporal_contract_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX TEMPORAL_CONTRACT.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(temporal_contract_records_test test_temporal_contract_records.cpp)
@@ -231,7 +296,7 @@ target_link_libraries(temporal_contract_records_test
 gtest_discover_tests(temporal_contract_records_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX TEMPORAL_CONTRACT_RECORDS.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(parameter_test test_parameter.cpp test_parameter_hash.cpp test_parameter_wide.cpp)
@@ -239,7 +304,7 @@ holoscan_configure_test_clang_tidy(parameter_test)
 
 target_include_directories(parameter_test
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${holoscan_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -252,7 +317,7 @@ target_link_libraries(parameter_test
 gtest_discover_tests(parameter_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX PARAMETER.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_library(parameter_dso_test_plugin SHARED parameter_dso_test_plugin.cpp)
@@ -275,7 +340,7 @@ target_link_libraries(parameter_dso_test_plugin PRIVATE holoscan::core)
 
 add_executable(parameter_dso_test test_parameter_dso.cpp)
 holoscan_configure_test_clang_tidy(parameter_dso_test)
-target_include_directories(parameter_dso_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(parameter_dso_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 target_link_libraries(parameter_dso_test
     PRIVATE
         holoscan::core
@@ -286,7 +351,7 @@ target_link_libraries(parameter_dso_test
 gtest_discover_tests(parameter_dso_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX PARAMETER_DSO.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(expected_helpers_test test_expected_helpers.cpp)
@@ -297,12 +362,12 @@ target_link_libraries(expected_helpers_test
         holoscan::core
         GTest::gtest_main
 )
-target_include_directories(expected_helpers_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(expected_helpers_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 gtest_discover_tests(expected_helpers_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX EXPECTED_HELPERS.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 function(holoscan_add_expected_compile_fail_test test_name source_name diagnostic_fragment)
@@ -319,7 +384,7 @@ function(holoscan_add_expected_compile_fail_test test_name source_name diagnosti
 
     add_test(NAME "EXPECTED_COMPILE_FAIL.${test_name}"
         COMMAND ${CMAKE_COMMAND}
-            -DHOLOSCAN_BUILD_DIR=${CMAKE_BINARY_DIR}
+            -DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}
             -DHOLOSCAN_BUILD_CONFIG=$<CONFIG>
             -DHOLOSCAN_TARGET=${target_name}
             -DHOLOSCAN_EXPECTED_DIAGNOSTIC=${diagnostic_fragment}
@@ -560,6 +625,11 @@ holoscan_add_expected_compile_fail_test(
     "HOLOSCAN_ACCEPT_ANY_DIAGNOSTIC"
 )
 holoscan_add_expected_compile_fail_test(
+    execution_plan_partition_of
+    execution_plan_partition_of.cpp
+    "HOLOSCAN_ACCEPT_ANY_DIAGNOSTIC"
+)
+holoscan_add_expected_compile_fail_test(
     graph_forbidden_capture
     graph_forbidden_capture.cpp
     "HOLOSCAN_ACCEPT_ANY_DIAGNOSTIC"
@@ -653,12 +723,12 @@ target_link_libraries(logger_test
 gtest_discover_tests(logger_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX LOGGER.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(tensor_test test_tensor.cpp)
 holoscan_configure_test_clang_tidy(tensor_test)
-target_include_directories(tensor_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(tensor_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 target_link_libraries(tensor_test
     PRIVATE
@@ -669,7 +739,7 @@ target_link_libraries(tensor_test
 gtest_discover_tests(tensor_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX TENSOR.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(schema_test test_schema.cpp)
@@ -678,13 +748,15 @@ add_dependencies(schema_test holoscan_flatbuffer_schemas_generated)
 
 target_include_directories(schema_test
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${holoscan_SOURCE_DIR}/src
         "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
 )
 
 target_link_libraries(schema_test
     PRIVATE
         holoscan::schema
+        # The Image and Imu generated headers and their trait specializations come from here now.
+        holoscan::sensor_io
         # holoscan::schema links FlatBuffers privately, so the test links it directly for the
         # FlatBufferBuilder / Verifier / generated-header symbols it uses itself.
         flatbuffers::flatbuffers
@@ -694,7 +766,7 @@ target_link_libraries(schema_test
 gtest_discover_tests(schema_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX SCHEMA.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(tensor_device_test
@@ -702,7 +774,7 @@ add_executable(tensor_device_test
     ../common/allocation_counter.cpp
 )
 holoscan_configure_test_clang_tidy(tensor_device_test)
-target_include_directories(tensor_device_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(tensor_device_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 target_link_libraries(tensor_device_test
     PRIVATE
@@ -713,5 +785,5 @@ target_link_libraries(tensor_device_test
 gtest_discover_tests(tensor_device_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX TENSOR_DEVICE.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )

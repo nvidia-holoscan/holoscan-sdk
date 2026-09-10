@@ -14,7 +14,8 @@ namespace holoscan {
 
 /// @brief Represent either a value of type \c T or an error of type \c E.
 ///
-/// This alias remains backed by \c tl::expected as the HSDK 5 EA1 public source and type contract.
+/// This alias remains backed by \c tl::expected as the HSDK 5 baseline public source and type
+/// contract.
 ///
 /// @tparam T Value type, or `void` for success-without-a-value operations.
 /// @tparam E Error type.

@@ -3,14 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <algorithm>
 #include <concepts>
 #include <cstdint>
 #include <filesystem>
+#include <iterator>
+#include <ranges>
 #include <span>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <holoscan/channel/endpoint_catalog_builder.hpp>
 #include <holoscan/channel/manual_tensor_publisher.hpp>
@@ -49,6 +54,19 @@ class InstalledClockImportGraph final : public holoscan::Graph {
   holoscan::ClockKey clock_import_;
 };
 
+// Provides one manual execution partition for the installed Green Context authoring and plan-
+// record check in main().
+class InstalledGreenContextGraph final : public holoscan::Graph {
+ protected:
+  void compose() override {
+    const auto source = op<InstalledCompileOperator>("source");
+    partition("installed-partition").add(source);
+    const holoscan::ClockKey clock =
+        add_clock<holoscan::ManualClock>("green-context-clock", std::int64_t{0});
+    set_default_clock(clock);
+  }
+};
+
 template <typename T>
 concept HasCompileMember = requires(T& value) { value.compile(); };
 
@@ -64,6 +82,9 @@ concept ExposesPrivateClockHealthRecord = requires(T value) {
   value.report_sequence;
   value.producer_epoch;
 };
+
+template <typename T>
+concept HasArrowOperator = requires(const T& value) { value.operator->(); };
 
 template <typename T>
 concept ExposesTensorLoanTransportMember =
@@ -217,12 +238,47 @@ static_assert(
 static_assert(
     std::same_as<decltype(std::declval<const holoscan::ExecutionPlan&>().predicate_callables()),
                  std::span<const holoscan::PredicateCallablePlanRecord>>);
+static_assert(std::same_as<decltype(std::declval<const holoscan::ExecutionPlan&>().partitions()),
+                           holoscan::ExecutionPartitionsView>);
+static_assert(!noexcept(std::declval<const holoscan::ExecutionPlan&>().partitions()));
+static_assert(!std::default_initializable<holoscan::ExecutionPartitionView>);
+static_assert(!std::default_initializable<holoscan::ExecutionPartitionsView>);
+static_assert(std::forward_iterator<holoscan::ExecutionPartitionsView::const_iterator>);
+static_assert(
+    std::same_as<typename std::iterator_traits<
+                     holoscan::ExecutionPartitionsView::const_iterator>::iterator_category,
+                 std::input_iterator_tag>);
+static_assert(std::ranges::forward_range<holoscan::ExecutionPartitionsView>);
+static_assert(!std::ranges::borrowed_range<holoscan::ExecutionPartitionsView>);
+static_assert(!HasArrowOperator<holoscan::ExecutionPartitionsView::const_iterator>);
 static_assert(
     std::same_as<decltype(std::declval<const holoscan::ExecutionGraphView&>().clock_imports()),
                  std::span<const holoscan::ClockImportAuthoringRecord>>);
 static_assert(
     std::same_as<decltype(std::declval<const holoscan::ExecutionGraphView&>().clock_bindings()),
                  std::span<const holoscan::EmbeddedClockBindingAuthoringRecord>>);
+static_assert(
+    std::same_as<
+        decltype(holoscan::query_cuda_green_context_capability(std::declval<holoscan::DeviceId>())),
+        holoscan::expected<holoscan::CudaGreenContextCapability, holoscan::Error>>);
+static_assert(
+    std::same_as<decltype(std::declval<const holoscan::DeploymentBinding&>().cuda_green_contexts()),
+                 std::span<const holoscan::PartitionCudaGreenContextBinding>>);
+static_assert(std::same_as<decltype(std::declval<const holoscan::ExecutionPlan&>()
+                                        .cuda_green_context_requests()),
+                           std::span<const holoscan::CudaGreenContextRequestPlanRecord>>);
+static_assert(std::same_as<decltype(std::declval<const holoscan::ExecutionPlan&>()
+                                        .cuda_green_context_assignments()),
+                           std::span<const holoscan::CudaGreenContextAssignmentPlanRecord>>);
+static_assert(std::same_as<
+              decltype(std::declval<const holoscan::ExecutionPlan&>().cuda_green_context_pools()),
+              std::span<const holoscan::CudaGreenContextPoolPlanRecord>>);
+static_assert(std::same_as<decltype(std::declval<const holoscan::ExecutionPlan&>()
+                                        .cuda_green_context_resources()),
+                           std::span<const holoscan::CudaGreenContextResourcePlanRecord>>);
+static_assert(
+    std::same_as<decltype(std::declval<const holoscan::ExecutionPlan&>().cuda_compute_streams()),
+                 std::span<const holoscan::CudaComputeStreamPlanRecord>>);
 
 }  // namespace
 
@@ -231,6 +287,7 @@ static_assert(
 // REQ: CHAN-069
 // REQ: GRAPH-026
 // REQ: COMPILE-053
+// REQ: COMPILE-068
 int main() {
   // The installed consumer checks canonical public evidence rather than depending on the private
   // health-control encoding used to transport the corresponding enum values.
@@ -246,8 +303,8 @@ int main() {
       "{\"id\":8,\"token\":\"monitor_fault\"},"
       "{\"id\":9,\"token\":\"unspecified\"}]";
 
-  // Taking addresses ensures the installed package exports the declaration-only EA1-013 facade
-  // symbols even though catalog construction remains intentionally unavailable until EA1-014.
+  // Taking addresses ensures the installed package exports the declaration-only HSDK5-013 facade
+  // symbols even though catalog construction remains intentionally unavailable until HSDK5-014.
   const auto loan_tensor = &holoscan::ChannelPublisher<holoscan::Tensor>::loan_tensor;
   const auto emit_loan = &holoscan::ChannelPublisher<holoscan::Tensor>::emit;
   const auto emit_captured = &holoscan::ChannelPublisher<holoscan::Tensor>::emit_captured;
@@ -282,6 +339,49 @@ int main() {
   (void)stream;
   (void)commit;
 
+  holoscan::DeploymentBinding deployment;
+  // REQ: MEM-GREENCTX-014
+  // REQ: COMPILE-063
+  std::string green_context_partition{"installed-partition"};
+  deployment.bind_cuda_green_context(
+      green_context_partition,
+      holoscan::CudaGreenContextPlacement{.device = holoscan::DeviceId{0}, .sm_count = 8U});
+  green_context_partition.assign("mutated-after-bind");
+  const auto green_context_bindings = deployment.cuda_green_contexts();
+  if (green_context_bindings.size() != 1U ||
+      green_context_bindings.front().partition_name != "installed-partition" ||
+      green_context_bindings.front().placement.device.value != 0 ||
+      green_context_bindings.front().placement.sm_count != 8U) {
+    return 1;
+  }
+  const auto capability_query = &holoscan::query_cuda_green_context_capability;
+  const auto local_capability = capability_query(holoscan::DeviceId{0});
+  if (local_capability) {
+    const std::uint32_t structured_sm_count =
+        local_capability->max_structured_context_count * local_capability->structured_sm_quantum;
+    if (structured_sm_count == 0U) {
+      return 1;
+    }
+    InstalledGreenContextGraph green_context_graph;
+    holoscan::CompileOptions green_context_options;
+    green_context_options.deployment.bind_cuda_green_context("installed-partition",
+                                                             holoscan::CudaGreenContextPlacement{
+                                                                 .device = holoscan::DeviceId{0},
+                                                                 .sm_count = structured_sm_count,
+                                                             });
+    const holoscan::ExecutionPlan green_context_plan =
+        holoscan::compile(green_context_graph, std::move(green_context_options));
+    if (!green_context_plan.ok() || green_context_plan.cuda_green_context_requests().size() != 1U ||
+        green_context_plan.cuda_green_context_assignments().size() != 1U ||
+        green_context_plan.cuda_green_context_pools().size() != 1U ||
+        green_context_plan.cuda_green_context_resources().size() != 1U ||
+        green_context_plan.cuda_compute_streams().size() != 1U ||
+        green_context_plan.cuda_green_context_pools().front().structured_sm_quantum !=
+            local_capability->structured_sm_quantum) {
+      return 1;
+    }
+  }
+
   const holoscan::TypeKey type_key{};
   const holoscan::TypeKeyHash type_key_hash;
   if (type_key_hash(type_key) == 0U) {
@@ -299,17 +399,51 @@ int main() {
     return 1;
   }
 
+  try {
+    (void)holoscan::ExecutionPlan{}.partitions();
+    return 1;
+  } catch (const holoscan::RuntimeError& error) {
+    if (error.code() != holoscan::ErrorCode::kInvalidArgument) {
+      return 1;
+    }
+  }
+
   holoscan::Graph graph{"installed-compile"};
   const holoscan::ClockKey root_clock =
       graph.add_clock<holoscan::ManualClock>("root_clock", std::int64_t{17});
   auto child = graph.embed<InstalledClockImportGraph>("child");
   graph.bind_clock(child, child->clock_import(), root_clock);
+  if (graph.view().automatic_partition_remaining()) {
+    return 1;
+  }
   const holoscan::ExecutionPlan plan = holoscan::compile(graph);
   if (!plan.ok() || plan.json().empty() || plan.graph().vertices().size() != 1U ||
       !plan.temporal_triggers().empty() || !plan.input_selections().empty() ||
       !plan.predicate_callables().empty() ||
       !plan.partitioning_plan().accepted_algorithm.has_value() ||
       plan.json().find(kClockHealthReasonSchema) == std::string_view::npos) {
+    return 1;
+  }
+  const holoscan::ExecutionPartitionsView partitions = plan.partitions();
+  if (partitions.mode() != holoscan::PartitioningMode::kAutomatic ||
+      partitions.authored_count() != 0U || partitions.automatic_count() != 1U ||
+      partitions.size() != 1U || partitions.empty()) {
+    return 1;
+  }
+  if (std::distance(partitions.begin(), partitions.end()) != 1) {
+    return 1;
+  }
+  std::vector<holoscan::ExecutionPartitionView> legacy_copied_partitions;
+  std::copy(partitions.begin(), partitions.end(), std::back_inserter(legacy_copied_partitions));
+  if (legacy_copied_partitions.size() != partitions.size()) {
+    return 1;
+  }
+  const holoscan::ExecutionPartitionView partition = *partitions.begin();
+  const auto by_id = partitions.lookup(partition.id());
+  const auto by_path = partitions.lookup_for_path("child/source");
+  if (!by_id || !by_path || by_id->id() != partition.id() || by_path->id() != partition.id() ||
+      partition.operator_paths().size() != 1U ||
+      partition.operator_paths().front() != "child/source") {
     return 1;
   }
   const holoscan::ExecutionGraphView compiled_graph = plan.graph();
@@ -323,6 +457,14 @@ int main() {
       !imported.is_default || !binding.parent_graph || binding.child_graph != imported.graph ||
       binding.child_clock != imported.key ||
       binding.parent_clock != holoscan::ClockKey::named("root_clock")) {
+    return 1;
+  }
+
+  holoscan::Graph hybrid_graph{"installed-hybrid-view"};
+  auto hybrid_source = hybrid_graph.op<InstalledCompileOperator>("source");
+  hybrid_graph.partition("anchor").add(hybrid_source);
+  hybrid_graph.auto_partition_remaining();
+  if (!hybrid_graph.view().automatic_partition_remaining()) {
     return 1;
   }
 

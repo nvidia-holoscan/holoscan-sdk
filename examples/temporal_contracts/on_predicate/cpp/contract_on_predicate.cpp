@@ -305,7 +305,7 @@ class ClockedConsumer final : public holoscan::Operator<> {
 int main() {
   PredicateObservation::reset();
 
-  holoscan::Graph graph{"ea1-contract-on-predicate"};
+  holoscan::Graph graph{"holoscan-contract-on-predicate"};
   const auto ticks = graph.op<TickSource>("ticks");
   const auto level = graph.op<LevelSource>("level");
   const auto gated = graph.op<GatedConsumer>("gated");
@@ -376,8 +376,11 @@ int main() {
     return 2;
   }
 
+  // A true evaluation may commit immediately before request_stop() closes callback admission.
+  // That terminal candidate is retired without entering compute().
+  const bool gate_cutoff_ok = gate_acts <= gate_trues && gate_trues - gate_acts <= 1U;
   const bool gating_ok = gate_misfires == 0U && gate_acts >= kMinGateActivations &&
-                         gate_acts == gate_trues && gate_evals > gate_trues;
+                         gate_cutoff_ok && gate_evals > gate_trues;
   const bool clocked_ok = edge_lows == 0U && edge_acts >= kMinClockedActivations &&
                           edge_trues > edge_acts && edge_evals > edge_trues;
   std::cout << "on_predicate verdict: gating=" << (gating_ok ? "ok" : "violated")

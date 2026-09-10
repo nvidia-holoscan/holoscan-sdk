@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # Script to check supported CUDA SM architectures (PTX and SASS)
 # for libraries (.so, .a) and executables in a given directory or for a single file.
 

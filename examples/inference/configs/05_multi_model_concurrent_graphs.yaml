@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# 05 - Same as 04, with CUDA Graphs enabled for lower per-tick launch overhead. With no
+# cuda_green_context_pool configured, concurrent-capture safety falls back to runtime
+# mutex-based capture serialization (see ../README.md, "Advanced: concurrent-capture safety").
+model_path_map:
+  model_a: ../models/identity_model.onnx
+  model_b: ../models/identity_model.onnx
+input_map:
+  model_a: [tensor_a_in]
+  model_b: [tensor_b_in]
+output_map:
+  model_a: [tensor_a_out]
+  model_b: [tensor_b_out]
+parallel_inference: true
+enable_cuda_graphs: true
+cuda_stream_pool:
+  max_size: 4

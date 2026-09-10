@@ -16,7 +16,6 @@ if(DEFINED HOLOSCAN_TEST_INSTALL_PREFIX AND NOT HOLOSCAN_TEST_INSTALL_PREFIX STR
 else()
     find_package(holoscan REQUIRED CONFIG
         PATHS
-            "/opt/nvidia/holoscan"
             "/workspace/holoscan-sdk/install"
             "/workspace/holoscan-sdk/public/install-cu13-x86_64"
     )

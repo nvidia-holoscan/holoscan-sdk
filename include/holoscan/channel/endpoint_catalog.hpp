@@ -134,7 +134,7 @@ class HOLOSCAN_CORE_EXPORT PodTypeIdentityView {
   /// @return Positive power-of-two alignment in bytes.
   [[nodiscard]] std::uint32_t object_alignment() const noexcept;
   /// @brief Return the POD layout-preimage format version.
-  /// @return Version one for EA1 catalogs.
+  /// @return Version one for baseline catalogs.
   [[nodiscard]] std::uint32_t layout_format_version() const noexcept;
   /// @brief Return the complete canonical POD layout digest bytes.
   /// @return Catalog-owned SHA-256 bytes in digest order.
@@ -143,10 +143,10 @@ class HOLOSCAN_CORE_EXPORT PodTypeIdentityView {
   /// @return Catalog-owned immutable field views covering the complete object.
   [[nodiscard]] std::span<const PodFieldLayoutView> fields() const noexcept;
   /// @brief Return the portable integer wire-endianness token.
-  /// @return Catalog-owned \c little token in EA1.
+  /// @return Catalog-owned \c little token in baseline.
   [[nodiscard]] std::string_view integer_wire_endianness() const noexcept;
   /// @brief Return the portable floating-point wire-format token.
-  /// @return Catalog-owned \c ieee754 token in EA1.
+  /// @return Catalog-owned \c ieee754 token in baseline.
   [[nodiscard]] std::string_view floating_wire_format() const noexcept;
   /// @brief Return build or toolchain evidence required for POD compatibility.
   /// @return Catalog-owned immutable evidence views, possibly empty.
@@ -219,7 +219,7 @@ class HOLOSCAN_CORE_EXPORT ClockHealthContractView {
 /// The view contains only immutable logical requirements. Physical pools,
 /// allocator authority, CUDA objects, readiness tokens, and live claims remain
 /// private execution-plan or Runtime state.
-class HOLOSCAN_CORE_EXPORT LogicalTensorRequirementsView {
+class HOLOSCAN_CORE_EXPORT TensorBoundaryContractView {
  public:
   /// @brief Return the required logical storage kind when constrained.
   /// @return Exact storage kind, or no value when the contract is storage-agnostic.
@@ -248,11 +248,14 @@ class HOLOSCAN_CORE_EXPORT LogicalTensorRequirementsView {
   /// @brief Return the positive inline-host cap when the inline policy is selected.
   /// @return Byte cap, or no value for non-inline policies.
   [[nodiscard]] std::optional<std::uint32_t> max_inline_bytes() const noexcept;
+  /// @brief Return the positive foreign-storage staging cap when copying is admitted.
+  /// @return Byte cap, or no value when copying is forbidden.
+  [[nodiscard]] std::optional<std::uint64_t> max_staging_byte_span() const noexcept;
 
  private:
-  explicit LogicalTensorRequirementsView(const LogicalTensorRequirementsRecord* record) noexcept
+  explicit TensorBoundaryContractView(const TensorBoundaryContractRecord* record) noexcept
       : record_(record) {}
-  const LogicalTensorRequirementsRecord* record_{};
+  const TensorBoundaryContractRecord* record_{};
   friend class detail::ChannelEndpointCatalogAccess;
 };
 
@@ -272,21 +275,21 @@ class HOLOSCAN_CORE_EXPORT ChannelEndpointCatalog {
   /// @brief Create an empty immutable catalog.
   ChannelEndpointCatalog() noexcept = default;
 
-  /// @brief Parse and normalize one strict schema-v1 JSON catalog.
+  /// @brief Parse and normalize one strict schema-v2 JSON catalog.
   /// @param source Exact source bytes; duplicate keys and invalid UTF-8 reject.
   /// @return Immutable normalized catalog with nonsemantic raw-source provenance.
-  /// @retval ErrorCode::kResourceExhausted The source exceeds a fixed schema-v1 parser or
+  /// @retval ErrorCode::kResourceExhausted The source exceeds a fixed schema-v2 parser or
   /// normalized-collection safety limit. Version one accepts at most 16 MiB of source, nesting
   /// depth 64, 100000 JSON nodes, 4096 members per object, and 65536 elements per array. Normalized
   /// collections accept at most 4096 endpoints/services, 1024 clocks, 4096 clock conversions, 1024
   /// POD fields per identity, and 32 Tensor axes per contract.
   [[nodiscard]] static expected<ChannelEndpointCatalog, Error> parse_json(std::string_view source);
 
-  /// @brief Load and normalize one strict schema-v1 JSON catalog.
+  /// @brief Load and normalize one strict schema-v2 JSON catalog.
   /// @param path File whose exact bytes are read before parsing.
   /// @return Immutable normalized catalog with nonsemantic raw-source provenance.
-  /// @retval ErrorCode::kResourceExhausted The file exceeds the 16 MiB schema-v1 source limit or
-  /// its decoded document exceeds another fixed schema-v1 safety limit. Loading reads at most the
+  /// @retval ErrorCode::kResourceExhausted The file exceeds the 16 MiB schema-v2 source limit or
+  /// its decoded document exceeds another fixed schema-v2 safety limit. Loading reads at most the
   /// source limit plus one byte before rejecting an oversized file.
   [[nodiscard]] static expected<ChannelEndpointCatalog, Error> load_json(
       const std::filesystem::path& path);
@@ -364,7 +367,7 @@ class HOLOSCAN_CORE_EXPORT ChannelEndpointCompatibilityReport {
   /// @return Report-owned immutable diagnostics.
   [[nodiscard]] std::span<const Diagnostic> diagnostics() const noexcept;
 
-  /// @brief Return deterministic schema-v1 report JSON.
+  /// @brief Return deterministic schema-v2 report JSON.
   /// @return Owned canonical report bytes.
   [[nodiscard]] std::string json() const;
 
@@ -445,7 +448,7 @@ class HOLOSCAN_CORE_EXPORT ChannelEndpointCatalog::EndpointView {
 
   /// @brief Return the logical Tensor contract when this endpoint is Tensor-backed.
   /// @return Catalog-owned immutable requirements, or no value for another payload family.
-  [[nodiscard]] std::optional<LogicalTensorRequirementsView> tensor_requirements() const noexcept;
+  [[nodiscard]] std::optional<TensorBoundaryContractView> tensor_requirements() const noexcept;
 
   /// @brief Return whether this view names a catalog endpoint.
   /// @return \c true when the borrowed state and record index are valid.

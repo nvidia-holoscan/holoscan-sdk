@@ -60,6 +60,8 @@ struct SyntheticActivationOptions {
   std::optional<ParamGeneration> params_generation{};
   void* restart_state{};
   RestartRequestFunction request_restart{};
+  void* termination_request_state{};
+  TerminationRequestFunction request_termination{};
   OperatorRef self{};
 };
 
@@ -129,7 +131,7 @@ class SyntheticOperatorBinding {
       if (record.direction == PortDirection::kInput) {
         declared_inputs_.push_back(DeclaredInput{
             .declaration = record.declaration,
-            .queue_depth = spec.input_builders_[record.builder_index].queue_depth_,
+            .queue_depth = spec.input_builders_[record.builder_index].queue_depth_.value_or(1U),
         });
       } else {
         const std::uint32_t max_emits =
@@ -331,6 +333,8 @@ class SyntheticOperatorBinding {
     state.params_generation = params_generation;
     state.restart_state = options.restart_state;
     state.request_restart = options.request_restart;
+    state.termination_request_state = options.termination_request_state;
+    state.request_termination = options.request_termination;
     state.self = options.self;
     ExecutionContext context{&state};
 
@@ -852,14 +856,20 @@ class SyntheticOperatorBinding {
     for (const OperatorSpec::PortRecord& record : spec.ports_) {
       if (record.direction == PortDirection::kInput) {
         if (record.builder_index >= spec.input_builders_.size() ||
-            spec.input_builders_[record.builder_index].queue_depth_ == 0) {
+            spec.input_builders_[record.builder_index].queue_depth_.value_or(1U) == 0U ||
+            spec.input_builders_[record.builder_index].rate_.error.code != ErrorCode::kSuccess ||
+            spec.input_builders_[record.builder_index].tensor_contract_error_.code !=
+                ErrorCode::kSuccess) {
           return false;
         }
         continue;
       }
       if (!record.tensor) {
         if (record.builder_index >= spec.output_builders_.size() ||
-            spec.output_builders_[record.builder_index].max_emits_per_compute_ == 0) {
+            spec.output_builders_[record.builder_index].max_emits_per_compute_ == 0 ||
+            spec.output_builders_[record.builder_index].rate_.error.code != ErrorCode::kSuccess ||
+            spec.output_builders_[record.builder_index].tensor_contract_error_.code !=
+                ErrorCode::kSuccess) {
           return false;
         }
         continue;
@@ -868,7 +878,8 @@ class SyntheticOperatorBinding {
         return false;
       }
       const TensorOutputSpecBuilder& builder = spec.tensor_output_builders_[record.builder_index];
-      if (builder.max_emits_per_compute_ == 0 ||
+      if (builder.max_emits_per_compute_ == 0 || builder.rate_.error.code != ErrorCode::kSuccess ||
+          builder.tensor_contract_error_.code != ErrorCode::kSuccess ||
           (builder.has_tensor_allocation_ && (builder.tensor_allocation_.max_rank == 0 ||
                                               builder.tensor_allocation_.max_byte_span == 0))) {
         return false;

@@ -28,6 +28,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS hello_cccl
-    RUNTIME DESTINATION examples/hello_cccl/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/hello_cccl/cpp"
     COMPONENT holoscan-examples
 )

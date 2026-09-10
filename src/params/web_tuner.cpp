@@ -33,6 +33,7 @@
 #include <holoscan/core/run.hpp>
 #include <holoscan/logger/logger.hpp>
 
+#include "core/canonical_text_encoding.hpp"
 #include "runtime/runtime_callback_context.hpp"
 #include "web_tuner_socket.hpp"
 
@@ -190,24 +191,12 @@ template <typename T>
 }
 
 [[nodiscard]] std::string percent_encode_path(std::span<const std::string> segments) {
-  constexpr std::string_view kHex = "0123456789ABCDEF";
   std::string result;
   for (const auto& segment : segments) {
     if (!result.empty()) {
       result.push_back('/');
     }
-    for (const unsigned char byte : segment) {
-      const bool safe = (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-                        (byte >= '0' && byte <= '9') || byte == '-' || byte == '_' || byte == '.' ||
-                        byte == '~';
-      if (safe) {
-        result.push_back(static_cast<char>(byte));
-      } else {
-        result.push_back('%');
-        result.push_back(kHex[(byte >> 4U) & 0x0FU]);
-        result.push_back(kHex[byte & 0x0FU]);
-      }
-    }
+    holoscan::detail::append_percent_encoded_uri_component(result, segment);
   }
   return result;
 }

@@ -14,9 +14,11 @@
 #include <vector>
 
 #include <holoscan/core/compile.hpp>
+#include <holoscan/cuda_execution/cuda_green_context_pool.hpp>
 
 #include "../compiler/execution_plan_state.hpp"
 #include "../compiler/process_placement_internal.hpp"
+#include "../cuda_execution/cuda_green_context_driver.hpp"
 
 namespace holoscan {
 namespace {
@@ -93,6 +95,47 @@ DeploymentBinding& DeploymentBinding::bind_thread_placement(std::string_view par
       .placement = std::move(placement),
   });
   return *this;
+}
+
+DeploymentBinding& DeploymentBinding::bind_cuda_green_context(std::string_view partition_name,
+                                                              CudaGreenContextPlacement placement) {
+  cuda_green_contexts_.push_back(PartitionCudaGreenContextBinding{
+      .partition_name = std::string(partition_name),
+      .placement = placement,
+  });
+  return *this;
+}
+
+expected<CudaGreenContextCapability, Error> query_cuda_green_context_capability(DeviceId device) {
+  if (!device.valid()) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument,
+              "CUDA Green Context capability query requires an explicit nonnegative device"});
+  }
+#if HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE
+  auto driver = cuda_execution_detail::cuda_green_context_driver();
+  if (!driver) {
+    return forward_error(driver);
+  }
+  auto capability =
+      cuda_execution_detail::query_cuda_green_context_device_capability(**driver, device.value);
+  if (!capability) {
+    return forward_error(capability);
+  }
+  return CudaGreenContextCapability{
+      .device = device,
+      .deployment_device_id = capability->deployment_device_id,
+      .total_sm_count = capability->device_sm_count,
+      .min_sm_partition_size = capability->min_sm_partition_size,
+      .sm_coscheduled_alignment = capability->sm_coscheduled_alignment,
+      .structured_sm_quantum = capability->structured_sm_quantum,
+      .max_structured_context_count = capability->max_structured_context_count,
+  };
+#else
+  return make_unexpected(
+      Error{ErrorCode::kFailure,
+            "CUDA Green Context capability query requires a CUDA 12.4 or newer toolkit"});
+#endif
 }
 
 DeploymentBinding& DeploymentBinding::allow_generated_endpoint_name(GeneratedEndpointNamePin pin) {
@@ -237,6 +280,173 @@ const PartitioningPlanRecord& ExecutionPlan::partitioning_plan() const noexcept 
   return state_ ? state_->partitioning_plan : kEmptyPartitioningPlan;
 }
 
+ExecutionPartitionId ExecutionPartitionView::id() const noexcept {
+  return state_->execution_partitions[index_].id;
+}
+
+ExecutionPartitionOrigin ExecutionPartitionView::origin() const noexcept {
+  return state_->execution_partitions[index_].authored_name ? ExecutionPartitionOrigin::kAuthored
+                                                            : ExecutionPartitionOrigin::kAutomatic;
+}
+
+std::optional<std::string_view> ExecutionPartitionView::authored_name() const noexcept {
+  const auto& name = state_->execution_partitions[index_].authored_name;
+  return name ? std::optional<std::string_view>{*name} : std::nullopt;
+}
+
+std::span<const VertexId> ExecutionPartitionView::members() const noexcept {
+  return state_->execution_partitions[index_].members;
+}
+
+std::span<const std::string> ExecutionPartitionView::operator_paths() const noexcept {
+  return state_->execution_partitions[index_].operator_paths;
+}
+
+std::uint32_t ExecutionPartitionView::execution_lane() const noexcept {
+  return state_->execution_partitions[index_].execution_lane;
+}
+
+PartitioningMode ExecutionPartitionsView::mode() const noexcept {
+  return state_ ? state_->partitioning_plan.mode : PartitioningMode::kAutomatic;
+}
+
+std::uint32_t ExecutionPartitionsView::authored_count() const noexcept {
+  return state_ ? state_->partitioning_plan.authored_partition_count : 0U;
+}
+
+std::uint32_t ExecutionPartitionsView::automatic_count() const noexcept {
+  return state_ ? state_->partitioning_plan.automatic_partition_count : 0U;
+}
+
+std::size_t ExecutionPartitionsView::size() const noexcept {
+  return state_ ? state_->execution_partitions.size() : 0U;
+}
+
+bool ExecutionPartitionsView::empty() const noexcept {
+  return size() == 0U;
+}
+
+bool ExecutionPartitionsView::usable() const noexcept {
+  return state_ && state_->admitted &&
+         state_->partitioning_plan.disposition == PlanDisposition::kAccepted;
+}
+
+expected<ExecutionPartitionView, Error> ExecutionPartitionsView::lookup(
+    ExecutionPartitionId id) const noexcept {
+  if (!usable()) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  if (!id) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  if (id.value > state_->execution_partition_index_by_id.size()) {
+    return make_unexpected(Error{ErrorCode::kNotFound});
+  }
+  const std::uint32_t table_index =
+      state_->execution_partition_index_by_id[static_cast<std::size_t>(id.value - 1U)];
+  if (table_index == 0U || table_index > state_->execution_partitions.size()) {
+    return make_unexpected(Error{ErrorCode::kNotFound});
+  }
+  return ExecutionPartitionView{state_, static_cast<std::size_t>(table_index - 1U)};
+}
+
+namespace {
+
+[[nodiscard]] expected<std::size_t, Error> lookup_partition_string_index(
+    const std::shared_ptr<const detail::ExecutionPlanState>& state,
+    std::span<const detail::ExecutionPartitionStringLookupEntry> entries,
+    std::string_view key) noexcept {
+  if (!state || !state->admitted ||
+      state->partitioning_plan.disposition != PlanDisposition::kAccepted || key.empty()) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  const auto found = std::lower_bound(
+      entries.begin(), entries.end(), key, [](const auto& entry, std::string_view value) {
+        return entry.key < value;
+      });
+  if (found == entries.end() || found->key != key || found->table_index == 0U ||
+      found->table_index > state->execution_partitions.size()) {
+    return make_unexpected(Error{ErrorCode::kNotFound});
+  }
+  return static_cast<std::size_t>(found->table_index - 1U);
+}
+
+}  // namespace
+
+expected<ExecutionPartitionView, Error> ExecutionPartitionsView::lookup_named(
+    std::string_view authored_name) const noexcept {
+  auto index = lookup_partition_string_index(
+      state_,
+      state_ ? std::span{state_->execution_partition_index_by_authored_name}
+             : std::span<const detail::ExecutionPartitionStringLookupEntry>{},
+      authored_name);
+  if (!index) {
+    return make_unexpected(std::move(index).error());
+  }
+  return ExecutionPartitionView{state_, index.value()};
+}
+
+expected<ExecutionPartitionView, Error> ExecutionPartitionsView::lookup_for_path(
+    std::string_view canonical_operator_path) const noexcept {
+  auto index = lookup_partition_string_index(
+      state_,
+      state_ ? std::span{state_->execution_partition_index_by_operator_path}
+             : std::span<const detail::ExecutionPartitionStringLookupEntry>{},
+      canonical_operator_path);
+  if (!index) {
+    return make_unexpected(std::move(index).error());
+  }
+  return ExecutionPartitionView{state_, index.value()};
+}
+
+ExecutionPartitionView ExecutionPartitionsView::of(OperatorRef plan_operator) const {
+  if (!usable() || !plan_operator.plan_bound()) {
+    throw RuntimeError{ErrorCode::kInvalidArgument};
+  }
+  if (plan_operator.plan_generation != state_->plan_generation) {
+    throw RuntimeError{ErrorCode::kStaleOperatorRef};
+  }
+  if (plan_operator.id > state_->execution_partition_index_by_operator_id.size()) {
+    throw RuntimeError{ErrorCode::kNotFound};
+  }
+  const std::uint32_t table_index =
+      state_->execution_partition_index_by_operator_id[static_cast<std::size_t>(plan_operator.id -
+                                                                                1U)];
+  if (table_index == 0U || table_index > state_->execution_partitions.size()) {
+    throw RuntimeError{ErrorCode::kNotFound};
+  }
+  return ExecutionPartitionView{state_, static_cast<std::size_t>(table_index - 1U)};
+}
+
+ExecutionPartitionView ExecutionPartitionsView::of_root_locator(
+    const detail::GraphOperatorLocator& locator) const {
+  if (!usable()) {
+    throw RuntimeError{ErrorCode::kInvalidArgument};
+  }
+  if (locator.graph != state_->graph_identity.graph) {
+    throw RuntimeError{ErrorCode::kIncompatible};
+  }
+  if (locator.generation != state_->graph_identity.version) {
+    throw RuntimeError{ErrorCode::kStaleOperatorRef};
+  }
+  if (locator.root_operator_index >= state_->execution_partition_index_by_root_operator.size()) {
+    throw RuntimeError{ErrorCode::kNotFound};
+  }
+  const std::uint32_t table_index =
+      state_->execution_partition_index_by_root_operator[locator.root_operator_index];
+  if (table_index == 0U || table_index > state_->execution_partitions.size()) {
+    throw RuntimeError{ErrorCode::kNotFound};
+  }
+  return ExecutionPartitionView{state_, static_cast<std::size_t>(table_index - 1U)};
+}
+
+ExecutionPartitionsView ExecutionPlan::partitions() const {
+  if (!ok() || state_->partitioning_plan.disposition != PlanDisposition::kAccepted) {
+    throw RuntimeError{ErrorCode::kInvalidArgument};
+  }
+  return ExecutionPartitionsView{state_};
+}
+
 std::span<const PartitionDecisionRecord> ExecutionPlan::partition_decisions() const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::partition_decisions);
 }
@@ -285,6 +495,24 @@ std::span<const PortPlanRecord> ExecutionPlan::ports() const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::ports);
 }
 
+std::span<const PortRatePlanRecord> ExecutionPlan::port_rates() const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::port_rates);
+}
+
+std::span<const AccumulationHorizonPlanRecord> ExecutionPlan::accumulation_horizons()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::accumulation_horizons);
+}
+
+std::span<const HardFloorContributorPlanRecord> ExecutionPlan::hard_floor_contributors()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::hard_floor_contributors);
+}
+
+std::span<const QueueSizingRecipePlanRecord> ExecutionPlan::queue_sizing_recipes() const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::queue_sizing_recipes);
+}
+
 std::span<const SchemaPackagePlanRecord> ExecutionPlan::schema_packages() const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::schema_packages);
 }
@@ -324,6 +552,51 @@ std::span<const TensorAllocationPlanRecord> ExecutionPlan::tensor_allocations() 
   return plan_span(state_, &detail::ExecutionPlanState::tensor_allocations);
 }
 
+std::span<const TensorByteSpanDerivationPlanRecord> ExecutionPlan::tensor_byte_span_derivations()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::tensor_byte_span_derivations);
+}
+
+const TensorByteSpanDerivationPlanRecord* ExecutionPlan::find_tensor_byte_span_derivation(
+    std::string_view operator_path, std::string_view output_name,
+    std::optional<std::uint16_t> field_id,
+    std::optional<std::uint16_t> tensor_index) const noexcept {
+  if (!state_ || operator_path.empty() || output_name.empty() ||
+      field_id.has_value() != tensor_index.has_value()) {
+    return nullptr;
+  }
+  const auto owner = std::ranges::find(
+      state_->operator_parameters, operator_path, &OperatorParameterPlanRecord::operator_path);
+  if (owner == state_->operator_parameters.end()) {
+    return nullptr;
+  }
+  const auto factory = std::ranges::find(state_->executable_factories.operators,
+                                         owner->owner.id,
+                                         &detail::ExecutableOperatorFactoryRecord::operator_id);
+  if (factory == state_->executable_factories.operators.end()) {
+    return nullptr;
+  }
+  const auto output = std::ranges::find_if(state_->ports, [&](const auto& candidate) {
+    return candidate.owner == factory->vertex && candidate.direction == PortDirection::kOutput &&
+           candidate.local_name == output_name;
+  });
+  if (output == state_->ports.end()) {
+    return nullptr;
+  }
+  const TensorByteSpanDerivationPlanRecord* match{};
+  for (const auto& candidate : state_->tensor_byte_span_derivations) {
+    if (candidate.output != output->id ||
+        (field_id && (candidate.field_id != field_id || candidate.tensor_index != tensor_index))) {
+      continue;
+    }
+    if (match != nullptr) {
+      return nullptr;
+    }
+    match = &candidate;
+  }
+  return match;
+}
+
 std::span<const TensorFieldAllocationPlanRecord> ExecutionPlan::tensor_field_allocations()
     const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::tensor_field_allocations);
@@ -337,6 +610,30 @@ std::span<const TensorInterfacePoolPlanRecord> ExecutionPlan::tensor_interface_p
 std::span<const TensorDeviceResourcePlanRecord> ExecutionPlan::tensor_device_resources()
     const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::tensor_device_resources);
+}
+
+std::span<const CudaGreenContextPoolPlanRecord> ExecutionPlan::cuda_green_context_pools()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::cuda_green_context_pools);
+}
+
+std::span<const CudaGreenContextResourcePlanRecord> ExecutionPlan::cuda_green_context_resources()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::cuda_green_context_resources);
+}
+
+std::span<const CudaGreenContextRequestPlanRecord> ExecutionPlan::cuda_green_context_requests()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::cuda_green_context_requests);
+}
+
+std::span<const CudaGreenContextAssignmentPlanRecord>
+ExecutionPlan::cuda_green_context_assignments() const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::cuda_green_context_assignments);
+}
+
+std::span<const CudaComputeStreamPlanRecord> ExecutionPlan::cuda_compute_streams() const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::cuda_compute_streams);
 }
 
 std::span<const TensorInlineRecordPlanRecord> ExecutionPlan::tensor_inline_records()
@@ -356,6 +653,16 @@ std::span<const TensorTransferPlanRecord> ExecutionPlan::tensor_transfer_plans()
 std::span<const PoolCapacityContributorRecord> ExecutionPlan::pool_capacity_contributors()
     const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::pool_capacity_contributors);
+}
+
+std::span<const PoolCapacityDependencyPlanRecord> ExecutionPlan::pool_capacity_dependencies()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::pool_capacity_dependencies);
+}
+
+std::span<const ProviderAllocationPlanRecord> ExecutionPlan::provider_allocation_plans()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::provider_allocation_plans);
 }
 
 std::span<const PublicationOutcomePlanRecord> ExecutionPlan::publication_outcomes() const noexcept {
@@ -381,6 +688,11 @@ std::span<const ClockConversionRecord> ExecutionPlan::clock_conversions() const 
 std::span<const EndpointClockHealthPlanRecord> ExecutionPlan::endpoint_clock_health()
     const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::endpoint_clock_health);
+}
+
+std::span<const OperatorCompletionPlanRecord> ExecutionPlan::operator_completion_rules()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::operator_completion_rules);
 }
 
 std::span<const TemporalTriggerPlanRecord> ExecutionPlan::temporal_triggers() const noexcept {

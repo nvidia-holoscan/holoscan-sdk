@@ -9,7 +9,7 @@ set(forbidden_root_type_regex
     "(^|[^A-Za-z0-9_])(holoscan::)?(Application|Pipeline)([^A-Za-z0-9_]|$)"
 )
 set(forbidden_selector_regex
-    "(^|[^A-Za-z0-9_])(PartitionAlgorithm|PartitionPlanner|PartitionAlgorithmSelector|PartitionPlannerRegistry|ReadyPolicy|partition_algorithm|partition_algorithm_selector|partition_planner|partition_planner_plugin|ready_policy|register_partition_planner|set_partition_algorithm|set_ready_policy|serial_baseline|source_chain|HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM)([^A-Za-z0-9_]|$)"
+    "(^|[^A-Za-z0-9_])(PartitionAlgorithm|PartitionPlanner|PartitionAlgorithmSelector|PartitionPlannerRegistry|ReadyPolicy|partition_algorithm|partition_algorithm_selector|partition_of|partition_planner|partition_planner_plugin|ready_policy|register_partition_planner|set_partition_algorithm|set_ready_policy|serial_baseline|source_chain|HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM)([^A-Za-z0-9_]|$)"
 )
 
 function(check_graph_public_contract_file contract_file)
@@ -69,6 +69,7 @@ function(check_graph_production_source_file source_file)
             ReadyPolicy
             partition_algorithm
             partition_algorithm_selector
+            partition_of
             partition_planner
             partition_planner_plugin
             ready_policy
@@ -146,10 +147,10 @@ if(DEFINED HOLOSCAN_PACKAGE_ROOT AND EXISTS "${HOLOSCAN_PACKAGE_ROOT}")
         LIST_DIRECTORIES FALSE
         "${HOLOSCAN_PACKAGE_ROOT}/lib*/cmake/holoscan/*.cmake"
         "${HOLOSCAN_PACKAGE_ROOT}/lib*/cmake/holoscan/*.cmake.in"
-        "${HOLOSCAN_PACKAGE_ROOT}/python/lib/holoscan/*.cpp"
-        "${HOLOSCAN_PACKAGE_ROOT}/python/lib/holoscan/*.h"
-        "${HOLOSCAN_PACKAGE_ROOT}/python/lib/holoscan/*.hpp"
-        "${HOLOSCAN_PACKAGE_ROOT}/python/lib/holoscan/*.json"
+        "${HOLOSCAN_PACKAGE_ROOT}/lib/python*/site-packages/holoscan/*.cpp"
+        "${HOLOSCAN_PACKAGE_ROOT}/lib/python*/site-packages/holoscan/*.h"
+        "${HOLOSCAN_PACKAGE_ROOT}/lib/python*/site-packages/holoscan/*.hpp"
+        "${HOLOSCAN_PACKAGE_ROOT}/lib/python*/site-packages/holoscan/*.json"
         "${HOLOSCAN_PACKAGE_ROOT}/python/holoscan/*.py"
         "${HOLOSCAN_PACKAGE_ROOT}/python/holoscan/*.pyi"
         "${HOLOSCAN_PACKAGE_ROOT}/lib/python*/site-packages/holoscan/*.py"
@@ -312,6 +313,7 @@ foreach(header IN LISTS HOLOSCAN_PUBLIC_HEADERS)
             ReadyPolicy
             partition_algorithm
             partition_algorithm_selector
+            partition_of
             partition_planner
             partition_planner_plugin
             ready_policy
@@ -336,7 +338,7 @@ endforeach()
 
 # Production sources, public bindings, package configuration, and plugin
 # manifests must not expose a second root or route around the compiler-owned
-# EA1-009 selector. Test trees, generated build/install trees, dependency
+# HSDK5-009 selector. Test trees, generated build/install trees, dependency
 # patches, and private conformance accessors are deliberately excluded so
 # negative evidence can name forbidden spellings without making this scanner
 # self-referential.

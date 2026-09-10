@@ -5,6 +5,7 @@
 
 #include "interprocess_test_operators.hpp"
 
+#include <iostream>
 #include <utility>
 
 namespace holoscan::test {
@@ -101,6 +102,8 @@ expected<void, Error> FanoutProcessBoundarySource::compute(ExecutionContext&) {
     return {};
   }
   if (!published) {
+    std::cerr << "fanout source publication failed at value " << next_value_ << ": "
+              << runtime_error_message(published.error()) << '\n';
     return make_unexpected(std::move(published).error());
   }
   ++next_value_;

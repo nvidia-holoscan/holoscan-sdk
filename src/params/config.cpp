@@ -20,7 +20,8 @@
 #include <utility>
 #include <vector>
 
-#include "compiler/parameter_plan_lowering.hpp"
+#include "compiler/parameter_identity.hpp"
+#include "core/canonical_text_encoding.hpp"
 #include "core/parameter_override_set_internal.hpp"
 #include "core/parameter_rebind_support.hpp"
 
@@ -30,21 +31,13 @@ namespace detail {
 
 class ParamConfigBindingAccess {
  public:
-  using DecodeOverlay = ParamResult<std::shared_ptr<const void>> (*)(const config::ConfigView&,
-                                                                     const void*,
-                                                                     const config::DecodeOptions&);
-  using ValueDigest = bool (*)(const void*, ParamSchemaHash&) noexcept;
-
   [[nodiscard]] static Graph* graph(const ParamConfigBinding& binding) noexcept {
     return binding.authoring_graph_;
   }
 
-  [[nodiscard]] static DecodeOverlay decode_overlay(const ParamConfigBinding& binding) noexcept {
-    return binding.decode_overlay_;
-  }
-
-  [[nodiscard]] static ValueDigest value_digest(const ParamConfigBinding& binding) noexcept {
-    return binding.value_digest_;
+  [[nodiscard]] static const ParamConfigTypeRoutes* type_routes(
+      const ParamConfigBinding& binding) noexcept {
+    return binding.type_routes_;
   }
 };
 
@@ -292,32 +285,13 @@ struct ConfigTree {
   return std::move(*object);
 }
 
-[[nodiscard]] std::string percent_encode(std::string_view value) {
-  constexpr std::string_view kHex = "0123456789ABCDEF";
-  std::string result;
-  result.reserve(value.size());
-  for (const unsigned char byte : value) {
-    const bool safe = (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-                      (byte >= '0' && byte <= '9') || byte == '-' || byte == '_' || byte == '.' ||
-                      byte == '~';
-    if (safe) {
-      result.push_back(static_cast<char>(byte));
-    } else {
-      result.push_back('%');
-      result.push_back(kHex[(byte >> 4U) & 0x0FU]);
-      result.push_back(kHex[byte & 0x0FU]);
-    }
-  }
-  return result;
-}
-
 [[nodiscard]] std::string render_path(const OperatorPath& path) {
   std::string result;
   for (const auto& segment : path.segments()) {
     if (!result.empty()) {
       result.push_back('/');
     }
-    result += percent_encode(segment);
+    holoscan::detail::append_percent_encoded_uri_component(result, segment);
   }
   return result;
 }
@@ -379,7 +353,7 @@ struct ConfigTree {
     if (!result.empty()) {
       result.push_back('/');
     }
-    result += percent_encode(segment);
+    holoscan::detail::append_percent_encoded_uri_component(result, segment);
   };
   const auto& graph_path = graph.path;
   if (!graph_path) {
@@ -566,6 +540,31 @@ struct DecodedBindingFields {
   bool codec_required{};
 };
 
+[[nodiscard]] const detail::ParamConfigTypeRoutes* config_type_routes(
+    const ParamSchemaDescriptor& schema, const ParamConfigBinding& binding) noexcept {
+  const detail::ParamConfigTypeRoutes* const routes =
+      detail::ParamConfigBindingAccess::type_routes(binding);
+  // The schema's local type describes the factory storage passed to captured callbacks.
+  return routes != nullptr && schema.local_type != nullptr &&
+                 routes->local_type_token == schema.local_type->local_type_token &&
+                 routes->fields.size() == schema.fields.size() &&
+                 routes->schema_id == schema.stable_id &&
+                 routes->schema_version == schema.version &&
+                 routes->structural_hash == schema.structural_hash
+             ? routes
+             : nullptr;
+}
+
+[[nodiscard]] const detail::ParamConfigFieldRoute* config_field_route(
+    const ParamSchemaDescriptor& schema, const ParamFieldDescriptor& field,
+    const detail::ParamConfigTypeRoutes* routes) noexcept {
+  if (routes == nullptr) {
+    return nullptr;
+  }
+  const std::size_t index = static_cast<std::size_t>(&field - schema.fields.data());
+  return index < routes->fields.size() ? &routes->fields[index] : nullptr;
+}
+
 [[nodiscard]] ParamResult<void> append_binding_field(
     const ParamPath& field_path, const config::ConfigView& field_value,
     const ParamSchemaDescriptor& schema, const ParamConfigBinding& binding,
@@ -584,6 +583,7 @@ struct DecodedBindingFields {
     return make_unexpected(
         conversion_error(ParamToolErrorCode::kInvalidArgument, "PARAM_CONFIG_FIELD_UNKNOWN"));
   }
+  const detail::ParamConfigTypeRoutes* const routes = config_type_routes(schema, binding);
   const auto duplicate =
       std::ranges::find(decoded_fields.contributions,
                         match.descriptor->id,
@@ -601,6 +601,9 @@ struct DecodedBindingFields {
   if (!inserted) {
     return make_unexpected(std::move(inserted.error()));
   }
+  const bool aggregate_codec_available = routes != nullptr && routes->decode_overlay != nullptr;
+  const detail::ParamConfigFieldRoute* const route =
+      aggregate_codec_available ? nullptr : config_field_route(schema, *match.descriptor, routes);
   if (match.descriptor->local_operations.replace_member_from_scalar != nullptr) {
     auto decoded = decode_scalar(field_value, match.descriptor->type_shape, options.values);
     if (!decoded) {
@@ -611,8 +614,16 @@ struct DecodedBindingFields {
       return make_unexpected(conversion_error(ParamToolErrorCode::kInvalidArgument,
                                               "PARAM_CONFIG_FIELD_TYPE_MISMATCH"));
     }
-  } else {
+  } else if (aggregate_codec_available || route == nullptr || route->decode == nullptr) {
+    // Preserve the existing whole-aggregate overlay whenever its codec is available. Mixing it
+    // with field routes would decode the same normalized contribution twice. Without either
+    // decoder, defer the complete aggregate to the caller's codec path.
     decoded_fields.codec_required = true;
+  } else {
+    auto decoded = route->decode(aggregate_value, field_value, options.values);
+    if (!decoded) {
+      return make_unexpected(std::move(decoded.error()));
+    }
   }
   decoded_fields.contributions.push_back(holoscan::detail::ParamOverrideFieldOriginRecord{
       .field = match.descriptor->id,
@@ -666,15 +677,12 @@ struct DecodedBindingFields {
 }
 
 [[nodiscard]] ParamResult<std::shared_ptr<const void>> resolve_binding_value(
-    DecodedBindingFields& fields, AggregateStorage& aggregate, const ParamConfigBinding& binding,
-    const ParamConfigDecodeOptions& options,
-    holoscan::params::detail::ParamConfigBindingAccess::ValueDigest value_digest) {
+    DecodedBindingFields& fields, AggregateStorage& aggregate,
+    detail::ParamConfigDecodeOverlay decode_overlay, const ParamConfigDecodeOptions& options) {
   if (!fields.codec_required) {
     return aggregate.release_shared();
   }
-  const auto decode_overlay =
-      holoscan::params::detail::ParamConfigBindingAccess::decode_overlay(binding);
-  if (decode_overlay == nullptr || value_digest == nullptr) {
+  if (decode_overlay == nullptr) {
     return make_unexpected(conversion_error(ParamToolErrorCode::kNotSupported,
                                             "PARAM_CONFIG_FIELD_CODEC_UNAVAILABLE"));
   }
@@ -711,13 +719,18 @@ struct DecodedBindingFields {
   const auto canonical_baseline = holoscan::detail::parameter_value_digest(
       factory.parameter_type(), schema, aggregate->value, factory.has_no_params());
   ParamSchemaHash baseline_digest{};
-  auto value_digest = holoscan::params::detail::ParamConfigBindingAccess::value_digest(binding);
+  const detail::ParamConfigTypeRoutes* const type_routes = config_type_routes(*schema, binding);
+  const detail::ParamConfigValueDigest value_digest =
+      type_routes == nullptr ? nullptr : type_routes->value_digest;
+  bool baseline_digest_available = false;
   if (canonical_baseline.available()) {
     baseline_digest = canonical_baseline.digest;
-  } else if (value_digest == nullptr || !value_digest(aggregate->value, baseline_digest)) {
-    return make_unexpected(conversion_error(ParamToolErrorCode::kNotSupported,
-                                            "PARAM_CONFIG_VALUE_DIGEST_UNAVAILABLE"));
+    baseline_digest_available = true;
+  } else if (value_digest != nullptr) {
+    baseline_digest_available = value_digest(aggregate->value, baseline_digest);
   }
+  // Decode first so an explicitly supplied unsupported field reports the field problem instead
+  // of the less useful consequence that a complete value digest cannot be produced.
 
   std::vector<std::pair<ParamPath, config::ConfigView>> leaves;
   leaves.reserve(std::min<std::size_t>(value.size(), remaining_fields));
@@ -752,9 +765,14 @@ struct DecodedBindingFields {
   }
   decoded_fields += static_cast<std::uint32_t>(fields->contributions.size());
 
-  auto resolved_value = resolve_binding_value(*fields, *aggregate, binding, options, value_digest);
+  auto resolved_value = resolve_binding_value(
+      *fields, *aggregate, type_routes == nullptr ? nullptr : type_routes->decode_overlay, options);
   if (!resolved_value) {
     return make_unexpected(std::move(resolved_value.error()));
+  }
+  if (!baseline_digest_available) {
+    return make_unexpected(conversion_error(ParamToolErrorCode::kNotSupported,
+                                            "PARAM_CONFIG_VALUE_DIGEST_UNAVAILABLE"));
   }
 
   const ParamValidationResult validation =
@@ -780,6 +798,7 @@ struct DecodedBindingFields {
       .contract_hash = schema->contract_hash,
       .local_type = &factory.parameter_type(),
       .local_value_digest = value_digest,
+      .field_replacements_only = !fields->codec_required,
       .resolved_value = std::move(*resolved_value),
       .baseline_value_digest = baseline_digest,
       .resolved_value_digest = resolved_digest,
@@ -1032,8 +1051,9 @@ ParamResult<ParamOverrideSet> decode_overrides(const config::Document& document,
     return holoscan::detail::ParamOverrideSetAccess::make_complete(
         captured->snapshot->identity,
         std::move(operators),
-        captured->admission_context_digest,
-        std::move(provenance));
+        {},
+        std::move(provenance),
+        ParamOverrideContextBinding::kCompile);
   } catch (const std::bad_alloc&) {
     return make_unexpected(
         conversion_error(ParamToolErrorCode::kResourceExhausted, "PARAM_CONFIG_ALLOC_FAILED"));

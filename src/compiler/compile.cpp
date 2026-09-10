@@ -10,8 +10,10 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <span>
@@ -36,23 +38,35 @@
 
 #include "../core/diagnostic_registry.hpp"
 #include "../core/graph_compiler_access.hpp"
+#include "clock_readiness_lowering.hpp"
 #include "closed_island_activation_plan.hpp"
 #include "compile_internal.hpp"
 #include "compile_platform.hpp"
+#include "cuda_execution_plan_validation.hpp"
+#include "cuda_service_stream_plan.hpp"
 #include "deployment_plan_lowering.hpp"
-#include "detail/snapshot_lookup.hpp"
+#include "endpoint_catalog_lowering.hpp"
+#include "endpoint_clock_health_lowering.hpp"
+#include "execution_plan_contracts.hpp"
+#include "execution_plan_identity.hpp"
 #include "execution_plan_state.hpp"
 #include "inline_partition_execution_plan.hpp"
 #include "lifecycle_plan_lowering.hpp"
+#include "parameter_identity.hpp"
 #include "parameter_plan_lowering.hpp"
 #include "partition_plan_lowering.hpp"
 #include "partition_runner_plan.hpp"
 #include "physical_plan_lowering.hpp"
-#include "plan_artifact_lowering.hpp"
+#include "plan_artifact_serialization.hpp"
+#include "plan_generation.hpp"
+#include "plan_lowering_diagnostic.hpp"
 #include "process_plan_lowering.hpp"
 #include "profile_admission.hpp"
 #include "profile_manifest_lowering.hpp"
+#include "rate_plan_lowering.hpp"
+#include "snapshot_lookup.hpp"
 #include "temporal_plan_lowering.hpp"
+#include "tensor_byte_span_derivation.hpp"
 
 namespace holoscan {
 namespace {
@@ -201,8 +215,11 @@ void append_error(detail::ExecutionPlanState& state, const Error& error) {
     if (vertex.kind != VertexKind::kOperator) {
       continue;
     }
-    auto [found, inserted] =
-        operator_by_path.emplace(detail::canonical_vertex_path(snapshot, vertex), &vertex);
+    auto operator_path = detail::canonical_operator_path(snapshot, vertex);
+    if (!operator_path) {
+      continue;
+    }
+    auto [found, inserted] = operator_by_path.emplace(std::move(*operator_path), &vertex);
     if (!inserted) {
       found->second = nullptr;
     }
@@ -283,7 +300,882 @@ void append_error(detail::ExecutionPlanState& state, const Error& error) {
   return result;
 }
 
-[[nodiscard]] std::optional<std::string> capture_partition_environment() {
+[[nodiscard]] bool partition_contains(const ExecutionPartitionRecord& partition,
+                                      VertexId vertex) noexcept {
+  return std::binary_search(partition.members.begin(),
+                            partition.members.end(),
+                            vertex,
+                            [](VertexId left, VertexId right) { return left.value < right.value; });
+}
+
+[[nodiscard]] std::optional<ProcessGroupId> partition_process_group(
+    const ExecutionPartitionRecord& partition, const detail::ExecutionPlanState& state) {
+  std::optional<ProcessGroupId> result;
+  for (const VertexId member : partition.members) {
+    const auto placement =
+        std::find_if(state.vertex_process_placements.begin(),
+                     state.vertex_process_placements.end(),
+                     [&](const auto& candidate) { return candidate.vertex == member; });
+    if (placement == state.vertex_process_placements.end() || !placement->process_group) {
+      return std::nullopt;
+    }
+    if (result && *result != placement->process_group) {
+      return std::nullopt;
+    }
+    result = placement->process_group;
+  }
+  return result;
+}
+
+// Device projection validates every Tensor storage vocabulary against one partition. Keeping the
+// cases together makes omissions visible when a new storage record is added.
+[[nodiscard]] std::set<std::int32_t>
+partition_tensor_devices(  // NOLINT(readability-function-cognitive-complexity)
+    const detail::GraphSnapshotData& snapshot, const ExecutionPartitionRecord& partition,
+    const detail::ExecutionPlanState& state) {
+  std::set<std::int32_t> devices;
+  const auto owns_port = [&](PortId port_id) {
+    const PortRecord* port = find_port(snapshot, GraphPortId{port_id.value()});
+    return port != nullptr && port->owner_kind == PortOwnerKind::kOperator &&
+           partition_contains(partition, port->owner);
+  };
+  const auto append_device = [&](DeviceId device) {
+    if (device.valid()) {
+      devices.insert(device.value);
+    }
+  };
+  const auto append_service_devices = [&](const auto& service) {
+    detail::for_each_tensor_service_storage(
+        detail::tensor_service_contract_view(service),
+        [&](detail::TensorServiceStorageView storage) { append_device(storage.device); });
+  };
+  const auto append_output = [&](PortId output, DeviceId device) {
+    if (owns_port(output)) {
+      append_device(device);
+    }
+  };
+  for (const auto& allocation : state.tensor_allocations) {
+    append_output(allocation.output, allocation.device);
+  }
+  for (const auto& allocation : state.tensor_field_allocations) {
+    append_output(allocation.output, allocation.device);
+  }
+  for (const auto& pool : state.tensor_interface_pools) {
+    bool owned = owns_port(pool.graph_port);
+    const PortId graph_port{pool.graph_port.value()};
+    for (const auto& edge : state.payload_edges) {
+      if ((pool.imported && edge.source == graph_port && owns_port(edge.target)) ||
+          (!pool.imported && edge.target == graph_port && owns_port(edge.source))) {
+        owned = true;
+      }
+    }
+    if (owned) {
+      append_device(pool.device);
+    }
+  }
+  for (const auto& subscriber : state.process_local_channel_subscribers) {
+    if (!owns_port(subscriber.target)) {
+      continue;
+    }
+    const auto service = std::find_if(state.process_local_channel_services.begin(),
+                                      state.process_local_channel_services.end(),
+                                      [&](const auto& row) {
+                                        return row.source == subscriber.source &&
+                                               row.service_id == subscriber.service_id;
+                                      });
+    if (service != state.process_local_channel_services.end()) {
+      append_service_devices(*service);
+    }
+  }
+  for (const auto& subscriber : state.cross_process_channel_subscribers) {
+    if (!owns_port(subscriber.target)) {
+      continue;
+    }
+    const auto service = std::find_if(state.cross_process_channel_services.begin(),
+                                      state.cross_process_channel_services.end(),
+                                      [&](const auto& row) {
+                                        return row.source == subscriber.source &&
+                                               row.service_id == subscriber.service_id;
+                                      });
+    if (service != state.cross_process_channel_services.end()) {
+      append_service_devices(*service);
+    }
+  }
+  for (const auto& service : state.cross_process_channel_services) {
+    if (detail::descriptor_tensor_schema_service(service) && owns_port(service.source)) {
+      append_service_devices(service);
+    }
+  }
+  return devices;
+}
+
+[[nodiscard]] std::optional<detail::CudaGreenContextCapabilityEvidence> green_context_capability(
+    const detail::RuntimeCompileEvidenceView& evidence, DeviceId device) {
+  const auto first =
+      std::find_if(evidence.cuda_green_context_capabilities.begin(),
+                   evidence.cuda_green_context_capabilities.end(),
+                   [&](const auto& candidate) { return candidate.device == device; });
+  if (first != evidence.cuda_green_context_capabilities.end()) {
+    // Injected compile evidence is authoritative only when exactly one row names the device.
+    // Duplicate rows fail closed; a live driver query is allowed only when no row was supplied.
+    if (std::find_if(std::next(first),
+                     evidence.cuda_green_context_capabilities.end(),
+                     [&](const auto& candidate) { return candidate.device == device; }) !=
+        evidence.cuda_green_context_capabilities.end()) {
+      return std::nullopt;
+    }
+    return *first;
+  }
+  auto queried = query_cuda_green_context_capability(device);
+  if (!queried) {
+    return std::nullopt;
+  }
+  return detail::CudaGreenContextCapabilityEvidence{
+      .device = queried->device,
+      .deployment_device_id = queried->deployment_device_id,
+      .total_sm_count = queried->total_sm_count,
+      .min_sm_partition_size = queried->min_sm_partition_size,
+      .sm_coscheduled_alignment = queried->sm_coscheduled_alignment,
+      .max_structured_context_count = queried->max_structured_context_count,
+      .evidence_id = "cuda.driver.device_resource/v1",
+      .probe_status = PlacementProbeStatus::kPassed,
+  };
+}
+
+[[nodiscard]] constexpr bool green_context_profile_permitted(Profile profile) noexcept {
+  return profile == Profile::kStandard || profile == Profile::kResearch ||
+         profile == Profile::kRealTime;
+}
+
+[[nodiscard]] bool green_context_partition_profile_permitted(
+    const ExecutionPartitionRecord& partition,
+    std::span<const std::optional<Profile>> effective_profiles) noexcept {
+  return std::all_of(partition.members.begin(), partition.members.end(), [&](VertexId member) {
+    const auto profile = detail::effective_profile_for_vertex(effective_profiles, member);
+    return profile && green_context_profile_permitted(*profile);
+  });
+}
+
+struct CudaGreenContextLoweringResult {
+  std::vector<CudaGreenContextRequestPlanRecord> requests;
+  std::vector<CudaGreenContextAssignmentPlanRecord> assignments;
+  std::vector<CudaGreenContextPoolPlanRecord> pools;
+  std::vector<CudaGreenContextResourcePlanRecord> resources;
+  std::vector<CudaComputeStreamPlanRecord> compute_streams;
+  std::vector<PlacementProbePlanRecord> placement_probes;
+  std::vector<detail::PlanLoweringDiagnostic> errors;
+  std::vector<detail::PlanLoweringDiagnostic> warnings;
+};
+
+// Green Context admission is cold, read-only, and deterministic over canonical plan/evidence rows.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] CudaGreenContextLoweringResult lower_cuda_green_context_plan(
+    const detail::GraphSnapshotData& snapshot, const DeploymentBinding& deployment,
+    const detail::RuntimeCompileEvidenceView& evidence,
+    std::span<const std::optional<Profile>> effective_profiles,
+    std::span<const detail::CudaServiceStreamRequirement> service_stream_requirements,
+    const detail::ExecutionPlanState& state) {
+  struct Candidate {
+    std::size_t request_index{};
+    const ExecutionPartitionRecord* partition{};
+    ProcessGroupId process_group{};
+    detail::CudaGreenContextCapabilityEvidence capability;
+  };
+  struct NormalizedRequest {
+    std::size_t request_index{};
+    const PartitionCudaGreenContextBinding* binding{};
+    const ExecutionPartitionRecord* partition{};
+    bool duplicate{};
+  };
+  std::vector<PartitionCudaGreenContextBinding> authored(deployment.cuda_green_contexts().begin(),
+                                                         deployment.cuda_green_contexts().end());
+  std::sort(authored.begin(), authored.end(), [](const auto& left, const auto& right) {
+    return std::tie(left.partition_name, left.placement.device.value, left.placement.sm_count) <
+           std::tie(right.partition_name, right.placement.device.value, right.placement.sm_count);
+  });
+  CudaGreenContextLoweringResult result;
+  result.requests.reserve(authored.size());
+  result.compute_streams = state.cuda_compute_streams;
+  std::vector<NormalizedRequest> normalized;
+  normalized.reserve(authored.size());
+  std::vector<Candidate> candidates;
+  candidates.reserve(authored.size());
+
+  const auto reject = [&](std::size_t request_index,
+                          std::string_view token,
+                          const ExecutionPartitionRecord* partition,
+                          std::string required,
+                          std::string provided) {
+    auto& request = result.requests[request_index];
+    request.accepted.reset();
+    request.disposition = PlanDisposition::kRejected;
+    request.reason = detail::diagnostic_id(token);
+    result.errors.push_back(detail::PlanLoweringDiagnostic{
+        .token = std::string(token),
+        .source = DiagnosticSource{.vertex = partition == nullptr || partition->members.empty()
+                                                 ? VertexId{}
+                                                 : partition->members.front()},
+        .json_pointer = "/cuda_green_context_requests/" + std::to_string(request_index),
+        .required = std::move(required),
+        .provided = std::move(provided),
+    });
+  };
+
+  // Phase 1: normalize all authored bindings into canonical request rows without admitting any.
+  for (std::size_t index = 0U; index < authored.size(); ++index) {
+    const auto& binding = authored[index];
+    const auto partition_row = std::find_if(
+        state.execution_partitions.begin(), state.execution_partitions.end(), [&](const auto& row) {
+          return row.authored_name && *row.authored_name == binding.partition_name;
+        });
+    const ExecutionPartitionRecord* partition =
+        partition_row == state.execution_partitions.end() ? nullptr : &*partition_row;
+    result.requests.push_back(CudaGreenContextRequestPlanRecord{
+        .plan_generation = state.plan_generation,
+        .run_generation = 0U,
+        .partition = partition == nullptr ? ExecutionPartitionId{} : partition->id,
+        .authored_name = binding.partition_name,
+        .execution_lane = partition == nullptr ? 0U : partition->execution_lane,
+        .requested = binding.placement,
+        .accepted = std::nullopt,
+        .source = CudaGreenContextAssignmentSource::kDeveloperBinding,
+        .disposition = PlanDisposition::kRejected,
+    });
+    const std::size_t request_index = result.requests.size() - 1U;
+    const bool duplicate =
+        (index > 0U && authored[index - 1U].partition_name == binding.partition_name) ||
+        (index + 1U < authored.size() &&
+         authored[index + 1U].partition_name == binding.partition_name);
+    normalized.push_back(NormalizedRequest{
+        .request_index = request_index,
+        .binding = &binding,
+        .partition = partition,
+        .duplicate = duplicate,
+    });
+  }
+
+  // Phase 2: admit normalized requests against immutable profile, placement, and capability
+  // evidence. Stable normalized indices are also the final diagnostic JSON-pointer indices.
+  for (const auto& normalized_request : normalized) {
+    const std::size_t request_index = normalized_request.request_index;
+    const auto& binding = *normalized_request.binding;
+    const ExecutionPartitionRecord* partition = normalized_request.partition;
+    if (binding.partition_name.empty() || binding.partition_name.size() > 255U ||
+        normalized_request.duplicate || partition == nullptr) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_UNKNOWN_OR_DUPLICATE",
+             partition,
+             "exactly one named manual execution partition",
+             binding.partition_name.empty() ? "<empty>" : binding.partition_name);
+      continue;
+    }
+    if (!binding.placement.device.valid() || binding.placement.sm_count == 0U) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_INVALID_PLACEMENT",
+             partition,
+             "nonnegative explicit device and positive exact SM count",
+             "device=" + std::to_string(binding.placement.device.value) +
+                 ",sm_count=" + std::to_string(binding.placement.sm_count));
+      continue;
+    }
+    const auto process_group = partition_process_group(*partition, state);
+    if (!process_group) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_DEVICE_OWNERSHIP_UNPROVEN",
+             partition,
+             "one owning process group",
+             "partition process ownership is unresolved or split");
+      continue;
+    }
+    const auto tensor_devices = partition_tensor_devices(snapshot, *partition, state);
+    if (tensor_devices.size() > 1U) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_PARTITION_MULTI_DEVICE",
+             partition,
+             "at most one partition compute device",
+             "resolved_tensor_devices=" + std::to_string(tensor_devices.size()));
+      continue;
+    }
+    if (!tensor_devices.empty() && *tensor_devices.begin() != binding.placement.device.value) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_DEVICE_CONFLICT",
+             partition,
+             "requested device must equal existing Tensor compute authority",
+             "requested=" + std::to_string(binding.placement.device.value) +
+                 ",tensor=" + std::to_string(*tensor_devices.begin()));
+      continue;
+    }
+    const bool profile_permitted =
+        green_context_partition_profile_permitted(*partition, effective_profiles);
+    if (!profile_permitted) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED",
+             partition,
+             "phase-1 profile policy admits only Standard, Research, or RealTime partitions",
+             "partition=" + binding.partition_name +
+                 ",device=" + std::to_string(binding.placement.device.value) +
+                 ",sm_count=" + std::to_string(binding.placement.sm_count));
+      continue;
+    }
+    auto capability = green_context_capability(evidence, binding.placement.device);
+    if (!capability || capability->deployment_device_id.empty() ||
+        capability->evidence_id.empty() || capability->total_sm_count == 0U ||
+        capability->min_sm_partition_size == 0U || capability->sm_coscheduled_alignment == 0U) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED",
+             partition,
+             "qualified CUDA Green Context device-resource evidence",
+             "device=" + std::to_string(binding.placement.device.value));
+      result.placement_probes.push_back(PlacementProbePlanRecord{
+          .partition = partition->id,
+          .probe_id = "cuda.green_context.split",
+          .status = PlacementProbeStatus::kRejected,
+          .reason = detail::diagnostic_id("CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED"),
+      });
+      continue;
+    }
+    if (capability->probe_status != PlacementProbeStatus::kPassed &&
+        capability->probe_status != PlacementProbeStatus::kRuntimeRequired) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED",
+             partition,
+             "passed local evidence or a versioned deferred target probe",
+             "partition=" + binding.partition_name + ",stable_device=" +
+                 capability->deployment_device_id + ",evidence=" + capability->evidence_id);
+      continue;
+    }
+    const auto quantum =
+        std::lcm(capability->min_sm_partition_size, capability->sm_coscheduled_alignment);
+    const std::uint64_t structured_sm_capacity =
+        static_cast<std::uint64_t>(capability->max_structured_context_count) * quantum;
+    if (quantum == 0U || capability->max_structured_context_count == 0U ||
+        structured_sm_capacity > capability->total_sm_count) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED",
+             partition,
+             "coherent driver-qualified structured CUDA capacity",
+             "device=" + std::to_string(binding.placement.device.value) +
+                 ",device_total=" + std::to_string(capability->total_sm_count) +
+                 ",quantum=" + std::to_string(quantum) +
+                 ",max_contexts=" + std::to_string(capability->max_structured_context_count));
+      continue;
+    }
+    if (binding.placement.sm_count < capability->min_sm_partition_size) {
+      const auto lower = (binding.placement.sm_count / quantum) * quantum;
+      const auto upper = lower + quantum;
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_SPLIT_GRANULARITY",
+             partition,
+             "quantum=" + std::to_string(quantum) +
+                 ",device_total=" + std::to_string(capability->total_sm_count) +
+                 ",evidence=" + capability->evidence_id,
+             "request=" + std::to_string(binding.placement.sm_count) + ",nearest_lower=" +
+                 std::to_string(lower) + ",nearest_upper=" + std::to_string(upper));
+      continue;
+    }
+    // Phase 1 has no deployment catalog capable of proving that another process's local ordinal
+    // names a different physical GPU. Fail closed on every foreign-process CUDA obligation.
+    const bool competing_process =
+        std::any_of(state.tensor_device_resources.begin(),
+                    state.tensor_device_resources.end(),
+                    [&](const auto& resource) { return resource.process_group != *process_group; });
+    if (competing_process) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_DEVICE_OWNERSHIP_UNPROVEN",
+             partition,
+             "one proven HSDK CUDA-active process group for stable physical device " +
+                 capability->deployment_device_id,
+             "partition=" + binding.partition_name +
+                 ",process_group=" + std::to_string(process_group->value) +
+                 ",local_device=" + std::to_string(binding.placement.device.value) +
+                 ",another process group has an unmapped CUDA obligation");
+      continue;
+    }
+    const bool gpu_backend_conflict =
+        std::any_of(state.tensor_device_resources.begin(),
+                    state.tensor_device_resources.end(),
+                    [&](const auto& resource) {
+                      return resource.process_group == *process_group &&
+                             resource.device == binding.placement.device &&
+                             resource.gpu_resident_backend_selected;
+                    });
+    if (gpu_backend_conflict) {
+      reject(request_index,
+             "CUDA_GREEN_CONTEXT_GPU_BACKEND_CONFLICT",
+             partition,
+             "host-managed partition execution with an injected Green Context stream",
+             "partition=" + binding.partition_name +
+                 ",process_group=" + std::to_string(process_group->value) +
+                 ",local_device=" + std::to_string(binding.placement.device.value) +
+                 ",stable_device=" + capability->deployment_device_id);
+      continue;
+    }
+    result.placement_probes.push_back(PlacementProbePlanRecord{
+        .partition = partition->id,
+        .probe_id = "cuda.green_context.split",
+        .status = capability->probe_status,
+        .evidence_id = capability->evidence_id,
+    });
+    candidates.push_back(Candidate{
+        .request_index = request_index,
+        .partition = partition,
+        .process_group = *process_group,
+        .capability = std::move(*capability),
+    });
+  }
+
+  // Phase 3: admit complete process/device groups and calculate each residual obligation.
+  const auto residual_work_required = [&](ProcessGroupId process_group, DeviceId device) {
+    if (std::any_of(service_stream_requirements.begin(),
+                    service_stream_requirements.end(),
+                    [&](const auto& service) {
+                      return service.process_group == process_group && service.device == device;
+                    })) {
+      return true;
+    }
+    return std::any_of(
+        state.execution_partitions.begin(),
+        state.execution_partitions.end(),
+        [&](const auto& partition) {
+          const auto group = partition_process_group(partition, state);
+          if (!group || *group != process_group ||
+              !partition_tensor_devices(snapshot, partition, state).contains(device.value)) {
+            return false;
+          }
+          return std::none_of(candidates.begin(), candidates.end(), [&](const auto& candidate) {
+            const auto& request = result.requests[candidate.request_index];
+            return candidate.process_group == process_group &&
+                   candidate.partition->id == partition.id && request.requested.device == device;
+          });
+        });
+  };
+
+  for (auto& candidate : candidates) {
+    auto& request = result.requests[candidate.request_index];
+    const bool ambiguous_physical_mapping =
+        std::any_of(candidates.begin(), candidates.end(), [&](const auto& peer) {
+          const auto& peer_request = result.requests[peer.request_index];
+          return &peer != &candidate &&
+                 peer.capability.deployment_device_id ==
+                     candidate.capability.deployment_device_id &&
+                 (peer.process_group != candidate.process_group ||
+                  peer_request.requested.device != request.requested.device);
+        });
+    if (ambiguous_physical_mapping) {
+      reject(candidate.request_index,
+             "CUDA_GREEN_CONTEXT_DEVICE_OWNERSHIP_UNPROVEN",
+             candidate.partition,
+             "one process/local-ordinal mapping for stable physical device " +
+                 candidate.capability.deployment_device_id,
+             "partition=" + request.authored_name +
+                 ",process_group=" + std::to_string(candidate.process_group.value) +
+                 ",local_device=" + std::to_string(request.requested.device.value));
+      continue;
+    }
+    const auto invalid_residual_participant =
+        std::find_if(state.execution_partitions.begin(),
+                     state.execution_partitions.end(),
+                     [&](const auto& partition) {
+                       const auto group = partition_process_group(partition, state);
+                       const auto devices = partition_tensor_devices(snapshot, partition, state);
+                       const bool dedicated =
+                           std::any_of(candidates.begin(), candidates.end(), [&](const auto& peer) {
+                             const auto& peer_request = result.requests[peer.request_index];
+                             return peer.process_group == candidate.process_group &&
+                                    peer_request.requested.device == request.requested.device &&
+                                    peer.partition->id == partition.id;
+                           });
+                       return group && *group == candidate.process_group && !dedicated &&
+                              devices.contains(request.requested.device.value) &&
+                              (devices.size() > 1U || !green_context_partition_profile_permitted(
+                                                          partition, effective_profiles));
+                     });
+    if (invalid_residual_participant != state.execution_partitions.end()) {
+      const auto devices = partition_tensor_devices(snapshot, *invalid_residual_participant, state);
+      if (devices.size() > 1U) {
+        reject(candidate.request_index,
+               "CUDA_GREEN_CONTEXT_PARTITION_MULTI_DEVICE",
+               candidate.partition,
+               "every dedicated or residual partition has at most one compute device",
+               "residual_partition=" + std::to_string(invalid_residual_participant->id.value) +
+                   ",resolved_tensor_devices=" + std::to_string(devices.size()));
+      } else {
+        reject(candidate.request_index,
+               "CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED",
+               candidate.partition,
+               "phase-1 profile policy admits every dedicated and residual participant",
+               "residual_partition=" + std::to_string(invalid_residual_participant->id.value));
+      }
+      continue;
+    }
+    std::uint64_t total = 0U;
+    std::uint32_t count = 0U;
+    for (const auto& peer : candidates) {
+      const auto& peer_request = result.requests[peer.request_index];
+      if (peer.process_group == candidate.process_group &&
+          peer_request.requested.device == request.requested.device) {
+        total += peer_request.requested.sm_count;
+        ++count;
+      }
+    }
+    const bool residual_required =
+        residual_work_required(candidate.process_group, request.requested.device);
+    const auto quantum = std::lcm(candidate.capability.min_sm_partition_size,
+                                  candidate.capability.sm_coscheduled_alignment);
+    const std::uint64_t structured_sm_capacity =
+        static_cast<std::uint64_t>(candidate.capability.max_structured_context_count) * quantum;
+    const bool whole_device_group =
+        count == 1U && !residual_required && total == candidate.capability.total_sm_count;
+    if (quantum == 0U) {
+      reject(candidate.request_index,
+             "CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED",
+             candidate.partition,
+             "nonzero driver-qualified structured CUDA quantum",
+             "partition=" + request.authored_name + ",quantum=0");
+      continue;
+    }
+    if (!whole_device_group && request.requested.sm_count % quantum != 0U) {
+      const auto lower = (request.requested.sm_count / quantum) * quantum;
+      const auto upper = lower + quantum;
+      reject(candidate.request_index,
+             "CUDA_GREEN_CONTEXT_SPLIT_GRANULARITY",
+             candidate.partition,
+             "quantum=" + std::to_string(quantum) +
+                 ",device_total=" + std::to_string(candidate.capability.total_sm_count) +
+                 ",evidence=" + candidate.capability.evidence_id,
+             "request=" + std::to_string(request.requested.sm_count) + ",nearest_lower=" +
+                 std::to_string(lower) + ",nearest_upper=" + std::to_string(upper));
+      continue;
+    }
+    const std::uint64_t admitted_sm_capacity =
+        whole_device_group ? candidate.capability.total_sm_count : structured_sm_capacity;
+    const std::uint64_t remaining =
+        total <= admitted_sm_capacity ? admitted_sm_capacity - total : 0U;
+    const bool structured_residual = !whole_device_group && quantum != 0U && remaining >= quantum;
+    const std::uint64_t required_total = total + (residual_required ? quantum : 0U);
+    if (required_total > admitted_sm_capacity ||
+        count + (structured_residual ? 1U : 0U) >
+            candidate.capability.max_structured_context_count) {
+      reject(
+          candidate.request_index,
+          "CUDA_GREEN_CONTEXT_SPLIT_OVERCOMMITTED",
+          candidate.partition,
+          "device_total=" + std::to_string(candidate.capability.total_sm_count) +
+              ",structured_capacity=" + std::to_string(admitted_sm_capacity) +
+              ",max_contexts=" + std::to_string(candidate.capability.max_structured_context_count),
+          "requested_total=" + std::to_string(total) +
+              ",required_residual=" + std::to_string(residual_required ? quantum : 0U) +
+              ",materialized_contexts=" + std::to_string(count + (structured_residual ? 1U : 0U)));
+      continue;
+    }
+    request.accepted = request.requested;
+    request.disposition = PlanDisposition::kAccepted;
+    request.reason = {};
+    if (partition_tensor_devices(snapshot, *candidate.partition, state).empty()) {
+      result.warnings.push_back(detail::PlanLoweringDiagnostic{
+          .token = "CUDA_GREEN_CONTEXT_INACTIVE_RESERVATION",
+          .source = DiagnosticSource{.vertex = candidate.partition->members.empty()
+                                                   ? VertexId{}
+                                                   : candidate.partition->members.front()},
+          .json_pointer = "/cuda_green_context_requests/" + std::to_string(candidate.request_index),
+          .required = "intentional exact reservation for opaque stream-directed CUDA work",
+          .provided = "partition=" + request.authored_name +
+                      ",process_group=" + std::to_string(candidate.process_group.value) +
+                      ",local_device=" + std::to_string(request.requested.device.value) +
+                      ",stable_device=" + candidate.capability.deployment_device_id +
+                      ",sm_count=" + std::to_string(request.requested.sm_count),
+      });
+    }
+    const std::string pool_id = detail::cuda_green_context_pool_id(
+        state.plan_generation, candidate.process_group, request.requested.device);
+    result.assignments.push_back(CudaGreenContextAssignmentPlanRecord{
+        .plan_generation = state.plan_generation,
+        .run_generation = 0U,
+        .partition = candidate.partition->id,
+        .execution_lane = candidate.partition->execution_lane,
+        .process_group = candidate.process_group,
+        .device = request.requested.device,
+        .pool_id = pool_id,
+        .green_context_id =
+            detail::cuda_green_context_partition_id(pool_id, candidate.partition->id),
+        .source = CudaGreenContextAssignmentSource::kDeveloperBinding,
+    });
+  }
+
+  std::sort(result.assignments.begin(),
+            result.assignments.end(),
+            detail::canonical_cuda_green_context_assignment_order);
+  // Phase 3: realize complete structured-resource families from accepted assignments only.
+  std::set<std::pair<std::uint32_t, std::int32_t>> materialized_groups;
+  for (const auto& assignment : result.assignments) {
+    const auto group_key = std::pair{assignment.process_group.value, assignment.device.value};
+    if (!materialized_groups.insert(group_key).second) {
+      continue;
+    }
+    const auto candidate = std::find_if(candidates.begin(), candidates.end(), [&](const auto& row) {
+      const auto& request = result.requests[row.request_index];
+      return row.process_group == assignment.process_group &&
+             request.requested.device == assignment.device;
+    });
+    if (candidate == candidates.end()) {
+      continue;
+    }
+    const auto quantum = std::lcm(candidate->capability.min_sm_partition_size,
+                                  candidate->capability.sm_coscheduled_alignment);
+    const auto driver_structured_sm_capacity = static_cast<std::uint32_t>(
+        static_cast<std::uint64_t>(candidate->capability.max_structured_context_count) * quantum);
+    std::uint32_t dedicated_sm_count = 0U;
+    for (const auto& peer : result.assignments) {
+      if (peer.process_group != assignment.process_group || peer.device != assignment.device) {
+        continue;
+      }
+      const auto request =
+          std::find_if(result.requests.begin(), result.requests.end(), [&](const auto& row) {
+            return row.partition == peer.partition && row.accepted;
+          });
+      if (request == result.requests.end()) {
+        continue;
+      }
+      dedicated_sm_count += request->accepted->sm_count;
+      result.resources.push_back(CudaGreenContextResourcePlanRecord{
+          .plan_generation = state.plan_generation,
+          .run_generation = 0U,
+          .process_group = peer.process_group,
+          .device = peer.device,
+          .pool_id = peer.pool_id,
+          .green_context_id = peer.green_context_id,
+          .accepted_sm_count = request->accepted->sm_count,
+          .role = CudaGreenContextResourceRole::kDedicatedPartition,
+      });
+    }
+    const bool whole_device_group =
+        std::count_if(result.assignments.begin(),
+                      result.assignments.end(),
+                      [&](const auto& peer) {
+                        return peer.process_group == assignment.process_group &&
+                               peer.device == assignment.device;
+                      }) == 1 &&
+        dedicated_sm_count == candidate->capability.total_sm_count;
+    const auto structured_sm_capacity =
+        whole_device_group ? candidate->capability.total_sm_count : driver_structured_sm_capacity;
+    const auto remaining = structured_sm_capacity - dedicated_sm_count;
+    const auto structured_residual = quantum == 0U ? 0U : (remaining / quantum) * quantum;
+    const bool service_residual =
+        std::any_of(service_stream_requirements.begin(),
+                    service_stream_requirements.end(),
+                    [&](const auto& service) {
+                      return service.process_group == assignment.process_group &&
+                             service.device == assignment.device;
+                    }) ||
+        std::any_of(state.execution_partitions.begin(),
+                    state.execution_partitions.end(),
+                    [&](const auto& partition) {
+                      const auto group = partition_process_group(partition, state);
+                      return group && *group == assignment.process_group &&
+                             partition_tensor_devices(snapshot, partition, state)
+                                 .contains(assignment.device.value) &&
+                             std::none_of(result.assignments.begin(),
+                                          result.assignments.end(),
+                                          [&](const auto& peer) {
+                                            return peer.process_group == assignment.process_group &&
+                                                   peer.device == assignment.device &&
+                                                   peer.partition == partition.id;
+                                          });
+                    });
+    const std::string residual_id = detail::cuda_green_context_residual_id(assignment.pool_id);
+    if (structured_residual != 0U) {
+      result.resources.push_back(CudaGreenContextResourcePlanRecord{
+          .plan_generation = state.plan_generation,
+          .run_generation = 0U,
+          .process_group = assignment.process_group,
+          .device = assignment.device,
+          .pool_id = assignment.pool_id,
+          .green_context_id = residual_id,
+          .accepted_sm_count = structured_residual,
+          .role = service_residual ? CudaGreenContextResourceRole::kSharedServiceResidual
+                                   : CudaGreenContextResourceRole::kReservedResidual,
+      });
+    }
+    result.pools.push_back(CudaGreenContextPoolPlanRecord{
+        .plan_generation = state.plan_generation,
+        .run_generation = 0U,
+        .process_group = assignment.process_group,
+        .device = assignment.device,
+        .deployment_device_id = candidate->capability.deployment_device_id,
+        .pool_id = assignment.pool_id,
+        .device_sm_count = candidate->capability.total_sm_count,
+        .min_sm_partition_size = candidate->capability.min_sm_partition_size,
+        .sm_coscheduled_alignment = candidate->capability.sm_coscheduled_alignment,
+        .structured_sm_quantum = quantum,
+        .max_structured_context_count = candidate->capability.max_structured_context_count,
+        .unprovisioned_sm_count =
+            candidate->capability.total_sm_count - dedicated_sm_count - structured_residual,
+        .co_scheduling = CudaGreenContextCoScheduling::kPreserveDeviceAlignment,
+        .workqueue_scope = CudaGreenContextWorkqueueScope::kDeviceContext,
+        .workqueue_concurrency_limit = 0U,
+        .sm_set_guarantee = CudaGreenContextSmSetGuarantee::kDriverDocumented,
+        .materialize_before = LifecycleStage::kArm,
+        .fallback_rejected = true,
+    });
+  }
+
+  // Phase 4: replace ordinary streams only after every structured resource family is complete.
+  std::set<std::pair<std::uint32_t, std::int32_t>> replaced_stream_groups;
+  for (const auto& assignment : result.assignments) {
+    const auto group_key = std::pair{assignment.process_group.value, assignment.device.value};
+    if (!replaced_stream_groups.insert(group_key).second) {
+      continue;
+    }
+    const std::string residual_id = detail::cuda_green_context_residual_id(assignment.pool_id);
+    std::vector<EdgeId> fused_edges;
+    result.compute_streams.erase(
+        std::remove_if(result.compute_streams.begin(),
+                       result.compute_streams.end(),
+                       [&](const auto& stream) {
+                         if (stream.process_group == assignment.process_group &&
+                             stream.device == assignment.device && !stream.green_context_id) {
+                           fused_edges.insert(fused_edges.end(),
+                                              stream.fused_linear_edges.begin(),
+                                              stream.fused_linear_edges.end());
+                           return true;
+                         }
+                         return false;
+                       }),
+        result.compute_streams.end());
+    for (const auto& peer : result.assignments) {
+      if (peer.process_group != assignment.process_group || peer.device != assignment.device) {
+        continue;
+      }
+      result.compute_streams.push_back(CudaComputeStreamPlanRecord{
+          .plan_generation = state.plan_generation,
+          .run_generation = 0U,
+          .process_group = peer.process_group,
+          .device = peer.device,
+          .owner_id = "partition." + std::to_string(peer.partition.value),
+          .partition = peer.partition,
+          .stream_id = detail::cuda_green_context_stream_id(peer.green_context_id),
+          .green_context_id = peer.green_context_id,
+          .materialize_before = LifecycleStage::kArm,
+      });
+    }
+    for (const auto& partition : state.execution_partitions) {
+      if (std::any_of(result.assignments.begin(), result.assignments.end(), [&](const auto& peer) {
+            return peer.process_group == assignment.process_group &&
+                   peer.device == assignment.device && peer.partition == partition.id;
+          })) {
+        continue;
+      }
+      const auto process_group = partition_process_group(partition, state);
+      const auto devices = partition_tensor_devices(snapshot, partition, state);
+      if (!process_group || *process_group != assignment.process_group ||
+          !devices.contains(assignment.device.value)) {
+        continue;
+      }
+      result.compute_streams.push_back(CudaComputeStreamPlanRecord{
+          .plan_generation = state.plan_generation,
+          .run_generation = 0U,
+          .process_group = assignment.process_group,
+          .device = assignment.device,
+          .owner_id = "partition." + std::to_string(partition.id.value),
+          .partition = partition.id,
+          .stream_id = detail::cuda_green_context_partition_stream_id(residual_id, partition.id),
+          .green_context_id = residual_id,
+          .materialize_before = LifecycleStage::kArm,
+      });
+    }
+    for (const auto& service : service_stream_requirements) {
+      if (service.process_group != assignment.process_group ||
+          service.device != assignment.device) {
+        continue;
+      }
+      result.compute_streams.push_back(CudaComputeStreamPlanRecord{
+          .plan_generation = state.plan_generation,
+          .run_generation = 0U,
+          .process_group = assignment.process_group,
+          .device = assignment.device,
+          .owner_id = service.owner_id,
+          .partition = std::nullopt,
+          .stream_id = detail::cuda_green_context_service_stream_id(residual_id, service.owner_id),
+          .green_context_id = residual_id,
+          .materialize_before = LifecycleStage::kArm,
+      });
+    }
+
+    for (const EdgeId edge_id : fused_edges) {
+      const auto edge = std::find_if(state.payload_edges.begin(),
+                                     state.payload_edges.end(),
+                                     [&](const auto& row) { return row.edge == edge_id; });
+      if (edge == state.payload_edges.end()) {
+        continue;
+      }
+      const PortRecord* source_port = find_port(snapshot, GraphPortId{edge->source.value()});
+      const PortRecord* target_port = find_port(snapshot, GraphPortId{edge->target.value()});
+      if (source_port == nullptr || target_port == nullptr) {
+        continue;
+      }
+      const auto partition = std::find_if(state.execution_partitions.begin(),
+                                          state.execution_partitions.end(),
+                                          [&](const auto& row) {
+                                            return partition_contains(row, source_port->owner) &&
+                                                   partition_contains(row, target_port->owner);
+                                          });
+      if (partition == state.execution_partitions.end()) {
+        continue;
+      }
+      const auto stream = std::find_if(
+          result.compute_streams.begin(), result.compute_streams.end(), [&](const auto& row) {
+            return row.process_group == assignment.process_group &&
+                   row.device == assignment.device && row.partition == partition->id;
+          });
+      if (stream != result.compute_streams.end()) {
+        stream->fused_linear_edges.push_back(edge_id);
+      }
+    }
+  }
+  std::sort(
+      result.pools.begin(), result.pools.end(), detail::canonical_cuda_green_context_pool_order);
+  // Requests were inserted from authored bindings sorted by the exact canonical request key.
+  // Preserve those indices so every diagnostic pointer continues to name the published row.
+  std::sort(result.resources.begin(),
+            result.resources.end(),
+            detail::canonical_cuda_green_context_resource_order);
+  std::sort(result.compute_streams.begin(),
+            result.compute_streams.end(),
+            detail::canonical_cuda_compute_stream_order);
+  return result;
+}
+
+void publish_cuda_green_context_plan(CudaGreenContextLoweringResult&& lowered,
+                                     detail::ExecutionPlanState& state) {
+  for (const auto& diagnostic : lowered.errors) {
+    append_diagnostic(state,
+                      diagnostic.token,
+                      diagnostic.source,
+                      DiagnosticSeverity::kError,
+                      diagnostic.json_pointer,
+                      diagnostic.required,
+                      diagnostic.provided);
+  }
+  for (const auto& diagnostic : lowered.warnings) {
+    append_diagnostic(state,
+                      diagnostic.token,
+                      diagnostic.source,
+                      holoscan::DiagnosticSeverity::kWarning,
+                      diagnostic.json_pointer,
+                      diagnostic.required,
+                      diagnostic.provided);
+  }
+  state.placement_probes.insert(state.placement_probes.end(),
+                                std::make_move_iterator(lowered.placement_probes.begin()),
+                                std::make_move_iterator(lowered.placement_probes.end()));
+  state.cuda_green_context_requests = std::move(lowered.requests);
+  state.cuda_green_context_assignments = std::move(lowered.assignments);
+  state.cuda_green_context_pools = std::move(lowered.pools);
+  state.cuda_green_context_resources = std::move(lowered.resources);
+  state.cuda_compute_streams = std::move(lowered.compute_streams);
+}
+
+[[nodiscard]] bool partition_environment_selector_present() {
   // Capture once at compile ingress. No downstream pass calls getenv, so an
   // accepted plan cannot change when the process environment changes later.
 #if defined(_WIN32)
@@ -291,28 +1183,11 @@ void append_error(detail::ExecutionPlanState& state, const Error& error) {
   ::SetLastError(ERROR_SUCCESS);
   const DWORD required = ::GetEnvironmentVariableA(kName, nullptr, 0U);
   if (required == 0U) {
-    return ::GetLastError() == ERROR_ENVVAR_NOT_FOUND ? std::nullopt
-                                                      : std::optional<std::string>{std::string{}};
+    return ::GetLastError() != ERROR_ENVVAR_NOT_FOUND;
   }
-  std::string value(required, '\0');
-  ::SetLastError(ERROR_SUCCESS);
-  const DWORD written = ::GetEnvironmentVariableA(kName, value.data(), required);
-  if (written == 0U) {
-    return ::GetLastError() == ERROR_SUCCESS
-               ? std::optional<std::string>{std::string{}}
-               : std::optional<std::string>{std::string{"<environment-changed-during-capture>"}};
-  }
-  if (written >= required) {
-    // A concurrent process-environment mutation invalidated the captured size.
-    // Preserve an invalid nonempty value rather than silently treating it as
-    // absent or accepting a truncated selector.
-    return std::string{"<environment-changed-during-capture>"};
-  }
-  value.resize(written);
-  return value;
+  return true;
 #else
-  const char* value = std::getenv("HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM");
-  return value != nullptr ? std::optional<std::string>{value} : std::nullopt;
+  return std::getenv("HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM") != nullptr;
 #endif
 }
 
@@ -351,7 +1226,7 @@ void publish_catalog(detail::EndpointCatalogLoweringResult&& catalog,
     append_diagnostic(state,
                       diagnostic.token,
                       diagnostic.source,
-                      DiagnosticSeverity::kWarning,
+                      holoscan::DiagnosticSeverity::kWarning,
                       diagnostic.json_pointer,
                       diagnostic.required,
                       diagnostic.provided);
@@ -397,11 +1272,12 @@ void publish_temporal(detail::TemporalPlanLoweringResult&& temporal,
     append_diagnostic(state,
                       diagnostic.token,
                       diagnostic.source,
-                      DiagnosticSeverity::kWarning,
+                      holoscan::DiagnosticSeverity::kWarning,
                       diagnostic.json_pointer,
                       diagnostic.required,
                       diagnostic.provided);
   }
+  state.operator_completion_rules = std::move(temporal.operator_completion_rules);
   state.temporal_triggers = std::move(temporal.triggers);
   state.window_triggers = std::move(temporal.window_triggers);
   state.bracketed_windows = std::move(temporal.bracketed_windows);
@@ -554,10 +1430,13 @@ void detail::publish_physical_plan_records(detail::PhysicalPlanLoweringResult&& 
   state.tensor_field_allocations = std::move(physical.tensor_field_allocations);
   state.tensor_interface_pools = std::move(physical.tensor_interface_pools);
   state.tensor_device_resources = std::move(physical.tensor_device_resources);
+  state.cuda_compute_streams = std::move(physical.cuda_compute_streams);
   state.tensor_inline_records = std::move(physical.tensor_inline_records);
   state.imported_generation_capacities = std::move(physical.imported_generation_capacities);
   state.tensor_transfer_plans = std::move(physical.tensor_transfer_plans);
   state.pool_capacity_contributors = std::move(physical.pool_capacity_contributors);
+  state.pool_capacity_dependencies = std::move(physical.pool_capacity_dependencies);
+  state.provider_allocation_plans = std::move(physical.provider_allocation_plans);
   state.publication_outcomes = std::move(physical.publication_outcomes);
 }
 
@@ -568,7 +1447,8 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
     Graph& graph, CompileOptions options, detail::RuntimeCompileEvidenceView evidence,
     detail::ProcessPlacementBinding placement) {
   // REQ: COMPILE-001, COMPILE-002, COMPILE-009
-  const std::optional<std::string> captured_environment = capture_partition_environment();
+  const bool removed_partition_environment_selector_present =
+      partition_environment_selector_present();
   // All target-package decisions in one compile share this single validated
   // immutable view; no later pass re-reads packaging state or searches paths.
   const detail::RuntimePackageCapabilityView package_capabilities = evidence.package_capabilities;
@@ -597,9 +1477,6 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
   state->process_roles = std::move(process.roles);
   state->process_selectors = std::move(process.selectors);
   state->vertex_process_placements = std::move(process.vertices);
-  const auto captured_view = captured_environment.has_value()
-                                 ? std::optional<std::string_view>{*captured_environment}
-                                 : std::nullopt;
   // Lower every record under one fixed nonzero seed. Once all compile inputs
   // have been normalized into semantic records, the seed-form artifact digest
   // determines the final generation and one cold pass rebinds provenance.
@@ -611,42 +1488,10 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
   state->schema_packages = detail::GraphCompilerAccess::schema_packages(graph, *snapshot);
   state->executable_factories = detail::GraphCompilerAccess::executable_factories(graph, *snapshot);
 
-  // Lower profile-independent facts even when profile admission rejects. A
-  // failed profile must not erase an otherwise inspectable canonical plan.
-  const std::vector<std::uint32_t> unresolved_lanes(snapshot->vertices.size(), 0U);
-  auto partition = detail::lower_partition_plan(*snapshot,
-                                                options.profile,
-                                                profile.effective_profiles(),
-                                                captured_view,
-                                                unresolved_lanes,
-                                                process.process_group_by_vertex,
-                                                *state);
-  if (!partition) {
-    append_error(*state, partition.error());
-  } else if (state->partitioning_plan.maturity == AlgorithmMaturity::kExperimental) {
-    append_diagnostic(*state, "PARTITION_PLANNER_EXPERIMENTAL_SELECTED");
-  }
-
-  auto deployment = detail::lower_deployment_plan(
-      *snapshot, options.deployment, profile.effective_profiles(), state->execution_partitions);
-  for (const auto& token : deployment.error_tokens) {
-    append_diagnostic(*state, token);
-  }
-  for (const auto& token : deployment.warning_tokens) {
-    append_diagnostic(*state, token, {}, holoscan::DiagnosticSeverity::kWarning);
-  }
   const ParamSchemaHash parameter_admission_context = detail::parameter_admission_context_digest(
-      state->profile_manifest, deployment, detail::empty_parameter_migration_catalog_digest());
-  state->placement_probes = std::move(deployment.placement_probes);
-  state->partition_placements = std::move(deployment.placements);
-  state->execution_lanes = std::move(deployment.lanes);
-  state->scheduler_plan.execution_lane_count =
-      static_cast<std::uint32_t>(state->execution_lanes.size());
-  const std::uint32_t partition_owner_count = callback_partition_owner_count(*state);
-  state->scheduler_plan.max_concurrent_activations = partition_owner_count;
-  state->scheduler_plan.activation_overlap = partition_owner_count > 1U;
-  state->scheduler_plan.worker_count = partition_owner_count;
-  state->scheduler_plan.intra_path_parallelism = partition_owner_count == 0U ? 0U : 1U;
+      state->profile_manifest,
+      options.deployment,
+      detail::empty_parameter_migration_catalog_digest());
 
   auto clocks_and_readiness =
       detail::lower_clocks_and_readiness(*snapshot, plan_generation, profile.effective_profiles());
@@ -678,13 +1523,145 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
                                                options.parameters,
                                                package_capabilities),
                    *state);
+  for (const auto& source : state->readiness) {
+    if (!source.referenced) {
+      append_diagnostic(*state,
+                        "READINESS_SOURCE_UNUSED",
+                        DiagnosticSource{.vertex = source.owner},
+                        holoscan::DiagnosticSeverity::kWarning);
+    }
+  }
+
+  // Resolve rate provenance before lifecycle closure admission. Rate dependencies widen only
+  // restart membership; they never become public lifecycle callback-order dependencies.
+  auto rate = detail::lower_rate_plan(*snapshot,
+                                      options.automatic_queue_sizing.headroom_ratio,
+                                      state->temporal_triggers,
+                                      state->input_selections,
+                                      state->bracketed_windows,
+                                      profile.effective_profiles(),
+                                      profile.rate_evidence_requirements(),
+                                      plan_generation,
+                                      process.process_group_by_vertex,
+                                      state->window_triggers,
+                                      state->predicate_triggers);
+  for (const auto& diagnostic : rate.errors) {
+    append_diagnostic(*state,
+                      diagnostic.token,
+                      diagnostic.source,
+                      std::nullopt,
+                      diagnostic.json_pointer,
+                      diagnostic.required,
+                      diagnostic.provided);
+  }
+  for (const auto& diagnostic : rate.warnings) {
+    append_diagnostic(*state,
+                      diagnostic.token,
+                      diagnostic.source,
+                      holoscan::DiagnosticSeverity::kWarning,
+                      diagnostic.json_pointer,
+                      diagnostic.required,
+                      diagnostic.provided);
+  }
+  state->port_rates = std::move(rate.port_rates);
+  state->accumulation_horizons = std::move(rate.accumulation_horizons);
+  state->hard_floor_contributors = std::move(rate.hard_floor_contributors);
+  state->queue_sizing_recipes = std::move(rate.queue_sizing_recipes);
+
+  // Parameter queue/storage facts are available before lifecycle lowering,
+  // but exact fence/quiesce/rollback minima require dependency-expanded
+  // restart closures. Build those closures once, finalize Parameter capacity,
+  // then rebuild the lifecycle result from the final admitted Parameter set so
+  // rejected capacity cannot leave stale parameter-origin restart authority.
+  auto lifecycle = detail::lower_lifecycle_plan(*snapshot,
+                                                profile.effective_profiles(),
+                                                parameters.lifecycle_mutable_fields,
+                                                parameters.capacity,
+                                                options.lifecycle_transactions,
+                                                plan_generation,
+                                                rate.restart_dependencies);
+  detail::finalize_parameter_lifecycle_capacity(
+      parameters, lifecycle, options.lifecycle_transactions);
+  lifecycle = detail::lower_lifecycle_plan(*snapshot,
+                                           profile.effective_profiles(),
+                                           parameters.lifecycle_mutable_fields,
+                                           parameters.capacity,
+                                           options.lifecycle_transactions,
+                                           plan_generation,
+                                           rate.restart_dependencies);
+  for (const auto& diagnostic : parameters.diagnostics) {
+    append_diagnostic(*state, diagnostic.token, diagnostic.source);
+  }
+  state->operator_parameters = std::move(parameters.operators);
+  state->parameter_fields = std::move(parameters.fields);
+  state->parameter_catalog = std::move(parameters.catalog);
+  state->parameter_generation_zero_operators = std::move(parameters.generation_zero_operators);
+  state->parameter_generation_zero_fields = std::move(parameters.generation_zero_fields);
+  state->parameter_runtime_capacity = parameters.capacity;
+
+  publish_lifecycle(std::move(lifecycle), *state);
+  auto tensor_byte_spans = detail::lower_tensor_byte_span_derivations(
+      state->executable_factories, *snapshot, plan_generation, state->parameter_fields);
+  for (const auto& diagnostic : tensor_byte_spans.diagnostics) {
+    append_diagnostic(*state,
+                      diagnostic.token,
+                      diagnostic.source,
+                      std::nullopt,
+                      diagnostic.json_pointer,
+                      diagnostic.required,
+                      diagnostic.provided);
+  }
+  state->tensor_byte_span_derivations = std::move(tensor_byte_spans.records);
+  auto tensor_device_bindings =
+      resolve_tensor_device_placements(*snapshot, options.deployment, *state);
+  tensor_device_bindings.insert(tensor_device_bindings.end(),
+                                evidence.tensor_device_bindings.begin(),
+                                evidence.tensor_device_bindings.end());
+
+  detail::finalize_temporal_queue_capacities(*snapshot,
+                                             rate.queue_sizings,
+                                             state->input_selections,
+                                             state->bracketed_windows,
+                                             state->aligned_triggers,
+                                             state->predicate_inputs);
+
+  // Plan one final cover only after generation-zero Parameter, selected temporal/readiness,
+  // lifecycle, derived Tensor-byte, process, and hard device facts are immutable.
+  auto partition = detail::lower_partition_plan(*snapshot,
+                                                options.profile,
+                                                profile.effective_profiles(),
+                                                removed_partition_environment_selector_present,
+                                                process.process_group_by_vertex,
+                                                options.deployment,
+                                                tensor_device_bindings,
+                                                *state);
+  if (!partition) {
+    append_error(*state, partition.error());
+  }
   auto partition_roots = detail::validate_partition_execution_roots(*snapshot, *state);
   if (!partition_roots) {
     append_error(*state, partition_roots.error());
   }
-  // Temporal replay marks the readiness rows actually selected by each
-  // contract. Validate busy-poll placement only after that replay so an
-  // unreferenced SpinSource remains inert rather than rejecting the plan.
+
+  auto deployment = detail::lower_deployment_plan(
+      *snapshot, options.deployment, profile.effective_profiles(), state->execution_partitions);
+  for (const auto& token : deployment.error_tokens) {
+    append_diagnostic(*state, token);
+  }
+  for (const auto& token : deployment.warning_tokens) {
+    append_diagnostic(*state, token, {}, holoscan::DiagnosticSeverity::kWarning);
+  }
+  state->placement_probes = std::move(deployment.placement_probes);
+  state->partition_placements = std::move(deployment.placements);
+  state->execution_lanes = std::move(deployment.lanes);
+  state->scheduler_plan.execution_lane_count =
+      static_cast<std::uint32_t>(state->execution_lanes.size());
+  const std::uint32_t partition_owner_count = callback_partition_owner_count(*state);
+  state->scheduler_plan.max_concurrent_activations = partition_owner_count;
+  state->scheduler_plan.activation_overlap = partition_owner_count > 1U;
+  state->scheduler_plan.worker_count = partition_owner_count;
+  state->scheduler_plan.intra_path_parallelism = partition_owner_count == 0U ? 0U : 1U;
+
   for (const auto& source : state->readiness) {
     if (!source.referenced || source.kind != ReadinessSourceKind::kSpin || !source.owner ||
         source.owner.value > deployment.lane_by_vertex.size()) {
@@ -701,62 +1678,22 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
       append_diagnostic(*state, "SPIN_UNPLACED", DiagnosticSource{.vertex = source.owner});
     }
   }
-  for (const auto& source : state->readiness) {
-    if (!source.referenced) {
-      append_diagnostic(*state,
-                        "READINESS_SOURCE_UNUSED",
-                        DiagnosticSource{.vertex = source.owner},
-                        holoscan::DiagnosticSeverity::kWarning);
-    }
-  }
 
-  // Parameter queue/storage facts are available before lifecycle lowering,
-  // but exact fence/quiesce/rollback minima require dependency-expanded
-  // restart closures. Build those closures once, finalize Parameter capacity,
-  // then rebuild the lifecycle result from the final admitted Parameter set so
-  // rejected capacity cannot leave stale parameter-origin restart authority.
-  auto lifecycle = detail::lower_lifecycle_plan(*snapshot,
-                                                profile.effective_profiles(),
-                                                parameters.lifecycle_mutable_fields,
-                                                parameters.capacity,
-                                                options.lifecycle_transactions,
-                                                plan_generation);
-  detail::finalize_parameter_lifecycle_capacity(
-      parameters, lifecycle, options.lifecycle_transactions);
-  lifecycle = detail::lower_lifecycle_plan(*snapshot,
-                                           profile.effective_profiles(),
-                                           parameters.lifecycle_mutable_fields,
-                                           parameters.capacity,
-                                           options.lifecycle_transactions,
-                                           plan_generation);
-  for (const auto& diagnostic : parameters.diagnostics) {
-    append_diagnostic(*state, diagnostic.token, diagnostic.source);
-  }
-  state->operator_parameters = std::move(parameters.operators);
-  state->parameter_fields = std::move(parameters.fields);
-  state->parameter_catalog = std::move(parameters.catalog);
-  state->parameter_generation_zero_operators = std::move(parameters.generation_zero_operators);
-  state->parameter_generation_zero_fields = std::move(parameters.generation_zero_fields);
-  state->parameter_runtime_capacity = parameters.capacity;
-
-  publish_lifecycle(std::move(lifecycle), *state);
   auto endpoint_catalog = detail::lower_endpoint_catalog(*snapshot,
                                                          options.deployment,
                                                          profile.effective_profiles(),
                                                          options.endpoint_catalog,
                                                          state->clocks,
-                                                         state->clock_conversions);
+                                                         state->clock_conversions,
+                                                         state->tensor_byte_span_derivations,
+                                                         rate.queue_sizings);
   const auto* endpoint_catalog_state =
       detail::ChannelEndpointCatalogAccess::state(endpoint_catalog.catalog);
   const auto catalog_endpoints =
       endpoint_catalog_state != nullptr
           ? std::span<const detail::ChannelEndpointRecord>{endpoint_catalog_state->endpoints}
           : std::span<const detail::ChannelEndpointRecord>{};
-  auto tensor_device_bindings =
-      resolve_tensor_device_placements(*snapshot, options.deployment, *state);
-  tensor_device_bindings.insert(tensor_device_bindings.end(),
-                                evidence.tensor_device_bindings.begin(),
-                                evidence.tensor_device_bindings.end());
+  state->force_process_local_holomq_event_wake = evidence.force_holomq_process_local_event_wake;
   publish_physical(detail::lower_physical_plan(*snapshot,
                                                plan_generation,
                                                profile.effective_profiles(),
@@ -768,8 +1705,58 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
                                                state->lifecycle_restart_targets,
                                                state->execution_partitions,
                                                tensor_device_bindings,
-                                               evidence.force_holomq_process_local_inline),
+                                               evidence.force_holomq_process_local_inline,
+                                               evidence.force_holomq_process_local_event_wake,
+                                               state->tensor_byte_span_derivations,
+                                               rate.queue_sizings,
+                                               state->queue_sizing_recipes),
                    *state);
+  for (const auto& derivation : state->tensor_byte_span_derivations) {
+    bool allocation_found{};
+    bool allocation_matches{};
+    if (derivation.field_id) {
+      const auto allocation = std::find_if(state->tensor_field_allocations.begin(),
+                                           state->tensor_field_allocations.end(),
+                                           [&](const auto& item) {
+                                             return item.output == derivation.output &&
+                                                    item.field_id == derivation.field_id &&
+                                                    item.tensor_index == derivation.tensor_index;
+                                           });
+      if (allocation != state->tensor_field_allocations.end()) {
+        allocation_found = true;
+        allocation_matches = allocation->bounds.max_byte_span == derivation.resolved_max_byte_span;
+      } else {
+        const auto singular =
+            std::find_if(state->tensor_allocations.begin(),
+                         state->tensor_allocations.end(),
+                         [&](const auto& item) { return item.output == derivation.output; });
+        allocation_found = singular != state->tensor_allocations.end();
+        allocation_matches =
+            allocation_found && singular->bounds.max_byte_span == derivation.resolved_max_byte_span;
+      }
+    } else {
+      const auto allocation =
+          std::find_if(state->tensor_allocations.begin(),
+                       state->tensor_allocations.end(),
+                       [&](const auto& item) { return item.output == derivation.output; });
+      allocation_found = allocation != state->tensor_allocations.end();
+      allocation_matches =
+          allocation_found && allocation->bounds.max_byte_span == derivation.resolved_max_byte_span;
+    }
+    if (allocation_found && !allocation_matches) {
+      append_diagnostic(*state,
+                        "PHYSICAL_TENSOR_BYTE_SPAN_CONTRACT_CONFLICT",
+                        DiagnosticSource{.port = derivation.output});
+    }
+  }
+  const auto cuda_service_streams = detail::lower_cuda_service_stream_requirements(*state);
+  publish_cuda_green_context_plan(lower_cuda_green_context_plan(*snapshot,
+                                                                options.deployment,
+                                                                evidence,
+                                                                profile.effective_profiles(),
+                                                                cuda_service_streams,
+                                                                *state),
+                                  *state);
   detail::apply_process_edge_locality(
       process.locality_by_edge, state->payload_edges, state->channel_locality);
   state->closed_island_activations = detail::derive_closed_island_activation_plan(*state);
@@ -854,6 +1841,14 @@ ExecutionPlan detail::compile_with_process_local_holomq(
     Graph& graph, CompileOptions options) {  // NOLINT(performance-unnecessary-value-param)
   auto evidence = detail::runtime_compile_evidence_view();
   evidence.force_holomq_process_local_inline = true;
+  return detail::compile_with_runtime_evidence(graph, std::move(options), std::move(evidence));
+}
+
+ExecutionPlan detail::compile_with_process_local_holomq_event_wake(
+    Graph& graph, CompileOptions options) {  // NOLINT(performance-unnecessary-value-param)
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.force_holomq_process_local_inline = true;
+  evidence.force_holomq_process_local_event_wake = true;
   return detail::compile_with_runtime_evidence(graph, std::move(options), std::move(evidence));
 }
 

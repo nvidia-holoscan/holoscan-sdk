@@ -98,6 +98,192 @@ TEST(RuntimeChannelBinding, GeneratedSchemaTransportEmitRecordsOrderedPhases) {
   }
   EXPECT_EQ(counters->trace_dropped(), 0U);
 }
+
+// Eventless HoloMQ generated schemas use the ordinary activation cut while preserving the schema
+// envelope verifier and owning-value materialization path.
+// REQ: CHAN-117
+// REQ: RUNTIME-019
+TEST(RuntimeChannelBinding, HoloMQGeneratedSchemaUsesOrdinaryActivationCut) {
+  // Key setup: publish one generated schema on an exact 1:1 eventless HoloMQ edge.
+  GeneratedSchemaSessionFixture fixture;
+  fixture.base.use_one_slot_blocking_transport();
+  fixture.base.use_same_partition_eventless_transport();
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto binding =
+      (*session)->create_readiness_binding(VertexId{2U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.base.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(1U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 1U,
+                                           });
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  EXPECT_FALSE((*session)->arm_direct_continuation(VertexId{1U}, 0U));
+
+  constexpr std::string_view kExpected{"HoloMQ generated-schema activation cut"};
+  schema::StringT value;
+  value.data = kExpected;
+  ASSERT_TRUE(fixture.source.output.emit(
+      std::move(value), EmitOptions{.frame_id = 313U, .trace = TraceContext::root(0xA11CEU)}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_TRUE((*session)->flush_process_local_activation_cut());
+  const auto post_cut_indexes = RuntimeChannelSessionTestAccess::pump_index_state(**session);
+  ASSERT_TRUE(post_cut_indexes) << runtime_error_message(post_cut_indexes.error());
+  EXPECT_FALSE(post_cut_indexes->background_thread_required);
+  EXPECT_FALSE(post_cut_indexes->background_thread_running);
+
+  // Key assertion: ordinary cut delivery exposes one verified owning value with intact metadata.
+  auto event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(event) << runtime_error_message(event.error());
+  auto record = (*session)->temporal_sample(event->port, event->source_sequence);
+  ASSERT_TRUE(record) << runtime_error_message(record.error());
+  const std::array selection{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = {InputState::kSelected, SelectionReason::kNone},
+      .samples = std::span<const TemporalSampleRecord>{&*record, 1U},
+      .destructive = true,
+  }};
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, selection));
+  auto received = fixture.sink.input.receive();
+  ASSERT_TRUE(received) << runtime_error_message(received.error());
+  EXPECT_EQ(received->data.data, kExpected);
+  EXPECT_EQ(received->metadata.sequence, 1U);
+  EXPECT_EQ(received->metadata.frame_id, 313U);
+  EXPECT_EQ(received->metadata.trace_id, 0xA11CEU);
+  ASSERT_TRUE((*binding)->retire(event->source_sequence));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 1U, true));
+  ASSERT_TRUE((*session)->retire_samples(PortId{2U}, selection.front().samples));
+
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
+// One bounded generated-schema publication is independently verified and materialized for every
+// recipient before the serial controller completes its post-compute activation cut.
+// REQ: CHAN-101
+// REQ: CHAN-117
+// REQ: RUNTIME-019
+TEST(RuntimeChannelBinding, HoloMQGeneratedSchemaFanoutUsesOrdinaryActivationCut) {
+  GeneratedSchemaSessionFixture fixture;
+  fixture.add_blocking_fanout();
+  fixture.base.use_same_partition_eventless_transport();
+  fixture.base.use_single_partition_runner();
+  const auto counters = std::make_shared<RuntimePhaseCounters>();
+  fixture.base.plan.executable_factories.phase_counters = counters;
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto left_binding =
+      (*session)->create_readiness_binding(VertexId{2U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.base.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(1U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 8U,
+                                           });
+  auto right_binding =
+      (*session)->create_readiness_binding(VertexId{3U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.base.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(2U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 8U,
+                                           });
+  ASSERT_TRUE(left_binding) << runtime_error_message(left_binding.error());
+  ASSERT_TRUE(right_binding) << runtime_error_message(right_binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+
+  // Key setup: publish one owning generated schema to two eventless subscribers and establish
+  // the ordinary activation cut before observing either readiness stream.
+  auto indexes = RuntimeChannelSessionTestAccess::pump_index_state(**session);
+  ASSERT_TRUE(indexes) << runtime_error_message(indexes.error());
+  EXPECT_TRUE(indexes->exact);
+  EXPECT_EQ(indexes->wait_handle_count, 0U);
+  EXPECT_EQ(indexes->drain_subscriber_count, 2U);
+  EXPECT_FALSE(indexes->background_thread_required);
+  EXPECT_FALSE(indexes->background_thread_running);
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  constexpr std::string_view kExpected{"HoloMQ generated-schema fanout activation cut"};
+  schema::StringT value;
+  value.data = kExpected;
+  ASSERT_TRUE(fixture.source.output.emit(
+      std::move(value), EmitOptions{.frame_id = 317U, .trace = TraceContext::root(0xFAD0U)}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_TRUE((*session)->flush_process_local_activation_cut());
+  const auto post_cut_indexes = RuntimeChannelSessionTestAccess::pump_index_state(**session);
+  ASSERT_TRUE(post_cut_indexes) << runtime_error_message(post_cut_indexes.error());
+  EXPECT_FALSE(post_cut_indexes->background_thread_required);
+  EXPECT_FALSE(post_cut_indexes->background_thread_running);
+  const auto snapshot = counters->snapshot();
+  EXPECT_EQ(snapshot[RuntimePhaseCounters::index(
+                RuntimePhaseCounter::kChannelActivationCutSubscriberProbes)],
+            2U);
+  EXPECT_EQ(snapshot[RuntimePhaseCounters::index(
+                RuntimePhaseCounter::kChannelActivationCutTransportProbes)],
+            0U);
+  EXPECT_EQ(snapshot[RuntimePhaseCounters::index(
+                RuntimePhaseCounter::kChannelActivationCutMaterializations)],
+            2U);
+  auto left_event = wait_for_event(**session, **left_binding);
+  auto right_event = wait_for_event(**session, **right_binding);
+  ASSERT_TRUE(left_event) << runtime_error_message(left_event.error());
+  ASSERT_TRUE(right_event) << runtime_error_message(right_event.error());
+  auto left_sample = (*session)->temporal_sample(left_event->port, left_event->source_sequence);
+  auto right_sample = (*session)->temporal_sample(right_event->port, right_event->source_sequence);
+  ASSERT_TRUE(left_sample) << runtime_error_message(left_sample.error());
+  ASSERT_TRUE(right_sample) << runtime_error_message(right_sample.error());
+  const std::array left_selection{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = {InputState::kSelected, SelectionReason::kNone},
+      .samples = std::span<const TemporalSampleRecord>{&*left_sample, 1U},
+      .destructive = true,
+  }};
+  const std::array right_selection{RuntimeChannelActivationSelection{
+      .port = PortId{3U},
+      .selection = {InputState::kSelected, SelectionReason::kNone},
+      .samples = std::span<const TemporalSampleRecord>{&*right_sample, 1U},
+      .destructive = true,
+  }};
+
+  // Key assertion: both subscribers independently expose the same verified owning value and
+  // metadata without any WaitSet attachment.
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, left_selection));
+  auto left_value = fixture.sink.input.receive();
+  ASSERT_TRUE(left_value) << runtime_error_message(left_value.error());
+  EXPECT_EQ(left_value->data.data, kExpected);
+  EXPECT_EQ(left_value->metadata.sequence, 1U);
+  EXPECT_EQ(left_value->metadata.frame_id, 317U);
+  EXPECT_EQ(left_value->metadata.trace_id, 0xFAD0U);
+  ASSERT_TRUE((*left_binding)->retire(left_event->source_sequence));
+  ASSERT_TRUE((*session)->retire_samples(left_event->port, left_selection.front().samples));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 1U, true));
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{3U}, 1U, right_selection));
+  auto right_value = fixture.second_sink.input.receive();
+  ASSERT_TRUE(right_value) << runtime_error_message(right_value.error());
+  EXPECT_EQ(right_value->data.data, kExpected);
+  EXPECT_EQ(right_value->metadata.sequence, 1U);
+  EXPECT_EQ(right_value->metadata.frame_id, 317U);
+  EXPECT_EQ(right_value->metadata.trace_id, 0xFAD0U);
+  ASSERT_TRUE((*right_binding)->retire(right_event->source_sequence));
+  ASSERT_TRUE((*session)->retire_samples(right_event->port, right_selection.front().samples));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{3U}, 1U, true));
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
 // A generated owning value uses the same public loan verbs as a scalar, while Runtime must route
 // the nontrivial value through its bounded generated-schema encoder and verifier/materializer
 // instead of copying the C++ object representation into the transport sample.
@@ -431,13 +617,12 @@ TEST(RuntimeChannelBinding, CrossProcessTensorPacketUsesGenericDescriptorStaging
 // Cross-process Image staging preserves CUDA-pinned host memory instead of routing the embedded
 // Tensor through the pageable-host provider.
 // REQ: CHAN-106
+// REQ: CHAN-135
 // REQ: TENSOR-SCHEMA-005
 TEST(RuntimeChannelBinding, CrossProcessImagePreservesPinnedHostStaging) {
   test::skip_without_cuda_device();
   int device_ordinal = -1;
   ASSERT_EQ(cudaGetDevice(&device_ordinal), cudaSuccess);
-  test::UniqueCudaStream consumer_stream;
-  ASSERT_EQ(test::create_non_blocking_cuda_stream(consumer_stream), cudaSuccess);
 
   constexpr std::uint64_t kExpectedValue = 0xA1B2'C3D4U;
   auto source_pool = std::make_shared<BlockMemoryPool>(
@@ -486,13 +671,14 @@ TEST(RuntimeChannelBinding, CrossProcessImagePreservesPinnedHostStaging) {
       .destructive = true,
   }};
   ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, selection));
-  ASSERT_TRUE((*session)->prepare_tensor_access(VertexId{2U}, 1U, consumer_stream.get()));
+  // Key setup: a pinned-host-only descriptor consumer has no planned CUDA compute stream.
+  ASSERT_TRUE((*session)->prepare_tensor_access(VertexId{2U}, 1U, nullptr));
   {
     auto received = fixture.sink.input.receive();
     ASSERT_TRUE(received) << runtime_error_message(received.error());
     ASSERT_NE(received->data.data, nullptr);
-    // Key assertion: import remains CUDA-pinned and read-only; a pageable-host intermediate would
-    // instead expose kDLCPU here.
+    // Key assertion: the null-stream activation waits for BufferHandle readiness before CPU
+    // access, while the import remains CUDA-pinned and read-only instead of becoming pageable.
     EXPECT_EQ(received->data.data->device().device_type, kDLCUDAHost);
     EXPECT_EQ(received->data.data->device().device_id, 0);
     EXPECT_TRUE(received->data.data->is_read_only());

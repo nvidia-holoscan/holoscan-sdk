@@ -72,7 +72,7 @@ statistic is not interchangeable with a Channel p50.
 | Channel | `BenchmarkPod64` | Inline | 64 B | 1.451 µs | 1.801 µs | Typed `Sample<T>` Channel path |
 | HoloMQ | Raw buffer | Pinned host | 1 MiB | 1.183 µs | 1.620 µs | 224-byte `BufferHandle` descriptor |
 | HoloMQ | Raw buffer | Device | 1 MiB | 1.072 µs | 1.367 µs | Preinitialized immutable buffer; no per-message CUDA fence |
-| Channel | `Tensor` | Pinned host | 1 MiB | 2.437 µs | 4.099 µs | 464-byte Tensor descriptor |
+| Channel | `Tensor` | Pinned host | 1 MiB | 2.437 µs | 4.099 µs | 472-byte Tensor descriptor |
 | Channel | `Tensor` | Device | 1 MiB | 2.280 µs | 3.649 µs | Automatic stream ordering |
 | Channel | `ImageT` | Pinned host | 1 MiB | 3.593 µs | 5.657 µs | 856-byte image metadata and Tensor descriptor |
 | Channel | `ImageT` | Device | 1 MiB | 3.428 µs | 6.742 µs | Image metadata plus device Tensor |

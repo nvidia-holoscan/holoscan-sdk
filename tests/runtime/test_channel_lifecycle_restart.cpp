@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -693,8 +694,7 @@ struct ClockPredicateInputProbeState {
     source_block_entered.store(true, std::memory_order_release);
     cv.notify_all();
     std::unique_lock lock{mutex};
-    static_cast<void>(
-        cv.wait_for(lock, 5s, [] { return release_source.load(std::memory_order_acquire); }));
+    cv.wait(lock, [] { return release_source.load(std::memory_order_acquire); });
   }
 
   static void release_source_block() noexcept {
@@ -721,6 +721,23 @@ class ClockInputSourceReleaseGuard {
   ClockInputSourceReleaseGuard(const ClockInputSourceReleaseGuard&) = delete;
   ClockInputSourceReleaseGuard& operator=(const ClockInputSourceReleaseGuard&) = delete;
   ~ClockInputSourceReleaseGuard() { ClockPredicateInputProbeState::release_source_block(); }
+};
+
+class ClockInputPreDispatchReleaseGuard {
+ public:
+  explicit ClockInputPreDispatchReleaseGuard(
+      std::shared_ptr<detail::RuntimePreDispatchTestControl> control)
+      : control_(std::move(control)) {}
+  ClockInputPreDispatchReleaseGuard(const ClockInputPreDispatchReleaseGuard&) = delete;
+  ClockInputPreDispatchReleaseGuard& operator=(const ClockInputPreDispatchReleaseGuard&) = delete;
+  ~ClockInputPreDispatchReleaseGuard() {
+    if (control_ != nullptr) {
+      control_->release();
+    }
+  }
+
+ private:
+  std::shared_ptr<detail::RuntimePreDispatchTestControl> control_;
 };
 
 class ClockPredicateInputSourceOperator final : public Operator<> {
@@ -2047,7 +2064,7 @@ TEST(ChannelLifecycleRestart, ClockInputStopFenceSuppressesSelectionPredicateAnd
        {ClockInputTriggerRoute::kOnClock, ClockInputTriggerRoute::kOnPredicate}) {
     SCOPED_TRACE(static_cast<unsigned>(route));
     ClockPredicateInputProbeState::reset();
-    const ExecutionPlan plan = make_clock_input_plan(Profile::kStandard,
+    const ExecutionPlan base = make_clock_input_plan(Profile::kStandard,
                                                      route,
                                                      {
                                                          .block_source_after_first_emit = true,
@@ -2055,14 +2072,41 @@ TEST(ChannelLifecycleRestart, ClockInputStopFenceSuppressesSelectionPredicateAnd
                                                          .deadline = 1ns,
                                                          .violation = OnViolation::kEmitWitness,
                                                      });
+    ASSERT_TRUE(base.ok()) << base.json();
+    ASSERT_EQ(base.deadlines().size(), 1U);
+    auto invocation_control =
+        std::make_shared<detail::RuntimePreDispatchTestControl>(base.deadlines().front().owner.id);
+    const auto phase_counters = std::make_shared<detail::RuntimePhaseCounters>();
+    const ExecutionPlan counted =
+        detail::RuntimeTestPlanAccess::with_phase_counters(base, phase_counters);
+    const ExecutionPlan plan = detail::RuntimeTestPlanAccess::enable_pre_dispatch_interleaving(
+        counted, invocation_control);
     ASSERT_TRUE(plan.ok()) << plan.json();
-    ASSERT_EQ(plan.deadlines().size(), 1U);
 
     RunSession session = run_async(plan);
+    // On assertion unwind, unblock both workers before RunSession joins them.
+    const ClockInputPreDispatchReleaseGuard invocation_release{invocation_control};
     const ClockInputSourceReleaseGuard release_guard;
     ASSERT_TRUE(ClockPredicateInputProbeState::wait_for_source_block());
+    ASSERT_TRUE(invocation_control->wait_until_paused());
+    const auto phase_count = [&](detail::RuntimePhaseCounter phase) {
+      return phase_counters->snapshot()[detail::RuntimePhaseCounters::index(phase)];
+    };
+    const std::uint64_t selected_before_stop =
+        phase_count(detail::RuntimePhaseCounter::kCandidatesSelected);
     session.request_stop();
     ClockPredicateInputProbeState::release_source_block();
+    // Keep the sink frozen until source retirement flushes the emitted sample's Channel cut.
+    const auto activation_cut_deadline = std::chrono::steady_clock::now() + 5s;
+    const auto completed_activation_count = [&] {
+      return phase_count(detail::RuntimePhaseCounter::kActivationsCompleted);
+    };
+    while (completed_activation_count() == 0U &&
+           std::chrono::steady_clock::now() < activation_cut_deadline) {
+      std::this_thread::yield();
+    }
+    ASSERT_GE(completed_activation_count(), 1U);
+    invocation_control->release();
     session.wait();
 
     EXPECT_EQ(session.termination(), RunTermination::kStopped);
@@ -2070,6 +2114,7 @@ TEST(ChannelLifecycleRestart, ClockInputStopFenceSuppressesSelectionPredicateAnd
               1U);
     EXPECT_EQ(ClockPredicateInputProbeState::sink_compute_count.load(std::memory_order_acquire),
               0U);
+    EXPECT_EQ(phase_count(detail::RuntimePhaseCounter::kCandidatesSelected), selected_before_stop);
     EXPECT_EQ(
         ClockPredicateInputProbeState::predicate_evaluation_count.load(std::memory_order_acquire),
         0U);

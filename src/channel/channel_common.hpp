@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "channel_payload_limits.hpp"
 #include "channel_publisher_pressure.hpp"
 #include "protected_terminal_channel.hpp"
 
@@ -28,7 +29,7 @@ namespace holoscan::channel_internal {
 
 using TransportCapabilities = holomq::PubSubCapabilities;
 
-/// @brief Translate one successful or standalone HoloMQ code by named meaning.
+/// @brief Translate one successful or independent HoloMQ code by named meaning.
 /// @param code Independent HoloMQ-domain code.
 /// @return Corresponding Core code, or fail-closed `kFailure` for an unknown future value.
 /// @note Failure carriers must use \ref from_holomq_error so an invalid `kSuccess` carrier and an
@@ -143,6 +144,39 @@ struct InlinePayloadBucket {
   alignas(std::max_align_t) std::array<std::byte, Size> bytes{};
 };
 
+/// @brief Carry descriptor-schema bytes plus catalog incarnation attribution.
+template <std::size_t Size>
+struct TensorSchemaPayloadBucket {
+  InlinePayloadOperation operation{InlinePayloadOperation::kData};
+  SampleMetadata metadata{};
+  std::uint64_t producer_generation{};
+  std::uint64_t health_report_sequence{};
+  std::uint32_t payload_size{};
+  alignas(std::max_align_t) std::array<std::byte, Size> bytes{};
+};
+
+/// @brief Return whether a sample's publication coordinate names a clock the catalog declares.
+///
+/// Catalog clock identities are dense and one-based, so a range check is exactly a membership test
+/// against the declared clock array. That is the property a peer depends on: an identity inside the
+/// range resolves to a clock record, and one outside it cannot. Every catalog payload family shares
+/// this rule so a subscriber's guarantee does not depend on which family carried the sample.
+///
+/// The check deliberately does not pin which declared clock a publication must use. The catalog
+/// records no designated publication domain, so requiring one specific identity here would encode
+/// an agreement the format does not carry.
+///
+/// @param metadata Sample metadata under validation.
+/// @param catalog_clock_count Number of clocks the owning catalog declares.
+/// @return \c true when the coordinate is canonically absent, or names a declared clock.
+[[nodiscard]] constexpr bool publication_coordinate_declared(
+    const SampleMetadata& metadata, const std::uint64_t catalog_clock_count) noexcept {
+  if (!metadata.publish_clock_id.valid()) {
+    return metadata.publish_timestamp_ns == 0;
+  }
+  return metadata.publish_clock_id.value <= catalog_clock_count;
+}
+
 /// @brief Return whether a public service id occupies the private terminal namespace.
 [[nodiscard]] bool is_ordered_terminal_service_id(std::string_view service_id) noexcept;
 
@@ -171,52 +205,7 @@ struct InlinePayloadBucket {
 
 static_assert(std::is_standard_layout_v<InlinePayloadBucket<8U>>);
 static_assert(std::is_trivially_copyable_v<InlinePayloadBucket<8U>>);
-
-[[nodiscard]] constexpr std::optional<std::size_t> inline_payload_bucket_size(
-    const std::size_t payload_size) noexcept {
-  if (payload_size == 0U) {
-    return std::nullopt;
-  }
-  if (payload_size <= 8U) {
-    return 8U;
-  }
-  if (payload_size <= 16U) {
-    return 16U;
-  }
-  if (payload_size <= 32U) {
-    return 32U;
-  }
-  if (payload_size <= 64U) {
-    return 64U;
-  }
-  if (payload_size <= 128U) {
-    return 128U;
-  }
-  if (payload_size <= 256U) {
-    return 256U;
-  }
-  if (payload_size <= 512U) {
-    return 512U;
-  }
-  if (payload_size <= 1024U) {
-    return 1024U;
-  }
-  if (payload_size <= 2048U) {
-    return 2048U;
-  }
-  if (payload_size <= 4096U) {
-    return 4096U;
-  }
-  if (payload_size <= 8192U) {
-    return 8192U;
-  }
-  if (payload_size <= 16384U) {
-    return 16384U;
-  }
-  if (payload_size <= 32768U) {
-    return 32768U;
-  }
-  return std::nullopt;
-}
+static_assert(std::is_standard_layout_v<TensorSchemaPayloadBucket<8U>>);
+static_assert(std::is_trivially_copyable_v<TensorSchemaPayloadBucket<8U>>);
 
 }  // namespace holoscan::channel_internal

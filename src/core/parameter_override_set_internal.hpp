@@ -42,8 +42,8 @@ struct ParamOverrideFieldOriginRecord {
 
 /// @brief Own one fully resolved aggregate override for an exact Operator path.
 ///
-/// EA1-018 constructs this private record after parsing, alias resolution, and
-/// migration. EA1-009 revalidates every identity and the baseline digest before
+/// HSDK5-018 constructs this private record after parsing, alias resolution, and
+/// migration. HSDK5-009 revalidates every identity and the baseline digest before
 /// cloning the resolved aggregate into the plan-owned executable factory. The
 /// erased value owns an exact immutable C++ aggregate; no caller storage is
 /// borrowed.
@@ -56,6 +56,7 @@ struct ParamOverrideOperatorState {
   const ParamTypeDescriptor* local_type{};  ///< Process-local exact aggregate descriptor.
   bool (*local_value_digest)(const void*,
                              ParamSchemaHash&) noexcept {};  ///< Optional codec digest.
+  bool field_replacements_only{};  ///< HSDK-owned assignment and omitted-field validation mode.
   std::shared_ptr<const void> resolved_value;  ///< Owned immutable resolved aggregate.
   ParamSchemaHash baseline_value_digest{};     ///< Exact defaults-plus-typed-baseline identity.
   ParamSchemaHash resolved_value_digest{};     ///< Exact resolved semantic value identity.
@@ -69,8 +70,10 @@ struct ParamOverrideSetState {
   std::uint32_t representation_version{1};
   std::array<std::byte, 32> target_identity{};
   std::optional<GraphAuthoringIdentity> target_graph;  ///< Exact graph/version/hash binding.
-  ParamSchemaHash admission_context_digest{};          ///< Producer-bound policy context identity.
-  std::vector<ParamOverrideOperatorState> operators;   ///< Fully resolved Operator aggregates.
+  ParamOverrideContextBinding context_binding{
+      ParamOverrideContextBinding::kExact};           ///< Captured or compile-time validation.
+  ParamSchemaHash admission_context_digest{};         ///< Producer-bound policy context identity.
+  std::vector<ParamOverrideOperatorState> operators;  ///< Fully resolved Operator aggregates.
   ParamRebindProvenance provenance;   ///< Owning inspectable snapshot/config source provenance.
   ParamSchemaHash semantic_digest{};  ///< Canonical value-bearing identity for plan generation.
 };
@@ -87,15 +90,18 @@ class ParamOverrideSetAccess {
   /// @brief Construct a complete compiler-consumable override set.
   /// @param target Exact immutable Graph authoring identity.
   /// @param operators Fully resolved owning Operator overrides.
-  /// @param admission_context_digest Producer-bound policy context identity.
+  /// @param admission_context_digest Producer-bound policy context identity. Empty for
+  /// compile-context overrides and nonempty for exact-context overrides.
   /// @param provenance Producer-validated, bounded, owning reconstruction evidence.
-  /// @return Opaque immutable override set with representation version two.
+  /// @param context_binding Captured-context or compile-time context validation.
+  /// @return Opaque immutable override set with representation version three.
   /// @pre Every variable-size provenance collection and text field satisfies the package-specific
   /// producer bounds. This private constructor normalizes identities but does not grant authority
   /// or silently truncate evidence.
   [[nodiscard]] static ParamOverrideSet make_complete(
       GraphAuthoringIdentity target, std::vector<ParamOverrideOperatorState> operators,
-      ParamSchemaHash admission_context_digest = {}, ParamRebindProvenance provenance = {}) {
+      ParamSchemaHash admission_context_digest, ParamRebindProvenance provenance = {},
+      ParamOverrideContextBinding context_binding = ParamOverrideContextBinding::kExact) {
     for (auto& op : operators) {
       std::sort(op.contributions.begin(), op.contributions.end(), contribution_less);
     }
@@ -103,12 +109,14 @@ class ParamOverrideSetAccess {
       return lhs.operator_path < rhs.operator_path;
     });
     auto state = std::make_shared<ParamOverrideSetState>();
-    state->representation_version = 2U;
+    state->representation_version = 3U;
     state->target_identity = target.hash.value;
     state->target_graph = target;
+    state->context_binding = context_binding;
     state->admission_context_digest = admission_context_digest;
     state->operators = std::move(operators);
     provenance.target = target;
+    provenance.context_binding = context_binding;
     provenance.admission_context_digest = admission_context_digest;
     state->provenance = std::move(provenance);
     state->semantic_digest = compute_semantic_digest(*state);
@@ -125,9 +133,10 @@ class ParamOverrideSetAccess {
   /// @return Private owning record suitable for \ref make_complete.
   template <ParameterAggregate ParamsT>
   [[nodiscard]] static ParamOverrideOperatorState resolved_operator(
-      std::string operator_path, ParamsT value, ParamSchemaHash baseline_value_digest,
-      ParamSchemaHash resolved_value_digest,
-      std::vector<ParamOverrideFieldOriginRecord> contributions) {
+      std::string operator_path,  // NOLINT(performance-unnecessary-value-param)
+      ParamsT value, ParamSchemaHash baseline_value_digest, ParamSchemaHash resolved_value_digest,
+      std::vector<ParamOverrideFieldOriginRecord>
+          contributions) {  // NOLINT(performance-unnecessary-value-param)
     const ParamSchemaDescriptor* const schema = param_schema_descriptor<ParamsT>();
     auto owned = std::make_shared<const ParamsT>(std::move(value));
     return ParamOverrideOperatorState{
@@ -245,6 +254,7 @@ class ParamOverrideSetAccess {
     add_text(hash, provenance.source_scope_path);
     hash.add(provenance.mode);
     add_graph_identity(hash, provenance.target);
+    hash.add(provenance.context_binding);
     hash.add(provenance.target_profile);
     add_hash(hash, provenance.admission_context_digest);
     hash.add(provenance.target_scope_kind);
@@ -337,6 +347,7 @@ class ParamOverrideSetAccess {
     if (state.target_graph) {
       add_graph_identity(hash, *state.target_graph);
     }
+    hash.add(state.context_binding);
     add_hash(hash, state.admission_context_digest);
     add_provenance(hash, state.provenance);
     hash.add_canonical_size(state.operators.size());
@@ -346,6 +357,7 @@ class ParamOverrideSetAccess {
       hash.add(op.schema_version);
       add_hash(hash, op.structural_hash);
       add_hash(hash, op.contract_hash);
+      hash.add(op.field_replacements_only);
       add_hash(hash, op.baseline_value_digest);
       add_hash(hash, op.resolved_value_digest);
       hash.add_canonical_size(op.contributions.size());

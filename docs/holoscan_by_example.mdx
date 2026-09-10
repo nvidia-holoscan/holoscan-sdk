@@ -11,7 +11,7 @@ you can read it next to the guide pages that explain it.
 <Note title="You will learn">
   - What each shipped example demonstrates, at a glance
   - Which guide chapters each example pairs with
-  - The role of the hero application (`ea1_camera_imu_control`) and its
+  - The role of the hero application (`camera_imu_control`) and its
     companion processes
   - How to build the examples in-tree or standalone against an installed SDK
   - How to run examples and their bundled tests
@@ -32,7 +32,7 @@ identify the implementation layer of the capability the example teaches;
 qualifiers such as **Beta** mirror the linked page or stability callout where
 shown; their absence is not a declaration that a capability is Stable. Use
 [API stability](/holoscan/sdk-user-guide/introduction/api-stability) as the
-area-level authority. The `examples/experimental/` directory is an EA1
+area-level authority. The `examples/experimental/` directory is a baseline
 example-catalog location, not the stability authority — an example may live
 there while the capability it demonstrates is Beta.
 
@@ -78,7 +78,7 @@ there while the capability it demonstrates is Beta.
 | E14 | [`errors_as_values`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/errors_as_values/cpp) | Core | Expected-return propagation and runtime failure channels. | [Errors as Values](/holoscan/sdk-user-guide/getting-started/errors-as-values) |
 | E15 | [`time_and_clocks`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/time_and_clocks/cpp) | Core | Clock domains, capture time, and deterministic test clocks. | [Time and Clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks) |
 | E16 | [`compile_and_check`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/compile_and_check/cpp) | Core | Admission diagnostics, canonical plans, and digest gates. | [Compile and Check](/holoscan/sdk-user-guide/getting-started/compile-and-check) |
-| E17 | [`running_and_stopping`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/running_and_stopping/cpp) | Core | `RunSession`, cooperative stop, and termination evidence. | [Running and Stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping) |
+| E17 | [`running_and_stopping`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/running_and_stopping/cpp) | Core | `RunSession`, requested completion, cooperative stop, and termination evidence. | [Running and Stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping) |
 | E18 | [`operator_anatomy`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/operator_anatomy/cpp) | Core | Ports, parameters, contracts, lifecycle, and `compute()`. | [Operator Anatomy](/holoscan/sdk-user-guide/building-operators/operator-anatomy) |
 | E19 | [`parameter_schemas`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/parameter_schemas/cpp) | Core | Schema field policies and validation. | [Parameter Schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas) |
 | E20 | [`lifecycle_callbacks`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/lifecycle_callbacks/cpp) | Core (Beta) | Sparse lifecycle callbacks and dependency ordering. | [Lifecycle Callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks) |
@@ -88,6 +88,8 @@ there while the capability it demonstrates is Beta.
 | E25 | [`tensors_in_depth`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/tensors_in_depth/cpp) | Core (Beta) | Device pools, stream ordering, and bounded exhaustion. | [Tensors in Depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth) |
 | E32 | [`custom_schema`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/custom_schema/cpp) | Core | Application-owned FlatBuffer types on generated Operator ports. | [Custom FlatBuffer Schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas) |
 | E33 | [`descriptor_tensor_schema`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_schema/cpp) | Core | Application-owned FlatBuffer metadata with descriptor-backed Tensor storage. | [Custom FlatBuffer Schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas) |
+| E34 | [`descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic) | Core | Application-owned multi-Tensor schema exchange between a Graph and standalone catalog client. | [External Topics](/holoscan/sdk-user-guide/composing-applications/external-topics) |
+| E35 | [`derived_tensor_pool_capacity`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/derived_tensor_pool_capacity/cpp) | Core | Compose Parameter- and input-derived bytes per slot with fixed, expected, followed, and lifecycle-selected rates; compare automatic sizing with an exact explicit depth. | [Tensors in Depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#size-queue-entries-from-nominal-rates) |
 
 ### Essential, advanced, and experimental
 
@@ -100,13 +102,14 @@ there while the capability it demonstrates is Beta.
 | E29 | [`runtime_params`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/runtime_params/cpp) | Core (Beta) | Programmatic parameter generations and snapshots. | [Runtime Parameter Updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates) |
 | E30 | [`web_tuner`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/web_tuner/cpp) | Experimental | The loopback-only parameter tuner facade. | [Runtime Parameter Updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates) |
 | E31 | [`determinism_replay`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/determinism_replay/cpp) | Core (Beta) | Replay-stable tags and manual-clock substitution. | [Determinism and Replay](/holoscan/sdk-user-guide/advanced/determinism-and-replay) |
+
 ### Complete reference applications
 
 | Example | Classification | What it exercises | Guide |
 | --- | --- | --- | --- |
-| [`ea1_camera_imu_control`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ea1_camera_imu_control/cpp) | Core | The hero application: fusion, contracts, bounded tensors, and external endpoints. | [Camera + IMU Control](/holoscan/sdk-user-guide/examples/camera-imu-control) |
-| [`ea1_slow_fast_fusion`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ea1_slow_fast_fusion/cpp) | Core | Multi-rate selection with `OnEach`, `LatestWithin`, and `Skip`. | [Slow/Fast Fusion](/holoscan/sdk-user-guide/examples/slow-fast-fusion) |
-| [`ea1_external_clients`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ea1_external_clients) | Core | Standalone non-operator processes attaching through `ChannelRuntime`. | [External Clients](/holoscan/sdk-user-guide/examples/external-clients) |
+| [`camera_imu_control`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/camera_imu_control/cpp) | Core | The hero application: fusion, contracts, bounded tensors, and external endpoints. | [Camera + IMU Control](/holoscan/sdk-user-guide/examples/camera-imu-control) |
+| [`slow_fast_fusion`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/slow_fast_fusion/cpp) | Core | Multi-rate selection with `OnEach`, `LatestWithin`, and `Skip`. | [Slow/Fast Fusion](/holoscan/sdk-user-guide/examples/slow-fast-fusion) |
+| [`external_clients`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/external_clients) | Core | Standalone non-operator processes attaching through `ChannelRuntime`. | [External Clients](/holoscan/sdk-user-guide/examples/external-clients) |
 
 ## Start here: hello_world
 
@@ -126,7 +129,7 @@ int main() {
 }
 ```
 
-## The hello tour: one dependency per example
+## The hello tour: one concern per example
 
 The remaining `hello_*` examples are deliberate one-liners. Each is a smoke
 test for exactly one public API surface and the header-only dependencies it
@@ -139,8 +142,8 @@ pulls in, so a failure points directly at the missing piece:
   managed-tensor context and queries shape and dtype metadata. Host-only; it
   needs no CUDA device.
 - **`hello_schema`** — encodes a tensor's image metadata with the schema
-  helpers and parses it back, exercising the FlatBuffers-backed
-  `holoscan::schema` library.
+  helpers and parses it back. The helpers live in `holoscan::sensor_io`, which
+  brings the FlatBuffers-backed `holoscan::schema` library with it.
 - **`hello_logger`** — sets a runtime log level and emits fmt-formatted
   messages through `HOLOSCAN_LOG_INFO` and friends, verifying that the SDK
   never overrides your compile-time log threshold.
@@ -152,9 +155,9 @@ pulls in, so a failure points directly at the missing piece:
 Each takes a few minutes to read end to end. The guided walkthrough is the
 [Hello Tour](/holoscan/sdk-user-guide/examples/hello-tour).
 
-## The hero application: ea1_camera_imu_control
+## The hero application: camera_imu_control
 
-`ea1_camera_imu_control` is the running example used throughout this guide: a
+`camera_imu_control` is the running example used throughout this guide: a
 camera producer, a high-rate IMU input, a fusion stage, and a control output.
 It is the single best example to study once you have finished
 [Getting Started](/holoscan/sdk-user-guide/getting-started/core-concepts),
@@ -163,8 +166,8 @@ because it exercises the whole compose → compile → run arc in one executable
 - an embedded fusion graph with typed operators and temporal contracts,
 - a bounded host `Tensor` producer drawing from a preallocated pool,
 - an IMU **external import** and a control-result **external export** with
-  stable, explicit endpoint names (`ea1.camera_imu.imu`,
-  `ea1.camera_imu.control`),
+  stable, explicit endpoint names (`baseline.camera_imu.imu`,
+  `baseline.camera_imu.control`),
 - a real `RunSession` plus an in-process `ChannelRuntime` client that
   publishes IMU samples and consumes one control result through the same
   catalog contract the standalone companions use,
@@ -179,15 +182,17 @@ step. The full walkthrough is
 the artifact story continues in
 [Plan Tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
 
-## Multi-rate selection: ea1_slow_fast_fusion
+## Multi-rate selection: slow_fast_fusion
 
-`ea1_slow_fast_fusion` is the ordinary application root distilled: one
+`slow_fast_fusion` is the ordinary application root distilled: one
 `holoscan::Graph`, the free `compile()` and `run_async()` functions, typed
 operators, and two periodic rates. The fast input drives fusion via `OnEach`;
 the most recent causal slow sample is admitted with `LatestWithin` only while
 it is within its declared age, and the activation is skipped (`Skip`)
-otherwise. The main routine stops after a bounded prefix and reports the
-compiled plan's trigger and selection counts.
+otherwise. After the sixth fused sample, the sink requests immediate whole-run
+success and the main routine verifies `kRequestedCompleted`; this request does
+not imply downstream drain. The program also reports the compiled plan's
+trigger and selection counts.
 
 Read it when you reach
 [Temporal Contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts) —
@@ -195,9 +200,9 @@ it is the smallest complete demonstration of trigger, input selection, and
 missing-data policy working together. The walkthrough is
 [Slow/Fast Fusion](/holoscan/sdk-user-guide/examples/slow-fast-fusion).
 
-## Standalone processes: ea1_external_clients
+## Standalone processes: external_clients
 
-`ea1_external_clients` contains two ordinary, non-operator programs that talk
+`external_clients` contains two ordinary, non-operator programs that talk
 to the hero application from separate processes:
 
 - **`sensor_daemon`** publishes `uint32_t` IMU samples with caller-owned
@@ -251,7 +256,7 @@ The installed package places `holoscan-config.cmake` under
 
 ```bash
 cd examples
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 
@@ -259,7 +264,7 @@ Then run any example directly from its build directory:
 
 ```bash
 ./build/hello_world/hello_world
-./build/ea1_slow_fast_fusion/ea1_slow_fast_fusion
+./build/slow_fast_fusion/slow_fast_fusion
 ```
 
 Each example registers a CTest entry with a pass expression, so the whole
@@ -279,7 +284,7 @@ The hero application additionally exposes a dedicated build target that emits
 its deployment bundle without running anything:
 
 ```bash
-cmake --build build --target ea1_camera_imu_control_graph_artifacts
+cmake --build build --target camera_imu_control_graph_artifacts
 ```
 
 Building `hello_cccl` and `hello_matx` requires the CUDA Toolkit, CCCL, and
@@ -293,11 +298,11 @@ them individually from their `CMakeLists.min.txt` files.
   greeting.
 - The `hello_*` tour isolates one public surface per example — errors,
   tensors, schemas, logging, CCCL, MatX.
-- `ea1_camera_imu_control` is the hero application: contracts, bounded
+- `camera_imu_control` is the hero application: contracts, bounded
   tensors, external endpoints, and cold artifact emission in one executable.
-- `ea1_slow_fast_fusion` is the minimal demonstration of multi-rate selection
+- `slow_fast_fusion` is the minimal demonstration of multi-rate selection
   with `OnEach`, `LatestWithin`, and `Skip`.
-- `ea1_external_clients` shows standalone processes attaching through the
+- `external_clients` shows standalone processes attaching through the
   public `ChannelRuntime` API and an explicit endpoint catalog.
 - Build in-tree with `CMakeLists.txt` or standalone with
   `CMakeLists.min.txt`; run the gallery as a test suite with `ctest`.

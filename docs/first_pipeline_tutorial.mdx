@@ -203,16 +203,18 @@ The shutdown handshake has three parts: `request_stop()` asks for a
 cooperative stop and returns immediately; `wait()` joins every run-owned
 activity; `termination()` then reports the stable outcome — `kStopped` for
 a cooperative stop, `kCompleted` when an admitted plan has no work left (for
-example, a compiler-accepted empty graph), and `kFailed` if startup or execution
-failed. This recurring nonempty pipeline never infers a natural completion
-point, so it requests a stop explicitly. The fixed sleep here is tutorial
-simplicity; real applications block on their own completion signal, as shown in
-[Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+example, a compiler-accepted empty graph), `kRequestedCompleted` when an
+operator requests immediate whole-run success, and `kFailed` if startup or
+execution failed. Requested completion does not imply EOS, downstream drain,
+or delivery of queued samples. This recurring nonempty pipeline never infers a
+natural completion point, so it requests a stop explicitly. The fixed sleep
+here is tutorial simplicity; real applications block on their own completion
+signal, as shown in [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
 
 ## The complete program
 
 Here is the whole pipeline in one file, following the same authoring pattern
-as richer SDK sample applications such as `ea1_slow_fast_fusion`.
+as richer SDK sample applications such as `slow_fast_fusion`.
 This listing is the readable tutorial variant. The shipped `first_pipeline`
 uses the same graph and contracts with a shorter period and a
 condition-variable completion signal so its smoke test finishes quickly.

@@ -28,7 +28,7 @@ flowchart LR
 From the `cpp/` directory, using an installed SDK:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build --parallel 4
 ```
 

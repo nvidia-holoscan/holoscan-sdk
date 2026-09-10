@@ -13,8 +13,11 @@ rapids_cpm_find(reflectcpp "${reflectcpp_VERSION}"
         GITHUB_REPOSITORY getml/reflect-cpp
         GIT_TAG "v${reflectcpp_VERSION}"
         GIT_SHALLOW TRUE
+        # Holoscan builds reflect-cpp directly; its development-only vcpkg submodule is unused.
+        GIT_CONFIG "submodule.vcpkg.update=none"
     OPTIONS
         "REFLECTCPP_BUILD_TESTS OFF"
+        "REFLECTCPP_USE_VCPKG OFF"
         "REFLECTCPP_YAML OFF"
     EXCLUDE_FROM_ALL
 )

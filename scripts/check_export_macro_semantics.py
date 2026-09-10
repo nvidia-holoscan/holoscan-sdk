@@ -28,8 +28,10 @@ PUBLIC_HEADER_ROOTS = (
     ("include/holoscan/schema", "HOLOSCAN_SCHEMA_EXPORT"),
     ("public/include/holoscan", "HOLOSCAN_CORE_EXPORT"),
     ("include/holoscan", "HOLOSCAN_CORE_EXPORT"),
-    ("public/modules/holomq/include/holomq", "HOLOMQ_EXPORT"),
+    ("public/include/holomq", "HOLOMQ_EXPORT"),
     ("include/holomq", "HOLOMQ_EXPORT"),
+    ("public/modules/visualization/include/holoviz", "HOLOVIZ_EXPORT"),
+    ("include/holoviz", "HOLOVIZ_EXPORT"),
 )
 PUBLIC_HEADER_FILE_MACROS = {
     "holoscan/config/io.hpp": "HOLOSCAN_CONFIG_IO_EXPORT",
@@ -37,6 +39,7 @@ PUBLIC_HEADER_FILE_MACROS = {
 }
 ALLOWLIST_SECTIONS = {
     "HOLOMQ_EXPORT": "holomq",
+    "HOLOVIZ_EXPORT": "holoviz",
     "HOLOSCAN_CORE_EXPORT": "holoscan_core",
 }
 DEFAULT_ALLOWLIST = Path(__file__).resolve().parents[1] / "ci/abi/export-macro-allowlist.yml"

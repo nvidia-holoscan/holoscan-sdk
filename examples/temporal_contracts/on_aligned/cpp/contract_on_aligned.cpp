@@ -200,7 +200,7 @@ class AlignedJoin final : public holoscan::Operator<> {
 int main() {
   AlignedObservation::reset();
 
-  holoscan::Graph graph{"ea1-contract-on-aligned"};
+  holoscan::Graph graph{"holoscan-contract-on-aligned"};
   const auto rig = graph.op<StereoRigSource>("rig");
   const auto join = graph.op<AlignedJoin>("join");
   graph.add_flow(rig->left, join->left, holoscan::ConnectionOptions{.queue_depth = 16U});

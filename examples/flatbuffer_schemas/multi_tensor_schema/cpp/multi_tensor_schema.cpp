@@ -44,23 +44,25 @@ constexpr std::array<std::int64_t, 2U> kCalibrationShape{2, 3};
 constexpr std::array<std::uint8_t, 4U> kLeftPixels{1U, 2U, 3U, 4U};
 constexpr std::array<std::uint8_t, 4U> kRightPixels{5U, 6U, 7U, 8U};
 constexpr std::array<float, 6U> kCalibration{1.0F, 0.0F, 0.5F, 0.0F, 1.0F, -0.5F};
-constexpr holoscan::TensorPortLayout kImageLayout{
+constexpr holoscan::TensorRepresentation kImageLayout{
     .memory_kind = holoscan::MemoryKind::kCudaDevice,
     .dtype = kImageDtype,
     .rank = 2U,
 };
-constexpr holoscan::TensorPortLayout kCalibrationLayout{
+constexpr holoscan::TensorRepresentation kCalibrationLayout{
     .memory_kind = holoscan::MemoryKind::kHost,
     .dtype = kCalibrationDtype,
     .rank = 2U,
 };
-constexpr holoscan::TensorFieldOutputContract kImageContract{
-    .layout = kImageLayout,
-    .max_byte_span = kLeftPixels.size(),
+constexpr holoscan::TensorOutputSpec kImageSpec{
+    .representation = kImageLayout,
+    .bounds = holoscan::tensor_bounds(kLeftPixels.size()),
+    .storage = holoscan::TensorOutputStorage::kRuntimePool,
 };
-constexpr holoscan::TensorFieldOutputContract kCalibrationContract{
-    .layout = kCalibrationLayout,
-    .max_byte_span = kCalibration.size() * sizeof(kCalibration.front()),
+constexpr holoscan::TensorOutputSpec kCalibrationSpec{
+    .representation = kCalibrationLayout,
+    .bounds = holoscan::tensor_bounds(kCalibration.size() * sizeof(kCalibration.front())),
+    .storage = holoscan::TensorOutputStorage::kRuntimePool,
 };
 
 struct Completion {
@@ -91,8 +93,8 @@ class Source final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
     auto& frames = spec.output(output, "frames").max_emits_per_compute(1U);
-    frames.tensor_fields(std::array{Fields::left, Fields::right}, kImageContract);
-    frames.tensor_field(Fields::calibration, kCalibrationContract);
+    frames.tensor_fields(std::array{Fields::left, Fields::right}, kImageSpec);
+    frames.tensor_field(Fields::calibration, kCalibrationSpec);
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {
@@ -172,9 +174,12 @@ class Sink final : public holoscan::Operator<> {
   void setup(holoscan::OperatorSpec& spec) override {
     auto& builder = spec.input(input, "frames").queue_depth(1U);
     // Purely optional: constrain the logical Tensor contract expected for each schema field.
-    builder.tensor_field(Fields::left).expects_tensor(kImageLayout);
-    builder.tensor_field(Fields::right).expects_tensor(kImageLayout);
-    builder.tensor_field(Fields::calibration).expects_tensor(kCalibrationLayout);
+    builder.tensor_field(Fields::left)
+        .expects_tensor(holoscan::TensorInputSpec{.representation = kImageLayout});
+    builder.tensor_field(Fields::right)
+        .expects_tensor(holoscan::TensorInputSpec{.representation = kImageLayout});
+    builder.tensor_field(Fields::calibration)
+        .expects_tensor(holoscan::TensorInputSpec{.representation = kCalibrationLayout});
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {

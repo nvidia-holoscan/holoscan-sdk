@@ -86,11 +86,13 @@ struct ResolvedServiceStaticRequirements {
   std::optional<PodCatalogIdentityRecord> pod_identity;  ///< Derived POD identity when applicable.
   std::optional<SchemaIdentityRecord>
       schema_identity;  ///< Complete schema identity when applicable.
-  std::optional<LogicalTensorRequirementsRecord> tensor;  ///< Logical Tensor wire policy.
-  QueuePolicy queue_policy{QueuePolicy::kBlocking};       ///< Frozen service queue family.
-  std::uint32_t max_subscriber_depth{1U};                 ///< Positive service queue maximum.
-  std::uint32_t max_subscriber_borrowed{1U};              ///< Positive service borrow maximum.
-  std::uint32_t publisher_history_depth{};  ///< Frozen EA1 history depth; exactly zero.
+  std::optional<TensorBoundaryContractRecord> tensor;  ///< Logical Tensor wire policy.
+  /// Complete descriptor-schema field contracts in canonical field-id order.
+  std::vector<DescriptorTensorTopicFieldRecord> tensor_fields;
+  QueuePolicy queue_policy{QueuePolicy::kBlocking};  ///< Frozen service queue family.
+  std::uint32_t max_subscriber_depth{1U};            ///< Positive service queue maximum.
+  std::uint32_t max_subscriber_borrowed{1U};         ///< Positive service borrow maximum.
+  std::uint32_t publisher_history_depth{};  ///< Frozen baseline history depth; exactly zero.
   bool event_wake{true};                    ///< Frozen readiness/event mode.
 };
 
@@ -128,7 +130,9 @@ struct ChannelEndpointRecord {
   std::optional<ClockKey> capture_time_clock;  ///< Required capture-time domain when present.
   ClockHealthOptions clock_health{};           ///< Explicit normalized ordinary or monitored mode.
   TopicAttachPolicy attach{};                  ///< Peer requirement and finite wait bound.
-  std::optional<LogicalTensorRequirementsRecord> tensor;  ///< Bounded Tensor wire policy.
+  std::optional<TensorBoundaryContractRecord> tensor;  ///< Bounded Tensor wire policy.
+  /// Complete descriptor-schema field contracts in canonical field-id order.
+  std::vector<DescriptorTensorTopicFieldRecord> tensor_fields;
   EndpointBounds bounds{};  ///< Direction-local finite endpoint bounds.
 
   // These three records are the normalized ownership seam. The fields above
@@ -185,6 +189,8 @@ class ChannelEndpointCatalogAccess {
   /// @brief Publish one complete immutable catalog state.
   /// @param state Deep-owning normalized state, or null for an empty catalog.
   /// @return Public copyable immutable catalog facade.
+  // The shared state is an ownership sink; by-value admission preserves move-only caller intent.
+  // NOLINTNEXTLINE(performance-unnecessary-value-param)
   [[nodiscard]] static ChannelEndpointCatalog make(
       std::shared_ptr<const ChannelEndpointCatalogState> state) noexcept {
     return ChannelEndpointCatalog{std::move(state)};
@@ -237,6 +243,19 @@ class ChannelEndpointCatalogAccess {
   [[nodiscard]] HOLOSCAN_CORE_EXPORT static ClockId capture_clock_id(
       ChannelEndpointCatalog::EndpointView endpoint) noexcept;
 
+  /// @brief Return how many clocks the catalog owning this endpoint declares.
+  ///
+  /// Catalog clock identities are dense and one-based, so this count is the upper bound of the
+  /// resolvable identity range. A transport boundary uses it to reject an identity no peer reading
+  /// this catalog could resolve.
+  ///
+  /// @param endpoint Borrowed public endpoint view.
+  /// @return Declared clock count, or zero for an empty or invalid view.
+  [[nodiscard]] static std::uint64_t clock_count(
+      ChannelEndpointCatalog::EndpointView endpoint) noexcept {
+    return endpoint ? static_cast<std::uint64_t>(endpoint.state_->clocks.size()) : 0U;
+  }
+
   [[nodiscard]] static PodTypeIdentityView pod_view(
       const PodCatalogIdentityRecord* record) noexcept {
     return PodTypeIdentityView{record};
@@ -255,9 +274,9 @@ class ChannelEndpointCatalogAccess {
     return ClockHealthContractView{options};
   }
 
-  [[nodiscard]] static LogicalTensorRequirementsView tensor_requirements_view(
-      const LogicalTensorRequirementsRecord* record) noexcept {
-    return LogicalTensorRequirementsView{record};
+  [[nodiscard]] static TensorBoundaryContractView tensor_requirements_view(
+      const TensorBoundaryContractRecord* record) noexcept {
+    return TensorBoundaryContractView{record};
   }
 };
 
@@ -267,6 +286,7 @@ class ChannelEndpointCompatibilityReportAccess {
   /// @brief Publish one complete report state.
   /// @param state Deep-owning immutable state.
   /// @return Public copyable report facade.
+  // NOLINTNEXTLINE(performance-unnecessary-value-param)
   [[nodiscard]] static ChannelEndpointCompatibilityReport make(
       std::shared_ptr<const ChannelEndpointCompatibilityReportState> state) noexcept {
     return ChannelEndpointCompatibilityReport{std::move(state)};

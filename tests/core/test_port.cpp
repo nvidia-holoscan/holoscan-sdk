@@ -187,7 +187,7 @@ static_assert(std::same_as<decltype(std::declval<ScalarLoan&>().value()), std::u
 static_assert(std::same_as<decltype(std::declval<ScalarLoan&>().operator->()), std::uint32_t*>);
 static_assert(std::same_as<decltype(*std::declval<ScalarLoan&>()), std::uint32_t&>);
 static_assert(noexcept(std::declval<ScalarLoan&>().cancel()));
-static_assert(!HasEmplace<ScalarLoan>);  // Deliberately retained for post-EA1 retrieval.
+static_assert(!HasEmplace<ScalarLoan>);  // Deliberately retained for post-baseline retrieval.
 
 // REQ: OPERATOR-014
 // REQ: OPERATOR-021

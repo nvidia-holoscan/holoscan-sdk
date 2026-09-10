@@ -23,9 +23,7 @@ if(TARGET holoscan::experimental_params_web_tuner)
             holoscan::core
             holoscan::experimental_params_web_tuner
     )
-    holoscan_configure_example_install(web_tuner
-        INSTALL_RPATH "$ORIGIN/../../../../lib"
-    )
+    holoscan_configure_example_install(web_tuner)
 
     if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # REQ: SYSTEM-015
@@ -39,7 +37,7 @@ if(TARGET holoscan::experimental_params_web_tuner)
     endif()
 
     install(TARGETS web_tuner
-        RUNTIME DESTINATION examples/experimental/web_tuner/cpp
+        RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/web_tuner/cpp"
         COMPONENT holoscan-examples
     )
 else()

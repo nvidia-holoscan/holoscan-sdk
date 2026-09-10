@@ -12,7 +12,7 @@ compile error or as an exception thrown at the exact line that authored the
 invalid request.
 
 **Complete C++ examples:** [`examples/first_pipeline/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/first_pipeline/cpp)
-and [`examples/ea1_slow_fast_fusion/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ea1_slow_fast_fusion/cpp)
+and [`examples/slow_fast_fusion/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/slow_fast_fusion/cpp)
 
 <Note title="You will learn">
   - How to construct a named `Graph` and add operators with `op<Op>()`
@@ -105,14 +105,25 @@ graph.add_flow(preview->frame, display->frame,
                holoscan::ConnectionOptions{
                    .queue_policy = holoscan::QueuePolicy::kDropOldest,
                    .queue_depth  = 4U,
-               });
+});
+```
+
+Leaving `queue_depth` unset asks compilation to size the edge from admitted
+nominal-rate and temporal-contract evidence when that evidence is finite. An
+explicit value is different: it is an exact logical and storage-authority pin,
+not a lower bound that automatic sizing may silently increase.
+
+```cpp
+graph.add_flow(camera->frame, recorder->frame);  // automatic when evidence closes
+graph.add_flow(camera->frame, preview->frame,
+               holoscan::ConnectionOptions{.queue_depth = 4U});  // exactly four
 ```
 
 The two options you will reach for first:
 
 | Option | Type | Meaning |
 |---|---|---|
-| `queue_depth` | `std::optional<std::uint32_t>` | History depth at the destination input. Must be positive; leave unset to accept the default. |
+| `queue_depth` | `std::optional<std::uint32_t>` | Exact history depth at the destination input. It must be positive. When omitted, compilation uses finite rate-and-contract evidence when available and otherwise preserves the legacy bounded fallback. |
 | `queue_policy` | `holoscan::QueuePolicy` | What happens when the queue is full. `kBlocking` (the default) preserves every accepted sample and applies backpressure; `kDropOldest` retains an in-order backlog up to `queue_depth` and replaces its oldest unread sample when full. |
 
 The slow/fast pattern is a good intuition pump: a high-rate IMU feeding a
@@ -121,15 +132,21 @@ complete data, while a frame pipeline that must not drop wants `kBlocking`
 with a depth sized for its worst-case burst. Increasing a `kDropOldest` depth
 above one intentionally changes the survivor set: the consumer receives the
 newest bounded backlog in order rather than only the freshest unread sample.
-The `ea1_slow_fast_fusion` example wires exactly this shape:
+The `slow_fast_fusion` example wires exactly this shape:
 
 ```cpp
 graph.add_flow(slow->output, fuse->slow, holoscan::ConnectionOptions{.queue_depth = 8U});
 graph.add_flow(fast->output, fuse->fast, holoscan::ConnectionOptions{.queue_depth = 16U});
 graph.add_flow(fuse->fused,  sink->input, holoscan::ConnectionOptions{.queue_depth = 8U});
 ```
+
 These options are cold authoring inputs: they request a shape for the queue
 that compilation will materialize. They never resize a live runtime queue.
+If an explicit depth is below a semantic hard floor, compilation rejects it;
+if it is merely below the nominal recommendation, compilation preserves the
+requested depth and reports the advisory evidence. See
+[Rate-aware queue and pool sizing](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#size-queue-entries-from-nominal-rates)
+for the sizing equations and lifecycle allocation boundary.
 
 ## Declare the default clock — this is mandatory
 

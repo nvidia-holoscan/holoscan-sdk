@@ -28,7 +28,7 @@ function(holoscan_add_channel_expected_compile_fail_test
 
     add_test(NAME "CHANNEL_EXPECTED_COMPILE_FAIL.${test_name}"
         COMMAND ${CMAKE_COMMAND}
-            -DHOLOSCAN_BUILD_DIR=${CMAKE_BINARY_DIR}
+            -DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}
             -DHOLOSCAN_BUILD_CONFIG=$<CONFIG>
             -DHOLOSCAN_TARGET=${target_name}
             -DHOLOSCAN_EXPECTED_DIAGNOSTIC=${diagnostic_fragment}
@@ -72,12 +72,13 @@ add_executable(channel_test
     test_catalog_pod_interprocess.cpp
     test_channel.cpp
     test_channel_tensor_loan.cpp
+    test_channel_wait.cpp
     test_pod_codec.cpp
     ../common/allocation_counter.cpp
     ../../src/channel/channel_common.cpp
 )
 holoscan_configure_channel_test_clang_tidy(channel_test)
-target_include_directories(channel_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(channel_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 add_executable(channel_interprocess_child
     channel_interprocess_child.cpp
@@ -89,12 +90,18 @@ add_executable(channel_catalog_pod_interprocess_child
 )
 holoscan_configure_channel_test_clang_tidy(channel_catalog_pod_interprocess_child)
 
+add_executable(channel_event_wait_child
+    channel_event_wait_child.cpp
+)
+holoscan_configure_channel_test_clang_tidy(channel_event_wait_child)
+
 target_link_libraries(channel_test
     PRIVATE
         channel_process_test_support
         flatbuffers::flatbuffers
         holoscan::core
         holoscan::schema
+        holoscan::sensor_io
         holomq::holomq
         GTest::gtest_main
 )
@@ -113,20 +120,28 @@ target_link_libraries(channel_catalog_pod_interprocess_child
         holoscan::core
         holomq::holomq
 )
+target_link_libraries(channel_event_wait_child
+    PRIVATE
+        channel_process_test_support
+        holoscan::core
+        holomq::holomq
+)
 target_compile_definitions(channel_test
     PRIVATE
         HOLOSCAN_CHANNEL_INTERPROCESS_CHILD_EXE="$<TARGET_FILE:channel_interprocess_child>"
         HOLOSCAN_CHANNEL_CATALOG_POD_INTERPROCESS_CHILD_EXE="$<TARGET_FILE:channel_catalog_pod_interprocess_child>"
+        HOLOSCAN_CHANNEL_EVENT_WAIT_CHILD_EXE="$<TARGET_FILE:channel_event_wait_child>"
 )
 add_dependencies(channel_test
     channel_catalog_pod_interprocess_child
+    channel_event_wait_child
     channel_interprocess_child
 )
 
 gtest_discover_tests(channel_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX CHANNEL.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(channel_schema_test
@@ -178,6 +193,7 @@ target_link_libraries(channel_schema_test
         flatbuffers::flatbuffers
         holoscan::core
         holoscan::schema
+        holoscan::sensor_io
         holomq::holomq
         GTest::gtest_main
 )
@@ -187,6 +203,7 @@ target_link_libraries(channel_schema_interprocess_child
         flatbuffers::flatbuffers
         holoscan::core
         holoscan::schema
+        holoscan::sensor_io
         holomq::holomq
 )
 target_compile_definitions(channel_schema_test
@@ -200,7 +217,7 @@ add_dependencies(channel_schema_test
 gtest_discover_tests(channel_schema_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX CHANNEL_SCHEMA.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(channel_tensor_test
@@ -247,5 +264,5 @@ add_dependencies(channel_test
 gtest_discover_tests(channel_tensor_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX CHANNEL.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )

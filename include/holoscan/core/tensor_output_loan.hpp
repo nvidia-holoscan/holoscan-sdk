@@ -69,11 +69,11 @@ struct TensorLoanRequest {
   TensorByteStridesView byte_strides{std::nullopt};  ///< Optional explicit byte strides.
 };
 
-/// @brief Bound direct tensor allocation for one output declaration.
+/// @brief Preserve accepted finite Tensor-pool bounds in compiler and Runtime records.
 ///
-/// Both values are finite compile-time admission inputs. A zero value rejects direct allocation;
-/// it never means unbounded or infer from the first activation.
-struct TensorAllocationBounds {
+/// Application authors request runtime storage through TensorOutputSpec and TensorBounds.
+/// This deep-owned record is the normalized physical-plan form after those contracts are admitted.
+struct TensorPoolBounds {
   std::uint32_t max_rank{};     ///< Maximum admitted tensor rank.
   std::size_t max_byte_span{};  ///< Maximum byte span including explicit strides.
 };

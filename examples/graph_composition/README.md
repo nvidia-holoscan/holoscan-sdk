@@ -58,7 +58,7 @@ you have not built a multi-operator graph yet, start at
 From this `cpp/` folder:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

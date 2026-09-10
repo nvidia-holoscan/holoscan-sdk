@@ -13,6 +13,7 @@
 #include <type_traits>
 
 #include <holoscan/core/lifecycle.hpp>
+#include <holoscan/core/port.hpp>
 
 #include <core/lifecycle_context_internal.hpp>
 #include <core/lifecycle_context_test_access.hpp>
@@ -56,6 +57,21 @@ expected<ClockRef, Error> reject_clock(void*, const ClockKey&) noexcept {
 
 expected<NotificationSender, Error> reject_sender(void*, NotificationSource&) noexcept {
   return make_unexpected(Error{ErrorCode::kNotReady});
+}
+
+struct LifecycleRateServiceProbe {
+  bool bind_called{};
+  bool resolve_called{};
+};
+
+expected<void, Error> record_rate_bind(void* opaque, const void*, Rate) noexcept {
+  static_cast<LifecycleRateServiceProbe*>(opaque)->bind_called = true;
+  return {};
+}
+
+expected<PortRateView, Error> record_rate_resolve(void* opaque, const void*, bool) noexcept {
+  static_cast<LifecycleRateServiceProbe*>(opaque)->resolve_called = true;
+  return PortRateView{};
 }
 
 // Tracks retain/release/post invocations on a NotificationSender to verify
@@ -131,13 +147,12 @@ TEST(LifecycleValues, StagesAndBarriersAreClosedAndPortable) {
   };
   for (std::size_t index = 0; index < stages.size(); ++index) {
     EXPECT_EQ(static_cast<std::uint8_t>(stages[index]), index);
+    EXPECT_TRUE(is_valid_lifecycle_stage(stages[index]));
+    EXPECT_EQ(is_lifecycle_forward_stage(stages[index]), index <= 5U);
   }
-  for (std::size_t index = 0; index < 6U; ++index) {
-    EXPECT_TRUE(is_lifecycle_forward_stage(stages[index]));
-  }
-  EXPECT_FALSE(is_lifecycle_forward_stage(LifecycleStage::kStop));
-  EXPECT_FALSE(is_lifecycle_forward_stage(LifecycleStage::kRelease));
-  EXPECT_FALSE(is_lifecycle_forward_stage(std::bit_cast<LifecycleStage>(std::uint8_t{255U})));
+  const auto unknown_stage = std::bit_cast<LifecycleStage>(std::uint8_t{255U});
+  EXPECT_FALSE(is_valid_lifecycle_stage(unknown_stage));
+  EXPECT_FALSE(is_lifecycle_forward_stage(unknown_stage));
   constexpr std::array phases{
       LifecycleTransitionPhase::kNone,
       LifecycleTransitionPhase::kStartupForward,
@@ -229,11 +244,40 @@ TEST(LifecycleContext, BindsExactPhaseGenerationAndColdServices) {
   EXPECT_EQ(notification_control.releases, 2U);
 
   detail::LifecycleContextState inert;
-  const LifecycleContext inert_context = detail::LifecycleContextTestAccess::context(inert);
+  LifecycleContext inert_context = detail::LifecycleContextTestAccess::context(inert);
   EXPECT_EQ(inert_context.transition_phase(), LifecycleTransitionPhase::kNone);
   const auto inert_clock = inert_context.resolve_clock(ClockKey::default_clock());
   ASSERT_FALSE(inert_clock);
   EXPECT_EQ(inert_clock.error().code, ErrorCode::kLifecycleInvalidCallingContext);
+
+  Output<std::uint32_t> inert_output{"output"};
+  const auto inert_bind = inert_context.bind_nominal_rate(inert_output, Rate::hz(60U));
+  ASSERT_FALSE(inert_bind);
+  EXPECT_EQ(inert_bind.error().code, ErrorCode::kLifecycleInvalidCallingContext);
+  EXPECT_EQ(inert_bind.error().message, "PORT_RATE_BIND_NOT_AUTHORIZED");
+  const auto inert_rate = inert_context.rate(inert_output);
+  ASSERT_FALSE(inert_rate);
+  EXPECT_EQ(inert_rate.error().code, ErrorCode::kLifecycleInvalidCallingContext);
+  EXPECT_EQ(inert_rate.error().message, "PORT_RATE_VIEW_INVALID");
+
+  LifecycleRateServiceProbe rate_service;
+  detail::LifecycleContextState rate_state{
+      .rate_state = &rate_service,
+      .bind_nominal_rate = &record_rate_bind,
+      .resolve_rate = &record_rate_resolve,
+  };
+  LifecycleContext rate_context = detail::LifecycleContextTestAccess::context(rate_state);
+  const auto null_bind = detail::LifecycleContextTestAccess::bind_nominal_rate_port(
+      rate_context, nullptr, Rate::hz(60U));
+  ASSERT_FALSE(null_bind);
+  EXPECT_EQ(null_bind.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(null_bind.error().message, "PORT_RATE_BIND_NOT_AUTHORIZED");
+  const auto null_rate = detail::LifecycleContextTestAccess::rate_port(rate_context, nullptr, true);
+  ASSERT_FALSE(null_rate);
+  EXPECT_EQ(null_rate.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(null_rate.error().message, "PORT_RATE_VIEW_INVALID");
+  EXPECT_FALSE(rate_service.bind_called);
+  EXPECT_FALSE(rate_service.resolve_called);
 }
 
 // REQ: LIFECYCLE-005

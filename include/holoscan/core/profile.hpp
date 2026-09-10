@@ -9,7 +9,7 @@
 
 namespace holoscan {
 
-/// @brief Identify one closed EA1 profile request.
+/// @brief Identify one closed baseline profile request.
 enum class Profile : std::uint8_t {
   kStandard = 0,   ///< General-purpose default capability policy.
   kRobotics = 1,   ///< Robotics-oriented capability and diagnostic policy.

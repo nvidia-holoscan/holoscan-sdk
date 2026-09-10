@@ -34,6 +34,9 @@ enum class RuntimePhaseCounter : std::uint8_t {
   kCandidatesFrozen,
   kCandidatesSelected,
   kReadinessPollDispatches,
+  kReadinessPollSkippedByCoordinatorBound,
+  kReadinessPollSkippedBySourceCredit,
+  kReadinessPollSkippedByNoTarget,
   kDirectContinuationReceiptsAccepted,
   kDirectContinuationPollElisions,
   kDirectCompositeAttempts,
@@ -56,7 +59,49 @@ enum class RuntimePhaseCounter : std::uint8_t {
   kChannelActivationCuts,
   kChannelActivationCutDrains,
   kChannelActivationCutSkips,
+  kChannelActivationCutInventoryScans,
+  kChannelActivationCutSubscriberProbes,
+  kChannelActivationCutTransportProbes,
+  kChannelActivationCutMaterializations,
   kChannelReceiveBackpressured,
+  kChannelRetirementPromotedNothing,
+  kChannelPollIncomplete,
+  kChannelDirectIngressPromotionPasses,
+  kChannelDirectIngressPromotions,
+  kChannelStagedEvidenceSweepVisits,
+  kChannelProtectedTerminalProbesWithPendingData,
+  kChannelPreWitnessReplacements,
+  kChannelFreshnessReservationReleaseDeferred,
+  kChannelReleasedClaimRefillReplacementDeclined,
+  kChannelReleasedClaimRefillPublished,
+  // One group per outcome of the superseded-retention reconcile. Every decline is counted on its
+  // own branch: the reconcile trades a bounded staleness for a possible lost activation, so which
+  // branch declined is the whole diagnostic question, and an aggregate "declined" would not
+  // separate a gate that is working from a gate that never fires.
+  kTemporalRetentionCandidates,
+  kTemporalRetentionEvictions,
+  kTemporalRetentionDeclinedNotSuperseded,
+  kTemporalRetentionDeclinedUnboundedRound,
+  kTemporalRetentionDeclinedUncomparableCoordinate,
+  kTemporalRetentionDeclinedAboveFloor,
+  kTemporalRetentionDeclinedEvictionRefused,
+  kTemporalRetentionFloorResolved,
+  kTemporalRetentionFloorAbsent,
+  kTemporalRetentionEvictionPromoted,
+  kTemporalRetentionEvictionPromotedNothing,
+  kTemporalReuseLastRetainedRecordQueries,
+  kTemporalReuseLastComparatorCalls,
+  // A lost ordinary selection, split by whether the reconcile evicted from that selector in the
+  // same freeze round. Together they account for every ordinary selection that found no record.
+  kSelectionMissedAfterFreshnessEviction,
+  kSelectionMissedAfterUngatedEviction,
+  kSelectionMissedAfterUnpolledEviction,
+  kSelectionMissedAfterUnrefilledEviction,
+  kSelectionMissedWithoutFreshnessEviction,
+  kCandidateSourceLookupProbes,
+  kCandidateOrderComparisons,
+  kCandidateOrderMoves,
+  kCandidateTagTimeReservations,
   kLaneDispatches,
   kLaneComputeDispatches,
   kLaneDispatcherDispatches,
@@ -96,6 +141,9 @@ enum class RuntimePhaseTracePoint : std::uint8_t {
   kControllerTimeoutReturned,
   kReadinessPollReturned,
   kCandidateFrozen,
+  kCandidateSelected,
+  kInputSelectionPrepared,
+  kActivationPrepared,
   kComputeDispatchStarted,
   kComputeCallbackEntered,
   kComputeCallbackReturned,
@@ -240,6 +288,40 @@ inline bool subtract(const Sample& start, const Sample& finish, Sample& result) 
 
 }  // namespace runtime_thread_usage_detail
 
+/// Retain the coordinates one lost selection was decided on.
+///
+/// Kept apart from \ref RuntimePhaseTraceRecord deliberately. The general ring is written by
+/// high-frequency checkpoints and would both overflow before a rare lost selection occurred and
+/// add a write to the dispatch path this record exists to measure. This sink is written only when
+/// a selection is lost after an eviction, which is a few times per run.
+struct TemporalRetentionMissRecord {
+  std::int64_t witness_reference_ns{};
+  std::int64_t successor_capture_ns{};
+  std::int64_t floor_ns{};
+  // The selector's own account of why it selected nothing, which separates "the cache was empty"
+  // from "the cache held a record this witness could not use" -- opposite causes with opposite
+  // fixes, and indistinguishable from the fact of the loss alone.
+  std::uint8_t selection_state{};
+  std::uint8_t selection_reason{};
+  bool floor_present{};
+  /// Whether any record reached the selector's cache in the round that lost the selection.
+  bool ingested_this_round{};
+  /// Fate of the record the eviction was traded for: 0 none/pending, 1 published, 2 protected.
+  std::uint8_t refill_outcome{};
+  /// Capture of the record actually promoted, against successor_capture_ns which the gate approved.
+  std::int64_t promoted_capture_ns{};
+  /// Readiness events the poll loop ingested into the coordinator in that same round.
+  std::uint32_t round_ingested_count{};
+  /// Candidates still pending in the coordinator when the losing selection was formed. Non-zero
+  /// means the round ingested an event it never froze; zero means everything ingested was frozen
+  /// and none of it belonged to this selector's port.
+  std::uint32_t pending_at_selection{};
+  /// Reference coordinate of the oldest candidate still pending, or 0 when none is.
+  std::int64_t pending_oldest_reference_ns{};
+};
+
+inline constexpr std::size_t kTemporalRetentionMissCapacity = 256U;
+
 /// Own opt-in relaxed counters used by source-tree benchmarks and tests.
 class RuntimePhaseCounters final {
  public:
@@ -253,8 +335,10 @@ class RuntimePhaseCounters final {
   explicit RuntimePhaseCounters(std::span<RuntimePhaseTraceRecord> trace_storage) noexcept
       : trace_storage_(trace_storage) {}
 
-  void increment(RuntimePhaseCounter counter) noexcept {
-    counters_[index(counter)].value.fetch_add(1U, std::memory_order_relaxed);
+  void increment(RuntimePhaseCounter counter) noexcept { add(counter, 1U); }
+
+  void add(RuntimePhaseCounter counter, std::uint64_t delta) noexcept {
+    counters_[index(counter)].value.fetch_add(delta, std::memory_order_relaxed);
   }
 
   [[nodiscard]] Snapshot snapshot() const noexcept {
@@ -346,6 +430,21 @@ class RuntimePhaseCounters final {
     return trace_write_index_.load(std::memory_order_relaxed);
   }
 
+  /// Record one lost selection's deciding coordinates, or drop it once the sink is full.
+  void record_retention_miss(const TemporalRetentionMissRecord& record) noexcept {
+    const std::size_t index = retention_miss_index_.fetch_add(1U, std::memory_order_relaxed);
+    if (index >= retention_misses_.size()) {
+      return;
+    }
+    retention_misses_[index] = record;
+  }
+
+  /// Return the initialized prefix after the observed RunSession has stopped.
+  [[nodiscard]] std::span<const TemporalRetentionMissRecord> retention_misses() const noexcept {
+    return std::span{retention_misses_}.first(
+        std::min(retention_miss_index_.load(std::memory_order_relaxed), retention_misses_.size()));
+  }
+
   /// Return checkpoints dropped after exhausting borrowed storage.
   [[nodiscard]] std::uint64_t trace_dropped() const noexcept {
     return trace_dropped_.load(std::memory_order_relaxed);
@@ -389,6 +488,8 @@ class RuntimePhaseCounters final {
   std::span<RuntimePhaseTraceRecord> trace_storage_;
   std::atomic<std::size_t> trace_write_index_{};
   std::atomic<std::uint64_t> trace_dropped_{};
+  std::array<TemporalRetentionMissRecord, kTemporalRetentionMissCapacity> retention_misses_{};
+  std::atomic<std::size_t> retention_miss_index_{};
 };
 
 /// Aggregate one opt-in Runtime thread lifetime into preallocated role counters.

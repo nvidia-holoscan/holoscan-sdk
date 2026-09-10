@@ -21,9 +21,12 @@ set(consumer_build_dir "${HOLOSCAN_CONSUMER_WORK_DIR}/build")
 file(REMOVE_RECURSE "${install_prefix}" "${consumer_build_dir}")
 
 # Build the complete holoscan-core install target set before component installation. This keeps the
-# test usable after focused builds, where the schema DSO may not otherwise exist yet.
+# test usable after focused builds, where the schema DSO may not otherwise exist yet. sensor_io is
+# named for the same reason and not because this consumer uses a sensor type: the install exports one
+# holoscan-targets.cmake spanning every exported target, and find_package rejects it if any referenced
+# file is absent.
 set(sdk_build_command
-    "${CMAKE_COMMAND}" --build "${HOLOSCAN_BUILD_DIR}" --target core holoscan_schema
+    "${CMAKE_COMMAND}" --build "${HOLOSCAN_BUILD_DIR}" --target core holoscan_schema sensor_io
 )
 if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
     list(APPEND sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
@@ -36,10 +39,11 @@ endif()
 foreach(component IN ITEMS
         holoscan
         holoscan-dependencies
-        holomq-iceoryx2-libraries
+        iceoryx2-lib
         dev
         holomq
-        holoscan-core)
+        holoscan-core
+        holoscan-sensor-io)
     set(install_command
         "${CMAKE_COMMAND}" --install "${HOLOSCAN_BUILD_DIR}"
         --prefix "${install_prefix}"

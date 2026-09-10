@@ -14,7 +14,8 @@
 #include <holoscan/time/manual_clock.hpp>
 
 #include "compile_test_graph.hpp"
-#include "compiler/plan_artifact_lowering.hpp"
+#include "compiler/clock_readiness_lowering.hpp"
+#include "compiler/plan_generation.hpp"
 #include "core/graph_compiler_access.hpp"
 
 namespace holoscan {
@@ -363,8 +364,10 @@ TEST(CompileLowering, ResolvesDefaultReadinessClockOrRejectsAtomically) {
 // REQ: COMPILE-007
 TEST(CompileLowering, EquivalentClockCatalogsReproducePlanIdentityAndBytes) {
   Graph first_graph{"clock-scope"};
+  (void)first_graph.op<test::CompileTestOperator>("operator");
   (void)first_graph.add_clock<ManualClock>("clock", std::int64_t{0});
   Graph second_graph{"clock-scope"};
+  (void)second_graph.op<test::CompileTestOperator>("operator");
   (void)second_graph.add_clock<ManualClock>("clock", std::int64_t{0});
 
   const ExecutionPlan first = compile(first_graph);
@@ -399,8 +402,10 @@ TEST(CompileLowering, CanonicalSemanticDigestQualifiesPlanGenerationIdentity) {
 // REQ: COMPILE-007
 TEST(CompileLowering, EqualNumericClockIdsRequireMatchingCatalogSemantics) {
   Graph first_graph{"clock-scope"};
+  (void)first_graph.op<test::CompileTestOperator>("operator");
   (void)first_graph.add_clock<ManualClock>("first_clock", std::int64_t{0});
   Graph second_graph{"clock-scope"};
+  (void)second_graph.op<test::CompileTestOperator>("operator");
   (void)second_graph.add_clock<ManualClock>("second_clock", std::int64_t{0});
 
   const ExecutionPlan first = compile(first_graph);
@@ -438,7 +443,9 @@ TEST(CompileLowering, EqualNumericClockIdsRequireMatchingCatalogSemantics) {
 // REQ: COMPILE-010
 TEST(CompileLowering, RejectsUnsupportedConverterDisableRatherThanIgnoringIt) {
   Graph default_graph{"compile-options-identity"};
+  (void)default_graph.op<test::CompileTestOperator>("operator");
   Graph changed_graph{"compile-options-identity"};
+  (void)changed_graph.op<test::CompileTestOperator>("operator");
   CompileOptions changed_options;
   changed_options.auto_insert_converters = false;
 

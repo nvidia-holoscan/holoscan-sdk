@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-if(NOT DEFINED RUNTIME_TEST OR NOT DEFINED PARTITION_SELECTOR OR NOT DEFINED SEMANTIC_FILTERS)
-    message(FATAL_ERROR "runtime test, partition selector, and semantic filters are required")
+if(NOT DEFINED RUNTIME_TEST OR NOT DEFINED SEMANTIC_FILTERS)
+    message(FATAL_ERROR "runtime test and semantic filters are required")
 endif()
 
 string(REPLACE "|" ";" semantic_filters "${SEMANTIC_FILTERS}")
 foreach(semantic_filter IN LISTS semantic_filters)
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env
-            "${PARTITION_SELECTOR}"
+            --unset=HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM
             "${RUNTIME_TEST}"
             "--gtest_filter=ChannelPartitionPlanParityTest.AcceptedCoverFacts:${semantic_filter}"
         RESULT_VARIABLE semantic_result

@@ -3,20 +3,153 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <new>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include <holoscan/core/compile.hpp>
 #include <holoscan/params/config.hpp>
 
 #include "core/parameter_catalog_internal.hpp"
 #include "core/parameter_override_set_internal.hpp"
 #include "core/parameter_snapshot_archive_access.hpp"
+
+namespace holoscan::params {
+
+struct ConfigBindingHistoryTerm {
+  std::string input_name;
+};
+
+struct ComparableOmittedField {
+  std::int32_t value{7};
+  bool operator==(const ComparableOmittedField&) const noexcept = default;
+};
+
+struct AggregateCodecBindingParams {
+  std::vector<std::string> labels{"baseline"};
+  ComparableOmittedField untouched;
+};
+
+struct ThrowingAssignmentValue {
+  std::int32_t number{};
+
+  ThrowingAssignmentValue() = default;
+  explicit ThrowingAssignmentValue(std::int32_t value) : number(value) {}
+  ThrowingAssignmentValue(const ThrowingAssignmentValue&) = default;
+  ThrowingAssignmentValue(ThrowingAssignmentValue&&) = default;
+  ThrowingAssignmentValue& operator=(const ThrowingAssignmentValue&) = default;
+  ThrowingAssignmentValue& operator=(ThrowingAssignmentValue&& other) {
+    if (other.number == 42) {
+      throw std::bad_alloc{};
+    }
+    number = other.number;
+    return *this;
+  }
+  bool operator==(const ThrowingAssignmentValue&) const = default;
+};
+
+struct ThrowingAssignmentParams {
+  ThrowingAssignmentValue value;
+};
+
+HOLOSCAN_PARAM_SCHEMA(AggregateCodecBindingParams,
+                      param_schema("holoscan.test.AggregateCodecBindingParams", 1),
+                      field<&AggregateCodecBindingParams::labels>("labels"),
+                      field<&AggregateCodecBindingParams::untouched>("untouched"));
+
+HOLOSCAN_PARAM_SCHEMA(ThrowingAssignmentParams,
+                      param_schema("holoscan.test.ThrowingAssignmentParams", 1),
+                      field<&ThrowingAssignmentParams::value>("value"));
+
+}  // namespace holoscan::params
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::params::ConfigBindingHistoryTerm> {
+  static ConfigResult<holoscan::params::ConfigBindingHistoryTerm> decode(
+      ConfigView view, const DecodeOptions& options, DecodeContext& context) {
+    auto input_name = ConfigCodec<std::string>::decode(std::move(view), options, context);
+    if (!input_name) {
+      return tl::make_unexpected(std::move(input_name.error()));
+    }
+    return holoscan::params::ConfigBindingHistoryTerm{.input_name = std::move(*input_name)};
+  }
+
+  static ConfigResult<ConfigValue> encode(const holoscan::params::ConfigBindingHistoryTerm& value,
+                                          const EncodeOptions& options, EncodeContext& context) {
+    return ConfigCodec<std::string>::encode(value.input_name, options, context);
+  }
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::params::AggregateCodecBindingParams> {
+  inline static std::uint32_t decode_calls{};
+  inline static bool change_untouched{};
+
+  static ConfigResult<holoscan::params::AggregateCodecBindingParams> decode(
+      ConfigView view, const DecodeOptions& options, DecodeContext& context) {
+    ++decode_calls;
+    ObjectDecoder object{std::move(view), options, context};
+    auto labels = object.required<std::vector<std::string>>("labels");
+    if (!labels) {
+      return tl::make_unexpected(std::move(labels.error()));
+    }
+    auto untouched = object.required<std::int32_t>("untouched");
+    if (!untouched) {
+      return tl::make_unexpected(std::move(untouched.error()));
+    }
+    auto finished = object.finish();
+    if (!finished) {
+      return tl::make_unexpected(std::move(finished.error()));
+    }
+    if (change_untouched) {
+      ++*untouched;
+    }
+    return holoscan::params::AggregateCodecBindingParams{.labels = std::move(*labels),
+                                                         .untouched = {.value = *untouched}};
+  }
+
+  static ConfigResult<ConfigValue> encode(
+      const holoscan::params::AggregateCodecBindingParams& value, const EncodeOptions& options,
+      EncodeContext& context) {
+    auto labels = context.encode_child<std::vector<std::string>>("labels", value.labels, options);
+    if (!labels) {
+      return tl::make_unexpected(std::move(labels.error()));
+    }
+    auto untouched =
+        context.encode_child<std::int32_t>("untouched", value.untouched.value, options);
+    if (!untouched) {
+      return tl::make_unexpected(std::move(untouched.error()));
+    }
+    const std::array entries{ConfigObjectEntry{"labels", *labels},
+                             ConfigObjectEntry{"untouched", *untouched}};
+    return ConfigValue::object(entries);
+  }
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::params::ThrowingAssignmentValue> {
+  static ConfigResult<holoscan::params::ThrowingAssignmentValue> decode(
+      ConfigView view, const DecodeOptions& options, DecodeContext& context) {
+    auto number = ConfigCodec<std::int32_t>::decode(std::move(view), options, context);
+    if (!number) {
+      return tl::make_unexpected(std::move(number.error()));
+    }
+    return holoscan::params::ThrowingAssignmentValue{*number};
+  }
+
+  static ConfigResult<ConfigValue> encode(const holoscan::params::ThrowingAssignmentValue& value,
+                                          const EncodeOptions& options, EncodeContext& context) {
+    return ConfigCodec<std::int32_t>::encode(value.number, options, context);
+  }
+};
 
 namespace holoscan::params {
 namespace {
@@ -40,6 +173,87 @@ HOLOSCAN_PARAM_SCHEMA(ConfigBindingParams, param_schema("holoscan.test.ConfigBin
 // No-op operator carrying ConfigBindingParams. Used to register operators in binding test graphs
 // without any real compute logic.
 class ConfigBindingOperator final : public Operator<ConfigBindingParams> {
+ public:
+  void setup(OperatorSpec&) override {}
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+struct ContainerBindingParams {
+  std::vector<std::string> labels{"baseline"};
+  std::map<std::string, double> gains{{"retained", 1.0}};
+  std::vector<ConfigBindingHistoryTerm> history{{.input_name = "baseline"}};
+  std::int32_t untouched{7};
+};
+
+HOLOSCAN_PARAM_SCHEMA(ContainerBindingParams,
+                      param_schema("holoscan.test.ContainerBindingParams", 1),
+                      field<&ContainerBindingParams::labels>("labels"),
+                      field<&ContainerBindingParams::gains>("gains"),
+                      field<&ContainerBindingParams::history>("history"),
+                      field<&ContainerBindingParams::untouched>("untouched"));
+
+class ContainerBindingOperator final : public Operator<ContainerBindingParams> {
+ public:
+  void setup(OperatorSpec&) override {}
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+struct SourceRetargetBindingParams {
+  std::array<std::int32_t, 2> values{{1, 2}};
+  std::int32_t marker{3};
+};
+
+struct TargetRetargetBindingParams {
+  std::int32_t marker{4};
+  std::array<std::int32_t, 2> values{{5, 6}};
+};
+
+// The shared schema identity makes the local C++ type token the only discriminator.
+HOLOSCAN_PARAM_SCHEMA(SourceRetargetBindingParams,
+                      param_schema("holoscan.test.RetargetBindingParams", 1),
+                      field<&SourceRetargetBindingParams::values>("values"),
+                      field<&SourceRetargetBindingParams::marker>("marker"));
+
+HOLOSCAN_PARAM_SCHEMA(TargetRetargetBindingParams,
+                      param_schema("holoscan.test.RetargetBindingParams", 1),
+                      field<&TargetRetargetBindingParams::values>("values"),
+                      field<&TargetRetargetBindingParams::marker>("marker"));
+
+class SourceRetargetBindingOperator final : public Operator<SourceRetargetBindingParams> {
+ public:
+  void setup(OperatorSpec&) override {}
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+class TargetRetargetBindingOperator final : public Operator<TargetRetargetBindingParams> {
+ public:
+  void setup(OperatorSpec&) override {}
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+class AggregateCodecBindingOperator final : public Operator<AggregateCodecBindingParams> {
+ public:
+  void setup(OperatorSpec&) override {}
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+struct UnsupportedBindingParams {
+  struct Value {
+    std::int32_t number{};
+  } value;
+};
+
+HOLOSCAN_PARAM_SCHEMA(UnsupportedBindingParams,
+                      param_schema("holoscan.test.UnsupportedBindingParams", 1),
+                      field<&UnsupportedBindingParams::value>("value"));
+
+class UnsupportedBindingOperator final : public Operator<UnsupportedBindingParams> {
+ public:
+  void setup(OperatorSpec&) override {}
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+class ThrowingAssignmentOperator final : public Operator<ThrowingAssignmentParams> {
  public:
   void setup(OperatorSpec&) override {}
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
@@ -115,6 +329,214 @@ TEST(ParameterConfigBinding, HandleBindingAppliesSparsePatchOverTypedBaseline) {
   ASSERT_NE(value, nullptr);
   EXPECT_EQ(value->required, 42);
   EXPECT_EQ(value->optional, 9);
+}
+
+// REQ: PARAM-033
+TEST(ParameterConfigBinding, TypedBindingDecodesVectorFieldWithoutAggregateCodec) {
+  Graph graph{"config-binding-vector"};
+  auto op = graph.op<ContainerBindingOperator>("op");
+  op.set_params(ContainerBindingParams{
+      .labels = {"baseline"}, .gains = {{"retained", 3.0}}, .untouched = 11});
+  const config::Document source = document(object({
+      {"managed",
+       object({{"labels",
+                array({value_or_null(config::ConfigValue::string("left")),
+                       value_or_null(config::ConfigValue::string("right"))})}})},
+  }));
+
+  auto decoded = decode_overrides(source, {bind(op, path("/managed"))});
+
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  const auto& state = holoscan::detail::ParamOverrideSetAccess::state(*decoded);
+  const auto* value =
+      static_cast<const ContainerBindingParams*>(state.operators.front().resolved_value.get());
+  ASSERT_NE(value, nullptr);
+  EXPECT_EQ(value->labels, (std::vector<std::string>{"left", "right"}));
+  EXPECT_EQ(value->gains, (std::map<std::string, double>{{"retained", 3.0}}));
+  EXPECT_EQ(value->untouched, 11);
+  EXPECT_NE(state.operators.front().baseline_value_digest,
+            state.operators.front().resolved_value_digest);
+  CompileOptions options;
+  options.parameter_overrides = *decoded;
+  const ExecutionPlan plan = compile(graph, std::move(options));
+  EXPECT_TRUE(plan.ok()) << plan.json();
+}
+
+// REQ: PARAM-033
+TEST(ParameterConfigBinding, TypedBindingReplacesMapFieldWithoutAggregateCodec) {
+  Graph graph{"config-binding-map"};
+  auto op = graph.op<ContainerBindingOperator>("op");
+  op.set_params(ContainerBindingParams{.gains = {{"retained", 3.0}, {"removed", 4.0}}});
+  const config::Document source = document(object({
+      {"managed",
+       object({{"gains",
+                object({{"replacement", value_or_null(config::ConfigValue::floating(2.5))}})}})},
+  }));
+
+  auto decoded = decode_overrides(source, {bind(op, path("/managed"))});
+
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  const auto& state = holoscan::detail::ParamOverrideSetAccess::state(*decoded);
+  const auto* value =
+      static_cast<const ContainerBindingParams*>(state.operators.front().resolved_value.get());
+  ASSERT_NE(value, nullptr);
+  EXPECT_EQ(value->gains, (std::map<std::string, double>{{"replacement", 2.5}}));
+  EXPECT_EQ(value->labels, (std::vector<std::string>{"baseline"}));
+}
+
+// REQ: PARAM-033
+TEST(ParameterConfigBinding, TypedBindingComposesVectorWithVisibleElementCodec) {
+  Graph graph{"config-binding-composed-vector"};
+  auto op = graph.op<ContainerBindingOperator>("op");
+  const config::Document source = document(object({
+      {"managed",
+       object({{"history",
+                array({value_or_null(config::ConfigValue::string("state")),
+                       value_or_null(config::ConfigValue::string("action"))})}})},
+  }));
+
+  auto decoded = decode_overrides(source, {bind(op, path("/managed"))});
+
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  const auto& state = holoscan::detail::ParamOverrideSetAccess::state(*decoded);
+  const auto* value =
+      static_cast<const ContainerBindingParams*>(state.operators.front().resolved_value.get());
+  ASSERT_NE(value, nullptr);
+  ASSERT_EQ(value->history.size(), 2U);
+  EXPECT_EQ(value->history[0].input_name, "state");
+  EXPECT_EQ(value->history[1].input_name, "action");
+  CompileOptions options;
+  options.parameter_overrides = *decoded;
+  const ExecutionPlan plan = compile(graph, std::move(options));
+  EXPECT_TRUE(plan.ok()) << plan.json();
+}
+
+// REQ: PARAM-033
+TEST(ParameterConfigBinding, AggregateCodecRemainsTheNonScalarFallbackWhenAvailable) {
+  Graph graph{"config-binding-aggregate-fallback"};
+  auto op = graph.op<AggregateCodecBindingOperator>("op");
+  const config::Document source = document(object({
+      {"managed",
+       object({{"labels", array({value_or_null(config::ConfigValue::string("configured"))})}})},
+  }));
+  config::ConfigCodec<AggregateCodecBindingParams>::decode_calls = 0;
+  config::ConfigCodec<AggregateCodecBindingParams>::change_untouched = false;
+
+  auto decoded = decode_overrides(source, {bind(op, path("/managed"))});
+
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  EXPECT_EQ(config::ConfigCodec<AggregateCodecBindingParams>::decode_calls, 1U);
+  CompileOptions options;
+  options.parameter_overrides = *decoded;
+  const ExecutionPlan preserved_plan = compile(graph, std::move(options));
+  EXPECT_TRUE(preserved_plan.ok()) << preserved_plan.json();
+
+  config::ConfigCodec<AggregateCodecBindingParams>::change_untouched = true;
+  auto changed = decode_overrides(source, {bind(op, path("/managed"))});
+  config::ConfigCodec<AggregateCodecBindingParams>::change_untouched = false;
+
+  ASSERT_TRUE(changed.has_value()) << changed.error().token();
+  EXPECT_EQ(config::ConfigCodec<AggregateCodecBindingParams>::decode_calls, 2U);
+  CompileOptions changed_options;
+  changed_options.parameter_overrides = *changed;
+  const ExecutionPlan changed_plan = compile(graph, std::move(changed_options));
+  EXPECT_FALSE(changed_plan.ok());
+  EXPECT_TRUE(std::ranges::any_of(changed_plan.diagnostics(), [](const Diagnostic& diagnostic) {
+    return diagnostic.token == "PARAMETER_OVERRIDE_UNDECLARED_CHANGE";
+  }));
+}
+
+// REQ: PARAM-033
+TEST(ParameterConfigBinding, InvalidContainerFieldReturnsNoOverrideSet) {
+  Graph graph{"config-binding-invalid-container"};
+  auto op = graph.op<ContainerBindingOperator>("op");
+  const config::Document source = document(object({
+      {"managed",
+       object({{"labels", array({value_or_null(config::ConfigValue::signed_integer(1))})}})},
+  }));
+
+  auto decoded = decode_overrides(source, {bind(op, path("/managed"))});
+
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().token(), "PARAM_CONFIG_FIELD_DECODE_FAILED");
+}
+
+// REQ: PARAM-033
+TEST(ParameterConfigBinding, TypedBindingReportsUnavailableFieldCodec) {
+  Graph graph{"config-binding-unsupported-field"};
+  auto op = graph.op<UnsupportedBindingOperator>("op");
+  const config::Document source = document(object({
+      {"managed",
+       object({{"value",
+                object({{"number", value_or_null(config::ConfigValue::signed_integer(1))}})}})},
+  }));
+
+  auto decoded = decode_overrides(source, {bind(op, path("/managed"))});
+
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().token(), "PARAM_CONFIG_FIELD_CODEC_UNAVAILABLE");
+}
+
+// REQ: PARAM-033
+TEST(ParameterConfigBinding, TypedBindingRejectsRoutesCapturedForAnotherSchema) {
+  Graph graph{"config-binding-schema-mismatch"};
+  auto source_op = graph.op<ThrowingAssignmentOperator>("source");
+  graph.op<UnsupportedBindingOperator>("target");
+  auto binding = bind(source_op, path("/managed"));
+  auto target_path = OperatorPath::parse("target");
+  ASSERT_TRUE(target_path.has_value());
+  binding.operator_path = std::move(*target_path);
+  const config::Document source = document(object({
+      {"managed", object({{"value", value_or_null(config::ConfigValue::signed_integer(7))}})},
+  }));
+
+  auto decoded = decode_overrides(source, {binding});
+
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().token(), "PARAM_CONFIG_FIELD_CODEC_UNAVAILABLE");
+}
+
+// REQ: PARAM-033
+TEST(ParameterConfigBinding, TypedBindingRejectsRoutesCapturedForAnotherLocalType) {
+  const auto* const source_schema = param_schema_descriptor<SourceRetargetBindingParams>();
+  const auto* const target_schema = param_schema_descriptor<TargetRetargetBindingParams>();
+  ASSERT_NE(source_schema, nullptr);
+  ASSERT_NE(target_schema, nullptr);
+  ASSERT_EQ(source_schema->structural_hash, target_schema->structural_hash);
+
+  Graph graph{"config-binding-local-type-mismatch"};
+  auto source_op = graph.op<SourceRetargetBindingOperator>("source");
+  graph.op<TargetRetargetBindingOperator>("target");
+  auto binding = bind(source_op, path("/managed"));
+  auto target_path = OperatorPath::parse("target");
+  ASSERT_TRUE(target_path.has_value());
+  binding.operator_path = std::move(*target_path);
+  const config::Document source = document(object({
+      {"managed",
+       object({{"values",
+                array({value_or_null(config::ConfigValue::signed_integer(7)),
+                       value_or_null(config::ConfigValue::signed_integer(8))})}})},
+  }));
+
+  auto decoded = decode_overrides(source, {binding});
+
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().token(), "PARAM_CONFIG_FIELD_CODEC_UNAVAILABLE");
+}
+
+// REQ: PARAM-033
+TEST(ParameterConfigBinding, FieldAssignmentAllocationFailureReportsResourceExhaustion) {
+  Graph graph{"config-binding-assignment-allocation"};
+  auto op = graph.op<ThrowingAssignmentOperator>("op");
+  const config::Document source = document(object({
+      {"managed", object({{"value", value_or_null(config::ConfigValue::signed_integer(42))}})},
+  }));
+
+  auto decoded = decode_overrides(source, {bind(op, path("/managed"))});
+
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().code(), ParamToolErrorCode::kResourceExhausted);
+  EXPECT_EQ(decoded.error().token(), "PARAM_CONFIG_ALLOC_FAILED");
 }
 
 // REQ: PARAM-033

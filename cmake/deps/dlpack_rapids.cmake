@@ -4,6 +4,9 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
+holoscan_generate_dependency_patch_command(_holoscan_dlpack_patch_command
+    PATCHES "${CMAKE_CURRENT_LIST_DIR}/patches/dlpack.patch")
+
 rapids_cpm_find(dlpack 1.3
     GLOBAL_TARGETS dlpack
     BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
@@ -14,9 +17,10 @@ rapids_cpm_find(dlpack 1.3
     GITHUB_REPOSITORY dmlc/dlpack
     GIT_TAG v1.3
     GIT_SHALLOW TRUE
-    PATCH_COMMAND bash -c "patch -p1 -N --dry-run -i ${CMAKE_CURRENT_LIST_DIR}/patches/dlpack.patch >/dev/null && patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/dlpack.patch || patch -p1 -R --dry-run -i ${CMAKE_CURRENT_LIST_DIR}/patches/dlpack.patch >/dev/null"
+    PATCH_COMMAND ${_holoscan_dlpack_patch_command}
     EXCLUDE_FROM_ALL
 )
+unset(_holoscan_dlpack_patch_command)
 
 # dlpack is a PUBLIC compile dependency of holoscan::core (core/domain/tensor.hpp and dlpack.hpp
 # include <dlpack/dlpack.h>), so it is registered in the holoscan export set above and the installed
@@ -25,7 +29,7 @@ rapids_cpm_find(dlpack 1.3
 # dlpack::dlpack INTERFACE target pointing at those headers.
 if(dlpack_ADDED)
     install(DIRECTORY "${dlpack_SOURCE_DIR}/include/dlpack"
-        DESTINATION include
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         COMPONENT holoscan-dependencies
     )
     install(FILES

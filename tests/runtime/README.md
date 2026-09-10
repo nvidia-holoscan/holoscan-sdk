@@ -1,6 +1,6 @@
 # Runtime test modes
 
-EA1 runtime evidence uses two deliberately distinct modes. Test names and
+baseline runtime evidence uses two deliberately distinct modes. Test names and
 failure reports must identify the mode so a low-level substrate test cannot be
 mistaken for a complete accepted-plan execution.
 
@@ -13,7 +13,7 @@ The private direct binding is test and measurement infrastructure. It uses the
 same internal binding contract as physical adapters, but it is not installed,
 is not a production transport, and never adds input/output queues or standalone
 execution methods to the public Operator API. Channel-backed runtime evidence
-is owned by EA1-012 and must be labeled separately when it lands.
+is owned by HSDK5-012 and must be labeled separately when it lands.
 
 Runtime component validation includes both focused GoogleTest cases and the
 `RUNTIME_SMOKE.fake_input_and_synthetic_clock` system test. A process exit alone

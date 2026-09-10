@@ -30,10 +30,9 @@
 #include "holoscan/schema/tensor_materialization.hpp"
 #include "holoscan/schema/tensor_packet_metadata.hpp"
 
-#include "image_bfbs_generated.h"
-#include "image_generated.h"
-#include "imu_bfbs_generated.h"
-#include "imu_generated.h"
+// image.fbs and imu.fbs are registered by holoscan/sensor_io/sensor_schema_package.hpp, which is
+// where their generated code is included. Core does not name them: a consumer that wants Image or
+// Imu on a port links holoscan::sensor_io.
 #include "string_bfbs_generated.h"
 #include "string_generated.h"
 #include "tensor_bfbs_generated.h"
@@ -127,10 +126,30 @@ inline constexpr SchemaPackageSource kTimeSource{
     .content_sha256 =
         schema_hex_bytes<32>("51d9cc42ca6d3ca4589eac955767c9ea772512128c72a2ec299254bc87f5855a"),
 };
+// kGeometrySource, kHeaderSource, and kTimeSource have no in-Core consumer: neither geometry.fbs
+// nor header.fbs is a registered root, and the Time package declares no includes. They are here
+// because holoscan::sensor_io names them as the include evidence for Image and Imu, so they read as
+// dead code and are not.
+//
+// These hashes are the source bytes of the named file and nothing derived from them, so editing a
+// schema here means editing its constant in the same commit:
+//     sha256sum public/schemas/header.fbs
+// Nothing enforces that pairing. The generated-traits path computes the equivalent with
+// file(SHA256) at configure time, but these four are maintained by hand, so a stale value survives
+// every build and test: the .fbs sources do not exist at run time, which makes this recorded
+// evidence rather than a checkable fact. kHeaderSource has in fact drifted four times already:
+// when sequence moved into Header, when publish_timestamp_ns left it, when the comment explaining
+// that departure was corrected, and when that comment stopped saying the envelope was unpopulated
+// after the runtime began stamping it. A comment is source bytes too.
 inline constexpr SchemaPackageSource kHeaderSource{
     .logical_path = "header.fbs",
     .content_sha256 =
-        schema_hex_bytes<32>("30355c7ec1853367a9fce23a983ce45509fa8bd3da23411fc0628f960c351ca2"),
+        schema_hex_bytes<32>("85054752451442caef375d7507000ed84ff0ca78c65ec736d12411205380496e"),
+};
+inline constexpr SchemaPackageSource kGeometrySource{
+    .logical_path = "geometry.fbs",
+    .content_sha256 =
+        schema_hex_bytes<32>("7b316a005dbd64a03c4e8c42c2e6392e3364fe68cba57603133f89f486fafe3e"),
 };
 inline constexpr SchemaPackageSource kTensorSource{
     .logical_path = "tensor.fbs",
@@ -138,16 +157,7 @@ inline constexpr SchemaPackageSource kTensorSource{
         schema_hex_bytes<32>("1f6a3fb98deab8fe9d3d2c47f4e8c44e3b1b4b2c011f5472cecaf88df607bf76"),
 };
 
-inline constexpr std::array<SchemaPackageSource, 3> kImageIncludes{
-    kTensorSource,
-    kHeaderSource,
-    kTimeSource,
-};
 inline constexpr std::array<SchemaPackageSource, 1> kTensorPacketIncludes{kTensorSource};
-inline constexpr std::array<SchemaPackageSource, 2> kImuIncludes{
-    kHeaderSource,
-    kTimeSource,
-};
 inline constexpr std::array<SchemaPackageSource, 0> kNoIncludes{};
 
 template <typename Root>
@@ -596,17 +606,30 @@ struct DescriptorTensorPortTypeOpsFactory {
             bytes, kCarriageOffset + offsetof(Carriage, presence_mask), presence_mask) &&
         read_descriptor_wire_value(
             bytes, kCarriageOffset + offsetof(Carriage, descriptor_mask), descriptor_mask);
-    const bool header_valid =
-        fixed_fields_valid && envelope_abi_version == Payload::expected_envelope_abi_version &&
-        envelope_header_size == kSchemaEnvelopeHeaderSize &&
-        schema_id == Payload::expected_schema_id &&
-        schema_version == Payload::expected_schema_version &&
-        endpoint_generation == expected_generation && metadata_size != 0U &&
-        metadata_size <= Payload::metadata_capacity && tensor_count == kTensorCount &&
-        reserved == 0U && presence_mask == kAllTensorsMask && descriptor_mask == kAllTensorsMask;
-    if (!header_valid || kMetadataOffset > bytes.size() ||
-        metadata_size > bytes.size() - kMetadataOffset) {
-      return make_unexpected(Error{ErrorCode::kProtocolError});
+    if (!fixed_fields_valid) {
+      return make_unexpected(
+          Error{ErrorCode::kProtocolError, "descriptor Tensor envelope fields are truncated"});
+    }
+    if (envelope_abi_version != Payload::expected_envelope_abi_version ||
+        envelope_header_size != kSchemaEnvelopeHeaderSize ||
+        schema_id != Payload::expected_schema_id ||
+        schema_version != Payload::expected_schema_version) {
+      return make_unexpected(
+          Error{ErrorCode::kProtocolError, "descriptor Tensor envelope identity is invalid"});
+    }
+    if (endpoint_generation != expected_generation) {
+      return make_unexpected(
+          Error{ErrorCode::kProtocolError, "descriptor Tensor endpoint generation does not match"});
+    }
+    if (metadata_size == 0U || metadata_size > Payload::metadata_capacity ||
+        kMetadataOffset > bytes.size() || metadata_size > bytes.size() - kMetadataOffset) {
+      return make_unexpected(
+          Error{ErrorCode::kProtocolError, "descriptor Tensor metadata size is invalid"});
+    }
+    if (tensor_count != kTensorCount || reserved != 0U || presence_mask != kAllTensorsMask ||
+        descriptor_mask != kAllTensorsMask) {
+      return make_unexpected(
+          Error{ErrorCode::kProtocolError, "descriptor Tensor carriage inventory is invalid"});
     }
     envelope.metadata_bytes = bytes.subspan(kMetadataOffset, metadata_size);
     auto metadata_valid = Payload::verify_metadata(envelope.metadata_bytes);
@@ -817,11 +840,13 @@ struct DescriptorTensorPortTypeOpsFactory {
 
   [[nodiscard]] static expected<void, Error> assign_tensors_sample(
       void* storage, const std::span<const std::byte> bytes,
-      const std::span<holoscan::Tensor> tensors, const SampleMetadata metadata) noexcept {
+      const std::span<holoscan::Tensor> tensors,
+      const holoscan::detail::DescriptorTensorWireMetadata wire_metadata,
+      const holoscan::detail::DescriptorTensorSampleMetadata sample_metadata) noexcept {
     if (storage == nullptr || tensors.size() != kTensorCount) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
-    auto metadata_bytes = validated_metadata_bytes(bytes, metadata);
+    auto metadata_bytes = validated_metadata_bytes(bytes, wire_metadata.metadata);
     if (!metadata_bytes) {
       return make_unexpected(std::move(metadata_bytes).error());
     }
@@ -842,16 +867,16 @@ struct DescriptorTensorPortTypeOpsFactory {
         return make_unexpected(Error{ErrorCode::kProtocolError});
       }
     }
-    return Assign{}(storage, *root, tensors, metadata);
+    return Assign{}(storage, *root, tensors, sample_metadata.metadata);
   }
 
-  [[nodiscard]] static expected<void, Error> assign_sample(void* storage,
-                                                           const std::span<const std::byte> bytes,
-                                                           holoscan::Tensor tensor,
-                                                           const SampleMetadata metadata) noexcept {
+  [[nodiscard]] static expected<void, Error> assign_sample(
+      void* storage, const std::span<const std::byte> bytes, holoscan::Tensor tensor,
+      const holoscan::detail::DescriptorTensorWireMetadata wire_metadata,
+      const holoscan::detail::DescriptorTensorSampleMetadata sample_metadata) noexcept {
     if constexpr (kTensorCount == 1U) {
       std::array<holoscan::Tensor, 1U> tensors{std::move(tensor)};
-      return assign_tensors_sample(storage, bytes, tensors, metadata);
+      return assign_tensors_sample(storage, bytes, tensors, wire_metadata, sample_metadata);
     } else {
       return make_unexpected(Error{ErrorCode::kNotSupported});
     }
@@ -1270,33 +1295,6 @@ template <typename Native, typename Root, std::size_t MetadataCapacity, auto... 
 
 namespace holoscan {
 
-/// @brief Describe the SDK Image owning type as descriptor metadata plus one Core Tensor.
-///
-/// Image metadata is bounded independently from Tensor storage. This specialization deliberately
-/// does not opt `ImageT` into `GeneratedSchemaNativeTraits`: ordinary generated-schema encoding
-/// would serialize or materialize Tensor bytes and bypass the plan-owned Tensor lifetime.
-template <>
-struct DescriptorTensorSchemaNativeTraits<schema::ImageT> {
-  using root_type = schema::Image;  ///< Generated metadata table root.
-  static constexpr std::size_t metadata_capacity =
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<root_type>;
-  static constexpr std::size_t tensor_count = 1U;  ///< Number of direct Tensor fields.
-  static constexpr std::array<std::uint16_t, 1U> tensor_field_ids{4U};
-
-  /// @brief Return the embedded Tensor without extending its lifetime.
-  /// @param value Owning generated Image value.
-  /// @return Embedded Tensor, or `nullptr` when the Image has no Tensor member.
-  [[nodiscard]] static const Tensor* tensor(const schema::ImageT& value) noexcept {
-    return value.data.get();
-  }
-
-  /// @brief Return the indexed embedded Tensor without extending its lifetime.
-  [[nodiscard]] static const Tensor* tensor_at(const schema::ImageT& value,
-                                               const std::size_t index) noexcept {
-    return index == 0U ? tensor(value) : nullptr;
-  }
-};
-
 /// @brief Describe TensorPacket as bounded descriptor metadata plus one Core Tensor.
 template <>
 struct DescriptorTensorSchemaNativeTraits<schema::TensorPacketT> {
@@ -1320,20 +1318,6 @@ struct DescriptorTensorSchemaNativeTraits<schema::TensorPacketT> {
   }
 };
 
-/// @brief Describe the SDK Imu owning generated type and finite serialized capacity.
-template <>
-struct GeneratedSchemaNativeTraits<schema::ImuT> {
-  using root_type = schema::Imu;  ///< Generated table root used only for package codec evidence.
-  static constexpr std::size_t max_serialized_size =
-      schema::flatbuffer_default_inline_capacity_v<root_type>;  ///< Maximum serialized bytes.
-};
-
-/// @brief Return the SDK Image semantic identity for its descriptor-backed owning type.
-template <>
-consteval SchemaIdentity schema_identity<schema::ImageT>() {
-  return schema::FlatBufferSchemaTraits<schema::Image>::identity;
-}
-
 /// @brief Return the SDK TensorPacket identity for its descriptor-backed owning type.
 template <>
 consteval SchemaIdentity schema_identity<schema::TensorPacketT>() {
@@ -1341,12 +1325,6 @@ consteval SchemaIdentity schema_identity<schema::TensorPacketT>() {
 }
 
 namespace detail {
-
-/// @brief Return the descriptor-backed Runtime operations for generated Image values.
-/// @return Process-local operations whose address never enters a plan or transport record.
-template <>
-[[nodiscard]] HOLOSCAN_SCHEMA_EXPORT const RuntimePortTypeOps*
-runtime_port_type_ops<schema::ImageT>() noexcept;
 
 /// @brief Return descriptor-backed Runtime operations for generated TensorPacket values.
 /// @return Process-local operations whose address never enters a plan or transport record.
@@ -1372,13 +1350,6 @@ struct GeneratedSchemaNativeTraits<schema::TimeT> {
       schema::flatbuffer_default_inline_capacity_v<root_type>;  ///< Maximum serialized bytes.
 };
 
-/// @brief Return the SDK Imu semantic identity for its owning generated type.
-/// @return Complete stable identity shared with the generated Imu root package.
-template <>
-consteval SchemaIdentity schema_identity<schema::ImuT>() {
-  return schema::FlatBufferSchemaTraits<schema::Imu>::identity;
-}
-
 /// @brief Return the SDK String semantic identity for its owning generated type.
 /// @return Complete stable identity shared with the generated String root package.
 template <>
@@ -1391,26 +1362,6 @@ consteval SchemaIdentity schema_identity<schema::StringT>() {
 template <>
 consteval SchemaIdentity schema_identity<schema::TimeT>() {
   return schema::FlatBufferSchemaTraits<schema::Time>::identity;
-}
-
-/// @brief Return the generated SDK Image package and verifier evidence.
-/// @return Process-lifetime immutable package; concurrent callers may borrow it safely.
-template <>
-inline const SchemaPackageDescriptor<schema::Image>& schema_package<schema::Image>() noexcept {
-  static const SchemaPackageDescriptor<schema::Image> package =
-      schema::detail::make_sdk_flatbuffer_package<schema::Image, schema::ImageBinarySchema>(
-          "image.fbs", std::span{schema::detail::kImageIncludes});
-  return package;
-}
-
-/// @brief Return the generated SDK Imu package and verifier evidence.
-/// @return Process-lifetime immutable package; concurrent callers may borrow it safely.
-template <>
-inline const SchemaPackageDescriptor<schema::Imu>& schema_package<schema::Imu>() noexcept {
-  static const SchemaPackageDescriptor<schema::Imu> package =
-      schema::detail::make_sdk_flatbuffer_package<schema::Imu, schema::ImuBinarySchema>(
-          "imu.fbs", std::span{schema::detail::kImuIncludes});
-  return package;
 }
 
 /// @brief Return the generated SDK String package and verifier evidence.
@@ -1452,16 +1403,6 @@ inline const SchemaPackageDescriptor<schema::Time>& schema_package<schema::Time>
   static const SchemaPackageDescriptor<schema::Time> package =
       schema::detail::make_sdk_flatbuffer_package<schema::Time, schema::TimeBinarySchema>(
           "time.fbs", std::span{schema::detail::kNoIncludes});
-  return package;
-}
-
-/// @brief Return the generated SDK Imu package for its owning native type.
-/// @return Process-lifetime immutable package; concurrent callers may borrow it safely.
-template <>
-inline const SchemaPackageDescriptor<schema::ImuT>& schema_package<schema::ImuT>() noexcept {
-  static const SchemaPackageDescriptor<schema::ImuT> package = schema::detail::
-      make_sdk_flatbuffer_native_package<schema::ImuT, schema::Imu, schema::ImuBinarySchema>(
-          "imu.fbs", std::span{schema::detail::kImuIncludes});
   return package;
 }
 

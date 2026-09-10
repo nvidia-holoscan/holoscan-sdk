@@ -120,13 +120,13 @@ struct SaveResult {
 
 /// @brief Persist one document with guarded same-directory atomic replacement.
 ///
-/// Serialization completes before filesystem mutation. The EA1 Linux implementation rejects
+/// Serialization completes before filesystem mutation. The baseline Linux implementation rejects
 /// symlinked parent components and destinations, acquires a deterministic sibling guard, optionally
 /// compares exact destination bytes, writes and data-flushes an exclusive sibling temporary,
 /// revalidates destination identity, atomically renames, and optionally flushes parent metadata.
 /// The call may block until `SaveOptions::guard_timeout`. Native Windows returns
-/// `CONFIG_ATOMIC_REPLACE_UNSUPPORTED` in EA1; mount-specific crash guarantees remain a platform
-/// qualification rather than a portable promise.
+/// `CONFIG_ATOMIC_REPLACE_UNSUPPORTED` in baseline; mount-specific crash guarantees remain a
+/// platform qualification rather than a portable promise.
 ///
 /// @param document Immutable source document.
 /// @param path Destination path. Its parent must already exist.

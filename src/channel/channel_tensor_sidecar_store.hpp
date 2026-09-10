@@ -75,6 +75,26 @@ class TensorSidecarStore {
     return index;
   }
 
+  /// Release the sole registered recipient after its endpoint is destroyed.
+  ///
+  /// Recipient indices are claim-bit positions and therefore cannot be compacted while other
+  /// recipients remain registered. Lifecycle replacement of an external-topic import owns one
+  /// recipient, so releasing that endpoint makes its exact index available to the replacement
+  /// without changing any surviving claim identity. Multi-recipient stores retain their static
+  /// registration contract.
+  void unregister_recipient(const std::size_t recipient_index,
+                            const holomq::DeliveryRecipientId& recipient_id) noexcept {
+    const std::lock_guard<std::mutex> lock(setup_mutex_);
+    if (expected_recipient_count_ != 1U || registered_recipient_count_ != 1U ||
+        recipient_index != 0U || recipient_ids_[recipient_index] != recipient_id) {
+      return;
+    }
+    recipient_ids_[recipient_index] = {};
+    --registered_recipient_count_;
+    registered_recipient_count_atomic_.store(registered_recipient_count_,
+                                             std::memory_order_release);
+  }
+
   [[nodiscard]] expected<ChannelSampleDescriptor, Error> insert(Tensor tensor,
                                                                 SampleMetadata metadata = {}) {
     const detail::TensorAccessSnapshot tensor_snapshot = detail::TensorAccess::snapshot(tensor);
@@ -443,9 +463,9 @@ class TensorSidecarStore {
   }
 
   [[nodiscard]] std::optional<std::size_t> find_recipient_index(
-      const holomq::DeliveryRecipientId& recipient_id) const noexcept {
-    const std::size_t count = registered_recipient_count_atomic_.load(std::memory_order_acquire);
-    for (std::size_t index = 0U; index < count; ++index) {
+      const holomq::DeliveryRecipientId& recipient_id) const {
+    const std::lock_guard<std::mutex> lock(setup_mutex_);
+    for (std::size_t index = 0U; index < registered_recipient_count_; ++index) {
       if (recipient_ids_[index] == recipient_id) {
         return index;
       }

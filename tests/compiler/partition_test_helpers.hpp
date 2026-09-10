@@ -20,7 +20,10 @@ struct PartitionProblemStorage {
   explicit PartitionProblemStorage(
       std::size_t vertex_count,
       std::initializer_list<std::pair<std::uint32_t, std::uint32_t>> edge_pairs = {})
-      : incoming(vertex_count), outgoing(vertex_count), source_regions(vertex_count) {
+      : incoming(vertex_count),
+        outgoing(vertex_count),
+        device_obligations(vertex_count),
+        source_regions(vertex_count) {
     edges.reserve(edge_pairs.size());
     std::uint32_t edge_id = 1U;
     for (const auto [source, target] : edge_pairs) {
@@ -40,6 +43,7 @@ struct PartitionProblemStorage {
           outgoing[index],
           false,
           detail::partitioning::ExecutionDomainKey{1U},
+          device_obligations[index],
           {},
           source_regions[index],
       });
@@ -51,6 +55,7 @@ struct PartitionProblemStorage {
     return detail::partitioning::PartitionProblem{
         vertices,
         edges,
+        {},
         max_partitions,
         detail::partitioning::kAllPartitionPlannerCapabilities,
     };
@@ -58,6 +63,7 @@ struct PartitionProblemStorage {
 
   std::vector<std::vector<detail::partitioning::EdgeIndex>> incoming;
   std::vector<std::vector<detail::partitioning::EdgeIndex>> outgoing;
+  std::vector<std::vector<std::int32_t>> device_obligations;
   std::vector<std::vector<RegionId>> source_regions;
   std::vector<detail::partitioning::PartitionVertexView> vertices;
   std::vector<detail::partitioning::PartitionEdgeView> edges;

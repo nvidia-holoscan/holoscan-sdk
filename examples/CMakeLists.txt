@@ -5,8 +5,12 @@ cmake_minimum_required(VERSION 4.0)
 
 project(holoscan_examples LANGUAGES CXX CUDA)
 
+include(GNUInstallDirs)
 include(CTest)
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/HoloscanExampleInstall.cmake")
+
+set(HOLOSCAN_EXAMPLES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+set(HOLOSCAN_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/examples")
 
 if(NOT COMMAND holoscan_add_graph_artifacts)
     if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../cmake/HoloscanGraphArtifacts.cmake")
@@ -16,6 +20,17 @@ endif()
 
 if(NOT TARGET holoscan::core)
     find_package(holoscan REQUIRED)
+endif()
+
+# Installed source packages do not inherit the SDK's cache options. Enable optional examples only
+# when their corresponding exported target is present; SDK builds may provide an explicit value
+# from the top-level configuration.
+if(NOT DEFINED HOLOSCAN_BUILD_INFERENCE)
+    if(TARGET holoscan::op_inference)
+        set(HOLOSCAN_BUILD_INFERENCE ON)
+    else()
+        set(HOLOSCAN_BUILD_INFERENCE OFF)
+    endif()
 endif()
 
 # Shipped examples opt into the SDK configuration matrix even when built from an installed source
@@ -51,9 +66,9 @@ add_subdirectory(hello_tensor)
 add_subdirectory(hello_schema)
 add_subdirectory(hello_matx)
 add_subdirectory(hello_cccl)
-add_subdirectory(ea1_slow_fast_fusion)
-add_subdirectory(ea1_camera_imu_control)
-add_subdirectory(ea1_external_clients)
+add_subdirectory(slow_fast_fusion)
+add_subdirectory(camera_imu_control)
+add_subdirectory(external_clients)
 add_subdirectory(first_pipeline)
 add_subdirectory(first_operator)
 add_subdirectory(tensors_101)
@@ -62,6 +77,9 @@ add_subdirectory(temporal_contracts)
 add_subdirectory(errors_as_values)
 add_subdirectory(time_and_clocks)
 add_subdirectory(compile_and_check)
+add_subdirectory(derived_tensor_pool_capacity)
+add_subdirectory(rate_aware_ports)
+add_subdirectory(green_context)
 add_subdirectory(running_and_stopping)
 add_subdirectory(retained_tensor_compositor)
 add_subdirectory(embedded_device_tensor)
@@ -70,16 +88,21 @@ add_subdirectory(operator_anatomy)
 add_subdirectory(parameter_schemas)
 add_subdirectory(lifecycle_callbacks)
 add_subdirectory(graph_composition)
+add_subdirectory(automatic_partitioning)
 add_subdirectory(reusable_graphs)
 add_subdirectory(schema_payloads)
 add_subdirectory(tensors_in_depth)
 add_subdirectory(flatbuffer_schemas)
 add_subdirectory(essential)
 add_subdirectory(experimental)
+add_subdirectory(holomq)
+if(HOLOSCAN_BUILD_INFERENCE)
+    add_subdirectory(inference)
+endif()
 
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
     install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/"
-        DESTINATION examples
+        DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}"
         COMPONENT holoscan-examples
         FILES_MATCHING
             PATTERN "CMakeLists.txt"
@@ -91,6 +114,7 @@ if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
             PATTERN "*.fbs"
             PATTERN "*.json"
             PATTERN "*.yaml"
+            PATTERN "*.sh"
             PATTERN "*.md"
         PATTERN "__pycache__" EXCLUDE
         PATTERN "build" EXCLUDE

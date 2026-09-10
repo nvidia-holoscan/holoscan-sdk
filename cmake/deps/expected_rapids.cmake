@@ -4,6 +4,9 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
+holoscan_generate_dependency_patch_command(_holoscan_expected_patch_command
+    PATCHES "${CMAKE_CURRENT_LIST_DIR}/patches/tl-expected.patch")
+
 rapids_cpm_find(tl-expected 1.1.0
     GLOBAL_TARGETS tl::expected
     BUILD_EXPORT_SET "${HOLOSCAN_DEPEND_EXPORT_SET}"
@@ -14,13 +17,14 @@ rapids_cpm_find(tl-expected 1.1.0
     GITHUB_REPOSITORY TartanLlama/expected
     GIT_TAG v1.1.0
     GIT_SHALLOW TRUE
-    PATCH_COMMAND bash -c "patch -p1 -N --dry-run -i ${CMAKE_CURRENT_LIST_DIR}/patches/tl-expected.patch >/dev/null && patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/tl-expected.patch || patch -p1 -R --dry-run -i ${CMAKE_CURRENT_LIST_DIR}/patches/tl-expected.patch >/dev/null"
+    PATCH_COMMAND ${_holoscan_expected_patch_command}
     EXCLUDE_FROM_ALL
 
     OPTIONS
     "EXPECTED_BUILD_TESTS OFF"
     "EXPECTED_BUILD_PACKAGE OFF"
 )
+unset(_holoscan_expected_patch_command)
 
 # tl-expected is a PUBLIC compile dependency of holoscan::core (expected.hpp includes
 # <tl/expected.hpp>), so it is registered in the holoscan export set above and the installed

@@ -33,7 +33,9 @@ set(_all_component_targets
     holoscan::config_io
     holoscan::params
     holoscan::params_io
-    holoscan::experimental_params_web_tuner)
+    holoscan::experimental_params_web_tuner
+    holoscan::sensor_io
+    holoscan::sensor_io_schemas)
 set(_all_metadata
     holoscan-config.json
     holoscan-config-io.json
@@ -116,6 +118,32 @@ elseif(HOLOSCAN_TEST_COMPONENT_MODE STREQUAL "full")
   # consumer body uses the configuration API, while the complete target list proves
   # that optional component closures coexist without hidden ordering requirements.
   set(_link_target ${_expected_targets})
+
+  # holoscan-sensor-io is installed on this prefix, so an unqualified find has to resolve it out of
+  # its own export file without a second component argument. Expected but deliberately not linked:
+  # the claim under test is provenance, not that a configuration consumer needs the acquisition DSO.
+  list(APPEND _expected_targets holoscan::sensor_io holoscan::sensor_io_schemas)
+
+  # The separation itself, checked against the installed files rather than only the resulting
+  # targets. While the sensor targets lived in the shared holoscan-exports set, the generated
+  # holoscan-targets.cmake declared holoscan::sensor_io and asserted its DSO existed, so a prefix
+  # without the component failed find_package(holoscan) for every consumer. Reading the shared file
+  # back is what distinguishes "the component is absent" from "the component is mandatory again".
+  get_filename_component(_holoscan_package_dir "${holoscan_CONFIG}" DIRECTORY)
+  if(NOT EXISTS "${_holoscan_package_dir}/holoscan-sensor-io-targets.cmake")
+    message(FATAL_ERROR
+        "holoscan-sensor-io did not install an export file of its own")
+  endif()
+  # The shared file is included OPTIONAL by the generated package, so read it only if it is there;
+  # holoscan::core above already fails if a Core-bearing prefix somehow lacks it.
+  if(EXISTS "${_holoscan_package_dir}/holoscan-targets.cmake")
+    file(READ "${_holoscan_package_dir}/holoscan-targets.cmake" _holoscan_shared_exports)
+    if(_holoscan_shared_exports MATCHES "holoscan::sensor_io")
+      message(FATAL_ERROR
+          "The shared holoscan-targets.cmake declares holoscan::sensor_io again, "
+          "which makes a Core-only prefix fail find_package(holoscan)")
+    endif()
+  endif()
 else()
   message(FATAL_ERROR "Unknown HOLOSCAN_TEST_COMPONENT_MODE=${HOLOSCAN_TEST_COMPONENT_MODE}")
 endif()

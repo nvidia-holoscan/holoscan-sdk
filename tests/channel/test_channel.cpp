@@ -34,6 +34,42 @@
 
 using namespace holoscan::channel_test;  // NOLINT(build/namespaces)
 
+namespace holoscan {
+
+struct ShortSameBucketPayload {
+  std::array<std::uint8_t, 9U> bytes{};
+};
+
+struct WideSameBucketPayload {
+  std::array<std::uint8_t, 16U> bytes{};
+};
+
+template <>
+struct ChannelTypeIdentity<ShortSameBucketPayload> {
+  static constexpr std::string_view name = "nvidia.holoscan.test.ShortSameBucketPayload";
+  static constexpr std::uint32_t version = 1U;
+};
+
+template <>
+struct ChannelPodLayout<ShortSameBucketPayload> {
+  static constexpr auto fields = pod_fields(
+      pod_field("bytes", &ShortSameBucketPayload::bytes, offsetof(ShortSameBucketPayload, bytes)));
+};
+
+template <>
+struct ChannelTypeIdentity<WideSameBucketPayload> {
+  static constexpr std::string_view name = "nvidia.holoscan.test.WideSameBucketPayload";
+  static constexpr std::uint32_t version = 1U;
+};
+
+template <>
+struct ChannelPodLayout<WideSameBucketPayload> {
+  static constexpr auto fields = pod_fields(
+      pod_field("bytes", &WideSameBucketPayload::bytes, offsetof(WideSameBucketPayload, bytes)));
+};
+
+}  // namespace holoscan
+
 namespace {
 
 // Value 3 is representable by the enum's closed numeric range but intentionally names no HoloMQ
@@ -91,6 +127,12 @@ class PhasePublisher final : public holoscan::channel_internal::InlinePayloadPub
 
 // REQ: CHANNEL-API-002
 static_assert(holoscan::ChannelInlinePayload<ControlPayload>);
+static_assert(holoscan::ChannelInlinePayload<holoscan::ShortSameBucketPayload>);
+static_assert(holoscan::ChannelInlinePayload<holoscan::WideSameBucketPayload>);
+static_assert(holoscan::PublishedPayload<holoscan::ShortSameBucketPayload>);
+static_assert(holoscan::PublishedPayload<holoscan::WideSameBucketPayload>);
+static_assert(sizeof(holoscan::ShortSameBucketPayload) == 9U);
+static_assert(sizeof(holoscan::WideSameBucketPayload) == 16U);
 static_assert(!holoscan::PublishedPayload<ControlPayload>);
 static_assert(std::is_standard_layout_v<DeletedDefaultPayload>);
 static_assert(std::is_trivially_copyable_v<DeletedDefaultPayload>);
@@ -824,6 +866,86 @@ TEST(ChannelInlinePayloadTest, BlockingPublishesAndReceivesControlPayload) {
   EXPECT_EQ(empty.error().code, holoscan::ErrorCode::kNotReady);
 }
 
+// Manual named channels do not carry catalog type identity. Two payload sizes in the same HoloMQ
+// bucket can therefore attach, but the typed facade must reject a short frame before bit-casting
+// persistent endpoint scratch into the wider type.
+// REQ: CHAN-138
+TEST(ChannelInlinePayloadTest, TypedFacadeRejectsShortSameBucketPayloadBeforeBitCast) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  auto publisher = runtime->create_publisher<holoscan::ShortSameBucketPayload>(channel_name);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<holoscan::WideSameBucketPayload>(channel_name);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+  ASSERT_TRUE(publisher->emit(holoscan::ShortSameBucketPayload{}));
+  auto received = subscriber->receive();
+  ASSERT_FALSE(received);
+  EXPECT_EQ(received.error().code, holoscan::ErrorCode::kProtocolError);
+
+  ASSERT_TRUE(publisher->emit(holoscan::ShortSameBucketPayload{}));
+  auto sample = subscriber->receive_sample();
+  ASSERT_FALSE(sample);
+  EXPECT_EQ(sample.error().code, holoscan::ErrorCode::kProtocolError);
+}
+
+// A bucket carries its actual payload length independently of the producer's claimed byte_size, so
+// a raw peer can submit fewer bytes than it declares. The typed facade reuses persistent scratch
+// across receives; admitting such a frame would splice the short prefix onto bytes retained from an
+// earlier sample and expose the result as a successful typed value. Both public receive verbs must
+// reject the frame on the actual length, not the claim.
+// REQ: CHAN-138
+TEST(ChannelInlinePayloadTest, TypedFacadeRejectsUnderfilledFrameClaimingFullTypedWidth) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  // The raw publisher shares the subscriber's bucket family, so it can submit an arbitrary prefix.
+  auto raw_publisher = holoscan::channel_internal::InlinePayloadTestAccess::create_publisher(
+      *runtime, channel_name, sizeof(holoscan::WideSameBucketPayload), holoscan::ChannelOptions{});
+  ASSERT_TRUE(raw_publisher) << holoscan::runtime_error_message(raw_publisher.error());
+  auto subscriber = runtime->create_subscriber<holoscan::WideSameBucketPayload>(channel_name);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_until(
+      [&raw_publisher] {
+        return (*raw_publisher)->update_connections() && (*raw_publisher)->has_subscribers();
+      },
+      std::chrono::seconds(2)));
+
+  constexpr std::size_t kWide = sizeof(holoscan::WideSameBucketPayload);
+  constexpr std::size_t kUnderfilled = 9U;
+  const holoscan::SampleMetadata claims_full_width{
+      .byte_size = kWide,
+      .payload_kind = holoscan::PayloadKind::kInlineTyped,
+  };
+
+  // Seed every scratch byte with a recognizable value through a well-formed publication.
+  std::array<std::byte, kWide> seed{};
+  seed.fill(std::byte{0xAB});
+  ASSERT_TRUE((*raw_publisher)->emit(seed, claims_full_width));
+  auto seeded = subscriber->receive();
+  ASSERT_TRUE(seeded) << holoscan::runtime_error_message(seeded.error());
+  decltype(seeded->bytes) all_seeded{};
+  all_seeded.fill(0xABU);
+  EXPECT_EQ(seeded->bytes, all_seeded);
+
+  // Key assertion: nine actual bytes while the metadata still claims the full sixteen.
+  std::array<std::byte, kUnderfilled> underfilled{};
+  underfilled.fill(std::byte{0x11});
+  ASSERT_TRUE((*raw_publisher)->emit(underfilled, claims_full_width));
+  auto received = subscriber->receive();
+  ASSERT_FALSE(received) << "underfilled frame was admitted and spliced onto retained scratch";
+  EXPECT_EQ(received.error().code, holoscan::ErrorCode::kProtocolError);
+
+  ASSERT_TRUE((*raw_publisher)->emit(underfilled, claims_full_width));
+  auto sample = subscriber->receive_sample();
+  ASSERT_FALSE(sample) << "underfilled frame was admitted and spliced onto retained scratch";
+  EXPECT_EQ(sample.error().code, holoscan::ErrorCode::kProtocolError);
+}
+
 // Blocking inline endpoints retain their original single FIFO lane for both data and EOS. Empty
 // payload bytes remain valid data and are never used as the terminal discriminator.
 // REQ: CHAN-076
@@ -852,6 +974,66 @@ TEST(ChannelInlinePayloadTest, BlockingCloseRemainsOnTheDataLane) {
   auto end_of_stream = subscriber->receive();
   ASSERT_FALSE(end_of_stream);
   EXPECT_EQ(end_of_stream.error().code, holoscan::ErrorCode::kClosed);
+}
+
+// A malformed staged operation is discarded before the checked error is returned. Otherwise the
+// same backend loan would remain pinned and every later receive would report the same malformed
+// head instead of making forward progress.
+TEST(ChannelInlinePayloadTest, MalformedStagedOperationIsDiscardedAfterProtocolError) {
+  constexpr std::size_t kBucketSize = 32U;
+  using Bucket = holoscan::channel_internal::InlinePayloadBucket<kBucketSize>;
+
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  holomq::Context* const context =
+      holoscan::channel_internal::TensorPublisherTestAccess::transport_context(runtime.value());
+  ASSERT_NE(context, nullptr);
+  const std::string channel_name = make_unique_channel_name();
+  holoscan::ChannelOptions options{};
+  options.subscriber_queue_depth = 1U;
+
+  auto publisher =
+      context->publisher_builder(channel_name)
+          .service_options(holoscan::channel_internal::to_holomq_service_options(options))
+          .publisher_options(holoscan::channel_internal::to_holomq_publisher_options(options))
+          .payload_type<Bucket>()
+          .create();
+  ASSERT_TRUE(publisher);
+  auto subscriber = holoscan::channel_internal::InlinePayloadTestAccess::create_subscriber(
+      runtime.value(), channel_name, kBucketSize, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_until(
+      [&publisher, &subscriber] {
+        auto refreshed = publisher->update_connections();
+        auto pending = subscriber.value()->has_samples();
+        return refreshed && pending && publisher->has_subscribers() &&
+               subscriber.value()->has_publishers();
+      },
+      std::chrono::seconds{2}));
+
+  auto malformed = publisher->loan();
+  ASSERT_TRUE(malformed);
+  malformed->payload().operation = holoscan::channel_internal::InlinePayloadOperation::kData;
+  malformed->payload().payload_size = 0U;
+  auto sent = publisher->send(std::move(*malformed));
+  ASSERT_TRUE(sent);
+  ASSERT_EQ(*sent, 1);
+  ASSERT_TRUE(wait_until(
+      [&subscriber] {
+        auto pending = subscriber.value()->has_samples();
+        return pending && *pending;
+      },
+      std::chrono::seconds{2}));
+
+  auto rejected = subscriber.value()->receive_borrowed();
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code, holoscan::ErrorCode::kProtocolError);
+  auto pending = subscriber.value()->has_samples();
+  ASSERT_TRUE(pending);
+  EXPECT_FALSE(*pending);
+  auto empty = subscriber.value()->receive_borrowed();
+  ASSERT_FALSE(empty);
+  EXPECT_EQ(empty.error().code, holoscan::ErrorCode::kNotReady);
 }
 
 // kDropOldest inline endpoints protect EOS on a private capacity-one lane while preserving per-arm

@@ -19,6 +19,7 @@ one-time concern covered in
   - When to call `now()` (measures, can fail) versus `at_ns()` (labels, cannot fail)
   - What a `TimePoint` is and why it carries a clock domain
   - How to stamp emitted samples with `EmitOptions::capture_time`
+  - How to read the publication time the runtime stamps for you
   - What a `Tag` is and why it is an identity, not a time
 </Note>
 
@@ -77,9 +78,18 @@ it one line (see
 [Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)):
 
 ```cpp
-HOLOSCAN_TRY(auto t_now, clock.now());
-const std::int64_t ns = t_now.timestamp_ns;  // current time in this clock's domain
+holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& ctx) override {
+  const holoscan::ClockRef clock = ctx.clock();
+  HOLOSCAN_TRY(auto t_now, clock.now());
+  const std::int64_t ns = t_now.timestamp_ns;  // current time in this clock's domain
+  return {};
+}
 ```
+
+`HOLOSCAN_TRY` expands to an early `return` of the error on failure, so it only
+compiles inside a function that returns `expected<..., Error>` — `compute()`
+above qualifies. The remaining `HOLOSCAN_TRY` fragments on this page are shown
+without that wrapper for brevity, but each assumes one.
 
 Reach for `now()` when you need the clock's *current* value:
 
@@ -152,7 +162,7 @@ Two common variants:
 
 - **Source operator with a hardware timestamp** — use `clock.at_ns(hw_ns)` as
   above.
-- **Source operator without one** — the `ea1_camera_imu_control` example's
+- **Source operator without one** — the `camera_imu_control` example's
   camera source stamps `context.activation_time()` as the capture time, using
   the activation instant as the best available approximation.
 - **Pass-through or fusion operator** — forward the *input's* capture time
@@ -169,6 +179,105 @@ if (captured.valid()) {
   // ... drop or degrade if age_ns exceeds a budget ...
 }
 ```
+
+## Publication time: what the runtime stamps for you
+
+Capture time is yours to supply; **publication time is the runtime's**. Every
+sample the runtime publishes carries `metadata.publish_time()`, a `TimePoint`
+naming the instant the runtime submitted that sample for publication. You never
+set it, and a value you write into `publish_timestamp_ns` before emitting does
+not survive the call.
+
+The instant is precise: the runtime reads its clock once per publication, right
+after it assigns the sample's `sequence` and before any recipient or transport
+accepts it. Two consequences follow, and both matter when you use the number:
+
+- **Every recipient of one publication sees the same coordinate.** When an output
+  fans out, the copies do not carry independent clock reads, so two consumers'
+  delivery latency is measured against one shared event.
+- **It is a send-side instant, not a delivery one.** It precedes transport
+  queueing, serialization, and delivery, so `publish_time()` never tells you when
+  a consumer observed the sample — only when the runtime handed it off.
+
+The coordinate lives in the **graph's default clock** domain. Since that is the
+same clock `ctx.clock()` hands your `compute()`, a consumer can subtract the two
+directly to measure how long a sample spent in transit and scheduling:
+
+```cpp
+holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& ctx) override {
+  HOLOSCAN_TRY(auto frame, in.receive());
+  const holoscan::TimePoint published = frame.metadata.publish_time();
+  if (published.valid()) {
+    HOLOSCAN_TRY(auto t_now, ctx.clock().now());
+    const std::int64_t transit_ns = t_now.timestamp_ns - published.timestamp_ns;
+    // ... same domain, so the subtraction is meaningful ...
+  }
+  return {};
+}
+```
+
+Always check `.valid()` first. Publication time is absent — a zero `ClockId`, as
+with any absent `TimePoint` — whenever the sample reached you from outside the
+clock generation that stamped it:
+
+- A sample your graph **imported** across an external channel boundary. That
+  publication belongs to the peer that produced the sample, and its clock is not
+  one your plan can place.
+- A sample that crossed a **process boundary** inside your own plan. Each worker
+  reconstructs the plan and resolves the default clock to its own live instance,
+  so the two workers number the same clock declaration identically while counting
+  from unrelated origins. The runtime withdraws the coordinate on that hop rather
+  than hand you a number that would subtract to a meaningless — possibly
+  negative — interval.
+
+The subtraction above is therefore meaningful for a consumer in the same process
+as the producer, which is the ordinary single-process graph.
+
+### Reading publication time as an external client
+
+A sample your graph **exports** does carry publication time, so a client outside
+the graph can correlate what it receives with the runtime's own timeline. The
+instant is the same one an in-graph consumer sees, but the clock is named in your
+catalog's numbering rather than the plan's: an endpoint catalog assigns its own
+dense clock ids, so the id on the wire is the catalog's, not the graph's. Resolve
+it against the clock records the catalog declares:
+
+```cpp
+auto sample = subscriber->receive_sample();
+const holoscan::TimePoint published = sample->metadata.publish_time();
+if (published.valid()) {
+  // published.clock_id indexes the clocks this catalog declares, so the client can
+  // look up that clock's kind, unit, epoch, and monotonicity before comparing.
+}
+```
+
+Check `.valid()` here too: a graph that declares no clock has no publication
+domain to attribute a send to, and its exports carry the absent coordinate.
+
+<Warning>
+  Resolving the clock id is not the same as being able to subtract the number.
+  The catalog record describes the publishing clock — its kind, unit, epoch,
+  monotonicity, and discipline — but carries no origin, offset, or conversion, so
+  it cannot tell a client how the publisher's coordinate relates to a reading the
+  client takes itself. The default `RealtimeClock` counts from its own
+  construction, so subtracting an exported coordinate from an unrelated clock's
+  `now()` yields a meaningless interval rather than a latency.
+
+  Compare across the boundary only when the deployment makes the two coordinates
+  commensurate: publish and read the *same* disciplined clock, or a clock
+  configured to count from a shared epoch, and confirm that from the catalog's
+  epoch and discipline records before trusting a difference. Otherwise treat the
+  coordinate as an identifier that orders and correlates a publisher's own sends,
+  which it always does correctly.
+</Warning>
+
+<Warning>
+  Publication time is not a substitute for capture time. It records when the
+  runtime *sent* a sample, which for a source operator is already later than the
+  acquisition instant and, for every stage after the first, later still. Measuring
+  end-to-end freshness against `publish_time()` silently discards the pipeline
+  latency accumulated upstream — use `capture_time()` for that.
+</Warning>
 
 ## `Tag`: identifying an activation
 
@@ -210,6 +319,11 @@ domains.
   domain, and check `.valid()` — absent time is a zero `ClockId`, not the epoch.
 - Stamp emitted samples with `EmitOptions::capture_time` so downstream stages
   measure freshness from the true acquisition instant.
+- The runtime stamps `publish_time()` itself, in the default clock domain, at the
+  instant it submits a sample — a send-side coordinate shared by every recipient
+  of that publication. Exported samples carry it, named in the receiving
+  catalog's clock numbering; samples imported across an external channel boundary
+  carry no publication time.
 - `Tag` is an activation identity for correlation — equality and hashing only,
   never ordering.
 - Every graph needs a default clock; production defaults to real time, tests

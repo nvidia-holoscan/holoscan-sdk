@@ -7,12 +7,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <iterator>
+#include <limits>
+#include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <ostream>
 #include <span>
@@ -32,9 +37,13 @@
 
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/errors.hpp>
+#include <holoscan/memory/memory_buffer.hpp>
+#include <holoscan/memory/tensor_storage.hpp>
+#include <holoscan/memory/unbounded_allocator.hpp>
 #include <holoscan/threading/thread_placement.hpp>
 
 #include "../common/transport_benchmark_common.hpp"
+#include "runtime/runtime_phase_counters.hpp"
 #include "runtime/runtime_support_thread_control.hpp"
 
 namespace holoscan::benchmarking {
@@ -128,6 +137,136 @@ struct BenchmarkThreadIdentity {
       return MemoryKind::kCudaDevice;
   }
   return MemoryKind::kUnknown;
+}
+
+[[nodiscard]] inline MemoryStorageType tensor_memory_storage_type(
+    const TensorStorage storage) noexcept {
+  switch (storage) {
+    case TensorStorage::kPageableHost:
+      return MemoryStorageType::kSystem;
+    case TensorStorage::kPinnedHost:
+      return MemoryStorageType::kHost;
+    case TensorStorage::kDevice:
+      return MemoryStorageType::kDevice;
+  }
+  return MemoryStorageType::kSystem;
+}
+
+/// Benchmark-only owner for one immutable Tensor backing initialized before measurement.
+class PreinitializedTensorStorage final : public TensorMemoryReference {
+ public:
+  [[nodiscard]] static expected<std::shared_ptr<PreinitializedTensorStorage>, Error> create(
+      const std::size_t byte_count, const TensorStorage storage, const int device,
+      const std::uint8_t fill, const std::size_t max_fanout_release_streams = 1U) {
+    try {
+      auto result = std::shared_ptr<PreinitializedTensorStorage>{new PreinitializedTensorStorage(
+          max_fanout_release_streams, storage == TensorStorage::kDevice)};
+      if (storage == TensorStorage::kDevice && cudaSetDevice(device) != cudaSuccess) {
+        return make_unexpected(Error{ErrorCode::kNotReady, "failed to select Tensor device"});
+      }
+      auto allocated = result->buffer_.resize(
+          std::make_shared<UnboundedAllocator>(), byte_count, tensor_memory_storage_type(storage));
+      if (!allocated) {
+        return make_unexpected(std::move(allocated.error()));
+      }
+      if (storage == TensorStorage::kDevice) {
+        if (cudaMemset(result->buffer_.pointer(), static_cast<int>(fill), byte_count) !=
+            cudaSuccess) {
+          return make_unexpected(Error{ErrorCode::kFailure, "device Tensor initialization failed"});
+        }
+      } else {
+        std::memset(result->buffer_.pointer(), static_cast<int>(fill), byte_count);
+      }
+      return result;
+    } catch (const std::bad_alloc&) {
+      return make_unexpected(Error{ErrorCode::kResourceExhausted});
+    }
+  }
+
+  [[nodiscard]] void* data() const noexcept { return buffer_.pointer(); }
+  [[nodiscard]] std::size_t size() const noexcept {
+    return static_cast<std::size_t>(buffer_.size());
+  }
+
+  bool set_deallocation_stream(cudaStream_t stream) override { return buffer_.set_stream(stream); }
+
+  bool set_readiness_stream(cudaStream_t stream) override {
+    readiness_stream_.store(stream, std::memory_order_release);
+    return true;
+  }
+
+  [[nodiscard]] bool has_readiness_stream_contract() const noexcept override {
+    return has_readiness_stream_contract_;
+  }
+
+  [[nodiscard]] cudaStream_t readiness_stream() const noexcept override {
+    return readiness_stream_.load(std::memory_order_acquire);
+  }
+
+  [[nodiscard]] expected<void, Error> synchronize_for_consumer(
+      cudaStream_t consumer_stream) override {
+    const cudaStream_t producer_stream = readiness_stream();
+    if (producer_stream == nullptr || producer_stream == consumer_stream) {
+      return {};
+    }
+    if (cudaStreamSynchronize(producer_stream) != cudaSuccess) {
+      return make_unexpected(Error{ErrorCode::kFailure, "Tensor readiness synchronization failed"});
+    }
+    return {};
+  }
+
+  [[nodiscard]] expected<void, Error> synchronize_for_host() override {
+    const cudaStream_t producer_stream = readiness_stream();
+    if (producer_stream != nullptr && cudaStreamSynchronize(producer_stream) != cudaSuccess) {
+      return make_unexpected(Error{ErrorCode::kFailure, "Tensor host synchronization failed"});
+    }
+    return {};
+  }
+
+ private:
+  explicit PreinitializedTensorStorage(const std::size_t max_fanout_release_streams,
+                                       const bool has_readiness_stream_contract)
+      : buffer_(MemoryBuffer::Options{
+            .max_fanout_release_streams = max_fanout_release_streams,
+        }),
+        has_readiness_stream_contract_(has_readiness_stream_contract) {}
+
+  MemoryBuffer buffer_;
+  bool has_readiness_stream_contract_{false};
+  std::atomic<cudaStream_t> readiness_stream_{nullptr};
+};
+
+[[nodiscard]] inline expected<std::shared_ptr<Tensor>, Error> make_preinitialized_byte_tensor(
+    const std::size_t byte_count, const TensorStorage storage, const int device,
+    const std::uint8_t fill, std::shared_ptr<PreinitializedTensorStorage>& storage_owner,
+    const std::size_t max_fanout_release_streams = 1U) {
+  auto owner = PreinitializedTensorStorage::create(
+      byte_count, storage, device, fill, max_fanout_release_streams);
+  if (!owner) {
+    return make_unexpected(std::move(owner.error()));
+  }
+  try {
+    auto context = std::make_shared<DLManagedTensorContext>();
+    context->dl_shape = {static_cast<std::int64_t>(byte_count)};
+    context->tensor.dl_tensor.data = (*owner)->data();
+    context->tensor.dl_tensor.device = DLDevice{
+        storage == TensorStorage::kDevice
+            ? kDLCUDA
+            : (storage == TensorStorage::kPinnedHost ? kDLCUDAHost : kDLCPU),
+        storage == TensorStorage::kDevice ? device : 0,
+    };
+    context->tensor.dl_tensor.ndim = 1;
+    context->tensor.dl_tensor.dtype = kTensorByteDtype;
+    context->tensor.dl_tensor.shape = context->dl_shape.data();
+    context->tensor.dl_tensor.strides = nullptr;
+    context->tensor.dl_tensor.byte_offset = 0U;
+    context->memory_reference = *owner;
+    auto result = std::make_shared<Tensor>(std::move(context));
+    storage_owner = std::move(*owner);
+    return result;
+  } catch (const std::bad_alloc&) {
+    return make_unexpected(Error{ErrorCode::kResourceExhausted});
+  }
 }
 
 [[nodiscard]] inline bool tensor_device_matches(const Tensor& tensor, const TensorStorage storage,
@@ -412,6 +551,74 @@ inline void emit_support_thread_evidence(std::ostream& output,
     output << '}';
   }
   output << ']';
+}
+
+[[nodiscard]] constexpr std::string_view runtime_thread_usage_role_name(
+    const detail::RuntimeThreadUsageRole role) noexcept {
+  switch (role) {
+    case detail::RuntimeThreadUsageRole::kController:
+      return "controller";
+    case detail::RuntimeThreadUsageRole::kExecutionLane:
+      return "execution_lanes";
+    case detail::RuntimeThreadUsageRole::kChannelPump:
+      return "channel_pump";
+    case detail::RuntimeThreadUsageRole::kNotificationDriver:
+      return "notification_driver";
+    case detail::RuntimeThreadUsageRole::kCount:
+      break;
+  }
+  return "unknown";
+}
+
+/// Emit opt-in Runtime-role CPU and context-switch evidence after observed threads stop.
+inline void emit_runtime_thread_usage(std::ostream& output,
+                                      const detail::RuntimePhaseCounters* counters) {
+  output << "  \"runtime_thread_usage\":{";
+  if (counters == nullptr) {
+    output << "\"enabled\":false},\n";
+    return;
+  }
+  const auto usage = counters->thread_usage_snapshot();
+  detail::RuntimeThreadUsageRecord aggregate;
+  const auto add = [](std::uint64_t& target, const std::uint64_t value) {
+    target = value > std::numeric_limits<std::uint64_t>::max() - target
+                 ? std::numeric_limits<std::uint64_t>::max()
+                 : target + value;
+  };
+  for (const auto& record : usage) {
+    add(aggregate.samples, record.samples);
+    add(aggregate.user_cpu_ns, record.user_cpu_ns);
+    add(aggregate.system_cpu_ns, record.system_cpu_ns);
+    add(aggregate.voluntary_context_switches, record.voluntary_context_switches);
+    add(aggregate.involuntary_context_switches, record.involuntary_context_switches);
+    add(aggregate.minor_page_faults, record.minor_page_faults);
+    add(aggregate.major_page_faults, record.major_page_faults);
+  }
+  output << "\"enabled\":true,\"supported\":"
+         << (detail::runtime_thread_usage_detail::kSupported ? "true" : "false")
+         << ",\"scope\":\"whole_runtime_thread_lifetime_including_startup_and_teardown\""
+         << ",\"roles\":[";
+  for (std::size_t index = 0U; index < usage.size(); ++index) {
+    if (index != 0U) {
+      output << ',';
+    }
+    const auto& record = usage[index];
+    output << "{\"role\":\"" << runtime_thread_usage_role_name(record.role)
+           << "\",\"supported\":" << (record.supported ? "true" : "false")
+           << ",\"samples\":" << record.samples << ",\"user_cpu_ns\":" << record.user_cpu_ns
+           << ",\"system_cpu_ns\":" << record.system_cpu_ns
+           << ",\"voluntary_context_switches\":" << record.voluntary_context_switches
+           << ",\"involuntary_context_switches\":" << record.involuntary_context_switches
+           << ",\"minor_page_faults\":" << record.minor_page_faults
+           << ",\"major_page_faults\":" << record.major_page_faults << '}';
+  }
+  output << "],\"aggregate\":{\"scope\":\"sum_of_runtime_roles\""
+         << ",\"samples\":" << aggregate.samples << ",\"user_cpu_ns\":" << aggregate.user_cpu_ns
+         << ",\"system_cpu_ns\":" << aggregate.system_cpu_ns
+         << ",\"voluntary_context_switches\":" << aggregate.voluntary_context_switches
+         << ",\"involuntary_context_switches\":" << aggregate.involuntary_context_switches
+         << ",\"minor_page_faults\":" << aggregate.minor_page_faults
+         << ",\"major_page_faults\":" << aggregate.major_page_faults << "}},\n";
 }
 
 }  // namespace holoscan::benchmarking

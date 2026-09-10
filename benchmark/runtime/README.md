@@ -1,6 +1,6 @@
 # Runtime Benchmarks
 
-The source-tree-only Google Benchmark suites measure bounded EA1 Runtime paths.
+The source-tree-only Google Benchmark suites measure bounded baseline Runtime paths.
 For controlled latency measurements, apply and record the platform setup in
 [Runtime Benchmark Hardware Tuning](HARDWARE_TUNING.md). Functional CTest
 smokes do not require those settings.
@@ -38,6 +38,23 @@ smokes do not require those settings.
 - paired `NoParams` and runtime-mutable/no-update sessions containing 65,536
   activations, reporting aggregate activation throughput so session startup and
   thread join are amortized across the steady callback path; and
+- three matched 65,536-activation fixed-rate sessions that retain identical
+  authored metadata and execute zero, one, or eight `ExecutionContext::rate()`
+  reads per callback. These rows characterize the lazy first-query pin and
+  repeated O(1) generation-table lookup. They do not observe stream rate and do
+  not replace an exact-base feature-absent comparison; allocation freedom is a
+  separate source-tree conformance assertion; and
+- paired 65,536-call `BM_RunSessionSteadyOutputNoCompletion` and
+  `BM_RunSessionSteadyComputeCallCompletion` sessions. They use the same Operator
+  type, empty callback, unconnected output, direct readiness, asynchronous session
+  route, and out-of-timing terminal validation. The completion row adds only one
+  bounded rule, recurring admission, one output-close decision, and one terminal
+  progress record, so this is the supported subtraction pair; and
+- complete one- and 1,024-call `BM_RunSessionComputeCallCompletionAndDrain`
+  sessions over one compiler-verified process-local Channel edge and two Runtime
+  partitions. They include the limit-reaching callback, accepted data delivery,
+  per-output EOS, downstream input retirement, natural completion, and one
+  terminal progress record; and
 - 8,192 real direct-mode host Tensor allocate/write/commit/cancel cycles while
   the cold pool capacity varies across 2, 8, 64, and 1,024 slots. This row
   detects accidental return of per-activation full-capacity scans; it includes
@@ -103,9 +120,13 @@ smokes do not require those settings.
   with the unmeasured half keeping every bounded endpoint reusable. A matched
   two-dispatch row wraps every sink's poll and consume
   transaction in the production busy-lane handoffs while deliberately excluding
-  global candidate selection. Matched direct-retained cycle and emit rows replace the HoloMQ-backed
-  service with the compiler-authorized synchronous 1:1 retention path while
-  preserving the same activation, readiness, receive, and retirement protocol.
+  global candidate selection. Matched direct-retained cycle and emit rows
+  replace the HoloMQ-backed service with the compiler-authorized synchronous
+  1:1 retention path while preserving the same activation, readiness, receive,
+  and retirement protocol. `BM_ChannelTypedPOD64DirectRetainedCycle` is the
+  matched production-Graph floor: it uses the canonical 64-byte benchmark POD,
+  blocking depth one, and final validation while still excluding Dispatcher
+  selection and both Operator callback transactions.
   The complete typed-POD cycle reports `readiness_poll_retries_per_cycle` and
   `comparison_uncontaminated`; a zero comparison flag means asynchronous pump
   retries added readiness polls, so that run is not a clean direct-versus-HoloMQ
@@ -382,32 +403,149 @@ These scenarios share that harness:
   storage. It verifies direct-pool pointer identity for every sample and validates final payload bytes after
   the measurement interval. `--payload-validation all` additionally validates each sample and intentionally
   adds validation work to the completion-rate path; and
-- `image` carries bounded generated `schema::ImageT` metadata plus an embedded immutable host Tensor. It
+- `image` carries bounded generated `schema::ImageT` metadata plus an embedded immutable Tensor. It
   verifies exact backing-pointer retention and final payload bytes; use `--tensor-bytes` to set the backing
-  size (`--tensor-storage pageable_host` is currently required).
+  size and `--tensor-storage` to select pageable-host, pinned-host, or CUDA-device backing; and
+- `multi_tensor` carries the generated two-field `runtime_benchmark::MultiTensorMessageT` schema and
+  acquires one compiler-owned BufferPool backing independently for each field before publishing the
+  composite value. Descriptor-only rows initialize each newly observed field backing during warmup; and
+- `multi_tensor_loan` and `multi_tensor_staging` carry the generated two-field
+  `runtime_benchmark::MultiTensorMessageT` descriptor schema. The loan row allocates and commits both
+  compiler-owned fields as one bundle; the staging row emits a whole generated object containing two
+  foreign Tensors in the selected storage domain. Both validate one logical sequence, both descriptors,
+  both backing identities, and both payloads. Both are descriptor-only comparisons with Image: backing
+  bytes are initialized before measurement and remain immutable while per-publication schema metadata and
+  Tensor descriptors still flow through the complete API. The loan row borrows from the compiler-created
+  BufferPool for each field. The benchmark derives the hot-path field-pool inventory from the accepted
+  plan, circulates every required backing before measurement, and rejects a `--warmup` count smaller than
+  that plan-derived minimum. First-use backing initialization during measurement remains a hard failure.
+  Staging uses a bounded preinitialized backing ring derived from queue depth so a
+  later publication cannot reuse a backing that direct retention or the HoloMQ sidecar still holds. Before
+  reuse, the source requires sole shared ownership and a sole live Tensor-handle claim for both slot
+  Tensors; an occupied wrap reports ordinary source backpressure without modifying the backing. Each Tensor
+  context also owns its ring storage through `TensorMemoryReference`, so retained final-payload validation
+  remains valid even if Runtime completion tears down the source operator first. The borrowed
+  `selected_batch()` sink and the loan source remain allocation-free at the excluded probe sample.
+  The staging source admits at most one allocation for implementations that probe direct export before
+  falling back to the bounded staging pool; implementations that bypass the known-inapplicable export
+  probe report zero.
+  `multi_tensor`, `multi_tensor_loan`, and `multi_tensor_staging` accept pageable-host, pinned-host, and
+  CUDA-device storage. Pinned-host and device rows require CUDA device zero and return the standard skip
+  code 77 when it is unavailable.
 
-The `pod`, `signal`, `sample_forward`, `schema`, `tensor`, and `image` scenarios use compiler-selected
-direct-retained delivery for eligible process-local edges with total fanout one. Blocking and
-`drop_oldest` are eligible at every accepted positive depth. They therefore construct no HoloMQ endpoint, WaitSet attachment,
-Tensor sidecar record, or Channel pump. The benchmark's `--queue-policy <blocking|drop_oldest>` comparison exposes lossless and lossy
-behavior for `pod`, `schema`, `tensor`, and `image`. The POD smoke matrix covers depth one separately
-from depth two because the mailbox-sized unread ingress has distinct capacity geometry. Lossy rows
-require fanout one. Pass
+For example, exercise pinned-host loan and CUDA-device staging storage without changing descriptor-only
+payload work:
+
+```sh
+python3 ../benchmark/runtime/run_runtime_graph_benchmark.py \
+  ./benchmark/runtime/runtime_graph_benchmark \
+  --workload latency --scenario multi_tensor_loan --operator-lanes shared \
+  --tensor-storage pinned_host --tensor-bytes 4096 --bulk-work-profile descriptor_only \
+  --samples 1000 --warmup 100 --queue-depth 1 --publisher-period-us 1000 \
+  --output-dir runtime-multi-tensor-loan-pinned-host
+
+python3 ../benchmark/runtime/run_runtime_graph_benchmark.py \
+  ./benchmark/runtime/runtime_graph_benchmark \
+  --workload latency --scenario multi_tensor_staging --operator-lanes shared \
+  --tensor-storage device --tensor-bytes 4096 --bulk-work-profile descriptor_only \
+  --samples 1000 --warmup 100 --queue-depth 1 --publisher-period-us 1000 \
+  --output-dir runtime-multi-tensor-staging-device
+```
+
+The `pod`, `signal`, `sample_forward`, `schema`, `third_party_schema`, `tensor`, `image`, `multi_tensor`,
+`multi_tensor_loan`, and `multi_tensor_staging` scenarios use compiler-selected direct-retained delivery
+for eligible process-local edges with total fanout one. Blocking and `drop_oldest` are eligible at every
+accepted positive depth.
+They therefore construct no HoloMQ endpoint, WaitSet attachment, Tensor sidecar record, or Channel pump.
+The benchmark's `--queue-policy <blocking|drop_oldest>` comparison exposes lossless and lossy behavior
+for `pod`, `schema`, `third_party_schema`, `tensor`, `image`, and both descriptor-schema multi-Tensor
+scenarios. The POD smoke matrix covers depth one separately from depth two because the mailbox-sized
+unread ingress has distinct capacity geometry. Raw `multi_tensor` rejects lossy delivery because its
+preallocated backing comparison requires contiguous publication sequences.
+Ordinary completion-driven lossy rows require fanout one. The controlled fixed-rate POD fanout
+exception is described below. Pass
 `--force-holomq-process-local-inline` to preserve the prior transport-backed path as an exact
 same-binary control; the result name gains `_holomq_fallback`, the JSON records
-`process_local_inline_delivery` and `queue_policy`, and the runner then admits `--channel-pump-cpu`. This is
-a private measurement control, not application authoring policy.
+`process_local_inline_delivery` and `queue_policy`. A separate-lane or event-wake control row admits
+`--channel-pump-cpu`; a shared-lane eventless HoloMQ row is pump-free unless the exact pump control
+described below is selected. These are private measurement controls, not application authoring policy.
 
-The `pod` and `schema` scenarios accept `--fanout` from 1 through 8. Fanout greater than one creates one
-source output connected to that many independently validated sinks and necessarily uses the process-local
-HoloMQ path because direct retention is restricted to total fanout one. In separate-lane mode, the source
-and every sink own distinct execution partitions, so a 1:N sweep measures both delivery fanout and the
+For a shared-lane 1:1 POD, SDK-schema, third-party-schema, Tensor, Image, or multi-Tensor HoloMQ row, or a shared-lane
+POD/SDK-schema/third-party-schema/raw-Tensor/Image/multi-Tensor fanout row at any positive depth
+supported by the selected workload,
+`--force-holomq-event-wake` selects a private compiler comparison seam that conservatively retains the
+Channel event-wake service on every otherwise-eventless active edge. It does not add a graph vertex,
+port, subscriber, or callback. The publication and subscription geometry is unchanged. Compare ordinary
+dispatch with compiler-selected event-wake suppression against ordinary dispatch plus event wake. Tensor-backed and
+HoloMQ paths deliberately remain ineligible for continuation receipts;
+`--disable-direct-continuation-elision` therefore does not define another HoloMQ dispatch arm. The result
+name gains `_event_wake_control`, and
+`runtime_controls.holomq_event_wake_forced` records the provenance in native results, summaries, and
+manifests.
+
+An all-eventless process-local HoloMQ row starts no Channel pump: the serialized successful-compute
+activation cut remains its transport-drain authority. `--force-process-local-channel-pump` retains the
+former pump for an otherwise identical shared-lane eventless row without changing HoloMQ transport,
+event wake, graph topology, payload work, queue policy, or queue depth. The result name gains
+`_channel_pump_control`, `runtime_controls.process_local_channel_pump_forced` records the provenance,
+and `--channel-pump-cpu` becomes available for the control role. The pump and forced-event-wake
+controls are mutually exclusive so the pump-only comparison remains exact.
+
+The narrow `--multi-output` applicability row authors one shared-lane POD source with two outputs and
+one subscriber per output. It requires `--fanout 2 --force-holomq-process-local-inline`, blocking
+delivery, no offered-rate mode, and equal per-service queue depths when `--sink-queue-depths` is
+provided. Each source callback publishes the same logical sequence once on
+each output, so the result reports two logical deliveries per publication while phase evidence records
+two physical emits. `geometry.source_outputs` and `geometry.subscribers_per_output` distinguish this
+2x1 topology from ordinary 1x2 fanout. Pair the default compiler-selected eventless row with
+`--force-holomq-event-wake`; every other graph, service, callback, and payload-work detail remains
+identical.
+
+The adjacent `--multi-input` row keeps the same two source outputs, two HoloMQ services, and two
+physical emits, but connects them to two paired inputs on one sink Operator. It has one sink callback
+per logical publication and two input reads in that callback. Both emits carry the same source
+activation capture coordinate so the sink can select the first input as the exact peer of the
+second-input trigger. The row has the same restrictions as `--multi-output` and reports
+`geometry.sink_operators=1` plus `geometry.inputs_per_sink=2`; the multi-output row reports two sink
+Operators with one input each. Pair it with
+`--force-holomq-event-wake` to isolate the target-composition wake decision without changing the
+graph.
+
+The `pod`, `schema`, and `third_party_schema` scenarios accept `--fanout` from 1 through 32. Raw
+`tensor`, `image`, `multi_tensor_loan`, and `multi_tensor_staging` accept `--fanout` from 1 through 8.
+Fanout greater than one creates one source output connected to that many independently validated sinks and
+necessarily uses the process-local HoloMQ path because direct retention is restricted to total fanout one.
+By default every subscriber uses `--queue-depth`. For a controlled mixed-capacity fanout, pass one
+positive depth per sink in index order with `--sink-queue-depths 4,2`; the list length must equal
+`--fanout`, and its maximum must equal `--queue-depth`, which remains the service-wide capacity and
+publication-backpressure ceiling. Native JSON and the runner validate the ordered depths as
+`geometry.subscriber_queue_depths`.
+A same-policy POD, bounded SDK-schema/third-party-schema, raw-Tensor, Image, or multi-Tensor fanout
+whose source and every sink share one execution partition suppresses event wakes service-wide; any
+partial or split-partition match retains them. Tensor-backed fanout is currently restricted to
+shared-lane measurement so the benchmark covers only its certified eventless gates. In separate-lane
+mode for POD/schema,
+the source and
+every sink own distinct execution partitions, so a 1:N sweep measures both delivery fanout and the
 corresponding N sink workers. A
 logical sequence completes only after its slowest sink receives it; notification pressure is bounded by
 those logical completions rather than aggregate deliveries. Results retain per-sink delivery/final-sequence
 evidence, source-to-sink percentiles for every sink index, and logical publications/s separately from
 aggregate deliveries/s. Use a forced-HoloMQ fanout-one control when attributing the fanout slope so the 1:1
 direct-retained fast path is not conflated with fanout cost.
+
+A shared-lane POD `drop_oldest` fanout can instead use
+`--offered-rate-hz 40000 --offered-burst-size 4`. This benchmark-only mode replaces the
+source-completion-driven notification loop with the production `OnClock` trigger. Each clock activation
+emits the bounded burst back-to-back, while the trigger period preserves the configured average logical
+publication rate. The burst must exceed `--queue-depth` and cannot exceed 64, so every leg experiences
+real replacement rather than merely admitting the lossy policy. The measured sample count must contain
+only complete bursts. The runner requires the measured accepted
+publication rate to remain within 2% of the configured clock rate and rejects a row unless every subscriber
+reports nonzero replacement and the final sequence. It records per-leg delivery, replacement, and rate
+evidence; aggregate `consumer_visible_replacements` is
+`publications * fanout - aggregate deliveries`. This mode is initially restricted to POD, saturated,
+shared-lane fanout and does not create a notification-driver thread.
 
 Use `--operator-lanes per_sink` to assign a distinct authored CPU to each POD or schema fanout subscriber.
 The partition and worker topology is the same as separate-lane fanout, but optional
@@ -425,13 +563,17 @@ Source pre-return and sink callback-entry timestamps further isolate controller/
 source bookkeeping and typed receive. These diagnostic boundaries add two source `steady_clock` reads and
 one read per sink for each measured publication; they are not application work.
 
-The benchmark authors an exact partition cover: separate-lane runs place the source, relay chain, and sink
-in distinct named partitions, while shared-lane runs place every Operator in `runtime-graph-shared`.
-Because an explicit planner selection and a manual partition cover intentionally conflict, the Python
-runner clears any inherited `HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM` value and requires the
-`core_default` selection. Native JSON, `summary.json`, and `manifest.json` retain the accepted
-`serial_baseline` algorithm, core-default provenance, and compiled partition inventory so relay
-measurements cannot be mistaken for a different execution shape.
+The default `--partition-cover legacy` preserves the benchmark's historical exact cover: separate-lane
+runs place the source, relay chain, and sink in distinct named partitions, while shared-lane runs place every
+Operator in `runtime-graph-shared`. Characterization rows may instead request `automatic`, `include_all`,
+or `hybrid`. `automatic` leaves the complete cover to the compiler, `include_all` authors one named root
+partition, and `hybrid` authors only the source partition before calling `auto_partition_remaining()`.
+The runner clears the retired `HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM` environment variable and derives
+the expected accepted algorithm from the cover authority. Native JSON and `summary.json` retain the
+authoring choice, accepted mode and algorithm, authored/automatic counts, deterministic cover signature,
+and compiled partition/lane owner inventory. Automatic generated names cannot be targeted by authored
+placement, so automatic rows reject Operator CPU, busy-poll, and Green Context requests instead of silently
+changing the comparison.
 
 The edge-bearing scenarios support three distinct workloads. `latency` uses the admitted `OnClock` trigger and records
 one source and sink timestamp per measured sample. `notification_latency` uses a `NotificationSource`, keeps
@@ -447,8 +589,10 @@ capacity must not exceed queue depth. The saturated row records no
 per-sample latency timestamps: its completion window begins at the first measured source callback and ends
 when the sink receives the final measured sample. Notification post attempts, accepted witnesses, not-ready
 startup retries, source-capacity backpressure, emit backpressure, callbacks, publications, and deliveries
-are reported separately. `consumer_visible_replacements` is accepted publications minus actual deliveries
-for the admitted fanout-one lossy rows, and `replacement_rate` exposes that fraction.
+are reported separately. `consumer_visible_replacements` is accepted delivery opportunities minus actual
+deliveries, and `replacement_rate` exposes that fraction. For ordinary fanout-one lossy rows the
+opportunity count equals publications. The fixed-rate fanout mode uses `publications * fanout` and the
+clock path above rather than a notification capacity.
 
 `source_only` is the deliberate exception to the shared workload matrix. Under `notification_latency`, it
 completes one activation before posting the next witness and uses notification-to-source callback time as
@@ -588,10 +732,11 @@ for policy in blocking drop_oldest; do
 done
 ```
 
-Use the same drop-oldest comparison for generated schema, raw Tensor, and descriptor-backed Image:
+Use the same drop-oldest comparison for SDK and third-party generated schema, raw Tensor, and
+descriptor-backed Image:
 
 ```sh
-for scenario in schema tensor image; do
+for scenario in schema third_party_schema tensor image; do
   for delivery in direct holomq; do
     fallback=
     test "${delivery}" = holomq && fallback=--force-holomq-process-local-inline
@@ -652,6 +797,13 @@ For example, run a 1 MiB CUDA-device Tensor row on device zero with:
      --publisher-period-us 1000 --output /tmp/runtime-tensor-device.json"
 ```
 
+CUDA Green Context phase-1 qualification uses the same production Tensor graph
+with explicit matched bound/unbound layouts, exact plan artifacts, cold and
+terminal-quiesce timing, and separate non-performance CUDA resource counters.
+See [GREEN_CONTEXT_QUALIFICATION.md](GREEN_CONTEXT_QUALIFICATION.md) for the
+matrix runner, Nsight attribution procedure, sanitizer lane, and `kRealTime`
+disposition.
+
 Tensor results also report the admitted direct-allocation and device-resource record counts, plus whether the
 compiler assigned the strict process-local 1:1 edge to a fused linear stream. These are immutable plan facts;
 the timed row does not install the mutex-backed source-tree Runtime test counter.
@@ -667,10 +819,14 @@ diagnostics. `final` validates retained content after the measured batch;
 `all` validates every sample and can therefore affect completion-rate timing.
 
 The native result uses the versioned
-`holoscan.ea1.runtime-benchmark/v1` JSON schema. Each row records the precise
+`holoscan.test.runtime-benchmark/v1` JSON schema. Each row records the precise
 question it answers, clock source, workload geometry, compile-accepted lane
 placement, completion-window throughput, callback/publication/delivery counts,
-validation, and session diagnostics. Latency rows additionally report p50,
+validation, and session diagnostics. The v1 `placement.operator_lanes` field is
+retained as a compatibility alias for the requested benchmark policy;
+`placement.requested_operator_lanes` is the precise field required by current
+consumers. Compiler-derived `operator_lane_count` and partition evidence remain
+the authority for the accepted automatic layout. Latency rows additionally report p50,
 p90, p99, min, and max from preallocated per-sample tables; p99.9 is reported
 only with at least 10,000 measured samples. For edge-bearing scenarios, `notification_latency` uses
 post-to-sink as its primary `latency_ns` and retains the component `notification_to_source_ns`,
@@ -723,8 +879,10 @@ Run the production Graph harness directly in the development container:
 
 Use the Python runner for repeated measurements. It preserves each native JSON and stdout/stderr log, then
 writes `summary.json` and `manifest.json` with run-to-run median-latency dispersion, exact native commands,
-Git/build/host/GPU metadata, requested Operator and Runtime support-thread placement, observed support-thread
-affinity and native thread IDs, resolved CPU topology, and scaling governor. If
+Git/build/host/GPU metadata, SHA-256 of the exact benchmark executable, requested Operator and Runtime
+support-thread placement, observed support-thread affinity and native thread IDs, resolved CPU topology,
+and scaling governor. `--source-state` and `--source-snapshot-sha256` record whether the measured source
+tree was dirty and the deterministic snapshot fingerprint used to build the executable. If
 `--output-dir` is omitted, the runner prints the generated temporary artifact
 directory to standard error. Repeated latency summaries retain p99 and also
 p99.9 when the native 10,000-sample minimum is met:
@@ -738,15 +896,71 @@ p99.9 when the native 10,000-sample minimum is met:
      --publisher-period-us 1000 --source-cpu 2 --sink-cpu 3 \
      --controller-cpu 4 \
      --git-revision $(git rev-parse HEAD) \
+     --source-state dirty-task040-worktree-snapshot \
+     --source-snapshot-sha256 <sha256> \
      --output-dir /tmp/runtime-graph-pod-latency"
 ```
 
 When the runner is launched inside the SDK container, the outer shell expands the revision before
 `public/run` starts the container. `HOLOSCAN_GIT_REVISION` provides the equivalent automation hook.
+For dirty-tree evidence, compute the source snapshot from the `git diff --no-ext-diff --binary
+--full-index HEAD --` bytes followed by the lexicographically sorted untracked path and file-SHA-256
+records from `git ls-files --others --exclude-standard`. Record the resulting SHA-256 and a precise
+state label; `unknown` is retained only as a backward-compatible standalone default.
+
+For automatic partition-cover rows, `requested_operator_lanes` is only a benchmark policy input. The
+compiler owns the effective partition layout, which the native result records through the accepted
+`operator_lane_count` and `operator_partition_uses` inventory. Automatic rows therefore require
+`--operator-lanes separate`; shared and per-sink requested layouts would incorrectly imply control over
+compiler-generated partition ownership. Source-only automatic rows retain one compiler-derived owner and
+no sink inventory. To keep requested controls from changing an effective automatic layout, automatic
+rows reject forced HoloMQ, and automatic rows without explicit fan-out reject Runtime phase counters.
+Fan-out automatic phase-trace rows remain supported because their compiler-derived source and sink owners
+are distinct.
+
+Use the comparison runner to alternate baseline and candidate processes and retain every child artifact:
+
+```sh
+./public/run launch --run-cmd \
+  "python3 ../benchmark/runtime/run_partition_cover_comparison.py \
+     ./benchmark/runtime/runtime_graph_benchmark \
+     --baseline-cover include_all --candidate-cover automatic \
+     --samples 10000 --warmup 1000 --repetitions 10 \
+     --git-revision $(git rev-parse HEAD) \
+     --source-state dirty-task040-worktree-snapshot \
+     --source-snapshot-sha256 <sha256> \
+     --output-dir /tmp/runtime-graph-partition-cover"
+```
+
+`comparison.json` reports medians, p95/p99 across repetitions, exact interleave order, cover signatures,
+partition-owner geometry, executable/source/build/revision checks, affinity/governor evidence, and the
+relative regression. Its top-level `provenance` object retains each arm's binary SHA-256, source
+state/snapshot SHA-256, revision, build, and host identity; it emits `shared` only when every child
+manifest matches, rather than attributing baseline provenance to a drifted candidate.
+Each child runner has a bounded wall time (`--arm-timeout-sec`, 1,800 seconds by default); a timeout
+preserves the exact command and partial standard streams in that arm's artifact directory.
+The 3% median parity threshold is enforced only when both arms have identical covers and owner geometry,
+at least five repetitions, identical host/kernel/machine and per-role CPU topology, confirmed actual
+support-thread affinity, one exact binary, stable explicit source/build/revision evidence, performance
+governors, and each arm remains below
+the configured median coefficient-of-variation limit. Execution-lane comparisons remain unqualified until
+actual worker affinity is captured; requested CPU metadata alone is insufficient. Other runs remain useful
+characterization evidence but are explicitly `unqualified`; they cannot pass or fail the parity gate.
+The comparison command exits successfully only for a qualified passing parity result. Both `fail`
+and `unqualified` return a nonzero status so automation cannot publish characterization-only data as
+accepted parity evidence.
+
+For a fan-out concurrency characterization, use `notification_latency`, `--runtime-phase-counters`, and
+automatic versus `include_all`. The diagnostic native evidence records one stable TID per sink partition,
+the source-owner TID, per-sink causal delivery counts, and source-return/sink-callback interval overlaps.
+The comparison runner fails closed unless automatic sink owners are stable and distinct, the source has a
+different owner, the `include_all` callbacks share the controller owner, every causal validation passes,
+and at least one measured callback interval overlaps. This intentionally different-cover row is always
+unqualified for the 3% parity gate.
 
 For notification-driven rows, also pass `--notification-driver-cpu` on a distinct physical core. The Operator CPU
 options use the public compile-time lane-placement contract, whose startup barrier applies and verifies the
-accepted placement. `--controller-cpu`, transport-backed `--channel-pump-cpu`, and
+accepted placement. `--controller-cpu`, pump-backed `--channel-pump-cpu`, and
 `--notification-driver-cpu` use a
 source-tree-only measurement control: it applies Linux affinity once when each thread enters, reads the
 affinity back, and records the native thread ID. This is deliberately not a public application placement API
@@ -756,9 +970,14 @@ Use `--runtime-phase-counters` only for diagnostic runs. It installs a private, 
 block and a capped, preallocated phase-trace buffer. The counters record controller readiness scans, waits and
 wakes, candidate freeze/select transactions, input-poll dispatches, compute dispatches, completed activations,
 and Runtime Channel prepare, emit, receive, readiness, read, witness-retirement, activation-retirement,
-activation-cut, and backpressure boundaries. The trace timestamps readiness-poll return, candidate freeze,
-compute-dispatch start/return, activation retirement, and activation-cut completion, then reports per-receiver
-phase distributions.
+activation-cut, and backpressure boundaries. The trace timestamps readiness-poll return; candidate freeze and
+selection; the preceding activation cut; input-selection and activation preparation; compute dispatch,
+callback entry, callback return, and
+dispatch return; activation retirement; and activation-cut completion. Per-receiver distributions expose the
+complete candidate-to-dispatch interval together with its selection, input/Channel preparation, and callback-
+context suffix, plus callback and retirement subintervals. The finer preparation fields are present on ordinary
+dispatch rows, including linear direct-retained and eventless-HoloMQ chains; specialized composite rows retain
+the enclosing activation intervals without fabricating ordinary-dispatch phases.
 It also reports source-activation runs, their maximum consecutive length, and all four
 source/downstream transition counts so queue-depth diagnostics can distinguish batching from payload work.
 For Tensor scenarios, the same bounded trace pairs output-port and sample-sequence identities and
@@ -768,14 +987,17 @@ rows require all five Tensor checkpoints for every accepted publication.
 Inline POD and generated-schema scenarios similarly report total emit, encoding, pre-transport,
 transport-publication, and post-transport distributions. Direct-retained rows stop after encoding;
 transport-backed rows require all five inline checkpoints for every accepted publication.
-The runner rejects a diagnostic result unless every frozen candidate is selected, dispatched, and completed;
-every wait returns by wake or timeout; and the Channel counts match the benchmark's exact callback,
-publication, and delivery evidence. It also classifies execution-lane tasks by callback context and verifies
-exact task publication, callback entry/exit, controller completion, and admitted busy-versus-sleeping handoff
-counts.
-`source_compute_entries` can exceed productive `source_callbacks` by one when the bounded notification driver
-has already admitted the terminal source witness; that entry invokes `compute()` and returns without
-publishing.
+The runner rejects a diagnostic result unless every nonterminal frozen candidate is selected, dispatched,
+and completed; every wait returns by wake or timeout; and the Channel counts match the benchmark's exact
+callback, publication, and delivery evidence. A clean terminal stop may retain exactly one candidate that
+froze but never entered dispatch. The bounded trace identifies that state explicitly and requires its count
+to equal the frozen-versus-selected counter surplus. It also classifies execution-lane tasks by callback
+context and verifies exact task publication, callback entry/exit, controller completion, and admitted
+busy-versus-sleeping handoff counts.
+`source_compute_entries` can exceed productive `source_callbacks` when scheduling has already admitted
+a terminal source witness: by at most one on a clocked row, or by the exact accepted-notification surplus
+within the configured capacity during notification-driven saturation. Those entries invoke `compute()` and
+return without publishing; native and runner evidence account for the bounded surplus.
 
 Counter increments use relaxed atomics in preallocated cache-line-aligned storage. Trace checkpoints also take
 `steady_clock` timestamps, and the fixed buffer records explicit drops if its two-million-record cap is reached.

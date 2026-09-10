@@ -1,7 +1,7 @@
 # Temporal Contract Benchmark
 
 This source-tree-only Google Benchmark suite measures the payload-independent
-EA1 temporal cache and selection engines. It complements correctness and
+baseline temporal cache and selection engines. It complements correctness and
 allocation tests with scaling evidence for the private implementation used by
 later compiler, Dispatcher, and Channel integration.
 
@@ -64,5 +64,4 @@ variation; they do not provide per-operation tail-latency distributions.
 
 This suite intentionally does not simulate the synthesized `OnAnyInput`
 ordinary-runtime path, production Channel-backed cache contention, a compiled
-multi-rate Operator graph, or Tensor lease/stream retirement. Those measurements
-belong to EA1-009/010, EA1-012, and EA1-014 after their production paths exist.
+multi-rate Operator graph, or Tensor lease/stream retirement.

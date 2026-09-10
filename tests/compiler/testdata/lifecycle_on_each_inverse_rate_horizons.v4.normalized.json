@@ -1,0 +1,20 @@
+{
+  "accumulation_horizons": [
+    {
+      "edge": 1,
+      "horizon": null,
+      "id": 1,
+      "inverse_rate_port": 3,
+      "origin": 0,
+      "source_record": 3
+    },
+    {
+      "edge": 2,
+      "horizon": null,
+      "id": 2,
+      "inverse_rate_port": 3,
+      "origin": 1,
+      "source_record": 3
+    }
+  ]
+}

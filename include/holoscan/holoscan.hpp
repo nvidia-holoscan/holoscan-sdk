@@ -11,6 +11,7 @@
 #include <holoscan/core/activation.hpp>
 #include <holoscan/core/compile.hpp>
 #include <holoscan/core/connection_options.hpp>
+#include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/error_helpers.hpp>
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/execution_context.hpp>
@@ -21,6 +22,7 @@
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/lifecycle.hpp>
 #include <holoscan/core/lifecycle_control.hpp>
+#include <holoscan/core/managed_shutdown_signals.hpp>
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/operator_ref.hpp>
 #include <holoscan/core/operator_spec.hpp>
@@ -37,6 +39,8 @@
 #include <holoscan/core/port.hpp>
 #include <holoscan/core/predicate.hpp>
 #include <holoscan/core/predicate_input_view.hpp>
+#include <holoscan/core/rate.hpp>
+#include <holoscan/core/rate_generation.hpp>
 #include <holoscan/core/readiness_source.hpp>
 #include <holoscan/core/run.hpp>
 #include <holoscan/core/run_session.hpp>
@@ -46,6 +50,7 @@
 #include <holoscan/core/tag.hpp>
 #include <holoscan/core/temporal_contract.hpp>
 #include <holoscan/core/temporal_contract_records.hpp>
+#include <holoscan/core/tensor_contract.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
 #include <holoscan/core/value_lifecycle.hpp>
 #include <holoscan/time/clock.hpp>

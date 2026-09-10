@@ -19,6 +19,10 @@ Copyright (c) 2012, Regents of the University of California.
 Copyright (c) 2009 PiCloud, Inc. Copyright
 Licensed under BSD-3-Clause (https://github.com/cloudpipe/cloudpickle/blob/master/LICENSE)
 
+CV-CUDA (https://github.com/CVCUDA/CV-CUDA)
+Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under Apache-2.0 (https://github.com/CVCUDA/CV-CUDA/blob/v0.17.0/LICENSE.md)
+
 dear_imgui (https://github.com/ocornut/imgui)
 Copyright (c) 2014-2023 Omar Cornut
 Licensed under MIT (https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
@@ -41,7 +45,7 @@ Licensed under Apache-2.0 (https://github.com/google/flatbuffers/blob/v25.12.19/
 
 fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
-Licensed under MIT (https://github.com/fmtlib/fmt/blob/11.0.2/LICENSE)
+Licensed under MIT (https://github.com/fmtlib/fmt/blob/12.2.0/LICENSE)
 
 foonathan_memory_vendor (https://github.com/eProsima/foonathan_memory_vendor)
 Licensed under Apache-2.0 (https://github.com/eProsima/foonathan_memory_vendor/blob/v1.3.2/LICENSE)
@@ -57,8 +61,8 @@ Licensed under Zlib (https://github.com/glfw/glfw/blob/3.4/LICENSE.md)
 
 Eclipse iceoryx2 (https://github.com/eclipse-iceoryx/iceoryx2)
 Copyright (c) Contributors to the Eclipse Foundation
-Licensed under Apache-2.0 OR MIT (https://github.com/eclipse-iceoryx/iceoryx2/blob/c837bf441419b3b0e7b295a02b0937f35aea5f7f/NOTICE.md)
-The source code for Eclipse iceoryx2 is available at <https://github.com/eclipse-iceoryx/iceoryx2/archive/c837bf441419b3b0e7b295a02b0937f35aea5f7f.tar.gz>.
+Licensed under Apache-2.0 OR MIT (https://github.com/eclipse-iceoryx/iceoryx2/blob/6ef7c55176a8487ae7ca53c2e0649d5df9a1b3b4/NOTICE.md)
+The source code for Eclipse iceoryx2 is available at <https://github.com/eclipse-iceoryx/iceoryx2/archive/6ef7c55176a8487ae7ca53c2e0649d5df9a1b3b4.tar.gz>.
 
 jq (https://github.com/jqlang/jq)
 Copyright (C) 2012 Stephen Dolan authors.
@@ -125,7 +129,7 @@ Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
 
 MatX (https://github.com/NVIDIA/MatX)
 Copyright (c) 2021, NVIDIA Corporation
-Licensed under BSD-3-Clause (https://github.com/NVIDIA/MatX/blob/968ca84c137d22b6c43b19d186994498a37c8cc7/LICENSE)
+Licensed under BSD-3-Clause (https://github.com/NVIDIA/MatX/blob/186c72d4794ead29527f45ca4a6f59caa7a08caf/LICENSE)
 
 nanobind (https://github.com/wjakob/nanobind)
 Copyright (c) 2022 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
@@ -135,9 +139,9 @@ nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.
 Licensed under Apache-2.0 (https://github.com/nvpro-samples/nvpro_core/blob/master/LICENSE)
 
-NVTX
+NVTX (https://github.com/NVIDIA/NVTX)
 Copyright 2009-2022, NVIDIA CORPORATION
-Licensed under Apache-2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+Licensed under Apache-2.0 WITH LLVM-exception (https://github.com/NVIDIA/NVTX/blob/v3.3.0-c-cpp/LICENSE.txt)
 
 pytest (https://github.com/pytest-dev/pytest)
 Copyright (c) 2004 Holger Krekel and others
@@ -154,9 +158,35 @@ Licensed under Linux-OpenIB (https://github.com/linux-rdma/rdma-core/blob/master
 Google Fonts Roboto (https://github.com/googlefonts/roboto/releases/download/v2.138/roboto-android.zip)
 Licensed under Apache-2.0 (https://github.com/googlefonts/roboto/blob/v2.138/LICENSE)
 
+Slang (https://github.com/shader-slang/slang)
+Copyright (c) 2024 Shader Slang Contributors
+Licensed under Apache-2.0 WITH LLVM-exception AND Apache-2.0 AND MIT AND BSD-3-Clause AND BSD-2-Clause (https://github.com/shader-slang/slang/blob/v2026.14/LICENSE)
+Bundled components: ankerl unordered_dense, fast_float, glslang, lz4, miniz, SPIRV-Headers, SPIRV-Tools
+The source code for Slang is available at <https://github.com/shader-slang/slang/archive/refs/tags/v2026.14.tar.gz>.
+
 spdlog (https://github.com/gabime/spdlog)
 Copyright (c) 2016 Gabi Melman.
 Licensed under MIT (https://github.com/gabime/spdlog/blob/v1.12.0/LICENSE)
+
+stb (https://github.com/nothings/stb)
+Copyright (c) 2017 Sean Barrett
+Licensed under MIT (https://github.com/nothings/stb/blob/master/LICENSE)
+
+Volk (https://github.com/zeux/volk)
+Copyright (c) 2018-2026 Arseny Kapoulkine
+Licensed under MIT (https://github.com/zeux/volk/blob/master/LICENSE.md)
+
+Vulkan Headers (https://github.com/KhronosGroup/Vulkan-Headers)
+Copyright (c) 2016-2026 The Khronos Group Inc.
+Licensed under Apache-2.0 (https://github.com/KhronosGroup/Vulkan-Headers/blob/main/LICENSE.md)
+
+Vulkan Memory Allocator (https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
+Copyright (c) 2016-2026 Advanced Micro Devices, Inc.
+Licensed under MIT (https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/blob/master/LICENSE.txt)
+
+Vulkan Utility Libraries (https://github.com/KhronosGroup/Vulkan-Utility-Libraries)
+Copyright (c) 2016-2026 The Khronos Group Inc.
+Licensed under Apache-2.0 (https://github.com/KhronosGroup/Vulkan-Utility-Libraries/blob/main/LICENSE.md)
 
 yaml-cpp (https://github.com/jbeder/yaml-cpp)
 Copyright (c) 2008-2015 Jesse Beder.

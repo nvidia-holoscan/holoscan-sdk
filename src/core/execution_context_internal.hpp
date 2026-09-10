@@ -17,6 +17,16 @@ namespace holoscan::detail {
 using RestartRequestFunction = expected<LifecycleRestartReceipt, Error> (*)(
     void*, OperatorRef, LifecycleRestartOptions) noexcept;
 
+enum class TerminationRequest : std::uint8_t {
+  kNone = 0,
+  kCompletion = 1,
+  kStop = 2,
+};
+
+using TerminationRequestFunction = void (*)(void*, TerminationRequest) noexcept;
+using ExecutionPortRateResolver = expected<PortRateView, Error> (*)(void*, const void*,
+                                                                    bool) noexcept;
+
 /// @brief Couple every callback-visible Parameter fact in one immutable publication record.
 ///
 /// Runtime pins this exact record before invoking a callback and retains its owning slot through
@@ -62,7 +72,11 @@ struct ExecutionContextState {
   ParamComputeSubmitFunction submit_param_update{};
   void* restart_state{};
   RestartRequestFunction request_restart{};
+  void* termination_request_state{};
+  TerminationRequestFunction request_termination{};
   OperatorRef self{};
+  void* rate_state{};
+  ExecutionPortRateResolver resolve_rate{};
 };
 
 }  // namespace holoscan::detail

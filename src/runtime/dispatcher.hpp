@@ -27,14 +27,43 @@
 namespace holoscan::detail {
 
 class EndpointClockHealthReceiver;
+class RuntimePhaseCounters;
+
+/// Cold Runtime split between an allocated queue/cache reservation and its published logical cap.
+struct RuntimeQueueCapacity {
+  std::uint32_t backing{};
+  std::uint32_t active{};
+};
 
 /// Execute one compiler-frozen input selector against bounded runtime history.
 ///
 /// This private state is the payload-independent half of direct Runtime input
 /// selection. It consumes the immutable plan record verbatim, owns only copied
-/// temporal metadata, and leaves typed Sample/Channel claims to EA1-012.
+/// temporal metadata, and leaves typed Sample/Channel claims to HSDK5-012.
 class RuntimeInputSelectionState {
  public:
+  class ReuseReplacementTransaction {
+   public:
+    ReuseReplacementTransaction() = default;
+    ReuseReplacementTransaction(const ReuseReplacementTransaction&) = delete;
+    ReuseReplacementTransaction& operator=(const ReuseReplacementTransaction&) = delete;
+    ReuseReplacementTransaction(ReuseReplacementTransaction&& other) noexcept;
+    ReuseReplacementTransaction& operator=(ReuseReplacementTransaction&&) = delete;
+    ~ReuseReplacementTransaction();
+
+    void commit() noexcept;
+
+   private:
+    ReuseReplacementTransaction(RuntimeInputSelectionState* owner,
+                                TemporalSampleRecord retained) noexcept
+        : owner_(owner), retained_(retained) {}
+
+    RuntimeInputSelectionState* owner_{};
+    TemporalSampleRecord retained_{};
+
+    friend class RuntimeInputSelectionState;
+  };
+
   class Transaction {
    public:
     Transaction() = default;
@@ -79,7 +108,25 @@ class RuntimeInputSelectionState {
   [[nodiscard]] static expected<RuntimeInputSelectionState, Error> create(
       const InputSelectionPlanRecord& selection,
       const BracketedWindowPlanRecord* bracketed_window = nullptr,
-      std::uint32_t max_pending_windows = 0U);
+      std::uint32_t max_pending_windows = 0U,
+      std::optional<RuntimeQueueCapacity> rate_capacity = std::nullopt);
+
+  /// Stage one lifecycle-selected logical capacity without exposing it to ingestion.
+  [[nodiscard]] expected<void, Error> prepare_rate_candidate_capacity(
+      std::uint32_t capacity) noexcept;
+
+  /// Validate the staged capacity without changing the published generation.
+  [[nodiscard]] expected<void, Error> validate_rate_candidate_capacity_commit() const noexcept;
+
+  /// Publish the staged logical capacity; backing storage and claim scratch remain unchanged.
+  [[nodiscard]] expected<void, Error> commit_rate_candidate_capacity() noexcept;
+
+  /// Apply a staged capacity after a complete closure-wide validation pass.
+  /// @pre \ref validate_rate_candidate_capacity_commit succeeded and state has not changed.
+  void commit_validated_rate_candidate_capacity() noexcept;
+
+  /// Discard a private lifecycle candidate without changing the published capacity.
+  void discard_rate_candidate_capacity() noexcept { candidate_rate_capacity_.reset(); }
 
   /// Retain one input sample under the selector's admitted finite capacity.
   [[nodiscard]] expected<void, Error> push(TemporalSampleRecord sample) noexcept;
@@ -100,20 +147,37 @@ class RuntimeInputSelectionState {
   /// Close this input generation with an explicit transport EOS witness.
   ///
   /// Scalar and drain selectors retain the closure reason for their next empty decision.
-  /// Bracketed selectors close their oldest pending window when present and otherwise accept the
-  /// empty pending set. RunSession stops forwarding later anchors to the terminal selector.
+  /// Bracketed selectors latch the witness and close every bounded pending window, continuing as
+  /// preallocated result slots retire, while accepting an empty pending set. RunSession stops
+  /// forwarding later anchors to the terminal selector.
   [[nodiscard]] expected<void, Error> close_end_of_stream() noexcept;
 
   /// Freeze one selector decision at the candidate's immutable reference time.
-  [[nodiscard]] expected<Transaction, Error> begin(TimePoint reference_time,
-                                                   std::uint64_t arrival_watermark,
-                                                   std::uint64_t producer_epoch) noexcept;
+  ///
+  /// `future_reference_lower_bound` may be supplied only when the trigger proves that every future
+  /// semantic reference in this clock is at or above that coordinate.
+  [[nodiscard]] expected<Transaction, Error> begin(
+      TimePoint reference_time, std::uint64_t arrival_watermark, std::uint64_t producer_epoch,
+      std::optional<TimePoint> future_reference_lower_bound = std::nullopt) noexcept;
 
   /// Clear history at a run/restart/rebind/epoch/discontinuity boundary.
   [[nodiscard]] expected<void, Error> reset() noexcept;
 
+  /// Release scalar/drain payload history after this generation's EOS becomes final.
+  ///
+  /// The terminal closure reason and arrival-order fence remain intact. Bracketed selectors own
+  /// their separate bounded terminal-history retirement and reject this scalar-only operation.
+  [[nodiscard]] expected<void, Error> release_terminal_history() noexcept;
+
   [[nodiscard]] const InputSelectionPlanRecord& plan() const noexcept { return plan_; }
   [[nodiscard]] std::size_t retained_count() const noexcept;
+
+  /// Return the largest sample batch this selector can materialize without reconstruction.
+  ///
+  /// Automatic DrainAll follows the immutable rate backing ceiling because lifecycle publication
+  /// can grow its active logical depth. Explicitly bounded and scalar selectors retain the frozen
+  /// plan bound.
+  [[nodiscard]] std::size_t maximum_selected_capacity() const noexcept;
 
   /// Return the preallocated scratch bound for typed payload claims.
   [[nodiscard]] std::size_t payload_claim_capacity() const noexcept;
@@ -125,15 +189,46 @@ class RuntimeInputSelectionState {
   [[nodiscard]] expected<std::size_t, Error> copy_payload_claims(
       std::span<TemporalSampleRecord> output) const noexcept;
 
+  /// Release one exactly identified retained scalar record.
+  ///
+  /// Used by the drop-oldest reconcile to give up a superseded candidate before its transport
+  /// payload claim is retired and a newer staged sample is promoted in its place. The caller names
+  /// the record, so this state never has to learn an edge's \c QueuePolicy. Retiring the payload
+  /// claim remains the caller's responsibility, and must follow this call: while the record is
+  /// still cached it names a live claim.
+  ///
+  /// A bracketed selector owns its retained set through window closure instead, so this is
+  /// rejected there rather than silently bypassing that ownership.
+  ///
+  /// @param arrival_sequence Arrival identity of the record to release.
+  /// @return Empty success; \c kNotSupported for a bracketed selector; \c kNotFound when no
+  ///         retained record carries that identity; \c kBackpressured during an open transaction.
+  [[nodiscard]] expected<void, Error> evict_retained(std::uint64_t arrival_sequence) noexcept;
+
+  /// Temporarily remove one exact ReuseLast record for a controller-owned Channel replacement.
+  [[nodiscard]] expected<ReuseReplacementTransaction, Error> reserve_reuse_replacement(
+      const TemporalSampleRecord& retained) noexcept;
+
+  /// Return the exact record independently retained by ReuseLast, excluding ordinary cache rows.
+  [[nodiscard]] std::optional<TemporalSampleRecord> reuse_retained_record() const noexcept;
+
+  /// Test whether staged data can satisfy this selector at one relevant witness.
+  [[nodiscard]] bool staged_reuse_eligible(TimePoint staged_reference,
+                                           TimePoint witness_reference) const noexcept;
+
   /// Return the number of bracketed windows awaiting a terminal close.
   [[nodiscard]] std::size_t pending_window_count() const noexcept;
+
+  /// Return whether a bracketed terminal decision can be frozen without another source event.
+  [[nodiscard]] bool terminal_decision_ready() const noexcept;
 
   /// Return the oldest pending window's semantic anchor, when present.
   [[nodiscard]] std::optional<TimePoint> oldest_pending_window_reference() const noexcept;
 
  private:
   RuntimeInputSelectionState(InputSelectionPlanRecord plan,
-                             std::optional<BracketedWindowEngine> bracketed);
+                             std::optional<BracketedWindowEngine> bracketed,
+                             RuntimeQueueCapacity rate_capacity);
 
   [[nodiscard]] static bool valid_plan(const InputSelectionPlanRecord& selection,
                                        const BracketedWindowPlanRecord* bracketed_window,
@@ -149,6 +244,8 @@ class RuntimeInputSelectionState {
   std::optional<TemporalSampleRecord> retained_;
   std::chrono::nanoseconds latest_within_max_age_{};
   std::optional<SelectionReason> closure_reason_;
+  RuntimeQueueCapacity rate_capacity_{};
+  std::optional<std::uint32_t> candidate_rate_capacity_;
   bool transaction_active_{};
 };
 
@@ -208,8 +305,25 @@ class RuntimeAlignedSelectionState {
 
   /// Validate and materialize one immutable aligned-trigger record.
   [[nodiscard]] static expected<RuntimeAlignedSelectionState, Error> create(
-      const AlignedTriggerPlanRecord& aligned,
-      std::span<const InputSelectionPlanRecord> selections);
+      const AlignedTriggerPlanRecord& aligned, std::span<const InputSelectionPlanRecord> selections,
+      std::span<const RuntimeQueueCapacity> rate_capacities = {});
+
+  /// Stage one member-local lifecycle-selected logical capacity.
+  [[nodiscard]] expected<void, Error> prepare_rate_candidate_capacity(
+      PortId input, std::uint32_t capacity) noexcept;
+
+  /// Validate every staged member capacity without changing the published generation.
+  [[nodiscard]] expected<void, Error> validate_rate_candidate_capacities_commit() const noexcept;
+
+  /// Publish every staged member capacity as one allocation-free transaction.
+  [[nodiscard]] expected<void, Error> commit_rate_candidate_capacities() noexcept;
+
+  /// Apply staged member capacities after a complete closure-wide validation pass.
+  /// @pre \ref validate_rate_candidate_capacities_commit succeeded and state has not changed.
+  void commit_validated_rate_candidate_capacities() noexcept;
+
+  /// Discard every staged member capacity without changing published admission.
+  void discard_rate_candidate_capacities() noexcept;
 
   /// Retain one already-normalized member sample under its exact plan bound.
   [[nodiscard]] expected<void, Error> push(PortId input, TemporalSampleRecord sample) noexcept;
@@ -228,6 +342,11 @@ class RuntimeAlignedSelectionState {
   /// Clear all retained heads and fallback state at a generation boundary.
   [[nodiscard]] expected<void, Error> reset() noexcept;
 
+  /// Release queued and reusable payload history after every aligned member is terminal.
+  ///
+  /// Producer epochs and last-observed ordering witnesses remain intact.
+  [[nodiscard]] expected<void, Error> release_terminal_history() noexcept;
+
   [[nodiscard]] const AlignedTriggerPlanRecord& plan() const noexcept { return plan_; }
   [[nodiscard]] std::span<const PortId> member_inputs() const noexcept { return member_inputs_; }
   [[nodiscard]] std::size_t queued(PortId input) const noexcept;
@@ -235,13 +354,17 @@ class RuntimeAlignedSelectionState {
   /// Return the preallocated scratch bound for one member's typed claims.
   [[nodiscard]] std::size_t payload_claim_capacity(PortId input) const noexcept;
 
+  /// Return whether closed aligned inputs retain another bounded compute decision.
+  [[nodiscard]] bool terminal_decision_ready() const noexcept;
+
   /// Copy queued and finite-reuse records that can still select one member.
   [[nodiscard]] expected<std::size_t, Error> copy_payload_claims(
       PortId input, std::span<TemporalSampleRecord> output) const noexcept;
 
  private:
   RuntimeAlignedSelectionState(AlignedTriggerPlanRecord plan, std::vector<PortId> member_inputs,
-                               std::vector<std::uint32_t> member_capacities,
+                               std::vector<std::uint32_t> member_backing_capacities,
+                               std::vector<std::uint32_t> member_active_capacities,
                                std::vector<AlignedMissingPolicy> missing,
                                std::size_t engine_capacity);
 
@@ -250,7 +373,9 @@ class RuntimeAlignedSelectionState {
 
   AlignedTriggerPlanRecord plan_;
   std::vector<PortId> member_inputs_;
-  std::vector<std::uint32_t> member_capacities_;
+  std::vector<std::uint32_t> member_backing_capacities_;
+  std::vector<std::uint32_t> member_active_capacities_;
+  std::vector<std::optional<std::uint32_t>> candidate_member_capacities_;
   std::vector<AlignedMissingPolicy> missing_;
   std::vector<AlignmentClosureProof> open_closure_;
   TimePoint closure_time_{};
@@ -363,7 +488,7 @@ struct RuntimeSourceBindingRecord {
   ///
   /// The receiver must outlive the coordinator and is mutated only under the
   /// same Dispatcher serialization domain. External attachment ownership is
-  /// supplied by EA1-016; this pointer is only the transport-neutral Runtime
+  /// supplied by HSDK5-016; this pointer is only the transport-neutral Runtime
   /// eligibility hook.
   EndpointClockHealthReceiver* clock_health{};
 };
@@ -396,10 +521,11 @@ class RuntimeCandidateCoordinator {
 
   [[nodiscard]] static expected<RuntimeCandidateCoordinator, Error> create(
       std::span<const RuntimeSourceBindingRecord> sources, std::size_t receiver_count,
-      std::size_t max_outstanding);
+      std::size_t max_outstanding, RuntimePhaseCounters* phase_counters = nullptr);
   [[nodiscard]] static expected<RuntimeCandidateCoordinator, Error> create_with_tags(
       std::span<const RuntimeSourceBindingRecord> sources,
-      std::span<TagAllocator* const> receiver_tags, std::size_t max_outstanding);
+      std::span<TagAllocator* const> receiver_tags, std::size_t max_outstanding,
+      RuntimePhaseCounters* phase_counters = nullptr);
 
   /// Drain one bounded ingress prefix without allocating or invoking user code.
   [[nodiscard]] expected<std::size_t, Error> ingest(PortBinding& binding) noexcept;
@@ -420,6 +546,30 @@ class RuntimeCandidateCoordinator {
   /// cannot affect equal-time microsteps.
   [[nodiscard]] expected<FrozenRuntimeCandidate, Error> freeze_next() noexcept;
 
+  /// Freeze one already-admitted input prerequisite before its selector's trigger witness.
+  [[nodiscard]] expected<FrozenRuntimeCandidate, Error> freeze_input_prerequisite(
+      VertexId owner, PortId input, TimePoint reference_time) noexcept;
+
+  /// Report the lowest reference coordinate among pending candidates.
+  ///
+  /// \ref freeze_next orders by reference time first, so this is the coordinate
+  /// of the candidate it would select from the pending set today. A caller that
+  /// must not disturb a witness it cannot yet see uses this as a lower bound on
+  /// what this round can freeze; it is only a bound, because a candidate
+  /// ingested later in the same round may sort ahead of everything here.
+  ///
+  /// @return The lowest pending reference time, or \c std::nullopt when nothing
+  ///         is pending.
+  /// @note This function does not throw and leaves the pending set unchanged.
+  [[nodiscard]] std::optional<TimePoint> oldest_pending_reference() const noexcept;
+
+  /// Return the lowest pending non-terminal witness for one immutable trigger source.
+  [[nodiscard]] std::optional<TimePoint> oldest_pending_nonterminal_trigger_reference(
+      VertexId owner, SourceId witness_source, PortId witness_port) const noexcept;
+
+  /// Prove that one input trigger has no admitted non-terminal witness remaining.
+  [[nodiscard]] bool no_pending_trigger_witness(VertexId owner, PortId witness_port) const noexcept;
+
   /// Freeze one compiler-proven causal successor at the next parent microstep.
   ///
   /// The caller must prove that the expected source is the sole newly ingested
@@ -429,6 +579,15 @@ class RuntimeCandidateCoordinator {
   /// mismatch is terminal rather than an ordinary whole-round fallback.
   [[nodiscard]] expected<FrozenRuntimeCandidate, Error> freeze_causal_next(SourceId expected_source,
                                                                            TagTime parent) noexcept;
+
+  /// Reserve a fresh receiver-local identity for another decision caused by one frozen EOS.
+  ///
+  /// The original source witness and its sole outstanding credit remain frozen. This operation
+  /// advances the coordinator's global logical cursor and receiver Tag allocator, but neither
+  /// accepts a transport event nor adds a second frozen source sequence. The caller must retire
+  /// the prior Dispatcher and activation identities before re-freezing the returned identity.
+  [[nodiscard]] expected<void, Error> rearm_terminal_successor(
+      FrozenRuntimeCandidate& candidate) noexcept;
 
   /// Release source credit after no-fire or complete activation retirement.
   [[nodiscard]] expected<void, Error> retire(const FrozenRuntimeCandidate& candidate) noexcept;
@@ -482,7 +641,7 @@ class RuntimeCandidateCoordinator {
 
   RuntimeCandidateCoordinator(std::vector<SourceState> sources,
                               std::vector<std::unique_ptr<TagAllocator>> owned_tags,
-                              std::size_t max_outstanding);
+                              std::size_t max_outstanding, RuntimePhaseCounters* phase_counters);
 
   [[nodiscard]] expected<void, Error> accept_event(RuntimeEvent event) noexcept;
   [[nodiscard]] expected<FrozenRuntimeCandidate, Error> freeze_pending(std::size_t pending_index,
@@ -499,6 +658,7 @@ class RuntimeCandidateCoordinator {
   std::int64_t last_logical_ns_{};
   std::uint32_t last_microstep_{};
   bool tag_time_initialized_{};
+  RuntimePhaseCounters* phase_counters_{};
 };
 
 /// Borrow one activation's payload-independent selected metadata.
@@ -523,7 +683,7 @@ struct ActivationSelectionView {
 /// scalar or DrainAll transaction only for nominal/degraded acceptance and
 /// lets its destructor abort on no-fire. Copying the selected metadata before
 /// destructive commit keeps callback-visible selection stable through
-/// retirement. EA1-012 attaches typed `Sample<T>` claims to the same slots.
+/// retirement. HSDK5-012 attaches typed `Sample<T>` claims to the same slots.
 class ActivationSelectionState {
  public:
   ActivationSelectionState(const ActivationSelectionState&) = delete;

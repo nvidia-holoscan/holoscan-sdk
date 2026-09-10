@@ -29,6 +29,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS hello_matx
-    RUNTIME DESTINATION examples/hello_matx/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/hello_matx/cpp"
     COMPONENT holoscan-examples
 )

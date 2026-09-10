@@ -186,7 +186,7 @@ class BracketWatcher final : public holoscan::Operator<> {
 int main() {
   WindowObservation::reset();
 
-  holoscan::Graph graph{"ea1-on-window-bracket"};
+  holoscan::Graph graph{"holoscan-on-window-bracket"};
   const auto camera = graph.op<ClockedSource>("camera", kCameraPeriod);
   const auto imu = graph.op<ClockedSource>("imu", kImuPeriod);
   const auto watcher = graph.op<BracketWatcher>("watcher");

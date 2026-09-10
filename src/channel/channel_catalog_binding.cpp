@@ -15,12 +15,13 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <holoscan/schema/schema_package.hpp>
 
+#include "catalog_attach_wait.hpp"
 #include "channel_common.hpp"
 #include "channel_inline_payload.hpp"
 #include "channel_runtime_impl.hpp"
@@ -33,12 +34,10 @@ namespace holoscan {
 namespace channel_internal {
 namespace {
 
-constexpr std::size_t kMaximumCatalogInlineBytes = 4096U;
 // Version 3 grows the data-attribution frame by one 8-byte producer-generation field
 // (magic@0, version@4, kind@6, health_report_sequence@8, producer_generation@16). This is a
 // coordinated pre-GA ABI break: version-2 frames are rejected outright with kProtocolError and
 // no negotiation or compatibility fallback exists.
-constexpr std::size_t kDataAttributionBytes = 24U;
 constexpr std::size_t kHealthControlBytes = 40U;
 constexpr std::uint32_t kDataAttributionMagic = 0x44434835U;  // "DCH5"
 constexpr std::uint16_t kDataAttributionVersion = 3U;
@@ -102,30 +101,14 @@ struct DataAttribution {
 
 [[nodiscard]] constexpr std::size_t catalog_wire_payload_size(
     const PayloadIdentityRecord& identity, const std::size_t payload_capacity = 0U) noexcept {
-  if (identity.kind == PayloadIdentityKind::kScalar && identity.scalar) {
-    return CatalogScalarCodec::wire_size(identity.scalar->kind);
-  }
-  if (identity.kind == PayloadIdentityKind::kPod && identity.pod) {
-    return identity.pod->object_size;
-  }
-  if (identity.kind == PayloadIdentityKind::kSchema && identity.schema && payload_capacity != 0U) {
-    return kSchemaEnvelopeHeaderSize + payload_capacity;
-  }
-  return 0U;
+  const auto contract = catalog_inline_payload_contract(identity, payload_capacity);
+  return contract ? static_cast<std::size_t>(contract->wire_payload_capacity_bytes) : 0U;
 }
 
 [[nodiscard]] constexpr std::size_t catalog_native_payload_size(
     const PayloadIdentityRecord& identity, const std::size_t payload_capacity = 0U) noexcept {
-  if (identity.kind == PayloadIdentityKind::kScalar && identity.scalar) {
-    return CatalogScalarCodec::native_size(identity.scalar->kind);
-  }
-  if (identity.kind == PayloadIdentityKind::kPod && identity.pod) {
-    return identity.pod->object_size;
-  }
-  if (identity.kind == PayloadIdentityKind::kSchema && identity.schema) {
-    return payload_capacity;
-  }
-  return 0U;
+  const auto contract = catalog_inline_payload_contract(identity, payload_capacity);
+  return contract ? static_cast<std::size_t>(contract->native_payload_capacity_bytes) : 0U;
 }
 
 [[nodiscard]] bool schema_identity_equal(const SchemaIdentityRecord& left,
@@ -230,7 +213,7 @@ template <typename Integer>
 
 void corrupt_schema_frame(std::span<std::byte> frame,
                           const CatalogSchemaFrameCorruption corruption) noexcept {
-  constexpr std::size_t kEnvelopeOffset = kDataAttributionBytes;
+  constexpr std::size_t kEnvelopeOffset = kCatalogDataAttributionBytes;
   constexpr std::size_t kSchemaIdOffset = kEnvelopeOffset + 8U;
   constexpr std::size_t kSchemaVersionOffset = kEnvelopeOffset + 24U;
   constexpr std::size_t kEndpointGenerationOffset = kEnvelopeOffset + 32U;
@@ -270,7 +253,7 @@ void encode_data_attribution(std::span<std::byte> wire, const DataAttributionKin
     std::span<const std::byte> wire) {
   // Reject any non-current frame version outright. There is deliberately no negotiation or
   // compatibility fallback for the superseded version-2 frame (pre-GA coordinated break).
-  if (wire.size() < kDataAttributionBytes ||
+  if (wire.size() < kCatalogDataAttributionBytes ||
       load_little<std::uint32_t>(wire, 0U) != kDataAttributionMagic ||
       load_little<std::uint16_t>(wire, 4U) != kDataAttributionVersion) {
     return make_unexpected(
@@ -293,15 +276,10 @@ void encode_data_attribution(std::span<std::byte> wire, const DataAttributionKin
   };
 }
 
-[[nodiscard]] constexpr std::size_t catalog_data_frame_size(
-    const PayloadIdentityRecord& identity, const std::size_t payload_capacity = 0U) noexcept {
-  return kDataAttributionBytes + catalog_wire_payload_size(identity, payload_capacity);
-}
-
 [[nodiscard]] expected<void, Error> validate_received_data_metadata(
     const SampleMetadata& metadata, const PayloadIdentityRecord& identity,
     const std::size_t payload_capacity, const ClockId capture_clock_id,
-    const DataAttributionKind kind) {
+    const std::uint64_t catalog_clock_count, const DataAttributionKind kind) {
   if (metadata.sequence == 0U) {
     return make_unexpected(
         catalog_error(ErrorCode::kProtocolError, "ENDPOINT_OPERATION_SEQUENCE_INVALID"));
@@ -323,10 +301,15 @@ void encode_data_attribution(std::span<std::byte> wire, const DataAttributionKin
   const PayloadKind expected_kind = schema_payload && kind == DataAttributionKind::kData
                                         ? PayloadKind::kSerializedBytes
                                         : PayloadKind::kInlineTyped;
+  // A control close carries no publication instant of its own, so it stays canonically absent.
+  const bool publish_coordinate_valid =
+      kind == DataAttributionKind::kEndOfStream
+          ? !metadata.publish_clock_id.valid() && metadata.publish_timestamp_ns == 0
+          : publication_coordinate_declared(metadata, catalog_clock_count);
   if (metadata.version.major != 1U || metadata.version.minor != 0U ||
       (static_cast<std::uint32_t>(metadata.flags) & ~0x3U) != 0U || !byte_size_valid ||
-      metadata.payload_kind != expected_kind || metadata.publish_clock_id.valid() ||
-      metadata.publish_timestamp_ns != 0 || !capture_coordinate_valid) {
+      metadata.payload_kind != expected_kind || !publish_coordinate_valid ||
+      !capture_coordinate_valid) {
     return make_unexpected(
         catalog_error(ErrorCode::kProtocolError, "ENDPOINT_SAMPLE_METADATA_INVALID"));
   }
@@ -434,11 +417,10 @@ void encode_data_attribution(std::span<std::byte> wire, const DataAttributionKin
   return data_options;
 }
 
-[[nodiscard]] expected<void, Error> validate_attach(const detail::ChannelEndpointRecord& endpoint,
-                                                    const PayloadIdentityRecord& payload_identity,
-                                                    std::size_t payload_size,
-                                                    ChannelAttachOptions options,
-                                                    TopicDirection expected_direction) {
+[[nodiscard]] expected<CatalogInlinePayloadContract, Error> validate_attach(
+    const detail::ChannelEndpointRecord& endpoint, const PayloadIdentityRecord& payload_identity,
+    std::size_t payload_size, ChannelAttachOptions options, TopicDirection expected_direction,
+    const bool attaching_publisher) {
   if (endpoint.direction != expected_direction) {
     return make_unexpected(
         catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_CLIENT_ROLE_MISMATCH"));
@@ -447,11 +429,22 @@ void encode_data_attribution(std::span<std::byte> wire, const DataAttributionKin
   if (!payload_compatible) {
     return make_unexpected(std::move(payload_compatible).error());
   }
-  if (payload_size == 0U || payload_size > kMaximumCatalogInlineBytes ||
-      catalog_native_payload_size(payload_identity, payload_size) != payload_size ||
-      catalog_wire_payload_size(payload_identity, payload_size) == 0U ||
-      catalog_data_frame_size(payload_identity, payload_size) > kMaximumCatalogInlineBytes) {
+  const auto service_contract =
+      catalog_inline_payload_contract(endpoint.service_static.payload_identity,
+                                      endpoint.service_static.serialized_payload_capacity_bytes);
+  const auto attaching_contract = catalog_inline_payload_contract(payload_identity, payload_size);
+  if (!service_contract || !service_contract->frame_fits_inline_transport || !attaching_contract ||
+      attaching_contract->native_payload_capacity_bytes != payload_size) {
     return make_unexpected(catalog_error(ErrorCode::kIncompatible, "ENDPOINT_TYPE_MISMATCH"));
+  }
+  const bool capacity_admitted = attaching_publisher
+                                     ? attaching_contract->native_payload_capacity_bytes <=
+                                           service_contract->native_payload_capacity_bytes
+                                     : attaching_contract->native_payload_capacity_bytes >=
+                                           service_contract->native_payload_capacity_bytes;
+  if (!capacity_admitted) {
+    return make_unexpected(
+        catalog_error(ErrorCode::kIncompatible, "ENDPOINT_PAYLOAD_CAPACITY_INCOMPATIBLE"));
   }
   if (!supported_queue_policy(endpoint.service_static.queue_policy) ||
       endpoint.service_static.publisher_history_depth != 0U ||
@@ -476,65 +469,13 @@ void encode_data_attribution(std::span<std::byte> wire, const DataAttributionKin
     return make_unexpected(
         catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_CLOCK_HEALTH_CONTRACT_INVALID"));
   }
-  return {};
-}
-
-[[nodiscard]] expected<std::chrono::nanoseconds, Error> effective_attach_bound(
-    const detail::ChannelEndpointRecord& endpoint, const ChannelAttachOptions& options) noexcept {
-  // Revalidate the catalog boundary where it is consumed. Attachment normally establishes these
-  // invariants first, but a malformed private record must never turn into an unbounded wait or a
-  // zero-duration fallback if this helper is reused independently.
-  if (!endpoint.attach.max_wait || endpoint.attach.max_wait->count() <= 0) {
-    return make_unexpected(
-        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_ATTACH_BOUND_INVALID"));
-  }
-  const std::chrono::nanoseconds maximum = *endpoint.attach.max_wait;
-  if (!options.timeout) {
-    return maximum;
-  }
-  if (options.timeout->count() <= 0 || *options.timeout > maximum) {
-    return make_unexpected(
-        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_ATTACH_BOUND_INVALID"));
-  }
-  return *options.timeout;
-}
-
-template <typename ObservePeer>
-[[nodiscard]] expected<void, Error> wait_for_required_peer(
-    const detail::ChannelEndpointRecord& endpoint, const ChannelAttachOptions& options,
-    ObservePeer observe_peer) noexcept {
-  if (endpoint.attach.peer == PeerRequirement::kOptional) {
-    return {};
-  }
-
-  constexpr std::chrono::nanoseconds kPollInterval = std::chrono::milliseconds{1};
-  auto bound = effective_attach_bound(endpoint, options);
-  if (!bound) {
-    return make_unexpected(std::move(bound).error());
-  }
-  const auto started = std::chrono::steady_clock::now();
-  while (true) {
-    auto observed = observe_peer();
-    if (!observed) {
-      return make_unexpected(std::move(observed).error());
-    }
-    if (*observed) {
-      return {};
-    }
-
-    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now() - started);
-    if (elapsed >= *bound) {
-      return make_unexpected(catalog_error(ErrorCode::kTimeout, "ENDPOINT_REQUIRED_PEER_TIMEOUT"));
-    }
-    std::this_thread::sleep_for(std::min(kPollInterval, *bound - elapsed));
-  }
+  return *service_contract;
 }
 
 [[nodiscard]] expected<void, Error> wait_for_required_subscribers(
     const detail::ChannelEndpointRecord& endpoint, const ChannelAttachOptions& options,
     InlinePayloadPublisher& data, InlinePayloadPublisher* health) noexcept {
-  return wait_for_required_peer(endpoint, options, [&]() -> expected<bool, Error> {
+  return wait_for_catalog_required_peer(endpoint, options, [&]() -> expected<bool, Error> {
     if (health != nullptr) {
       auto refreshed = health->update_connections();
       if (!refreshed) {
@@ -552,7 +493,7 @@ template <typename ObservePeer>
 [[nodiscard]] expected<void, Error> wait_for_required_publishers(
     const detail::ChannelEndpointRecord& endpoint, const ChannelAttachOptions& options,
     InlinePayloadSubscriber& data, InlinePayloadSubscriber* health) noexcept {
-  return wait_for_required_peer(endpoint, options, [&]() -> expected<bool, Error> {
+  return wait_for_catalog_required_peer(endpoint, options, [&]() -> expected<bool, Error> {
     auto data_ready = data.has_samples();
     if (!data_ready) {
       return make_unexpected(std::move(data_ready).error());
@@ -563,7 +504,11 @@ template <typename ObservePeer>
         return make_unexpected(std::move(health_ready).error());
       }
     }
-    return data.has_publishers() && (health == nullptr || health->has_publishers());
+    // Retained data or terminal control proves a short-lived publisher existed even if it retired
+    // before this refresh observed its peer count. Readiness is non-consuming, so attachment can
+    // succeed without stealing the queued record from the caller.
+    return *data_ready ||
+           (data.has_publishers() && (health == nullptr || health->has_publishers()));
   });
 }
 
@@ -572,17 +517,22 @@ class CatalogInlinePayloadPublisher final : public InlinePayloadPublisher {
   CatalogInlinePayloadPublisher(std::unique_ptr<InlinePayloadPublisher> data,
                                 std::unique_ptr<InlinePayloadPublisher> health,
                                 PayloadIdentityRecord payload_identity, std::size_t payload_size,
-                                ClockId capture_clock_id, ClockHealthOptions clock_health,
-                                const bool protected_terminal_required) noexcept
+                                const std::size_t service_frame_size, ClockId capture_clock_id,
+                                std::uint64_t catalog_clock_count, ClockHealthOptions clock_health,
+                                const bool protected_terminal_required,
+                                const bool graph_owned_publication)
       : data_(std::move(data)),
         health_(std::move(health)),
         payload_identity_(std::move(payload_identity)),
         native_payload_size_(payload_size),
         wire_payload_size_(catalog_wire_payload_size(payload_identity_, payload_size)),
-        framed_payload_size_(catalog_data_frame_size(payload_identity_, payload_size)),
+        framed_payload_size_(service_frame_size),
+        encoded_(service_frame_size),
         capture_clock_id_(capture_clock_id),
+        catalog_clock_count_(catalog_clock_count),
         clock_health_(clock_health),
-        protected_terminal_required_(protected_terminal_required) {}
+        protected_terminal_required_(protected_terminal_required),
+        graph_owned_publication_(graph_owned_publication) {}
 
   [[nodiscard]] InlinePublicationResult emit_phase(
       std::span<const std::byte> payload, const SampleMetadata& supplied_metadata) override {
@@ -637,31 +587,33 @@ class CatalogInlinePayloadPublisher final : public InlinePayloadPublisher {
       return {.error = Error{ErrorCode::kInvalidArgument}};
     }
 
-    // Every byte in the submitted data frame is written below. Avoid clearing the unused tail of
-    // the maximum-size stack buffer on every publication.
-    std::array<std::byte, kMaximumCatalogInlineBytes> encoded;
+    // Every submitted byte is overwritten below. The cold endpoint-owned scratch avoids a large
+    // stack frame and leaves its unused tail untouched on variable-size schema publications.
+    std::span<std::byte> encoded{encoded_};
     encode_data_attribution(
         encoded, DataAttributionKind::kData, report_sequence_, producer_generation_);
     std::size_t submitted_frame_size = framed_payload_size_;
     if (schema_payload) {
-      auto envelope = encode_schema_envelope(
-          std::span<std::byte>{encoded}.subspan(kDataAttributionBytes, kSchemaEnvelopeHeaderSize),
-          *payload_identity_.schema,
-          payload.size());
+      auto envelope =
+          encode_schema_envelope(std::span<std::byte>{encoded}.subspan(kCatalogDataAttributionBytes,
+                                                                       kSchemaEnvelopeHeaderSize),
+                                 *payload_identity_.schema,
+                                 payload.size());
       if (!envelope) {
         return {.error = std::move(envelope).error()};
       }
       std::copy(payload.begin(),
                 payload.end(),
-                encoded.begin() + kDataAttributionBytes + kSchemaEnvelopeHeaderSize);
-      submitted_frame_size = kDataAttributionBytes + kSchemaEnvelopeHeaderSize + payload.size();
+                encoded.begin() + kCatalogDataAttributionBytes + kSchemaEnvelopeHeaderSize);
+      submitted_frame_size =
+          kCatalogDataAttributionBytes + kSchemaEnvelopeHeaderSize + payload.size();
     } else if (canonical_pod) {
-      std::copy(payload.begin(), payload.end(), encoded.begin() + kDataAttributionBytes);
+      std::copy(payload.begin(), payload.end(), encoded.begin() + kCatalogDataAttributionBytes);
     } else {
       auto encoded_result = encode_catalog_payload(
           payload_identity_,
           payload,
-          std::span<std::byte>{encoded}.subspan(kDataAttributionBytes, wire_payload_size_));
+          std::span<std::byte>{encoded}.subspan(kCatalogDataAttributionBytes, wire_payload_size_));
       if (!encoded_result) {
         return {.error = std::move(encoded_result).error()};
       }
@@ -677,8 +629,23 @@ class CatalogInlinePayloadPublisher final : public InlinePayloadPublisher {
     SampleMetadata metadata = supplied_metadata;
     const std::uint64_t proposed_sequence = operation_sequence_ + 1U;
     metadata.sequence = proposed_sequence;
-    metadata.publish_timestamp_ns = 0;
-    metadata.publish_clock_id = {};
+    if (graph_owned_publication_) {
+      // Runtime has already translated the publication coordinate into this catalog's clock
+      // namespace, so forward it instead of erasing it. An identity outside the declared clock
+      // range cannot be resolved by any peer reading this catalog, and shipping one would hand a
+      // subscriber a number it must silently ignore.
+      if (!publication_coordinate_declared(metadata, catalog_clock_count_)) {
+        return {.error =
+                    catalog_error(ErrorCode::kProtocolError, "ENDPOINT_PUBLISH_CLOCK_INVALID")};
+      }
+    } else {
+      // This endpoint publishes into the Graph, so the client on this side holds no stamp authority
+      // and its coordinate is erased rather than rejected. Runtime refuses any populated
+      // publication coordinate on an import, so forwarding a supplied pair would turn a formerly
+      // accepted client publication into a terminal protocol failure.
+      metadata.publish_timestamp_ns = 0;
+      metadata.publish_clock_id = {};
+    }
     metadata.byte_size = schema_payload ? payload.size() : wire_payload_size_;
     metadata.payload_kind =
         schema_payload ? PayloadKind::kSerializedBytes : PayloadKind::kInlineTyped;
@@ -777,7 +744,7 @@ class CatalogInlinePayloadPublisher final : public InlinePayloadPublisher {
     if (operation_sequence_ == std::numeric_limits<std::uint64_t>::max()) {
       return make_unexpected(Error{ErrorCode::kResourceExhausted});
     }
-    std::array<std::byte, kMaximumCatalogInlineBytes> encoded;
+    std::span<std::byte> encoded{encoded_};
     // The fixed-width transport stages the complete configured frame before it can inspect the
     // EOS attribution. Initialize only that frame, not the unused maximum-size buffer tail.
     std::fill_n(encoded.begin(), framed_payload_size_, std::byte{});
@@ -879,9 +846,14 @@ class CatalogInlinePayloadPublisher final : public InlinePayloadPublisher {
   std::size_t native_payload_size_{};
   std::size_t wire_payload_size_{};
   std::size_t framed_payload_size_{};
+  std::vector<std::byte> encoded_;
   ClockId capture_clock_id_{};
+  std::uint64_t catalog_clock_count_{};
   ClockHealthOptions clock_health_{};
   bool protected_terminal_required_{};
+  // True only on an export endpoint, where Runtime is the publisher and owns publication time. An
+  // import endpoint is published by a client with no stamp authority, so it forwards no coordinate.
+  bool graph_owned_publication_{};
   // Incarnation identity token stamped on every data, EOS, and health frame of this attachment.
   // It is not a total order; receivers fence on ANY change (see next_producer_generation()).
   std::uint64_t producer_generation_{mint_producer_generation()};
@@ -893,21 +865,25 @@ class CatalogInlinePayloadPublisher final : public InlinePayloadPublisher {
 };
 
 class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
-                                             public ProtectedTerminalWaitSetSubscriber {
+                                             public ProtectedTerminalWaitSetSubscriber,
+                                             public StagedDataWaitSetSubscriber {
  public:
   CatalogInlinePayloadSubscriber(std::unique_ptr<InlinePayloadSubscriber> data,
                                  std::unique_ptr<InlinePayloadSubscriber> health,
                                  PayloadIdentityRecord payload_identity, std::size_t payload_size,
-                                 ClockId capture_clock_id,
-                                 const bool replacement_gaps_allowed) noexcept
+                                 const std::size_t service_frame_size, ClockId capture_clock_id,
+                                 std::uint64_t catalog_clock_count,
+                                 const bool replacement_gaps_allowed)
       : data_(std::move(data)),
         health_(std::move(health)),
         payload_identity_(std::move(payload_identity)),
         native_payload_size_(payload_size),
         wire_payload_size_(catalog_wire_payload_size(payload_identity_, payload_size)),
-        framed_payload_size_(catalog_data_frame_size(payload_identity_, payload_size)),
+        framed_payload_size_(service_frame_size),
         capture_clock_id_(capture_clock_id),
-        replacement_gaps_allowed_(replacement_gaps_allowed) {}
+        catalog_clock_count_(catalog_clock_count),
+        replacement_gaps_allowed_(replacement_gaps_allowed),
+        pending_wire_(service_frame_size) {}
 
   [[nodiscard]] expected<bool, Error> has_samples() const override {
     if (stream_closed_) {
@@ -932,7 +908,8 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
     return !stream_closed_ && data_->has_publishers() && (!health_ || health_->has_publishers());
   }
 
-  [[nodiscard]] expected<SampleMetadata, Error> receive(std::span<std::byte> payload) override {
+  [[nodiscard]] expected<InlinePayloadReceiveResult, Error> receive(
+      std::span<std::byte> payload) override {
     if (stream_closed_) {
       return make_unexpected(Error{ErrorCode::kClosed});
     }
@@ -944,7 +921,8 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
       return make_unexpected(std::move(operation).error());
     }
     if (operation->kind == CatalogReceivedOperationKind::kData) {
-      return operation->metadata;
+      return InlinePayloadReceiveResult{.metadata = operation->metadata,
+                                        .payload_size = operation->payload_size};
     }
     if (operation->kind == CatalogReceivedOperationKind::kEndOfStream) {
       return make_unexpected(Error{ErrorCode::kClosed});
@@ -957,6 +935,11 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
   }
 
   [[nodiscard]] expected<InlinePayloadReceiveGuard, Error> receive_borrowed() override {
+    return receive_borrowed_if_data_accepted(true);
+  }
+
+  [[nodiscard]] expected<InlinePayloadReceiveGuard, Error> receive_borrowed_if_data_accepted(
+      const bool accept_data) override {
     if (borrowed_schema_payload_) {
       return make_unexpected(
           catalog_error(ErrorCode::kFailure, "ENDPOINT_PAYLOAD_LOAN_ALREADY_ACTIVE"));
@@ -967,8 +950,7 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
     if (payload_identity_.kind != PayloadIdentityKind::kSchema || !payload_identity_.schema) {
       return make_unexpected(Error{ErrorCode::kNotSupported});
     }
-    auto operation =
-        receive_next(std::span<std::byte>{pending_wire_}.first(native_payload_size_), true, true);
+    auto operation = receive_next(std::span<std::byte>{}, accept_data, true);
     if (!operation) {
       return make_unexpected(std::move(operation).error());
     }
@@ -981,6 +963,9 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
     }
     if (operation->kind == CatalogReceivedOperationKind::kEndOfStream) {
       return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    if (operation->kind == CatalogReceivedOperationKind::kDataPending) {
+      return make_unexpected(Error{ErrorCode::kBackpressured});
     }
     if (operation->kind == CatalogReceivedOperationKind::kPeerIncarnationChanged) {
       return make_unexpected(
@@ -995,9 +980,35 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
     return data_->attach_wait_set(wait_set);
   }
 
+  // Waiting is delegated wholesale to the inner data binding: it owns the transport lanes, so it
+  // owns both the event-wake capability and the runtime the wait context is built from. Readiness
+  // is not delegated; this composite's own has_samples additionally reports staged data that the
+  // transport lane has already surrendered.
+  [[nodiscard]] bool event_wake_enabled() const noexcept override {
+    return data_->event_wake_enabled();
+  }
+
+  [[nodiscard]] void* wait_context_runtime() noexcept override {
+    return data_->wait_context_runtime();
+  }
+
   [[nodiscard]] std::optional<std::uint64_t> protected_terminal_wait_handle()
       const noexcept override {
     return channel_internal::protected_terminal_wait_handle(*data_);
+  }
+
+  [[nodiscard]] std::optional<StagedDataState> staged_data_state() const noexcept override {
+    if (pending_data_ && pending_data_attribution_.kind == DataAttributionKind::kData &&
+        pending_metadata_.sequence != 0U &&
+        !foreign_producer_generation(pending_data_attribution_.producer_generation)) {
+      return StagedDataState{.sequence = pending_metadata_.sequence,
+                             .capture_time = pending_metadata_.capture_time()};
+    }
+    return channel_internal::staged_data_state(*data_);
+  }
+
+  [[nodiscard]] std::optional<std::uint64_t> staged_terminal_sequence() const noexcept override {
+    return channel_internal::staged_terminal_sequence(*data_);
   }
 
   [[nodiscard]] expected<void, Error> detach_wait_set() noexcept override {
@@ -1093,7 +1104,8 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
     if (stream_closed_) {
       return CatalogReceivedOperation{};
     }
-    if (payload.size() != native_payload_size_) {
+    if ((!borrow_schema_payload && payload.size() != native_payload_size_) ||
+        (borrow_schema_payload && !payload.empty() && payload.size() != native_payload_size_)) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
     auto staged_data = stage_data();
@@ -1253,9 +1265,10 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
     const bool schema_payload =
         payload_identity_.kind == PayloadIdentityKind::kSchema && payload_identity_.schema;
     std::span<const std::byte> borrowed_schema_payload;
+    std::size_t decoded_payload_size = 0U;
     if (schema_payload) {
       auto payload_size = decode_schema_envelope(
-          std::span<const std::byte>{pending_wire_}.subspan(kDataAttributionBytes),
+          std::span<const std::byte>{pending_wire_}.subspan(kCatalogDataAttributionBytes),
           *payload_identity_.schema,
           native_payload_size_);
       if (!payload_size || *payload_size != pending_metadata_.byte_size) {
@@ -1263,21 +1276,30 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
                                                             "ENDPOINT_SCHEMA_PAYLOAD_SIZE_INVALID")
                                             : std::move(payload_size).error());
       }
+      // pending_wire_ is endpoint-owned and reused, so its tail still holds the previous sample.
+      // Admit only serialized bytes this staging operation actually received.
+      if (kCatalogDataAttributionBytes + kSchemaEnvelopeHeaderSize + *payload_size >
+          pending_wire_size_) {
+        return make_unexpected(
+            catalog_error(ErrorCode::kProtocolError, "ENDPOINT_SCHEMA_PAYLOAD_SIZE_INVALID"));
+      }
       const auto serialized = std::span<const std::byte>{pending_wire_}.subspan(
-          kDataAttributionBytes + kSchemaEnvelopeHeaderSize, *payload_size);
+          kCatalogDataAttributionBytes + kSchemaEnvelopeHeaderSize, *payload_size);
       if (borrow_schema_payload) {
         borrowed_schema_payload = serialized;
       } else {
         std::copy(serialized.begin(), serialized.end(), payload.begin());
+        decoded_payload_size = *payload_size;
       }
     } else {
       auto decoded = decode_catalog_payload(payload_identity_,
                                             std::span<const std::byte>{pending_wire_}.subspan(
-                                                kDataAttributionBytes, wire_payload_size_),
+                                                kCatalogDataAttributionBytes, wire_payload_size_),
                                             payload);
       if (!decoded) {
         return make_unexpected(std::move(decoded).error());
       }
+      decoded_payload_size = native_payload_size_;
     }
 
     SampleMetadata metadata = pending_metadata_;
@@ -1289,6 +1311,7 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
     return CatalogReceivedOperation{
         .kind = CatalogReceivedOperationKind::kData,
         .metadata = metadata,
+        .payload_size = decoded_payload_size,
         .schema_payload = borrowed_schema_payload,
     };
   }
@@ -1352,21 +1375,42 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
     if (!*ready) {
       return {};
     }
-    auto metadata = data_->receive(std::span<std::byte>{pending_wire_}.first(framed_payload_size_));
-    if (!metadata) {
-      return make_unexpected(std::move(metadata).error());
+    auto received = data_->receive(std::span<std::byte>{pending_wire_}.first(framed_payload_size_));
+    if (!received) {
+      return make_unexpected(std::move(received).error());
+    }
+    // A schema publication submits only its encoded prefix, so the staged frame is variable. Any
+    // frame too short to carry attribution cannot be decoded at all, and every later read of
+    // pending_wire_ is bounded by this length so the reused tail is never mistaken for payload.
+    if (received->payload_size < kCatalogDataAttributionBytes ||
+        received->payload_size > framed_payload_size_) {
+      return make_unexpected(
+          catalog_error(ErrorCode::kProtocolError, "ENDPOINT_DATA_FRAME_SIZE_INVALID"));
     }
     auto attribution = decode_data_attribution(
         std::span<const std::byte>{pending_wire_}.first(framed_payload_size_));
     if (!attribution) {
       return make_unexpected(std::move(attribution).error());
     }
-    auto metadata_valid = validate_received_data_metadata(
-        *metadata, payload_identity_, native_payload_size_, capture_clock_id_, attribution->kind);
+    // A non-schema endpoint publishes its complete fixed frame; a short one is malformed.
+    const bool schema_payload =
+        payload_identity_.kind == PayloadIdentityKind::kSchema && payload_identity_.schema;
+    if (!schema_payload && attribution->kind == DataAttributionKind::kData &&
+        received->payload_size != framed_payload_size_) {
+      return make_unexpected(
+          catalog_error(ErrorCode::kProtocolError, "ENDPOINT_DATA_FRAME_SIZE_INVALID"));
+    }
+    auto metadata_valid = validate_received_data_metadata(received->metadata,
+                                                          payload_identity_,
+                                                          native_payload_size_,
+                                                          capture_clock_id_,
+                                                          catalog_clock_count_,
+                                                          attribution->kind);
     if (!metadata_valid) {
       return make_unexpected(std::move(metadata_valid).error());
     }
-    pending_metadata_ = *metadata;
+    pending_metadata_ = received->metadata;
+    pending_wire_size_ = received->payload_size;
     pending_data_attribution_ = *attribution;
     pending_data_ = true;
     return {};
@@ -1388,15 +1432,19 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
       return {};
     }
     std::array<std::byte, kHealthControlBytes> wire{};
-    auto metadata = health_->receive(wire);
-    if (!metadata) {
-      return make_unexpected(std::move(metadata).error());
+    auto received = health_->receive(wire);
+    if (!received) {
+      return make_unexpected(std::move(received).error());
+    }
+    if (received->payload_size != kHealthControlBytes) {
+      return make_unexpected(
+          catalog_error(ErrorCode::kProtocolError, "ENDPOINT_HEALTH_CONTROL_INVALID"));
     }
     auto report = decode_health_control(wire);
     if (!report) {
       return make_unexpected(std::move(report).error());
     }
-    pending_health_metadata_ = *metadata;
+    pending_health_metadata_ = received->metadata;
     pending_health_state_ = *report;
     pending_health_ = true;
     return {};
@@ -1417,8 +1465,11 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
   std::size_t wire_payload_size_{};
   std::size_t framed_payload_size_{};
   ClockId capture_clock_id_{};
+  std::uint64_t catalog_clock_count_{};
   bool replacement_gaps_allowed_{};
-  std::array<std::byte, kMaximumCatalogInlineBytes> pending_wire_{};
+  std::vector<std::byte> pending_wire_;
+  /// Bytes the staged frame actually wrote into pending_wire_; the remainder is a previous sample.
+  std::size_t pending_wire_size_{};
   SampleMetadata pending_metadata_{};
   DataAttribution pending_data_attribution_{};
   bool pending_data_{};
@@ -1524,6 +1575,7 @@ expected<void, Error> CatalogChannelBindingTestAccess::validate_data_metadata(
       record->service_static.payload_identity,
       catalog_native_payload_size(record->service_static.payload_identity, payload_capacity),
       detail::ChannelEndpointCatalogAccess::capture_clock_id(endpoint),
+      detail::ChannelEndpointCatalogAccess::clock_count(endpoint),
       DataAttributionKind::kData);
 }
 
@@ -1649,15 +1701,15 @@ ChannelRuntime::create_catalog_inline_payload_publisher(
   if (endpoint_record == nullptr) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
-  if (auto valid = channel_internal::validate_attach(
-          *endpoint_record, payload_identity, payload_size, options, publisher_direction);
-      !valid) {
-    return make_unexpected(std::move(valid).error());
+  auto service_contract = channel_internal::validate_attach(
+      *endpoint_record, payload_identity, payload_size, options, publisher_direction, true);
+  if (!service_contract) {
+    return make_unexpected(std::move(service_contract).error());
   }
   const std::string binding =
       detail::ChannelEndpointCatalogAccess::backend_service_binding(endpoint);
   const std::size_t framed_payload_size =
-      channel_internal::catalog_data_frame_size(payload_identity, payload_size);
+      static_cast<std::size_t>(service_contract->required_frame_bytes);
   const ChannelOptions endpoint_options = channel_internal::channel_options(*endpoint_record, true);
   const channel_internal::PublisherPressureOptions data_pressure =
       pressure.for_queue(endpoint_options.queue_policy);
@@ -1706,9 +1758,12 @@ ChannelRuntime::create_catalog_inline_payload_publisher(
       std::move(health),
       std::move(payload_identity),
       payload_size,
+      framed_payload_size,
       capture_clock,
+      detail::ChannelEndpointCatalogAccess::clock_count(endpoint),
       health_options,
-      channel_internal::replaces_oldest_unread_sample(endpoint_options.queue_policy));
+      channel_internal::replaces_oldest_unread_sample(endpoint_options.queue_policy),
+      endpoint_record->direction == TopicDirection::kExport);
 }
 
 expected<std::unique_ptr<channel_internal::InlinePayloadSubscriber>, Error>
@@ -1724,15 +1779,15 @@ ChannelRuntime::create_catalog_inline_payload_subscriber(
   if (endpoint_record == nullptr) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
-  if (auto valid = channel_internal::validate_attach(
-          *endpoint_record, payload_identity, payload_size, options, subscriber_direction);
-      !valid) {
-    return make_unexpected(std::move(valid).error());
+  auto service_contract = channel_internal::validate_attach(
+      *endpoint_record, payload_identity, payload_size, options, subscriber_direction, false);
+  if (!service_contract) {
+    return make_unexpected(std::move(service_contract).error());
   }
   const std::string binding =
       detail::ChannelEndpointCatalogAccess::backend_service_binding(endpoint);
   const std::size_t framed_payload_size =
-      channel_internal::catalog_data_frame_size(payload_identity, payload_size);
+      static_cast<std::size_t>(service_contract->required_frame_bytes);
   const ChannelOptions endpoint_options =
       channel_internal::channel_options(*endpoint_record, false);
   auto data =
@@ -1775,7 +1830,9 @@ ChannelRuntime::create_catalog_inline_payload_subscriber(
       std::move(health),
       std::move(payload_identity),
       payload_size,
+      framed_payload_size,
       detail::ChannelEndpointCatalogAccess::capture_clock_id(endpoint),
+      detail::ChannelEndpointCatalogAccess::clock_count(endpoint),
       channel_internal::replaces_oldest_unread_sample(endpoint_options.queue_policy));
 }
 

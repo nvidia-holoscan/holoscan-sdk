@@ -67,7 +67,7 @@ cmake --build build
 If the SDK is not in a default location, point CMake at it:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S . -DCMAKE_PREFIX_PATH=<install-prefix>
 ```
 
 ## Run
@@ -135,7 +135,7 @@ degraded branch.)
 
 The 50 ms sensor is slower than the 20 ms controller so `ReuseLast` is
 observable between fresh admissions. `LatestWithin` and `ReuseLast` are the
-EA1 pattern for sampling a slower or unrelated-rate scalar stream at the
+baseline pattern for sampling a slower or unrelated-rate scalar stream at the
 anchor cadence. A side stream that is faster than the consumer cadence must
 instead use `DrainAll` so every surviving sample is retired as a batch; a
 replacement queue policy does not make a fast scalar

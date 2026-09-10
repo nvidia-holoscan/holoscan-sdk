@@ -9,15 +9,169 @@
 #include <string>
 #include <utility>
 
+#include "rate_math_internal.hpp"
+
 namespace holoscan {
 
 namespace {
 
-[[nodiscard]] bool valid_lifecycle_stage(LifecycleStage stage) noexcept {
-  return static_cast<std::uint8_t>(stage) <= static_cast<std::uint8_t>(LifecycleStage::kRelease);
+void record_rate_error(detail::AuthoredPortRate& authored, std::string_view token) {
+  if (authored.error.code == ErrorCode::kSuccess) {
+    // Preserve the sticky fail-closed state before any diagnostic enrichment.  Builder authoring
+    // itself stays allocation-free, including in exception-disabled builds; the cold compiler
+    // access path may copy the static token into an owning Error later.
+    authored.error.code = ErrorCode::kInvalidArgument;
+    authored.error_token = token;
+  }
+}
+
+[[nodiscard]] bool rate_kind_conflicts(PortRateKind existing, PortRateKind requested) noexcept {
+  return existing != PortRateKind::kUnspecified && existing != requested;
+}
+
+void declare_expected_rate(detail::AuthoredPortRate& authored, Rate rate) {
+  if (authored.error.code != ErrorCode::kSuccess) {
+    return;
+  }
+  const auto normalized = detail::rate_math::normalize(rate);
+  if (!normalized) {
+    record_rate_error(authored, "PORT_RATE_INVALID");
+    return;
+  }
+  if (rate_kind_conflicts(authored.kind, PortRateKind::kExpectedInput) ||
+      (authored.expected_rate && *authored.expected_rate != *normalized)) {
+    record_rate_error(authored, "PORT_RATE_CONFLICT");
+    return;
+  }
+  authored.kind = PortRateKind::kExpectedInput;
+  authored.expected_rate = *normalized;
+}
+
+void declare_nominal_rate(detail::AuthoredPortRate& authored, Rate rate) {
+  if (authored.error.code != ErrorCode::kSuccess) {
+    return;
+  }
+  const auto normalized = detail::rate_math::normalize(rate);
+  if (!normalized) {
+    record_rate_error(authored, "PORT_RATE_INVALID");
+    return;
+  }
+  if (authored.max_nominal_rate ||
+      rate_kind_conflicts(authored.kind, PortRateKind::kFixedNominal) ||
+      (authored.nominal_rate && *authored.nominal_rate != *normalized)) {
+    record_rate_error(authored, "PORT_RATE_CONFLICT");
+    return;
+  }
+  authored.kind = PortRateKind::kFixedNominal;
+  authored.nominal_rate = *normalized;
+}
+
+void declare_lifecycle_rate(detail::AuthoredPortRate& authored, LifecycleStage stage) {
+  if (authored.error.code != ErrorCode::kSuccess) {
+    return;
+  }
+  if (stage != LifecycleStage::kConfigure && stage != LifecycleStage::kDiscover &&
+      stage != LifecycleStage::kWarmUp && stage != LifecycleStage::kArm) {
+    record_rate_error(authored, "PORT_RATE_BIND_STAGE_INVALID");
+    return;
+  }
+  if (rate_kind_conflicts(authored.kind, PortRateKind::kLifecycleNominal) ||
+      (authored.lifecycle_binding_stage && *authored.lifecycle_binding_stage != stage)) {
+    record_rate_error(authored, "PORT_RATE_CONFLICT");
+    return;
+  }
+  authored.kind = PortRateKind::kLifecycleNominal;
+  authored.lifecycle_binding_stage = stage;
+}
+
+void declare_maximum_rate(detail::AuthoredPortRate& authored, Rate rate) {
+  if (authored.error.code != ErrorCode::kSuccess) {
+    return;
+  }
+  const auto normalized = detail::rate_math::normalize(rate);
+  if (!normalized) {
+    record_rate_error(authored, "PORT_RATE_INVALID");
+    return;
+  }
+  if ((authored.kind != PortRateKind::kUnspecified &&
+       authored.kind != PortRateKind::kLifecycleNominal) ||
+      (authored.max_nominal_rate && *authored.max_nominal_rate != *normalized)) {
+    record_rate_error(authored, "PORT_RATE_CONFLICT");
+    return;
+  }
+  authored.max_nominal_rate = *normalized;
+}
+
+void declare_follows_rate(detail::AuthoredPortRate& authored, const InputBase& input,
+                          RateRatio ratio) {
+  if (authored.error.code != ErrorCode::kSuccess) {
+    return;
+  }
+  const auto normalized = detail::rate_math::normalize(ratio);
+  if (!normalized) {
+    record_rate_error(authored, "PORT_RATE_INVALID");
+    return;
+  }
+  if (authored.max_nominal_rate ||
+      rate_kind_conflicts(authored.kind, PortRateKind::kFollowsInput) ||
+      (authored.follows_input != nullptr && authored.follows_input != &input) ||
+      (authored.follows_ratio && *authored.follows_ratio != *normalized)) {
+    record_rate_error(authored, "PORT_RATE_CONFLICT");
+    return;
+  }
+  authored.kind = PortRateKind::kFollowsInput;
+  authored.follows_input = &input;
+  authored.follows_ratio = *normalized;
 }
 
 }  // namespace
+
+InputSpecBuilder& InputSpecBuilder::expected_rate(Rate rate) {
+  declare_expected_rate(rate_, rate);
+  return *this;
+}
+
+OutputSpecBuilder& OutputSpecBuilder::nominal_rate(Rate rate) {
+  declare_nominal_rate(rate_, rate);
+  return *this;
+}
+
+OutputSpecBuilder& OutputSpecBuilder::lifecycle_nominal_rate(LifecycleStage bind_stage) {
+  declare_lifecycle_rate(rate_, bind_stage);
+  return *this;
+}
+
+OutputSpecBuilder& OutputSpecBuilder::max_nominal_rate(Rate rate) {
+  declare_maximum_rate(rate_, rate);
+  return *this;
+}
+
+OutputSpecBuilder& OutputSpecBuilder::follows_input(const InputBase& input, RateRatio ratio) {
+  declare_follows_rate(rate_, input, ratio);
+  return *this;
+}
+
+TensorOutputSpecBuilder& TensorOutputSpecBuilder::nominal_rate(Rate rate) {
+  declare_nominal_rate(rate_, rate);
+  return *this;
+}
+
+TensorOutputSpecBuilder& TensorOutputSpecBuilder::lifecycle_nominal_rate(
+    LifecycleStage bind_stage) {
+  declare_lifecycle_rate(rate_, bind_stage);
+  return *this;
+}
+
+TensorOutputSpecBuilder& TensorOutputSpecBuilder::max_nominal_rate(Rate rate) {
+  declare_maximum_rate(rate_, rate);
+  return *this;
+}
+
+TensorOutputSpecBuilder& TensorOutputSpecBuilder::follows_input(const InputBase& input,
+                                                                RateRatio ratio) {
+  declare_follows_rate(rate_, input, ratio);
+  return *this;
+}
 
 OperatorSpec::~OperatorSpec() noexcept = default;
 
@@ -34,7 +188,7 @@ LifecycleBuilder& LifecycleBuilder::requires_dependency(LifecycleStage stage,
 
 void OperatorSpec::register_lifecycle_fact(LifecycleStage stage, LifecycleDependencyKey key,
                                            LifecycleFactKind kind) {
-  if (!valid_lifecycle_stage(stage) || key.stable_name.empty()) {
+  if (!is_valid_lifecycle_stage(stage) || key.stable_name.empty()) {
     if (declaration_error_.code == ErrorCode::kSuccess) {
       declaration_error_ =
           Error{ErrorCode::kInvalidArgument, "operator lifecycle dependency is invalid"};

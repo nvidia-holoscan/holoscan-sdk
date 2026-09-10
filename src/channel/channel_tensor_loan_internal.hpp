@@ -36,7 +36,7 @@ struct StagedTensorCopy {
 
 // Source-private operation tables keep the installed facades independent of Runtime, pool, CUDA
 // event, and HoloMQ control types. The admitted endpoint state binds through this seam without
-// changing the public facade layout established by EA1-013.
+// changing the public facade layout established by HSDK5-013.
 struct TensorLoanWriteGuardOps {
   void (*abandon)(void*) noexcept;
   void* (*data)(const void*) noexcept;
@@ -70,7 +70,7 @@ struct TensorPublisherOps {
                                               EmitOptions) noexcept;
   expected<ForeignTensorDisposition, Error> (*classify_foreign_tensor)(const void*,
                                                                        const Tensor&) noexcept;
-  expected<StagedTensorCopy, Error> (*stage_foreign_tensor)(void*, const Tensor&,
+  expected<StagedTensorCopy, Error> (*stage_foreign_tensor)(void*, const Tensor&, cudaStream_t,
                                                             cudaStream_t) noexcept;
   expected<std::uint32_t, Error> (*emit_prevalidated_exportable_tensor)(void*, const Tensor&,
                                                                         SampleMetadata) noexcept;
@@ -78,9 +78,12 @@ struct TensorPublisherOps {
   expected<void, Error> (*report_clock_health)(void*, ClockHealthReport) noexcept;
   expected<void, Error> (*update_connections)(void*) noexcept;
   bool (*has_subscribers)(const void*) noexcept;
+  bool (*exhaust_operation_sequence_for_test)(void*) noexcept;
+  bool (*fail_next_terminal_pre_submit_for_test)(void*) noexcept;
   void (*fail_next_post_submit_for_test)(void*, ErrorCode) noexcept;
   void (*fail_next_readiness_registration_for_test)(void*) noexcept;
   void (*corrupt_next_free_slot_for_test)(void*) noexcept;
+  std::size_t (*preallocated_copy_event_count_for_test)(const void*) noexcept;
 };
 
 /// Construct source-private facades without exporting their control-state representation.
@@ -111,6 +114,11 @@ class TensorPublishLoanAccess {
     return publisher.emit_end_of_stream(metadata);
   }
 
+  static void set_health_report_sequence(ManualTensorPublisher& publisher,
+                                         const std::uint64_t sequence) noexcept {
+    publisher.set_health_report_sequence(sequence);
+  }
+
   [[nodiscard]] static bool loan_bound_to(const TensorPublishLoan& loan,
                                           const void* state) noexcept {
     return loan.state_ == state;
@@ -127,12 +135,13 @@ class TensorPublishLoanAccess {
 
   [[nodiscard]] static expected<StagedTensorCopy, Error> stage_foreign_tensor(
       ChannelPublisher<Tensor>& publisher, const Tensor& tensor,
-      cudaStream_t producer_stream = nullptr) noexcept {
+      cudaStream_t producer_stream = nullptr, cudaStream_t copy_stream = nullptr) noexcept {
     if (publisher.state_ == nullptr || publisher.ops_ == nullptr ||
         publisher.ops_->stage_foreign_tensor == nullptr) {
       return make_unexpected(Error{ErrorCode::kClosed});
     }
-    return publisher.ops_->stage_foreign_tensor(publisher.state_, tensor, producer_stream);
+    return publisher.ops_->stage_foreign_tensor(
+        publisher.state_, tensor, producer_stream, copy_stream);
   }
 
   [[nodiscard]] static expected<std::uint32_t, Error> emit_prevalidated_exportable_tensor(
@@ -154,6 +163,26 @@ class TensorPublishLoanAccess {
   [[nodiscard]] static bool fail_next_catalog_post_submit_acknowledgement_for_test(
       ChannelPublisher<Tensor>& publisher) noexcept {
     return fail_next_catalog_post_submit_for_test(publisher, ErrorCode::kPublicationIndeterminate);
+  }
+
+  /// Inject one source-tree-only terminal-loan exhaustion before a catalog Tensor submit.
+  [[nodiscard]] static bool fail_next_catalog_terminal_pre_submit_for_test(
+      ChannelPublisher<Tensor>& publisher) noexcept {
+    if (publisher.state_ == nullptr || publisher.ops_ == nullptr ||
+        publisher.ops_->fail_next_terminal_pre_submit_for_test == nullptr) {
+      return false;
+    }
+    return publisher.ops_->fail_next_terminal_pre_submit_for_test(publisher.state_);
+  }
+
+  /// Set one source-tree-only catalog Tensor publisher to permanent sequence exhaustion.
+  [[nodiscard]] static bool exhaust_catalog_operation_sequence_for_test(
+      ChannelPublisher<Tensor>& publisher) noexcept {
+    if (publisher.state_ == nullptr || publisher.ops_ == nullptr ||
+        publisher.ops_->exhaust_operation_sequence_for_test == nullptr) {
+      return false;
+    }
+    return publisher.ops_->exhaust_operation_sequence_for_test(publisher.state_);
   }
 
   /// Inject one source-tree-only post-submit result after a completed catalog Tensor submit.
@@ -187,6 +216,16 @@ class TensorPublishLoanAccess {
     }
     publisher.ops_->corrupt_next_free_slot_for_test(publisher.state_);
     return true;
+  }
+
+  /// Return the number of cold-bound producer-to-copy-stream ordering events.
+  [[nodiscard]] static std::size_t preallocated_copy_event_count_for_test(
+      const ChannelPublisher<Tensor>& publisher) noexcept {
+    if (publisher.state_ == nullptr || publisher.ops_ == nullptr ||
+        publisher.ops_->preallocated_copy_event_count_for_test == nullptr) {
+      return 0U;
+    }
+    return publisher.ops_->preallocated_copy_event_count_for_test(publisher.state_);
   }
 
   /// Detach one public loan so a consuming publisher operation can validate and retire it.

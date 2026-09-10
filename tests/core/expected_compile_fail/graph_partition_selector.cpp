@@ -6,6 +6,7 @@
 #include <holoscan/core/graph.hpp>
 
 // REQ: GRAPH-001
+// REQ: COMPILE-068
 int main() {
   holoscan::Graph graph;
   graph.set_partition_algorithm("source_chain");

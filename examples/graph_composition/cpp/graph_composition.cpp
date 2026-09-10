@@ -342,7 +342,7 @@ void print_view(const holoscan::GraphView& view) {
 int main() {
   CompositionObservation::reset();
 
-  holoscan::Graph graph{"ea1-graph-composition"};
+  holoscan::Graph graph{"holoscan-graph-composition"};
   const auto burst_blocking = graph.op<BurstSource>("burst_blocking", PathId::kBlocking);
   const auto burst_freshest = graph.op<BurstSource>("burst_freshest", PathId::kFreshest);
   const auto sink_blocking = graph.op<SlowSink>("sink_blocking", PathId::kBlocking);

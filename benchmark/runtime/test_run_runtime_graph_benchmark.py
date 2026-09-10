@@ -39,20 +39,55 @@ def summary_evidence(source_trigger: str) -> dict[str, object]:
     }
 
 
+def partitioning_evidence(args: SimpleNamespace) -> dict[str, object]:
+    algorithm, mode = runner.expected_partitioning(args)
+    lane_count = runner.expected_operator_lane_count(args)
+    authored_count = {
+        "automatic": 0,
+        "include_all": 1,
+        "hybrid": 1,
+    }.get(args.partition_cover, lane_count)
+    automatic_count = (
+        lane_count
+        if args.partition_cover == "automatic"
+        else lane_count - 1
+        if args.partition_cover == "hybrid"
+        else 0
+    )
+    return {
+        "requested_algorithm": {"id": algorithm, "version": 1},
+        "accepted_algorithm": {"id": algorithm, "version": 1},
+        "selection_source": "core_default",
+        "authoring": args.partition_cover,
+        "mode": mode,
+        "partition_count": lane_count,
+        "authored_partition_count": authored_count,
+        "automatic_partition_count": automatic_count,
+        "cover_signature": "test-cover",
+    }
+
+
 def make_args(**updates: object) -> SimpleNamespace:
     values = {
         "samples": 100,
         "workload": "latency",
         "scenario": "pod",
         "operator_lanes": "separate",
-        "partition_algorithm": "core_default",
+        "partition_cover": "legacy",
         "warmup": 10,
         "queue_policy": "blocking",
         "queue_depth": 1,
+        "sink_queue_depths": [],
         "relay_count": 1,
         "fanout": 1,
+        "multi_output": False,
+        "multi_input": False,
+        "mixed_policy_fanout": False,
         "notification_capacity": 1,
+        "offered_rate_hz": 0,
+        "offered_burst_size": 1,
         "publisher_period_us": 1_000,
+        "callback_work_us": 0,
         "source_cpu": -1,
         "relay_cpu": -1,
         "sink_cpu": -1,
@@ -74,15 +109,142 @@ def make_args(**updates: object) -> SimpleNamespace:
         "disable_direct_continuation_elision": False,
         "disable_closed_island_composite": False,
         "force_holomq_process_local_inline": False,
+        "force_holomq_event_wake": False,
+        "force_process_local_channel_pump": False,
+        "test_gate_pod_sink_for_pressure": False,
+        "source_state": "unknown",
+        "source_snapshot_sha256": None,
     }
     values.update(updates)
     return SimpleNamespace(**values)
+
+
+def test_read_cpu_topology_keeps_siblings_when_core_id_is_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    topology_values = {
+        "physical_package_id": "0",
+        "core_id": "unknown",
+        "thread_siblings_list": "7",
+        "core_type": None,
+        "scaling_governor": "performance",
+    }
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    monkeypatch.setattr(runner.os, "sched_getaffinity", lambda _pid: {7}, raising=False)
+    monkeypatch.setattr(runner, "read_text", lambda path: topology_values[path.name])
+
+    topology = runner.read_cpu_topology("source", 7)
+
+    assert topology["package_id"] == 0
+    assert topology["core_id"] is None
+    assert topology["thread_siblings"] == "7"
+    assert topology["topology_available"] is True
 
 
 def test_expected_operator_lane_count_keeps_relay_topology_distinct_from_fanout() -> None:
     # sample_forward authors source, relay, and one sink; argument validation rejects fanout there.
     assert runner.expected_operator_lane_count(make_args(scenario="sample_forward", fanout=4)) == 3
     assert runner.expected_operator_lane_count(make_args(scenario="pod", fanout=4)) == 5
+    assert runner.expected_sink_operator_count(make_args(multi_input=True, fanout=2)) == 1
+    assert (
+        runner.expected_operator_lane_count(
+            make_args(partition_cover="automatic", multi_input=True, fanout=2)
+        )
+        == 1
+    )
+
+
+def test_automatic_lane_expectation_is_topology_derived_not_request_derived() -> None:
+    automatic = make_args(partition_cover="automatic", scenario="pod", fanout=3)
+
+    assert runner.expected_operator_lane_count(automatic) == 4
+
+
+def test_effective_automatic_lane_count_comes_from_the_accepted_plan() -> None:
+    # The compiler selects automatic partitions; a requested lane policy cannot redefine them.
+    automatic = make_args(partition_cover="automatic", operator_lanes="shared", fanout=3)
+
+    assert runner.effective_operator_lane_count({"operator_lane_count": 4}, automatic) == 4
+    assert (
+        runner.effective_operator_lane_count(
+            {"operator_lane_count": 1},
+            make_args(
+                partition_cover="automatic",
+                scenario="source_only",
+                workload="notification_latency",
+            ),
+        )
+        == 1
+    )
+    with pytest.raises(RuntimeError, match="invalid effective Operator lane count"):
+        runner.effective_operator_lane_count({"operator_lane_count": 0}, automatic)
+
+
+def test_automatic_source_only_keeps_only_controller_topology_evidence() -> None:
+    automatic = make_args(
+        partition_cover="automatic",
+        scenario="source_only",
+        workload="notification_latency",
+    )
+
+    runner.validate_args(automatic)
+    assert [item["role"] for item in runner.collect_cpu_topology(automatic)] == [
+        "controller",
+        "notification_driver",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("partition_cover", "operator_lanes", "scenario", "fanout", "lanes", "algorithm", "mode"),
+    [
+        ("legacy", "separate", "pod", 1, 2, "holoscan.partition.serial_baseline", "manual"),
+        ("include_all", "shared", "pod", 1, 1, "holoscan.partition.serial_baseline", "manual"),
+        ("automatic", "separate", "pod", 1, 1, "holoscan.partition.source_chain", "automatic"),
+        (
+            "automatic",
+            "separate",
+            "pod",
+            3,
+            4,
+            "holoscan.partition.source_chain",
+            "automatic",
+        ),
+        (
+            "hybrid",
+            "separate",
+            "pod",
+            1,
+            2,
+            "holoscan.partition.source_chain",
+            "constrained_automatic",
+        ),
+    ],
+)
+def test_partition_cover_predicts_accepted_plan(
+    partition_cover: str,
+    operator_lanes: str,
+    scenario: str,
+    fanout: int,
+    lanes: int,
+    algorithm: str,
+    mode: str,
+) -> None:
+    args = make_args(
+        partition_cover=partition_cover,
+        operator_lanes=operator_lanes,
+        scenario=scenario,
+        fanout=fanout,
+    )
+    assert runner.expected_operator_lane_count(args) == lanes
+    assert runner.expected_partitioning(args) == (algorithm, mode)
+
+
+def test_benchmark_command_preserves_legacy_default_and_forwards_cover(tmp_path: Path) -> None:
+    args = make_args(partition_cover="automatic")
+
+    command = runner.benchmark_command(args, Path("benchmark"), tmp_path / "result.json")
+
+    assert command[command.index("--partition-cover") + 1] == "automatic"
 
 
 def test_expected_execution_lane_worker_count_excludes_inline_partition_owners() -> None:
@@ -100,6 +262,13 @@ def test_expected_execution_lane_worker_count_excludes_inline_partition_owners()
         == 2
     )
     assert runner.expected_execution_lane_worker_count(make_args(scenario="pod", fanout=4)) == 5
+    assert runner.expected_execution_lane_worker_count(make_args(partition_cover="automatic")) == 0
+    assert (
+        runner.expected_execution_lane_worker_count(
+            make_args(partition_cover="automatic", fanout=4)
+        )
+        == 5
+    )
 
 
 @pytest.mark.parametrize(
@@ -174,36 +343,162 @@ class TestArgumentValidation:
 
         monkeypatch.setattr(runner, "read_cpu_topology", synthetic_topology)
 
+    def test_singleton_sibling_sets_override_ambiguous_core_ids(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def thor_topology(role: str, cpu: int) -> dict[str, object]:
+            return {
+                "role": role,
+                "cpu": cpu,
+                "pinned": cpu >= 0,
+                "package_id": 0,
+                "core_id": 0,
+                "topology_available": True,
+                "thread_siblings": str(cpu),
+            }
+
+        monkeypatch.setattr(runner, "read_cpu_topology", thor_topology)
+        args = make_args(source_cpu=0, sink_cpu=1, controller_cpu=2)
+
+        topology = runner.collect_cpu_topology(args)
+
+        assert len({runner.physical_core_identity(item) for item in topology}) == len(topology)
+
     # Each vector isolates one CLI contract so an invalid workload cannot produce mislabeled data.
     @pytest.mark.parametrize(
         ("updates", "message"),
         [
             ({"samples": 0}, "--samples must be positive"),
             ({"warmup": -1}, "--warmup must be nonnegative"),
+            ({"callback_work_us": 2}, "--callback-work-us must be 0, 1, 5, 20, or 100"),
             ({"queue_depth": 3}, "latency workloads require --queue-depth 1 or 2"),
             (
+                {"scenario": "multi_tensor", "queue_policy": "drop_oldest"},
+                "--queue-policy drop_oldest supports pod, schema, third_party_schema, tensor, "
+                "image, multi_tensor_loan, or multi_tensor_staging",
+            ),
+            (
                 {"queue_policy": "drop_oldest", "fanout": 2},
-                "--queue-policy drop_oldest currently requires --fanout 1",
+                "--queue-policy drop_oldest fanout requires --offered-rate-hz",
+            ),
+            (
+                {"offered_rate_hz": -1},
+                "--offered-rate-hz must be between 1 and 1000000 when enabled",
+            ),
+            (
+                {"offered_rate_hz": 1_000_001},
+                "--offered-rate-hz must be between 1 and 1000000 when enabled",
+            ),
+            (
+                {"offered_rate_hz": 100_000},
+                "--offered-rate-hz requires shared-lane saturated POD drop_oldest fanout",
+            ),
+            (
+                {"offered_burst_size": 2},
+                "--offered-burst-size requires --offered-rate-hz",
+            ),
+            (
+                {
+                    "workload": "saturated",
+                    "scenario": "pod",
+                    "operator_lanes": "shared",
+                    "queue_policy": "drop_oldest",
+                    "queue_depth": 2,
+                    "fanout": 2,
+                    "offered_rate_hz": 100_000,
+                    "offered_burst_size": 4,
+                    "samples": 10,
+                },
+                "--offered-rate-hz requires --samples to contain only complete bursts",
             ),
             ({"relay_count": 0}, "--relay-count must be between 1 and 64"),
             ({"relay_count": 65}, "--relay-count must be between 1 and 64"),
             ({"relay_count": 2}, "--relay-count requires --scenario sample_forward"),
-            ({"fanout": 0}, "--fanout must be between 1 and 8"),
-            ({"fanout": 9}, "--fanout must be between 1 and 8"),
+            ({"fanout": 0}, "--fanout must be between 1 and 32"),
+            ({"fanout": 33}, "--fanout must be between 1 and 32"),
             (
-                {"scenario": "tensor", "fanout": 2},
-                "--fanout greater than one requires --scenario pod or schema",
+                {"mixed_policy_fanout": True},
+                "--mixed-policy-fanout requires shared-lane blocking POD --fanout 2",
             ),
             (
-                {"fanout": 2, "force_holomq_process_local_inline": True},
-                "--force-holomq-process-local-inline requires --fanout 1",
+                {"scenario": "tensor", "operator_lanes": "shared", "fanout": 16},
+                "--fanout greater than 8 requires --scenario pod, schema, or third_party_schema",
+            ),
+            (
+                {"scenario": "signal", "fanout": 2},
+                "--fanout greater than one requires --scenario pod, schema, third_party_schema, "
+                "tensor, image, multi_tensor_loan, or multi_tensor_staging",
             ),
             (
                 {
-                    "disable_direct_continuation_elision": True,
+                    "workload": "saturated",
+                    "queue_depth": 4,
+                    "fanout": 1,
+                    "sink_queue_depths": [4],
+                },
+                "--sink-queue-depths requires supported --fanout greater than one",
+            ),
+            (
+                {
+                    "workload": "saturated",
+                    "queue_depth": 4,
+                    "fanout": 2,
+                    "sink_queue_depths": [4],
+                },
+                "--sink-queue-depths must provide exactly one depth per fanout sink",
+            ),
+            (
+                {
+                    "workload": "saturated",
+                    "queue_depth": 4,
+                    "fanout": 2,
+                    "sink_queue_depths": [4, 0],
+                },
+                "--sink-queue-depths values must be positive",
+            ),
+            (
+                {
+                    "workload": "saturated",
+                    "queue_depth": 4,
+                    "fanout": 2,
+                    "sink_queue_depths": [3, 2],
+                },
+                "maximum --sink-queue-depths value must equal --queue-depth",
+            ),
+            (
+                {
+                    "workload": "saturated",
+                    "scenario": "pod",
+                    "operator_lanes": "shared",
+                    "queue_depth": 4,
+                    "fanout": 2,
+                    "sink_queue_depths": [4, 2],
+                    "multi_output": True,
                     "force_holomq_process_local_inline": True,
                 },
-                "are mutually exclusive",
+                "--multi-output/--multi-input requires equal sink queue depths",
+            ),
+            (
+                {"fanout": 2, "force_holomq_process_local_inline": True},
+                "--force-holomq-process-local-inline requires --fanout 1, --multi-output, or "
+                "--multi-input",
+            ),
+            (
+                {"force_holomq_event_wake": True},
+                "--force-holomq-event-wake requires a shared-lane",
+            ),
+            (
+                {"force_process_local_channel_pump": True},
+                "--force-process-local-channel-pump requires an otherwise eventless shared-lane",
+            ),
+            (
+                {
+                    "operator_lanes": "shared",
+                    "force_holomq_process_local_inline": True,
+                    "force_holomq_event_wake": True,
+                    "force_process_local_channel_pump": True,
+                },
+                "--force-process-local-channel-pump requires an otherwise eventless shared-lane",
             ),
             (
                 {"workload": "saturated", "queue_depth": 0},
@@ -236,8 +531,27 @@ class TestArgumentValidation:
             ),
             ({"relay_cpu": 3}, "requires --scenario sample_forward"),
             (
-                {"partition_algorithm": "source_chain"},
-                "must remain core_default for benchmark-authored partitions",
+                {"partition_cover": "automatic", "source_cpu": 2},
+                "cannot bind generated partition names",
+            ),
+            (
+                {"partition_cover": "automatic", "operator_lanes": "shared"},
+                "requires --operator-lanes separate",
+            ),
+            (
+                {"partition_cover": "automatic", "operator_lanes": "per_sink", "fanout": 2},
+                "requires --operator-lanes separate",
+            ),
+            (
+                {
+                    "partition_cover": "automatic",
+                    "force_holomq_process_local_inline": True,
+                },
+                "cannot force HoloMQ because compiler-derived ownership is authoritative",
+            ),
+            (
+                {"partition_cover": "automatic", "runtime_phase_counters": True},
+                "without explicit fan-out cannot use --runtime-phase-counters",
             ),
             (
                 {"operator_lanes": "shared", "sink_cpu": 3},
@@ -253,7 +567,38 @@ class TestArgumentValidation:
             ),
             (
                 {"operator_lanes": "per_sink", "fanout": 1},
-                "--operator-lanes per_sink requires pod or schema fanout greater than one",
+                "--operator-lanes per_sink requires supported fanout greater than one",
+            ),
+            (
+                {"scenario": "tensor", "operator_lanes": "separate", "fanout": 2},
+                "Tensor, Image, and multi-Tensor fanout currently require --operator-lanes shared",
+            ),
+            (
+                {
+                    "scenario": "image",
+                    "operator_lanes": "separate",
+                    "fanout": 2,
+                    "bulk_work_profile": "descriptor_only",
+                },
+                "Tensor, Image, and multi-Tensor fanout currently require --operator-lanes shared",
+            ),
+            (
+                {
+                    "scenario": "multi_tensor_loan",
+                    "operator_lanes": "separate",
+                    "fanout": 2,
+                    "bulk_work_profile": "descriptor_only",
+                },
+                "Tensor, Image, and multi-Tensor fanout currently require --operator-lanes shared",
+            ),
+            (
+                {
+                    "scenario": "multi_tensor_staging",
+                    "operator_lanes": "separate",
+                    "fanout": 2,
+                    "bulk_work_profile": "descriptor_only",
+                },
+                "Tensor, Image, and multi-Tensor fanout currently require --operator-lanes shared",
             ),
             (
                 {"operator_lanes": "per_sink", "fanout": 2, "sink_cpu": 3},
@@ -292,7 +637,7 @@ class TestArgumentValidation:
                     "workload": "notification_latency",
                     "channel_pump_cpu": 5,
                 },
-                "--channel-pump-cpu requires a transport-backed scenario",
+                "--channel-pump-cpu requires an active channel pump",
             ),
             (
                 {
@@ -301,34 +646,35 @@ class TestArgumentValidation:
                 },
                 (
                     "--force-holomq-process-local-inline requires pod, signal, "
-                    "sample_forward, schema, tensor, image, or multi_tensor"
+                    "sample_forward, schema, third_party_schema, tensor, image, "
+                    "multi_tensor, multi_tensor_loan, or multi_tensor_staging"
                 ),
             ),
             (
-                {"scenario": "image", "tensor_storage": "device"},
-                "--scenario image and multi_tensor currently require --tensor-storage "
-                "pageable_host",
-            ),
-            (
-                {"scenario": "image", "tensor_device": 1},
-                "--scenario image and multi_tensor currently require --tensor-device 0",
-            ),
-            (
-                {"scenario": "multi_tensor", "tensor_storage": "pinned_host"},
-                "--scenario image and multi_tensor currently require --tensor-storage "
-                "pageable_host",
-            ),
-            (
-                {"scenario": "multi_tensor", "tensor_device": 1},
-                "--scenario image and multi_tensor currently require --tensor-device 0",
-            ),
-            (
                 {"bulk_work_profile": "descriptor_only"},
-                "--bulk-work-profile descriptor_only requires --scenario tensor or multi_tensor",
+                "--bulk-work-profile descriptor_only requires --scenario tensor, image, "
+                "multi_tensor, multi_tensor_loan, or multi_tensor_staging",
+            ),
+            (
+                {"scenario": "image"},
+                "--scenario image requires --bulk-work-profile descriptor_only",
+            ),
+            (
+                {"scenario": "multi_tensor_loan"},
+                "--scenario multi_tensor_loan requires --bulk-work-profile descriptor_only",
+            ),
+            (
+                {"scenario": "multi_tensor_staging"},
+                "--scenario multi_tensor_staging requires --bulk-work-profile descriptor_only",
             ),
             ({"notification_driver_cpu": 3}, "requires a notification workload"),
             ({"repetitions": 0}, "--repetitions must be positive"),
             ({"max_median_cv": -0.1}, "--max-median-cv must be nonnegative"),
+            ({"source_state": ""}, "--source-state must be nonempty"),
+            (
+                {"source_snapshot_sha256": "not-a-sha256"},
+                "--source-snapshot-sha256 must be a lowercase SHA-256 digest",
+            ),
         ],
     )
     def test_invalid_options_are_rejected(self, updates: dict[str, object], message: str) -> None:
@@ -356,6 +702,155 @@ class TestArgumentValidation:
         assert command[command.index("--notification-capacity") + 1] == "8"
         assert "--publisher-period-us" not in command
 
+    @pytest.mark.parametrize(
+        ("scenario", "tensor_storage"),
+        [
+            ("image", "pinned_host"),
+            ("image", "device"),
+            ("multi_tensor", "pinned_host"),
+            ("multi_tensor", "device"),
+            ("multi_tensor_loan", "pinned_host"),
+            ("multi_tensor_loan", "device"),
+            ("multi_tensor_staging", "pinned_host"),
+            ("multi_tensor_staging", "device"),
+        ],
+    )
+    def test_descriptor_schema_scenarios_accept_nonpageable_storage(
+        self, scenario: str, tensor_storage: str
+    ) -> None:
+        # Key setup: select an authored one- or two-field descriptor schema with an explicit
+        # non-pageable storage contract and non-default CUDA device.
+        args = make_args(
+            scenario=scenario,
+            tensor_storage=tensor_storage,
+            tensor_device=1,
+            bulk_work_profile=(
+                "descriptor_only"
+                if scenario in {"image", "multi_tensor", *runner.MULTI_TENSOR_SCENARIOS}
+                else "full_write"
+            ),
+        )
+
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args,
+            Path("/tmp/runtime_graph_benchmark"),
+            Path("/tmp/result.json"),
+        )
+
+        # Key assertion: storage and device reach the native benchmark without relabeling the
+        # scenario or changing its established publication mode.
+        assert command[command.index("--tensor-storage") + 1] == tensor_storage
+        assert command[command.index("--tensor-device") + 1] == "1"
+        assert command[command.index("--scenario") + 1] == scenario
+        if scenario == "multi_tensor":
+            assert command[command.index("--bulk-work-profile") + 1] == "descriptor_only"
+        else:
+            assert "--bulk-work-profile" not in command
+
+    def test_saturated_workload_accepts_diagnostic_fanout_scaling(self) -> None:
+        # Key setup: request the maximum diagnostic POD fanout without changing Runtime eligibility.
+        args = make_args(
+            workload="saturated",
+            scenario="pod",
+            operator_lanes="shared",
+            fanout=32,
+        )
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args,
+            Path("/tmp/runtime_graph_benchmark"),
+            Path("/tmp/result.json"),
+        )
+
+        # Key assertion: the runner forwards the full benchmark-only scaling width.
+        assert command[command.index("--fanout") + 1] == "32"
+
+    def test_saturated_fanout_accepts_explicit_per_sink_queue_depths(self) -> None:
+        # Key setup: author two shared-lane POD subscribers at depths four and two while retaining
+        # the service maximum and publication-pressure capacity at four.
+        args = make_args(
+            workload="saturated",
+            scenario="pod",
+            operator_lanes="shared",
+            queue_depth=4,
+            sink_queue_depths=[4, 2],
+            fanout=2,
+            notification_capacity=4,
+        )
+        runner.validate_args(args)
+
+        command = runner.benchmark_command(
+            args,
+            Path("/tmp/runtime_graph_benchmark"),
+            Path("/tmp/result.json"),
+        )
+
+        # Key assertion: the native command receives ordered subscriber depths and the expected
+        # result geometry preserves that exact topology rather than flattening it to the maximum.
+        assert command[command.index("--sink-queue-depths") + 1] == "4,2"
+        assert runner.subscriber_queue_depths(args) == [4, 2]
+
+    @pytest.mark.parametrize("topology", ["multi_output", "multi_input"])
+    def test_multi_output_topologies_accept_only_uniform_explicit_depths(
+        self, topology: str
+    ) -> None:
+        # Key setup: author either paired-output topology with the same explicit depth on both
+        # independently published services.
+        args = make_args(
+            workload="saturated",
+            scenario="pod",
+            operator_lanes="shared",
+            queue_depth=2,
+            sink_queue_depths=[2, 2],
+            fanout=2,
+            notification_capacity=2,
+            force_holomq_process_local_inline=True,
+            **{topology: True},
+        )
+        runner.validate_args(args)
+
+        # Key assertion: the uniform topology reaches the native parser with both depths intact.
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+        assert command[command.index("--sink-queue-depths") + 1] == "2,2"
+
+    def test_drop_oldest_fanout_accepts_fixed_publication_offer_rate(self) -> None:
+        # Key setup: pace a shared-lane two-subscriber drop-oldest service from the Runtime clock
+        # instead of advancing notification credit behind source callbacks.
+        args = make_args(
+            workload="saturated",
+            scenario="pod",
+            operator_lanes="shared",
+            queue_policy="drop_oldest",
+            queue_depth=2,
+            fanout=2,
+            notification_capacity=1,
+            offered_rate_hz=100_000,
+            offered_burst_size=4,
+        )
+        runner.validate_args(args)
+
+        command = runner.benchmark_command(
+            args,
+            Path("/tmp/runtime_graph_benchmark"),
+            Path("/tmp/result.json"),
+        )
+
+        # Key assertion: command and result identity retain the configured rate so eventless and
+        # forced-wake arms cannot silently use source-completion-limited pressure.
+        assert command[command.index("--offered-rate-hz") + 1] == "100000"
+        assert command[command.index("--offered-burst-size") + 1] == "4"
+        assert runner.benchmark_name(
+            "pod",
+            "saturated",
+            fanout=2,
+            queue_policy="drop_oldest",
+            offered_rate_hz=100_000,
+            offered_burst_size=4,
+        ).endswith("_drop_oldest_offered_100000hz_burst4_saturated")
+
     def test_shared_operator_lane_accepts_paced_latency(self) -> None:
         args = make_args(operator_lanes="shared")
         runner.validate_args(args)
@@ -370,6 +865,17 @@ class TestArgumentValidation:
         assert command[command.index("--operator-lanes") + 1] == "shared"
         assert command[command.index("--workload") + 1] == "latency"
         assert command[command.index("--publisher-period-us") + 1] == "1000"
+
+    @pytest.mark.parametrize("callback_work_us", runner.SUPPORTED_CALLBACK_WORK_US)
+    def test_callback_work_sweep_is_forwarded_explicitly(self, callback_work_us: int) -> None:
+        args = make_args(callback_work_us=callback_work_us)
+        runner.validate_args(args)
+
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        assert command[command.index("--callback-work-us") + 1] == str(callback_work_us)
 
     def test_partition_environment_is_explicit_and_clears_inherited_selection(
         self, monkeypatch: pytest.MonkeyPatch
@@ -416,6 +922,121 @@ class TestArgumentValidation:
         assert "--runtime-phase-counters" not in runner.benchmark_command(
             make_args(), Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
         )
+
+    def test_pod_sink_pressure_gate_is_exact_and_opt_in(self) -> None:
+        # Key setup: select only the counter-enabled, separate-lane, forced-HoloMQ depth-one POD
+        # diagnostic whose independent notification gate leaves source activations runnable.
+        args = make_args(
+            workload="saturated",
+            queue_policy="drop_oldest",
+            runtime_phase_counters=True,
+            force_holomq_process_local_inline=True,
+            test_gate_pod_sink_for_pressure=True,
+        )
+
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        # Key assertion: the test seam reaches only its exact diagnostic command and remains
+        # absent from the ordinary counters-off benchmark command used for A/C measurement.
+        assert "--test-gate-pod-sink-for-pressure" in command
+        assert "--runtime-phase-counters" in command
+        assert "--test-gate-pod-sink-for-pressure" not in runner.benchmark_command(
+            make_args(
+                workload="saturated",
+                queue_policy="drop_oldest",
+                force_holomq_process_local_inline=True,
+            ),
+            Path("/tmp/runtime_graph_benchmark"),
+            Path("/tmp/result.json"),
+        )
+
+    def test_pod_sink_pressure_gate_requires_ordered_bounded_acknowledgements(self) -> None:
+        # Key setup: encode the source/witness/first-delivery barriers and bounded one-at-a-time
+        # gate posts used to drain a final survivor after 21 finite source publications.
+        args = make_args(
+            workload="saturated",
+            queue_policy="drop_oldest",
+            runtime_phase_counters=True,
+            force_holomq_process_local_inline=True,
+            test_gate_pod_sink_for_pressure=True,
+        )
+        counts = {"publications": 21}
+        pressure_gate = {
+            "first_readiness_published": 1,
+            "first_witness_retired": 1,
+            "first_delivery_publications": 1,
+            "source_completion_publications": 21,
+            "source_retirement_activations_completed": 22,
+            "notification_attempts": 3,
+            "notifications_accepted": 3,
+            "notification_backpressure": 0,
+            "notification_not_ready": 0,
+        }
+
+        runner.validate_pod_sink_pressure_gate(
+            pressure_gate, counts, args, Path("/tmp/result.json")
+        )
+
+        for name in (
+            "first_readiness_published",
+            "first_witness_retired",
+            "source_completion_publications",
+            "source_retirement_activations_completed",
+            "notifications_accepted",
+        ):
+            invalid = dict(pressure_gate)
+            invalid[name] = 0
+            with pytest.raises(RuntimeError, match="pressure-gate|pressure gate"):
+                runner.validate_pod_sink_pressure_gate(
+                    invalid, counts, args, Path("/tmp/result.json")
+                )
+
+        with pytest.raises(RuntimeError, match="unexpectedly enabled"):
+            runner.validate_pod_sink_pressure_gate(
+                pressure_gate, counts, make_args(), Path("/tmp/result.json")
+            )
+
+    @pytest.mark.parametrize(
+        "updates",
+        [
+            {"partition_cover": "hybrid"},
+            {"runtime_phase_counters": False},
+            {"workload": "latency"},
+            {"scenario": "schema"},
+            {"operator_lanes": "shared"},
+            {"queue_policy": "blocking"},
+            {"queue_depth": 2},
+            {"sink_queue_depths": [1]},
+            {"fanout": 2},
+            {"multi_output": True},
+            {"multi_input": True},
+            {"mixed_policy_fanout": True},
+            {"notification_capacity": 2},
+            {"offered_rate_hz": 100_000},
+            {"offered_burst_size": 2},
+            {"callback_work_us": 1},
+            {"force_holomq_process_local_inline": False},
+            {"force_holomq_event_wake": True},
+            {"force_process_local_channel_pump": True},
+        ],
+    )
+    def test_pod_sink_pressure_gate_rejects_nearby_rows(self, updates: dict[str, object]) -> None:
+        # Key setup: start from the sole supported diagnostic identity, then drift one field.
+        values: dict[str, object] = {
+            "workload": "saturated",
+            "queue_policy": "drop_oldest",
+            "runtime_phase_counters": True,
+            "force_holomq_process_local_inline": True,
+            "test_gate_pod_sink_for_pressure": True,
+        }
+        values.update(updates)
+
+        # Key assertion: the seam cannot leak into ordinary performance or nearby graph rows.
+        with pytest.raises(ValueError, match="counter-enabled saturated"):
+            runner.validate_args(make_args(**values))
 
     def test_closed_island_composite_control_is_explicit(
         self, monkeypatch: pytest.MonkeyPatch
@@ -482,6 +1103,265 @@ class TestArgumentValidation:
         args = runner.parse_args()
         assert args.disable_direct_continuation_elision
         assert not args.force_holomq_process_local_inline
+
+    def test_holomq_event_wake_control_composes_with_ordinary_dispatch(self) -> None:
+        # Key setup: force the one-deep shared POD edge through HoloMQ while independently
+        # retaining event wake and selecting the ordinary-dispatch control.
+        args = make_args(
+            scenario="pod",
+            operator_lanes="shared",
+            force_holomq_process_local_inline=True,
+            force_holomq_event_wake=True,
+            disable_direct_continuation_elision=True,
+        )
+
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        # Key assertion: all three controls remain explicit, event wake is required, and the
+        # result identity prevents the forced-wake row from merging with the optimized row.
+        assert "--force-holomq-process-local-inline" in command
+        assert "--force-holomq-event-wake" in command
+        assert "--disable-direct-continuation-elision" in command
+        assert runner.event_wake_required(args) is True
+        assert runner.benchmark_name("pod", "latency", True, force_holomq_event_wake=True) == (
+            "runtime_graph_pod_1to1_holomq_fallback_event_wake_control"
+        )
+
+    def test_shared_eventless_holomq_does_not_require_channel_pump(self) -> None:
+        # Key setup: compare a shared-lane eventless POD HoloMQ row with its forced-event-wake
+        # control while preserving topology, transport, and queue policy.
+        eventless = make_args(
+            operator_lanes="shared",
+            force_holomq_process_local_inline=True,
+        )
+        wake_control = make_args(
+            operator_lanes="shared",
+            force_holomq_process_local_inline=True,
+            force_holomq_event_wake=True,
+            channel_pump_cpu=5,
+        )
+
+        runner.validate_args(eventless)
+        runner.validate_args(wake_control)
+
+        # Key assertion: both rows use HoloMQ, but only the event-wake control requires and
+        # reports a Channel-pump support thread.
+        assert runner.uses_holomq(eventless)
+        assert runner.process_local_delivery(eventless) == "holomq"
+        assert not runner.event_wake_required(eventless)
+        assert not runner.uses_channel_pump(eventless)
+        assert all(
+            item["role"] != "channel_pump" for item in runner.collect_cpu_topology(eventless)
+        )
+        assert runner.uses_holomq(wake_control)
+        assert runner.event_wake_required(wake_control)
+        assert runner.uses_channel_pump(wake_control)
+        assert "channel_pump" in {
+            item["role"] for item in runner.collect_cpu_topology(wake_control)
+        }
+
+    def test_eventless_holomq_forced_pump_control_changes_only_cold_thread_selection(self) -> None:
+        # Key setup: pair one shared-lane eventless POD HoloMQ row with the private forced-pump
+        # control while preserving its topology, transport, queue, and wake state.
+        baseline = make_args(
+            scenario="pod",
+            operator_lanes="shared",
+            force_holomq_process_local_inline=True,
+        )
+        control = make_args(
+            scenario="pod",
+            operator_lanes="shared",
+            force_holomq_process_local_inline=True,
+            force_process_local_channel_pump=True,
+            channel_pump_cpu=5,
+        )
+
+        runner.validate_args(baseline)
+        runner.validate_args(control)
+        command = runner.benchmark_command(
+            control, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        # Key assertion: both rows remain eventless HoloMQ; only the control owns and names a pump.
+        assert runner.uses_holomq(baseline)
+        assert not runner.event_wake_required(baseline)
+        assert not runner.uses_channel_pump(baseline)
+        assert runner.uses_holomq(control)
+        assert not runner.event_wake_required(control)
+        assert runner.uses_channel_pump(control)
+        assert "--force-process-local-channel-pump" in command
+        assert (
+            runner.benchmark_name("pod", "latency", True, force_process_local_channel_pump=True)
+            == "runtime_graph_pod_1to1_holomq_fallback_channel_pump_control"
+        )
+
+    @pytest.mark.parametrize("force_event_wake", [False, True])
+    def test_multi_output_event_wake_pair_preserves_exact_topology(
+        self, force_event_wake: bool
+    ) -> None:
+        # Key setup: author two POD outputs with one subscriber each on one shared operator lane.
+        args = make_args(
+            scenario="pod",
+            operator_lanes="shared",
+            fanout=2,
+            multi_output=True,
+            force_holomq_process_local_inline=True,
+            force_holomq_event_wake=force_event_wake,
+        )
+
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        # Key assertion: the paired rows retain identical 2x1 geometry and differ only in wake.
+        assert "--multi-output" in command
+        assert command[command.index("--fanout") + 1] == "2"
+        assert ("--force-holomq-event-wake" in command) is force_event_wake
+        assert runner.benchmark_name(
+            "pod",
+            "latency",
+            True,
+            fanout=2,
+            force_holomq_event_wake=force_event_wake,
+            multi_output=True,
+        ) == (
+            "runtime_graph_pod_2x1_holomq_fallback"
+            + ("_event_wake_control" if force_event_wake else "")
+        )
+
+    @pytest.mark.parametrize("force_event_wake", [False, True])
+    def test_multi_input_event_wake_pair_preserves_exact_topology(
+        self, force_event_wake: bool
+    ) -> None:
+        # Key setup: author two POD outputs feeding two paired inputs on one shared-lane sink.
+        args = make_args(
+            scenario="pod",
+            operator_lanes="shared",
+            fanout=2,
+            multi_input=True,
+            force_holomq_process_local_inline=True,
+            force_holomq_event_wake=force_event_wake,
+        )
+
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        # Key assertion: the paired rows retain two outputs, one two-input sink, and differ only
+        # in the exact compiler-selected wake control.
+        assert "--multi-input" in command
+        assert command[command.index("--fanout") + 1] == "2"
+        assert ("--force-holomq-event-wake" in command) is force_event_wake
+        assert runner.source_output_count(args) == 2
+        assert runner.sink_operator_count(args) == 1
+        assert runner.inputs_per_sink(args) == 2
+        assert runner.benchmark_name(
+            "pod",
+            "latency",
+            True,
+            fanout=2,
+            force_holomq_event_wake=force_event_wake,
+            multi_input=True,
+        ) == (
+            "runtime_graph_pod_2to1_holomq_fallback"
+            + ("_event_wake_control" if force_event_wake else "")
+        )
+
+    @pytest.mark.parametrize("force_event_wake", [False, True])
+    def test_mixed_policy_event_wake_pair_preserves_split_service_geometry(
+        self, force_event_wake: bool
+    ) -> None:
+        # Key setup: author one POD output with blocking and drop-oldest subscribers on the same
+        # shared lane, optionally retaining event wake through the existing compiler control.
+        args = make_args(
+            workload="saturated",
+            scenario="pod",
+            operator_lanes="shared",
+            fanout=2,
+            mixed_policy_fanout=True,
+            force_holomq_event_wake=force_event_wake,
+        )
+
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        # Key assertion: the pair retains one source and two policy-specific subscribers; only
+        # the control enables the pump-backed event wake and changes benchmark identity.
+        assert "--mixed-policy-fanout" in command
+        assert runner.subscriber_queue_policies(args) == ["blocking", "drop_oldest"]
+        assert runner.has_lossy_subscriber(args)
+        assert runner.event_wake_required(args) is force_event_wake
+        assert runner.uses_channel_pump(args) is force_event_wake
+        assert runner.benchmark_name(
+            "pod",
+            "saturated",
+            fanout=2,
+            force_holomq_event_wake=force_event_wake,
+            mixed_policy_fanout=True,
+        ) == (
+            "runtime_graph_pod_1to2"
+            + ("_event_wake_control" if force_event_wake else "")
+            + "_mixed_policy_saturated"
+        )
+
+    @pytest.mark.parametrize("fanout", [1, 2])
+    def test_holomq_event_wake_control_accepts_deeper_queues(self, fanout: int) -> None:
+        # Key setup: retain event wake on a shared-lane depth-eight POD service for both exact
+        # 1:1 forced-HoloMQ delivery and native two-subscriber fanout.
+        args = make_args(
+            workload="saturated",
+            scenario="pod",
+            operator_lanes="shared",
+            queue_depth=8,
+            notification_capacity=8,
+            fanout=fanout,
+            force_holomq_process_local_inline=fanout == 1,
+            force_holomq_event_wake=True,
+        )
+
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        # Key assertion: queue capacity does not change control eligibility, active fanout, or
+        # the explicit forced-wake provenance passed to the native benchmark.
+        assert "--force-holomq-event-wake" in command
+        assert command[command.index("--queue-depth") + 1] == "8"
+        assert command[command.index("--fanout") + 1] == str(fanout)
+        assert runner.event_wake_required(args) is True
+
+    @pytest.mark.parametrize("scenario", sorted(runner.TENSOR_BACKED_SCENARIOS))
+    def test_tensor_holomq_event_wake_control_is_explicit(self, scenario: str) -> None:
+        # Key setup: retain event wake on an otherwise eventless exact 1:1 Tensor HoloMQ row.
+        args = make_args(
+            scenario=scenario,
+            operator_lanes="shared",
+            force_holomq_process_local_inline=True,
+            force_holomq_event_wake=True,
+            bulk_work_profile=(
+                "descriptor_only" if scenario in runner.DESCRIPTOR_ONLY_SCENARIOS else "full_write"
+            ),
+        )
+
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        # Key assertion: the command and result identity preserve the forced-wake provenance.
+        assert "--force-holomq-event-wake" in command
+        assert runner.event_wake_required(args) is True
+        assert runner.benchmark_name(
+            scenario, "latency", True, force_holomq_event_wake=True
+        ).endswith("_holomq_fallback_event_wake_control")
 
     def test_direct_pod_omits_channel_pump_and_names_holomq_fallback(self) -> None:
         # Key setup: compare the compiler-selected direct POD path with its private control mode.
@@ -637,7 +1517,17 @@ class TestArgumentValidation:
             == f"runtime_graph_pod_1to1_holomq_fallback_{queue_policy}_saturated"
         )
 
-    @pytest.mark.parametrize("scenario", ["schema", "tensor", "image"])
+    @pytest.mark.parametrize(
+        "scenario",
+        [
+            "schema",
+            "third_party_schema",
+            "tensor",
+            "image",
+            "multi_tensor_loan",
+            "multi_tensor_staging",
+        ],
+    )
     def test_drop_oldest_payloads_admit_matched_holomq_control(self, scenario: str) -> None:
         # Key setup: apply the same depth-two drop-oldest policy to each direct-retained payload
         # family and change only the compiler-private delivery control.
@@ -646,12 +1536,18 @@ class TestArgumentValidation:
             queue_policy="drop_oldest",
             queue_depth=2,
             tensor_bytes=64,
+            bulk_work_profile=(
+                "descriptor_only" if scenario in runner.DESCRIPTOR_ONLY_SCENARIOS else "full_write"
+            ),
         )
         fallback = make_args(
             scenario=scenario,
             queue_policy="drop_oldest",
             queue_depth=2,
             tensor_bytes=64,
+            bulk_work_profile=(
+                "descriptor_only" if scenario in runner.DESCRIPTOR_ONLY_SCENARIOS else "full_write"
+            ),
             force_holomq_process_local_inline=True,
             channel_pump_cpu=5,
         )
@@ -681,12 +1577,44 @@ class TestArgumentValidation:
             == f"{runner.BENCHMARK_NAMES[scenario]}_holomq_fallback_drop_oldest_saturated"
         )
 
-    def test_direct_schema_omits_channel_pump_and_admits_holomq_fallback(self) -> None:
+    @pytest.mark.parametrize("scenario", ["multi_tensor_loan", "multi_tensor_staging"])
+    def test_direct_multi_tensor_admits_matched_holomq_control(self, scenario: str) -> None:
+        direct = make_args(scenario=scenario, tensor_bytes=64, bulk_work_profile="descriptor_only")
+        fallback = make_args(
+            scenario=scenario,
+            tensor_bytes=64,
+            bulk_work_profile="descriptor_only",
+            force_holomq_process_local_inline=True,
+            channel_pump_cpu=5,
+        )
+
+        runner.validate_args(direct)
+        runner.validate_args(fallback)
+
+        assert runner.process_local_delivery(direct) == "direct_retained"
+        assert runner.process_local_delivery(fallback) == "holomq"
+        assert runner.benchmark_name(scenario, "latency", True) == (
+            f"{runner.BENCHMARK_NAMES[scenario]}_holomq_fallback"
+        )
+
+    @pytest.mark.parametrize(
+        ("scenario", "native_name"),
+        [
+            ("schema", "runtime_graph_schema_time_1to1_holomq_fallback"),
+            (
+                "third_party_schema",
+                "runtime_graph_third_party_telemetry_1to1_holomq_fallback",
+            ),
+        ],
+    )
+    def test_direct_schema_omits_channel_pump_and_admits_holomq_fallback(
+        self, scenario: str, native_name: str
+    ) -> None:
         # Key setup: compare compiler-retained generated-schema delivery with the same graph
         # forced through its process-local HoloMQ serialized endpoint.
-        direct = make_args(scenario="schema")
+        direct = make_args(scenario=scenario)
         fallback = make_args(
-            scenario="schema",
+            scenario=scenario,
             force_holomq_process_local_inline=True,
             channel_pump_cpu=5,
         )
@@ -699,17 +1627,150 @@ class TestArgumentValidation:
         assert runner.process_local_delivery(direct) == "direct_retained"
         assert runner.uses_channel_pump(fallback) is True
         assert runner.process_local_delivery(fallback) == "holomq"
-        assert runner.benchmark_name("schema", "latency", True) == (
-            "runtime_graph_schema_time_1to1_holomq_fallback"
+        assert runner.benchmark_name(scenario, "latency", True) == native_name
+
+    def test_event_wake_is_suppressed_only_for_certified_holomq_rows(self) -> None:
+        # Key setup: compare both certified queue policies and Tensor shape with retained-wake
+        # controls.
+        blocking = make_args(
+            scenario="pod", operator_lanes="shared", force_holomq_process_local_inline=True
+        )
+        drop_oldest = make_args(
+            scenario="pod",
+            operator_lanes="shared",
+            queue_policy="drop_oldest",
+            queue_depth=1,
+            force_holomq_process_local_inline=True,
+        )
+        split = make_args(scenario="pod", force_holomq_process_local_inline=True)
+        tensor = make_args(
+            scenario="tensor", operator_lanes="shared", force_holomq_process_local_inline=True
+        )
+        tensor_forced_wake = make_args(
+            scenario="tensor",
+            operator_lanes="shared",
+            force_holomq_process_local_inline=True,
+            force_holomq_event_wake=True,
+        )
+        pod_fanout = make_args(scenario="pod", operator_lanes="shared", fanout=2)
+        pod_fanout_forced_wake = make_args(
+            scenario="pod",
+            operator_lanes="shared",
+            fanout=2,
+            force_holomq_event_wake=True,
+        )
+        schema_fanout = make_args(scenario="schema", operator_lanes="shared", fanout=2)
+        third_party_fanout = make_args(
+            scenario="third_party_schema", operator_lanes="shared", fanout=2
+        )
+        tensor_fanout = make_args(scenario="tensor", operator_lanes="shared", fanout=2)
+        tensor_fanout_forced_wake = make_args(
+            scenario="tensor",
+            operator_lanes="shared",
+            fanout=2,
+            force_holomq_event_wake=True,
+        )
+        image_fanout = make_args(scenario="image", operator_lanes="shared", fanout=2)
+        image_fanout_forced_wake = make_args(
+            scenario="image",
+            operator_lanes="shared",
+            fanout=2,
+            force_holomq_event_wake=True,
+        )
+        multi_tensor_loan_fanout = make_args(
+            scenario="multi_tensor_loan", operator_lanes="shared", fanout=2
+        )
+        multi_tensor_loan_fanout_forced_wake = make_args(
+            scenario="multi_tensor_loan",
+            operator_lanes="shared",
+            fanout=2,
+            force_holomq_event_wake=True,
+        )
+        multi_tensor_staging_fanout = make_args(
+            scenario="multi_tensor_staging", operator_lanes="shared", fanout=2
+        )
+        multi_tensor_staging_fanout_forced_wake = make_args(
+            scenario="multi_tensor_staging",
+            operator_lanes="shared",
+            fanout=2,
+            force_holomq_event_wake=True,
+        )
+
+        # Key assertion: exact POD/Tensor and complete POD/schema/Tensor descriptor fanout
+        # suppress wake; split and forced controls retain it.
+        assert runner.event_wake_required(blocking) is False
+        assert runner.event_wake_required(drop_oldest) is False
+        assert runner.event_wake_required(split) is True
+        assert runner.event_wake_required(tensor) is False
+        assert runner.event_wake_required(tensor_forced_wake) is True
+        assert runner.event_wake_required(pod_fanout) is False
+        assert runner.event_wake_required(pod_fanout_forced_wake) is True
+        assert runner.event_wake_required(schema_fanout) is False
+        assert runner.event_wake_required(third_party_fanout) is False
+        assert runner.event_wake_required(tensor_fanout) is False
+        assert runner.event_wake_required(tensor_fanout_forced_wake) is True
+        assert runner.event_wake_required(image_fanout) is False
+        assert runner.event_wake_required(image_fanout_forced_wake) is True
+        assert runner.event_wake_required(multi_tensor_loan_fanout) is False
+        assert runner.event_wake_required(multi_tensor_loan_fanout_forced_wake) is True
+        assert runner.event_wake_required(multi_tensor_staging_fanout) is False
+        assert runner.event_wake_required(multi_tensor_staging_fanout_forced_wake) is True
+
+    @pytest.mark.parametrize(
+        "scenario",
+        [
+            "pod",
+            "schema",
+            "third_party_schema",
+            "tensor",
+            "image",
+            "multi_tensor_loan",
+            "multi_tensor_staging",
+        ],
+    )
+    def test_fanout_event_wake_control_preserves_active_geometry(self, scenario: str) -> None:
+        # Key setup: retain event wake on an otherwise eventless two-subscriber shared-lane
+        # POD/schema/Tensor descriptor service without requesting the redundant 1:1 HoloMQ
+        # fallback control.
+        args = make_args(
+            scenario=scenario,
+            operator_lanes="shared",
+            fanout=2,
+            force_holomq_event_wake=True,
+            bulk_work_profile=(
+                "descriptor_only"
+                if scenario in {"image", *runner.MULTI_TENSOR_SCENARIOS}
+                else "full_write"
+            ),
+        )
+
+        runner.validate_args(args)
+        command = runner.benchmark_command(
+            args, Path("/tmp/runtime_graph_benchmark"), Path("/tmp/result.json")
+        )
+
+        # Key assertion: the control changes only wake eligibility and result identity; the two
+        # active subscribers remain the native fanout geometry.
+        assert "--fanout" in command
+        assert "--force-holomq-event-wake" in command
+        assert "--force-holomq-process-local-inline" not in command
+        assert runner.process_local_delivery(args) == "holomq"
+        assert runner.event_wake_required(args) is True
+        assert (
+            runner.benchmark_name(scenario, "latency", fanout=2, force_holomq_event_wake=True)
+            == runner.BENCHMARK_NAMES[scenario].removesuffix("1to1") + "1to2_event_wake_control"
         )
 
     def test_direct_image_omits_channel_pump_and_admits_holomq_fallback(self) -> None:
         # Key setup: compare direct retention of Image metadata plus its embedded Tensor handle
         # with the same graph forced through the HoloMQ descriptor-sidecar path.
-        direct = make_args(scenario="image", tensor_bytes=1 << 20)
+        direct = make_args(
+            scenario="image", tensor_bytes=1 << 20, bulk_work_profile="descriptor_only"
+        )
         fallback = make_args(
             scenario="image",
             tensor_bytes=1 << 20,
+            bulk_work_profile="descriptor_only",
             force_holomq_process_local_inline=True,
             channel_pump_cpu=5,
         )
@@ -752,7 +1813,8 @@ class TestArgumentValidation:
         assert command[command.index("--notification-driver-cpu") + 1] == "6"
 
     def test_shared_operator_lane_uses_only_source_cpu(self) -> None:
-        # Key setup: source and sink share one lane while support threads remain independent.
+        # Key setup: source and sink share one lane while the exact pump control retains its
+        # independently pinned support thread.
         args = make_args(
             operator_lanes="shared",
             workload="notification_latency",
@@ -760,6 +1822,7 @@ class TestArgumentValidation:
             controller_cpu=4,
             channel_pump_cpu=5,
             force_holomq_process_local_inline=True,
+            force_process_local_channel_pump=True,
         )
 
         runner.validate_args(args)
@@ -768,8 +1831,10 @@ class TestArgumentValidation:
         )
         topology = runner.collect_cpu_topology(args)
 
-        # Key assertion: topology reports one shared operator lane and no separate sink lane.
+        # Key assertion: topology reports one shared operator lane and the explicit pump control,
+        # without introducing a separate sink lane.
         assert command[command.index("--operator-lanes") + 1] == "shared"
+        assert command[command.index("--channel-pump-cpu") + 1] == "5"
         assert [item["role"] for item in topology] == [
             "shared_operator_lane",
             "controller",
@@ -1227,11 +2292,45 @@ class TestSummaries:
 
 
 class TestResultValidation:
+    def test_callback_counts_accept_reported_clocked_terminal_drain_entries(self) -> None:
+        # Key setup: reproduce the aarch64 fanout control result where final Tensor retirement
+        # took long enough for three more periodic source candidates to enter compute.
+        counts = {
+            "source_callbacks": 11,
+            "source_compute_entries": 14,
+            "source_terminal_compute_entries": 3,
+            "source_tensor_pool_retries": 0,
+            "source_tensor_pool_in_activation_retries": 0,
+            "relay_callbacks": 0,
+            "sink_callbacks": 22,
+            "relay_publications": 0,
+            "backpressured_emits": 0,
+            "source_backpressured_emits": 0,
+        }
+        args = make_args(
+            samples=8,
+            warmup=2,
+            workload="latency",
+            scenario="tensor",
+            fanout=2,
+        )
+
+        runner.validate_callback_counts(Path("result.json"), counts, args, 11, 22)
+
+        # Key assertion: the explicit terminal count must account for every otherwise extra
+        # compute entry; it is evidence, not an arbitrary scheduler allowance.
+        counts["source_terminal_compute_entries"] = 2
+        with pytest.raises(RuntimeError, match="inconsistent callback counts"):
+            runner.validate_callback_counts(Path("result.json"), counts, args, 11, 22)
+
     def test_callback_counts_distinguish_relay_backpressure_from_source_retries(self) -> None:
         # This is the exact count pattern from the partitioned-chain backpressure CI failure:
         # all nine retries occurred in relays, so the source still ran exactly once per sample.
         counts = {
             "source_callbacks": 41,
+            "source_compute_entries": 41,
+            "source_tensor_pool_retries": 0,
+            "source_tensor_pool_in_activation_retries": 0,
             "relay_callbacks": 164,
             "sink_callbacks": 41,
             "relay_publications": 164,
@@ -1246,6 +2345,7 @@ class TestResultValidation:
         counts.update(
             {
                 "source_callbacks": 43,
+                "source_compute_entries": 43,
                 "backpressured_emits": 11,
                 "source_backpressured_emits": 2,
             }
@@ -1255,6 +2355,9 @@ class TestResultValidation:
     def test_callback_count_failure_reports_actual_and_expected_counts(self) -> None:
         counts = {
             "source_callbacks": 42,
+            "source_compute_entries": 42,
+            "source_tensor_pool_retries": 0,
+            "source_tensor_pool_in_activation_retries": 0,
             "relay_callbacks": 164,
             "sink_callbacks": 41,
             "relay_publications": 164,
@@ -1272,6 +2375,239 @@ class TestResultValidation:
         assert "relay_publications=164, expected_relay_publications=164" in message
         assert "sink_callbacks=41, expected_sink_callbacks=41" in message
         assert "backpressured_emits=9, source_backpressured_emits=0" in message
+
+    def test_notification_count_caps_source_compute_entries_after_source_retries(self) -> None:
+        # Key setup: two source backpressure retries account for the only notifications accepted
+        # beyond the three productive source callbacks.
+        args = make_args(
+            samples=2,
+            warmup=0,
+            workload="saturated",
+            notification_capacity=4,
+        )
+        counts = {
+            "source_callbacks": 5,
+            "source_compute_entries": 5,
+            "source_tensor_pool_retries": 0,
+            "source_tensor_pool_in_activation_retries": 0,
+            "relay_callbacks": 0,
+            "sink_callbacks": 3,
+            "relay_publications": 0,
+            "backpressured_emits": 2,
+            "source_backpressured_emits": 2,
+            "notifications_accepted": 5,
+        }
+        runner.validate_callback_counts(Path("result.json"), counts, args, 3, 3)
+
+        # Key assertion: accepted notifications are the absolute compute-entry ceiling; source
+        # backpressure cannot be added to that same surplus a second time.
+        counts["source_compute_entries"] = 6
+        with pytest.raises(RuntimeError, match="inconsistent callback counts"):
+            runner.validate_callback_counts(Path("result.json"), counts, args, 3, 3)
+
+    @pytest.mark.parametrize("notifications_accepted", [None, True, 5.0, "5"])
+    def test_notification_count_requires_non_boolean_integer(
+        self, notifications_accepted: object
+    ) -> None:
+        # Key setup: make every callback count valid in a notification-driven run while supplying
+        # evidence that is absent, boolean, or another non-integer type.
+        args = make_args(samples=2, warmup=0, workload="saturated")
+        counts = {
+            "source_callbacks": 3,
+            "source_compute_entries": 3,
+            "source_tensor_pool_retries": 0,
+            "source_tensor_pool_in_activation_retries": 0,
+            "relay_callbacks": 0,
+            "sink_callbacks": 3,
+            "relay_publications": 0,
+            "backpressured_emits": 0,
+            "source_backpressured_emits": 0,
+            "notifications_accepted": notifications_accepted,
+        }
+
+        # Key assertion: malformed notification evidence cannot authorize the compute count.
+        with pytest.raises(RuntimeError, match="inconsistent callback counts"):
+            runner.validate_callback_counts(Path("result.json"), counts, args, 3, 3)
+
+    def test_callback_counts_do_not_double_count_tensor_pool_retries(self) -> None:
+        # Key setup: one Tensor pool retry consumes the only notification admitted beyond the
+        # expected publication count in a saturated run.
+        args = make_args(
+            samples=2,
+            warmup=0,
+            workload="saturated",
+            scenario="tensor",
+            notification_capacity=1,
+        )
+        counts = {
+            "source_callbacks": 3,
+            "source_compute_entries": 4,
+            "source_tensor_pool_retries": 1,
+            "source_tensor_pool_in_activation_retries": 0,
+            "relay_callbacks": 0,
+            "sink_callbacks": 3,
+            "relay_publications": 0,
+            "backpressured_emits": 0,
+            "source_backpressured_emits": 0,
+            "notifications_accepted": 4,
+        }
+        runner.validate_callback_counts(Path("result.json"), counts, args, 3, 3)
+
+        # Key assertion: the retry cannot also be added above the notification-derived terminal
+        # allowance, so a fifth source compute entry is rejected.
+        counts["source_compute_entries"] = 5
+        with pytest.raises(RuntimeError, match="inconsistent callback counts"):
+            runner.validate_callback_counts(Path("result.json"), counts, args, 3, 3)
+
+    @pytest.mark.parametrize("scenario", ["tensor", "multi_tensor"])
+    def test_in_activation_tensor_pool_retry_is_not_emit_backpressure(self, scenario: str) -> None:
+        # Key setup: one allocation retry succeeds inside the same notification-driven Tensor
+        # callback without attempting a Channel emit for the failed allocation.
+        args = make_args(
+            samples=2,
+            warmup=0,
+            workload="saturated",
+            scenario=scenario,
+            notification_capacity=1,
+        )
+        counts = {
+            "source_callbacks": 3,
+            "source_compute_entries": 3,
+            "source_tensor_pool_retries": 0,
+            "source_tensor_pool_in_activation_retries": 1,
+            "relay_callbacks": 0,
+            "sink_callbacks": 3,
+            "relay_publications": 0,
+            "backpressured_emits": 0,
+            "source_backpressured_emits": 0,
+            "notifications_accepted": 3,
+        }
+
+        # Key assertion: the distinct retry evidence does not add a callback, notification, or
+        # Channel backpressure expectation.
+        runner.validate_callback_counts(Path("result.json"), counts, args, 3, 3)
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            make_args(scenario="tensor", operator_lanes="shared", runtime_phase_counters=True),
+            make_args(
+                scenario="pod",
+                operator_lanes="shared",
+                force_holomq_process_local_inline=True,
+                runtime_phase_counters=True,
+            ),
+        ],
+        ids=("direct-retained-tensor", "holomq-pod"),
+    )
+    def test_tensor_and_holomq_rows_reject_continuation_receipt_evidence(
+        self, args: SimpleNamespace
+    ) -> None:
+        # Key setup: model a complete Tensor or HoloMQ shared-lane cycle using ordinary dispatch.
+        counts = {
+            "source_callbacks": 1,
+            "source_compute_entries": 2,
+            "relay_callbacks": 0,
+            "sink_callbacks": 1,
+            "publications": 1,
+            "relay_publications": 0,
+            "backpressured_emits": 0,
+        }
+        counters = {
+            "enabled": True,
+            "readiness_scans": 3,
+            "no_progress_scans": 1,
+            "wait_calls": 1,
+            "wake_signals": 1,
+            "wake_returns": 1,
+            "timeout_returns": 0,
+            "stop_signals": 1,
+            "candidates_frozen": 3,
+            "candidates_selected": 3,
+            "readiness_poll_dispatches": 1,
+            "direct_continuation_receipts_accepted": 0,
+            "direct_continuation_poll_elisions": 0,
+            "direct_composite_attempts": 0,
+            "direct_composite_completions": 0,
+            "direct_composite_fallbacks": 0,
+            "direct_composite_failures": 0,
+            "direct_composite_callbacks_attempted": 0,
+            "direct_composite_callbacks_completed": 0,
+            "compute_dispatches": 3,
+            "activations_completed": 3,
+            "channel_prepare_calls": 3,
+            "channel_emit_attempts": 1,
+            "channel_emit_accepted": 1,
+            "channel_emit_backpressured": 0,
+            "channel_samples_received": 1,
+            "channel_readiness_published": 1,
+            "channel_input_reads": 1,
+            "channel_witness_retired": 1,
+            "channel_retire_calls": 3,
+            "channel_activation_cuts": 0,
+            "channel_activation_cut_drains": 0,
+            "channel_activation_cut_skips": 0,
+            "channel_receive_backpressured": 0,
+            "channel_activation_cut_inventory_scans": 0,
+            "channel_activation_cut_subscriber_probes": 0,
+            "channel_activation_cut_transport_probes": 0,
+            "channel_activation_cut_materializations": 0,
+            "candidate_source_lookup_probes": 0,
+            "candidate_order_comparisons": 0,
+            "candidate_order_moves": 0,
+            "candidate_tag_time_reservations": 0,
+            "lane_dispatches": 6,
+            "lane_compute_dispatches": 3,
+            "lane_dispatcher_dispatches": 1,
+            "lane_lifecycle_dispatches": 2,
+            "lane_unknown_dispatches": 0,
+            "lane_busy_task_publications": 0,
+            "lane_sleeping_wake_signals": 6,
+            "lane_callbacks_entered": 6,
+            "lane_callbacks_exited": 6,
+            "lane_completions_observed": 6,
+            "lane_serialization_contentions": 0,
+            "lane_inline_owner_invocations": 0,
+        }
+        if runner.uses_holomq(args):
+            counters["channel_activation_cuts"] = 3
+            counters["channel_activation_cut_skips"] = 3
+
+        # Key assertion: zero receipts pass, while fabricated receipt evidence fails closed.
+        runner.validate_runtime_phase_counters(counters, counts, args)
+
+        if runner.uses_holomq(args):
+            # Key setup: a pump-free blocked head adds one retirement-owned activation cut and
+            # records the receive backpressure that authorized it.
+            retry_counters = {
+                **counters,
+                "channel_activation_cuts": 4,
+                "channel_activation_cut_drains": 1,
+                "channel_receive_backpressured": 1,
+            }
+
+            # Key assertion: the bounded retry cut is admitted, but a second unaccounted cut is
+            # rejected.
+            runner.validate_runtime_phase_counters(retry_counters, counts, args)
+            retry_counters["channel_activation_cuts"] = 5
+            retry_counters["channel_activation_cut_drains"] = 2
+            with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+                runner.validate_runtime_phase_counters(retry_counters, counts, args)
+
+        # Key setup: clean stop can leave one scheduler candidate frozen after every expected
+        # compute transaction has already completed.
+        terminal_frozen = {**counters, "candidates_frozen": 4}
+
+        # Key assertion: exactly one frozen-but-unselected terminal candidate is admitted, while
+        # two remain inconsistent with the bounded scheduler state.
+        runner.validate_runtime_phase_counters(terminal_frozen, counts, args)
+        terminal_frozen["candidates_frozen"] = 5
+        with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+            runner.validate_runtime_phase_counters(terminal_frozen, counts, args)
+        counters["direct_continuation_receipts_accepted"] = 1
+        counters["direct_continuation_poll_elisions"] = 1
+        with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+            runner.validate_runtime_phase_counters(counters, counts, args)
 
     def test_runtime_phase_counters_require_exact_activation_cardinality(self) -> None:
         # Key setup: one productive source callback, one final empty source entry, and one sink
@@ -1320,6 +2656,14 @@ class TestResultValidation:
             "channel_activation_cut_drains": 0,
             "channel_activation_cut_skips": 0,
             "channel_receive_backpressured": 0,
+            "channel_activation_cut_inventory_scans": 0,
+            "channel_activation_cut_subscriber_probes": 0,
+            "channel_activation_cut_transport_probes": 0,
+            "channel_activation_cut_materializations": 0,
+            "candidate_source_lookup_probes": 0,
+            "candidate_order_comparisons": 0,
+            "candidate_order_moves": 0,
+            "candidate_tag_time_reservations": 0,
             "lane_dispatches": 6,
             "lane_compute_dispatches": 3,
             "lane_dispatcher_dispatches": 1,
@@ -1335,6 +2679,51 @@ class TestResultValidation:
         }
         args = make_args(runtime_phase_counters=True)
         runner.validate_runtime_phase_counters(counters, counts, args)
+
+        # Key setup: a cross-partition drop-oldest source can publish two retained revisions while
+        # the sink reads only the surviving sample. Retention/readiness therefore remain bounded
+        # by accepted emits and reads rather than equaling the read count.
+        lossy_counts = {
+            **counts,
+            "source_callbacks": 2,
+            "source_compute_entries": 3,
+            "sink_callbacks": 1,
+            "publications": 2,
+        }
+        lossy_counters = {
+            **counters,
+            "readiness_scans": 4,
+            "candidates_frozen": 4,
+            "candidates_selected": 4,
+            "compute_dispatches": 4,
+            "activations_completed": 4,
+            "channel_prepare_calls": 4,
+            "channel_emit_attempts": 2,
+            "channel_emit_accepted": 2,
+            "channel_samples_received": 2,
+            "channel_readiness_published": 2,
+            "channel_retire_calls": 4,
+            "lane_dispatches": 7,
+            "lane_compute_dispatches": 4,
+            "lane_sleeping_wake_signals": 7,
+            "lane_callbacks_entered": 7,
+            "lane_callbacks_exited": 7,
+            "lane_completions_observed": 7,
+        }
+        runner.validate_runtime_phase_counters(
+            lossy_counters,
+            lossy_counts,
+            make_args(runtime_phase_counters=True, queue_policy="drop_oldest"),
+        )
+
+        # Key assertion: lossy retention cannot fall below reads or exceed accepted publications.
+        lossy_counters["channel_samples_received"] = 0
+        with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+            runner.validate_runtime_phase_counters(
+                lossy_counters,
+                lossy_counts,
+                make_args(runtime_phase_counters=True, queue_policy="drop_oldest"),
+            )
 
         inline_counters = dict(counters)
         inline_counters.update(
@@ -1352,6 +2741,35 @@ class TestResultValidation:
         )
         runner.validate_runtime_phase_counters(inline_counters, counts, args)
 
+        # Key setup: a source-only row retains the same scheduler and lane evidence but performs
+        # no channel operation of any kind.
+        source_only_counts = {
+            **counts,
+            "source_compute_entries": 3,
+            "sink_callbacks": 0,
+            "publications": 0,
+        }
+        source_only_counters = {
+            **counters,
+            **{name: 0 for name in counters if name.startswith("channel_")},
+            "lane_compute_dispatches": 3,
+        }
+        source_only_args = make_args(
+            scenario="source_only", workload="saturated", runtime_phase_counters=True
+        )
+        runner.validate_runtime_phase_counters(
+            source_only_counters, source_only_counts, source_only_args
+        )
+
+        # Key assertion: every channel counter, including accepted emits, retirement, and
+        # activation cuts, fails closed when fabricated in source-only evidence.
+        for name in (counter for counter in counters if counter.startswith("channel_")):
+            invalid_source_only_counters = {**source_only_counters, name: 1}
+            with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+                runner.validate_runtime_phase_counters(
+                    invalid_source_only_counters, source_only_counts, source_only_args
+                )
+
         # Key assertion: a missing completion cannot enter an aggregate benchmark summary.
         counters["activations_completed"] = 2
         with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
@@ -1361,6 +2779,181 @@ class TestResultValidation:
         counters["direct_continuation_receipts_accepted"] = 1
         with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
             runner.validate_runtime_phase_counters(counters, counts, args)
+
+    def test_pressured_staged_diagnostics_require_attributed_depth_one_drain(self) -> None:
+        # Key setup: model the one forced-HoloMQ depth-one POD diagnostic after its first gated
+        # delivery, two later staged replacements, and the final gated drain.
+        counts = {
+            "source_compute_entries": 4,
+            "relay_callbacks": 0,
+            "sink_callbacks": 2,
+            "publications": 4,
+            "relay_publications": 0,
+            "backpressured_emits": 0,
+            "consumer_visible_replacements": 2,
+            "deliveries": 2,
+            "activation_completions": 2,
+        }
+        counters = {name: 0 for name in runner.RUNTIME_PHASE_COUNTER_NAMES}
+        counters.update(
+            {
+                "enabled": True,
+                "readiness_scans": 6,
+                "no_progress_scans": 1,
+                "wait_calls": 1,
+                "wake_signals": 1,
+                "wake_returns": 1,
+                "stop_signals": 1,
+                "candidates_frozen": 6,
+                "candidates_selected": 6,
+                "readiness_poll_dispatches": 2,
+                "compute_dispatches": 6,
+                "activations_completed": 6,
+                "channel_prepare_calls": 6,
+                "channel_emit_attempts": 4,
+                "channel_emit_accepted": 4,
+                "channel_samples_received": 3,
+                "channel_readiness_published": 3,
+                "channel_input_reads": 2,
+                "channel_witness_retired": 2,
+                "channel_retire_calls": 6,
+                "channel_activation_cuts": 6,
+                "channel_activation_cut_skips": 6,
+                "lane_dispatches": 10,
+                "lane_compute_dispatches": 6,
+                "lane_dispatcher_dispatches": 2,
+                "lane_lifecycle_dispatches": 2,
+                "lane_sleeping_wake_signals": 10,
+                "lane_callbacks_entered": 10,
+                "lane_callbacks_exited": 10,
+                "lane_completions_observed": 10,
+            }
+        )
+        counters.update(
+            {
+                name: 0
+                for name in (
+                    runner.PRESSURED_STAGED_DIAGNOSTIC_COUNTER_NAMES
+                    + runner.PRESSURED_STAGED_EXISTING_ATTRIBUTION_COUNTER_NAMES
+                )
+            }
+        )
+        counters.update(
+            {
+                "channel_direct_ingress_promotion_passes": 8,
+                "channel_direct_ingress_promotions": 3,
+                "channel_staged_evidence_sweep_visits": 12,
+                "channel_pre_witness_replacements": 1,
+                "temporal_retention_candidates": 2,
+                "temporal_retention_evictions": 1,
+                "temporal_reuse_last_retained_record_queries": 2,
+            }
+        )
+        args = make_args(
+            workload="saturated",
+            queue_policy="drop_oldest",
+            runtime_phase_counters=True,
+            force_holomq_process_local_inline=True,
+            test_gate_pod_sink_for_pressure=True,
+        )
+
+        # Key assertion: the diagnostic schema preserves positive staged traversal, ReuseLast
+        # handoff, replacement accounting, and final-data delivery. The protected-terminal probe
+        # and depth-one comparator remain required but nonnegative because exact scheduling and
+        # claim cardinality decide whether this row observes them.
+        assert runner.pressured_staged_diagnostics_required(args)
+        runner.validate_runtime_phase_counters(counters, counts, args)
+        runner.validate_runtime_phase_counters(
+            {**counters, "channel_protected_terminal_probes_with_pending_data": 1}, counts, args
+        )
+        runner.validate_runtime_phase_counters(
+            {**counters, "temporal_reuse_last_comparator_calls": 1}, counts, args
+        )
+
+        for name in runner.PRESSURED_STAGED_DIAGNOSTIC_COUNTER_NAMES:
+            incomplete = dict(counters)
+            incomplete.pop(name)
+            with pytest.raises(RuntimeError, match="incomplete Runtime phase counters"):
+                runner.validate_runtime_phase_counters(incomplete, counts, args)
+
+        for name in (
+            "channel_direct_ingress_promotion_passes",
+            "channel_direct_ingress_promotions",
+            "channel_staged_evidence_sweep_visits",
+            "temporal_retention_candidates",
+            "temporal_retention_evictions",
+            "temporal_reuse_last_retained_record_queries",
+        ):
+            unexercised = {**counters, name: 0}
+            with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+                runner.validate_runtime_phase_counters(unexercised, counts, args)
+
+        without_replacement = {**counts, "consumer_visible_replacements": 0}
+        with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+            runner.validate_runtime_phase_counters(counters, without_replacement, args)
+
+        without_final_data_delivery = {**counts, "activation_completions": 0}
+        with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+            runner.validate_runtime_phase_counters(counters, without_final_data_delivery, args)
+
+    @pytest.mark.parametrize("name", runner.RUNTIME_PHASE_COUNTER_NAMES)
+    @pytest.mark.parametrize("invalid_kind", ["missing", "negative", "boolean"])
+    def test_runtime_phase_counters_require_nonnegative_integer_fields(
+        self, name: str, invalid_kind: str
+    ) -> None:
+        # Key setup: start from one complete ordinary-dispatch source/sink cycle, then corrupt one
+        # required field using each JSON shape that previously evaded the evidence contract.
+        counts = {
+            "source_compute_entries": 2,
+            "relay_callbacks": 0,
+            "sink_callbacks": 1,
+            "publications": 1,
+            "relay_publications": 0,
+            "backpressured_emits": 0,
+        }
+        counters = {counter: 0 for counter in runner.RUNTIME_PHASE_COUNTER_NAMES}
+        counters.update(
+            {
+                "enabled": True,
+                "readiness_scans": 3,
+                "no_progress_scans": 1,
+                "wait_calls": 1,
+                "wake_signals": 1,
+                "wake_returns": 1,
+                "stop_signals": 1,
+                "candidates_frozen": 3,
+                "candidates_selected": 3,
+                "readiness_poll_dispatches": 1,
+                "compute_dispatches": 3,
+                "activations_completed": 3,
+                "channel_prepare_calls": 3,
+                "channel_emit_attempts": 1,
+                "channel_emit_accepted": 1,
+                "channel_samples_received": 1,
+                "channel_readiness_published": 1,
+                "channel_input_reads": 1,
+                "channel_witness_retired": 1,
+                "channel_retire_calls": 3,
+                "lane_dispatches": 6,
+                "lane_compute_dispatches": 3,
+                "lane_dispatcher_dispatches": 1,
+                "lane_lifecycle_dispatches": 2,
+                "lane_sleeping_wake_signals": 6,
+                "lane_callbacks_entered": 6,
+                "lane_callbacks_exited": 6,
+                "lane_completions_observed": 6,
+            }
+        )
+        if invalid_kind == "missing":
+            counters.pop(name)
+        else:
+            counters[name] = -1 if invalid_kind == "negative" else False
+
+        # Key assertion: every required counter rejects omission, negative values, and booleans.
+        with pytest.raises(RuntimeError, match="Runtime phase counters"):
+            runner.validate_runtime_phase_counters(
+                counters, counts, make_args(runtime_phase_counters=True)
+            )
 
     def test_runtime_phase_trace_requires_complete_bounded_activations(self) -> None:
         # Key setup: source and sink receivers retain all four controller timestamps for one
@@ -1379,6 +2972,7 @@ class TestResultValidation:
             "readiness_polls": 1,
             "unmatched_readiness_polls": 0,
             "complete_activations": 2,
+            "terminal_frozen_candidates": 0,
             "source_activation_runs": 1,
             "maximum_consecutive_source_activations": 1,
             "source_to_source_transitions": 0,
@@ -1419,6 +3013,22 @@ class TestResultValidation:
         args = make_args(runtime_phase_counters=True)
         runner.validate_runtime_phase_trace(phase_trace, counts, args)
 
+        # Key setup: the matching counters identify one final candidate freeze after both complete
+        # source and sink activations.
+        phase_trace["terminal_frozen_candidates"] = 1
+        terminal_counters = {"candidates_frozen": 3, "candidates_selected": 2}
+        runner.validate_runtime_phase_trace(phase_trace, counts, args, terminal_counters)
+
+        # Key assertion: the trace allowance must match the exact counter surplus and never exceed
+        # one candidate.
+        terminal_counters["candidates_frozen"] = 2
+        with pytest.raises(RuntimeError, match="inconsistent terminal Runtime phase state"):
+            runner.validate_runtime_phase_trace(phase_trace, counts, args, terminal_counters)
+        phase_trace["terminal_frozen_candidates"] = 2
+        with pytest.raises(RuntimeError, match="inconsistent Runtime phase trace"):
+            runner.validate_runtime_phase_trace(phase_trace, counts, args)
+        phase_trace["terminal_frozen_candidates"] = 0
+
         # Key assertion: storage overflow cannot silently yield a partial diagnostic breakdown.
         phase_trace["dropped"] = 1
         with pytest.raises(RuntimeError, match="inconsistent Runtime phase trace"):
@@ -1442,6 +3052,7 @@ class TestResultValidation:
             "dropped": 0,
             "unmatched_readiness_polls": 0,
             "complete_activations": 0,
+            "terminal_frozen_candidates": 0,
             "receivers": [],
         }
         runner.validate_runtime_phase_trace(
@@ -1471,6 +3082,7 @@ class TestResultValidation:
             "readiness_polls": 1,
             "unmatched_readiness_polls": 0,
             "complete_activations": 2,
+            "terminal_frozen_candidates": 0,
             "source_activation_runs": 1,
             "maximum_consecutive_source_activations": 1,
             "source_to_source_transitions": 0,
@@ -1545,6 +3157,7 @@ class TestResultValidation:
             "readiness_polls": 1,
             "unmatched_readiness_polls": 0,
             "complete_activations": 2,
+            "terminal_frozen_candidates": 0,
             "source_activation_runs": 1,
             "maximum_consecutive_source_activations": 1,
             "source_to_source_transitions": 0,
@@ -1611,6 +3224,7 @@ class TestResultValidation:
             "readiness_polls": 2,
             "unmatched_readiness_polls": 0,
             "complete_activations": 3,
+            "terminal_frozen_candidates": 0,
             "source_activation_runs": 1,
             "maximum_consecutive_source_activations": 1,
             "source_to_source_transitions": 0,
@@ -1632,7 +3246,14 @@ class TestResultValidation:
             "receivers": [
                 {
                     "activations": 1,
+                    "candidate_to_selection_ns": complete_timing,
+                    "selection_to_input_preparation_ns": complete_timing,
+                    "input_preparation_to_activation_ns": complete_timing,
+                    "activation_to_dispatch_start_ns": complete_timing,
                     "candidate_to_dispatch_start_ns": complete_timing,
+                    "dispatch_start_to_callback_entry_ns": complete_timing,
+                    "callback_entry_to_return_ns": complete_timing,
+                    "callback_return_to_dispatch_return_ns": complete_timing,
                     "compute_dispatch_ns": complete_timing,
                     "dispatch_return_to_retirement_ns": complete_timing,
                     "retirement_to_cut_ns": complete_timing,
@@ -1640,7 +3261,14 @@ class TestResultValidation:
                 },
                 {
                     "activations": 2,
+                    "candidate_to_selection_ns": {"samples": 2, "p50": 100},
+                    "selection_to_input_preparation_ns": {"samples": 2, "p50": 100},
+                    "input_preparation_to_activation_ns": {"samples": 2, "p50": 100},
+                    "activation_to_dispatch_start_ns": {"samples": 2, "p50": 100},
                     "candidate_to_dispatch_start_ns": {"samples": 2, "p50": 100},
+                    "dispatch_start_to_callback_entry_ns": {"samples": 2, "p50": 100},
+                    "callback_entry_to_return_ns": {"samples": 2, "p50": 100},
+                    "callback_return_to_dispatch_return_ns": {"samples": 2, "p50": 100},
                     "compute_dispatch_ns": {"samples": 2, "p50": 100},
                     "dispatch_return_to_retirement_ns": {"samples": 2, "p50": 100},
                     "retirement_to_cut_ns": {"samples": 2, "p50": 100},
@@ -1648,8 +3276,25 @@ class TestResultValidation:
                 },
             ],
         }
-        args = make_args(runtime_phase_counters=True)
+        args = make_args(scenario="sample_forward", runtime_phase_counters=True)
         runner.validate_runtime_phase_trace(phase_trace, counts, args)
+
+        # Key assertion: every general-chain activation must retain a complete preparation
+        # breakdown before transition cardinality is considered.
+        phase_trace["receivers"][1]["input_preparation_to_activation_ns"] = None
+        with pytest.raises(RuntimeError, match="incomplete Runtime activation-preparation trace"):
+            runner.validate_runtime_phase_trace(phase_trace, counts, args)
+        phase_trace["receivers"][1]["input_preparation_to_activation_ns"] = {
+            "samples": 2,
+            "p50": 100,
+        }
+        phase_trace["receivers"][1]["callback_entry_to_return_ns"] = None
+        with pytest.raises(RuntimeError, match="incomplete Runtime callback phase trace"):
+            runner.validate_runtime_phase_trace(phase_trace, counts, args)
+        phase_trace["receivers"][1]["callback_entry_to_return_ns"] = {
+            "samples": 2,
+            "p50": 100,
+        }
 
         # Key assertion: dropping one transition makes the activation sequence incomplete.
         phase_trace["downstream_to_downstream_transitions"] = 0
@@ -1665,6 +3310,7 @@ class TestResultValidation:
             "source_compute_entries": 11,
             "relay_callbacks": 0,
             "sink_callbacks": 11,
+            "per_sink": [{"index": 0, "deliveries": 11}],
         }
         evidence = {
             "enabled": True,
@@ -1695,6 +3341,14 @@ class TestResultValidation:
                     "native_tid": 23,
                     "multiple_threads": False,
                 },
+            ],
+            "sink_roles": [
+                {
+                    "index": 0,
+                    "callbacks": 11,
+                    "native_tid": 23,
+                    "multiple_threads": False,
+                }
             ],
         }
         args = make_args(runtime_phase_counters=True, operator_lanes="shared")
@@ -1740,6 +3394,170 @@ class TestResultValidation:
         with pytest.raises(RuntimeError, match="unexpectedly enabled"):
             runner.validate_callback_thread_evidence(evidence, counts, disabled_args)
         runner.validate_callback_thread_evidence({"enabled": False}, counts, disabled_args)
+
+    def test_fanout_callback_threads_require_stable_distinct_partition_owners(self) -> None:
+        counts = {
+            "source_compute_entries": 11,
+            "relay_callbacks": 0,
+            "sink_callbacks": 22,
+            "per_sink": [
+                {"index": 0, "deliveries": 11},
+                {"index": 1, "deliveries": 11},
+            ],
+        }
+        evidence = {
+            "enabled": True,
+            "valid": True,
+            "thread_identity_kind": (
+                "native_tid" if sys.platform.startswith("linux") else "std_thread_id_hash"
+            ),
+            "native_tid_syscall_unavailable": False,
+            "controller_native_tid": 17,
+            "shared_lane_single_thread": False,
+            "callbacks_on_partition_owner": False,
+            "roles": [
+                {
+                    "role": "source",
+                    "callbacks": 11,
+                    "native_tid": 23,
+                    "multiple_threads": False,
+                },
+                {
+                    "role": "relay",
+                    "callbacks": 0,
+                    "native_tid": None,
+                    "multiple_threads": False,
+                },
+                {
+                    "role": "sink",
+                    "callbacks": 22,
+                    "native_tid": 29,
+                    "multiple_threads": True,
+                },
+            ],
+            "sink_roles": [
+                {"index": 0, "callbacks": 11, "native_tid": 29, "multiple_threads": False},
+                {"index": 1, "callbacks": 11, "native_tid": 31, "multiple_threads": False},
+            ],
+        }
+        args = make_args(runtime_phase_counters=True, fanout=2, operator_lanes="separate")
+        runner.validate_callback_thread_evidence(evidence, counts, args)
+
+        evidence["sink_roles"][1]["native_tid"] = 29
+        with pytest.raises(RuntimeError, match="per-partition"):
+            runner.validate_callback_thread_evidence(evidence, counts, args)
+        evidence["sink_roles"][1]["native_tid"] = 31
+        evidence["sink_roles"][1]["multiple_threads"] = True
+        with pytest.raises(RuntimeError, match="per-sink"):
+            runner.validate_callback_thread_evidence(evidence, counts, args)
+
+    def test_source_only_callback_threads_require_no_sink_records(self) -> None:
+        counts = {
+            "source_compute_entries": 11,
+            "relay_callbacks": 0,
+            "sink_callbacks": 0,
+            "per_sink": [],
+        }
+        evidence = {
+            "enabled": True,
+            "valid": True,
+            "thread_identity_kind": (
+                "native_tid" if sys.platform.startswith("linux") else "std_thread_id_hash"
+            ),
+            "native_tid_syscall_unavailable": False,
+            "controller_native_tid": 17,
+            "shared_lane_single_thread": True,
+            "callbacks_on_partition_owner": True,
+            "roles": [
+                {
+                    "role": "source",
+                    "callbacks": 11,
+                    "native_tid": 17,
+                    "multiple_threads": False,
+                },
+                {
+                    "role": "relay",
+                    "callbacks": 0,
+                    "native_tid": None,
+                    "multiple_threads": False,
+                },
+                {
+                    "role": "sink",
+                    "callbacks": 0,
+                    "native_tid": None,
+                    "multiple_threads": False,
+                },
+            ],
+            "sink_roles": [],
+        }
+        args = make_args(
+            scenario="source_only",
+            workload="notification_latency",
+            runtime_phase_counters=True,
+        )
+
+        runner.validate_callback_thread_evidence(evidence, counts, args)
+
+    def test_multi_input_callback_threads_describe_one_logical_sink_not_two_input_legs(
+        self,
+    ) -> None:
+        counts = {
+            "source_compute_entries": 11,
+            "relay_callbacks": 0,
+            "sink_callbacks": 11,
+            "per_sink": [
+                {"index": 0, "deliveries": 11},
+                {"index": 1, "deliveries": 11},
+            ],
+        }
+        evidence = {
+            "enabled": True,
+            "valid": True,
+            "thread_identity_kind": (
+                "native_tid" if sys.platform.startswith("linux") else "std_thread_id_hash"
+            ),
+            "native_tid_syscall_unavailable": False,
+            "controller_native_tid": 23,
+            "shared_lane_single_thread": True,
+            "callbacks_on_partition_owner": True,
+            "roles": [
+                {
+                    "role": "source",
+                    "callbacks": 11,
+                    "native_tid": 23,
+                    "multiple_threads": False,
+                },
+                {
+                    "role": "relay",
+                    "callbacks": 0,
+                    "native_tid": None,
+                    "multiple_threads": False,
+                },
+                {
+                    "role": "sink",
+                    "callbacks": 11,
+                    "native_tid": 23,
+                    "multiple_threads": False,
+                },
+            ],
+            "sink_roles": [
+                {"index": 0, "callbacks": 11, "native_tid": 23, "multiple_threads": False}
+            ],
+        }
+        args = make_args(
+            runtime_phase_counters=True,
+            operator_lanes="shared",
+            multi_input=True,
+            fanout=2,
+        )
+
+        runner.validate_callback_thread_evidence(evidence, counts, args)
+
+        evidence["sink_roles"].append(
+            {"index": 1, "callbacks": 11, "native_tid": 23, "multiple_threads": False}
+        )
+        with pytest.raises(RuntimeError, match="callback-thread"):
+            runner.validate_callback_thread_evidence(evidence, counts, args)
 
     def test_runtime_thread_usage_requires_exact_role_population_and_aggregate(self) -> None:
         supported = sys.platform.startswith("linux")
@@ -1795,11 +3613,14 @@ class TestResultValidation:
 
     def test_checked_result_rejects_incomplete_deliveries(self, tmp_path: Path) -> None:
         # Key setup: encode one fewer delivery than the requested latency sample count.
+        args = make_args()
         result = {
             "schema": runner.RESULT_SCHEMA,
             "runtime_controls": {
                 "direct_continuation_elision_disabled": False,
                 "closed_island_composite_disabled": False,
+                "holomq_event_wake_forced": False,
+                "process_local_channel_pump_forced": False,
             },
             "clock": clock_evidence(),
             "timestamp_instrumentation": timestamp_instrumentation(),
@@ -1808,22 +3629,21 @@ class TestResultValidation:
             "process_local_inline_delivery": "direct_retained",
             "queue_policy": "blocking",
             "workload": "latency",
-            "partitioning": {
-                "requested_algorithm": {
-                    "id": "holoscan.partition.serial_baseline",
-                    "version": 1,
-                },
-                "accepted_algorithm": {
-                    "id": "holoscan.partition.serial_baseline",
-                    "version": 1,
-                },
-                "selection_source": "core_default",
-            },
+            "source_trigger": "clock",
+            "partitioning": partitioning_evidence(args),
             "geometry": {
                 "samples": 100,
                 "warmup": 10,
+                "callback_work_us": 0,
                 "queue_depth": 1,
+                "subscriber_queue_depths": [1],
+                "subscriber_queue_policies": ["blocking"],
+                "offered_burst_size": 1,
                 "fanout": 1,
+                "source_outputs": 1,
+                "subscribers_per_output": 1,
+                "sink_operators": 1,
+                "inputs_per_sink": 1,
                 "relay_count": 0,
                 "pipeline_edges": 1,
                 "notification_capacity": 0,
@@ -1836,6 +3656,10 @@ class TestResultValidation:
             },
             "counts": {
                 "source_callbacks": 111,
+                "source_compute_entries": 111,
+                "source_tensor_pool_retries": 0,
+                "source_tensor_pool_in_activation_retries": 0,
+                "measured_source_callbacks": 100,
                 "relay_callbacks": 0,
                 "sink_callbacks": 110,
                 "publications": 111,
@@ -1848,7 +3672,15 @@ class TestResultValidation:
                 "source_backpressured_emits": 0,
                 "notification_post_attempts": 0,
                 "validation_errors": 0,
-                "per_sink": [{"index": 0, "deliveries": 110, "final_sequence": 110}],
+                "per_sink": [
+                    {
+                        "index": 0,
+                        "deliveries": 110,
+                        "final_sequence": 110,
+                        "replacements": 0,
+                        "replacement_rate": 0.0,
+                    }
+                ],
             },
             "validation": {
                 "mode": "final",
@@ -1871,6 +3703,7 @@ class TestResultValidation:
             },
             "placement": {
                 "operator_lanes": "separate",
+                "requested_operator_lanes": "separate",
                 "operator_lane_count": 2,
                 "source_compile_accepted_cpu": None,
                 "relay_compile_accepted_cpu": None,
@@ -1907,7 +3740,7 @@ class TestResultValidation:
 
         # Key assertion: incomplete evidence fails before it can enter aggregate summaries.
         with pytest.raises(RuntimeError, match="incomplete publication or delivery"):
-            runner.checked_result(path, make_args())
+            runner.checked_result(path, args)
 
         # Key setup: make aggregate counts complete while leaving the sole sink one sample short.
         result["counts"].update(
@@ -1946,6 +3779,8 @@ class TestResultValidation:
             "runtime_controls": {
                 "direct_continuation_elision_disabled": False,
                 "closed_island_composite_disabled": False,
+                "holomq_event_wake_forced": False,
+                "process_local_channel_pump_forced": False,
             },
             "clock": clock_evidence(),
             "timestamp_instrumentation": timestamp_instrumentation(),
@@ -1954,22 +3789,21 @@ class TestResultValidation:
             "process_local_inline_delivery": "not_applicable",
             "queue_policy": "blocking",
             "workload": "notification_latency",
-            "partitioning": {
-                "requested_algorithm": {
-                    "id": "holoscan.partition.serial_baseline",
-                    "version": 1,
-                },
-                "accepted_algorithm": {
-                    "id": "holoscan.partition.serial_baseline",
-                    "version": 1,
-                },
-                "selection_source": "core_default",
-            },
+            "source_trigger": "notification",
+            "partitioning": partitioning_evidence(args),
             "geometry": {
                 "samples": 2,
                 "warmup": 0,
+                "callback_work_us": 0,
                 "queue_depth": 1,
+                "subscriber_queue_depths": [],
+                "subscriber_queue_policies": [],
+                "offered_burst_size": 1,
                 "fanout": 0,
+                "source_outputs": 0,
+                "subscribers_per_output": 0,
+                "sink_operators": 0,
+                "inputs_per_sink": 0,
                 "relay_count": 0,
                 "pipeline_edges": 0,
                 "notification_capacity": 1,
@@ -1982,6 +3816,10 @@ class TestResultValidation:
             },
             "counts": {
                 "source_callbacks": 3,
+                "source_compute_entries": 3,
+                "source_tensor_pool_retries": 0,
+                "source_tensor_pool_in_activation_retries": 0,
+                "measured_source_callbacks": 2,
                 "relay_callbacks": 0,
                 "sink_callbacks": 0,
                 "publications": 0,
@@ -2018,6 +3856,7 @@ class TestResultValidation:
             },
             "placement": {
                 "operator_lanes": "separate",
+                "requested_operator_lanes": "separate",
                 "operator_lane_count": 1,
                 "source_compile_accepted_cpu": None,
                 "relay_compile_accepted_cpu": None,
@@ -2056,6 +3895,25 @@ class TestResultValidation:
         # Key assertion: validation applies scenario-specific count invariants.
         assert runner.checked_result(path, args) == result
 
+        # Key assertion: native partition-cover evidence is mandatory for every v1 result.
+        result["partitioning"].pop("authoring")
+        path.write_text(json.dumps(result), encoding="utf-8")
+        with pytest.raises(RuntimeError, match="partition-cover evidence"):
+            runner.checked_result(path, args)
+        result["partitioning"]["authoring"] = "legacy"
+
+        # Key setup: the versioned v1 compatibility alias must remain present and agree with the
+        # precise requested-policy field.
+        result["placement"].pop("operator_lanes")
+        path.write_text(json.dumps(result), encoding="utf-8")
+        with pytest.raises(RuntimeError, match="unexpected Operator lane placement"):
+            runner.checked_result(path, args)
+        result["placement"]["operator_lanes"] = "shared"
+        path.write_text(json.dumps(result), encoding="utf-8")
+        with pytest.raises(RuntimeError, match="unexpected Operator lane placement"):
+            runner.checked_result(path, args)
+        result["placement"]["operator_lanes"] = "separate"
+
         # Key assertion: the private A/B provenance is mandatory rather than inferred from the
         # requested command, so a stale binary cannot enter a matched summary silently.
         result.pop("runtime_controls")
@@ -2065,6 +3923,8 @@ class TestResultValidation:
         result["runtime_controls"] = {
             "direct_continuation_elision_disabled": False,
             "closed_island_composite_disabled": False,
+            "holomq_event_wake_forced": False,
+            "process_local_channel_pump_forced": False,
         }
 
         # Key setup: native evidence retains a dormant record for each bounded support role.
@@ -2125,6 +3985,8 @@ class TestResultValidation:
             "runtime_controls": {
                 "direct_continuation_elision_disabled": False,
                 "closed_island_composite_disabled": False,
+                "holomq_event_wake_forced": False,
+                "process_local_channel_pump_forced": False,
             },
             "clock": clock_evidence(),
             "timestamp_instrumentation": timestamp_instrumentation(),
@@ -2133,22 +3995,21 @@ class TestResultValidation:
             "process_local_inline_delivery": "not_applicable",
             "queue_policy": "blocking",
             "workload": "saturated",
-            "partitioning": {
-                "requested_algorithm": {
-                    "id": "holoscan.partition.serial_baseline",
-                    "version": 1,
-                },
-                "accepted_algorithm": {
-                    "id": "holoscan.partition.serial_baseline",
-                    "version": 1,
-                },
-                "selection_source": "core_default",
-            },
+            "source_trigger": "notification",
+            "partitioning": partitioning_evidence(args),
             "geometry": {
                 "samples": 2,
                 "warmup": 0,
+                "callback_work_us": 0,
                 "queue_depth": 2,
+                "subscriber_queue_depths": [],
+                "subscriber_queue_policies": [],
+                "offered_burst_size": 1,
                 "fanout": 0,
+                "source_outputs": 0,
+                "subscribers_per_output": 0,
+                "sink_operators": 0,
+                "inputs_per_sink": 0,
                 "relay_count": 0,
                 "pipeline_edges": 0,
                 "notification_capacity": 2,
@@ -2161,6 +4022,10 @@ class TestResultValidation:
             },
             "counts": {
                 "source_callbacks": 3,
+                "source_compute_entries": 3,
+                "source_tensor_pool_retries": 0,
+                "source_tensor_pool_in_activation_retries": 0,
+                "measured_source_callbacks": 2,
                 "relay_callbacks": 0,
                 "sink_callbacks": 0,
                 "publications": 0,
@@ -2197,6 +4062,7 @@ class TestResultValidation:
             },
             "placement": {
                 "operator_lanes": "separate",
+                "requested_operator_lanes": "separate",
                 "operator_lane_count": 1,
                 "source_compile_accepted_cpu": None,
                 "relay_compile_accepted_cpu": None,
@@ -2249,6 +4115,28 @@ class TestResultValidation:
 
 
 class TestRunRepetitionFailures:
+    def test_native_skip_exit_is_preserved_with_logs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Key setup: the CUDA-sensitive native benchmark reports the CTest skip return code.
+        monkeypatch.setattr(
+            runner.subprocess,
+            "run",
+            lambda *_args, **_kwargs: SimpleNamespace(
+                returncode=runner.NATIVE_SKIP_RETURN_CODE,
+                stdout="native skip",
+                stderr="CUDA unavailable",
+            ),
+        )
+
+        # Key assertion: the Python runner preserves code 77 and retains both diagnostic streams.
+        with pytest.raises(SystemExit) as error:
+            runner.run_repetition(make_args(), Path("/tmp/benchmark"), 0, tmp_path)
+        assert error.value.code == runner.NATIVE_SKIP_RETURN_CODE
+        repetition_dir = tmp_path / "repetition_000"
+        assert next(repetition_dir.glob("stdout_*.log")).read_text() == "native skip"
+        assert next(repetition_dir.glob("stderr_*.log")).read_text() == "CUDA unavailable"
+
     def test_nonzero_exit_retains_logs_and_fails_closed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2262,11 +4150,80 @@ class TestRunRepetitionFailures:
         )
 
         # Key assertion: no result is accepted and both streams remain available for diagnosis.
-        with pytest.raises(RuntimeError, match="exited with 9"):
+        with pytest.raises(RuntimeError, match="exited with 9") as error:
             runner.run_repetition(make_args(), Path("/tmp/benchmark"), 0, tmp_path)
+        assert "--- native stdout\nnative stdout" in str(error.value)
+        assert "--- native stderr\nnative stderr" in str(error.value)
         repetition_dir = tmp_path / "repetition_000"
         assert next(repetition_dir.glob("stdout_*.log")).read_text() == "native stdout"
         assert next(repetition_dir.glob("stderr_*.log")).read_text() == "native stderr"
+
+    def test_native_failure_details_reports_bounded_stream_tails(self) -> None:
+        # Key setup: stderr exceeds the diagnostic bound while stdout remains short.
+        stderr = "discarded-prefix\n" + "x" * runner.NATIVE_FAILURE_LOG_LIMIT
+
+        details = runner.native_failure_details("native stdout", stderr)
+
+        # Key assertion: CTest receives both streams and an explicit truncation marker.
+        assert "--- native stdout\nnative stdout" in details
+        assert "--- native stderr\n[... earlier output truncated ...]" in details
+        assert "discarded-prefix" not in details
+
+    def test_native_result_failure_details_fails_closed_when_file_is_missing(
+        self, tmp_path: Path
+    ) -> None:
+        assert runner.native_result_failure_details(tmp_path / "missing.json") == ""
+
+    @pytest.mark.parametrize(
+        "payload",
+        ["{", "[]"],
+        ids=("malformed-json", "non-object-json"),
+    )
+    def test_native_result_failure_details_fails_closed_for_invalid_inputs(
+        self, tmp_path: Path, payload: str
+    ) -> None:
+        result_path = tmp_path / "result.json"
+        result_path.write_text(payload, encoding="utf-8")
+
+        assert runner.native_result_failure_details(result_path) == ""
+
+    def test_native_result_failure_details_reports_runtime_startup_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        result_path = tmp_path / "result.json"
+        result_path.write_text(
+            json.dumps(
+                {
+                    "cold_timing_ns": {
+                        "compile": 100,
+                        "run_async_return": 200,
+                        "run_async_to_first_callback": 0,
+                        "terminal_wait": 16_000_000_000,
+                    },
+                    "counts": {"source_compute_entries": 0},
+                    "placement": {"support_threads": [{"role": "controller", "entered": True}]},
+                    "runtime_phase_counters": {
+                        "enabled": True,
+                        "readiness_scans": 0,
+                        "lane_lifecycle_dispatches": 2,
+                    },
+                    "runtime_thread_usage": {"enabled": True, "supported": True},
+                    "session": {"termination": "stopped", "diagnostics": []},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        details = runner.native_result_failure_details(result_path)
+
+        assert details.startswith("--- native result diagnostics\n")
+        evidence = json.loads(details.split("\n", 1)[1])
+        assert evidence["cold_timing_ns"]["run_async_to_first_callback"] == 0
+        assert evidence["runtime_phase_counters"] == {
+            "enabled": True,
+            "lane_lifecycle_dispatches": 2,
+        }
+        assert evidence["support_threads"] == [{"entered": True, "role": "controller"}]
 
     def test_timeout_retains_partial_logs_and_fails_closed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2280,8 +4237,10 @@ class TestRunRepetitionFailures:
         monkeypatch.setattr(runner.subprocess, "run", time_out)
 
         # Key assertion: timeout remains distinct from a native exit and preserves partial logs.
-        with pytest.raises(TimeoutError, match="timed out"):
+        with pytest.raises(TimeoutError, match="timed out") as error:
             runner.run_repetition(make_args(), Path("/tmp/benchmark"), 0, tmp_path)
+        assert "--- native stdout\npartial stdout" in str(error.value)
+        assert "--- native stderr\npartial stderr" in str(error.value)
         repetition_dir = tmp_path / "repetition_000"
         assert next(repetition_dir.glob("stdout_*.log")).read_text() == "partial stdout"
         assert next(repetition_dir.glob("stderr_*.log")).read_text() == "partial stderr"
@@ -2328,6 +4287,8 @@ class TestArtifactReporting:
         args.benchmark_binary = binary
         args.output_dir = None
         args.git_revision = "abc123"
+        args.source_state = "dirty-task040-worktree-snapshot"
+        args.source_snapshot_sha256 = "b" * 64
         monkeypatch.setattr(runner, "parse_args", lambda: args)
         monkeypatch.setattr(runner.tempfile, "mkdtemp", lambda **_kwargs: str(output_dir))
         monkeypatch.setattr(runner, "collect_cpu_topology", lambda _args: [])
@@ -2354,9 +4315,16 @@ class TestArtifactReporting:
         assert (output_dir / "summary.json").is_file()
         assert (output_dir / "manifest.json").is_file()
         manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["binary_sha256"] == (
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
+        assert manifest["source_state"] == "dirty-task040-worktree-snapshot"
+        assert manifest["source_snapshot_sha256"] == "b" * 64
         assert manifest["runtime_controls"] == {
             "direct_continuation_elision_disabled": True,
             "closed_island_composite_disabled": False,
+            "holomq_event_wake_forced": False,
+            "process_local_channel_pump_forced": False,
         }
         assert "--disable-direct-continuation-elision" in manifest["native_commands"][0]
 

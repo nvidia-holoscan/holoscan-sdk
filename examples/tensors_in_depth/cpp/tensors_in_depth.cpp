@@ -50,7 +50,7 @@ constexpr DLDataType kByteDtype{kDLUInt, 8U, 1U};
 constexpr std::size_t kFrameBytes = 256U;
 constexpr std::array<std::int64_t, 1U> kFrameShape{static_cast<std::int64_t>(kFrameBytes)};
 // Logical facts every consumer may rely on: CUDA device memory, uint8, rank 1.
-constexpr holoscan::TensorPortLayout kDeviceByteFrame{
+constexpr holoscan::TensorRepresentation kDeviceByteFrame{
     .memory_kind = holoscan::MemoryKind::kCudaDevice,
     .dtype = kByteDtype,
     .rank = 1U,
@@ -63,7 +63,7 @@ constexpr int kNoCudaDeviceReturnCode = 77;
 
 // Operators record what happened here; main() prints the summary only after the
 // session has fully stopped. graph.op<> takes no pointers, so shared observation
-// state is static by design (same pattern as tensors_101 / ea1_slow_fast_fusion).
+// state is static by design (same pattern as tensors_101 / slow_fast_fusion).
 struct Observation {
   static void reset() {
     const std::lock_guard lock(mutex);
@@ -144,13 +144,14 @@ struct Observation {
 class PatternSource final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
-    // produces_tensor states the logical facts; tensor_allocation opts this
-    // output into a bounded plan-owned CUDA device pool. The device itself is
-    // bound at compile time (bind_tensor_output_device) — never inferred.
+    // The output spec requests a bounded plan-owned CUDA device pool. The
+    // device itself is bound at compile time — never inferred.
     spec.output(frame, "frame")
-        .produces_tensor(kDeviceByteFrame)
-        .tensor_allocation(
-            holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = kFrameBytes});
+        .produces_tensor(holoscan::TensorOutputSpec{
+            .representation = kDeviceByteFrame,
+            .bounds = holoscan::tensor_bounds(kFrameBytes),
+            .storage = holoscan::TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {
@@ -255,7 +256,9 @@ class PatternSource final : public holoscan::Operator<> {
 class DeviceConsumer final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
-    spec.input(frame, "frame").queue_depth(8U).expects_tensor(kDeviceByteFrame);
+    spec.input(frame, "frame")
+        .queue_depth(8U)
+        .expects_tensor(holoscan::TensorInputSpec{.representation = kDeviceByteFrame});
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {
@@ -324,7 +327,9 @@ class EdgeInspector final : public holoscan::Operator<> {
   }
 
   void setup(holoscan::OperatorSpec& spec) override {
-    spec.input(frame, "frame").queue_depth(1U).expects_tensor(kDeviceByteFrame);
+    spec.input(frame, "frame")
+        .queue_depth(1U)
+        .expects_tensor(holoscan::TensorInputSpec{.representation = kDeviceByteFrame});
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {

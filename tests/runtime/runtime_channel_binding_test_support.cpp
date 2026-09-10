@@ -54,8 +54,12 @@ using namespace std::chrono_literals;
 
 ScriptedInlinePublisher::ScriptedInlinePublisher(
     std::vector<channel_internal::InlinePublicationResult> results,
-    std::vector<ErrorCode> refresh_results)
-    : results_(std::move(results)), refresh_results_(std::move(refresh_results)) {}
+    std::vector<ErrorCode> refresh_results, std::vector<ErrorCode> close_results,
+    const bool throw_on_close)
+    : results_(std::move(results)),
+      refresh_results_(std::move(refresh_results)),
+      close_results_(std::move(close_results)),
+      throw_on_close_(throw_on_close) {}
 
 channel_internal::InlinePublicationResult ScriptedInlinePublisher::emit_phase(
     const std::span<const std::byte> payload, const SampleMetadata& metadata) {
@@ -77,6 +81,21 @@ channel_internal::InlinePublicationResult ScriptedInlinePublisher::emit_phase(
   };
 }
 
+expected<void, Error> ScriptedInlinePublisher::close_stream() {
+  ++close_count;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  if (throw_on_close_) {
+    throw std::runtime_error{"injected terminal close failure"};
+  }
+#endif
+  if (next_close_result_ == close_results_.size()) {
+    return {};
+  }
+  const ErrorCode result = close_results_[next_close_result_++];
+  return result == ErrorCode::kSuccess ? expected<void, Error>{}
+                                       : expected<void, Error>{make_unexpected(Error{result})};
+}
+
 expected<void, Error> ScriptedInlinePublisher::update_connections() noexcept {
   if (next_refresh_result_ == refresh_results_.size()) {
     return {};
@@ -90,11 +109,114 @@ bool ScriptedInlinePublisher::has_subscribers() const noexcept {
   return true;
 }
 
+ScriptedInlineSubscriber::ScriptedInlineSubscriber(const std::int32_t value,
+                                                   const std::uint64_t sequence,
+                                                   const InlineReceivePath path)
+    : metadata_{
+          .sequence = sequence,
+          .byte_size = sizeof(value),
+          .payload_kind = PayloadKind::kInlineTyped,
+      },
+      path_(path) {
+  std::memcpy(payload_.data(), &value, sizeof(value));
+}
+
+expected<bool, Error> ScriptedInlineSubscriber::has_samples() const {
+  return true;
+}
+
+bool ScriptedInlineSubscriber::event_wake_enabled() const noexcept {
+  return false;
+}
+
+void* ScriptedInlineSubscriber::wait_context_runtime() noexcept {
+  return nullptr;
+}
+
+bool ScriptedInlineSubscriber::has_publishers() const noexcept {
+  return true;
+}
+
+expected<channel_internal::InlinePayloadReceiveResult, Error> ScriptedInlineSubscriber::receive(
+    const std::span<std::byte> payload) {
+  ++copy_receive_count;
+  if (path_ != InlineReceivePath::kCopyFallback) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  if (data_delivered_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  if (payload.size() != payload_.size()) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  std::memcpy(payload.data(), payload_.data(), payload_.size());
+  data_delivered_ = true;
+  return channel_internal::InlinePayloadReceiveResult{.metadata = metadata_,
+                                                      .payload_size = payload_.size()};
+}
+
+expected<channel_internal::InlinePayloadReceiveGuard, Error>
+ScriptedInlineSubscriber::receive_borrowed() {
+  ++borrowed_receive_count;
+  if (path_ == InlineReceivePath::kCopyFallback) {
+    return make_unexpected(Error{ErrorCode::kNotSupported});
+  }
+  if (loan_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  if (data_delivered_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  data_delivered_ = true;
+  loan_active_ = true;
+  return channel_internal::InlinePayloadReceiveGuard{
+      *this, std::span<const std::byte>{payload_}, metadata_};
+}
+
+expected<channel_internal::InlinePayloadReceiveGuard, Error>
+ScriptedInlineSubscriber::receive_borrowed_if_data_accepted(const bool accept_data) {
+  // Model the bounded endpoint transaction: a data head stays pending until Runtime has a typed
+  // destination, while the stable terminal behind an already-consumed data head remains visible.
+  if (data_delivered_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  if (!accept_data) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  return receive_borrowed();
+}
+
+void ScriptedInlineSubscriber::release_payload_loan() noexcept {
+  if (loan_active_) {
+    loan_active_ = false;
+    ++loan_release_count;
+  }
+}
+
+expected<std::uint64_t, Error> ScriptedInlineSubscriber::attach_wait_set(void*) {
+  return make_unexpected(Error{ErrorCode::kNotSupported});
+}
+
+expected<void, Error> ScriptedInlineSubscriber::detach_wait_set() noexcept {
+  return {};
+}
+
+std::optional<channel_internal::StagedDataState> ScriptedInlineSubscriber::staged_data_state()
+    const noexcept {
+  ++staged_data_query_count;
+  return std::nullopt;
+}
+
+std::optional<std::uint64_t> ScriptedInlineSubscriber::staged_terminal_sequence() const noexcept {
+  return std::nullopt;
+}
+
 [[nodiscard]] std::string unique_service() {
   static std::atomic<std::uint64_t> sequence{1U};
   const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
-  return "ea1-runtime-channel-" + std::to_string(channel_internal::current_process_identity()) +
-         "-" + std::to_string(timestamp) + "-" +
+  return "holoscan-runtime-channel-" +
+         std::to_string(channel_internal::current_process_identity()) + "-" +
+         std::to_string(timestamp) + "-" +
          std::to_string(sequence.fetch_add(1U, std::memory_order_relaxed));
 }
 
@@ -190,7 +312,7 @@ SessionFixture::SessionFixture() {
       GenericOutputLoanPlanRecord{
           .output = PortId{1U},
           .plan_generation = plan.plan_generation,
-          .pool_id = "ea1-runtime-channel-loans",
+          .pool_id = "holoscan-runtime-channel-loans",
           .slot_size_bytes = sizeof(std::int32_t),
           .aggregate_byte_capacity = 4U * sizeof(std::int32_t),
           .slot_count = 4U,
@@ -372,6 +494,36 @@ void SessionFixture::use_one_slot_blocking_transport() {
   set_queue_depth(0U, 1U);
 }
 
+void SessionFixture::use_same_partition_eventless_transport() {
+  for (auto& service : plan.process_local_channel_services) {
+    service.event_wake = false;
+  }
+  for (auto& subscriber : plan.process_local_channel_subscribers) {
+    subscriber.event_wake = false;
+  }
+  std::vector<VertexId> members;
+  members.reserve(plan.ports.size());
+  for (const auto& port : plan.ports) {
+    if (port.owner && std::find(members.begin(), members.end(), port.owner) == members.end()) {
+      members.push_back(port.owner);
+    }
+  }
+  plan.execution_partitions = {ExecutionPartitionRecord{
+      .id = ExecutionPartitionId{1U},
+      .members = std::move(members),
+      .execution_lane = 0U,
+  }};
+}
+
+void SessionFixture::use_single_partition_runner() {
+  plan.partition_runners = {PartitionRunnerPlanRecord{
+      .ordinal = 0U,
+      .partition = ExecutionPartitionId{1U},
+      .execution_lane = 0U,
+      .process_group = ProcessGroupId{1U},
+  }};
+}
+
 void SessionFixture::use_cross_process_edge() {
   const std::string service =
       fmt::format("cross-process-channel.{}.source.1.policy.0.anchor.1", plan.plan_generation);
@@ -548,6 +700,14 @@ void SessionFixture::use_one_slot_blocking_fanout() {
   use_one_slot_blocking_transport();
   add_blocking_fanout();
   set_queue_depth(1U, 1U);
+}
+
+void SessionFixture::use_one_slot_drop_oldest_fanout() {
+  use_one_slot_blocking_fanout();
+  set_primary_queue_policy(QueuePolicy::kDropOldest);
+  const std::string& service = plan.process_local_channel_services.front().service_id;
+  plan.process_local_channel_subscribers.back().service_id = service;
+  plan.payload_edges.back().queue_policy = QueuePolicy::kDropOldest;
 }
 
 void SessionFixture::add_compute_only_input_for_sink() {

@@ -98,9 +98,11 @@ endif()
 get_target_property(_holoscan_core_imported_type holoscan::core TYPE)
 get_target_property(_holoscan_core_interface_links holoscan::core INTERFACE_LINK_LIBRARIES)
 if(_holoscan_core_imported_type STREQUAL "SHARED_LIBRARY")
-    if(TARGET holomq::holomq OR _holoscan_core_interface_links MATCHES "holomq")
+    # HoloMQ is independently linkable from the SDK package. Its imported target may therefore
+    # be present after find_package(holoscan), but shared Core must not require consumers to link it.
+    if(_holoscan_core_interface_links MATCHES "holomq")
         message(FATAL_ERROR
-            "Shared holoscan::core exposes a HoloMQ package target or link interface"
+            "Shared holoscan::core exposes HoloMQ through its link interface"
         )
     endif()
 endif()

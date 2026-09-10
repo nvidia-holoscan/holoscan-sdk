@@ -131,14 +131,14 @@ namespace holoscan::detail::physical_plan_test {
       .field_id = field_id,
       .tensor_index = tensor_index,
       .tensor_layout =
-          TensorPortLayout{
+          TensorRepresentation{
               .memory_kind = memory_kind,
               .dtype = DLDataType{kDLUInt, 8U, 1U},
               .rank = rank,
           },
-      .tensor_allocation = TensorAllocationBounds{.max_rank = rank, .max_byte_span = max_byte_span},
+      .tensor_allocation = TensorPoolBounds{.max_rank = rank, .max_byte_span = max_byte_span},
       .payload_options =
-          TensorFieldPayloadOptions{
+          TensorFieldTransferRecord{
               .max_tensor_byte_span = max_byte_span,
               .interface_tensor_emit_policy = emit_policy,
           },
@@ -212,6 +212,7 @@ namespace holoscan::detail::physical_plan_test {
         .serialized_payload_capacity_bytes = topic.serialized_payload_capacity_bytes,
         .attach = topic.attach,
         .tensor = topic.tensor,
+        .tensor_fields = topic.tensor_fields,
         .bounds = topic.bounds,
     });
   }
@@ -227,7 +228,7 @@ namespace holoscan::detail::physical_plan_test {
     const RuntimePackageCapabilityView* package_override,
     std::span<const TensorDeviceBindingRecord> tensor_device_bindings,
     std::span<const ExecutionPartitionRecord> execution_partitions,
-    bool force_holomq_process_local_inline) {
+    const LowerForTestOptions options) {
   const auto endpoints = catalog_endpoints(snapshot);
   const auto placements = default_process_placements(snapshot);
   const auto default_partitions = default_execution_partitions(snapshot);
@@ -248,7 +249,65 @@ namespace holoscan::detail::physical_plan_test {
                              lifecycle_targets,
                              accepted_partitions,
                              tensor_device_bindings,
-                             force_holomq_process_local_inline);
+                             options.force_holomq_process_local_inline,
+                             options.force_holomq_process_local_event_wake,
+                             {},
+                             options.resolved_queue_sizings,
+                             options.queue_sizing_recipes);
+}
+
+[[nodiscard]] ExecutionPlanState published_physical_plan_state(
+    PhysicalPlanLoweringResult result, PlanGenerationId plan_generation,
+    std::span<const VertexProcessPlacementPlanRecord> placements,
+    const RatePlanLoweringResult* exact_rate_plan) {
+  ExecutionPlanState state;
+  state.plan_generation = plan_generation;
+  state.vertex_process_placements.assign(placements.begin(), placements.end());
+  detail::publish_physical_plan_records(std::move(result), state);
+
+  if (exact_rate_plan != nullptr) {
+    state.port_rates = exact_rate_plan->port_rates;
+    state.accumulation_horizons = exact_rate_plan->accumulation_horizons;
+    state.hard_floor_contributors = exact_rate_plan->hard_floor_contributors;
+    state.queue_sizing_recipes = exact_rate_plan->queue_sizing_recipes;
+    return state;
+  }
+
+  // Physical-only fixture callers do not run rate lowering. Keep their minimal artifact
+  // scaffolding separate from callers that supply the exact semantic rate records above.
+  state.port_rates.reserve(state.ports.size());
+  for (const auto& port : state.ports) {
+    state.port_rates.push_back(PortRatePlanRecord{
+        .port = port.id,
+        .kind = PortRateKind::kUnspecified,
+        .disposition = PlanDisposition::kAccepted,
+    });
+  }
+  state.hard_floor_contributors.reserve(state.payload_edges.size());
+  state.queue_sizing_recipes.reserve(state.payload_edges.size());
+  for (std::size_t index = 0U; index < state.payload_edges.size(); ++index) {
+    const auto& payload_edge = state.payload_edges[index];
+    const std::uint32_t id = static_cast<std::uint32_t>(index + 1U);
+    state.hard_floor_contributors.push_back(HardFloorContributorPlanRecord{
+        .id = HardFloorContributorId{id},
+        .edge = payload_edge.edge,
+        .origin = HardFloorOrigin::kMinimumQueue,
+        .required_slots = 1U,
+        .scenario = HardFloorScenarioId{id},
+        .alternative_group = HardFloorAlternativeGroupId{id},
+    });
+    state.queue_sizing_recipes.push_back(QueueSizingRecipePlanRecord{
+        .id = QueueSizingRecipeId{id},
+        .edge = payload_edge.edge,
+        .origin = QueueDepthOrigin::kAddFlowOption,
+        .explicit_depth = payload_edge.queue_depth,
+        .headroom_ratio = RateRatio{2U, 1U},
+        .reuse_policy = ProviderReusePolicy::kCompatibleExactOrLarger,
+        .geometry_mode = AllocationGeometryMode::kCompileConcrete,
+        .disposition = PlanDisposition::kAccepted,
+    });
+  }
+  return state;
 }
 
 [[nodiscard]] bool has_error(const PhysicalPlanLoweringResult& result, std::string_view token) {
@@ -328,13 +387,13 @@ namespace holoscan::detail::physical_plan_test {
       input_port(6U, 6U, "public", scalar_payload(), 1U, PortOwnerKind::kGraphInterface),
       input_port(7U, 7U, "internal", scalar_payload(), 1U),
   };
-  snapshot.ports[1].setup.tensor_layout = TensorPortLayout{
+  snapshot.ports[1].setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kCudaDevice,
       .dtype = DLDataType{kDLFloat, 32U, 1U},
       .rank = 2U,
   };
   snapshot.ports[1].setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 3U, .max_byte_span = 4096U};
+      TensorPoolBounds{.max_rank = 3U, .max_byte_span = 4096U};
   snapshot.edges = {edge(1U, 1U, 3U, 3U), edge(2U, 4U, 5U, 2U)};
   snapshot.interface_bindings.push_back(InterfaceBindingRecord{
       .public_port = GraphPortId{6U},
@@ -350,7 +409,7 @@ namespace holoscan::detail::physical_plan_test {
       .payload_identity = tensor_payload(),
   };
   topic.bounds.publisher = PublisherEndpointBounds{.max_loaned_samples = 2U};
-  topic.tensor = LogicalTensorRequirementsRecord{
+  topic.tensor = TensorBoundaryContractRecord{
       .memory_kind = MemoryKind::kCudaDevice,
       .dtype = DLDataType{kDLFloat, 32U, 1U},
       .rank = 2U,
@@ -359,7 +418,10 @@ namespace holoscan::detail::physical_plan_test {
       .axes = {{.max_extent = 16U}, {.max_extent = 16U}},
       .foreign_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
       .max_inline_bytes = 1024U,
+      .max_staging_byte_span = 4096U,
+      .memory_conversion = MemoryConversionPolicy::kDisable,
   };
+  topic.memory_conversion = MemoryConversionPolicy::kDisable;
   snapshot.external_topics.push_back(std::move(topic));
   const auto profiles = standard_profiles(snapshot.vertices.size());
   const std::array device_bindings{
@@ -367,9 +429,7 @@ namespace holoscan::detail::physical_plan_test {
       TensorDeviceBindingRecord{.port = PortId{4U}, .device = DeviceId{0}},
   };
   auto physical = lower_for_test(snapshot, 71U, profiles, {}, {}, {}, nullptr, device_bindings);
-  ExecutionPlanState state;
-  state.plan_generation = 71U;
-  detail::publish_physical_plan_records(std::move(physical), state);
+  auto state = published_physical_plan_state(std::move(physical), 71U);
   const OperatorRef owner{.id = 1U, .plan_generation = 71U, .run_generation = 0U};
   state.aligned_triggers.push_back(AlignedTriggerPlanRecord{
       .owner = owner,

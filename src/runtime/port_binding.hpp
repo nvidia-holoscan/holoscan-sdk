@@ -42,7 +42,7 @@ enum class RuntimeEventKind : std::uint8_t {
 /// \ref Tag or \ref TagTime: the Dispatcher does that later, when it forms a
 /// candidate after draining all bounded ingress for the freeze cycle. Payload
 /// retention and selection remain owned by the typed Channel binding
-/// introduced by EA1-012; this record deliberately carries no payload pointer
+/// introduced by HSDK5-012; this record deliberately carries no payload pointer
 /// or ownership claim.
 struct RuntimeEvent {
   RuntimeEventKind kind{RuntimeEventKind::kInputArrival};
@@ -51,7 +51,9 @@ struct RuntimeEvent {
   /// Exact source-domain coordinate that established deadline eligibility.
   ///
   /// An internally scheduled window-timeout witness stores its terminal acceptance coordinate in
-  /// both time fields; the selector recovers the window anchor from its pending transaction.
+  /// both time fields; the selector recovers the window anchor from its pending transaction. An
+  /// input-end-of-stream event likewise stores its reference-clock observation in both fields,
+  /// but remains control evidence and never establishes deadline eligibility.
   TimePoint source_decision_time{};
   /// Normalized trigger-reference coordinate used for candidate ordering.
   TimePoint reference_time{};
@@ -92,6 +94,14 @@ class PortBinding {
     return {};
   }
 
+  /// Poll while waiting out a contended cache lock rather than abandoning the pass.
+  ///
+  /// Only a caller that has already given something up on the strength of this poll completing
+  /// should use this. Every other caller must use \ref poll, which never waits on a producer.
+  [[nodiscard]] virtual expected<void, Error> poll_blocking(TimePoint observed_at) noexcept {
+    return poll(observed_at);
+  }
+
   /// Return the admitted poll placement, or no target for event-driven bindings.
   [[nodiscard]] virtual std::optional<PortBindingPollTarget> poll_target() const noexcept {
     return std::nullopt;
@@ -99,6 +109,13 @@ class PortBinding {
 
   /// Return the plan-scoped source identity when binding retirement is required.
   [[nodiscard]] virtual SourceId source() const noexcept { return {}; }
+
+  /// Return whether the most recent \ref poll returned without draining everything available.
+  ///
+  /// A poll that loses a contended cache lock reports no error and creates no event, so a caller
+  /// that published a readiness change and needs it converted in this same pass cannot otherwise
+  /// tell that outcome from "nothing was ready".
+  [[nodiscard]] virtual bool last_poll_incomplete() const noexcept { return false; }
 
   /// Enqueue one internally scheduled window-timeout witness.
   ///

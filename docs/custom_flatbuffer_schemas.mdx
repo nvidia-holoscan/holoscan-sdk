@@ -12,6 +12,8 @@ package evidence, native traits, and Runtime type-ops at build time. Application
 
 **Descriptor-Tensor Operator/Graph example:** `public/examples/flatbuffer_schemas/descriptor_tensor_schema/cpp`
 
+**Descriptor-Tensor external-topic example:** `public/examples/flatbuffer_schemas/descriptor_tensor_external_topic/cpp`
+
 <Note title="You will learn">
   - When to use an application-owned FlatBuffer schema
   - How to generate its object-API type and Holoscan package traits
@@ -310,29 +312,28 @@ inventory. Input declarations are compatibility constraints: an omitted input-fi
 does not make that generated field optional, and the received owning value still contains every
 statically required Tensor field.
 
-Fields with the same contract can share one concise declaration while still receiving independent
+Fields with the same spec can share one concise declaration while still receiving independent
 provider pools:
 
 ```cpp
-const holoscan::TensorFieldOutputContract image_contract{
-    .layout = {.memory_kind = holoscan::MemoryKind::kCudaDevice,
-               .dtype = image_dtype,
-               .rank = 2U},
-    .max_byte_span = max_image_bytes,
+const holoscan::TensorOutputSpec image_spec{
+    .representation = {.memory_kind = holoscan::MemoryKind::kCudaDevice,
+                       .dtype = image_dtype,
+                       .rank = 2U},
+    .bounds = holoscan::tensor_bounds(max_image_bytes),
+    .storage = holoscan::TensorOutputStorage::kRuntimePool,
 };
 auto& frames = spec.output(output, "frames");
-frames.tensor_fields(std::array{Fields::left, Fields::right}, image_contract);
-frames.tensor_field(Fields::calibration, calibration_contract);
+frames.tensor_fields(std::array{Fields::left, Fields::right}, image_spec);
+frames.tensor_field(Fields::calibration, calibration_spec);
 ```
 
 A heterogeneous
-`tensor_fields(std::array{holoscan::tensor_field(selector, contract), ...})` aggregate is also
-available. The original fluent sequence of `tensor_field(selector)`, `produces_tensor(...)`, and
-`tensor_allocation(...)` remains the escape hatch when spelling each policy step separately is
-clearer or when deliberately declaring a by-value-only output without a provider pool. The concise
-output contract always declares a provider allocation. Field-qualified `expects_tensor()` calls
-on an input are purely optional consumer compatibility constraints; Runtime still validates every
-required descriptor field when they are omitted.
+`tensor_fields(std::array{holoscan::tensor_field(selector, spec), ...})` aggregate is also
+available. The same `TensorOutputSpec` can request runtime-pool storage or deliberately declare
+a pass-through output. Field-qualified `expects_tensor()` calls on an input are purely optional
+consumer compatibility constraints; Runtime still validates every required descriptor field when
+they are omitted.
 
 When every output field has an exact admitted dtype, a transactional allocation needs only the
 field shapes. A batch write preflights the whole bundle before any application callback runs:
@@ -366,18 +367,47 @@ requires every field to export directly; it never silently stages one member. Or
 policy permits but does not require a copy: compatible backing can still export directly, while
 foreign storage may use the explicitly bounded staging pool.
 
+### Bound lifecycle-selected multi-field rates
+
+A descriptor-backed multi-field output can select its nominal rate during lifecycle discovery when
+it also declares a finite maximum:
+
+```cpp
+auto& frames = spec.output(output, "frames")
+                   .lifecycle_nominal_rate(holoscan::LifecycleStage::kDiscover)
+                   .max_nominal_rate(holoscan::Rate::hz(120U));
+
+frames.tensor_fields(std::array{
+    holoscan::tensor_field(Fields::left, left_spec),
+    holoscan::tensor_field(Fields::right, right_spec),
+    holoscan::tensor_field(Fields::calibration, calibration_spec),
+});
+```
+
+Every selected field has its own provider and field-local capacity dependencies. The finite maximum
+makes all of those providers compile-concrete before execution; a discovered smaller rate changes
+only the active logical limit. A descriptor-backed multi-field lifecycle declaration with omitted
+depth and no finite maximum is rejected
+(`PHYSICAL_TENSOR_PROVIDER_UNSUPPORTED`). Rejection produces no partial provider or allocation
+inventory, and Runtime does not fall back to late per-field geometry. The no-maximum candidate
+exception is limited to admitted direct-host, single-pool raw-Tensor outputs.
+
 ## Keep standalone clients separate
 
-Manual `ChannelRuntime::create_publisher<T>()` and `create_subscriber<T>()` APIs are for standalone
-processes that attach to exported graph endpoints. They are not the application graph programming
-model and are intentionally absent from the public custom-schema application example.
+Manual `ChannelRuntime` publisher/subscriber APIs are for standalone processes that attach to
+Graph endpoints. They are not the application Graph programming model. Ordinary schemas use
+`create_publisher<T>()` and `create_subscriber<T>()`; descriptor-backed schemas use the specialized
+`create_tensor_schema_publisher<Payload>()` and `create_tensor_schema_subscriber<Payload>()`
+factories so Tensor descriptors and backing remain associated.
 
 If a standalone process must exchange an application-owned schema with a graph endpoint, use the
 standalone-client contract and catalog described in
 [Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients) and
-[Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels). Low-level
+[Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels). The complete
+[`descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
+example demonstrates that boundary with an application-owned two-Tensor schema. Low-level
 fixed-capacity wrappers, malformed-byte checks, foreign identity rejection, and attachment polling
-belong to that boundary and to internal Channel tests—not inside an Operator.
+belong to the standalone boundary—not inside an Operator.
 
 ## Compatibility and failure behavior
 

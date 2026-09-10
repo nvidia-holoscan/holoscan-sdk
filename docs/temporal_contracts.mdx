@@ -59,9 +59,10 @@ The temporal-contract catalog provides one complete C++ program per pattern:
   </g>
 </svg>
 
-This page covers the full core vocabulary — five triggers, three selectors,
-three missing-data policies, and deadlines — and shows the three multi-rate
-patterns you will reach for most often, on the camera + IMU running example.
+This page covers the full core vocabulary - five triggers, three selectors,
+three missing-data policies, operator-local compute-call completion, and
+deadlines - and shows the three multi-rate patterns you will reach for most
+often, on the camera + IMU running example.
 
 <Note title="You will learn">
 - How to declare a temporal contract by overriding `contract()`
@@ -69,6 +70,8 @@ patterns you will reach for most often, on the camera + IMU running example.
 - Per-input selectors (`Exact`, `LatestWithin`, `DrainAll`) and missing-data
   policies (`Skip`, `SafeDefault`, `ReuseLast`)
 - How `deadline()` and `on_violation()` bound how late compute may start
+- How `complete_after(ComputeCalls{.limit = N})` naturally completes one
+  finite producer after successful `compute()` calls
 - Three multi-rate patterns: fast-drives-fusion, clock-driven control, aligned fusion
 - Which contract mistakes are caught by `compile()` rather than at the builder call site
 </Note>
@@ -158,6 +161,46 @@ The empty-contract default (`OnAnyInput`) is only valid for an operator that
 **has** inputs. A source operator with zero inputs must declare an explicit
 trigger — typically `OnClock` — or `compile()` rejects the plan.
 </Warning>
+
+## Operator-local compute-call completion
+
+Use `complete_after(ComputeCalls{.limit = N})` to make one finite producer
+complete naturally after exactly `N` successful calls to its `compute()`
+method. The rule is accepted only for an operator with no inputs, at
+least one output, and exactly one explicit source trigger: `OnClock`,
+`OnReadable`, `OnNotified`, `OnDoorbell`, or `OnSpin`. The compiler rejects
+implicit `OnAnyInput`, explicit input triggers (`OnAnyInput`, `OnEach`,
+`OnAligned`, and `OnWindow`), predicate triggers, inputful transforms and
+sinks, and outputless operators. The rule is therefore a producer-local
+contract, not a whole-workflow iteration count. Different finite producers may
+declare different limits.
+
+```cpp
+result.trigger(holoscan::OnClock{.period = 20ms})
+    .complete_after(holoscan::ComputeCalls{.limit = 100U});
+```
+
+One unit is committed only after `compute()` returns success and Runtime retires
+that call's accepted publications. A returned error, exception, failed
+publication, skipped readiness evaluation, or rejected admission does not
+advance progress. Both boundary values are ordinary: a limit of zero admits no
+compute call and closes the producer's outputs, while `UINT64_MAX` is the exact
+maximum limit rather than an "unbounded" sentinel. Omit
+`complete_after(...)` when the producer is not bounded by a compute-call limit.
+
+Progress belongs to the pair `(RunSession, logical Operator)`. It survives a
+lifecycle restart of that operator, including a failed restart that rolls back
+to the previous lifecycle generation; it does not restart at zero merely
+because the lifecycle generation changed. Starting a fresh `RunSession`
+creates fresh progress at zero. After the session reaches a terminal outcome,
+`RunSession::operator_completion_progress()` exposes the immutable configured
+limit, successful-call count, and whether the limit was reached.
+
+When the final successful call reaches the limit, publications accepted from
+that call remain valid and are delivered before end-of-stream. The runtime then
+closes the producer's outputs and lets downstream operators drain accepted data
+and EOS to natural completion. This rule does not double as a generic timeout
+or deadlock-detection control; those are separate run-termination mechanisms.
 
 ## Selectors: which sample each input sees
 
@@ -273,13 +316,32 @@ only; it does not combine with batch selectors such as `DrainAll`.
 
 ## Deadlines
 
-`deadline()` bounds how late compute may **start** after an activation becomes
-eligible, and `on_violation()` picks the single action taken when that bound is
-missed:
+`deadline()` bounds how late compute may **start** after the trigger's planned
+source coordinate, and `on_violation()` picks the single action taken when that
+bound is missed:
 
 ```cpp
 result.deadline(2ms).on_violation(holoscan::OnViolation::kFailRun);
 ```
+
+The source coordinate follows the trigger contract:
+
+| Trigger family | Deadline origin |
+|---|---|
+| `OnEach`, `OnAnyInput` | The triggering sample's capture time. |
+| `OnClock` | The scheduled tick. |
+| `OnReadable`, `OnNotified`, `OnDoorbell`, `OnSpin` | The readiness witness. |
+| `OnAligned`, `OnWindow`, input-driven `OnPredicate` | The admitted tuple, window-close, or predicate-driver coordinate. |
+
+For sample-driven triggers, transport time counts toward the deadline. An
+external producer clock therefore needs an admitted conversion to the runtime
+reference clock; a stale sample or an arbitrary, unaligned producer epoch may
+make the deadline expire before the sample arrives. An input end-of-stream
+record has no capture instant. EOS is not evaluated against a sample- or
+predicate-driver-relative deadline, even when a selector resolves a retained
+sample. When EOS serves as an `OnWindow` or `OnAligned` closure proof, Runtime
+instead evaluates the compiled closure-origin deadline against the window-close
+or aligned-closure coordinate in the reference clock.
 
 | `OnViolation` value | Effect when the deadline is missed |
 |---|---|
@@ -296,13 +358,13 @@ declares one without the other is rejected when the plan is compiled.
 ## Multi-rate patterns on the running example
 
 The camera + IMU pipeline exercises three recurring contract shapes. The first
-two appear in the `ea1_slow_fast_fusion` example, the windowed variant of the
-third in `ea1_camera_imu_control`.
+two appear in the `slow_fast_fusion` example, the windowed variant of the
+third in `camera_imu_control`.
 
 ### Fast input drives fusion
 
 When one stream is much faster than the other, let the fast stream set the pace
-and sample the slow stream by freshness. From the `ea1_slow_fast_fusion`
+and sample the slow stream by freshness. From the `slow_fast_fusion`
 example's fusion operator:
 
 ```cpp
@@ -367,7 +429,7 @@ When correctness requires samples that belong **together in time** — not merel
 The operator activates only when the heads of both queues fall within the 2 ms
 window, and each activation consumes exactly that aligned pair. When companions
 may straggle, the related `OnWindow` trigger opens a bounded wait per anchor
-sample instead — the `ea1_camera_imu_control` fusion operator uses
+sample instead — the `camera_imu_control` fusion operator uses
 `OnWindow{.anchor = camera, .max_wait = 20ms, .max_pending_windows = 2U}` to
 wait briefly for IMU data around each camera frame.
 
@@ -417,6 +479,9 @@ Most operators never need either. When you do, see
   bounds are inclusive.
 - Author `deadline()` and `on_violation()` (`kSafeDefault`, `kEmitWitness`,
   `kFailRun`) together.
+- `complete_after(ComputeCalls{.limit = N})` bounds one eligible finite
+  producer by successful compute calls and preserves final-call data through
+  EOS and downstream drain.
 - Semantic conflicts are rejected by `compile()`, not thrown by the fluent
   builder.
 - `OnPredicate` and `BracketedWindow` are the advanced tier.

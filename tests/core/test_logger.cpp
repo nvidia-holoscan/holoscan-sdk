@@ -292,7 +292,7 @@ TEST(Logger, CompileTimeThresholdDoesNotEvaluateDisabledTraceArguments) {
   const auto orig_level = log_level();
   set_log_level(LogLevel::OFF);
 
-  HOLOSCAN_LOG_TRACE("EA1_TRACE_COMPILE_OUT_MARKER {}", ++trace_argument_evaluations);
+  HOLOSCAN_LOG_TRACE("TRACE_COMPILE_OUT_MARKER {}", ++trace_argument_evaluations);
 
 #if HOLOSCAN_LOG_ACTIVE_LEVEL <= HOLOSCAN_LOG_LEVEL_TRACE
   EXPECT_EQ(trace_argument_evaluations, 1);
@@ -317,14 +317,14 @@ TEST(Logger, SourceLocationCapturesMacroCallSite) {
 
   testing::internal::CaptureStderr();
   const int expected_line = __LINE__ + 1;
-  HOLOSCAN_LOG_ERROR("ea1-source-location-marker");
+  HOLOSCAN_LOG_ERROR("holoscan-source-location-marker");
   const std::string log_output = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(log_output.find("logger.cpp:" + std::to_string(expected_line)), std::string::npos)
       << log_output;
   EXPECT_NE(log_output.find("SourceLocationCapturesMacroCallSite"), std::string::npos)
       << log_output;
-  EXPECT_NE(log_output.find("ea1-source-location-marker"), std::string::npos) << log_output;
+  EXPECT_NE(log_output.find("holoscan-source-location-marker"), std::string::npos) << log_output;
 
   set_log_level(orig_level);
   set_log_pattern(orig_pattern);

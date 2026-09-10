@@ -98,6 +98,11 @@ static_assert(std::same_as<decltype(std::declval<ExecutionContext&>().request_re
                            RestartResult>);
 static_assert(
     noexcept(std::declval<ExecutionContext&>().request_restart(std::declval<OperatorRef>())));
+// REQ: OPERATOR-038
+static_assert(std::same_as<decltype(std::declval<ExecutionContext&>().request_completion()), void>);
+static_assert(noexcept(std::declval<ExecutionContext&>().request_completion()));
+static_assert(std::same_as<decltype(std::declval<ExecutionContext&>().request_stop()), void>);
+static_assert(noexcept(std::declval<ExecutionContext&>().request_stop()));
 
 static_assert(std::is_trivially_copyable_v<OperatorRef>);
 static_assert(std::is_trivially_copyable_v<LifecycleRestartOptions>);
@@ -299,6 +304,60 @@ TEST(ExecutionContextValues, InvalidRestartStagePrecedesDisabledRuntimeBinding) 
   op.options.from_stage = LifecycleStage::kConfigure;
   ASSERT_TRUE(fixture.invoke_once());
   EXPECT_EQ(op.observed, ErrorCode::kLifecycleTransactionsDisabled);
+}
+
+class TerminationRequestProbeOperator final : public Operator<> {
+ public:
+  bool request_stop{};
+  bool returned{};
+
+  expected<void, Error> compute(ExecutionContext& context) override {
+    if (request_stop) {
+      context.request_stop();
+    } else {
+      context.request_completion();
+    }
+    returned = true;
+    return {};
+  }
+};
+
+struct TerminationRequestSpy {
+  std::uint32_t calls{};
+  detail::TerminationRequest request{};
+
+  static void notify(void* opaque, detail::TerminationRequest request) noexcept {
+    auto& spy = *static_cast<TerminationRequestSpy*>(opaque);
+    ++spy.calls;
+    spy.request = request;
+  }
+};
+
+// REQ: OPERATOR-038
+TEST(ExecutionContextValues, TerminationRequestsForwardOnlyThroughTheActiveCallbackBinding) {
+  TerminationRequestProbeOperator op;
+  TerminationRequestSpy spy;
+  test::SyntheticOperatorFixture fixture{op};
+  ASSERT_TRUE(fixture.declare_ports());
+
+  ASSERT_TRUE(fixture.invoke_once());
+  EXPECT_TRUE(op.returned);
+  EXPECT_EQ(spy.calls, 0);
+
+  const detail::SyntheticActivationOptions activation{
+      .termination_request_state = &spy,
+      .request_termination = &TerminationRequestSpy::notify,
+  };
+  ASSERT_TRUE(fixture.invoke_once(activation));
+  EXPECT_TRUE(op.returned);
+  EXPECT_EQ(spy.calls, 1);
+  EXPECT_EQ(spy.request, detail::TerminationRequest::kCompletion);
+
+  op.request_stop = true;
+  ASSERT_TRUE(fixture.invoke_once(activation));
+  EXPECT_TRUE(op.returned);
+  EXPECT_EQ(spy.calls, 2);
+  EXPECT_EQ(spy.request, detail::TerminationRequest::kStop);
 }
 
 // Operator<ContextParams> that deliberately calls params<WrongContextParams>() in compute().

@@ -168,6 +168,7 @@ class HOLOSCAN_CORE_EXPORT TensorPublishLoan {
   /// callback must not retain the borrowed guard or its data pointer beyond the invocation.
   template <typename Fill>
     requires detail::TensorLoanFill<Fill&&, TensorLoanWriteGuard>
+  // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
   [[nodiscard]] expected<void, Error> write_and_commit(::cuda::stream_ref producer_stream,
                                                        Fill&& fill) & {
     return detail::fill_and_commit_tensor_loan(write(producer_stream), std::forward<Fill>(fill));
@@ -189,6 +190,7 @@ class HOLOSCAN_CORE_EXPORT TensorPublishLoan {
   /// callback must not retain the borrowed guard or its data pointer beyond the invocation.
   template <typename Fill>
     requires detail::TensorLoanFill<Fill&&, TensorLoanWriteGuard>
+  // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
   [[nodiscard]] expected<void, Error> write_host_and_commit(Fill&& fill) & {
     return detail::fill_and_commit_tensor_loan(write_host(), std::forward<Fill>(fill));
   }

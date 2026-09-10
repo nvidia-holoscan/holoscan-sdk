@@ -10,14 +10,16 @@ include(CTest)
 find_package(Threads REQUIRED)
 find_package(holoscan REQUIRED CONFIG
     PATHS
-        "/opt/nvidia/holoscan"
         "/workspace/holoscan-sdk/install"
         "/workspace/holoscan-sdk/public/install-cu13-x86_64"
 )
 
 add_executable(schema_payloads schema_payloads.cpp)
 target_compile_features(schema_payloads PRIVATE cxx_std_20)
-target_link_libraries(schema_payloads PRIVATE holoscan::core holoscan::schema Threads::Threads)
+# holoscan::sensor_io supplies the Imu schema this example carries; it is a separate package
+# component from holoscan-core, so an install that omitted it will not configure here.
+target_link_libraries(schema_payloads
+    PRIVATE holoscan::core holoscan::schema holoscan::sensor_io Threads::Threads)
 
 if(BUILD_TESTING)
     # REQ: SYSTEM-014

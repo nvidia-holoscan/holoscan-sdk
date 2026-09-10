@@ -251,6 +251,17 @@ class HOLOSCAN_CONFIG_EXPORT ConfigError {
   std::array<ConfigErrorCause, kMaxNestedCauseDepth> causes_{};
 };
 
+/// @brief Render a configuration error as a single line for logs and diagnostics.
+///
+/// The result begins with the stable error token and includes available message, source, path,
+/// and retained cause context. Truncated fields are marked. Raw excerpt bytes are never included
+/// because they may contain sensitive configuration data. The wording is intended for people and
+/// is not a stable format; use ConfigError accessors for programmatic decisions.
+///
+/// @param error Configuration error to render.
+/// @return Human-readable text without a trailing newline.
+[[nodiscard]] HOLOSCAN_CONFIG_EXPORT std::string format_error(const ConfigError& error);
+
 /// @brief Represent either a configuration result or a bounded structured error.
 template <class T>
 using ConfigResult = tl::expected<T, ConfigError>;
@@ -660,6 +671,13 @@ class HOLOSCAN_CONFIG_EXPORT Document {
   /// @param edits Complete transaction. Duplicate or ancestor/descendant paths conflict.
   /// @return A successor document, or a structured failure with this document unchanged.
   [[nodiscard]] ConfigResult<Document> patched(std::span<const Edit> edits) const;
+  /// @brief Apply one immutable edit transactionally.
+  /// @param edit Complete single-edit transaction.
+  /// @return A successor document, or a structured failure with this document unchanged.
+  /// @see patched(std::span<const Edit>)
+  [[nodiscard]] ConfigResult<Document> patched(const Edit& edit) const {
+    return patched(std::span<const Edit>{&edit, 1});
+  }
   /// @brief Return immutable semantic identity and optional original-source provenance.
   [[nodiscard]] ConfigDigest digest() const noexcept;
 

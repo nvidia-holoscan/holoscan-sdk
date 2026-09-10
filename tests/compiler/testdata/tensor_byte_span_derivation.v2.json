@@ -1,0 +1,88 @@
+{
+  "tensor_byte_span_derivations": [
+    {
+      "nodes": [
+        {
+          "input": 0,
+          "left": 0,
+          "operand": 0,
+          "operation": 1,
+          "parameter_field": 14792511978192650658,
+          "resolved_value": 1000,
+          "right": 0
+        },
+        {
+          "input": 0,
+          "left": 0,
+          "operand": 3,
+          "operation": 0,
+          "parameter_field": 0,
+          "resolved_value": 3,
+          "right": 0
+        },
+        {
+          "input": 0,
+          "left": 0,
+          "operand": 0,
+          "operation": 4,
+          "parameter_field": 0,
+          "resolved_value": 3000,
+          "right": 1
+        },
+        {
+          "input": 0,
+          "left": 0,
+          "operand": 2,
+          "operation": 0,
+          "parameter_field": 0,
+          "resolved_value": 2,
+          "right": 0
+        },
+        {
+          "input": 0,
+          "left": 2,
+          "operand": 0,
+          "operation": 5,
+          "parameter_field": 0,
+          "resolved_value": 1500,
+          "right": 3
+        },
+        {
+          "input": 0,
+          "left": 0,
+          "operand": 1500,
+          "operation": 0,
+          "parameter_field": 0,
+          "resolved_value": 1500,
+          "right": 0
+        },
+        {
+          "input": 0,
+          "left": 4,
+          "operand": 0,
+          "operation": 6,
+          "parameter_field": 0,
+          "resolved_value": 1500,
+          "right": 5
+        },
+        {
+          "input": 0,
+          "left": 6,
+          "operand": 256,
+          "operation": 7,
+          "parameter_field": 0,
+          "resolved_value": 1536,
+          "right": 0
+        }
+      ],
+      "field_id": null,
+      "output": 1,
+      "plan_generation": 1,
+      "resolved_max_byte_span": 1536,
+      "resolved_max_staging_byte_span": null,
+      "run_generation": 0,
+      "tensor_index": null,
+      "update_disposition": 1
+    }
+  ]
+}

@@ -5,6 +5,8 @@ foreach(required_variable IN ITEMS
         HOLOSCAN_BUILD_DIR
         HOLOSCAN_EXAMPLES_WORK_DIR
         HOLOSCAN_INSTALL_LIB_DIR
+        HOLOSCAN_INSTALL_DATA_DIR
+        HOLOSCAN_EXAMPLES_INSTALL_DIR
         HOLOSCAN_EXPECT_SHARED
         HOLOSCAN_GENERATOR
         HOLOSCAN_CTEST_COMMAND)
@@ -13,9 +15,12 @@ foreach(required_variable IN ITEMS
     endif()
 endforeach()
 
-set(install_prefix "${HOLOSCAN_EXAMPLES_WORK_DIR}/install")
+set(install_destination "/usr")
+set(install_staging_root "${HOLOSCAN_EXAMPLES_WORK_DIR}/stage")
+set(install_prefix "${install_staging_root}${install_destination}")
 set(examples_build_dir "${HOLOSCAN_EXAMPLES_WORK_DIR}/build")
-file(REMOVE_RECURSE "${install_prefix}" "${examples_build_dir}")
+set(custom_examples_data_dir "custom-example-data")
+file(REMOVE_RECURSE "${install_staging_root}" "${examples_build_dir}")
 
 # Build every shipped example before component installation so a focused CTest
 # invocation exercises the same complete source tree as the container image.
@@ -30,10 +35,10 @@ set(sdk_build_command
         hello_schema
         hello_matx
         hello_cccl
-        ea1_slow_fast_fusion
-        ea1_camera_imu_control
-        ea1_sensor_daemon
-        ea1_result_recorder
+        slow_fast_fusion
+        camera_imu_control
+        sensor_daemon
+        result_recorder
         first_pipeline
         first_operator
         tensors_101
@@ -54,10 +59,14 @@ set(sdk_build_command
         retained_tensor_compositor
         embedded_device_tensor
         notification_bridge
+        green_context
         operator_anatomy
         parameter_schemas
+        derived_tensor_pool_capacity
+        rate_aware_ports
         lifecycle_callbacks
         graph_composition
+        automatic_partitioning
         reusable_graphs
         pod_payloads
         schema_payloads
@@ -69,6 +78,8 @@ set(sdk_build_command
         custom_schema
         descriptor_tensor_schema
         multi_tensor_schema
+        descriptor_tensor_external_topic_graph
+        descriptor_tensor_external_topic_client
 )
 if(HOLOSCAN_CONFIG_COMPONENT_ENABLED AND
    HOLOSCAN_CONFIG_IO_COMPONENT_ENABLED AND
@@ -94,19 +105,23 @@ endif()
 # Seed the explicit build-target output with a stale graph ID. The component installer must ignore
 # this tree, generate a fresh bundle from the already-built executable, and install only that bundle.
 set(sdk_artifact_output
-    "${HOLOSCAN_BUILD_DIR}/examples/ea1_camera_imu_control/cpp/holoscan-artifacts"
+    "${HOLOSCAN_BUILD_DIR}/examples/camera_imu_control/cpp/holoscan-artifacts"
 )
 file(REMOVE_RECURSE "${sdk_artifact_output}")
 file(MAKE_DIRECTORY "${sdk_artifact_output}/stale-graph-id/developer")
 file(WRITE "${sdk_artifact_output}/stale-graph-id/developer/stale-marker.txt" "stale\n")
 
+# holoscan-sensor-io is unconditional, unlike the optional components appended below: the install
+# exports one holoscan-targets.cmake covering every exported target, so leaving it out fails
+# find_package regardless of whether the examples here use a sensor payload.
 set(installed_example_components
     holoscan
     holoscan-dependencies
-    holomq-iceoryx2-libraries
+    iceoryx2-lib
     dev
     holomq
     holoscan-core
+    holoscan-sensor-io
 )
 # On Windows, a shared iceoryx2 library's DLL is installed in the bin component.
 if(WIN32 AND HOLOSCAN_EXPECT_SHARED)
@@ -139,8 +154,9 @@ list(APPEND installed_example_components
 
 foreach(component IN LISTS installed_example_components)
     set(install_command
+        "${CMAKE_COMMAND}" -E env "DESTDIR=${install_staging_root}"
         "${CMAKE_COMMAND}" --install "${HOLOSCAN_BUILD_DIR}"
-        --prefix "${install_prefix}"
+        --prefix "${install_destination}"
         --component "${component}"
     )
     if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
@@ -174,32 +190,24 @@ foreach(component IN LISTS installed_example_components)
     endif()
 endforeach()
 
+# The upstream iceoryx2 install exports both the static and the shared C++ targets and
+# ships both library flavors, so only the flavor HoloMQ links against is asserted here.
 if(HOLOSCAN_EXPECT_SHARED)
     set(iceoryx2_cxx_selected_target "iceoryx2-cxx::shared-lib-cxx")
-    set(iceoryx2_cxx_unselected_target "iceoryx2-cxx::static-lib-cxx")
     set(iceoryx2_cxx_shared_library_dir "${HOLOSCAN_INSTALL_LIB_DIR}")
     if(WIN32)
         set(iceoryx2_cxx_shared_library_dir "${HOLOSCAN_INSTALL_BIN_DIR}")
     endif()
     set(iceoryx2_cxx_selected_artifact_glob
-        "${install_prefix}/${iceoryx2_cxx_shared_library_dir}/${HOLOSCAN_SHARED_LIBRARY_PREFIX}holomq_iceoryx2_cxx${HOLOSCAN_SHARED_LIBRARY_SUFFIX}*")
+        "${install_prefix}/${iceoryx2_cxx_shared_library_dir}/${HOLOSCAN_SHARED_LIBRARY_PREFIX}iceoryx2_cxx${HOLOSCAN_SHARED_LIBRARY_SUFFIX}*")
     set(iceoryx2_ffi_selected_artifact_glob
-        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_SHARED_LIBRARY_PREFIX}holomq_iceoryx2_ffi_c${HOLOSCAN_SHARED_LIBRARY_SUFFIX}*")
-    set(iceoryx2_cxx_unselected_artifact_glob
-        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_STATIC_LIBRARY_PREFIX}holomq_iceoryx2_cxx${HOLOSCAN_STATIC_LIBRARY_SUFFIX}")
-    set(iceoryx2_ffi_unselected_artifact_glob
-        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_STATIC_LIBRARY_PREFIX}holomq_iceoryx2_ffi_c${HOLOSCAN_STATIC_LIBRARY_SUFFIX}")
+        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_SHARED_LIBRARY_PREFIX}iceoryx2_ffi_c${HOLOSCAN_SHARED_LIBRARY_SUFFIX}*")
 else()
     set(iceoryx2_cxx_selected_target "iceoryx2-cxx::static-lib-cxx")
-    set(iceoryx2_cxx_unselected_target "iceoryx2-cxx::shared-lib-cxx")
     set(iceoryx2_cxx_selected_artifact_glob
-        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_STATIC_LIBRARY_PREFIX}holomq_iceoryx2_cxx${HOLOSCAN_STATIC_LIBRARY_SUFFIX}")
+        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_STATIC_LIBRARY_PREFIX}iceoryx2_cxx${HOLOSCAN_STATIC_LIBRARY_SUFFIX}")
     set(iceoryx2_ffi_selected_artifact_glob
-        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_STATIC_LIBRARY_PREFIX}holomq_iceoryx2_ffi_c${HOLOSCAN_STATIC_LIBRARY_SUFFIX}")
-    set(iceoryx2_cxx_unselected_artifact_glob
-        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_SHARED_LIBRARY_PREFIX}holomq_iceoryx2_cxx${HOLOSCAN_SHARED_LIBRARY_SUFFIX}*")
-    set(iceoryx2_ffi_unselected_artifact_glob
-        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_SHARED_LIBRARY_PREFIX}holomq_iceoryx2_ffi_c${HOLOSCAN_SHARED_LIBRARY_SUFFIX}*")
+        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_STATIC_LIBRARY_PREFIX}iceoryx2_ffi_c${HOLOSCAN_STATIC_LIBRARY_SUFFIX}")
 endif()
 
 set(iceoryx2_cxx_targets_file
@@ -214,12 +222,6 @@ if(iceoryx2_cxx_selected_target_index EQUAL -1)
     message(FATAL_ERROR
         "Installed iceoryx2 C++ package does not export ${iceoryx2_cxx_selected_target}")
 endif()
-string(FIND "${iceoryx2_cxx_targets_contents}" "${iceoryx2_cxx_unselected_target}"
-    iceoryx2_cxx_unselected_target_index)
-if(NOT iceoryx2_cxx_unselected_target_index EQUAL -1)
-    message(FATAL_ERROR
-        "Installed iceoryx2 C++ package unexpectedly exports ${iceoryx2_cxx_unselected_target}")
-endif()
 
 foreach(iceoryx2_selected_artifact_glob IN ITEMS
         "${iceoryx2_cxx_selected_artifact_glob}"
@@ -231,19 +233,9 @@ foreach(iceoryx2_selected_artifact_glob IN ITEMS
             "Missing selected iceoryx2 artifact matching ${iceoryx2_selected_artifact_glob}")
     endif()
 endforeach()
-foreach(iceoryx2_unselected_artifact_glob IN ITEMS
-        "${iceoryx2_cxx_unselected_artifact_glob}"
-        "${iceoryx2_ffi_unselected_artifact_glob}")
-    file(GLOB iceoryx2_unselected_artifacts LIST_DIRECTORIES FALSE
-        "${iceoryx2_unselected_artifact_glob}")
-    if(iceoryx2_unselected_artifacts)
-        message(FATAL_ERROR
-            "Unexpected unselected iceoryx2 artifacts: ${iceoryx2_unselected_artifacts}")
-    endif()
-endforeach()
 
 set(installed_artifact_root
-    "${install_prefix}/share/ea1_camera_imu_control/holoscan"
+    "${install_prefix}/${HOLOSCAN_INSTALL_DATA_DIR}/camera_imu_control/holoscan"
 )
 file(GLOB installed_artifact_graph_entries
     LIST_DIRECTORIES TRUE
@@ -324,10 +316,11 @@ set(holoscan_package_dir
     "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
 )
 set(required_install_paths
+    "${install_prefix}/include/holoscan/holoscan.hpp"
     "${holoscan_package_dir}/holoscan-config.cmake"
     "${holoscan_package_dir}/HoloscanLoggingPolicy.cmake"
     "${holoscan_package_dir}/HoloscanGraphArtifacts.cmake"
-    "${install_prefix}/examples/CMakeLists.txt"
+    "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/CMakeLists.txt"
 )
 if(HOLOSCAN_CONFIG_COMPONENT_ENABLED)
     list(APPEND required_install_paths
@@ -355,12 +348,98 @@ foreach(required_install_path IN LISTS required_install_paths)
     endif()
 endforeach()
 
+if(HOLOSCAN_EXPECT_SHARED)
+    set(installed_core_library_glob
+        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_SHARED_LIBRARY_PREFIX}holoscan_core${HOLOSCAN_SHARED_LIBRARY_SUFFIX}*"
+    )
+else()
+    set(installed_core_library_glob
+        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/${HOLOSCAN_STATIC_LIBRARY_PREFIX}holoscan_core${HOLOSCAN_STATIC_LIBRARY_SUFFIX}"
+    )
+endif()
+file(GLOB installed_core_libraries "${installed_core_library_glob}")
+if(NOT installed_core_libraries)
+    message(FATAL_ERROR
+        "Missing Holoscan core library in the staged GNU library directory: "
+        "${installed_core_library_glob}")
+endif()
+
+set(legacy_install_root "${install_staging_root}/opt/nvidia/holoscan")
+if(EXISTS "${legacy_install_root}")
+    message(FATAL_ERROR "Unexpected legacy install payload: ${legacy_install_root}")
+endif()
+
+file(GLOB holoscan_package_files "${holoscan_package_dir}/*.cmake")
+foreach(holoscan_package_file IN LISTS holoscan_package_files)
+    file(READ "${holoscan_package_file}" holoscan_package_contents)
+    if(holoscan_package_contents MATCHES "/opt/nvidia/holoscan")
+        message(FATAL_ERROR
+            "Installed package metadata retains a legacy install prefix: ${holoscan_package_file}")
+    endif()
+endforeach()
+
 # REQ: SYSTEM-014
-# Execute the packaged target itself with inherited loader search paths removed.
-# The later installed-source consumer build proves that the example remains
-# buildable; this run independently proves the shipped target's INSTALL_RPATH.
+# Execute packaged targets from both the standard and nested example layouts
+# with inherited loader search paths removed. The later installed-source consumer
+# build proves the examples remain buildable; these runs independently prove the
+# shipped targets' INSTALL_RPATH values.
+set(installed_hello_world_executable
+    "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/hello_world/cpp/hello_world${HOLOSCAN_EXECUTABLE_SUFFIX}"
+)
+if(NOT EXISTS "${installed_hello_world_executable}")
+    message(FATAL_ERROR
+        "Installed hello world executable is missing: ${installed_hello_world_executable}")
+endif()
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env
+        --unset=LD_LIBRARY_PATH
+        --unset=DYLD_LIBRARY_PATH
+        "${installed_hello_world_executable}"
+    RESULT_VARIABLE installed_hello_world_result
+    OUTPUT_VARIABLE installed_hello_world_output
+    ERROR_VARIABLE installed_hello_world_error_output
+    TIMEOUT 30
+)
+if(NOT installed_hello_world_result EQUAL 0)
+    message(FATAL_ERROR
+        "Failed to execute the installed hello world target with sanitized loader paths: "
+        "${installed_hello_world_output}${installed_hello_world_error_output}")
+endif()
+
+# REQ: COMPILE-068
+set(installed_automatic_partitioning_executable
+    "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/automatic_partitioning/cpp/automatic_partitioning${HOLOSCAN_EXECUTABLE_SUFFIX}"
+)
+if(NOT EXISTS "${installed_automatic_partitioning_executable}")
+    message(FATAL_ERROR
+        "Installed automatic partitioning executable is missing: "
+        "${installed_automatic_partitioning_executable}")
+endif()
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env
+        --unset=LD_LIBRARY_PATH
+        --unset=DYLD_LIBRARY_PATH
+        "${installed_automatic_partitioning_executable}"
+        --mode cpu
+    RESULT_VARIABLE installed_automatic_partitioning_result
+    OUTPUT_VARIABLE installed_automatic_partitioning_output
+    ERROR_VARIABLE installed_automatic_partitioning_error_output
+    TIMEOUT 30
+)
+string(CONCAT installed_automatic_partitioning_log
+    "${installed_automatic_partitioning_output}"
+    "${installed_automatic_partitioning_error_output}"
+)
+if(NOT installed_automatic_partitioning_result EQUAL 0 OR
+   NOT installed_automatic_partitioning_log MATCHES
+       "automatic_partitioning cpu example complete")
+    message(FATAL_ERROR
+        "Failed to execute the installed automatic partitioning target with sanitized loader "
+        "paths: ${installed_automatic_partitioning_log}")
+endif()
+
 set(installed_pod_payloads_executable
-    "${install_prefix}/examples/experimental/pod_payloads/cpp/pod_payloads${HOLOSCAN_EXECUTABLE_SUFFIX}"
+    "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/pod_payloads/cpp/pod_payloads${HOLOSCAN_EXECUTABLE_SUFFIX}"
 )
 if(NOT EXISTS "${installed_pod_payloads_executable}")
     message(FATAL_ERROR
@@ -390,11 +469,12 @@ endif()
 
 set(configure_command
     "${CMAKE_COMMAND}"
-    -S "${install_prefix}/examples"
+    -S "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}"
     -B "${examples_build_dir}"
     -G "${HOLOSCAN_GENERATOR}"
-    "-Dholoscan_DIR:PATH=${holoscan_package_dir}"
     "-DCMAKE_PREFIX_PATH:PATH=${install_prefix}"
+    "-DCMAKE_INSTALL_PREFIX:PATH=${install_prefix}"
+    "-DCMAKE_INSTALL_DATADIR:STRING=${custom_examples_data_dir}"
     "-DBUILD_TESTING:BOOL=ON"
     "-DHOLOSCAN_INSTALL_EXAMPLE_SOURCE:BOOL=OFF"
 )
@@ -461,6 +541,50 @@ if(NOT examples_build_result EQUAL 0)
     message(FATAL_ERROR "Failed to build the complete isolated installed examples tree")
 endif()
 
+set(examples_install_command
+    "${CMAKE_COMMAND}" --install "${examples_build_dir}"
+    --prefix "${install_prefix}"
+    --component holoscan-examples
+)
+if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
+    list(APPEND examples_install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+endif()
+execute_process(
+    COMMAND ${examples_install_command}
+    RESULT_VARIABLE examples_install_result
+    TIMEOUT 300
+)
+if(NOT examples_install_result EQUAL 0)
+    message(FATAL_ERROR
+        "Failed to install the isolated examples with a custom data directory")
+endif()
+
+set(custom_installed_automatic_partitioning_executable
+    "${install_prefix}/${custom_examples_data_dir}/examples/automatic_partitioning/cpp/automatic_partitioning${HOLOSCAN_EXECUTABLE_SUFFIX}"
+)
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env
+        --unset=LD_LIBRARY_PATH
+        --unset=DYLD_LIBRARY_PATH
+        "${custom_installed_automatic_partitioning_executable}"
+        --mode cpu
+    RESULT_VARIABLE custom_installed_automatic_partitioning_result
+    OUTPUT_VARIABLE custom_installed_automatic_partitioning_output
+    ERROR_VARIABLE custom_installed_automatic_partitioning_error_output
+    TIMEOUT 30
+)
+string(CONCAT custom_installed_automatic_partitioning_log
+    "${custom_installed_automatic_partitioning_output}"
+    "${custom_installed_automatic_partitioning_error_output}"
+)
+if(NOT custom_installed_automatic_partitioning_result EQUAL 0 OR
+   NOT custom_installed_automatic_partitioning_log MATCHES
+       "automatic_partitioning cpu example complete")
+    message(FATAL_ERROR
+        "Failed to execute the custom-data-directory automatic partitioning target with "
+        "sanitized loader paths: ${custom_installed_automatic_partitioning_log}")
+endif()
+
 # A successful isolated compile is insufficient evidence for the reference
 # applications: execute the bounded, self-contained Graphs, the lifecycle-owned
 # notification bridge, and the camera/IMU graph-artifact build target from that
@@ -470,9 +594,11 @@ endif()
 # generators. Enumerate every required row before executing the aggregate so a
 # partial installed test inventory cannot satisfy the phase accidentally.
 set(installed_example_tests
-    EXAMPLE_EA1_SLOW_FAST_FUSION_TEST
-    EXAMPLE_EA1_CAMERA_IMU_RUNTIME_TEST
-    EXAMPLE_EA1_CAMERA_IMU_ARTIFACT_TARGET_TEST
+    EXAMPLE_CPP_AUTOMATIC_PARTITIONING_CPU_TEST
+    EXAMPLE_CPP_AUTOMATIC_PARTITIONING_HYBRID_TEST
+    EXAMPLE_SLOW_FAST_FUSION_TEST
+    EXAMPLE_CAMERA_IMU_RUNTIME_TEST
+    EXAMPLE_CAMERA_IMU_ARTIFACT_TARGET_TEST
     EXAMPLE_RETAINED_TENSOR_COMPOSITOR_HOST
     EXAMPLE_RETAINED_TENSOR_COMPOSITOR_CUDA
     EXAMPLE_RETAINED_TENSOR_COMPOSITOR_INVALID_DEVICE
@@ -482,12 +608,49 @@ set(installed_example_tests
     EXAMPLE_CPP_NOTIFICATION_BRIDGE_FAILURE_TEST
     EXAMPLE_CPP_NOTIFICATION_BRIDGE_UNSUPPORTED_TEST
 )
-# The experimental raw-POD example is not one of the eleven reference
-# applications, but execute it from the relocated installed tree to verify its
-# deeper install path resolves the SDK libraries.
+# These smoke tests are not among the reference applications, but execute the experimental POD
+# example and any available descriptor-Tensor external-topic example from the relocated installed
+# tree to verify their deeper install paths resolve the SDK libraries.
 set(installed_example_smoke_tests
+    EXAMPLE_CPP_DERIVED_TENSOR_POOL_CAPACITY_TEST
+    EXAMPLE_CPP_RATE_AWARE_PORTS_TEST
     EXAMPLE_CPP_POD_PAYLOADS_TEST
 )
+set(optional_installed_example_smoke_test EXAMPLE_CPP_DESCRIPTOR_TENSOR_EXTERNAL_TOPIC_TEST)
+
+# The descriptor-Tensor driver is registered only when the isolated consumer finds Python 3.
+# Inspect that consumer's CTest inventory so a Python-less package image skips only this optional
+# smoke row instead of failing every installed-example test.
+set(optional_example_test_list_command
+    "${HOLOSCAN_CTEST_COMMAND}"
+    --test-dir "${examples_build_dir}"
+    --show-only=json-v1
+    -R "^${optional_installed_example_smoke_test}$"
+)
+if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
+    list(APPEND optional_example_test_list_command -C "${HOLOSCAN_BUILD_CONFIG}")
+endif()
+execute_process(
+    COMMAND ${optional_example_test_list_command}
+    RESULT_VARIABLE optional_example_test_list_result
+    OUTPUT_VARIABLE optional_example_test_list_json
+    ERROR_VARIABLE optional_example_test_list_error_output
+    TIMEOUT 30
+)
+string(JSON optional_example_test_list_count
+    ERROR_VARIABLE optional_example_test_list_json_error
+    LENGTH "${optional_example_test_list_json}" tests)
+if(NOT optional_example_test_list_result EQUAL 0 OR
+   NOT optional_example_test_list_json_error STREQUAL "NOTFOUND" OR
+   optional_example_test_list_count GREATER 1)
+    message(FATAL_ERROR
+        "Optional installed example test ${optional_installed_example_smoke_test} has an invalid "
+        "inventory: ${optional_example_test_list_error_output}"
+        "${optional_example_test_list_json_error}")
+endif()
+if(optional_example_test_list_count EQUAL 1)
+    list(APPEND installed_example_smoke_tests ${optional_installed_example_smoke_test})
+endif()
 set(installed_example_execution_tests
     ${installed_example_tests}
     ${installed_example_smoke_tests}
@@ -553,7 +716,7 @@ execute_process(
 )
 if(NOT examples_test_result EQUAL 0)
     message(FATAL_ERROR
-        "Failed to execute EA1 reference applications, installed smoke tests, notification "
+        "Failed to execute baseline reference applications, installed smoke tests, notification "
         "bridge, and artifact target "
         "from the installed example sources: "
         "${examples_test_output}${examples_test_error_output}")

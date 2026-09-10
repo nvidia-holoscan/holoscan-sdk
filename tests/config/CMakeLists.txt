@@ -9,16 +9,16 @@ add_executable(config_test
     test_sha256.cpp
 )
 holoscan_configure_test_clang_tidy(config_test)
-target_include_directories(config_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(config_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 add_executable(config_no_exceptions_compile no_exceptions_codec.cpp)
 holoscan_configure_cxx20_target(config_no_exceptions_compile PRIVATE)
 target_include_directories(config_no_exceptions_compile
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_BINARY_DIR}/include
+        ${holoscan_SOURCE_DIR}/include
+        ${holoscan_BINARY_DIR}/include
 )
-target_link_libraries(config_no_exceptions_compile PRIVATE tl::expected)
+target_link_libraries(config_no_exceptions_compile PRIVATE holoscan::config)
 if(MSVC)
   target_compile_options(config_no_exceptions_compile PRIVATE /EHs-c-)
 else()
@@ -34,14 +34,14 @@ target_link_libraries(config_test
 if(HOLOSCAN_BUILD_CONFIG_IO)
   add_executable(config_io_test
       test_io.cpp
-      ${CMAKE_SOURCE_DIR}/src/config/reflect_backend.cpp
+      ${holoscan_SOURCE_DIR}/src/config/reflect_backend.cpp
       $<TARGET_OBJECTS:holoscan_config_reflect_private_objects>
       $<TARGET_OBJECTS:holoscan_config_yyjson_private_objects>
   )
   holoscan_configure_test_clang_tidy(config_io_test)
   target_compile_definitions(config_io_test PRIVATE yyjson_api=)
   target_include_directories(config_io_test
-      PRIVATE ${CMAKE_SOURCE_DIR}/src
+      PRIVATE ${holoscan_SOURCE_DIR}/src
       SYSTEM PRIVATE "${reflectcpp_SOURCE_DIR}/include"
   )
   target_link_libraries(config_io_test
@@ -52,14 +52,14 @@ if(HOLOSCAN_BUILD_CONFIG_IO)
   gtest_discover_tests(config_io_test
       DISCOVERY_MODE PRE_TEST
       TEST_PREFIX CONFIG_IO.
-      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+      WORKING_DIRECTORY ${holoscan_BINARY_DIR}
   )
 endif()
 
 gtest_discover_tests(config_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX CONFIG.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 set(_holoscan_tooling_component_modes config)
@@ -85,7 +85,7 @@ list(JOIN _holoscan_tooling_component_modes "," _holoscan_tooling_component_mode
 # examples introduced by a later examples-only change set.
 add_test(NAME CONFIG.installed_package_components
     COMMAND ${CMAKE_COMMAND}
-        "-DHOLOSCAN_BUILD_DIR=${CMAKE_BINARY_DIR}"
+        "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
         "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/installed_consumer"
         "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed_consumer"
         "-DHOLOSCAN_COMPONENT_MODES=${_holoscan_tooling_component_modes_csv}"
@@ -97,7 +97,7 @@ add_test(NAME CONFIG.installed_package_components
 )
 set_tests_properties(CONFIG.installed_package_components PROPERTIES
     RUN_SERIAL TRUE
-    LABELS "ea1;installed-package;config;params"
+    LABELS "installed-package;config;params"
 )
 unset(_holoscan_tooling_component_modes_csv)
 unset(_holoscan_tooling_component_modes)

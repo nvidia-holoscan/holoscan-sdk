@@ -5,10 +5,29 @@
 
 #include <holoscan/config/codec.hpp>
 
+#include <tuple>
+
 namespace holoscan::config::test {
 
 struct NothrowValue {};
+struct NothrowObject {
+  NothrowValue value;
+};
 struct ThrowingValue {};
+struct ThrowingDefaultObject {
+  ThrowingDefaultObject() noexcept(false) {}
+  NothrowValue value;
+};
+struct ThrowingAssignmentValue {
+  ThrowingAssignmentValue() = default;
+  ThrowingAssignmentValue(const ThrowingAssignmentValue&) = default;
+  ThrowingAssignmentValue(ThrowingAssignmentValue&&) = default;
+  ThrowingAssignmentValue& operator=(const ThrowingAssignmentValue&) = default;
+  ThrowingAssignmentValue& operator=(ThrowingAssignmentValue&&) noexcept(false) { return *this; }
+};
+struct ThrowingAssignmentObject {
+  ThrowingAssignmentValue value;
+};
 
 }  // namespace holoscan::config::test
 
@@ -38,8 +57,51 @@ struct holoscan::config::ConfigCodec<holoscan::config::test::ThrowingValue> {
   }
 };
 
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::ThrowingAssignmentValue> {
+  static ConfigResult<test::ThrowingAssignmentValue> decode(
+      ConfigView,  // NOLINT(performance-unnecessary-value-param)
+      const DecodeOptions&, DecodeContext&) noexcept {
+    return test::ThrowingAssignmentValue{};
+  }
+  static ConfigResult<ConfigValue> encode(const test::ThrowingAssignmentValue&,
+                                          const EncodeOptions&, EncodeContext&) noexcept {
+    return ConfigValue::null();
+  }
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::NothrowObject>
+    : holoscan::config::ObjectCodec<holoscan::config::test::NothrowObject> {
+  static constexpr auto fields = std::tuple{
+      object_field("value", &holoscan::config::test::NothrowObject::value),
+  };
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::ThrowingDefaultObject>
+    : holoscan::config::ObjectCodec<holoscan::config::test::ThrowingDefaultObject> {
+  static constexpr auto fields = std::tuple{
+      object_field("value", &holoscan::config::test::ThrowingDefaultObject::value),
+  };
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::ThrowingAssignmentObject>
+    : holoscan::config::ObjectCodec<holoscan::config::test::ThrowingAssignmentObject> {
+  static constexpr auto fields = std::tuple{
+      object_field("value", &holoscan::config::test::ThrowingAssignmentObject::value),
+  };
+};
+
+template struct holoscan::config::ObjectCodec<holoscan::config::test::NothrowObject>;
+
+// REQ: CONFIG-006
 static_assert(holoscan::config::ConfigCodable<holoscan::config::test::NothrowValue>);
 static_assert(!holoscan::config::ConfigCodable<holoscan::config::test::ThrowingValue>);
+static_assert(!holoscan::config::ConfigCodable<holoscan::config::test::NothrowObject>);
+static_assert(!holoscan::config::ConfigCodable<holoscan::config::test::ThrowingDefaultObject>);
+static_assert(!holoscan::config::ConfigCodable<holoscan::config::test::ThrowingAssignmentObject>);
 
 int main() {
   return 0;

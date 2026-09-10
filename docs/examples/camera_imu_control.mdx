@@ -1,4 +1,4 @@
-This walkthrough covers `ea1_camera_imu_control`, the guide's hero application:
+This walkthrough covers `camera_imu_control`, the guide's hero application:
 a camera + IMU fusion pipeline that exercises nearly every concept from the
 earlier chapters in one program. A simulated camera produces bounded host
 tensors on a 20 ms clock; an embedded fusion graph aligns each frame with a
@@ -7,8 +7,8 @@ fused control value is exported back out for an external consumer. If you can
 read this example end to end, you understand the Holoscan 5.0 programming
 model.
 
-The full source lives at `public/examples/ea1_camera_imu_control/` in the SDK
-tree, with two companion processes under `public/examples/ea1_external_clients/`.
+The full source lives at `public/examples/camera_imu_control/` in the SDK
+tree, with two companion processes under `public/examples/external_clients/`.
 
 <Note title="You will learn">
   - How the camera + IMU application is composed from an embedded graph, two
@@ -30,16 +30,16 @@ tree, with two companion processes under `public/examples/ea1_external_clients/`
 
 ## What it builds
 
-One executable, `ea1_camera_imu_control`, composes and compiles a single
+One executable, `camera_imu_control`, composes and compiles a single
 application graph with two operators and two external endpoints:
 
 - **`CameraSource`** — fires on a 20 ms clock and emits one 64-byte host
   `Tensor` per activation from a preallocated, bounded pool.
 - **`WindowFusion`** — anchors on each camera frame, selects a bracketed
   window of IMU samples around it, and emits one `std::uint32_t` control value.
-- **Imported topic** `ea1.camera_imu.imu` — `std::uint32_t` IMU samples
+- **Imported topic** `baseline.camera_imu.imu` — `std::uint32_t` IMU samples
   published by an external process.
-- **Exported topic** `ea1.camera_imu.control` — the fused control result,
+- **Exported topic** `baseline.camera_imu.control` — the fused control result,
   consumed by an external process.
 
 The same binary has two modes: a bounded **reference run** that starts the
@@ -56,13 +56,13 @@ output as its own public port; the outer `CameraImuGraph` embeds it and wires
 that port to the exported control topic.
 
 ```text
-CameraImuGraph ("ea1-camera-imu-control")
+CameraImuGraph ("holoscan-camera-imu-control")
 └── FusionGraph ("fusion")                        [embedded via embed<FusionGraph>()]
-    ├── import_topic<uint32_t>("holomq://ea1.camera_imu.imu")
+    ├── import_topic<uint32_t>("holomq://baseline.camera_imu.imu")
     ├── CameraSource ("camera") ──frame──▶ WindowFusion ("window-fusion")
     ├── imported imu ────────────imu────▶ WindowFusion
     └── control (exported Output<uint32_t>)
-        └── outer: add_flow ──▶ export_topic<uint32_t>("holomq://ea1.camera_imu.control")
+        └── outer: add_flow ──▶ export_topic<uint32_t>("holomq://baseline.camera_imu.control")
 ```
 
 The inner graph declares its public surface as a member port and connects it
@@ -161,8 +161,11 @@ The camera output declares its tensor shape and its allocation bounds at
 ```cpp
 void setup(holoscan::OperatorSpec& spec) override {
   spec.output(frame, "frame")
-      .produces_tensor(kHostByteFrame)  // host memory, uint8, rank 1
-      .tensor_allocation(holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 64U});
+      .produces_tensor(holoscan::TensorOutputSpec{
+          .representation = kHostByteFrame,  // host memory, uint8, rank 1
+          .bounds = holoscan::tensor_bounds(64U),
+          .storage = holoscan::TensorOutputStorage::kRuntimePool,
+      });
 }
 ```
 
@@ -217,7 +220,7 @@ with **stable, explicit endpoint names**:
 
 ```cpp
 holoscan::TopicOptions imu_options;
-imu_options.endpoint_name = kImuEndpoint;  // "ea1.camera_imu.imu"
+imu_options.endpoint_name = kImuEndpoint;  // "baseline.camera_imu.imu"
 imu_options.capture_time = holoscan::RequireCaptureTime{.clock = clock};
 const auto imu = import_topic<std::uint32_t>("holomq://" + std::string{kImuEndpoint}, imu_options);
 // wired like any other producer:
@@ -252,11 +255,11 @@ Running the binary with no arguments starts the compiled plan **and** an
 in-process `ChannelRuntime` client that plays both external roles:
 
 ```bash
-./ea1_camera_imu_control
+./camera_imu_control
 ```
 
-The client creates a publisher on `ea1.camera_imu.imu` and a subscriber on
-`ea1.camera_imu.control` from `plan.endpoint_catalog()`, waits for both
+The client creates a publisher on `baseline.camera_imu.imu` and a subscriber on
+`baseline.camera_imu.control` from `plan.endpoint_catalog()`, waits for both
 directions to observe a live peer, publishes 16 captured IMU samples, waits
 for one control value that provably includes IMU contribution (a camera-only
 `SafeDefault` result is ignored), then stops and joins the session
@@ -275,11 +278,11 @@ The artifact mode compiles the graph and writes the deployment bundle
 transport:
 
 ```bash
-./ea1_camera_imu_control --emit-artifacts \
+./camera_imu_control --emit-artifacts \
   --artifact-root ./holoscan-artifacts --deployment-id developer
 ```
 
-There is also a build target (`ea1_camera_imu_control_graph_artifacts`) that
+There is also a build target (`camera_imu_control_graph_artifacts`) that
 does the same from CMake. Keeping artifact publication separate from execution
 means build tooling can regenerate bundles without side effects; rebuilding
 preserves timestamps of unchanged artifacts. See
@@ -288,22 +291,22 @@ preserves timestamps of unchanged artifacts. See
 
 ### The companion processes
 
-The separate-process companions live in `public/examples/ea1_external_clients/`
+The separate-process companions live in `public/examples/external_clients/`
 and are walked through in detail on
 [External clients](/holoscan/sdk-user-guide/examples/external-clients). Both
 take the **exact** emitted catalog path plus an endpoint name — they never
 search for a global "latest" catalog. The no-argument reference mode already
 creates in-process clients for both endpoints; do not attach the standalone
-companions to that same run. EA1 ships the companions as independently tested
+companions to that same run. The baseline release ships the companions as independently tested
 catalog-client patterns, but it does not yet ship an author-facing
 graph-only/deployment launcher for this three-process recipe.
 
 ```bash
 # Publish IMU samples:
-./ea1_sensor_daemon <catalog.json> <endpoint> [count] [period-ms] [first-value]
+./sensor_daemon <catalog.json> <endpoint> [count] [period-ms] [first-value]
 
 # Record control results:
-./ea1_result_recorder <catalog.json> <endpoint>
+./result_recorder <catalog.json> <endpoint>
 ```
 
 The sensor daemon's optional arguments default to `64`, `5`, and `1`,
@@ -328,7 +331,7 @@ respectively.
 - One binary serves both roles: a bounded self-contained reference run, and a
   cold `--emit-artifacts` mode that produces the catalog used by deployment
   tooling and compatible standalone peers.
-- Standalone companions (`ea1_sensor_daemon`, `ea1_result_recorder`) attach by
+- Standalone companions (`sensor_daemon`, `result_recorder`) attach by
   catalog path + endpoint name using the `ChannelRuntime` client API.
 
 Next: [Slow/fast fusion](/holoscan/sdk-user-guide/examples/slow-fast-fusion)

@@ -14,12 +14,15 @@ values.
 
 **Complete C++ example:** [`examples/graph_composition/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/graph_composition/cpp)
 
+**Partitioning example:** [`examples/automatic_partitioning/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/automatic_partitioning/cpp)
+
 <Note title="You will learn">
   - How to derive a reusable graph from `holoscan::Graph` and author its body in `compose()`
   - How to expose a subgraph's interface with `export_input()`/`export_output()` — and why to prefer them over raw same-direction `add_flow()`
   - How to tune ports and edges with `configure()`/`try_configure()` configurators
   - How to group operators into named regions with `region(name).add(...)`
-  - How manual `partition(name).add(...)` declarations define serial execution ownership
+  - How automatic, hybrid, and `include_all()` partitioning define serial execution ownership
+  - How to inspect the accepted partition cover with `ExecutionPlan::partitions()`
   - How to declare graph-scope clocks and lifecycle ordering
   - How `view()` freezes an immutable `GraphView` you can inspect safely
 </Note>
@@ -49,7 +52,7 @@ class FusionStage final : public holoscan::Graph {
 
 A containing graph embeds the component with `embed<G>("instance-name")` and
 wires only its exported interface — the internal operators stay private. The
-`ea1_camera_imu_control` example nests a `FusionGraph` inside a
+`camera_imu_control` example nests a `FusionGraph` inside a
 `CameraImuGraph` exactly this way.
 `compose()` runs **lazily, exactly once** — the first time the graph is
 observed (for example by `view()` or by an outer graph embedding it). This has
@@ -155,28 +158,110 @@ constraints, `optimize(...)` for optimization hints, and `profile(...)` for a
 named profile. Regions are pure authoring metadata here — the compiler
 consumes them when it lowers the graph to an executable plan.
 
-## Manual execution partitions
+## Execution partitions
 
-A **partition** is different from a region: it names the exact set of
-operators that share one serial execution owner. Partitions do not carry
-analysis constraints, and regions do not imply execution placement.
+An **execution partition** owns an exact set of executable graph vertices.
+Callback-bearing partitions give their Operators one serial execution owner;
+endpoint-only partitions retain topology without manufacturing a callback
+owner. Regions remain analysis and placement metadata; they do not implicitly
+define execution ownership.
+
+<Warning>
+  Operators in distinct execution partitions may run callbacks concurrently on
+  stable owner threads, and there is no total callback order across partitions.
+  Synchronize any shared mutable state. `include_all()` places the complete
+  executable application in one partition and gives all of its Operators one
+  serial owner, but it does not make callbacks run on the caller thread.
+  Inspect `plan.partitions()` to confirm the accepted ownership and topology.
+</Warning>
+
+With no partition declarations, the production
+`holoscan.partition.source_chain/1` planner produces a complete automatic
+cover. The name is a stable algorithm identity, not a promise that only source
+Operators are inspected: the planner walks the complete canonical DAG and
+starts a linear execution chain at each source or other mandatory boundary.
 
 ```cpp
-g.partition("capture").add(camera).add(normalize);
-g.partition("inference").add(preprocess).add(inference).add(postprocess);
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+const auto partitions = plan.partitions();
+
+for (const auto partition : partitions) {
+  for (const auto& path : partition.operator_paths()) {
+    std::cout << path << '\n';
+  }
+}
+
+const auto source_partition = partitions.of(source);  // root handle retained during composition
+const auto join_partition = partitions.lookup_for_path("join");
 ```
 
-If you author any partition, the complete set must be nonempty, disjoint, and
-cover every direct root-Graph operator exactly once. EA1 manual partitions are
-single-process root-Graph declarations and are not admitted inside an embedded
-reusable graph. A one-root acyclic graph can omit the declarations and compile
-to one implicit serial partition; a graph with multiple independent roots must
-author the exact cover.
+The retained `partitions()` view reports the accepted mode, authored and
+automatic counts, canonical order, execution lane, origin, and logical
+Operator paths. It also supports exact lookup by dense ID, authored name, and
+canonical path. Automatic partitions deliberately have no public generated
+name; use their ID, path, or an Operator handle instead. Dynamic lookup
+returns a typed error for an invalid or missing key.
 
-Use the same partition name with
-`CompileOptions::deployment.bind_thread_placement(...)` when you need CPU or
-scheduling placement. The name selects placement authority only; it does not
-select a planner or change callback order.
+Operator paths are exact lookup keys over decoded Graph and Operator identity
+segments. Each segment is UTF-8 byte-wise percent-encoded with uppercase hex
+before `/` separators are inserted, so decoded names such as `a/b` cannot
+collide with separate `a` and `b` segments. Every key uses the same
+no-leading-slash `OperatorPath` grammar as Parameter records and Tensor output
+placement. Pass the published spelling back to
+`lookup_for_path()` unchanged—the lookup does not decode or normalize input.
+For example, root Operator `camera/left%` publishes
+`camera%2Fleft%25`, while Operator `b/c` in embedded Graph `a` publishes
+`a/b%2Fc`.
+
+The planner considers the whole DAG. A fan-out starts separate successor legs,
+and a fan-in starts its own join partition rather than collapsing multiple
+predecessor chains. A diamond therefore exposes both branch legs and the join
+boundary. A linear successor can join its one predecessor only when the
+execution domain and edge-collapse rules permit it. Two edges between the same
+ordered Operators are parallel edges, not a structural branch.
+
+```text
+source ──┬── left ──┐
+         └── right ─┴── join       fan-out, fan-in, and diamond
+source ──────────────── join      parallel edges: one structural successor
+```
+
+### Exact manual and hybrid covers
+
+Manual declarations remain an exact, disjoint cover:
+
+```cpp
+graph.partition("capture").add(camera).add(normalize);
+graph.partition("inference").add(preprocess).add(inference).add(postprocess);
+```
+
+An incomplete manual cover is rejected unless the application explicitly opts
+into a bounded hybrid cover. Exact named anchors remain unchanged and the
+compiler partitions only the uncovered remainder:
+
+```cpp
+graph.partition("capture").add(camera).add(normalize);
+graph.auto_partition_remaining();
+```
+
+The frozen authoring view exposes this directive directly through
+`graph.view().automatic_partition_remaining()`, alongside the exact manual
+declarations returned by `graph.view().partitions()`.
+
+Use `partition(name).include_all()` on the compile root when one explicit
+serial owner should cover the complete composed application, including
+embedded Graph descendants:
+
+```cpp
+graph.partition("application").include_all();
+```
+
+`include_all()` is manual intent and bypasses automatic partitioning. It is
+mutually exclusive with another root partition declaration or an automatic
+remainder request. Use the exact authored name with
+`CompileOptions::deployment.bind_thread_placement(...)` or a Green Context
+binding when deployment placement is required; names select an authored
+partition and never select a planner.
 
 ## Graph-scope clocks
 
@@ -204,7 +289,7 @@ so calling it triggers — and must not re-enter — composition). When a
 pipeline spans clock domains, `add_clock_conversion(from, to, conversion)`
 declares a directed affine mapping between two declared clocks.
 
-The `ea1_camera_imu_control` example opens its `compose()` with exactly this
+The `camera_imu_control` example opens its `compose()` with exactly this
 pattern:
 
 ```cpp

@@ -2,11 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 set(HOLOSCAN_SCHEMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
-set(HOLOSCAN_SCHEMA_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/holoscan/schemas")
+set(HOLOSCAN_SCHEMA_GENERATED_DIR "${holoscan_BINARY_DIR}/generated/holoscan/schemas")
+# Transport primitives only. The sensor payload types, image.fbs and imu.fbs, belong to
+# holoscan::sensor_io and are built from src/sensor_io/schemas; see the rationale there. geometry.fbs
+# and header.fbs stay because neither names a sensor: a rotation and a message header are meaningful
+# to any payload, and image.fbs and imu.fbs include header.fbs from here.
 set(HOLOSCAN_SCHEMA_FILES
+    "${HOLOSCAN_SCHEMA_DIR}/geometry.fbs"
     "${HOLOSCAN_SCHEMA_DIR}/header.fbs"
-    "${HOLOSCAN_SCHEMA_DIR}/image.fbs"
-    "${HOLOSCAN_SCHEMA_DIR}/imu.fbs"
     "${HOLOSCAN_SCHEMA_DIR}/string.fbs"
     "${HOLOSCAN_SCHEMA_DIR}/tensor.fbs"
     "${HOLOSCAN_SCHEMA_DIR}/tensor_packet.fbs"
@@ -33,21 +36,30 @@ set(HOLOSCAN_SCHEMA_GENERATED_HEADERS
     ${holoscan_flatbuffer_schemas_generated_GENERATED_HEADERS}
 )
 
+# The image metadata helper and its port type ops moved to holoscan_sensor_io along with image.fbs.
+# Their definitions left this library with them, so a binary linked against the 5.0.0.1
+# libholoscan_schema.so.5 no longer resolves build_image_metadata, parse_image_metadata,
+# image_tensor_metadata, or runtime_port_type_ops<schema::ImageT> here. The mangled names are
+# unchanged: all four keep their holoscan::schema and holoscan::detail enclosing scopes, so this
+# relocates symbols between two DSOs of the same package rather than renaming or dropping them.
+# libholoscan_sensor_io.so defines them now, and a consumer changes one include and links
+# holoscan::sensor_io. SOVERSION below stays at PROJECT_VERSION_MAJOR, matching every other SDK
+# library: 5.x publishes no binary-compatibility guarantee across packages before its general
+# availability, so consumers rebuild against matching headers and libraries, and the release notes
+# carry that requirement the way an earlier 5.x queue-policy change did.
 add_library(holoscan_schema
-    "${HOLOSCAN_TOP}/src/schema/image_metadata.cpp"
-    "${HOLOSCAN_TOP}/src/schema/image_port_type_ops.cpp"
-    "${HOLOSCAN_TOP}/src/schema/tensor_overrides.cpp"
-    "${HOLOSCAN_TOP}/src/schema/tensor_packet_port_type_ops.cpp"
+    "${holoscan_SOURCE_DIR}/src/schema/tensor_overrides.cpp"
+    "${holoscan_SOURCE_DIR}/src/schema/tensor_packet_port_type_ops.cpp"
 )
 add_library(${HOLOSCAN_PACKAGE_NAME}::schema ALIAS holoscan_schema)
 add_dependencies(holoscan_schema holoscan_flatbuffer_schemas_generated)
 holoscan_configure_cxx20_target(holoscan_schema PUBLIC)
 target_include_directories(holoscan_schema
     PRIVATE
-        "${HOLOSCAN_TOP}/src"
+        "${holoscan_SOURCE_DIR}/src"
     PUBLIC
-        $<BUILD_INTERFACE:${HOLOSCAN_TOP}/include>
-        $<BUILD_INTERFACE:${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include>
+        $<BUILD_INTERFACE:${holoscan_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${holoscan_BINARY_DIR}/include>
         $<BUILD_INTERFACE:${Flatbuffers_SOURCE_DIR}/include>
         "$<BUILD_INTERFACE:${HOLOSCAN_SCHEMA_GENERATED_DIR}>"
         $<INSTALL_INTERFACE:include>
@@ -72,7 +84,7 @@ generate_export_header(holoscan_schema
     STATIC_DEFINE HOLOSCAN_SCHEMA_STATIC_DEFINE
     INCLUDE_GUARD_NAME HOLOSCAN_SCHEMA_EXPORT_H_GENERATED
     EXPORT_FILE_NAME
-        "${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/holoscan_schema_export.h"
+        "${holoscan_BINARY_DIR}/include/holoscan/holoscan_schema_export.h"
 )
 set_target_properties(holoscan_schema PROPERTIES
     CXX_VISIBILITY_PRESET hidden
@@ -98,16 +110,16 @@ holoscan_configure_linux_shared_link(holoscan_schema)
 
 install(FILES
     "${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/holoscan_schema_export.h"
-    DESTINATION include/holoscan
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
 )
-install(DIRECTORY "${HOLOSCAN_TOP}/include/holoscan/schema"
-    DESTINATION include/holoscan
+install(DIRECTORY "${holoscan_SOURCE_DIR}/include/holoscan/schema"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
     COMPONENT holoscan-core
     FILES_MATCHING PATTERN "*.hpp"
 )
 install(FILES ${HOLOSCAN_SCHEMA_GENERATED_HEADERS}
-    DESTINATION include/holoscan/schemas
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan/schemas
     COMPONENT holoscan-core
 )
 install(FILES ${HOLOSCAN_SCHEMA_FILES}
@@ -122,4 +134,4 @@ install(FILES "${HOLOSCAN_SCHEMA_DIR}/flatbuffers/reflection.fbs"
 # Keep existing in-tree test and benchmark consumers working until they consume target properties.
 set(HOLOSCAN_SCHEMA_DIR "${HOLOSCAN_SCHEMA_DIR}" PARENT_SCOPE)
 set(HOLOSCAN_SCHEMA_GENERATED_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}" PARENT_SCOPE)
-set(holoscan_SCHEMA_TOOLS_DIR "${HOLOSCAN_TOP}/cmake" PARENT_SCOPE)
+set(holoscan_SCHEMA_TOOLS_DIR "${holoscan_SOURCE_DIR}/cmake" PARENT_SCOPE)

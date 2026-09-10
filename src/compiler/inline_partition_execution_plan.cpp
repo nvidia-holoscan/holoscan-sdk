@@ -13,11 +13,15 @@
 #include <limits>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "compiler/execution_plan_identity.hpp"
+#include "compiler/execution_plan_lookup.hpp"
 #include "compiler/process_plan_records.hpp"
+#include "core/plan_record_contracts.hpp"
 #include "core/tensor_allocation_record_validation.hpp"
 
 namespace holoscan::detail {
@@ -37,21 +41,6 @@ namespace {
   const ExecutableOperatorFactoryRecord* result = nullptr;
   for (const auto& candidate : state.executable_factories.operators) {
     if (candidate.vertex != vertex) {
-      continue;
-    }
-    if (result != nullptr) {
-      return nullptr;
-    }
-    result = &candidate;
-  }
-  return result;
-}
-
-[[nodiscard]] const TemporalTriggerPlanRecord* temporal_trigger_for(
-    const ExecutionPlanState& state, OperatorInstanceId owner) noexcept {
-  const TemporalTriggerPlanRecord* result = nullptr;
-  for (const auto& candidate : state.temporal_triggers) {
-    if (candidate.owner.id != owner) {
       continue;
     }
     if (result != nullptr) {
@@ -146,16 +135,8 @@ namespace {
 
 [[nodiscard]] bool descriptor_tensor_payload_equal(const PayloadIdentityRecord& left,
                                                    const PayloadIdentityRecord& right) noexcept {
-  if (!descriptor_tensor_payload(left) || !descriptor_tensor_payload(right) ||
-      !left.schema.has_value() || !right.schema.has_value()) {
-    return false;
-  }
-  const auto& left_schema = left.schema.value();
-  const auto& right_schema = right.schema.value();
-  return left_schema.canonical_name == right_schema.canonical_name &&
-         left_schema.version == right_schema.version &&
-         left_schema.schema_sha256 == right_schema.schema_sha256 &&
-         left_schema.id == right_schema.id;
+  return descriptor_tensor_payload(left) && descriptor_tensor_payload(right) &&
+         payload_identity_exactly_equal(left, right);
 }
 
 [[nodiscard]] bool tensor_backed_payload(const PayloadIdentityRecord& identity) noexcept {
@@ -338,21 +319,6 @@ struct RootReadinessFacts {
   }
 }
 
-[[nodiscard]] const PredicateTriggerPlanRecord* predicate_trigger_for(
-    const ExecutionPlanState& state, OperatorInstanceId owner) noexcept {
-  const PredicateTriggerPlanRecord* result = nullptr;
-  for (const auto& candidate : state.predicate_triggers) {
-    if (candidate.owner.id != owner) {
-      continue;
-    }
-    if (result != nullptr) {
-      return nullptr;
-    }
-    result = &candidate;
-  }
-  return result;
-}
-
 [[nodiscard]] bool owned_inputs(const ExecutionPlanState& state, VertexId vertex,
                                 const std::vector<PortId>& inputs) noexcept {
   return std::all_of(inputs.begin(), inputs.end(), [&](PortId input) {
@@ -375,7 +341,7 @@ struct RootReadinessFacts {
       return !trigger.declared_inputs.empty() &&
              (!trigger.trigger_input || owned_input(state, vertex, trigger.trigger_input));
     case TemporalRecordTriggerKind::kPredicate: {
-      const auto* predicate = predicate_trigger_for(state, trigger.owner.id);
+      const auto* predicate = find_unique_predicate_trigger_by_owner(state, trigger.owner.id);
       return predicate != nullptr &&
              predicate->source == PredicateEvaluationSourceKind::kInputUpdate &&
              predicate->driver == trigger.trigger_input && trigger.trigger_input &&
@@ -396,62 +362,26 @@ struct RootReadinessFacts {
          state.tensor_inline_records.empty() && state.tensor_transfer_plans.empty();
 }
 
-[[nodiscard]] bool dtype_equal(DLDataType left, DLDataType right) noexcept {
-  return left.code == right.code && left.bits == right.bits && left.lanes == right.lanes;
-}
-
-[[nodiscard]] bool tensor_layout_equal(const std::optional<TensorPortLayout>& left,
-                                       const std::optional<TensorPortLayout>& right) noexcept {
-  if (left.has_value() != right.has_value()) {
-    return false;
-  }
-  if (!left) {
-    return true;
-  }
-  return left->memory_kind == right->memory_kind && left->rank == right->rank &&
-         left->dtype.has_value() == right->dtype.has_value() &&
-         (!left->dtype || dtype_equal(*left->dtype, *right->dtype));
-}
-
 [[nodiscard]] bool tensor_allocation_satisfies_input(
     const TensorAllocationPlanRecord& allocation,
-    const std::optional<TensorPortLayout>& input_layout) noexcept {
+    const std::optional<TensorRepresentation>& input_layout) noexcept {
   if (!input_layout) {
     return true;
   }
   if (input_layout->memory_kind && *input_layout->memory_kind != allocation.memory_kind) {
     return false;
   }
-  if (input_layout->dtype && (!allocation.layout || !allocation.layout->dtype ||
-                              !dtype_equal(*input_layout->dtype, *allocation.layout->dtype))) {
+  if (input_layout->dtype &&
+      (!allocation.layout || !allocation.layout->dtype ||
+       !dl_data_type_exactly_equal(*input_layout->dtype, *allocation.layout->dtype))) {
+    return false;
+  }
+  if (input_layout->strides &&
+      (!allocation.layout || allocation.layout->strides != input_layout->strides)) {
     return false;
   }
   return !input_layout->rank || (allocation.layout && allocation.layout->rank &&
                                  *input_layout->rank == *allocation.layout->rank);
-}
-
-[[nodiscard]] std::string process_local_service_id(PlanGenerationId generation, PortId source,
-                                                   QueuePolicy policy) {
-  return "process-local-channel." + std::to_string(generation) + ".source." +
-         std::to_string(source.value()) + ".policy." +
-         std::to_string(static_cast<std::uint32_t>(policy));
-}
-
-[[nodiscard]] std::string tensor_pool_id(PlanGenerationId generation, PortId output) {
-  return "tensor-output-pool." + std::to_string(generation) + "." + std::to_string(output.value());
-}
-
-[[nodiscard]] std::string tensor_allocator_id(PlanGenerationId generation,
-                                              ProcessGroupId process_group, DeviceId device) {
-  return "tensor-allocator." + std::to_string(generation) + ".process." +
-         std::to_string(process_group.value) + ".device." +
-         (device.valid() ? std::to_string(device.value) : std::string{"host"});
-}
-
-[[nodiscard]] std::string tensor_stream_id(PlanGenerationId generation,
-                                           ProcessGroupId process_group, DeviceId device) {
-  return "tensor-stream." + std::to_string(generation) + ".process." +
-         std::to_string(process_group.value) + ".device." + std::to_string(device.value);
 }
 
 [[nodiscard]] const PayloadEdgePlanRecord* edge_record(const ExecutionPlanState& state,
@@ -484,20 +414,6 @@ struct RootReadinessFacts {
   return result;
 }
 
-[[nodiscard]] std::vector<const TensorFieldAllocationPlanRecord*> tensor_field_allocations(
-    const ExecutionPlanState& state, PortId output) {
-  std::vector<const TensorFieldAllocationPlanRecord*> result;
-  for (const auto& candidate : state.tensor_field_allocations) {
-    if (candidate.output == output) {
-      result.push_back(&candidate);
-    }
-  }
-  std::sort(result.begin(), result.end(), [](const auto* left, const auto* right) {
-    return left->field_id < right->field_id;
-  });
-  return result;
-}
-
 [[nodiscard]] bool tensor_field_storage_equal(
     const TensorFieldServiceStorageContract& field,
     const TensorFieldAllocationPlanRecord& allocation) noexcept {
@@ -509,29 +425,29 @@ struct RootReadinessFacts {
          field.max_byte_span == allocation.bounds.max_byte_span &&
          field.memory_kind == allocation.memory_kind && field.device == allocation.device &&
          field.rank == layout.rank && field.dtype.has_value() == layout.dtype.has_value() &&
-         (!field.dtype || dtype_equal(*field.dtype, *layout.dtype));
+         (!field.dtype || dl_data_type_exactly_equal(*field.dtype, *layout.dtype));
 }
 
 [[nodiscard]] bool supported_tensor_field_allocations(
     const ExecutionPlanState& state, const PortPlanRecord& source,
     const PayloadEdgePlanRecord& edge, ProcessGroupId process_group,
     const ProcessLocalChannelServicePlanRecord& service,
-    const std::vector<const TensorFieldAllocationPlanRecord*>& allocations) noexcept {
+    std::span<const TensorFieldAllocationPlanRecord> allocations) noexcept {
   if (allocations.empty() || service.tensor_fields.size() != allocations.size()) {
     return false;
   }
   for (std::size_t index = 0U; index < allocations.size(); ++index) {
-    const auto& allocation = *allocations[index];
+    const auto& allocation = allocations[index];
     if (!validate_tensor_field_allocation_record(allocation, state.plan_generation) ||
         allocation.output != edge.source || allocation.allocator_process_group != process_group ||
         allocation.allocator_root_id !=
-            tensor_allocator_id(state.plan_generation, process_group, allocation.device) ||
+            tensor_allocator_root_id(state.plan_generation, process_group, allocation.device) ||
         (allocation.memory_kind != MemoryKind::kHost &&
          allocation.memory_kind != MemoryKind::kCudaDevice) ||
         source.max_emits_per_compute != allocation.max_emits_per_compute ||
         edge.producer_max_emits_per_compute != allocation.max_emits_per_compute ||
         allocation.tensor_index != index ||
-        (index != 0U && allocations[index - 1U]->field_id >= allocation.field_id) ||
+        (index != 0U && allocations[index - 1U].field_id >= allocation.field_id) ||
         !tensor_field_storage_equal(service.tensor_fields[index], allocation)) {
       return false;
     }
@@ -552,7 +468,7 @@ struct RootReadinessFacts {
   const auto* source = dense_port(state, edge.source);
   const auto* target = dense_port(state, edge.target);
   const auto* allocation = tensor_allocation(state, edge.source);
-  const auto field_allocations = tensor_field_allocations(state, edge.source);
+  const auto field_allocations = tensor_field_allocations_by_output(state, edge.source);
   const bool raw_tensor = raw_tensor_payload(edge.payload_identity);
   const bool payload_contract_matches =
       raw_tensor
@@ -588,12 +504,12 @@ struct RootReadinessFacts {
       allocation != nullptr &&
       validate_tensor_allocation_record(*allocation, state.plan_generation) &&
       allocation->allocator_process_group == process_group &&
-      allocation->pool_id == tensor_pool_id(state.plan_generation, edge.source) &&
+      allocation->pool_id == tensor_output_pool_id(state.plan_generation, edge.source) &&
       allocation->allocator_root_id ==
-          tensor_allocator_id(state.plan_generation, process_group, allocation->device) &&
+          tensor_allocator_root_id(state.plan_generation, process_group, allocation->device) &&
       (allocation->memory_kind == MemoryKind::kHost ||
        allocation->memory_kind == MemoryKind::kCudaDevice) &&
-      tensor_layout_equal(allocation->layout, source->tensor_layout) &&
+      tensor_port_layout_exactly_equal(allocation->layout, source->tensor_layout) &&
       tensor_allocation_satisfies_input(*allocation, target->tensor_layout) &&
       source->max_emits_per_compute == allocation->max_emits_per_compute &&
       edge.producer_max_emits_per_compute == allocation->max_emits_per_compute &&
@@ -607,7 +523,7 @@ struct RootReadinessFacts {
     return false;
   }
   const std::string expected_service_id =
-      process_local_service_id(state.plan_generation, edge.source, edge.queue_policy);
+      process_local_channel_service_id(state.plan_generation, edge.source, edge.queue_policy);
   const bool storage_contract_matches =
       raw_tensor && allocation != nullptr
           ? service->payload_size_bytes == 0U &&
@@ -617,11 +533,15 @@ struct RootReadinessFacts {
                 service->tensor_device == allocation->device
           : descriptor_tensor_payload(edge.payload_identity) &&
                 service->payload_size_bytes == source->serialized_payload_capacity_bytes &&
-                service->tensor_max_byte_span == 0U && service->tensor_pool_id.empty() &&
-                service->tensor_memory_kind == MemoryKind::kUnknown &&
-                !service->tensor_device.valid() &&
-                (field_allocations_match ? !service->tensor_fields.empty()
-                                         : service->tensor_fields.empty());
+                ((direct_allocation_matches && service->tensor_fields.empty() &&
+                  service->tensor_max_byte_span == allocation->bounds.max_byte_span &&
+                  service->tensor_pool_id == allocation->pool_id &&
+                  service->tensor_memory_kind == allocation->memory_kind &&
+                  service->tensor_device == allocation->device) ||
+                 (field_allocations_match && !service->tensor_fields.empty() &&
+                  service->tensor_max_byte_span == 0U && service->tensor_pool_id.empty() &&
+                  service->tensor_memory_kind == MemoryKind::kUnknown &&
+                  !service->tensor_device.valid()));
   if (service->service_id != expected_service_id ||
       (raw_tensor
            ? !raw_tensor_payload(service->payload_identity)
@@ -728,11 +648,12 @@ template <typename Allocation>
                     tensor_backed_payload(edge->payload_identity);
            }) == 1;
   };
-  if (std::ranges::any_of(state.tensor_allocations,
-                          [&](const auto& allocation) {
-                            return !output_has_one_topology_edge(allocation.output) ||
-                                   !tensor_field_allocations(state, allocation.output).empty();
-                          }) ||
+  if (std::ranges::any_of(
+          state.tensor_allocations,
+          [&](const auto& allocation) {
+            return !output_has_one_topology_edge(allocation.output) ||
+                   !tensor_field_allocations_by_output(state, allocation.output).empty();
+          }) ||
       std::ranges::any_of(state.tensor_field_allocations, [&](const auto& allocation) {
         return !output_has_one_topology_edge(allocation.output) ||
                tensor_allocation(state, allocation.output) != nullptr;
@@ -852,16 +773,35 @@ template <typename Allocation>
     if (resource.plan_generation != state.plan_generation || resource.run_generation != 0U ||
         resource.process_group != process_group || !resource.device.valid() ||
         resource.allocator_root_id !=
-            tensor_allocator_id(state.plan_generation, process_group, resource.device) ||
-        resource.stream_id !=
-            tensor_stream_id(state.plan_generation, process_group, resource.device) ||
-        resource.materialize_before != LifecycleStage::kArm || resource.per_partition_stream ||
-        resource.per_partition_event || resource.per_partition_green_context ||
-        resource.gpu_resident_backend_selected || !resource.fallback_rejected ||
-        std::adjacent_find(resource.fused_linear_edges.begin(),
-                           resource.fused_linear_edges.end(),
-                           [](EdgeId left, EdgeId right) { return left.value >= right.value; }) !=
-            resource.fused_linear_edges.end()) {
+            tensor_allocator_root_id(state.plan_generation, process_group, resource.device) ||
+        resource.materialize_before != LifecycleStage::kArm ||
+        resource.gpu_resident_backend_selected || !resource.fallback_rejected) {
+      return false;
+    }
+
+    std::vector<EdgeId> fused_linear_edges;
+    for (const auto& stream : state.cuda_compute_streams) {
+      if (stream.process_group != process_group || stream.device != resource.device) {
+        continue;
+      }
+      if (stream.plan_generation != state.plan_generation || stream.run_generation != 0U ||
+          stream.owner_id.empty() || stream.stream_id.empty() ||
+          stream.materialize_before != LifecycleStage::kArm ||
+          std::adjacent_find(stream.fused_linear_edges.begin(),
+                             stream.fused_linear_edges.end(),
+                             [](EdgeId left, EdgeId right) { return left.value >= right.value; }) !=
+              stream.fused_linear_edges.end()) {
+        return false;
+      }
+      fused_linear_edges.insert(fused_linear_edges.end(),
+                                stream.fused_linear_edges.begin(),
+                                stream.fused_linear_edges.end());
+    }
+    std::sort(fused_linear_edges.begin(), fused_linear_edges.end(), [](EdgeId left, EdgeId right) {
+      return left.value < right.value;
+    });
+    if (std::adjacent_find(fused_linear_edges.begin(), fused_linear_edges.end()) !=
+        fused_linear_edges.end()) {
       return false;
     }
 
@@ -905,27 +845,27 @@ template <typename Allocation>
     for (const EdgeId edge_id : topology_edges) {
       const auto* edge = edge_record(state, edge_id);
       const auto* allocation = edge == nullptr ? nullptr : tensor_allocation(state, edge->source);
-      const auto fields = edge == nullptr ? std::vector<const TensorFieldAllocationPlanRecord*>{}
-                                          : tensor_field_allocations(state, edge->source);
+      const auto fields = edge == nullptr ? std::span<const TensorFieldAllocationPlanRecord>{}
+                                          : tensor_field_allocations_by_output(state, edge->source);
       const bool direct_uses_resource = allocation != nullptr &&
                                         allocation->memory_kind == MemoryKind::kCudaDevice &&
                                         allocation->device == resource.device;
-      const bool field_uses_resource = std::ranges::any_of(fields, [&](const auto* field) {
-        return field->memory_kind == MemoryKind::kCudaDevice && field->device == resource.device;
+      const bool field_uses_resource = std::ranges::any_of(fields, [&](const auto& field) {
+        return field.memory_kind == MemoryKind::kCudaDevice && field.device == resource.device;
       });
       if (edge == nullptr || !tensor_backed_payload(edge->payload_identity) ||
           (!direct_uses_resource && !field_uses_resource)) {
         continue;
       }
       ++expected_fused_edges;
-      if (!std::binary_search(resource.fused_linear_edges.begin(),
-                              resource.fused_linear_edges.end(),
+      if (!std::binary_search(fused_linear_edges.begin(),
+                              fused_linear_edges.end(),
                               edge_id,
                               [](EdgeId left, EdgeId right) { return left.value < right.value; })) {
         return false;
       }
     }
-    if (expected_fused_edges != resource.fused_linear_edges.size()) {
+    if (expected_fused_edges != fused_linear_edges.size()) {
       return false;
     }
   }
@@ -1011,7 +951,7 @@ std::optional<InlinePartitionExecutionPlanRecord> derive_inline_partition_execut
     if (factory == nullptr) {
       return std::nullopt;
     }
-    const auto* trigger = temporal_trigger_for(state, factory->operator_id);
+    const auto* trigger = find_unique_temporal_trigger_by_owner(state, factory->operator_id);
     if (trigger == nullptr) {
       return std::nullopt;
     }

@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -16,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -26,6 +28,7 @@
 #include "partition_parity_test_support.hpp"
 #include "runtime/execution_lane.hpp"
 #include "runtime/graph_exec.hpp"
+#include "runtime/physical_readiness_binding.hpp"
 #include "runtime/predicate_evaluator.hpp"
 #include "runtime/runtime_callback_context.hpp"
 #include "runtime/runtime_phase_counters.hpp"
@@ -40,6 +43,360 @@ namespace {
 
 using namespace std::chrono_literals;
 using namespace test::run_session_channel_execution;
+
+enum class RuntimeMixedPolicyFanoutBranch : std::uint8_t {
+  kBlocking,
+  kDropOldest,
+};
+
+struct RuntimeMixedPolicyFanoutObservation {
+  std::int32_t value{};
+  std::uint64_t sequence{};
+};
+
+// Records the two policy-specific subscriber streams produced by one public Output port.
+struct RuntimeMixedPolicyFanoutProbe {
+  static void reset() {
+    const std::lock_guard lock(mutex);
+    blocking.clear();
+    drop_oldest.clear();
+  }
+
+  static void record(RuntimeMixedPolicyFanoutBranch branch, const Sample<std::int32_t>& sample) {
+    {
+      const std::lock_guard lock(mutex);
+      auto& observations =
+          branch == RuntimeMixedPolicyFanoutBranch::kBlocking ? blocking : drop_oldest;
+      observations.push_back(RuntimeMixedPolicyFanoutObservation{
+          .value = sample.data,
+          .sequence = sample.metadata.sequence,
+      });
+    }
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static bool wait_for_both(std::size_t expected) {
+    std::unique_lock lock(mutex);
+    return cv.wait_for(lock, 5s, [expected] {
+      return blocking.size() >= expected && drop_oldest.size() >= expected;
+    });
+  }
+
+  [[nodiscard]] static std::array<std::vector<RuntimeMixedPolicyFanoutObservation>, 2U> snapshot() {
+    const std::lock_guard lock(mutex);
+    return {blocking, drop_oldest};
+  }
+
+  static inline std::mutex mutex;
+  static inline std::condition_variable cv;
+  static inline std::vector<RuntimeMixedPolicyFanoutObservation> blocking;
+  static inline std::vector<RuntimeMixedPolicyFanoutObservation> drop_oldest;
+};
+
+// Emits two publications far enough apart for both capacity-one branches to retire each sample.
+class RuntimeMixedPolicyFanoutSourceOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 10ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    if (next_value_ > 2) {
+      return {};
+    }
+    auto emitted = output.emit(next_value_);
+    if (emitted) {
+      ++next_value_;
+    }
+    return emitted;
+  }
+
+  Output<std::int32_t> output;
+
+ private:
+  std::int32_t next_value_{1};
+};
+
+// Records one branch of a mixed-policy fanout without changing its temporal contract.
+class RuntimeMixedPolicyFanoutSinkOperator final : public Operator<> {
+ public:
+  explicit RuntimeMixedPolicyFanoutSinkOperator(RuntimeMixedPolicyFanoutBranch branch)
+      : branch_(branch) {}
+
+  void setup(OperatorSpec& spec) override { spec.input(input, "input").queue_depth(1U); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample).error());
+    }
+    RuntimeMixedPolicyFanoutProbe::record(branch_, *sample);
+    return {};
+  }
+
+  Input<std::int32_t> input;
+
+ private:
+  RuntimeMixedPolicyFanoutBranch branch_;
+};
+
+[[nodiscard]] ExecutionPlan make_runtime_mixed_policy_fanout_plan() {
+  Graph graph{"runtime-mixed-policy-fanout"};
+  auto source = graph.op<RuntimeMixedPolicyFanoutSourceOperator>("source");
+  auto blocking = graph.op<RuntimeMixedPolicyFanoutSinkOperator>(
+      "blocking", RuntimeMixedPolicyFanoutBranch::kBlocking);
+  auto drop_oldest = graph.op<RuntimeMixedPolicyFanoutSinkOperator>(
+      "drop-oldest", RuntimeMixedPolicyFanoutBranch::kDropOldest);
+  graph.add_flow(source->output, blocking->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(source->output,
+                 drop_oldest->input,
+                 ConnectionOptions{.queue_policy = QueuePolicy::kDropOldest, .queue_depth = 1U});
+  graph.partition("runtime-mixed-policy-fanout").include_all();
+  const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
+  graph.set_default_clock(default_clock);
+  return compile(graph);
+}
+
+enum class RuntimeCompletionPhysicalRoot : std::uint8_t {
+  kReadable,
+  kDoorbell,
+};
+
+struct RuntimeCompletionPhysicalProbe {
+  struct Snapshot {
+    std::size_t source_calls{};
+    std::vector<std::uint32_t> sink_values;
+  };
+
+  static void reset() {
+    const std::lock_guard lock(mutex);
+    source_calls = 0U;
+    sink_values.clear();
+  }
+
+  [[nodiscard]] static std::uint32_t enter_source() {
+    std::uint32_t call = 0U;
+    {
+      const std::lock_guard lock(mutex);
+      ++source_calls;
+      call = static_cast<std::uint32_t>(source_calls);
+    }
+    cv.notify_all();
+    return call;
+  }
+
+  static void record_sink(std::uint32_t value) {
+    {
+      const std::lock_guard lock(mutex);
+      sink_values.push_back(value);
+    }
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static bool wait_for_source_calls(std::size_t expected) {
+    std::unique_lock lock(mutex);
+    return cv.wait_for(lock, 5s, [expected] { return source_calls >= expected; });
+  }
+
+  [[nodiscard]] static Snapshot snapshot() {
+    const std::lock_guard lock(mutex);
+    return Snapshot{.source_calls = source_calls, .sink_values = sink_values};
+  }
+
+  static inline std::mutex mutex;
+  static inline std::condition_variable cv;
+  static inline std::size_t source_calls{};
+  static inline std::vector<std::uint32_t> sink_values;
+};
+
+class RuntimeCompletionPhysicalSourceOperator final : public Operator<> {
+ public:
+  explicit RuntimeCompletionPhysicalSourceOperator(RuntimeCompletionPhysicalRoot root) noexcept
+      : root_(root) {}
+
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output").max_emits_per_compute(1U);
+    if (root_ == RuntimeCompletionPhysicalRoot::kReadable) {
+      spec.readable_source(readable_, "completion-readable");
+    } else {
+      spec.doorbell_source(doorbell_, "completion-doorbell").capacity(3U);
+    }
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    if (root_ == RuntimeCompletionPhysicalRoot::kReadable) {
+      result.trigger(OnReadable{readable_});
+    } else {
+      result.trigger(OnDoorbell{doorbell_});
+    }
+    result.complete_after(ComputeCalls{.limit = 2U});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    return output.emit(RuntimeCompletionPhysicalProbe::enter_source());
+  }
+
+  Output<std::uint32_t> output;
+
+ private:
+  RuntimeCompletionPhysicalRoot root_;
+  ReadableSource readable_;
+  DoorbellSource doorbell_;
+};
+
+class RuntimeCompletionPhysicalSinkOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.input(input, "input").queue_depth(3U); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto received = input.receive();
+    if (!received) {
+      return make_unexpected(std::move(received).error());
+    }
+    RuntimeCompletionPhysicalProbe::record_sink(received->data);
+    return {};
+  }
+
+  Input<std::uint32_t> input;
+};
+
+[[nodiscard]] ExecutionPlan make_runtime_completion_physical_plan(
+    RuntimeCompletionPhysicalRoot root) {
+  Graph graph{root == RuntimeCompletionPhysicalRoot::kReadable ? "runtime-completion-readable"
+                                                               : "runtime-completion-doorbell"};
+  const auto source = graph.op<RuntimeCompletionPhysicalSourceOperator>("source", root);
+  const auto sink = graph.op<RuntimeCompletionPhysicalSinkOperator>("sink");
+  graph.partition("runtime-completion-physical-source").add(source);
+  graph.partition("runtime-completion-physical-sink").add(sink);
+  graph.add_flow(source->output, sink->input, ConnectionOptions{.queue_depth = 3U});
+  const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
+  graph.set_default_clock(default_clock);
+  return compile(graph);
+}
+
+// Materializes the real bounded physical backend from Runtime's exact cold binding request, then
+// exposes only its transport-neutral control so tests can supply readable or doorbell evidence.
+class RuntimeCompletionPhysicalBindingFactory final : public detail::RuntimePortBindingFactory {
+ public:
+  struct BoundControl {
+    detail::PhysicalReadinessControl control;
+    ClockId reference_clock{};
+  };
+
+  explicit RuntimeCompletionPhysicalBindingFactory(RuntimeCompletionPhysicalRoot root) noexcept
+      : root_(root) {}
+
+  [[nodiscard]] expected<std::unique_ptr<detail::PortBinding>, Error> bind(
+      const detail::RuntimePortBindingRequest& request,
+      TimePoint start_coordinate) noexcept override {
+    const detail::RuntimeEventKind expected_kind = root_ == RuntimeCompletionPhysicalRoot::kReadable
+                                                       ? detail::RuntimeEventKind::kReadable
+                                                       : detail::RuntimeEventKind::kDoorbell;
+    if (request.kind != expected_kind) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    const detail::PhysicalReadinessBindingDescriptor descriptor{
+        .request = request,
+        .wake_requirement = ReadinessWakeRequirement::kDeploymentSelected,
+        .wake_mode = WakeMode::kSleepingWaitset,
+        .execution_lane = request.execution_lane,
+    };
+    auto physical = detail::PhysicalReadinessBindingFactory::create(
+        std::span<const detail::PhysicalReadinessBindingDescriptor>{&descriptor, 1U});
+    if (!physical) {
+      return make_unexpected(std::move(physical.error()));
+    }
+    auto binding = (*physical)->bind(request, start_coordinate);
+    if (!binding) {
+      return make_unexpected(std::move(binding.error()));
+    }
+    auto control = (*physical)->control(
+        request.source, request.plan_generation, request.run_generation, request.source_generation);
+    if (!control) {
+      return make_unexpected(std::move(control.error()));
+    }
+    {
+      const std::lock_guard lock(mutex_);
+      physical_ = std::move(*physical);
+      bound_ =
+          BoundControl{.control = std::move(*control), .reference_clock = request.reference_clock};
+    }
+    cv_.notify_all();
+    return std::move(*binding);
+  }
+
+  [[nodiscard]] std::optional<BoundControl> wait_for_control() const {
+    std::unique_lock lock(mutex_);
+    if (!cv_.wait_for(lock, 5s, [&] { return bound_.has_value(); })) {
+      return std::nullopt;
+    }
+    return bound_;
+  }
+
+ private:
+  RuntimeCompletionPhysicalRoot root_;
+  mutable std::mutex mutex_;
+  mutable std::condition_variable cv_;
+  std::shared_ptr<detail::PhysicalReadinessBindingFactory> physical_;
+  std::optional<BoundControl> bound_;
+};
+
+[[nodiscard]] bool wait_for_readable_rearm(const detail::PhysicalReadinessControl& control,
+                                           std::uint64_t wake_epoch_before_publication) {
+  constexpr std::uint64_t kPublicationAndRetirementWakes = 2U;
+  if (wake_epoch_before_publication >
+      std::numeric_limits<std::uint64_t>::max() - kPublicationAndRetirementWakes) {
+    return false;
+  }
+  const std::uint64_t rearmed_epoch =
+      wake_epoch_before_publication + kPublicationAndRetirementWakes;
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (control.wake_epoch() < rearmed_epoch && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  return control.wake_epoch() >= rearmed_epoch;
+}
+
+void expect_runtime_completion_physical_outcome(const RunSession& session,
+                                                const ExecutionPlan& plan) {
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  const RuntimeCompletionPhysicalProbe::Snapshot observed =
+      RuntimeCompletionPhysicalProbe::snapshot();
+  EXPECT_EQ(observed.source_calls, 2U);
+  EXPECT_EQ(observed.sink_values, (std::vector<std::uint32_t>{1U, 2U}));
+
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+  ASSERT_EQ(session.operator_completion_progress().size(), 1U);
+  const auto& rule = plan.operator_completion_rules().front();
+  const auto& progress = session.operator_completion_progress().front();
+  EXPECT_EQ(progress.owner.id, rule.owner.id);
+  EXPECT_EQ(progress.kind, OperatorCompletionRuleKind::kComputeCalls);
+  EXPECT_EQ(progress.configured_limit, 2U);
+  EXPECT_EQ(progress.successful_compute_calls, 2U);
+  EXPECT_TRUE(progress.limit_reached);
+}
 
 struct RuntimeClosedIslandAllocationProbe {
   static void begin(void* opaque) noexcept {
@@ -133,6 +490,19 @@ void expect_caller_sample_metadata_preserved(const SampleMetadata& expected,
   EXPECT_EQ(actual.flags, expected.flags);
 }
 
+// Runtime stamps publication time from the Graph default clock at the submission boundary, so a
+// consumer must observe a coordinate in that domain rather than canonical absence. Comparing the
+// clock identity against the plan catalog is what makes the coordinate usable: it proves the
+// consumer can place the sample on the same timeline the runtime published it against.
+void expect_runtime_publication_coordinate(const ExecutionPlan& plan,
+                                           const SampleMetadata& actual) {
+  const ClockId publish_clock = plan.clock_catalog().root_default_clock;
+  ASSERT_TRUE(publish_clock.valid());
+  EXPECT_EQ(actual.publish_clock_id, publish_clock);
+  EXPECT_TRUE(actual.publish_time().valid());
+  EXPECT_GT(actual.publish_timestamp_ns, 0);
+}
+
 void expect_input_selection_equal(InputSelection expected, InputSelection actual) {
   EXPECT_EQ(actual.state, expected.state);
   EXPECT_EQ(actual.reason, expected.reason);
@@ -141,7 +511,7 @@ void expect_input_selection_equal(InputSelection expected, InputSelection actual
 // This is the production path rather than a manually assembled RuntimeChannelSession: compile()
 // freezes the POD identity/layout, run_async() reconstructs both typed ports, and the public
 // Output<T>::emit(Sample<T>) overload retains the caller-authored metadata while Runtime stamps
-// publication-owned sequence and representation fields.
+// publication-owned sequence, publication time, and representation fields.
 // REQ: CHAN-074
 // REQ: CHAN-096
 // REQ: RUNTIME-019
@@ -177,6 +547,7 @@ TEST(RunSessionTest, CompiledGraphRoundTripsCustomPodWithCallerSampleMetadata) {
   EXPECT_GT(received_sample.metadata.sequence, 0U);
   EXPECT_EQ(received_sample.metadata.byte_size, sizeof(RuntimeChannelRoundTripPod));
   EXPECT_EQ(received_sample.metadata.payload_kind, PayloadKind::kInlineTyped);
+  expect_runtime_publication_coordinate(plan, received_sample.metadata);
 }
 
 // Generated roots use the same concise Output<T>::emit(Sample<T>) call, but the compiled runtime
@@ -213,6 +584,7 @@ TEST(RunSessionTest, CompiledGraphRoundTripsGeneratedSchemaWithCallerSampleMetad
   EXPECT_GT(received_sample.metadata.sequence, 0U);
   EXPECT_GT(received_sample.metadata.byte_size, received_sample.schema_value.size());
   EXPECT_EQ(received_sample.metadata.payload_kind, PayloadKind::kSerializedBytes);
+  expect_runtime_publication_coordinate(plan, received_sample.metadata);
 }
 
 // A direct-retained publication may carry one allocation-free continuation receipt back through
@@ -533,6 +905,104 @@ TEST(RunSessionTest, ClosedIslandEligibilityAcceptsPhysicalSpinAndReadableRoots)
   EXPECT_EQ(count(detail::RuntimePhaseCounter::kPartitionCausalFrontierAccepted), 0U);
   EXPECT_EQ(count(detail::RuntimePhaseCounter::kPartitionCausalFrontierFallbacks), 0U);
   EXPECT_EQ(count(detail::RuntimePhaseCounter::kLaneComputeDispatches), 0U);
+}
+
+// The compiler admits Readable as explicit producer authority. Cold reconstruction must bind the
+// fresh declaration before normalizing its completion-bearing Contract, then close and drain the
+// output after exactly two successful calls.
+// REQ: CONTRACT-020
+// REQ: RUNTIME-050
+// REQ: CHAN-136
+TEST(RunSessionTest, ComputeCallCompletionExecutesReadableColdReplayAndNaturalDrain) {
+  RuntimeCompletionPhysicalProbe::reset();
+  ExecutionPlan plan =
+      make_runtime_completion_physical_plan(RuntimeCompletionPhysicalRoot::kReadable);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+  const auto compiled = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(compiled, nullptr);
+  ASSERT_EQ(compiled->readiness.size(), 1U);
+  EXPECT_EQ(compiled->readiness.front().kind, ReadinessSourceKind::kReadable);
+  EXPECT_TRUE(compiled->readiness.front().referenced);
+  EXPECT_TRUE(compiled->readiness.front().materialized);
+
+  const auto factory = std::make_shared<RuntimeCompletionPhysicalBindingFactory>(
+      RuntimeCompletionPhysicalRoot::kReadable);
+  plan = detail::RuntimeTestPlanAccess::with_port_binding_factory(plan, factory);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const auto bound = factory->wait_for_control();
+  ASSERT_TRUE(bound.has_value());
+  if (!bound) {
+    return;
+  }
+  // The first readable publication and its asserted-level retirement each advance this
+  // source-local epoch. The retirement wake occurs only after the cell and readable edge gate are
+  // re-armed; raw zero credit alone is an earlier boundary and is not safe for injecting replay.
+  const std::uint64_t wake_epoch_before_publication = bound->control.wake_epoch();
+  ASSERT_TRUE(
+      bound->control
+          .observe_readable(true, TimePoint{.timestamp_ns = 1, .clock_id = bound->reference_clock})
+          .has_value());
+  ASSERT_TRUE(RuntimeCompletionPhysicalProbe::wait_for_source_calls(1U));
+  ASSERT_TRUE(wait_for_readable_rearm(bound->control, wake_epoch_before_publication));
+  EXPECT_EQ(bound->control.outstanding(), 0U);
+  ASSERT_TRUE(
+      bound->control
+          .observe_readable(false, TimePoint{.timestamp_ns = 2, .clock_id = bound->reference_clock})
+          .has_value());
+  ASSERT_TRUE(
+      bound->control
+          .observe_readable(true, TimePoint{.timestamp_ns = 3, .clock_id = bound->reference_clock})
+          .has_value());
+  ASSERT_TRUE(RuntimeCompletionPhysicalProbe::wait_for_source_calls(2U));
+  session.wait();
+
+  expect_runtime_completion_physical_outcome(session, plan);
+}
+
+// Doorbell replay follows the same completion contract but retains its counted monotonic physical
+// source and capacity. Both accepted witnesses must become successful calls before natural EOS.
+// REQ: CONTRACT-020
+// REQ: RUNTIME-050
+// REQ: CHAN-136
+TEST(RunSessionTest, ComputeCallCompletionExecutesDoorbellColdReplayAndNaturalDrain) {
+  RuntimeCompletionPhysicalProbe::reset();
+  ExecutionPlan plan =
+      make_runtime_completion_physical_plan(RuntimeCompletionPhysicalRoot::kDoorbell);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+  const auto compiled = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(compiled, nullptr);
+  ASSERT_EQ(compiled->readiness.size(), 1U);
+  EXPECT_EQ(compiled->readiness.front().kind, ReadinessSourceKind::kDoorbell);
+  EXPECT_EQ(compiled->readiness.front().accepted_capacity, 3U);
+  EXPECT_TRUE(compiled->readiness.front().referenced);
+  EXPECT_TRUE(compiled->readiness.front().materialized);
+
+  const auto factory = std::make_shared<RuntimeCompletionPhysicalBindingFactory>(
+      RuntimeCompletionPhysicalRoot::kDoorbell);
+  plan = detail::RuntimeTestPlanAccess::with_port_binding_factory(plan, factory);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const auto bound = factory->wait_for_control();
+  ASSERT_TRUE(bound.has_value());
+  if (!bound) {
+    return;
+  }
+  const auto first = bound->control.ring_doorbell(
+      1U, TimePoint{.timestamp_ns = 10, .clock_id = bound->reference_clock});
+  ASSERT_TRUE(first.has_value());
+  EXPECT_TRUE(first->witness_accepted);
+  const auto second = bound->control.ring_doorbell(
+      2U, TimePoint{.timestamp_ns = 11, .clock_id = bound->reference_clock});
+  ASSERT_TRUE(second.has_value());
+  EXPECT_TRUE(second->witness_accepted);
+  session.wait();
+
+  expect_runtime_completion_physical_outcome(session, plan);
 }
 
 // A lifecycle-acquired NotificationSender exercises the distinct startup materialization and
@@ -1022,6 +1492,68 @@ TEST(RunSessionTest, DirectContinuationRemainsDisabledForLifecyclePlans) {
   }
 }
 
+// One public output with blocking and drop-oldest consumers must remain one logical publication
+// even though the compiler materializes one HoloMQ service per queue policy.
+// REQ: CHAN-101
+// REQ: CHAN-115
+// REQ: RUNTIME-019
+TEST(RunSessionTest, PublishesSameOutputAcrossSeparateMixedPolicyServices) {
+  // Key setup: connect one scalar Output to capacity-one blocking and drop-oldest inputs on the
+  // same execution partition, then compile and run through the ordinary public Graph API.
+  RuntimeMixedPolicyFanoutProbe::reset();
+  const ExecutionPlan plan = make_runtime_mixed_policy_fanout_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 1U);
+  EXPECT_EQ(plan.partitioning_plan().mode, PartitioningMode::kManual);
+  EXPECT_EQ(plan.partitioning_plan().authored_partition_count, 1U);
+  EXPECT_EQ(plan.partitioning_plan().automatic_partition_count, 0U);
+  ASSERT_TRUE(plan.execution_partitions().front().authored_name.has_value());
+  EXPECT_EQ(*plan.execution_partitions().front().authored_name, "runtime-mixed-policy-fanout");
+  const auto state = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(state, nullptr);
+  ASSERT_EQ(state->process_local_channel_services.size(), 2U);
+  ASSERT_EQ(state->process_local_channel_publishers.size(), 2U);
+  ASSERT_EQ(state->process_local_channel_subscribers.size(), 2U);
+  EXPECT_EQ(state->process_local_channel_services[0].source,
+            state->process_local_channel_services[1].source);
+  EXPECT_TRUE(std::ranges::all_of(state->process_local_channel_services, [](const auto& service) {
+    return service.delivery_kind == detail::ProcessLocalChannelDeliveryKind::kHoloMQ &&
+           service.max_subscribers == 1U && !service.event_wake &&
+           service.event_wake_reason == detail::ProcessLocalHoloMQEventWakeReason::kSuppressed;
+  }));
+  EXPECT_TRUE(std::ranges::none_of(state->process_local_channel_subscribers,
+                                   [](const auto& subscriber) { return subscriber.event_wake; }));
+  EXPECT_EQ(std::ranges::count_if(
+                state->process_local_channel_services,
+                [](const auto& service) { return service.queue_policy == QueuePolicy::kBlocking; }),
+            1);
+  EXPECT_EQ(std::ranges::count_if(state->process_local_channel_services,
+                                  [](const auto& service) {
+                                    return service.queue_policy == QueuePolicy::kDropOldest;
+                                  }),
+            1);
+
+  RunSession session = run_async(plan);
+  const bool observed = RuntimeMixedPolicyFanoutProbe::wait_for_both(2U);
+  session.request_stop();
+  session.wait();
+
+  ASSERT_TRUE(observed);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  const auto observations = RuntimeMixedPolicyFanoutProbe::snapshot();
+  ASSERT_EQ(observations[0].size(), 2U);
+  ASSERT_EQ(observations[1].size(), 2U);
+  // Key assertion: both policy-specific services expose the same logical values and publication
+  // sequence in order; the lowering boundary does not duplicate or omit either publication.
+  for (std::size_t index = 0U; index < observations[0].size(); ++index) {
+    EXPECT_EQ(observations[0][index].value, static_cast<std::int32_t>(index + 1U));
+    EXPECT_EQ(observations[1][index].value, observations[0][index].value);
+    EXPECT_EQ(observations[1][index].sequence, observations[0][index].sequence);
+  }
+}
+
 // The public compile/run path must not let a capacity-one blocking queue monopolize the serial
 // execution lane. The callback observes finite pressure, remains live under the cooperative
 // cancellation contract, and then lets request_stop() complete the ordinary RunSession teardown.
@@ -1205,12 +1737,22 @@ TEST(RunSessionTest, ChannelActivationOwnershipRequiresMaterializedEndpoints) {
 // REQ: RUNTIME-016
 // REQ: RUNTIME-018
 TEST(RunSessionTest, PostComputeActivationCutOrdersOpposingSubscriberScanByTagTime) {
+  // Key setup: compile two source outputs with two HoloMQ recipients apiece, suppress all four
+  // event wakes, and publish the later-tagged service before the earlier-tagged service.
   test::RuntimeActivationCutProbeState::reset();
   const ExecutionPlan plan = test::make_runtime_activation_cut_order_plan();
   ASSERT_TRUE(plan.ok()) << plan.json();
   const auto state = detail::ExecutionPlanAccess::retain(plan);
   ASSERT_NE(state, nullptr);
-  ASSERT_EQ(state->process_local_channel_subscribers.size(), 2U);
+  ASSERT_EQ(state->process_local_channel_services.size(), 2U);
+  ASSERT_EQ(state->process_local_channel_subscribers.size(), 4U);
+  EXPECT_TRUE(std::ranges::all_of(state->process_local_channel_services, [](const auto& service) {
+    return service.delivery_kind == detail::ProcessLocalChannelDeliveryKind::kHoloMQ &&
+           !service.event_wake &&
+           service.event_wake_reason == detail::ProcessLocalHoloMQEventWakeReason::kSuppressed;
+  }));
+  EXPECT_TRUE(std::ranges::none_of(state->process_local_channel_subscribers,
+                                   [](const auto& subscriber) { return subscriber.event_wake; }));
   const auto source_name = [&](PortId source) -> std::string_view {
     const auto port = std::find_if(state->ports.begin(), state->ports.end(), [&](const auto& row) {
       return row.id == source;
@@ -1218,10 +1760,12 @@ TEST(RunSessionTest, PostComputeActivationCutOrdersOpposingSubscriberScanByTagTi
     return port == state->ports.end() ? std::string_view{} : std::string_view{port->local_name};
   };
   EXPECT_EQ(source_name(state->process_local_channel_subscribers[0].source), "a-later");
-  EXPECT_EQ(source_name(state->process_local_channel_subscribers[1].source), "z-earlier");
+  EXPECT_EQ(source_name(state->process_local_channel_subscribers[1].source), "a-later");
+  EXPECT_EQ(source_name(state->process_local_channel_subscribers[2].source), "z-earlier");
+  EXPECT_EQ(source_name(state->process_local_channel_subscribers[3].source), "z-earlier");
 
   RunSession session = run_async(plan);
-  const bool observed = test::RuntimeActivationCutProbeState::wait_for_sinks(2U);
+  const bool observed = test::RuntimeActivationCutProbeState::wait_for_sinks(4U);
   session.request_stop();
   session.wait();
 
@@ -1230,13 +1774,18 @@ TEST(RunSessionTest, PostComputeActivationCutOrdersOpposingSubscriberScanByTagTi
   EXPECT_TRUE(session.diagnostics().empty())
       << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
   const auto observations = test::RuntimeActivationCutProbeState::snapshot();
-  ASSERT_EQ(observations.size(), 2U);
+  ASSERT_EQ(observations.size(), 4U);
+  // Key assertion: the single post-compute cut materializes every eventless recipient before the
+  // next freeze, so both earlier-tagged activations run before either later-tagged activation.
   EXPECT_EQ(observations[0].value, 5U);
-  EXPECT_EQ(observations[1].value, 10U);
-  EXPECT_LT(observations[0].capture_timestamp_ns, observations[1].capture_timestamp_ns);
-  EXPECT_LT(observations[0].tag_time, observations[1].tag_time);
-  EXPECT_EQ(observations[0].capture_timestamp_ns, observations[0].tag_time.logical_ns);
-  EXPECT_EQ(observations[1].capture_timestamp_ns, observations[1].tag_time.logical_ns);
+  EXPECT_EQ(observations[1].value, 5U);
+  EXPECT_EQ(observations[2].value, 10U);
+  EXPECT_EQ(observations[3].value, 10U);
+  EXPECT_LT(observations[1].capture_timestamp_ns, observations[2].capture_timestamp_ns);
+  EXPECT_LT(observations[1].tag_time, observations[2].tag_time);
+  for (const auto& observation : observations) {
+    EXPECT_EQ(observation.capture_timestamp_ns, observation.tag_time.logical_ns);
+  }
 }
 
 // REQ: RUNTIME-004
@@ -1296,6 +1845,55 @@ TEST(RunSessionTest, ChannelWindowTimeoutInvokesWithMissingWindowSelection) {
   EXPECT_EQ(test::RuntimeWindowChannelProbeState::batch_size.load(), 0U);
   EXPECT_GT(test::RuntimeWindowChannelProbeState::activation_time_ns.load(),
             test::RuntimeWindowChannelProbeState::anchor_capture_ns.load());
+}
+
+// One physical producer EOS closes both pending bracketed windows. Each all-or-nothing terminal
+// decision must invoke the SafeDefault branch once, publish downstream once, and retire before the
+// sink forwards EOS and the finite graph completes naturally.
+// REQ: RUNTIME-050
+// REQ: CHAN-136
+TEST(RunSessionTest, ChannelWindowEndOfStreamDrainsEveryPendingDecisionBeforeDownstreamEos) {
+  test::RuntimeWindowChannelProbeState::reset(test::RuntimeWindowChannelScript::kEndOfStreamDrain);
+  const ExecutionPlan compiled = test::make_runtime_window_channel_plan();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::disable_direct_continuation_elision_for_test(compiled);
+  test::partition_parity::expect_accepted_cover(plan);
+
+  RunSession session = run_async(plan);
+  const bool drained = test::RuntimeWindowChannelProbeState::wait_for_compute_count(2U);
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (session.is_running() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
+  const bool completed_naturally = !session.is_running();
+  if (!completed_naturally) {
+    session.request_stop();
+  }
+  session.wait();
+
+  ASSERT_TRUE(drained)
+      << "window_compute=" << test::RuntimeWindowChannelProbeState::compute_count.load()
+      << " eos_defaults="
+      << test::RuntimeWindowChannelProbeState::safe_default_end_of_stream_count.load()
+      << " downstream=" << test::RuntimeWindowChannelProbeState::downstream_count.load()
+      << " termination=" << static_cast<std::uint32_t>(session.termination());
+  ASSERT_TRUE(completed_naturally);
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  EXPECT_EQ(test::RuntimeWindowChannelProbeState::compute_count.load(), 2U);
+  EXPECT_EQ(test::RuntimeWindowChannelProbeState::safe_default_end_of_stream_count.load(), 2U);
+  EXPECT_EQ(test::RuntimeWindowChannelProbeState::downstream_count.load(), 2U);
+  const auto& tags = test::RuntimeWindowChannelProbeState::terminal_tags;
+  const auto& tag_times = test::RuntimeWindowChannelProbeState::terminal_tag_times;
+  ASSERT_TRUE(tags[0].valid());
+  ASSERT_TRUE(tags[1].valid());
+  EXPECT_EQ(tags[1].generation, tags[0].generation);
+  EXPECT_EQ(tags[1].sequence, tags[0].sequence + 1U);
+  ASSERT_TRUE(tag_times[0].valid());
+  ASSERT_TRUE(tag_times[1].valid());
+  EXPECT_EQ(tag_times[1].logical_ns, tag_times[0].logical_ns);
+  EXPECT_EQ(tag_times[1].microstep, tag_times[0].microstep + 1U);
 }
 
 // Each partition runner observes only the window-trigger state it owns. A
@@ -1404,9 +2002,22 @@ TEST(RunSessionTest, SuccessfulFalsePredicateRetiresInputsBeyondTheQueueCapacity
 // REQ: RUNTIME-019
 // REQ: CONTRACT-011
 TEST(RunSessionTest, ComputeOnlySkipDoesNotRollBackASuccessfulPredicateInput) {
+  // Key setup: force both source outputs through separate HoloMQ services into one two-input
+  // predicate target, where the first driver has no compute-only peer.
   reset_predicate_retirement_probe();
   const ExecutionPlan plan = make_predicate_compute_skip_plan();
   test::partition_parity::expect_accepted_cover(plan);
+  const auto state = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(state, nullptr);
+  ASSERT_EQ(state->process_local_channel_services.size(), 2U);
+  ASSERT_EQ(state->process_local_channel_subscribers.size(), 2U);
+  EXPECT_TRUE(std::ranges::all_of(state->process_local_channel_services, [](const auto& service) {
+    return service.delivery_kind == detail::ProcessLocalChannelDeliveryKind::kHoloMQ &&
+           !service.event_wake &&
+           service.event_wake_reason == detail::ProcessLocalHoloMQEventWakeReason::kSuppressed;
+  }));
+  EXPECT_TRUE(std::ranges::none_of(state->process_local_channel_subscribers,
+                                   [](const auto& subscriber) { return subscriber.event_wake; }));
 
   RunSession session = run_async(plan);
   const bool computed = wait_for_predicate_retirement_compute();
@@ -1417,9 +2028,9 @@ TEST(RunSessionTest, ComputeOnlySkipDoesNotRollBackASuccessfulPredicateInput) {
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty())
       << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
-  // Driver 1 evaluates successfully but its missing compute-only peer suppresses
-  // the callback. Driver 2 must then advance and adopt the peer with the same
-  // capture coordinate; replaying driver 1 would suppress forever.
+  // Key assertion: driver 1 evaluates successfully but its missing compute-only peer suppresses
+  // the callback. Both eventless services then cross the next source activation cut, so driver 2
+  // advances and adopts peer 200 with the same capture coordinate instead of replaying driver 1.
   const PredicateRetirementSnapshot snapshot = predicate_retirement_snapshot();
   EXPECT_EQ(snapshot.source_count, 2U);
   EXPECT_EQ(snapshot.evaluation_count, 2U);

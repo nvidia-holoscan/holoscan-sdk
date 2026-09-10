@@ -25,6 +25,9 @@
 #include "runtime/dispatcher.hpp"
 #include "runtime/endpoint_clock_health.hpp"
 #include "runtime/predicate_evaluator.hpp"
+#include "runtime/runtime_phase_counters.hpp"
+#include "runtime/runtime_test_access.hpp"
+#include "runtime/temporal_depth_publication.hpp"
 
 namespace holoscan {
 namespace {
@@ -177,6 +180,39 @@ InputSelectionPlanRecord selection_plan(InputSelectorKind selector, PortId input
       .reference_clock = kRuntimeClock,
   };
   return plan;
+}
+
+// Mirror only the selector inventory fields consumed by Runtime's source-private temporal-depth
+// publication algorithm. The focused regression moves selectors through this inventory so it
+// exercises the same validate-all/apply-all implementation as RunSession without a Core ABI seam.
+struct TemporalDepthPublicationTestState {
+  struct InputSelectorSlot {
+    detail::RuntimeInputSelectionState selector;
+    bool aligned_member{};
+  };
+
+  struct AlignedSelectorSlot {
+    detail::RuntimeAlignedSelectionState selector;
+  };
+
+  std::vector<InputSelectorSlot> input_selectors;
+  std::vector<AlignedSelectorSlot> aligned_selectors;
+};
+
+[[nodiscard]] bool commit_two_ordinary_selectors(detail::RuntimeInputSelectionState& first,
+                                                 detail::RuntimeInputSelectionState& second) {
+  TemporalDepthPublicationTestState state;
+  state.input_selectors.reserve(2U);
+  state.input_selectors.push_back(
+      TemporalDepthPublicationTestState::InputSelectorSlot{.selector = std::move(first)});
+  state.input_selectors.push_back(
+      TemporalDepthPublicationTestState::InputSelectorSlot{.selector = std::move(second)});
+  std::span<TemporalDepthPublicationTestState> states{&state, 1U};
+
+  const bool committed = detail::runtime_internal::commit_rate_candidate_temporal_depths(states);
+  first = std::move(state.input_selectors[0].selector);
+  second = std::move(state.input_selectors[1].selector);
+  return committed;
 }
 
 // Two-member AlignedTriggerPlanRecord covering ports 1 and 2 with configurable capacity/window.
@@ -415,6 +451,34 @@ TEST(DispatcherBindingTest, SourceCreditPreflightPreservesPendingSingleCreditIng
   const auto unknown = coordinator->source_credit_remaining(detail::make_source_id(99U));
   ASSERT_FALSE(unknown);
   EXPECT_EQ(unknown.error().code, ErrorCode::kNotFound);
+}
+
+TEST(DispatcherBindingTest, TriggerWitnessReferenceExcludesTerminalButPreservesData) {
+  auto source = source_binding(0U, detail::RuntimeEventKind::kInputArrival, 2U);
+  source.port = {};
+  const PortId trigger_port{7U};
+  auto coordinator = detail::RuntimeCandidateCoordinator::create({&source, 1U}, 1U, 2U);
+  ASSERT_TRUE(coordinator);
+
+  detail::BoundedEventPortBinding terminal_only{2U, source.source};
+  auto terminal = runtime_event(source, 1U, 20);
+  terminal.kind = detail::RuntimeEventKind::kInputEndOfStream;
+  terminal.port = trigger_port;
+  ASSERT_TRUE(terminal_only.push(terminal));
+  ASSERT_EQ(coordinator->ingest(terminal_only), 1U);
+  EXPECT_FALSE(coordinator->oldest_pending_nonterminal_trigger_reference(
+      source.vertex, source.source, trigger_port));
+  EXPECT_TRUE(coordinator->no_pending_trigger_witness(source.vertex, trigger_port));
+
+  detail::BoundedEventPortBinding data{2U, source.source};
+  auto arrival = runtime_event(source, 2U, 10);
+  arrival.port = trigger_port;
+  ASSERT_TRUE(data.push(arrival));
+  ASSERT_EQ(coordinator->ingest(data), 1U);
+  EXPECT_EQ(coordinator->oldest_pending_nonterminal_trigger_reference(
+                source.vertex, source.source, trigger_port),
+            (TimePoint{10, source.reference_clock}));
+  EXPECT_FALSE(coordinator->no_pending_trigger_witness(source.vertex, trigger_port));
 }
 
 // REQ: RUNTIME-007
@@ -742,7 +806,9 @@ TEST(DispatcherBindingTest, CoordinatorFreezesEverySourceKindInDeterministicOrde
       source_binding(4U, detail::RuntimeEventKind::kDoorbell),
       source_binding(5U, detail::RuntimeEventKind::kSpin),
   };
-  auto coordinator = detail::RuntimeCandidateCoordinator::create(sources, 1U, sources.size());
+  detail::RuntimePhaseCounters counters;
+  auto coordinator =
+      detail::RuntimeCandidateCoordinator::create(sources, 1U, sources.size(), &counters);
   ASSERT_TRUE(coordinator);
   // Key setup: all 6 events pushed in reverse index order to confirm freeze order is by plan
   // ordinal, not arrival order.
@@ -768,6 +834,14 @@ TEST(DispatcherBindingTest, CoordinatorFreezesEverySourceKindInDeterministicOrde
               (TagTime{100, static_cast<std::uint32_t>(index), 0U}));
   }
   EXPECT_EQ(coordinator->freeze_next().error().code, ErrorCode::kNotReady);
+
+  const auto phase_counts = counters.snapshot();
+  const auto phase = [&](detail::RuntimePhaseCounter counter) {
+    return phase_counts[detail::RuntimePhaseCounters::index(counter)];
+  };
+  EXPECT_EQ(phase(detail::RuntimePhaseCounter::kCandidateOrderComparisons), 15U);
+  EXPECT_EQ(phase(detail::RuntimePhaseCounter::kCandidateOrderMoves), 0U);
+  EXPECT_EQ(phase(detail::RuntimePhaseCounter::kCandidateTagTimeReservations), sources.size());
 
   const SchedulerPlanRecord plan = scheduler_plan();
   auto dispatcher = detail::Dispatcher::create(plan, ready.size());
@@ -798,6 +872,39 @@ TEST(DispatcherBindingTest, CoordinatorFreezesEverySourceKindInDeterministicOrde
   ASSERT_TRUE(selected);
   ASSERT_TRUE(dispatcher->complete(*selected));
   EXPECT_TRUE(coordinator->retire(*second_candidate));
+}
+
+// Source lookup is repeated across readiness credit, acceptance, and lifecycle queries, so its
+// linear work must remain visible to opt-in performance attribution.
+// REQ: RUNTIME-007
+TEST(DispatcherBindingTest, CoordinatorPhaseCountersAttributeSourceLookupProbes) {
+  constexpr std::size_t kSourceCount = 6U;
+  std::array<detail::RuntimeSourceBindingRecord, kSourceCount> sources;
+  for (std::size_t index = 0U; index < sources.size(); ++index) {
+    sources[index] =
+        source_binding(static_cast<std::uint32_t>(index), detail::RuntimeEventKind::kClockTick);
+  }
+  detail::RuntimePhaseCounters counters;
+  auto coordinator =
+      detail::RuntimeCandidateCoordinator::create(sources, 1U, sources.size(), &counters);
+  ASSERT_TRUE(coordinator);
+
+  // Key setup: query the first, last, and one absent source in the frozen inventory.
+  EXPECT_TRUE(coordinator->source_credit_remaining(sources.front().source));
+  EXPECT_TRUE(coordinator->source_credit_remaining(sources.back().source));
+  auto absent = coordinator->source_credit_remaining(detail::make_source_id(100U));
+  ASSERT_FALSE(absent);
+  EXPECT_EQ(absent.error().code, ErrorCode::kNotFound);
+
+  // Key assertion: attribution reports the exact 1 + N + N linear probes and no candidate work.
+  const auto phase_counts = counters.snapshot();
+  const auto phase = [&](detail::RuntimePhaseCounter counter) {
+    return phase_counts[detail::RuntimePhaseCounters::index(counter)];
+  };
+  EXPECT_EQ(phase(detail::RuntimePhaseCounter::kCandidateSourceLookupProbes),
+            1U + kSourceCount + kSourceCount);
+  EXPECT_EQ(phase(detail::RuntimePhaseCounter::kCandidateOrderComparisons), 0U);
+  EXPECT_EQ(phase(detail::RuntimePhaseCounter::kCandidateTagTimeReservations), 0U);
 }
 
 // Independently accepted sources may become visible in separate scans: a later reference can
@@ -1157,6 +1264,421 @@ TEST(DispatcherBindingTest, PlanBackedScalarAndDrainSelectorsCommitOnlyAcceptedC
   EXPECT_TRUE(empty->finish(true));
 }
 
+// REQ: LIFECYCLE-012
+// REQ: CHAN-141
+// A lifecycle-selected logical depth is enforced independently from the preallocated selector
+// backing. Candidate changes remain private until committed, and changing the active bound never
+// changes the payload-claim scratch bound.
+TEST(DispatcherBindingTest, RateCandidateDepthSeparatesSelectorBackingFromActiveAdmission) {
+  const auto plan = selection_plan(InputSelectorKind::kExact, PortId{1U}, 2U, 1U);
+  auto state = detail::RuntimeInputSelectionState::create(
+      plan, nullptr, 0U, detail::RuntimeQueueCapacity{.backing = 8U, .active = 2U});
+  ASSERT_TRUE(state);
+  EXPECT_EQ(state->payload_claim_capacity(), 8U);
+
+  ASSERT_TRUE(state->push(temporal_sample(10, 1U, 1U)));
+  ASSERT_TRUE(state->push(temporal_sample(11, 2U, 2U)));
+  EXPECT_EQ(state->push(temporal_sample(12, 3U, 3U)).error().code, ErrorCode::kResourceExhausted);
+
+  ASSERT_TRUE(state->prepare_rate_candidate_capacity(4U));
+  EXPECT_EQ(state->push(temporal_sample(12, 3U, 3U)).error().code, ErrorCode::kResourceExhausted);
+  state->discard_rate_candidate_capacity();
+  EXPECT_EQ(state->push(temporal_sample(12, 3U, 3U)).error().code, ErrorCode::kResourceExhausted);
+
+  ASSERT_TRUE(state->prepare_rate_candidate_capacity(4U));
+  ASSERT_TRUE(state->commit_rate_candidate_capacity());
+  ASSERT_TRUE(state->push(temporal_sample(12, 3U, 3U)));
+  ASSERT_TRUE(state->push(temporal_sample(13, 4U, 4U)));
+  EXPECT_EQ(state->push(temporal_sample(14, 5U, 5U)).error().code, ErrorCode::kResourceExhausted);
+  EXPECT_EQ(state->payload_claim_capacity(), 8U);
+}
+
+// REQ: LIFECYCLE-012
+// REQ: RUNTIME-007
+// A published lifecycle restart may grow the logical depth inside preallocated backing. DrainAll
+// must consume that generation's complete active prefix instead of retaining the smaller bound
+// frozen into the original selection record.
+TEST(DispatcherBindingTest, LifecycleDepthGrowthExpandsAutomaticDrainAllServiceBound) {
+  const auto plan = selection_plan(InputSelectorKind::kDrainAll, PortId{1U}, 2U, 2U);
+  auto state = detail::RuntimeInputSelectionState::create(
+      plan, nullptr, 0U, detail::RuntimeQueueCapacity{.backing = 8U, .active = 2U});
+  ASSERT_TRUE(state);
+
+  ASSERT_TRUE(state->push(temporal_sample(10, 1U, 1U)));
+  ASSERT_TRUE(state->push(temporal_sample(11, 2U, 2U)));
+  auto initial = state->begin(TimePoint{11, kRuntimeClock}, 2U, 1U);
+  ASSERT_TRUE(initial);
+  ASSERT_EQ(initial->selected().size(), 2U);
+  ASSERT_TRUE(initial->finish(true));
+
+  ASSERT_TRUE(state->prepare_rate_candidate_capacity(4U));
+  ASSERT_TRUE(state->commit_rate_candidate_capacity());
+  ASSERT_TRUE(state->push(temporal_sample(20, 3U, 3U)));
+  ASSERT_TRUE(state->push(temporal_sample(21, 4U, 4U)));
+  ASSERT_TRUE(state->push(temporal_sample(22, 5U, 5U)));
+  ASSERT_TRUE(state->push(temporal_sample(23, 6U, 6U)));
+
+  auto restarted = state->begin(TimePoint{23, kRuntimeClock}, 6U, 2U);
+  ASSERT_TRUE(restarted) << restarted.error().message;
+  ASSERT_EQ(restarted->selected().size(), 4U);
+  EXPECT_EQ(restarted->selected().front().source_sequence, 3U);
+  EXPECT_EQ(restarted->selected().back().source_sequence, 6U);
+  ASSERT_TRUE(restarted->finish(true));
+  EXPECT_EQ(state->retained_count(), 0U);
+}
+
+// REQ: LIFECYCLE-012
+// REQ: RUNTIME-007
+// Selection scratch is sized from the largest batch that Runtime can materialize. Automatic
+// DrainAll follows the immutable lifecycle backing ceiling, while explicitly bounded and scalar
+// selectors retain their compiler-frozen limits.
+TEST(DispatcherBindingTest, MaximumSelectedCapacityDistinguishesAutomaticAndExplicitBounds) {
+  const auto automatic_plan = selection_plan(InputSelectorKind::kDrainAll, PortId{1U}, 2U, 2U);
+  auto automatic = detail::RuntimeInputSelectionState::create(
+      automatic_plan, nullptr, 0U, detail::RuntimeQueueCapacity{.backing = 8U, .active = 2U});
+  ASSERT_TRUE(automatic);
+  EXPECT_EQ(automatic->maximum_selected_capacity(), 8U);
+
+  auto explicit_plan = selection_plan(InputSelectorKind::kBracketedWindow, PortId{2U}, 8U, 3U);
+  explicit_plan.lookbehind = 1U;
+  explicit_plan.lookahead = 1U;
+  const BracketedWindowPlanRecord window{
+      .owner = OperatorRef{1U, 77U, 0U},
+      .input = PortId{2U},
+      .anchor = PortId{1U},
+      .lookbehind = 1U,
+      .lookahead = 1U,
+      .max_samples = 3U,
+      .event_clock = kRuntimeClock,
+      .queue_capacity = 8U,
+      .cache_capacity = 8U,
+      .producer_max_emits_per_compute = 1U,
+      .retained_overlap_capacity = 2U,
+  };
+  auto explicit_bound = detail::RuntimeInputSelectionState::create(explicit_plan, &window, 2U);
+  ASSERT_TRUE(explicit_bound);
+  EXPECT_EQ(explicit_bound->maximum_selected_capacity(), 3U);
+
+  const auto scalar_plan = selection_plan(InputSelectorKind::kExact, PortId{3U}, 8U, 1U);
+  auto scalar = detail::RuntimeInputSelectionState::create(scalar_plan);
+  ASSERT_TRUE(scalar);
+  EXPECT_EQ(scalar->maximum_selected_capacity(), 1U);
+}
+
+// REQ: RUNTIME-007
+// An explicit selected-capacity bound remains an overflow boundary even when the retained queue is
+// larger. A failed snapshot must neither consume the prefix nor leave a stale transaction active.
+TEST(DispatcherBindingTest, SelectedCapacityBoundRejectsOverflowAndPreservesRetainedPrefix) {
+  detail::TemporalInputCache cache{4U};
+  ASSERT_TRUE(cache.push(temporal_sample(10, 1U, 1U)));
+  ASSERT_TRUE(cache.push(temporal_sample(11, 2U, 2U)));
+  ASSERT_TRUE(cache.push(temporal_sample(12, 3U, 3U)));
+
+  auto overflow = cache.snapshot_drain_all(3U, 2U);
+  ASSERT_FALSE(overflow);
+  EXPECT_EQ(overflow.error().code, ErrorCode::kResourceExhausted);
+  EXPECT_EQ(cache.size(), 3U);
+
+  ASSERT_TRUE(cache.evict(3U));
+  auto exact_bound = cache.snapshot_drain_all(3U, 2U);
+  ASSERT_TRUE(exact_bound);
+  ASSERT_EQ(exact_bound->samples().size(), 2U);
+  ASSERT_TRUE(exact_bound->commit());
+  EXPECT_EQ(cache.size(), 0U);
+}
+
+// REQ: LIFECYCLE-012
+// Restart publication validates every selector before mutating any of them. A later selector that
+// cannot shrink below retained history therefore leaves an earlier selector on its old generation.
+TEST(DispatcherBindingTest, CandidateCapacityValidationPreventsEarlierPartialPublication) {
+  const auto earlier_plan = selection_plan(InputSelectorKind::kExact, PortId{1U}, 1U, 1U);
+  auto earlier = detail::RuntimeInputSelectionState::create(
+      earlier_plan, nullptr, 0U, detail::RuntimeQueueCapacity{.backing = 2U, .active = 1U});
+  ASSERT_TRUE(earlier);
+  ASSERT_TRUE(earlier->push(temporal_sample(10, 1U, 1U)));
+  ASSERT_TRUE(earlier->prepare_rate_candidate_capacity(2U));
+
+  const auto later_plan = selection_plan(InputSelectorKind::kExact, PortId{2U}, 2U, 1U);
+  auto later = detail::RuntimeInputSelectionState::create(later_plan);
+  ASSERT_TRUE(later);
+  ASSERT_TRUE(later->push(temporal_sample(10, 1U, 1U)));
+  ASSERT_TRUE(later->push(temporal_sample(11, 2U, 2U)));
+  ASSERT_TRUE(later->prepare_rate_candidate_capacity(1U));
+
+  EXPECT_FALSE(commit_two_ordinary_selectors(*earlier, *later));
+
+  // Key assertion: the production closure performs no apply pass after the later validation
+  // fails, so the first state still enforces depth one instead of exposing its staged depth two.
+  EXPECT_EQ(earlier->push(temporal_sample(11, 2U, 2U)).error().code, ErrorCode::kResourceExhausted);
+  earlier->discard_rate_candidate_capacity();
+  later->discard_rate_candidate_capacity();
+}
+
+// REQ: RUNTIME-017
+// kLatestWithin[capacity=1]: the drop-oldest reconcile releases its superseded candidate through
+// evict_retained, which must surrender both the record and its payload claim so the caller can
+// retire the transport slot, and must leave the cache able to admit the newer arrival.
+TEST(DispatcherBindingTest, EvictRetainedSurrendersTheNamedScalarRecordAndItsPayloadClaim) {
+  auto plan = selection_plan(InputSelectorKind::kLatestWithin, PortId{1U}, 1U, 1U);
+  plan.max_age_ns = 1000;
+  plan.missing = TemporalRecordMissingKind::kSkip;
+  auto state = detail::RuntimeInputSelectionState::create(plan);
+  ASSERT_TRUE(state);
+  ASSERT_TRUE(state->push(temporal_sample(10, 1U, 1U)));
+
+  std::array<detail::TemporalSampleRecord, 2U> claims{};
+  auto claim_count = state->copy_payload_claims(claims);
+  ASSERT_TRUE(claim_count);
+  ASSERT_EQ(*claim_count, 1U);
+  EXPECT_EQ(claims.front().arrival_sequence, 1U);
+
+  // Key assertion: the claim disappears with the record, which is what lets the reconcile hand the
+  // transport slot back through retire_samples() without stranding an observer.
+  ASSERT_TRUE(state->evict_retained(1U));
+  EXPECT_EQ(state->retained_count(), 0U);
+  claim_count = state->copy_payload_claims(claims);
+  ASSERT_TRUE(claim_count);
+  EXPECT_EQ(*claim_count, 0U);
+  // A depth-one cache that still refused the successor would convert a stale selection into a
+  // permanently missing one.
+  ASSERT_TRUE(state->push(temporal_sample(30, 2U, 2U)));
+  auto selected = state->begin(TimePoint{30, kRuntimeClock}, 2U, 1U);
+  ASSERT_TRUE(selected);
+  EXPECT_EQ(selected->selection().state, InputState::kSelected);
+  ASSERT_EQ(selected->selected().size(), 1U);
+  EXPECT_EQ(selected->selected().front().source_sequence, 2U);
+  ASSERT_TRUE(selected->finish(true));
+
+  // Evicting an identity the cache never held is refused rather than silently ignored.
+  const auto absent = state->evict_retained(99U);
+  ASSERT_FALSE(absent);
+  EXPECT_EQ(absent.error().code, ErrorCode::kNotFound);
+}
+
+// REQ: CHAN-131
+// A ReuseLast selector reports its reuse retention through copy_payload_claims, but that record
+// lives in retained_ rather than in the cache: commit() erases the cache entry and republishes it
+// as the reuse copy. evict_retained only inspects the cache, so the reconcile sees exactly one
+// claim, passes its depth-one gate, and then cannot evict the record that claim names.
+//
+// Key assertion: the two disagree. This is the cheapest possible reproduction of the permanent
+// depth-one ReuseLast stall -- claims reports 1 while eviction reports kNotFound -- and it needs no
+// graph, no transport, and no timing.
+TEST(DispatcherBindingTest, EvictRetainedCannotReachAReuseLastRetentionItsClaimReports) {
+  auto plan = selection_plan(InputSelectorKind::kLatestWithin, PortId{1U}, 1U, 1U);
+  plan.max_age_ns = 1000;
+  plan.missing = TemporalRecordMissingKind::kReuseLast;
+  plan.reuse_max_age_ns = 1000000;
+  auto state = detail::RuntimeInputSelectionState::create(plan);
+  ASSERT_TRUE(state);
+  ASSERT_TRUE(state->push(temporal_sample(10, 1U, 1U)));
+
+  // Accept the record, which moves it out of the cache and into the reuse retention.
+  auto selected = state->begin(TimePoint{10, kRuntimeClock}, 1U, 1U);
+  ASSERT_TRUE(selected);
+  ASSERT_EQ(selected->selection().state, InputState::kSelected);
+  ASSERT_TRUE(selected->finish(true));
+  EXPECT_EQ(state->retained_count(), 0U);
+
+  std::array<detail::TemporalSampleRecord, 2U> claims{};
+  const auto claim_count = state->copy_payload_claims(claims);
+  ASSERT_TRUE(claim_count);
+  ASSERT_EQ(*claim_count, 1U) << "the reuse retention is reported as a live payload claim";
+  EXPECT_EQ(claims.front().arrival_sequence, 1U);
+
+  // Key assertion: the claim names a record eviction cannot reach, so any reconcile gated on
+  // "exactly one claim" is a no-op here while the transport slot stays pinned by that claim.
+  const auto evicted = state->evict_retained(claims.front().arrival_sequence);
+  ASSERT_FALSE(evicted) << "eviction unexpectedly reached the reuse retention";
+  EXPECT_EQ(evicted.error().code, ErrorCode::kNotFound);
+}
+
+// REQ: RUNTIME-050
+TEST(DispatcherBindingTest, ReuseReplacementTransactionFencesSelectionAndRestoresOnRollback) {
+  auto plan = selection_plan(InputSelectorKind::kLatestWithin, PortId{1U}, 1U, 1U);
+  plan.max_age_ns = 1000;
+  plan.missing = TemporalRecordMissingKind::kReuseLast;
+  plan.reuse_max_age_ns = 1000000;
+  auto state = detail::RuntimeInputSelectionState::create(plan);
+  ASSERT_TRUE(state);
+  const auto retained = temporal_sample(10, 1U, 1U);
+  ASSERT_TRUE(state->push(retained));
+  auto selected = state->begin(TimePoint{10, kRuntimeClock}, 1U, 1U);
+  ASSERT_TRUE(selected);
+  ASSERT_TRUE(selected->finish(true));
+
+  {
+    auto replacement = state->reserve_reuse_replacement(retained);
+    ASSERT_TRUE(replacement);
+    auto concurrent = state->begin(TimePoint{11, kRuntimeClock}, 1U, 1U);
+    ASSERT_FALSE(concurrent);
+    EXPECT_EQ(concurrent.error().code, ErrorCode::kBackpressured);
+    auto reset = state->reset();
+    ASSERT_FALSE(reset);
+    EXPECT_EQ(reset.error().code, ErrorCode::kBackpressured);
+  }
+  std::array<detail::TemporalSampleRecord, 1U> claims{};
+  auto restored = state->copy_payload_claims(claims);
+  ASSERT_TRUE(restored);
+  ASSERT_EQ(*restored, 1U);
+  EXPECT_EQ(claims.front(), retained);
+
+  auto replacement = state->reserve_reuse_replacement(retained);
+  ASSERT_TRUE(replacement);
+  replacement->commit();
+  auto committed = state->copy_payload_claims(claims);
+  ASSERT_TRUE(committed);
+  EXPECT_EQ(*committed, 0U);
+}
+
+// REQ: RUNTIME-043
+// REQ: RUNTIME-050
+// Capture absence is an arrival fact even though it cannot identify the selected payload. A
+// rejected activation preserves that evidence; an accepted ReuseLast activation consumes it while
+// retaining the independently selected prior payload.
+TEST(DispatcherBindingTest, ReuseLastConsumesCaptureAbsentEvidenceOnlyOnAcceptedCommit) {
+  auto plan = selection_plan(InputSelectorKind::kLatestWithin, PortId{1U}, 2U, 1U);
+  plan.max_age_ns = 1000;
+  plan.missing = TemporalRecordMissingKind::kReuseLast;
+  plan.reuse_max_age_ns = 1000000;
+  auto state = detail::RuntimeInputSelectionState::create(plan);
+  ASSERT_TRUE(state);
+  const auto retained = temporal_sample(10, 1U, 1U);
+  ASSERT_TRUE(state->push(retained));
+  auto selected = state->begin(TimePoint{10, kRuntimeClock}, 1U, 1U);
+  ASSERT_TRUE(selected);
+  ASSERT_TRUE(selected->finish(true));
+
+  auto absent_capture = temporal_sample(20, 2U, 2U);
+  absent_capture.capture_time = {};
+  ASSERT_TRUE(state->push(absent_capture));
+  {
+    auto reused = state->begin(TimePoint{20, kRuntimeClock}, 2U, 1U);
+    ASSERT_TRUE(reused);
+    EXPECT_EQ(reused->selection().state, InputState::kReused);
+    EXPECT_EQ(reused->selection().reason, SelectionReason::kCaptureTimeAbsent);
+    ASSERT_EQ(reused->selected().size(), 1U);
+    EXPECT_EQ(reused->selected().front(), retained);
+    ASSERT_TRUE(reused->finish(false));
+  }
+  std::array<detail::TemporalSampleRecord, 2U> claims{};
+  auto rolled_back = state->copy_payload_claims(claims);
+  ASSERT_TRUE(rolled_back);
+  EXPECT_EQ(*rolled_back, 2U);
+
+  auto reused = state->begin(TimePoint{20, kRuntimeClock}, 2U, 1U);
+  ASSERT_TRUE(reused);
+  ASSERT_TRUE(reused->finish(true));
+  auto committed = state->copy_payload_claims(claims);
+  ASSERT_TRUE(committed);
+  ASSERT_EQ(*committed, 1U);
+  EXPECT_EQ(claims.front(), retained);
+}
+
+// REQ: RUNTIME-017
+// kBracketedWindow: a window owns its retained set until closure, so the reconcile must be refused
+// outright rather than removing a record from underneath a pending or closed window.
+TEST(DispatcherBindingTest, EvictRetainedIsRefusedForABracketedSelector) {
+  auto selection = selection_plan(InputSelectorKind::kBracketedWindow, PortId{2U}, 8U, 5U);
+  selection.lookbehind = 1U;
+  selection.lookahead = 1U;
+  const BracketedWindowPlanRecord window{
+      .owner = OperatorRef{1U, 77U, 0U},
+      .input = PortId{2U},
+      .anchor = PortId{1U},
+      .lookbehind = 1U,
+      .lookahead = 1U,
+      .max_samples = 5U,
+      .event_clock = kRuntimeClock,
+      .queue_capacity = 8U,
+      .cache_capacity = 8U,
+      .producer_max_emits_per_compute = 1U,
+      .retained_overlap_capacity = 2U,
+  };
+  auto state = detail::RuntimeInputSelectionState::create(selection, &window, 2U);
+  ASSERT_TRUE(state);
+  ASSERT_TRUE(state->push(temporal_sample(5, 1U, 1U)));
+
+  // Key assertion: refused by selector family, not by whether this particular record happens to be
+  // reachable from a window right now.
+  const auto refused = state->evict_retained(1U);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().code, ErrorCode::kNotSupported);
+
+  // The window's payload claim must survive the refusal. retained_count() would not show this: a
+  // bracketed selector keeps its samples in the window engine, so cache_ -- which is what
+  // retained_count() reports -- is empty here whether or not the claim was stripped.
+  std::array<detail::TemporalSampleRecord, 4U> claims{};
+  const auto claim_count = state->copy_payload_claims(claims);
+  ASSERT_TRUE(claim_count);
+  EXPECT_EQ(*claim_count, 1U);
+  EXPECT_EQ(claims.front().arrival_sequence, 1U);
+}
+
+// REQ: RUNTIME-017
+// kExact: an open transaction is reading the retained set, so eviction must be refused until it
+// resolves; the reconcile treats that refusal as a no-op and retries on a later pass.
+TEST(DispatcherBindingTest, EvictRetainedIsRefusedWhileASelectionTransactionIsOpen) {
+  auto plan = selection_plan(InputSelectorKind::kExact, PortId{1U}, 2U, 1U);
+  plan.missing = TemporalRecordMissingKind::kSkip;
+  auto state = detail::RuntimeInputSelectionState::create(plan);
+  ASSERT_TRUE(state);
+  ASSERT_TRUE(state->push(temporal_sample(10, 1U, 1U)));
+
+  auto open = state->begin(TimePoint{10, kRuntimeClock}, 1U, 1U);
+  ASSERT_TRUE(open);
+  ASSERT_EQ(open->selected().size(), 1U);
+
+  const auto refused = state->evict_retained(1U);
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().code, ErrorCode::kBackpressured);
+
+  // Key assertion: the refusal leaves the transaction's view intact, so aborting still restores the
+  // record for a later reconcile rather than losing it to a half-applied release.
+  ASSERT_TRUE(open->finish(false));
+  EXPECT_EQ(state->retained_count(), 1U);
+  ASSERT_TRUE(state->evict_retained(1U));
+  EXPECT_EQ(state->retained_count(), 0U);
+}
+
+// REQ: CHAN-136
+// Once EOS is final, unobservable scalar cache and ReuseLast history must release their typed
+// Channel claims without resetting the generation's arrival-order fence.
+TEST(DispatcherBindingTest, ScalarEndOfStreamReleasesUnobservableHistoryWithoutGenerationReset) {
+  auto plan = selection_plan(InputSelectorKind::kExact, PortId{1U}, 3U, 1U);
+  plan.missing = TemporalRecordMissingKind::kReuseLast;
+  plan.reuse_max_age_ns = 100;
+  auto state = detail::RuntimeInputSelectionState::create(plan);
+  ASSERT_TRUE(state);
+  ASSERT_TRUE(state->push(temporal_sample(10, 1U, 1U)));
+  ASSERT_TRUE(state->push(temporal_sample(20, 2U, 2U)));
+  ASSERT_TRUE(state->push(temporal_sample(30, 3U, 3U)));
+
+  EXPECT_EQ(state->release_terminal_history().error().code, ErrorCode::kInvalidArgument);
+  auto middle = state->begin(TimePoint{20, kRuntimeClock}, 3U, 1U);
+  ASSERT_TRUE(middle);
+  EXPECT_EQ(state->release_terminal_history().error().code, ErrorCode::kBackpressured);
+  ASSERT_TRUE(middle->finish(true));
+  auto final = state->begin(TimePoint{30, kRuntimeClock}, 3U, 1U);
+  ASSERT_TRUE(final);
+  ASSERT_TRUE(final->finish(true));
+
+  std::array<detail::TemporalSampleRecord, 4U> claims{};
+  auto claim_count = state->copy_payload_claims(claims);
+  ASSERT_TRUE(claim_count);
+  ASSERT_EQ(*claim_count, 2U);
+  EXPECT_EQ(claims[0], temporal_sample(10, 1U, 1U));
+  EXPECT_EQ(claims[1], temporal_sample(30, 3U, 3U));
+
+  ASSERT_TRUE(state->close_end_of_stream());
+  ASSERT_TRUE(state->release_terminal_history());
+  EXPECT_EQ(state->retained_count(), 0U);
+  claim_count = state->copy_payload_claims(claims);
+  ASSERT_TRUE(claim_count);
+  EXPECT_EQ(*claim_count, 0U);
+  EXPECT_EQ(state->push(temporal_sample(40, 4U, 3U)).error().code, ErrorCode::kInvalidArgument);
+}
+
 // REQ: RUNTIME-007
 // kLatestWithin[max_age=5ns]: sample at t=10, query at t=20 -> absent; after extending max_age
 // to 10ns at runtime, the same query returns kSelected without re-pushing the sample.
@@ -1344,6 +1866,38 @@ TEST(DispatcherBindingTest, PlanBackedAlignedJoinCommitsAcceptedHeadsAndRetiresE
   EXPECT_EQ(*member_claim_count, 1U);
 }
 
+// REQ: LIFECYCLE-012
+// REQ: CHAN-141
+// Each aligned member retains its maximum physical backing while lifecycle publication changes
+// only the member-local active FIFO bound.
+TEST(DispatcherBindingTest, RateCandidateDepthSeparatesAlignedBackingFromActiveAdmission) {
+  const auto plan = aligned_plan(1U, 1);
+  const auto selections = aligned_selections(1U);
+  const std::array capacities{
+      detail::RuntimeQueueCapacity{.backing = 4U, .active = 1U},
+      detail::RuntimeQueueCapacity{.backing = 4U, .active = 1U},
+  };
+  auto state = detail::RuntimeAlignedSelectionState::create(plan, selections, capacities);
+  ASSERT_TRUE(state);
+  EXPECT_EQ(state->payload_claim_capacity(PortId{1U}), 4U);
+
+  ASSERT_TRUE(state->push(PortId{1U}, temporal_sample(10, 1U, 1U)));
+  EXPECT_EQ(state->push(PortId{1U}, temporal_sample(11, 2U, 2U)).error().code,
+            ErrorCode::kResourceExhausted);
+  ASSERT_TRUE(state->prepare_rate_candidate_capacity(PortId{1U}, 2U));
+  EXPECT_EQ(state->push(PortId{1U}, temporal_sample(11, 2U, 2U)).error().code,
+            ErrorCode::kResourceExhausted);
+  state->discard_rate_candidate_capacities();
+
+  ASSERT_TRUE(state->prepare_rate_candidate_capacity(PortId{1U}, 2U));
+  ASSERT_TRUE(state->prepare_rate_candidate_capacity(PortId{2U}, 2U));
+  ASSERT_TRUE(state->commit_rate_candidate_capacities());
+  ASSERT_TRUE(state->push(PortId{1U}, temporal_sample(11, 2U, 2U)));
+  EXPECT_EQ(state->push(PortId{1U}, temporal_sample(12, 3U, 3U)).error().code,
+            ErrorCode::kResourceExhausted);
+  EXPECT_EQ(state->payload_claim_capacity(PortId{1U}), 4U);
+}
+
 // REQ: RUNTIME-007
 // Aligned join [window=0ns, port2=kSafeDefault]: begin() without closure proof -> kNotReady;
 // begin(EndOfStream) -> kDegraded; reset() clears both member queues and all generation state.
@@ -1393,11 +1947,10 @@ TEST(DispatcherBindingTest, PlanBackedAlignedJoinRequiresProofAndResetsAllGenera
             ErrorCode::kInvalidArgument);
 }
 
-// REQ: RUNTIME-007
-// REQ: RUNTIME-018
+// REQ: CHAN-136
 // Aligned join [port1=kReuseLast]: after finish(true) the port1 claim stays visible (reuse buffer)
-// until reset() is called; port2 consumed normally reports zero claims after commit.
-TEST(DispatcherBindingTest, AlignedReusePayloadClaimSurvivesConsumptionUntilReset) {
+// until every member closes and terminal history is released; port2 reports zero after commit.
+TEST(DispatcherBindingTest, AlignedReusePayloadClaimSurvivesUntilTerminalRelease) {
   const auto plan = aligned_plan(1U, 0);
   auto selections = aligned_selections(1U);
   selections[0].missing = TemporalRecordMissingKind::kReuseLast;
@@ -1420,6 +1973,15 @@ TEST(DispatcherBindingTest, AlignedReusePayloadClaimSurvivesConsumptionUntilRese
   auto second_count = state->copy_payload_claims(PortId{2U}, claims);
   ASSERT_TRUE(second_count);
   EXPECT_EQ(*second_count, 0U);
+
+  EXPECT_EQ(state->release_terminal_history().error().code, ErrorCode::kInvalidArgument);
+  ASSERT_TRUE(state->close_end_of_stream(PortId{1U}, TimePoint{401, kRuntimeClock}));
+  EXPECT_EQ(state->release_terminal_history().error().code, ErrorCode::kInvalidArgument);
+  ASSERT_TRUE(state->close_end_of_stream(PortId{2U}, TimePoint{401, kRuntimeClock}));
+  ASSERT_TRUE(state->release_terminal_history());
+  first_count = state->copy_payload_claims(PortId{1U}, claims);
+  ASSERT_TRUE(first_count);
+  EXPECT_EQ(*first_count, 0U);
 
   ASSERT_TRUE(state->reset());
   first_count = state->copy_payload_claims(PortId{1U}, claims);
@@ -1567,9 +2129,9 @@ TEST(DispatcherBindingTest, BracketedWindowExposesBoundedTimeoutAndEndOfStreamCl
 // End of stream is unsolicited: a bracketed input can have no pending window when the producer's
 // close() lands, because whether the anchor already closed the last window is a race.
 // close_end_of_stream() absorbs that race and succeeds, so a well-formed close() cannot terminate
-// the run. The tolerance lives here and not in BracketedWindowEngine: closing a window the engine
-// never observed remains a caller error, which the direct close_oldest() assertions below pin down
-// (see also TEMPORAL_CONTRACT.TemporalInputCache.WindowTimeoutAndEndOfStreamClosePendingInOrder).
+// the run. The dedicated terminal latch is distinct from close_oldest(): directly closing a window
+// the engine never observed remains a caller error, which the assertions below pin down (see also
+// TEMPORAL_CONTRACT.TemporalInputCache.WindowTimeoutAndEndOfStreamClosePendingInOrder).
 TEST(DispatcherBindingTest, BracketedWindowEndOfStreamClosureAcceptsEmptyPendingSet) {
   auto selection = selection_plan(InputSelectorKind::kBracketedWindow, PortId{2U}, 4U, 3U);
   selection.lookbehind = 1U;
@@ -1613,6 +2175,150 @@ TEST(DispatcherBindingTest, BracketedWindowEndOfStreamClosureAcceptsEmptyPending
   ASSERT_EQ(drained->pending_window_count(), 0U);
   // A second end-of-stream against the now-empty pending set is still accepted.
   EXPECT_TRUE(drained->close_end_of_stream());
+}
+
+// REQ: CHAN-136
+// One transport EOS must close every window already pending for that producer generation. The
+// selector may already hold closed decisions when EOS arrives, so terminal closure is latched and
+// continues as result slots are retired; no second transport EOS or timeout is required.
+TEST(DispatcherBindingTest, BracketedWindowEndOfStreamDrainsEveryPendingWindow) {
+  auto selection = selection_plan(InputSelectorKind::kBracketedWindow, PortId{2U}, 4U, 3U);
+  selection.lookbehind = 1U;
+  selection.lookahead = 1U;
+  const BracketedWindowPlanRecord window{
+      .owner = OperatorRef{1U, 77U, 0U},
+      .input = PortId{2U},
+      .anchor = PortId{1U},
+      .lookbehind = 1U,
+      .lookahead = 1U,
+      .max_samples = 3U,
+      .event_clock = kRuntimeClock,
+      .queue_capacity = 4U,
+      .cache_capacity = 4U,
+      .producer_max_emits_per_compute = 1U,
+      .retained_overlap_capacity = 1U,
+  };
+  auto state = detail::RuntimeInputSelectionState::create(selection, &window, 2U);
+  ASSERT_TRUE(state);
+
+  // Fill two of the three preallocated result slots, then leave two windows pending. EOS can
+  // publish only one terminal decision immediately; retiring the oldest result must publish the
+  // remaining latched terminal decision without another external event.
+  ASSERT_TRUE(state->push(temporal_sample(5, 1U, 1U)));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(10, 1U, 1U)));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(20, 2U, 2U)));
+  ASSERT_TRUE(state->close_oldest(SelectionReason::kWindowTimeout));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(30, 3U, 3U)));
+  ASSERT_TRUE(state->close_oldest(SelectionReason::kWindowTimeout));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(40, 4U, 4U)));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(50, 5U, 5U)));
+  ASSERT_EQ(state->pending_window_count(), 2U);
+
+  ASSERT_TRUE(state->close_end_of_stream());
+  EXPECT_EQ(state->pending_window_count(), 1U);
+
+  constexpr std::array expected_reasons{SelectionReason::kWindowTimeout,
+                                        SelectionReason::kWindowTimeout,
+                                        SelectionReason::kEndOfStream,
+                                        SelectionReason::kEndOfStream};
+  constexpr std::array<std::int64_t, 4U> expected_reference_times{20, 30, 40, 50};
+  for (std::size_t index = 0U; index < expected_reasons.size(); ++index) {
+    auto closed = state->begin(TimePoint{60, kRuntimeClock}, 0U, 1U);
+    ASSERT_TRUE(closed);
+    EXPECT_EQ(closed->selection().state, InputState::kAbsent);
+    EXPECT_EQ(closed->selection().reason, expected_reasons[index]);
+    EXPECT_EQ(closed->semantic_reference_time(),
+              (TimePoint{expected_reference_times[index], kRuntimeClock}));
+    ASSERT_TRUE(closed->finish(false));
+    if (index == 0U) {
+      EXPECT_EQ(state->pending_window_count(), 0U);
+      std::array<detail::TemporalSampleRecord, 4U> claims{};
+      const auto claim_count = state->copy_payload_claims(claims);
+      ASSERT_TRUE(claim_count);
+      EXPECT_EQ(*claim_count, 0U);
+    }
+  }
+  EXPECT_EQ(state->begin(TimePoint{60, kRuntimeClock}, 0U, 1U).error().code, ErrorCode::kNotReady);
+}
+
+// REQ: CHAN-136
+// A window that became ordinarily ready before EOS keeps that decision even when a full closed-
+// result ring delayed publication. Retiring one older result must publish the ready snapshot
+// before EOS closes only the still-unresolved window.
+TEST(DispatcherBindingTest, BracketedWindowEndOfStreamPreservesReadyDecisionBehindFullRing) {
+  auto selection = selection_plan(InputSelectorKind::kBracketedWindow, PortId{2U}, 4U, 3U);
+  selection.lookbehind = 1U;
+  selection.lookahead = 1U;
+  const BracketedWindowPlanRecord window{
+      .owner = OperatorRef{1U, 77U, 0U},
+      .input = PortId{2U},
+      .anchor = PortId{1U},
+      .lookbehind = 1U,
+      .lookahead = 1U,
+      .max_samples = 3U,
+      .event_clock = kRuntimeClock,
+      .queue_capacity = 4U,
+      .cache_capacity = 4U,
+      .producer_max_emits_per_compute = 1U,
+      .retained_overlap_capacity = 1U,
+  };
+  auto state = detail::RuntimeInputSelectionState::create(selection, &window, 2U);
+  ASSERT_TRUE(state);
+
+  // Fill all three preallocated result slots, then leave two windows pending. The first pending
+  // window has a complete [lookbehind, interior, lookahead] snapshot before EOS arrives; the
+  // second has no outer successor and remains unresolved.
+  ASSERT_TRUE(state->push_anchor(temporal_sample(10, 1U, 1U)));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(20, 2U, 2U)));
+  ASSERT_TRUE(state->close_oldest(SelectionReason::kWindowTimeout));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(30, 3U, 3U)));
+  ASSERT_TRUE(state->close_oldest(SelectionReason::kWindowTimeout));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(40, 4U, 4U)));
+  ASSERT_TRUE(state->close_oldest(SelectionReason::kWindowTimeout));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(50, 5U, 5U)));
+  ASSERT_TRUE(state->push_anchor(temporal_sample(60, 6U, 6U)));
+  ASSERT_TRUE(state->push(temporal_sample(35, 1U, 1U)));
+  ASSERT_TRUE(state->push(temporal_sample(45, 2U, 2U)));
+  ASSERT_TRUE(state->push(temporal_sample(55, 3U, 3U)));
+  ASSERT_EQ(state->pending_window_count(), 2U);
+
+  ASSERT_TRUE(state->close_end_of_stream());
+  EXPECT_EQ(state->pending_window_count(), 2U);
+
+  constexpr std::array<std::int64_t, 3U> timeout_references{20, 30, 40};
+  for (const auto reference : timeout_references) {
+    auto timed_out = state->begin(TimePoint{70, kRuntimeClock}, 0U, 1U);
+    ASSERT_TRUE(timed_out);
+    EXPECT_EQ(timed_out->selection().state, InputState::kAbsent);
+    EXPECT_EQ(timed_out->selection().reason, SelectionReason::kWindowTimeout);
+    EXPECT_EQ(timed_out->semantic_reference_time(), (TimePoint{reference, kRuntimeClock}));
+    ASSERT_TRUE(timed_out->finish(false));
+  }
+
+  auto ready = state->begin(TimePoint{70, kRuntimeClock}, 3U, 1U);
+  ASSERT_TRUE(ready);
+  EXPECT_EQ(ready->selection().state, InputState::kSelected);
+  EXPECT_EQ(ready->selection().reason, SelectionReason::kNone);
+  EXPECT_EQ(ready->semantic_reference_time(), (TimePoint{50, kRuntimeClock}));
+  ASSERT_EQ(ready->selected().size(), 3U);
+  EXPECT_EQ(ready->selected()[0], temporal_sample(35, 1U, 1U));
+  EXPECT_EQ(ready->selected()[1], temporal_sample(45, 2U, 2U));
+  EXPECT_EQ(ready->selected()[2], temporal_sample(55, 3U, 3U));
+  ASSERT_TRUE(ready->finish(false));
+
+  auto end_of_stream = state->begin(TimePoint{70, kRuntimeClock}, 3U, 1U);
+  ASSERT_TRUE(end_of_stream);
+  EXPECT_EQ(end_of_stream->selection().state, InputState::kAbsent);
+  EXPECT_EQ(end_of_stream->selection().reason, SelectionReason::kEndOfStream);
+  EXPECT_EQ(end_of_stream->semantic_reference_time(), (TimePoint{60, kRuntimeClock}));
+  ASSERT_TRUE(end_of_stream->finish(false));
+
+  EXPECT_EQ(state->pending_window_count(), 0U);
+  EXPECT_EQ(state->begin(TimePoint{70, kRuntimeClock}, 3U, 1U).error().code, ErrorCode::kNotReady);
+  std::array<detail::TemporalSampleRecord, 4U> claims{};
+  const auto claim_count = state->copy_payload_claims(claims);
+  ASSERT_TRUE(claim_count);
+  EXPECT_EQ(*claim_count, 0U);
 }
 
 // REQ: RUNTIME-007
@@ -2810,6 +3516,87 @@ TEST(DispatcherBindingTest, WarmedIngressFreezeAndActivationPathsDoNotAllocate) 
   // Key assertion: ScopedAllocationCounter reports zero allocations for the hot path.
   EXPECT_EQ(allocations, 0U);
   EXPECT_EQ(coordinator->outstanding_count(), 0U);
+}
+
+// REQ: RUNTIME-017
+// REQ: CHAN-131
+// The Exact half of the reconcile's eligibility rule, stated as its consequence rather than as the
+// rule itself. kExact requires capture_time == reference_time, so a retained record is the only
+// record that can ever satisfy a witness at its coordinate: no later sample substitutes for it,
+// however fresh. Releasing it is therefore an unconditional loss rather than a trade, and no
+// ordering of the release can make it safe -- which is why the reconcile refuses kExact outright
+// instead of gating it the way it gates kLatestWithin.
+//
+// Both selectors are exercised against the same eviction so the asymmetry is the assertion. Under
+// kLatestWithin the successor satisfies the witness and the trade is sound; under kExact the
+// witness that the retained record alone could satisfy is stranded.
+TEST(DispatcherBindingTest, EvictingAnExactRetentionStrandsTheWitnessNoSuccessorCanSatisfy) {
+  constexpr std::int64_t kRetainedCaptureNs = 10;
+  constexpr std::int64_t kSuccessorCaptureNs = 30;
+
+  struct Vector {
+    InputSelectorKind selector{};
+    // The coordinate each selector's witness is formed at: its own capture for kExact, and the
+    // successor's for kLatestWithin, which is where each is meant to be satisfiable.
+    std::int64_t witness_reference_ns{};
+    bool successor_satisfies{};
+  };
+  constexpr std::array vectors{
+      Vector{InputSelectorKind::kExact, kRetainedCaptureNs, false},
+      Vector{InputSelectorKind::kLatestWithin, kSuccessorCaptureNs, true},
+  };
+
+  for (const Vector& vector : vectors) {
+    SCOPED_TRACE(vector.selector == InputSelectorKind::kExact ? "kExact" : "kLatestWithin");
+    const TimePoint witness{vector.witness_reference_ns, kRuntimeClock};
+
+    // Control: the retained record, still held, satisfies this witness. Without this the negative
+    // half below cannot distinguish "the eviction stranded the witness" from "this witness was
+    // never satisfiable at all".
+    // max_age_ns belongs to kLatestWithin alone; kExact rejects a plan that carries one.
+    auto control_plan = selection_plan(vector.selector, PortId{1U}, 1U, 1U);
+    if (vector.selector == InputSelectorKind::kLatestWithin) {
+      control_plan.max_age_ns = 1000;
+    }
+    control_plan.missing = TemporalRecordMissingKind::kSkip;
+    auto control = detail::RuntimeInputSelectionState::create(control_plan);
+    ASSERT_TRUE(control);
+    ASSERT_TRUE(control->push(temporal_sample(kRetainedCaptureNs, 1U, 1U)));
+    auto held = control->begin(witness, 1U, 1U);
+    ASSERT_TRUE(held);
+    EXPECT_EQ(held->selection().state, InputState::kSelected);
+    ASSERT_EQ(held->selected().size(), 1U);
+    EXPECT_EQ(held->selected().front().capture_time.timestamp_ns, kRetainedCaptureNs);
+    ASSERT_TRUE(held->finish(true));
+
+    // The same witness, after the reconcile's release admitted a strictly newer record in place of
+    // the one it gave up.
+    auto plan = selection_plan(vector.selector, PortId{1U}, 1U, 1U);
+    if (vector.selector == InputSelectorKind::kLatestWithin) {
+      plan.max_age_ns = 1000;
+    }
+    plan.missing = TemporalRecordMissingKind::kSkip;
+    auto state = detail::RuntimeInputSelectionState::create(plan);
+    ASSERT_TRUE(state);
+    ASSERT_TRUE(state->push(temporal_sample(kRetainedCaptureNs, 1U, 1U)));
+    ASSERT_TRUE(state->evict_retained(1U));
+    ASSERT_TRUE(state->push(temporal_sample(kSuccessorCaptureNs, 2U, 2U)));
+
+    auto decision = state->begin(witness, 2U, 1U);
+    ASSERT_TRUE(decision);
+    if (vector.successor_satisfies) {
+      EXPECT_EQ(decision->selection().state, InputState::kSelected);
+      ASSERT_EQ(decision->selected().size(), 1U);
+      EXPECT_EQ(decision->selected().front().capture_time.timestamp_ns, kSuccessorCaptureNs);
+    } else {
+      // Key assertion: a fresher record is present and cannot stand in. The witness the retained
+      // record alone could satisfy now selects nothing, so the release cost an activation outright
+      // rather than trading staleness for freshness.
+      EXPECT_NE(decision->selection().state, InputState::kSelected);
+      EXPECT_TRUE(decision->selected().empty());
+    }
+    ASSERT_TRUE(decision->finish(true));
+  }
 }
 
 }  // namespace

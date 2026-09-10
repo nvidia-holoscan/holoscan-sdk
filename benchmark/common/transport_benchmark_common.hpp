@@ -20,7 +20,7 @@
 
 namespace holoscan::benchmarking {
 
-constexpr std::size_t kTensorTransportPayloadBytes = 464U;
+constexpr std::size_t kTensorTransportPayloadBytes = 472U;
 // Version-3 singular carriage: 40-byte header + 24-byte count/masks +
 // 304-byte descriptor + 512-byte metadata.
 constexpr std::size_t kDescriptorBackedImagePayloadBytes = 880U;

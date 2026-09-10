@@ -3,20 +3,23 @@ description of *what* to run. This page covers the third phase of the
 compose → compile → run model: turning that plan into a running session,
 watching it, stopping it cooperatively, and finding out why it ended.
 
-There are exactly two entry points, and they are two views of the same path:
-`holoscan::run(plan)` blocks until the run reaches a terminal state, while
-`holoscan::run_async(plan)` returns immediately with a `RunSession` — a
-move-only RAII owner of everything the run started. There is no scheduler or
-executor object to construct or configure; one free call starts everything.
+There are two execution families. `holoscan::run(...)` blocks until the run
+reaches a terminal state, while `holoscan::run_async(...)` returns immediately
+with a `RunSession` — a move-only RAII owner of everything the run started.
+Each family has an overload for explicit signal ownership. There is no
+scheduler or executor object to construct or configure.
 
 **Complete C++ example:** [`examples/running_and_stopping/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/running_and_stopping/cpp)
 
 <Note title="You will learn">
   - How to start a plan with the blocking `run()` or the asynchronous `run_async()`
+  - How Linux blocking runs manage SIGINT/SIGTERM by default, and how to opt out
+  - How to establish an early managed-signal domain for asynchronous execution
   - The strict RAII rules that govern a `RunSession`'s lifetime
+  - How an operator requests explicit whole-run success from `compute()`
   - How to stop a run cooperatively with `request_stop()` and `wait()`
   - How to branch on `termination()` and read `diagnostics()` after a failure
-  - The two distinct failure channels: boundary exceptions versus a terminal `kFailed` session
+  - How boundary exceptions, terminal `kFailed`, and explicit-domain `Error` values differ
 </Note>
 
 ## The blocking entry point: `run()`
@@ -36,18 +39,182 @@ if (!plan.ok()) {
 const int rc = holoscan::run(plan);  // blocks until terminal
 ```
 
-`rc == 0` means one thing only: the run reached clean completion
-(`RunTermination::kCompleted`). A compiler-accepted empty `Graph` is a valid
-zero-work plan and completes immediately. A nonempty graph built from recurring
-sources does **not** infer a natural completion point; stop it cooperatively.
-Any nonzero result means the run was stopped or failed. `run()` is
-`[[nodiscard]]` — the compiler will remind you not to drop the result.
+<Warning>
+  On Linux, default managed admission requires either an available compatible
+  explicit domain or exactly one live process task at **both** census reads.
+  Logger, driver, telemetry, framework, or application background threads can
+  make transient admission fail before a session is created. The runtime never
+  falls back silently to caller-managed signal handling.
+</Warning>
 
-`run()` is exactly the blocking wrapper over the path `run_async()` uses, so
-synchronous and asynchronous runs cannot diverge in behavior. When a nonzero
-result is all the detail you need, `run()` is the whole story. When you need to
-know *why* a run ended, use `run_async()` and inspect the session, as shown
-below.
+`rc == 0` means the run ended successfully: either natural finite completion
+(`RunTermination::kCompleted`) or explicit operator-requested completion
+(`RunTermination::kRequestedCompleted`). A compiler-accepted empty `Graph` is
+a valid zero-work plan and completes naturally. A nonempty graph built from
+recurring sources does **not** infer a natural completion point. Any nonzero
+result means the run was stopped, failed, or rejected during managed-signal
+admission before session creation. `run()` is `[[nodiscard]]` — the compiler
+will remind you not to drop the result.
+
+On Linux, blocking `run(plan)` manages process-directed `SIGINT` and `SIGTERM`
+by default. The first synchronously accepted occurrence requests ordinary
+cooperative stop and returns nonzero after cleanup. This is equivalent to
+`run(plan, RunSignalPolicy::kManaged)`.
+
+Choose signal ownership deliberately:
+
+| Call | Signal ownership |
+|---|---|
+| `run(plan)` | Managed by default on Linux; ordinary blocking execution elsewhere |
+| `run(plan, RunSignalPolicy::kManaged)` | Same behavior as plain `run(plan)` |
+| `run(plan, RunSignalPolicy::kCallerManaged)` | Caller owns signals; HSDK performs no managed-signal-domain work |
+| `run_async(plan)` | Caller-managed on every platform |
+| `run_async(plan, signals)` | Managed through an explicitly established early domain |
+
+An embedding process that already owns process signals can opt out while
+keeping the convenient blocking result:
+
+```cpp
+const int rc = holoscan::run(
+    plan, holoscan::RunSignalPolicy::kCallerManaged);
+```
+
+The caller-managed blocking overload performs no managed owner acquisition,
+thread census, signal-mask change, descriptor setup, terminal participation,
+or managed-signal diagnostic publication. It is the direct replacement for an
+embedding host that previously used `run(plan)` with its own handlers or
+signal-waiting thread. Plain async is also caller-managed:
+
+```cpp
+holoscan::RunSession session = holoscan::run_async(plan);
+// Application-owned control code may call session.request_stop().
+session.wait();
+```
+
+Do not try to make default managed `run(plan)` work by changing only one thread
+in an already-multithreaded process. Signal masks are per-thread, and that does
+not establish process-wide ownership. With no adoptable domain, successful
+census reads that change or either observe anything other than exactly one live
+task report `RUNTIME_MANAGED_SIGNAL_DOMAIN_REQUIRED`; a census read error reports
+`RUNTIME_MANAGED_SIGNAL_INSTALL_FAILED`. Admission returns nonzero before session
+creation in either case. In the originating process, an
+existing unavailable domain or binding, or a poisoned process registry, instead
+reports `RUNTIME_MANAGED_SIGNAL_OWNER_BUSY`. Let an active binding retire; close
+and recreate a spent domain; reconcile an ownership conflict or choose
+caller-managed execution. After registry poisoning or another irreparable
+cleanup failure, contain and restart the process rather than retrying.
+
+### Managed signals with `run_async()`
+
+For managed asynchronous execution, create the process domain near the start
+of `main()`, before graph, CUDA, logger, framework, or application setup that
+may create participant threads. Then bind the session as part of the
+`run_async` call; attaching to a session that has already started would race a
+fast terminal run and is intentionally not supported.
+
+```cpp
+#include <iostream>
+#include <utility>
+
+#include <holoscan/core/managed_shutdown_signals.hpp>
+#include <holoscan/core/run.hpp>
+
+auto created = holoscan::ManagedShutdownSignals::create();
+if (!created) {
+  std::cerr << holoscan::runtime_error_message(created.error()) << '\n';
+  return 1;
+}
+auto signals = std::move(created).value();
+
+holoscan::RunSession session = holoscan::run_async(plan, signals);
+session.wait();
+
+auto closed = signals.close();
+if (!closed) {
+  std::cerr << holoscan::runtime_error_message(closed.error()) << '\n';
+  return 1;
+}
+```
+
+`ManagedShutdownSignals` is move-only, creator-thread-affine, and one-shot.
+Create, bind, and close it on its creator thread; keep it alive until its
+bound session and every participant thread have retired. `session.wait()`
+includes managed binding retirement, so an immediate creator-thread
+`signals.close()` is deterministic. A domain that is available or spent but
+currently unbound forwards accepted signals under the unchanged prior policy;
+it never redirects them to a caller-managed blocking run or plain async run.
+Plain `run(plan)` may adopt an available explicit domain. That successful
+reservation consumes the domain's sole binding attempt, so after retirement
+close the spent domain and create a fresh one before another managed run.
+
+On non-Linux platforms, `ManagedShutdownSignals::create()` returns
+`ErrorCode::kNotSupported`, while both blocking policy values use ordinary
+blocking execution. Active-domain HSDK use after `fork()`, adoption of arbitrary
+pre-existing threads, and signals directed with `pthread_kill()` to another
+participant thread are currently unsupported.
+
+The child of `fork()` inherits the creator's blocked SIGINT/SIGTERM mask, and
+`exec()` preserves that mask even though the managed descriptors are
+close-on-exec. In the post-fork child, reset the mask with async-signal-safe
+`sigprocmask()` before `exec()`, or use `posix_spawn()` with
+`POSIX_SPAWN_SETSIGMASK` and an empty or application-chosen mask. `system()` and
+`popen()` do not reset the inherited mask for you.
+
+### First and second accepted signals
+
+HSDK installs no asynchronous signal handler and does not mutate `sigaction`.
+Every participant in a managed domain inherits blocked SIGINT/SIGTERM, and an
+ordinary controller or broker synchronously accepts process-directed
+occurrences with Linux `signalfd`:
+
+1. The first accepted occurrence publishes
+   `RUNTIME_MANAGED_SIGNAL_RECEIVED` and requests `kStopped` cleanup at most
+   once.
+2. A second accepted occurrence publishes
+   `RUNTIME_MANAGED_SIGNAL_ESCALATED`, disarms management, and delegates that
+   actual second signal under the unchanged default, ignored, or custom prior
+   policy.
+
+An unchanged custom disposition does not promise delivery-thread affinity. For
+a persistent domain, an unblocked custom handler may run on the broker thread
+both when an unbound domain forwards a signal and when a bound session delegates
+the second accepted signal. A handler must not assume the creator thread's TLS,
+affinity, or identity.
+
+SIGINT and SIGTERM are standard, non-real-time signals. Identical occurrences
+can coalesce while pending, and the order of simultaneously pending mixed
+signals is unspecified. A deterministic supervisor that wants to exercise the
+second-signal path must wait until first-acceptance evidence is observable
+before sending the second signal. "Second" means second synchronously accepted
+occurrence, not necessarily second generated occurrence.
+
+Signal handling remains cooperative. A first signal adds no forced
+cancellation and no whole-run completion bound: `run()` can still wait
+indefinitely if user code ignores cancellation and never returns.
+
+Managed-signal diagnostics use seven stable identifiers:
+
+| Identifier | Meaning and response |
+|---|---|
+| `RUNTIME_MANAGED_SIGNAL_RECEIVED` | The binding synchronously accepted its first signal and requested cooperative stop. |
+| `RUNTIME_MANAGED_SIGNAL_OWNER_BUSY` | An existing domain or binding is unavailable, or the process registry is poisoned. Let an active binding retire, close/recreate a spent domain, reconcile ownership or choose caller-managed execution, and restart after poisoning. |
+| `RUNTIME_MANAGED_SIGNAL_DOMAIN_REQUIRED` | No domain was adoptable and successful census reads changed or did not each observe exactly one live task; establish an early domain or explicitly choose caller-managed policy. |
+| `RUNTIME_MANAGED_SIGNAL_INSTALL_FAILED` | Domain, mask, census read, descriptor, or binding setup failed; no managed session starts when admission fails. |
+| `RUNTIME_MANAGED_SIGNAL_WAIT_FAILED` | Polling, signal consumption, notification, or final drain failed; an attached session is stopped, fails, and managed admission is poisoned. |
+| `RUNTIME_MANAGED_SIGNAL_RESTORE_FAILED` | Binding cleanup, delegation, or mask restoration failed; contain or restart the process before attempting another managed run. |
+| `RUNTIME_MANAGED_SIGNAL_ESCALATED` | The second accepted signal was published and delegated under the unchanged prior policy. |
+
+An irreparable wait, notification, disposition, delegation, restoration, or
+cleanup failure poisons managed admission so a later caller cannot assume clean
+process state. Complete application-level containment and restart rather than
+retrying managed ownership in that process.
+
+`run()` executes the same session path as `run_async()` while its selected
+policy controls only the surrounding signal domain. The blocking `int` cannot
+distinguish stop, execution failure, and managed-domain admission failure. When
+you need a typed setup error, establish `ManagedShutdownSignals` explicitly;
+when you need to control the session or inspect terminal diagnostics, use a
+`run_async()` overload as shown below.
 
 ## The asynchronous entry point: `run_async()` and `RunSession`
 
@@ -58,7 +225,8 @@ the run and every activity it started:
 #include <holoscan/core/run_session.hpp>
 
 holoscan::RunSession session = holoscan::run_async(plan);
-// Your thread is free: serve a UI, watch a signal handler, do other work.
+// Your thread is free: serve a UI, run the application's caller-managed
+// signal/control loop, or do other work.
 // The source graph and even your ExecutionPlan wrapper may be destroyed now —
 // the session reconstructed everything it needs from the plan.
 ```
@@ -93,6 +261,35 @@ and the authoring objects need not outlive the run.
 
 ### Stopping and waiting
 
+An operator can end its own run without holding a `RunSession`. Call
+`context.request_completion()` from `compute()` when its work means the run
+finished successfully, or `context.request_stop()` when it is cancelling the
+run cooperatively. Both return immediately. The accepted request closes
+callback admission at one session-wide publication point: callback claims
+ordered before it may proceed and retire, but no claim ordered afterward enters.
+
+```cpp
+holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& context) override {
+  if (finished_work()) {
+    context.request_completion();
+  }
+  return {};
+}
+```
+
+Completion reports the distinct success `RunTermination::kRequestedCompleted`
+and makes `run(plan)` return zero. Stop reports `RunTermination::kStopped` and
+makes `run(plan)` return nonzero. Repeated requests are idempotent; a stop
+request promotes and overrides completion. A callback, runtime, or cleanup
+failure overrides both and reports `kFailed`.
+
+<Warning>
+  **Requested completion is immediate whole-run success, not EOS.** It does
+  not guarantee source closure, downstream drain, or delivery of samples already
+  queued. `ExecutionContext` is valid only during its callback: never retain the
+  facade or use it after `compute()` returns.
+</Warning>
+
 Stopping is a two-step, cooperative protocol:
 
 ```cpp
@@ -108,6 +305,13 @@ until the run has finished, call `wait()`. Like the destructor, `wait()` may
 block indefinitely if an operator ignores cancellation and never returns from
 `compute()`.
 
+A direct application `request_stop()` normally reaches `kStopped` without a
+managed-signal diagnostic. A first synchronously accepted managed signal also
+reaches `kStopped`, but retains a warning-level
+`RUNTIME_MANAGED_SIGNAL_RECEIVED` record. Do not use
+`diagnostics().empty()` to classify every stopped run; inspect the stable token
+when the origin of a stop matters.
+
 Query operations — `is_running()`, `termination()`, `diagnostics()`,
 `request_stop()`, and `wait()` — may be called concurrently on one session.
 Moving or destroying the wrapper is the exception: that requires external
@@ -121,7 +325,10 @@ until the run reaches one stable terminal state, then never changes:
 ```cpp
 switch (session.termination()) {
   case holoscan::RunTermination::kCompleted:
-    // Natural clean completion — the only success.
+    // Natural finite completion.
+    break;
+  case holoscan::RunTermination::kRequestedCompleted:
+    // Explicit immediate whole-run success; no downstream-drain guarantee.
     break;
   case holoscan::RunTermination::kStopped:
     // A cooperative stop completed (or this wrapper is moved-from).
@@ -162,10 +369,10 @@ may expose a *longer* prefix — reacquire it rather than assuming the one you
 saw was complete. For how to interpret the tokens themselves, see
 [Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures).
 
-## The two failure channels
+## The execution and signal-domain failure channels
 
-Run-phase failures arrive through exactly two channels, and they are not
-interchangeable:
+Run-phase outcomes and explicit signal-domain administration use distinct
+channels; do not collapse them:
 
 1. **Exceptions at the boundary.** `run()` and `run_async()` throw
    `holoscan::CompileError` if the plan is a default-constructed/no-state
@@ -173,11 +380,21 @@ interchangeable:
    or be prepared to catch. Beyond that, only `std::system_error` from a
    failed platform thread join can escape `run()` or `wait()`. That is the
    entire set.
-2. **A terminal `kFailed` session.** Everything that goes wrong *after* the
-   boundary — a required runtime binding that is unavailable, a worker that
+2. **A terminal `kFailed` session.** Once a session is created, failures — a
+   required runtime binding that is unavailable, a worker that
    fails to start, resource exhaustion during startup, an execution failure —
    is reported as `termination() == kFailed` (a nonzero `run()` result) plus
    `diagnostics()` records. No exception is thrown for these.
+3. **Typed explicit-domain administration.** `ManagedShutdownSignals::create()`
+   and `close()` return `expected<..., Error>`. Setup, wrong-thread,
+   ownership, platform, and close/restoration failures are values rather than
+   exceptions. A managed `run_async(plan, signals)` binding-admission failure
+   returns a terminal failed session with bounded managed-signal diagnostics.
+   Default blocking managed admission is the explicit pre-session exception:
+   it has only its `int` result and returns nonzero before session creation.
+   The blocking API exposes bounded terminal/log evidence, but not a typed
+   admission result. Use explicit-domain creation for typed setup errors and
+   managed async execution for inspectable session diagnostics.
 
 This split is deliberate and mirrors the failure styles of the three-phase
 model: authoring throws, `compile()` returns rejected plans, and run fails
@@ -204,21 +421,34 @@ That machinery has its own page — see
 
 ## Recap
 
-- `run(plan)` blocks and returns an `int`; `rc == 0` only for
-  `kCompleted` — including a compiler-accepted zero-work empty graph — and any
-  nonzero result means stopped or failed. Recurring nonempty graphs require an
-  explicit cooperative stop.
+- `run(plan)` blocks and returns an `int`; on Linux it uses managed SIGINT and
+  SIGTERM by default. `rc == 0` for natural `kCompleted` or explicit
+  `kRequestedCompleted`; any nonzero result means stopped, failed, or managed
+  admission failed. Recurring nonempty graphs do not infer natural completion.
+- Use `run(plan, RunSignalPolicy::kCallerManaged)` when the host owns process
+  signals. It performs no HSDK-managed signal-domain work. Plain `run_async(plan)`
+  is likewise caller-managed on every platform.
+- For managed async, create one move-only `ManagedShutdownSignals` domain near
+  `main()` entry, call `run_async(plan, signals)`, wait for the session, then
+  close the one-shot domain on its creator thread.
+- The first synchronously accepted process signal requests cooperative stop;
+  the second accepted signal is delegated under the unchanged prior policy.
+  Standard signals may coalesce, and simultaneously pending mixed order is
+  unspecified. HSDK installs no signal handler and mutates no disposition.
+- An operator may call `request_completion()` for immediate whole-run success,
+  without EOS, source-closure, queued-delivery, or downstream-drain guarantees.
 - `run_async(plan)` returns a move-only `RunSession`; its destructor requests
   stop and joins everything the run started — RAII is the shutdown story.
 - Stop cooperatively: `request_stop()` asks and returns immediately;
   `wait()` blocks until the run has fully joined.
 - Never call `wait()` or destroy the session from run-owned code — that is a
   fatal contract violation.
-- Branch on `termination()` (`kCompleted` / `kStopped` / `kFailed` /
-  `kRunning`); on failure, read the stable tokens in `session.diagnostics()`.
-- Two failure channels only: `CompileError` (plus `std::system_error` on join)
-  at the boundary; everything else is a terminal `kFailed` session with
-  diagnostics.
+- Branch on `termination()` (`kCompleted` / `kRequestedCompleted` /
+  `kStopped` / `kFailed` / `kRunning`); on failure, read the stable tokens in
+  `session.diagnostics()`.
+- Execution uses `CompileError` (plus `std::system_error` on join) at the
+  boundary and terminal `kFailed` sessions after admission. Explicit domain
+  create/close adds a typed `expected<..., Error>` administration channel.
 
 Next: wire these pieces into a complete application in
 [Your first pipeline](/holoscan/sdk-user-guide/getting-started/first-pipeline).

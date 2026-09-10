@@ -37,7 +37,7 @@ using namespace std::chrono_literals;
 constexpr DLDataType kFloat32{kDLFloat, 32U, 1U};
 constexpr std::array<std::int64_t, 1U> kFrameShape{16};
 constexpr std::size_t kFrameBytes = 16U * sizeof(float);
-constexpr holoscan::TensorPortLayout kHostFloatFrame{
+constexpr holoscan::TensorRepresentation kHostFloatFrame{
     .memory_kind = holoscan::MemoryKind::kHost,
     .dtype = kFloat32,
     .rank = 1U,
@@ -120,12 +120,12 @@ class FrameProducer final : public holoscan::Operator<> {
   }
 
   void setup(holoscan::OperatorSpec& spec) override {
-    // produces_tensor states the logical facts consumers may rely on;
-    // tensor_allocation opts this output into a bounded plan-owned host pool.
     spec.output(frame, "frame")
-        .produces_tensor(kHostFloatFrame)
-        .tensor_allocation(
-            holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = kFrameBytes});
+        .produces_tensor(holoscan::TensorOutputSpec{
+            .representation = kHostFloatFrame,
+            .bounds = holoscan::tensor_bounds(kFrameBytes),
+            .storage = holoscan::TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {
@@ -215,7 +215,9 @@ class FrameProducer final : public holoscan::Operator<> {
 class FrameInspector final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
-    spec.input(frame, "frame").queue_depth(8U).expects_tensor(kHostFloatFrame);
+    spec.input(frame, "frame")
+        .queue_depth(8U)
+        .expects_tensor(holoscan::TensorInputSpec{.representation = kHostFloatFrame});
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {

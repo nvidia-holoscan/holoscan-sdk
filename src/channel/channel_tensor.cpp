@@ -8,10 +8,13 @@
 #include <holoscan/channel/tensor_endpoints.hpp>
 #include <holoscan/core/domain/dlpack_utils.hpp>
 
+#include "../runtime/channel_runtime_binding_access.hpp"
+#include "catalog_tensor_clock_health.hpp"
 #include "catalog_tensor_receive_control.hpp"
 #include "channel_common.hpp"
 #include "channel_runtime_impl.hpp"
 #include "channel_tensor_sidecar_store.hpp"
+#include "channel_tensor_test_access.hpp"
 #include "channel_tensor_transport_payload.hpp"
 #include "core/domain/tensor_layout_validation.hpp"
 #include "holomq_tensor.hpp"
@@ -25,7 +28,10 @@
 #include <holomq/wait_set.hpp>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -33,6 +39,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -54,6 +61,8 @@ using channel_internal::validate_tensor_channel_options;
 
 namespace {
 
+using ReceiveProbeBarrier = channel_internal::TensorPublisherTestAccess::ReceiveProbeBarrier;
+
 template <typename T>
 [[nodiscard]] T* optional_value_pointer(std::optional<T>& value) noexcept {
   if (!value.has_value()) {
@@ -74,9 +83,9 @@ template <typename T>
   return lhs.code == rhs.code && lhs.bits == rhs.bits && lhs.lanes == rhs.lanes;
 }
 
-[[nodiscard]] bool valid_catalog_tensor_envelope(
-    const TensorTransportPayload& payload,
-    const LogicalTensorRequirementsRecord& contract) noexcept {
+[[nodiscard]] bool valid_catalog_tensor_envelope(const TensorTransportPayload& payload,
+                                                 const TensorBoundaryContractRecord& contract,
+                                                 const std::uint64_t catalog_clock_count) noexcept {
   const auto& descriptor = payload.reference.holomq;
   const bool memory_kind_matches =
       !contract.memory_kind ||
@@ -99,18 +108,22 @@ template <typename T>
       (!contract.max_rank || descriptor.rank <= *contract.max_rank) &&
       (!contract.max_byte_span || descriptor.byte_size <= *contract.max_byte_span);
   const auto& metadata = payload.metadata;
-  const bool metadata_valid = metadata.version.major == 1U && metadata.version.minor == 0U &&
-                              (static_cast<std::uint32_t>(metadata.flags) & ~0x3U) == 0U &&
-                              metadata.sequence != 0U &&
-                              metadata.byte_size == descriptor.byte_size &&
-                              metadata.payload_kind == PayloadKind::kDescriptorBacked;
+  // A publication coordinate naming a clock outside the declared range resolves to no record, so a
+  // subscriber would expose a plausible publish_time() it cannot place on any timeline. Runtime
+  // always projects a declared identity, so this rejects only a malformed or stale peer.
+  const bool metadata_valid =
+      metadata.version.major == 1U && metadata.version.minor == 0U &&
+      (static_cast<std::uint32_t>(metadata.flags) & ~0x3U) == 0U && metadata.sequence != 0U &&
+      metadata.byte_size == descriptor.byte_size &&
+      metadata.payload_kind == PayloadKind::kDescriptorBacked &&
+      channel_internal::publication_coordinate_declared(metadata, catalog_clock_count);
   return payload.operation_kind == channel_internal::TensorTransportOperationKind::kData &&
          payload.producer_generation != 0U && descriptor_valid && contract_valid && metadata_valid;
 }
 
 [[nodiscard]] bool catalog_tensor_axis_within_bounds(
     const channel_internal::HoloMQTensorDescriptor& descriptor,
-    const LogicalTensorRequirementsRecord& contract, const std::size_t index,
+    const TensorBoundaryContractRecord& contract, const std::size_t index,
     const bool has_byte_strides) noexcept {
   const std::int64_t extent = descriptor.shape[index];
   if (extent < 0 || (index < contract.axes.size() &&
@@ -128,7 +141,7 @@ template <typename T>
 
 [[nodiscard]] expected<void, Error> validate_catalog_tensor_axes(
     const channel_internal::HoloMQTensorDescriptor& descriptor,
-    const LogicalTensorRequirementsRecord& contract, const bool has_byte_strides) noexcept {
+    const TensorBoundaryContractRecord& contract, const bool has_byte_strides) noexcept {
   for (std::size_t index = 0U; index < descriptor.rank; ++index) {
     if (!catalog_tensor_axis_within_bounds(descriptor, contract, index, has_byte_strides)) {
       return make_unexpected(make_channel_error(
@@ -140,7 +153,7 @@ template <typename T>
 
 [[nodiscard]] expected<void, Error> validate_catalog_tensor_contiguity(
     const channel_internal::HoloMQTensorDescriptor& descriptor,
-    const LogicalTensorRequirementsRecord& contract, const bool has_byte_strides) noexcept {
+    const TensorBoundaryContractRecord& contract, const bool has_byte_strides) noexcept {
   if (!has_byte_strides || contract.strides != TensorStridePolicy::kContiguousOnly) {
     return {};
   }
@@ -164,10 +177,10 @@ template <typename T>
 }
 
 [[nodiscard]] expected<void, Error> validate_catalog_tensor_payload(
-    const TensorTransportPayload& payload,
-    const LogicalTensorRequirementsRecord& contract) noexcept {
+    const TensorTransportPayload& payload, const TensorBoundaryContractRecord& contract,
+    const std::uint64_t catalog_clock_count) noexcept {
   const auto& descriptor = payload.reference.holomq;
-  if (!valid_catalog_tensor_envelope(payload, contract)) {
+  if (!valid_catalog_tensor_envelope(payload, contract, catalog_clock_count)) {
     return make_unexpected(make_channel_error(
         ErrorCode::kProtocolError, "Tensor channel payload violates its catalog contract"));
   }
@@ -199,13 +212,13 @@ template <typename T>
   return {};
 }
 
-[[nodiscard]] expected<void, Error> validate_catalog_tensor_end_of_stream(
-    const TensorTransportPayload& payload) noexcept {
+[[nodiscard]] expected<void, Error> validate_tensor_end_of_stream(
+    const TensorTransportPayload& payload,
+    const ChannelPayloadKind expected_payload_kind) noexcept {
   const auto& metadata = payload.metadata;
   if (payload.operation_kind != channel_internal::TensorTransportOperationKind::kEndOfStream ||
-      payload.producer_generation == 0U ||
-      payload.payload_kind != ChannelPayloadKind::kBufferHandle || metadata.version.major != 1U ||
-      metadata.version.minor != 0U || metadata.sequence == 0U ||
+      payload.producer_generation == 0U || payload.payload_kind != expected_payload_kind ||
+      metadata.version.major != 1U || metadata.version.minor != 0U || metadata.sequence == 0U ||
       metadata.capture_timestamp_ns != 0 || metadata.source_clock_id.valid() ||
       metadata.publish_timestamp_ns != 0 || metadata.publish_clock_id.valid() ||
       metadata.trace_id != 0U || metadata.frame_id != 0U || metadata.byte_size != 0U ||
@@ -298,29 +311,40 @@ class ManualTensorPublisher::Impl {
   ChannelOptions options_;
   bool graph_retry_boundary_{};
   std::uint64_t producer_generation_{};
+  std::uint64_t health_report_sequence_{};
 };
 
-class ChannelSubscriber<Tensor>::Impl
-    : public channel_internal::WaitSetSubscriber,
-      public channel_internal::ProtectedTerminalWaitSetSubscriber {
+class ChannelSubscriber<Tensor>::Impl : public channel_internal::WaitSetSubscriber,
+                                        public channel_internal::ProtectedTerminalWaitSetSubscriber,
+                                        public channel_internal::StagedDataWaitSetSubscriber {
  public:
   Impl(std::shared_ptr<void> runtime_lifetime, holomq::Context& context,
        holomq::Subscriber<TensorTransportPayload>&& subscriber,
        std::optional<holomq::Subscriber<TensorTransportPayload>> terminal_subscriber,
-       std::shared_ptr<TensorSidecarStore> sidecar_store, std::size_t recipient_index,
-       std::optional<LogicalTensorRequirementsRecord> receive_contract,
-       std::unique_ptr<channel_internal::CatalogTensorReceiveControl> receive_control) noexcept
+       std::unique_ptr<channel_internal::InlinePayloadSubscriber> health_subscriber,
+       const bool replacement_gaps_allowed, std::shared_ptr<TensorSidecarStore> sidecar_store,
+       std::size_t recipient_index, std::optional<TensorBoundaryContractRecord> receive_contract,
+       std::unique_ptr<channel_internal::CatalogTensorReceiveControl> receive_control,
+       ReceiveProbeBarrier* receive_probe_barrier,
+       const std::uint64_t catalog_clock_count = 0U) noexcept
       : runtime_lifetime_(std::move(runtime_lifetime)),
         context_(&context),
         subscriber_(std::move(subscriber)),
         terminal_subscriber_(std::move(terminal_subscriber)),
+        health_subscriber_(std::move(health_subscriber)),
+        replacement_gaps_allowed_(replacement_gaps_allowed),
         sidecar_store_(std::move(sidecar_store)),
         recipient_index_(recipient_index),
         has_receive_contract_(receive_contract.has_value()),
-        receive_contract_(std::move(receive_contract).value_or(LogicalTensorRequirementsRecord{})),
-        receive_control_(receive_control.release()) {}
+        receive_contract_(std::move(receive_contract).value_or(TensorBoundaryContractRecord{})),
+        receive_control_(receive_control.release()),
+        receive_probe_barrier_(receive_probe_barrier),
+        catalog_clock_count_(catalog_clock_count) {}
 
   ~Impl() {
+    if (sidecar_store_) {
+      sidecar_store_->unregister_recipient(recipient_index_, subscriber_.recipient_id());
+    }
     if (receive_control_ != nullptr) {
       receive_control_->release();
     }
@@ -342,7 +366,9 @@ class ChannelSubscriber<Tensor>::Impl
 
   [[nodiscard]] expected<Sample<Tensor>, Error> receive_end_of_stream(
       const TensorTransportPayload& payload) noexcept {
-    if (auto valid = validate_catalog_tensor_end_of_stream(payload); !valid) {
+    const auto expected_payload_kind = sidecar_store_ ? ChannelPayloadKind::kLocalBufferDescriptor
+                                                      : ChannelPayloadKind::kBufferHandle;
+    if (auto valid = validate_tensor_end_of_stream(payload, expected_payload_kind); !valid) {
       return make_unexpected(std::move(valid).error());
     }
     if (auto valid = validate_catalog_operation_sequence(payload); !valid) {
@@ -371,7 +397,9 @@ class ChannelSubscriber<Tensor>::Impl
   [[nodiscard]] expected<Sample<Tensor>, Error> receive_buffer_handle(
       const TensorTransportPayload& payload) {
     if (has_receive_contract_) {
-      if (auto valid = validate_catalog_tensor_payload(payload, receive_contract_); !valid) {
+      if (auto valid =
+              validate_catalog_tensor_payload(payload, receive_contract_, catalog_clock_count_);
+          !valid) {
         return make_unexpected(std::move(valid).error());
       }
       if (auto valid = validate_catalog_operation_sequence(payload); !valid) {
@@ -424,41 +452,496 @@ class ChannelSubscriber<Tensor>::Impl
     return receive_local_sidecar(payload);
   }
 
-  // Data and protected-terminal arbitration intentionally remain one ordered receive state machine.
-  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-  [[nodiscard]] expected<Sample<Tensor>, Error> receive_sample(const bool accept_data) {
-    if (stream_closed_) {
-      return make_unexpected(Error{ErrorCode::kClosed});
+  [[nodiscard]] bool foreign_producer_generation(const std::uint64_t generation) const noexcept {
+    return generation == superseded_producer_generation_ ||
+           (latched_producer_generation_ != 0U && generation != latched_producer_generation_);
+  }
+
+  [[nodiscard]] bool discard_pending_generation(const std::uint64_t generation) noexcept {
+    bool discarded = false;
+    if (pending_inbound_ && pending_inbound_->payload().producer_generation == generation) {
+      pending_inbound_.reset();
+      discarded = true;
     }
-    auto* const terminal_subscriber = optional_value_pointer(terminal_subscriber_);
-    if (!pending_inbound_.has_value()) {
-      auto data_ready = from_holomq_result(subscriber_.has_samples());
-      if (!data_ready) {
-        return make_unexpected(std::move(data_ready).error());
+    if (pending_terminal_inbound_ &&
+        pending_terminal_inbound_->payload().producer_generation == generation) {
+      pending_terminal_inbound_.reset();
+      discarded = true;
+    }
+    if (pending_health_ && pending_health_state_.producer_epoch == generation) {
+      pending_health_ = false;
+      discarded = true;
+    }
+    return discarded;
+  }
+
+  [[nodiscard]] expected<void, Error> validate_pending_incarnations(
+      const bool reject_ambiguous_ties) const noexcept {
+    struct PendingHead {
+      std::uint64_t sequence{};
+      std::uint64_t generation{};
+    };
+    std::array<PendingHead, 3U> heads{};
+    std::size_t count = 0U;
+    if (pending_inbound_) {
+      const auto& payload = pending_inbound_->payload();
+      heads[count++] = PendingHead{payload.metadata.sequence, payload.producer_generation};
+    }
+    if (pending_terminal_inbound_) {
+      const auto& payload = pending_terminal_inbound_->payload();
+      heads[count++] = PendingHead{payload.metadata.sequence, payload.producer_generation};
+    }
+    if (pending_health_) {
+      heads[count++] = PendingHead{pending_health_state_.publisher_operation_sequence,
+                                   pending_health_state_.producer_epoch};
+    }
+    for (std::size_t index = 0U; index < count; ++index) {
+      if (heads[index].generation == 0U) {
+        return make_unexpected(Error{ErrorCode::kProtocolError});
       }
-      std::optional<bool> terminal_ready;
-      if (terminal_subscriber != nullptr) {
-        auto ready = from_holomq_result(terminal_subscriber->has_samples());
-        if (!ready) {
-          return make_unexpected(std::move(ready).error());
+      for (std::size_t other = index + 1U; reject_ambiguous_ties && other < count; ++other) {
+        if (heads[index].sequence == heads[other].sequence &&
+            heads[index].generation != heads[other].generation) {
+          return make_unexpected(Error{ErrorCode::kProtocolError});
         }
-        terminal_ready = *ready;
       }
-      if (*data_ready) {
+    }
+    return {};
+  }
+
+  [[nodiscard]] expected<bool, Error> fence_pending_incarnations() noexcept {
+    if (superseded_producer_generation_ != 0U &&
+        discard_pending_generation(superseded_producer_generation_)) {
+      return true;
+    }
+    // Generation zero is malformed in every attachment state. Equal-sequence cross-generation
+    // ambiguity is meaningful only before the subscriber has selected its accepted incarnation.
+    auto valid = validate_pending_incarnations(latched_producer_generation_ == 0U);
+    if (!valid) {
+      return make_unexpected(std::move(valid).error());
+    }
+
+    if (latched_producer_generation_ == 0U) {
+      std::uint64_t earliest_sequence = std::numeric_limits<std::uint64_t>::max();
+      std::uint64_t earliest_generation = 0U;
+      const auto observe = [&](const std::uint64_t sequence, const std::uint64_t generation) {
+        if (sequence < earliest_sequence) {
+          earliest_sequence = sequence;
+          earliest_generation = generation;
+        }
+      };
+      if (pending_inbound_) {
+        observe(pending_inbound_->payload().metadata.sequence,
+                pending_inbound_->payload().producer_generation);
+      }
+      if (pending_terminal_inbound_) {
+        observe(pending_terminal_inbound_->payload().metadata.sequence,
+                pending_terminal_inbound_->payload().producer_generation);
+      }
+      if (pending_health_) {
+        observe(pending_health_state_.publisher_operation_sequence,
+                pending_health_state_.producer_epoch);
+      }
+      bool fenced = false;
+      if (pending_inbound_ &&
+          pending_inbound_->payload().producer_generation != earliest_generation) {
+        pending_inbound_.reset();
+        fenced = true;
+      }
+      if (pending_terminal_inbound_ &&
+          pending_terminal_inbound_->payload().producer_generation != earliest_generation) {
+        pending_terminal_inbound_.reset();
+        fenced = true;
+      }
+      if (pending_health_ && pending_health_state_.producer_epoch != earliest_generation) {
+        pending_health_ = false;
+        fenced = true;
+      }
+      if (fenced) {
+        return true;
+      }
+    }
+
+    bool foreign = false;
+    if (pending_inbound_ &&
+        foreign_producer_generation(pending_inbound_->payload().producer_generation)) {
+      pending_inbound_.reset();
+      foreign = true;
+    }
+    if (pending_terminal_inbound_ &&
+        foreign_producer_generation(pending_terminal_inbound_->payload().producer_generation)) {
+      pending_terminal_inbound_.reset();
+      foreign = true;
+    }
+    if (pending_health_ && foreign_producer_generation(pending_health_state_.producer_epoch)) {
+      pending_health_ = false;
+      foreign = true;
+    }
+    return foreign;
+  }
+
+  [[nodiscard]] expected<void, Error> stage_catalog_operations() noexcept {
+    const auto stage_data = [&]() -> expected<bool, Error> {
+      if (pending_inbound_) {
+        return true;
+      }
+      auto ready = from_holomq_result(subscriber_.has_samples());
+      if (!ready) {
+        return make_unexpected(std::move(ready).error());
+      }
+      if (*ready) {
         auto inbound = subscriber_.try_take();
         if (!inbound) {
           return make_unexpected(from_holomq_error(std::move(inbound).error()));
         }
-        pending_inbound_.emplace(std::move(inbound).value());
-      } else if (!pending_terminal_inbound_.has_value() && terminal_subscriber != nullptr) {
-        if (!terminal_ready.value_or(false)) {
-          return make_unexpected(Error{ErrorCode::kNotReady});
+        pending_inbound_.emplace(std::move(*inbound));
+      }
+      return pending_inbound_.has_value();
+    };
+    const auto stage_terminal = [&]() -> expected<bool, Error> {
+      if (!pending_terminal_inbound_ && terminal_subscriber_) {
+        auto ready = from_holomq_result(terminal_subscriber_->has_samples());
+        if (!ready) {
+          return make_unexpected(std::move(ready).error());
         }
-        auto inbound = terminal_subscriber->try_take();
-        if (!inbound) {
-          return make_unexpected(from_holomq_error(std::move(inbound).error()));
+        if (*ready) {
+          auto inbound = terminal_subscriber_->try_take();
+          if (!inbound) {
+            return make_unexpected(from_holomq_error(std::move(inbound).error()));
+          }
+          pending_terminal_inbound_.emplace(std::move(*inbound));
         }
-        pending_terminal_inbound_.emplace(std::move(inbound).value());
+      }
+      return pending_terminal_inbound_.has_value();
+    };
+    auto staged = channel_internal::stage_protected_terminal_transaction(
+        stage_data, stage_terminal, [&]() noexcept {
+          if (receive_probe_barrier_ != nullptr &&
+              receive_probe_barrier_->pause_after_empty_data_probe()) {
+            receive_probe_barrier_ = nullptr;
+          }
+        });
+    if (!staged) {
+      return make_unexpected(std::move(staged).error());
+    }
+    if (!pending_health_ && health_subscriber_) {
+      auto ready = health_subscriber_->has_samples();
+      if (!ready) {
+        return make_unexpected(std::move(ready).error());
+      }
+      if (*ready) {
+        std::array<std::byte, channel_internal::kTensorCatalogClockHealthControlBytes> wire{};
+        auto received = health_subscriber_->receive(wire);
+        if (!received) {
+          return make_unexpected(std::move(received).error());
+        }
+        if (received->payload_size != channel_internal::kTensorCatalogClockHealthControlBytes) {
+          return make_unexpected(make_channel_error(ErrorCode::kProtocolError,
+                                                    "Tensor clock health record is invalid"));
+        }
+        auto health = channel_internal::decode_tensor_catalog_clock_health(wire);
+        if (!health) {
+          return make_unexpected(std::move(health).error());
+        }
+        pending_health_metadata_ = received->metadata;
+        pending_health_state_ = *health;
+        pending_health_ = true;
+      }
+    }
+    return {};
+  }
+
+  [[nodiscard]] expected<channel_internal::CatalogReceivedOperation, Error>
+  receive_catalog_operation(const bool accept_data) noexcept {
+    if (!has_receive_contract_) {
+      return make_unexpected(Error{ErrorCode::kNotSupported});
+    }
+    auto staged = stage_catalog_operations();
+    if (!staged) {
+      return make_unexpected(std::move(staged).error());
+    }
+
+    auto fenced = fence_pending_incarnations();
+    if (!fenced) {
+      return make_unexpected(std::move(fenced).error());
+    }
+    if (*fenced) {
+      return channel_internal::CatalogReceivedOperation{
+          .kind = channel_internal::CatalogReceivedOperationKind::kPeerIncarnationChanged};
+    }
+
+    const TensorTransportPayload* data = pending_inbound_ ? &pending_inbound_->payload() : nullptr;
+    const TensorTransportPayload* terminal =
+        pending_terminal_inbound_ ? &pending_terminal_inbound_->payload() : nullptr;
+    if (data != nullptr && terminal != nullptr &&
+        data->metadata.sequence == terminal->metadata.sequence) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    const TensorTransportPayload* transport = data;
+    if (terminal != nullptr &&
+        (transport == nullptr || terminal->metadata.sequence < transport->metadata.sequence)) {
+      transport = terminal;
+    }
+    const std::uint64_t data_sequence = transport != nullptr
+                                            ? transport->metadata.sequence
+                                            : std::numeric_limits<std::uint64_t>::max();
+    const std::uint64_t health_sequence = pending_health_
+                                              ? pending_health_state_.publisher_operation_sequence
+                                              : std::numeric_limits<std::uint64_t>::max();
+    if (data_sequence == health_sequence &&
+        data_sequence != std::numeric_limits<std::uint64_t>::max()) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    const std::uint64_t next_sequence = std::min(data_sequence, health_sequence);
+    if (next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+      return channel_internal::CatalogReceivedOperation{};
+    }
+    if (next_sequence <= last_operation_sequence_) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    if (last_operation_sequence_ == std::numeric_limits<std::uint64_t>::max()) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    const std::uint64_t expected_sequence = last_operation_sequence_ + 1U;
+    bool initial_attachment_gap = false;
+    if (next_sequence > expected_sequence) {
+      // A publisher can consume authority before this attachment receives its first operation
+      // (for example, a zero-recipient partial publication during connection convergence). The
+      // first visible operation establishes the baseline; continuity is strict after latching.
+      initial_attachment_gap = latched_producer_generation_ == 0U &&
+                               last_operation_sequence_ == 0U && !health_state_.has_report;
+      if (!initial_attachment_gap && !replacement_gaps_allowed_) {
+        return channel_internal::CatalogReceivedOperation{};
+      }
+      if (!initial_attachment_gap && health_sequence == next_sequence) {
+        if (health_state_.report_sequence == std::numeric_limits<std::uint64_t>::max() ||
+            pending_health_state_.report_sequence != health_state_.report_sequence + 1U) {
+          return make_unexpected(Error{ErrorCode::kProtocolError});
+        }
+      } else if (!initial_attachment_gap &&
+                 transport->health_report_sequence > health_state_.report_sequence) {
+        return channel_internal::CatalogReceivedOperation{};
+      } else if (!initial_attachment_gap &&
+                 transport->health_report_sequence < health_state_.report_sequence) {
+        return make_unexpected(Error{ErrorCode::kProtocolError});
+      }
+    }
+
+    if (health_sequence < data_sequence) {
+      if (pending_health_metadata_.sequence != health_sequence ||
+          pending_health_metadata_.byte_size !=
+              channel_internal::kTensorCatalogClockHealthControlBytes ||
+          pending_health_metadata_.payload_kind != PayloadKind::kInlineTyped ||
+          (!initial_attachment_gap &&
+           pending_health_state_.report_sequence != health_state_.report_sequence + 1U) ||
+          (initial_attachment_gap && pending_health_state_.report_sequence == 0U)) {
+        return make_unexpected(Error{ErrorCode::kProtocolError});
+      }
+      latched_producer_generation_ = pending_health_state_.producer_epoch;
+      last_operation_sequence_ = health_sequence;
+      health_state_ = pending_health_state_;
+      pending_health_ = false;
+      return channel_internal::CatalogReceivedOperation{
+          .kind = channel_internal::CatalogReceivedOperationKind::kClockHealth,
+          .clock_health = health_state_,
+      };
+    }
+
+    if (!initial_attachment_gap &&
+        transport->health_report_sequence != health_state_.report_sequence) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    if (transport->operation_kind == channel_internal::TensorTransportOperationKind::kData &&
+        !accept_data) {
+      return channel_internal::CatalogReceivedOperation{
+          .kind = channel_internal::CatalogReceivedOperationKind::kDataPending};
+    }
+    const bool terminal_lane = transport == terminal;
+    const SampleMetadata metadata = transport->metadata;
+    const std::uint64_t health_report_sequence = transport->health_report_sequence;
+    auto received = receive_payload(*transport);
+    if (!received) {
+      if (received.error().code == ErrorCode::kClosed && stream_closed_) {
+        if (terminal_lane) {
+          pending_terminal_inbound_.reset();
+        } else {
+          pending_inbound_.reset();
+        }
+        if (initial_attachment_gap) {
+          health_state_.report_sequence = health_report_sequence;
+        }
+        return channel_internal::CatalogReceivedOperation{
+            .kind = channel_internal::CatalogReceivedOperationKind::kEndOfStream,
+            .metadata = metadata,
+        };
+      }
+      return make_unexpected(std::move(received).error());
+    }
+    if (terminal_lane) {
+      pending_terminal_inbound_.reset();
+    } else {
+      pending_inbound_.reset();
+    }
+    if (initial_attachment_gap) {
+      health_state_.report_sequence = health_report_sequence;
+    }
+    return channel_internal::CatalogReceivedOperation{
+        .kind = channel_internal::CatalogReceivedOperationKind::kData,
+        .metadata = received->metadata,
+        .tensor_sample = std::move(*received),
+    };
+  }
+
+  [[nodiscard]] expected<bool, Error> has_pending_catalog_operation() const noexcept {
+    if (!has_receive_contract_) {
+      return make_unexpected(Error{ErrorCode::kNotSupported});
+    }
+    if (stream_closed_) {
+      return false;
+    }
+    if (pending_inbound_ || pending_terminal_inbound_ || pending_health_) {
+      return true;
+    }
+    auto data = from_holomq_result(subscriber_.has_samples());
+    if (!data) {
+      return data;
+    }
+    auto terminal = terminal_subscriber_ ? from_holomq_result(terminal_subscriber_->has_samples())
+                                         : expected<bool, Error>{false};
+    if (!terminal) {
+      return terminal;
+    }
+    auto health =
+        health_subscriber_ ? health_subscriber_->has_samples() : expected<bool, Error>{false};
+    if (!health) {
+      return health;
+    }
+    return *data || *terminal || *health;
+  }
+
+  [[nodiscard]] expected<void, Error> detach_wait_set() noexcept {
+    terminal_attachment_.reset();
+    terminal_wait_handle_ = 0U;
+    attachment_.reset();
+    return {};
+  }
+
+  [[nodiscard]] expected<void, Error> supersede_producer_generation(
+      const std::uint64_t generation) noexcept {
+    if (!has_receive_contract_ || generation == 0U || latched_producer_generation_ != 0U ||
+        pending_inbound_ || pending_terminal_inbound_ || pending_health_ ||
+        last_operation_sequence_ != 0U || stream_closed_) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    superseded_producer_generation_ = generation;
+    return {};
+  }
+
+  [[nodiscard]] expected<channel_internal::CatalogImportQuiescence, Error>
+  import_quiescence() noexcept {
+    if (!has_receive_contract_) {
+      return make_unexpected(Error{ErrorCode::kNotSupported});
+    }
+    auto staged = stage_catalog_operations();
+    if (!staged) {
+      return make_unexpected(std::move(staged).error());
+    }
+    channel_internal::CatalogImportQuiescence result{.latched_producer_generation =
+                                                         latched_producer_generation_};
+    const auto classify = [&](const std::uint64_t generation) {
+      const bool foreign = foreign_producer_generation(generation);
+      result.pending_foreign = result.pending_foreign || foreign;
+      result.pending_current = result.pending_current || !foreign;
+    };
+    if (pending_inbound_) {
+      classify(pending_inbound_->payload().producer_generation);
+    }
+    if (pending_terminal_inbound_) {
+      classify(pending_terminal_inbound_->payload().producer_generation);
+    }
+    if (pending_health_) {
+      classify(pending_health_state_.producer_epoch);
+    }
+    return result;
+  }
+
+  // Data and protected-terminal arbitration intentionally remain one ordered receive state machine.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+  [[nodiscard]] expected<Sample<Tensor>, Error> receive_sample(const bool accept_data) {
+    if (has_receive_contract_) {
+      if (stream_closed_) {
+        return make_unexpected(Error{ErrorCode::kClosed});
+      }
+      auto operation = receive_catalog_operation(accept_data);
+      if (!operation) {
+        return make_unexpected(std::move(operation).error());
+      }
+      if (operation->kind == channel_internal::CatalogReceivedOperationKind::kData &&
+          operation->tensor_sample) {
+        return std::move(*operation->tensor_sample);
+      }
+      if (operation->kind == channel_internal::CatalogReceivedOperationKind::kEndOfStream) {
+        return make_unexpected(Error{ErrorCode::kClosed});
+      }
+      if (operation->kind ==
+          channel_internal::CatalogReceivedOperationKind::kPeerIncarnationChanged) {
+        return make_unexpected(Error{ErrorCode::kStaleEndpoint});
+      }
+      if (operation->kind == channel_internal::CatalogReceivedOperationKind::kDataPending) {
+        return make_unexpected(Error{ErrorCode::kBackpressured});
+      }
+      return make_unexpected(Error{ErrorCode::kNotReady});
+    }
+    if (stream_closed_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    auto* const terminal_subscriber = optional_value_pointer(terminal_subscriber_);
+    {
+      const auto stage_data = [&]() -> expected<bool, Error> {
+        if (pending_inbound_) {
+          return true;
+        }
+        auto ready = from_holomq_result(subscriber_.has_samples());
+        if (!ready) {
+          return make_unexpected(std::move(ready).error());
+        }
+        if (*ready) {
+          auto inbound = subscriber_.try_take();
+          if (!inbound) {
+            return make_unexpected(from_holomq_error(std::move(inbound).error()));
+          }
+          pending_inbound_.emplace(std::move(inbound).value());
+        }
+        return pending_inbound_.has_value();
+      };
+      const auto stage_terminal = [&]() -> expected<bool, Error> {
+        if (!pending_terminal_inbound_ && terminal_subscriber != nullptr) {
+          auto ready = from_holomq_result(terminal_subscriber->has_samples());
+          if (!ready) {
+            return make_unexpected(std::move(ready).error());
+          }
+          if (*ready) {
+            auto inbound = terminal_subscriber->try_take();
+            if (!inbound) {
+              return make_unexpected(from_holomq_error(std::move(inbound).error()));
+            }
+            pending_terminal_inbound_.emplace(std::move(inbound).value());
+          }
+        }
+        return pending_terminal_inbound_.has_value();
+      };
+      auto staged = channel_internal::stage_protected_terminal_transaction(
+          stage_data, stage_terminal, [&]() noexcept {
+            // This source-tree-only, one-shot barrier deterministically exercises the race in
+            // which EOS becomes visible after the data-lane probe. Production subscribers retain
+            // a null pointer.
+            if (receive_probe_barrier_ != nullptr &&
+                receive_probe_barrier_->pause_after_empty_data_probe()) {
+              receive_probe_barrier_ = nullptr;
+            }
+          });
+      if (!staged) {
+        return make_unexpected(std::move(staged).error());
       }
       if (!pending_inbound_.has_value() && !pending_terminal_inbound_.has_value()) {
         return make_unexpected(Error{ErrorCode::kNotReady});
@@ -519,20 +1002,100 @@ class ChannelSubscriber<Tensor>::Impl
                                        : std::optional<std::uint64_t>{terminal_wait_handle_};
   }
 
+  [[nodiscard]] std::optional<channel_internal::StagedDataState> staged_data_state()
+      const noexcept override {
+    if (!pending_inbound_) {
+      return std::nullopt;
+    }
+    const auto& data = pending_inbound_->payload();
+    if (data.operation_kind != channel_internal::TensorTransportOperationKind::kData ||
+        data.producer_generation == 0U || data.metadata.sequence == 0U ||
+        foreign_producer_generation(data.producer_generation)) {
+      return std::nullopt;
+    }
+    return channel_internal::StagedDataState{.sequence = data.metadata.sequence,
+                                             .capture_time = data.metadata.capture_time()};
+  }
+
+  [[nodiscard]] std::optional<std::uint64_t> staged_terminal_sequence() const noexcept override {
+    if (!pending_terminal_inbound_) {
+      return std::nullopt;
+    }
+    const auto& terminal = pending_terminal_inbound_->payload();
+    return terminal.operation_kind ==
+                       channel_internal::TensorTransportOperationKind::kEndOfStream &&
+                   terminal.producer_generation != 0U &&
+                   !foreign_producer_generation(terminal.producer_generation) &&
+                   terminal.metadata.sequence != 0U
+               ? std::optional<std::uint64_t>{terminal.metadata.sequence}
+               : std::nullopt;
+  }
+
+  // Read from the port rather than a cached flag so this can never disagree with the transport.
+  [[nodiscard]] bool event_wake_enabled() const noexcept override {
+    return subscriber_.is_event_wake_enabled();
+  }
+
+  // The parent Channel runtime owns this transport context and outlives every endpoint created
+  // from it, so this borrow stays valid for the subscriber's lifetime.
+  [[nodiscard]] void* wait_context_runtime() noexcept override { return context_; }
+
+  [[nodiscard]] expected<bool, Error> has_samples() const override {
+    if (stream_closed_) {
+      return false;
+    }
+    auto data = from_holomq_result(subscriber_.has_samples());
+    if (!data) {
+      return data;
+    }
+    // Probed for its refresh side effect, not its answer: the health lane carries no sample this
+    // subscriber can select, but leaving it unprobed lets its transport mapping lapse.
+    if (health_subscriber_) {
+      auto health = health_subscriber_->has_samples();
+      if (!health) {
+        return make_unexpected(std::move(health).error());
+      }
+    }
+    const auto* const terminal = optional_value_pointer(terminal_subscriber_);
+    if (terminal == nullptr) {
+      return pending_inbound_.has_value() || *data;
+    }
+    // Refresh both receiver mappings before returning the OR result. Tensor replacement can keep
+    // the data lane continuously ready; probing only that lane would let the private terminal
+    // transport mapping lapse while its registry-level peer count still appears connected.
+    auto terminal_ready = from_holomq_result(terminal->has_samples());
+    if (!terminal_ready) {
+      return terminal_ready;
+    }
+    return pending_inbound_.has_value() || *data || pending_terminal_inbound_.has_value() ||
+           *terminal_ready;
+  }
+
   std::shared_ptr<void> runtime_lifetime_;
   holomq::Context* context_{};
   holomq::Subscriber<TensorTransportPayload> subscriber_;
   std::optional<holomq::Subscriber<TensorTransportPayload>> terminal_subscriber_;
+  std::unique_ptr<channel_internal::InlinePayloadSubscriber> health_subscriber_;
+  bool replacement_gaps_allowed_{};
   std::optional<holomq::WaitSetAttachment> attachment_;
   std::optional<holomq::WaitSetAttachment> terminal_attachment_;
   std::uint64_t terminal_wait_handle_{};
   std::shared_ptr<TensorSidecarStore> sidecar_store_;
   std::size_t recipient_index_{};
   bool has_receive_contract_{};
-  LogicalTensorRequirementsRecord receive_contract_;
+  TensorBoundaryContractRecord receive_contract_;
   channel_internal::CatalogTensorReceiveControl* receive_control_{};
+  ReceiveProbeBarrier* receive_probe_barrier_{};
+  // Declared clock count of the catalog behind this endpoint, or zero when this subscriber has no
+  // catalog contract. Only the catalog receive path consults it.
+  std::uint64_t catalog_clock_count_{};
   std::uint64_t latched_producer_generation_{};
+  std::uint64_t superseded_producer_generation_{};
   std::uint64_t last_operation_sequence_{};
+  channel_internal::CatalogClockHealthState health_state_{};
+  channel_internal::CatalogClockHealthState pending_health_state_{};
+  SampleMetadata pending_health_metadata_{};
+  bool pending_health_{};
   bool stream_closed_{};
   std::optional<holomq::InboundMessage<TensorTransportPayload>> pending_inbound_;
   std::optional<holomq::InboundMessage<TensorTransportPayload>> pending_terminal_inbound_;
@@ -554,13 +1117,16 @@ std::uint64_t ManualTensorPublisher::producer_generation() const noexcept {
   return impl_ ? impl_->producer_generation_ : 0U;
 }
 
+void ManualTensorPublisher::set_health_report_sequence(const std::uint64_t sequence) noexcept {
+  if (impl_) {
+    impl_->health_report_sequence_ = sequence;
+  }
+}
+
 expected<std::uint32_t, Error> ManualTensorPublisher::emit_end_of_stream(
     SampleMetadata metadata) noexcept {
   if (!impl_) {
     return make_unexpected(Error{ErrorCode::kClosed});
-  }
-  if (impl_->options_.tensor_transfer_mode != ChannelTensorTransferMode::kBufferHandle) {
-    return make_unexpected(Error{ErrorCode::kNotSupported});
   }
   auto* const terminal_publisher = optional_value_pointer(impl_->terminal_publisher_);
   if (!impl_->publisher_.has_subscribers() ||
@@ -575,8 +1141,12 @@ expected<std::uint32_t, Error> ManualTensorPublisher::emit_end_of_stream(
   message->payload() = TensorTransportPayload{
       .metadata = metadata,
       .producer_generation = impl_->producer_generation_,
+      .health_report_sequence = impl_->health_report_sequence_,
       .operation_kind = channel_internal::TensorTransportOperationKind::kEndOfStream,
-      .payload_kind = ChannelPayloadKind::kBufferHandle,
+      .payload_kind =
+          impl_->options_.tensor_transfer_mode == ChannelTensorTransferMode::kBufferHandle
+              ? ChannelPayloadKind::kBufferHandle
+              : ChannelPayloadKind::kLocalBufferDescriptor,
   };
   // HoloMQ send synchronously enqueues each accepted data descriptor before returning. Close can
   // therefore submit this terminal record only after the data publication is visible, and the
@@ -620,6 +1190,7 @@ expected<std::uint32_t, Error> ManualTensorPublisher::emit_sample(Sample<Tensor>
 
   TensorTransportPayload payload{};
   payload.producer_generation = impl_->producer_generation_;
+  payload.health_report_sequence = impl_->health_report_sequence_;
   SidecarPublicationRollback sidecar_rollback;
   if (impl_->options_.tensor_transfer_mode == ChannelTensorTransferMode::kBufferHandle) {
     auto descriptor = channel_internal::export_holomq_tensor_descriptor(sample.data);
@@ -688,29 +1259,34 @@ expected<std::uint32_t, Error> ManualTensorPublisher::emit_sample(Sample<Tensor>
       std::move(sent), impl_->options_.expected_recipient_count, impl_->graph_retry_boundary_);
 }
 
-expected<void, Error> ManualTensorPublisher::update_connections() {
-  if (!impl_) {
-    return make_unexpected(Error{ErrorCode::kClosed});
-  }
-  auto updated = impl_->publisher_.update_connections();
-  if (!updated) {
-    return make_unexpected(from_holomq_error(std::move(updated).error()));
-  }
-  if (auto* const terminal_publisher = optional_value_pointer(impl_->terminal_publisher_);
-      terminal_publisher != nullptr) {
-    auto terminal_updated = terminal_publisher->update_connections();
-    if (!terminal_updated) {
-      return make_unexpected(from_holomq_error(std::move(terminal_updated).error()));
+expected<void, Error> ManualTensorPublisher::update_connections() noexcept {
+  try {
+    if (!impl_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
     }
+    auto updated = impl_->publisher_.update_connections();
+    if (!updated) {
+      return make_unexpected(from_holomq_error(std::move(updated).error()));
+    }
+    if (auto* const terminal_publisher = optional_value_pointer(impl_->terminal_publisher_);
+        terminal_publisher != nullptr) {
+      auto terminal_updated = terminal_publisher->update_connections();
+      if (!terminal_updated) {
+        return make_unexpected(from_holomq_error(std::move(terminal_updated).error()));
+      }
+    }
+    if (impl_->options_.tensor_transfer_mode == ChannelTensorTransferMode::kBufferHandle) {
+      // iceoryx2 returns released samples to the publisher while entering an allocation/send path.
+      // Borrowing and immediately abandoning one transport payload therefore dispatches pending
+      // release callbacks without publishing data. This keeps a one-slot external Tensor pool from
+      // waiting forever for a second application Tensor that it cannot yet loan.
+      static_cast<void>(impl_->publisher_.loan());
+    }
+    return {};
+  } catch (...) {
+    return channel_internal::make_unexpected_nothrow<void>(
+        ErrorCode::kFailure, "Tensor connection refresh raised an exception");
   }
-  if (impl_->options_.tensor_transfer_mode == ChannelTensorTransferMode::kBufferHandle) {
-    // iceoryx2 returns released samples to the publisher while entering an allocation/send path.
-    // Borrowing and immediately abandoning one transport payload therefore dispatches pending
-    // release callbacks without publishing data. This keeps a one-slot external Tensor pool from
-    // waiting forever for a second application Tensor that it cannot yet loan.
-    static_cast<void>(impl_->publisher_.loan());
-  }
-  return {};
 }
 
 bool ManualTensorPublisher::has_subscribers() const noexcept {
@@ -839,30 +1415,59 @@ std::uint64_t ChannelSubscriber<Tensor>::accepted_end_of_stream_sequence() const
   return impl_ != nullptr && impl_->stream_closed_ ? impl_->last_operation_sequence_ : 0U;
 }
 
+expected<channel_internal::CatalogReceivedOperation, Error>
+detail::RuntimeChannelBindingAccess::receive_catalog_tensor_operation(
+    ChannelSubscriber<Tensor>& subscriber, const bool accept_data) noexcept {
+  if (!subscriber.impl_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  return subscriber.impl_->receive_catalog_operation(accept_data);
+}
+
+expected<bool, Error> detail::RuntimeChannelBindingAccess::has_pending_catalog_tensor_operation(
+    const ChannelSubscriber<Tensor>& subscriber) noexcept {
+  if (!subscriber.impl_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  return subscriber.impl_->has_pending_catalog_operation();
+}
+
+expected<void, Error> detail::RuntimeChannelBindingAccess::detach_catalog_tensor_wait_set(
+    ChannelSubscriber<Tensor>& subscriber) noexcept {
+  if (!subscriber.impl_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  return subscriber.impl_->detach_wait_set();
+}
+
+std::uint64_t detail::RuntimeChannelBindingAccess::latched_catalog_tensor_producer_generation(
+    const ChannelSubscriber<Tensor>& subscriber) noexcept {
+  return subscriber.impl_ ? subscriber.impl_->latched_producer_generation_ : 0U;
+}
+
+expected<void, Error>
+detail::RuntimeChannelBindingAccess::supersede_catalog_tensor_producer_generation(
+    ChannelSubscriber<Tensor>& subscriber, const std::uint64_t generation) noexcept {
+  if (!subscriber.impl_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  return subscriber.impl_->supersede_producer_generation(generation);
+}
+
+expected<channel_internal::CatalogImportQuiescence, Error>
+detail::RuntimeChannelBindingAccess::catalog_tensor_import_quiescence(
+    ChannelSubscriber<Tensor>& subscriber) noexcept {
+  if (!subscriber.impl_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  return subscriber.impl_->import_quiescence();
+}
+
 expected<bool, Error> ChannelSubscriber<Tensor>::has_samples() const {
   if (!impl_) {
     return make_unexpected(Error{ErrorCode::kClosed});
   }
-  if (impl_->stream_closed_) {
-    return false;
-  }
-  auto data = from_holomq_result(impl_->subscriber_.has_samples());
-  if (!data) {
-    return data;
-  }
-  const auto* const terminal_subscriber = optional_value_pointer(impl_->terminal_subscriber_);
-  if (terminal_subscriber == nullptr) {
-    return impl_->pending_inbound_.has_value() || *data;
-  }
-  // Refresh both receiver mappings before returning the OR result. Tensor replacement can keep
-  // the data lane continuously ready; probing only that lane would let the private terminal
-  // transport mapping lapse while its registry-level peer count still appears connected.
-  auto terminal = from_holomq_result(terminal_subscriber->has_samples());
-  if (!terminal) {
-    return terminal;
-  }
-  return impl_->pending_inbound_.has_value() || *data ||
-         impl_->pending_terminal_inbound_.has_value() || *terminal;
+  return impl_->has_samples();
 }
 
 expected<Tensor, Error> ChannelSubscriber<Tensor>::receive() {
@@ -879,6 +1484,40 @@ expected<Sample<Tensor>, Error> ChannelSubscriber<Tensor>::receive_sample() {
         make_channel_error(ErrorCode::kClosed, "Tensor channel subscriber is closed"));
   }
   return impl_->receive_sample(true);
+}
+
+expected<Sample<Tensor>, Error> ChannelSubscriber<Tensor>::wait_and_receive_sample(
+    const std::chrono::steady_clock::time_point deadline) {
+  return wait_and_receive_sample(deadline, std::stop_token{});
+}
+
+expected<Sample<Tensor>, Error> ChannelSubscriber<Tensor>::wait_and_receive_sample(
+    const std::chrono::steady_clock::time_point deadline, const std::stop_token& token) {
+  if (!impl_) {
+    return make_unexpected(
+        make_channel_error(ErrorCode::kClosed, "Tensor channel subscriber is closed"));
+  }
+  // Always accept data. receive_sample_if_data_accepted(false) exists for the Runtime readiness
+  // pump and can report kBackpressured, which is not part of this facade's return contract.
+  return channel_internal::wait_and_receive_next(
+      *impl_, deadline, channel_internal::borrowed_stop_token(token), [this] {
+        return impl_->receive_sample(true);
+      });
+}
+
+expected<void, Error> ChannelSubscriber<Tensor>::wait_for_sample(
+    const std::chrono::steady_clock::time_point deadline, const std::stop_token& token) {
+  if (!impl_) {
+    return make_unexpected(
+        make_channel_error(ErrorCode::kClosed, "Tensor channel subscriber is closed"));
+  }
+  // The end-of-stream latch is sticky and has_samples() reports false once it is set, so waiting
+  // would run to the deadline. Report the terminal state instead.
+  if (impl_->stream_closed_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  return channel_internal::wait_for_sample_readiness(
+      *impl_, deadline, channel_internal::borrowed_stop_token(token));
 }
 
 expected<Sample<Tensor>, Error> ChannelSubscriber<Tensor>::receive_sample_if_data_accepted(
@@ -908,6 +1547,12 @@ expected<void, Error> ChannelSubscriber<Tensor>::refresh_connections() {
       return make_unexpected(from_holomq_error(std::move(terminal_refreshed).error()));
     }
   }
+  if (impl_->health_subscriber_) {
+    auto health_refreshed = impl_->health_subscriber_->has_samples();
+    if (!health_refreshed) {
+      return make_unexpected(std::move(health_refreshed).error());
+    }
+  }
   return {};
 }
 
@@ -916,7 +1561,8 @@ bool ChannelSubscriber<Tensor>::has_publishers() const noexcept {
     return false;
   }
   const auto* const terminal_subscriber = optional_value_pointer(impl_->terminal_subscriber_);
-  return terminal_subscriber == nullptr || terminal_subscriber->has_publishers();
+  return (terminal_subscriber == nullptr || terminal_subscriber->has_publishers()) &&
+         (!impl_->health_subscriber_ || impl_->health_subscriber_->has_publishers());
 }
 
 expected<ManualTensorPublisher, Error> ChannelRuntime::create_tensor_publisher(
@@ -944,8 +1590,7 @@ expected<ManualTensorPublisher, Error> ChannelRuntime::create_tensor_publisher(
                            "Tensor channel name occupies the reserved terminal namespace"));
   }
   std::string terminal_service_id;
-  if (effective_options.tensor_transfer_mode == ChannelTensorTransferMode::kBufferHandle &&
-      replaces_oldest_unread_sample(effective_options.queue_policy)) {
+  if (replaces_oldest_unread_sample(effective_options.queue_policy)) {
     terminal_service_id = channel_internal::ordered_terminal_service_id(channel_name);
     if (terminal_service_id.empty()) {
       return make_unexpected(make_channel_error(
@@ -993,8 +1638,7 @@ expected<ManualTensorPublisher, Error> ChannelRuntime::create_tensor_publisher(
                                              "failed to create Tensor channel publisher"));
   }
   std::optional<holomq::Publisher<TensorTransportPayload>> terminal_publisher;
-  if (effective_options.tensor_transfer_mode == ChannelTensorTransferMode::kBufferHandle &&
-      replaces_oldest_unread_sample(effective_options.queue_policy)) {
+  if (replaces_oldest_unread_sample(effective_options.queue_policy)) {
     auto created =
         impl_->context_.publisher_builder(terminal_service_id)
             .service_options(channel_internal::ordered_terminal_service_options(effective_options))
@@ -1020,8 +1664,14 @@ expected<ManualTensorPublisher, Error> ChannelRuntime::create_tensor_publisher(
 
 expected<ChannelSubscriber<Tensor>, Error> ChannelRuntime::create_tensor_subscriber(
     const std::string_view channel_name, const ChannelOptions& options,
-    std::optional<LogicalTensorRequirementsRecord> receive_contract,
-    const std::uint32_t receive_control_capacity) {
+    std::optional<TensorBoundaryContractRecord> receive_contract,
+    const std::uint32_t receive_control_capacity,
+    std::unique_ptr<channel_internal::InlinePayloadSubscriber> health_subscriber,
+    const std::uint64_t catalog_clock_count) {
+  // Consume the source-tree-only attachment on the cold construction path so a failed
+  // construction cannot leak a borrowed barrier into a later subscriber.
+  auto* const receive_probe_barrier =
+      channel_internal::take_next_tensor_subscriber_receive_probe_barrier_for_test();
   if (!impl_) {
     return make_unexpected(make_channel_error(ErrorCode::kClosed, "channel runtime is closed"));
   }
@@ -1038,8 +1688,7 @@ expected<ChannelSubscriber<Tensor>, Error> ChannelRuntime::create_tensor_subscri
                            "Tensor channel name occupies the reserved terminal namespace"));
   }
   std::string terminal_service_id;
-  if (effective_options.tensor_transfer_mode == ChannelTensorTransferMode::kBufferHandle &&
-      replaces_oldest_unread_sample(effective_options.queue_policy)) {
+  if (replaces_oldest_unread_sample(effective_options.queue_policy)) {
     terminal_service_id = channel_internal::ordered_terminal_service_id(channel_name);
     if (terminal_service_id.empty()) {
       return make_unexpected(make_channel_error(
@@ -1070,8 +1719,7 @@ expected<ChannelSubscriber<Tensor>, Error> ChannelRuntime::create_tensor_subscri
                                              "failed to create Tensor channel subscriber"));
   }
   std::optional<holomq::Subscriber<TensorTransportPayload>> terminal_subscriber;
-  if (effective_options.tensor_transfer_mode == ChannelTensorTransferMode::kBufferHandle &&
-      replaces_oldest_unread_sample(effective_options.queue_policy)) {
+  if (replaces_oldest_unread_sample(effective_options.queue_policy)) {
     auto created =
         impl_->context_.subscriber_builder(terminal_service_id)
             .service_options(channel_internal::ordered_terminal_service_options(effective_options))
@@ -1100,19 +1748,32 @@ expected<ChannelSubscriber<Tensor>, Error> ChannelRuntime::create_tensor_subscri
     auto created = channel_internal::CatalogTensorReceiveControl::create(
         impl_, impl_->context_, *receive_contract, receive_control_capacity);
     if (!created) {
+      if (sidecar_store) {
+        sidecar_store->unregister_recipient(recipient_index, subscriber->recipient_id());
+      }
       return make_unexpected(std::move(created).error());
     }
     receive_control = std::move(created).value();
   }
-  auto subscriber_impl =
-      std::make_unique<ChannelSubscriber<Tensor>::Impl>(impl_,
-                                                        impl_->context_,
-                                                        std::move(subscriber).value(),
-                                                        std::move(terminal_subscriber),
-                                                        std::move(sidecar_store),
-                                                        recipient_index,
-                                                        std::move(receive_contract),
-                                                        std::move(receive_control));
+  auto subscriber_impl = std::make_unique<ChannelSubscriber<Tensor>::Impl>(
+      impl_,
+      impl_->context_,
+      std::move(subscriber).value(),
+      std::move(terminal_subscriber),
+      std::move(health_subscriber),
+      replaces_oldest_unread_sample(effective_options.queue_policy),
+      std::move(sidecar_store),
+      recipient_index,
+      std::move(receive_contract),
+      std::move(receive_control),
+      receive_probe_barrier,
+      catalog_clock_count);
   return ChannelSubscriber<Tensor>(std::move(subscriber_impl));
+}
+
+void channel_internal::TensorPublisherTestAccess::
+    attach_receive_probe_barrier_to_next_subscriber_for_test(
+        ReceiveProbeBarrier& barrier) noexcept {
+  next_tensor_subscriber_receive_probe_barrier_for_test() = std::ref(barrier);
 }
 }  // namespace holoscan

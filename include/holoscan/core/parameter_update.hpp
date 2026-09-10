@@ -92,7 +92,7 @@ enum class ParamUpdateStatus : std::uint8_t {
 /// @brief Own one supported fixed scalar parameter value.
 ///
 /// `ParamValue` deliberately supports only Boolean, fixed-width signed/unsigned integer, enum
-/// underlying, IEC 60559 `float`/`double`, and integral-representation duration values in EA1.
+/// underlying, IEC 60559 `float`/`double`, and integral-representation duration values in baseline.
 /// Durations are checked-converted to signed 64-bit canonical nanoseconds; a source overflow or
 /// non-integral nanosecond value produces an empty value that submission rejects. The carrier
 /// contains no heap storage, string, container, object address, or C++ type token. Enum identity
@@ -278,8 +278,8 @@ struct ParamBatchUpdateResult {
 struct ParamSubmitResult {
   ParamUpdateStatus status{ParamUpdateStatus::kRejected};  ///< Immediate nonblocking outcome.
   ParamUpdateState state{ParamUpdateState::kRejected};     ///< Submitted or rejected state.
-  ParamUpdateSequence
-      update_sequence{};  ///< Always zero in EA1; acceptance assigns identity after ingress drain.
+  ParamUpdateSequence update_sequence{};  ///< Always zero in baseline; acceptance assigns identity
+                                          ///< after ingress drain.
 };
 
 /// @brief Report the irreversible session-wide parameter-ingress stop fence.
@@ -307,7 +307,7 @@ enum class ParamEventKind : std::uint8_t {
 /// and bounded audit identities. They never contain Parameter values, object
 /// bytes, addresses, hashes derived from sensitive values, or formatted text.
 /// A gap is deliberately non-counting: policy filtering and bounded overwrite
-/// may hide any positive number of source records. EA1 sets
+/// may hide any positive number of source records. The baseline sets
 /// \ref first_missing_sequence and \ref last_missing_sequence to the same
 /// cursor-local marker sequence. Callers must resnapshot and must not infer a
 /// source-record count or global source position from those fields. For a gap,
@@ -333,7 +333,7 @@ static_assert(std::is_trivially_copyable_v<ParamEvent>);
 
 /// @brief Select the initial independent Parameter event-cursor position.
 struct ParamEventCursorOptions {
-  /// Reserved resume position. EA1 requires zero because event sequences are
+  /// Reserved resume position. The baseline requires zero because event sequences are
   /// projected per restricted cursor and no finite per-policy resume index is
   /// admitted yet. Any nonzero value is rejected fail-closed.
   ParamEventSequence after_event_sequence{};

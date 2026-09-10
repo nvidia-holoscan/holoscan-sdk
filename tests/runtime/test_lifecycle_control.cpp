@@ -2867,10 +2867,15 @@ TEST(LifecycleControl, DependencyClosureRestartFencesEveryMemberAndPreservesUnre
       EXPECT_EQ(event.tag.generation, 1U);
     }
   }
-  std::sort(compute_generations.begin(), compute_generations.end());
-  const std::vector<std::pair<std::int32_t, std::uint32_t>> expected_compute_generations{
-      {2, 1U}, {2, 2U}, {3, 1U}, {3, 2U}, {4, 1U}};
-  EXPECT_EQ(compute_generations, expected_compute_generations);
+  // The requester can publish the restart before either independent closure-member lane performs
+  // its first activation. Generation one is therefore optional; generation two proves that both
+  // closure members crossed the fence, while the unrelated Operator must remain in generation one.
+  constexpr std::array required_compute_generations{
+      std::pair{2, 2U}, std::pair{3, 2U}, std::pair{4, 1U}};
+  for (const auto& required : required_compute_generations) {
+    EXPECT_NE(std::find(compute_generations.begin(), compute_generations.end(), required),
+              compute_generations.end());
+  }
   EXPECT_EQ(std::count_if(compute_generations.begin(),
                           compute_generations.end(),
                           [](const auto& observed) { return observed.first == 4; }),

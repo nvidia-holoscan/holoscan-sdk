@@ -49,7 +49,7 @@ fixed and varies only the missing-data policy.
 From this folder's `cpp/` directory:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

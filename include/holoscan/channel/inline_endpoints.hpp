@@ -17,11 +17,13 @@
 
 #include <array>
 #include <bit>
+#include <chrono>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -40,6 +42,47 @@ inline constexpr std::size_t kSchemaEndpointScratchCapacity = [] {
   }
   return std::size_t{1U};
 }();
+
+template <typename T>
+inline constexpr std::size_t kSubscriberEndpointScratchCapacity = [] {
+  if constexpr (CatalogChannelSchema<T>) {
+    return generated_schema_max_serialized_size_v<T>;
+  }
+  return sizeof(T);
+}();
+
+/// @brief Admit one received frame whose whole width is bit-cast into persistent endpoint scratch.
+/// @tparam T Typed payload reconstructed from the complete scratch array.
+/// @param received Erased receive result carrying both the written length and the producer claim.
+/// @return Success, or ErrorCode::kProtocolError when the frame does not cover every scratch byte.
+/// @note The written length and the producer's claimed width are independent. Requiring both to
+/// equal `sizeof(T)` is what keeps a short frame from combining with bytes an earlier sample left
+/// in the reused scratch. A peer may claim the full width while submitting fewer bytes.
+template <typename T>
+[[nodiscard]] expected<void, Error> admit_typed_frame(
+    const InlinePayloadReceiveResult& received) noexcept {
+  if (received.payload_size != sizeof(T) || received.metadata.byte_size != sizeof(T)) {
+    return make_unexpected(
+        Error{ErrorCode::kProtocolError, "received payload byte size does not match its type"});
+  }
+  return {};
+}
+
+/// @brief Admit one received serialized-schema frame and return its verified byte count.
+/// @param received Erased receive result carrying both the written length and the producer claim.
+/// @param scratch_capacity Bytes available in the caller's persistent receive scratch.
+/// @return Serialized length safe to materialize, or ErrorCode::kProtocolError.
+/// @note Materialization must never read past the bytes this operation wrote, so the written
+/// length has to agree with the claimed length before either bounds the decoded span.
+[[nodiscard]] inline expected<std::size_t, Error> admitted_schema_frame(
+    const InlinePayloadReceiveResult& received, const std::size_t scratch_capacity) noexcept {
+  if (received.metadata.byte_size == 0U || received.metadata.byte_size > scratch_capacity ||
+      received.payload_size != received.metadata.byte_size) {
+    return make_unexpected(
+        Error{ErrorCode::kProtocolError, "received schema byte size exceeds its package bound"});
+  }
+  return expected<std::size_t, Error>{received.payload_size};
+}
 
 template <CatalogChannelSchema T>
 [[nodiscard]] expected<T, Error> materialize_catalog_schema(
@@ -362,29 +405,47 @@ class ChannelSubscriber<T> {
   /// A clock-health-only operation is applied in sequence and returns \ref ErrorCode::kNotReady;
   /// retry to receive a later data operation without allowing control traffic to create an
   /// unbounded call.
+  /// @note Observing \ref ErrorCode::kClosed here latches end of stream for this facade, so a
+  /// later \ref wait_for_sample or \ref wait_and_receive_sample reports \ref ErrorCode::kClosed
+  /// rather than waiting out its deadline. The result of this call is unaffected.
   [[nodiscard]] expected<T, Error> receive() {
     if (!subscriber_) {
       return make_unexpected(
           channel_internal::make_channel_error(ErrorCode::kClosed, "channel subscriber is closed"));
     }
     if constexpr (CatalogChannelSchema<T>) {
-      auto received = subscriber_->receive(schema_scratch_);
+      auto received = subscriber_->receive(receive_scratch_);
       if (!received) {
+        // Latch here and not only in wait_and_receive_sample. The transport surfaces end of
+        // stream exactly once and then reads as an empty, never-ready endpoint, so a caller that
+        // consumed it through a non-waiting path would leave a later wait with nothing to
+        // observe: it would block for its whole deadline and report kTimeout for a stream that
+        // has already finished. Set-only, so this call's own result is unchanged.
+        if (received.error().code == ErrorCode::kClosed) {
+          stream_closed_ = true;
+        }
         return make_unexpected(std::move(received).error());
       }
-      if (received->byte_size == 0U || received->byte_size > schema_scratch_.size()) {
-        return make_unexpected(Error{ErrorCode::kProtocolError,
-                                     "received schema byte size exceeds its package bound"});
+      auto admitted = channel_internal::admitted_schema_frame(*received, receive_scratch_.size());
+      if (!admitted) {
+        return make_unexpected(std::move(admitted).error());
       }
       return channel_internal::materialize_catalog_schema<T>(
-          std::span<const std::byte>(schema_scratch_).first(received->byte_size));
+          std::span<const std::byte>(receive_scratch_).first(*admitted));
     } else {
-      std::array<std::byte, sizeof(T)> bytes{};
-      auto received = subscriber_->receive(bytes);
+      auto received = subscriber_->receive(receive_scratch_);
       if (!received) {
+        // Same one-shot end-of-stream latch as above.
+        if (received.error().code == ErrorCode::kClosed) {
+          stream_closed_ = true;
+        }
         return make_unexpected(std::move(received).error());
       }
-      T value = std::bit_cast<T>(bytes);
+      auto admitted = channel_internal::admit_typed_frame<T>(*received);
+      if (!admitted) {
+        return make_unexpected(std::move(admitted).error());
+      }
+      T value = std::bit_cast<T>(receive_scratch_);
       if constexpr (ChannelSchemaEnvelopePayload<T>) {
         auto valid = channel_internal::validate_received_compatibility_schema_payload(value);
         if (!valid) {
@@ -404,6 +465,9 @@ class ChannelSubscriber<T> {
   /// bounded serialized bytes and then return a new owning native object.
   /// @note A catalog-attached monitored endpoint applies at most one private operation per call.
   /// A clock-health-only operation is applied in sequence and returns \ref ErrorCode::kNotReady.
+  /// @note Observing \ref ErrorCode::kClosed here latches end of stream for this facade, so a
+  /// later \ref wait_for_sample or \ref wait_and_receive_sample reports \ref ErrorCode::kClosed
+  /// rather than waiting out its deadline. The result of this call is unaffected.
   template <PublishedPayload U = T>
     requires std::same_as<U, T>
   [[nodiscard]] expected<Sample<U>, Error> receive_sample() {
@@ -412,35 +476,155 @@ class ChannelSubscriber<T> {
           channel_internal::make_channel_error(ErrorCode::kClosed, "channel subscriber is closed"));
     }
     if constexpr (CatalogChannelSchema<T>) {
-      auto received = subscriber_->receive(schema_scratch_);
+      auto received = subscriber_->receive(receive_scratch_);
       if (!received) {
+        // Same one-shot end-of-stream latch as above.
+        if (received.error().code == ErrorCode::kClosed) {
+          stream_closed_ = true;
+        }
         return make_unexpected(std::move(received).error());
       }
-      if (received->byte_size == 0U || received->byte_size > schema_scratch_.size()) {
-        return make_unexpected(Error{ErrorCode::kProtocolError,
-                                     "received schema byte size exceeds its package bound"});
+      auto admitted = channel_internal::admitted_schema_frame(*received, receive_scratch_.size());
+      if (!admitted) {
+        return make_unexpected(std::move(admitted).error());
       }
       auto value = channel_internal::materialize_catalog_schema<T>(
-          std::span<const std::byte>(schema_scratch_).first(received->byte_size));
+          std::span<const std::byte>(receive_scratch_).first(*admitted));
       if (!value) {
         return make_unexpected(std::move(value).error());
       }
-      return Sample<U>(std::move(*value), *received);
+      return Sample<U>(std::move(*value), received->metadata);
     } else {
-      std::array<std::byte, sizeof(U)> bytes{};
-      auto received = subscriber_->receive(bytes);
+      auto received = subscriber_->receive(receive_scratch_);
       if (!received) {
+        // Same one-shot end-of-stream latch as above.
+        if (received.error().code == ErrorCode::kClosed) {
+          stream_closed_ = true;
+        }
         return make_unexpected(std::move(received).error());
       }
-      U value = std::bit_cast<U>(bytes);
+      auto admitted = channel_internal::admit_typed_frame<U>(*received);
+      if (!admitted) {
+        return make_unexpected(std::move(admitted).error());
+      }
+      U value = std::bit_cast<U>(receive_scratch_);
       if constexpr (ChannelSchemaEnvelopePayload<U>) {
         auto valid = channel_internal::validate_received_compatibility_schema_payload(value);
         if (!valid) {
           return make_unexpected(std::move(valid).error());
         }
       }
-      return Sample<U>(std::move(value), received.value());
+      return Sample<U>(std::move(value), received->metadata);
     }
+  }
+
+  /// @brief Block until a sample is available, then receive and consume it.
+  ///
+  /// A receive is attempted before any wait is built, so an already queued sample costs no wait
+  /// context and no kernel wait. \ref ErrorCode::kNotReady never escapes: readiness is a hint, so
+  /// an attempt that loses its race waits again against the same absolute \p deadline.
+  ///
+  /// @tparam U Core-admitted published payload, constrained to this endpoint's payload type.
+  /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+  /// @return The sample on success, or the first checked error.
+  /// @retval ErrorCode::kTimeout \p deadline elapsed. Retryable; endpoint state is unchanged.
+  /// @retval ErrorCode::kClosed The producer published end of stream, or this facade was moved
+  /// from. Both mean no later sample arrives, and this facade latches the state so every later
+  /// call reports it.
+  /// @retval ErrorCode::kStaleEndpoint The producer incarnation changed; rebuild the subscriber.
+  /// @retval ErrorCode::kNotSupported This endpoint was created with
+  /// \c ChannelOptions::enable_event_wake disabled, so it has no kernel event lane. Reported only
+  /// when a wait is actually required, and before any wait context is built. This operation
+  /// deliberately does not fall back to polling.
+  /// @retval ErrorCode::kInvalidArgument This subscriber's readiness is already owned by another
+  /// wait set, such as the Runtime readiness pump, or another wait on this subscriber is already
+  /// in flight.
+  /// @retval ErrorCode::kFailure An inline payload loan is still active. Reported by the first
+  /// receive attempt, before any wait.
+  /// @note \ref ErrorCode::kProtocolError, \ref ErrorCode::kCodecError,
+  /// \ref ErrorCode::kReceiveError, and \ref ErrorCode::kResourceExhausted pass through
+  /// unchanged; they are never reclassified.
+  /// @note There is no duration overload by design. An absolute deadline cannot silently restart
+  /// its budget on a spurious wake; callers pass \c std::chrono::steady_clock::now() plus a bound.
+  /// @note Readiness is a hint, so a subscriber that keeps reporting it while every receive loses
+  /// its race retries at full speed until \p deadline. The absolute deadline is the only bound on
+  /// that loop; there is no backoff. It is not reachable by an idle endpoint -- something has to be
+  /// producing readiness that no receive can consume, such as a competing consumer on the same
+  /// endpoint -- but a caller that shares a subscriber should size the deadline accordingly.
+  /// @warning One subscriber supports one waiting thread and calls on one facade are not
+  /// internally serialized. A second concurrent waiter is rejected with
+  /// \ref ErrorCode::kInvalidArgument rather than sharing the first one's wait context. The facade
+  /// must outlive an in-flight wait and must not be moved while one is in flight.
+  template <PublishedPayload U = T>
+    requires std::same_as<U, T>
+  [[nodiscard]] expected<Sample<U>, Error> wait_and_receive_sample(
+      const std::chrono::steady_clock::time_point deadline) {
+    return wait_and_receive_sample<U>(deadline, std::stop_token{});
+  }
+
+  /// @brief Block until a sample is available or a stop is requested, then receive and consume it.
+  ///
+  /// @tparam U Core-admitted published payload, constrained to this endpoint's payload type.
+  /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+  /// @param token Cancellation observer for this call; a default-constructed token never cancels.
+  /// @return The sample on success, or the first checked error.
+  /// @retval ErrorCode::kInterrupted \p token requested a stop. Caller-local and non-terminal.
+  /// @note Every other retval of the single-argument overload applies unchanged.
+  /// @note Cancellation is scoped to one call. A stop that fires ends this wait and leaves the
+  /// subscriber usable; the next wait arms a fresh cancellation trigger.
+  template <PublishedPayload U = T>
+    requires std::same_as<U, T>
+  [[nodiscard]] expected<Sample<U>, Error> wait_and_receive_sample(
+      const std::chrono::steady_clock::time_point deadline, const std::stop_token& token) {
+    if (!subscriber_) {
+      return make_unexpected(
+          channel_internal::make_channel_error(ErrorCode::kClosed, "channel subscriber is closed"));
+    }
+    if (stream_closed_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    auto received = channel_internal::wait_and_receive_next(
+        *subscriber_, deadline, channel_internal::borrowed_stop_token(token), [this] {
+          return receive_sample<U>();
+        });
+    // A manually created inline endpoint reports end of stream exactly once and then reads as an
+    // empty, never-ready endpoint, which would turn every later call into a full-deadline
+    // kTimeout. Latch it here so kClosed stays terminal for this facade on both endpoint kinds.
+    if (!received && received.error().code == ErrorCode::kClosed) {
+      stream_closed_ = true;
+    }
+    return received;
+  }
+
+  /// @brief Block until this endpoint may have a sample, without consuming one.
+  ///
+  /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+  /// @param token Cancellation observer for this call; a default-constructed token never cancels.
+  /// @return Empty success when a sample may be available, or a checked wait error.
+  /// @retval ErrorCode::kTimeout \p deadline elapsed with no readiness.
+  /// @retval ErrorCode::kInterrupted \p token requested a stop.
+  /// @retval ErrorCode::kClosed This facade was moved from, or a previous
+  /// \ref wait_and_receive_sample observed end of stream.
+  /// @retval ErrorCode::kNotSupported This endpoint was created with
+  /// \c ChannelOptions::enable_event_wake disabled and has no queued sample.
+  /// @retval ErrorCode::kInvalidArgument This subscriber's readiness is already owned by another
+  /// wait set, or another wait on this subscriber is already in flight.
+  /// @note Success is a hint, exactly like \ref has_samples. A following \ref receive or
+  /// \ref receive_sample may still report \ref ErrorCode::kNotReady.
+  /// @note An already ready endpoint returns success without consulting the event lane, so a
+  /// poll-only endpoint that already holds a sample is not refused with
+  /// \ref ErrorCode::kNotSupported.
+  [[nodiscard]] expected<void, Error> wait_for_sample(
+      const std::chrono::steady_clock::time_point deadline, const std::stop_token& token = {}) {
+    if (!subscriber_) {
+      return make_unexpected(
+          channel_internal::make_channel_error(ErrorCode::kClosed, "channel subscriber is closed"));
+    }
+    if (stream_closed_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    return channel_internal::wait_for_sample_readiness(
+        *subscriber_, deadline, channel_internal::borrowed_stop_token(token));
   }
 
  private:
@@ -452,8 +636,11 @@ class ChannelSubscriber<T> {
       : subscriber_(std::move(subscriber)) {}
 
   std::unique_ptr<channel_internal::InlinePayloadSubscriber> subscriber_;
-  alignas(std::max_align_t)
-      std::array<std::byte, channel_internal::kSchemaEndpointScratchCapacity<T>> schema_scratch_{};
+  /// Latched once a wait observed end of stream, so kClosed stays terminal for the waiting API
+  /// even on an endpoint whose transport reports it only once.
+  bool stream_closed_{false};
+  alignas(std::max_align_t) std::array<
+      std::byte, channel_internal::kSubscriberEndpointScratchCapacity<T>> receive_scratch_{};
 };
 
 }  // namespace holoscan

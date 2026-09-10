@@ -6,12 +6,13 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <holoscan/channel/clock_health.hpp>
 #include <holoscan/core/connection_options.hpp>
@@ -19,6 +20,7 @@
 #include <holoscan/core/payload_options.hpp>
 #include <holoscan/core/port.hpp>
 #include <holoscan/core/schema_identity.hpp>
+#include <holoscan/core/tensor_field.hpp>
 #include <holoscan/time/clock_registry.hpp>
 
 namespace holoscan {
@@ -27,7 +29,77 @@ class Graph;
 
 namespace detail {
 class GraphState;
+
+/// Preserve one call-lifetime descriptor-Tensor topic field before Graph normalization.
+struct AuthoredDescriptorTensorTopicField {
+  std::uint16_t field_id{};
+  std::uint16_t tensor_index{};
+  std::optional<TensorBoundaryContract> contract;
+  bool selector_valid{};
+};
 }  // namespace detail
+
+/// @brief Declare Tensor field contracts for one descriptor-backed schema external topic.
+///
+/// The schema type fixes the selector domain at compile time. Each selected field must receive
+/// exactly one finite boundary contract, and a complete inventory must be supplied when the
+/// companion is passed to \ref Graph::import_topic or \ref Graph::export_topic. Borrowed shape and
+/// stride views are copied during that Graph authoring call.
+///
+/// @tparam SchemaT Owning descriptor-backed generated schema type.
+template <typename SchemaT>
+  requires detail::HasDescriptorTensorSchemaNativeTraits<SchemaT>
+class DescriptorTensorTopicContract {
+ public:
+  /// @brief Configure the contract for one selected descriptor Tensor field.
+  class FieldBuilder {
+   public:
+    /// @brief Set the finite external-boundary contract for this field.
+    /// @param contract Representation, bounds, transfer, and conversion requirements.
+    /// @return The owning topic contract for continued authoring.
+    DescriptorTensorTopicContract& contract(TensorBoundaryContract contract) {
+      parent_->fields_[index_].contract = std::move(contract);
+      return *parent_;
+    }
+
+   private:
+    FieldBuilder(DescriptorTensorTopicContract* parent, std::size_t index) noexcept
+        : parent_(parent), index_(index) {}
+
+    DescriptorTensorTopicContract* parent_{};
+    std::size_t index_{};
+
+    friend class DescriptorTensorTopicContract;
+  };
+
+  /// @brief Select one Tensor member for external-boundary authoring.
+  /// @param selector Generated schema-typed field token.
+  /// @return Field-scoped builder used to provide its finite contract.
+  [[nodiscard]] FieldBuilder field(TensorFieldSelector<SchemaT> selector) {
+    fields_.push_back(detail::AuthoredDescriptorTensorTopicField{
+        .field_id = selector.field_id,
+        .tensor_index = selector.tensor_index,
+        .contract = std::nullopt,
+        .selector_valid = detail::descriptor_tensor_schema_field_selector_matches<SchemaT>(
+            selector.field_id, selector.tensor_index),
+    });
+    return FieldBuilder{this, fields_.size() - 1U};
+  }
+
+  /// @brief Declare one selected Tensor member and its finite boundary contract.
+  /// @param selector Generated schema-typed field token.
+  /// @param contract Representation, bounds, transfer, and conversion requirements.
+  /// @return This topic contract for continued authoring.
+  DescriptorTensorTopicContract& field(TensorFieldSelector<SchemaT> selector,
+                                       TensorBoundaryContract contract) {
+    return field(selector).contract(std::move(contract));
+  }
+
+ private:
+  std::vector<detail::AuthoredDescriptorTensorTopicField> fields_;
+
+  friend class Graph;
+};
 
 /// @brief Require capture timestamps in one declared clock domain.
 struct RequireCaptureTime {
@@ -48,48 +120,6 @@ enum class PeerRequirement : std::uint8_t {
 struct TopicAttachPolicy {
   PeerRequirement peer{PeerRequirement::kOptional};  ///< Whether an absent external peer is valid.
   std::optional<std::chrono::nanoseconds> max_wait;  ///< Positive finite attach bound when present.
-};
-
-/// @brief Classify logical Tensor stride contracts at an external boundary.
-enum class TensorStridePolicy : std::uint8_t {
-  kContiguousOnly = 0,  ///< Only canonical contiguous logical layout is admitted.
-  kBoundedStrided = 1,  ///< Noncontiguous layout is admitted within explicit axis bounds.
-};
-
-/// @brief Bound one logical Tensor axis at an external boundary.
-struct TensorAxisBounds {
-  std::uint64_t max_extent{};            ///< Maximum logical extent; zero permits zero extent.
-  std::uint64_t max_abs_stride_bytes{};  ///< Maximum absolute byte stride.
-};
-
-/// @brief Bound logical Tensor rank, byte span, and per-axis layout evidence.
-///
-/// An exact rank, when present, must not exceed \ref max_rank. Rank zero and
-/// zero extents are valid logical values. Contiguous layouts may retain partial
-/// axis evidence; bounded-strided layouts require exactly \ref max_rank axis
-/// records and a positive maximum absolute stride for every axis.
-struct LogicalTensorBounds {
-  std::uint32_t max_rank{};       ///< Positive maximum rank; rank-zero payloads remain valid.
-  std::uint64_t max_byte_span{};  ///< Positive maximum validated logical byte span.
-  std::span<const TensorAxisBounds> axes;  ///< Call-lifetime axis bounds copied by Graph.
-};
-
-/// @brief Carry complete logical Tensor requirements for an external topic.
-///
-/// Omitting this carrier supplies no explicit boundary-side emission policy.
-/// When present, its policy/cap participates in normalization with producer
-/// \ref PayloadOptions: one explicit side wins, identical sides agree, and a
-/// mismatch rejects the edge. An inline cap is required only for the inline
-/// policy and is rejected for both non-inline policies.
-struct LogicalTensorRequirements {
-  std::optional<MemoryKind> memory_kind;  ///< Exact logical storage kind when constrained.
-  std::optional<DLDataType> dtype;        ///< Exact DLPack element type when constrained.
-  std::optional<std::uint32_t> rank;      ///< Exact rank when constrained; zero denotes a scalar.
-  std::optional<LogicalTensorBounds> logical_bounds;  ///< Finite rank/span/axis bounds.
-  TensorStridePolicy strides{TensorStridePolicy::kContiguousOnly};  ///< Admitted stride family.
-  InterfaceTensorEmitPolicy foreign_emit_policy{
-      InterfaceTensorEmitPolicy::kRequireExportable};  ///< Non-exportable storage handling.
-  std::optional<std::uint32_t> max_inline_bytes;  ///< Positive cap required only by inline policy.
 };
 
 /// @brief Bound publisher-local external endpoint claims.
@@ -123,7 +153,7 @@ struct TopicOptions {
   std::optional<RequireCaptureTime> capture_time;  ///< Required capture-time domain when present.
   std::optional<ClockHealthOptions> clock_health;  ///< Closed health capability/requirement mode.
   TopicAttachPolicy attach{};  ///< Peer presence and optional finite attach wait policy.
-  std::optional<LogicalTensorRequirements> tensor;  ///< Tensor-only logical boundary contract.
+  std::optional<TensorBoundaryContract> tensor;  ///< Tensor-only logical boundary contract.
   EndpointBounds bounds{};  ///< External peer bounds, interpreted by import/export direction.
 };
 

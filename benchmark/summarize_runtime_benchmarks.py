@@ -134,6 +134,13 @@ INTERPROCESS_ROWS = (
         "Preinitialized backing",
     ),
     RowSpec(
+        "image_pageable_host_1to1",
+        "Two-process 1:1",
+        "`schema::ImageT`",
+        "Pageable host",
+        "Generated schema with preinitialized Tensor backing",
+    ),
+    RowSpec(
         "image_pinned_host_1to1",
         "Two-process 1:1",
         "`schema::ImageT`",
@@ -230,10 +237,33 @@ def require_complete_docs_run(
     incomplete = [
         str(case.get("case_id"))
         for case in cases
-        if isinstance(case, dict) and case.get("status") != "passed"
+        if isinstance(case, dict) and case.get("status") not in {"passed", "skipped"}
     ]
     if incomplete:
         raise RuntimeError("docs Runtime suite has incomplete cases: " + ", ".join(incomplete))
+    selected_cpus = manifest.get("cpus")
+    skipped_cases = [
+        case for case in cases if isinstance(case, dict) and case.get("status") == "skipped"
+    ]
+    if skipped_cases and (
+        not isinstance(selected_cpus, list)
+        or len(selected_cpus) < 4
+        or not all(isinstance(cpu, int) and not isinstance(cpu, bool) for cpu in selected_cpus)
+    ):
+        raise RuntimeError("docs Runtime suite has skips without a valid reduced-core selection")
+    for case in skipped_cases:
+        required_cpus = case.get("required_cpus")
+        if (
+            not isinstance(required_cpus, int)
+            or isinstance(required_cpus, bool)
+            or required_cpus <= len(selected_cpus)
+            or case.get("returncode") != 77
+            or case.get("command") != []
+            or not isinstance(case.get("skip_reason"), str)
+        ):
+            raise RuntimeError(
+                f"docs Runtime case {case.get('case_id')} has an invalid reduced-core skip"
+            )
     row_ids = [manifest_case_id(row) for row in rows]
     duplicate_row_ids = sorted(value for value, count in Counter(row_ids).items() if count > 1)
     if duplicate_row_ids:
@@ -242,7 +272,12 @@ def require_complete_docs_run(
             + ", ".join(duplicate_row_ids)
         )
     by_id = dict(zip(row_ids, rows, strict=True))
-    if set(by_id) != expected_ids:
+    passed_ids = {
+        str(case.get("case_id"))
+        for case in cases
+        if isinstance(case, dict) and case.get("status") == "passed"
+    }
+    if set(by_id) != passed_ids:
         raise RuntimeError("normalized Runtime rows do not match the table contract")
     return by_id
 
@@ -300,7 +335,9 @@ def render_latency_table(
         f"| --- | --- | --- | ---: | {percentile_rule} | --- |",
     ]
     for spec in specs:
-        row = by_id[case_id(domain, spec, "latency")]
+        row = by_id.get(case_id(domain, spec, "latency"))
+        if row is None:
+            continue
         percentiles = [
             format_duration_ns(row["latency_p50_ns"]),
             format_duration_ns(row["latency_p99_ns"]),
@@ -340,7 +377,9 @@ def render_throughput_table(
         "| --- | --- | --- | ---: | ---: | ---: | --- |",
     ]
     for spec in specs:
-        row = by_id[case_id(domain, spec, "throughput")]
+        row = by_id.get(case_id(domain, spec, "throughput"))
+        if row is None:
+            continue
         notes = row_notes(domain, spec, row)
         coefficient_of_variation = transport_summary.number(
             row.get("primary_metric_coefficient_of_variation")
@@ -465,14 +504,20 @@ def render_provenance(
     if set(topology_by_cpu) != set(selected_cpus):
         raise RuntimeError("native artifact does not cover every selected CPU")
     physical_cores = {
-        (item.get("package_id"), item.get("core_id")) for item in topology_by_cpu.values()
+        (
+            item.get("package_id"),
+            "siblings" if item.get("thread_siblings") else "core",
+            item.get("thread_siblings") or item.get("core_id"),
+        )
+        for item in topology_by_cpu.values()
     }
     packages = {item.get("package_id") for item in topology_by_cpu.values()}
     if any(value is None for core in physical_cores for value in core) or None in packages:
         raise RuntimeError("native artifact is missing physical CPU topology")
     governors = {str(item.get("governor")) for item in topology_by_cpu.values()}
     smt_reported = any(
-        "," in str(item.get("thread_siblings", "")) for item in topology_by_cpu.values()
+        "," in str(item.get("thread_siblings", "")) or "-" in str(item.get("thread_siblings", ""))
+        for item in topology_by_cpu.values()
     )
 
     gpu_values = []
@@ -589,8 +634,17 @@ def main() -> int:
     manifest, rows = transport_summary.collect_rows(suite_dir)
     by_id = require_complete_docs_run(manifest, rows)
     latency, throughput = render_tables(by_id)
+    omitted_count = len(expected_case_ids() - set(by_id))
+    notice = ""
+    if omitted_count:
+        notice = (
+            f"> Partial reduced-core run: {len(by_id)}/{len(expected_case_ids())} rows completed; "
+            f"{omitted_count} rows requiring more CPU roles were omitted.\n\n"
+        )
+    if args.update_doc is not None and omitted_count:
+        raise RuntimeError("--update-doc requires a complete 40-row, eight-core docs run")
     output = (args.output or (suite_dir / "core-runtime-tables.md")).resolve()
-    output.write_text(f"{latency}\n\n{throughput}\n", encoding="utf-8")
+    output.write_text(f"{notice}{latency}\n\n{throughput}\n", encoding="utf-8")
     if args.update_doc is not None:
         provenance = render_provenance(suite_dir, manifest, by_id)
         update_doc(args.update_doc.resolve(), latency, throughput, provenance)

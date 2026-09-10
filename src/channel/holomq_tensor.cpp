@@ -319,6 +319,10 @@ class HoloMQBufferTensorMemoryReference final : public HoloMQExportableTensorMem
     return static_cast<bool>(buffer_);
   }
 
+  [[nodiscard]] cudaStream_t readiness_stream() const noexcept override {
+    return readiness_stream_.load(std::memory_order_acquire);
+  }
+
   [[nodiscard]] expected<void, Error> synchronize_for_consumer(
       cudaStream_t consumer_stream) override {
     return synchronize_cuda_streams(readiness_stream_.load(std::memory_order_acquire),
@@ -377,6 +381,10 @@ class HoloMQConstBufferTensorMemoryReference final : public HoloMQExportableTens
     return static_cast<bool>(buffer_);
   }
 
+  [[nodiscard]] cudaStream_t readiness_stream() const noexcept override {
+    return readiness_stream_.load(std::memory_order_acquire);
+  }
+
   [[nodiscard]] expected<void, Error> synchronize_for_consumer(
       cudaStream_t consumer_stream) override {
     cudaStream_t readiness_stream = readiness_stream_.load(std::memory_order_acquire);
@@ -395,6 +403,13 @@ class HoloMQConstBufferTensorMemoryReference final : public HoloMQExportableTens
   }
 
   [[nodiscard]] expected<void, Error> synchronize_for_host() override {
+    if (!buffer_) {
+      return make_unexpected(make_holomq_tensor_error(ErrorCode::kInvalidArgument,
+                                                      "HoloMQ imported buffer is inactive"));
+    }
+    if (!buffer_.has_producer_readiness_fence()) {
+      return {};
+    }
     const ScopedCUDADevice selected{buffer_.cuda_device_ordinal()};
     if (!selected.active()) {
       return make_unexpected(make_holomq_tensor_error(
@@ -529,20 +544,34 @@ expected<HoloMQTensorDescriptor, Error> make_holomq_tensor_descriptor(
       tensor.device().device_type == kDLCUDA ? tensor.device().device_id : -1);
 }
 
-expected<HoloMQTensorDescriptor, Error> export_holomq_tensor_descriptor(const Tensor& tensor) {
+HoloMQExportableTensorMemoryReference* holomq_exportable_tensor_memory_reference(
+    const Tensor& tensor) noexcept {
   const auto& context = detail::TensorAccess::context(tensor);
-  if (!context || !context->memory_reference) {
-    return make_unexpected(
-        make_holomq_tensor_error(ErrorCode::kInvalidArgument, "Tensor is empty"));
+  if (context == nullptr || context->memory_reference == nullptr) {
+    return nullptr;
+  }
+  return dynamic_cast<HoloMQExportableTensorMemoryReference*>(context->memory_reference.get());
+}
+
+expected<HoloMQTensorDescriptor, Error> export_holomq_tensor_descriptor(
+    const Tensor& tensor, HoloMQExportableTensorMemoryReference& memory) {
+  auto handle = memory.export_handle();
+  if (!handle) {
+    return make_unexpected(std::move(handle).error());
+  }
+  return make_holomq_tensor_descriptor(tensor, handle.value());
+}
+
+expected<HoloMQTensorDescriptor, Error> export_holomq_tensor_descriptor(const Tensor& tensor) {
+  auto* const memory = holomq_exportable_tensor_memory_reference(tensor);
+  if (memory != nullptr) {
+    return export_holomq_tensor_descriptor(tensor, *memory);
   }
 
-  if (auto* memory =
-          dynamic_cast<HoloMQExportableTensorMemoryReference*>(context->memory_reference.get())) {
-    auto handle = memory->export_handle();
-    if (!handle) {
-      return make_unexpected(std::move(handle).error());
-    }
-    return make_holomq_tensor_descriptor(tensor, handle.value());
+  const auto& context = detail::TensorAccess::context(tensor);
+  if (context == nullptr || context->memory_reference == nullptr) {
+    return make_unexpected(
+        make_holomq_tensor_error(ErrorCode::kInvalidArgument, "Tensor is empty"));
   }
 
   return make_unexpected(make_holomq_tensor_error(

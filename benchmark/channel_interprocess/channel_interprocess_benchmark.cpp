@@ -39,7 +39,8 @@
 #include <holoscan/memory/block_memory_pool.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
 #include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
-#include <holoscan/schema/image_metadata.hpp>
+#include <holoscan/sensor_io/image_metadata.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "../../src/channel/channel_tensor_test_access.hpp"
 #include "../../src/channel/channel_tensor_transport_payload.hpp"
@@ -568,21 +569,20 @@ void emit_optional_duration(std::ostream& os, const char* const name,
 
 [[nodiscard]] holoscan::expected<std::vector<std::byte>, holoscan::Error> build_image_metadata(
     const holoscan::Tensor& tensor, const Options& options, const std::uint64_t sequence,
-    const std::int64_t full_start_time_ns, const std::int64_t send_time_ns) {
+    const std::int64_t full_start_time_ns) {
   const holoscan::schema::ImageMetadataOptions metadata_options{
       .height = 1,
       .width = static_cast<int32_t>(options.tensor_bytes / sizeof(std::uint32_t)),
       .encoding = holoscan::schema::ImageEncoding_CUSTOM,
-      .time_ns = full_start_time_ns,
-      .acqtime_ns = send_time_ns,
+      .capture_timestamp_ns = full_start_time_ns,
       .frame_id = "channel_interprocess_image_" + std::to_string(sequence)};
   return holoscan::schema::build_image_metadata(tensor, metadata_options);
 }
 
 [[nodiscard]] holoscan::expected<DescriptorBackedImagePayload, holoscan::Error> make_image_payload(
     const holoscan::Tensor& tensor, const Options& options, const std::uint64_t sequence,
-    const std::int64_t full_start_time_ns, const std::int64_t send_time_ns) {
-  auto metadata = build_image_metadata(tensor, options, sequence, full_start_time_ns, send_time_ns);
+    const std::int64_t full_start_time_ns) {
+  auto metadata = build_image_metadata(tensor, options, sequence, full_start_time_ns);
   if (!metadata) {
     return holoscan::make_unexpected(std::move(metadata).error());
   }
@@ -606,9 +606,8 @@ void emit_optional_duration(std::ostream& os, const char* const name,
 
 [[nodiscard]] holoscan::expected<std::uint32_t, holoscan::Error> emit_image(
     ImageInlinePublisher& publisher, const holoscan::Tensor& tensor, const Options& options,
-    const std::uint64_t sequence, const std::int64_t full_start_time_ns,
-    const std::int64_t send_time_ns) {
-  auto payload = make_image_payload(tensor, options, sequence, full_start_time_ns, send_time_ns);
+    const std::uint64_t sequence, const std::int64_t full_start_time_ns) {
+  auto payload = make_image_payload(tensor, options, sequence, full_start_time_ns);
   if (!payload) {
     return holoscan::make_unexpected(std::move(payload).error());
   }
@@ -617,9 +616,8 @@ void emit_optional_duration(std::ostream& os, const char* const name,
 
 [[nodiscard]] holoscan::expected<std::uint32_t, holoscan::Error> emit_image(
     ImageSidecarPublisher& publisher, const holoscan::Tensor& tensor, const Options& options,
-    const std::uint64_t sequence, const std::int64_t full_start_time_ns,
-    const std::int64_t send_time_ns) {
-  auto metadata = build_image_metadata(tensor, options, sequence, full_start_time_ns, send_time_ns);
+    const std::uint64_t sequence, const std::int64_t full_start_time_ns) {
+  auto metadata = build_image_metadata(tensor, options, sequence, full_start_time_ns);
   if (!metadata) {
     return holoscan::make_unexpected(std::move(metadata).error());
   }
@@ -1471,8 +1469,7 @@ template <typename CreateEndpoint>
         return wait_for_channel_subscribers(
             endpoint, options.expected_subscribers, [&endpoint, tensor_handles, &options]() {
               const std::int64_t probe_time_ns = now_ns();
-              return emit_image(
-                  endpoint, tensor_handles->front(), options, 0U, probe_time_ns, probe_time_ns);
+              return emit_image(endpoint, tensor_handles->front(), options, 0U, probe_time_ns);
             });
       },
       *publisher);
@@ -1496,13 +1493,12 @@ template <typename CreateEndpoint>
     publisher_pacer.wait();
     const bool measured = sequence > options.warmup;
     const std::int64_t full_start_time_ns = now_ns();
-    const std::int64_t send_time_ns = now_ns();
     const holoscan::Tensor& tensor = (*tensor_handles)[(sequence - 1U) % tensor_handles->size()];
 
     const std::int64_t emit_start_ns = now_ns();
     auto emitted = std::visit(
         [&](auto& endpoint) {
-          return emit_image(endpoint, tensor, options, sequence, full_start_time_ns, send_time_ns);
+          return emit_image(endpoint, tensor, options, sequence, full_start_time_ns);
         },
         *publisher);
     const std::uint64_t emit_elapsed_ns = elapsed_ns(emit_start_ns);
@@ -1884,10 +1880,11 @@ template <typename CreateEndpoint>
   start_gate.arrive_and_wait();
 
   std::vector<std::uint64_t> channel_receive_ns;
-  std::vector<std::uint64_t> end_to_end_ns;
+  // No publish-to-receive series here. This subscriber resolves a ChannelResolvedTensorSample,
+  // which carries no SampleMetadata, and the transport descriptor carries no timestamp, so the
+  // publish instant does not cross the process boundary on this path.
   std::vector<std::uint64_t> full_end_to_end_ns;
   channel_receive_ns.reserve(static_cast<std::size_t>(options.samples));
-  end_to_end_ns.reserve(static_cast<std::size_t>(options.samples));
   full_end_to_end_ns.reserve(static_cast<std::size_t>(options.samples));
   std::vector<std::uint32_t> validation_scratch;
   std::optional<holoscan::Tensor> validation_tensor;
@@ -1933,8 +1930,7 @@ template <typename CreateEndpoint>
     }
     last_sequence = sequence;
 
-    const auto* stamp = header == nullptr ? nullptr : header->stamp();
-    const bool valid_image_timestamps = stamp != nullptr;
+    const bool valid_image_timestamps = header != nullptr;
     const bool valid_tensor =
         sample.payload.payload_kind == tensor_payload_kind(options) &&
         sample.payload.byte_size == options.tensor_bytes &&
@@ -1953,9 +1949,8 @@ template <typename CreateEndpoint>
       }
       channel_receive_ns.push_back(static_cast<std::uint64_t>(receive_done_ns - receive_start_ns));
       if (valid_image_timestamps) {
-        end_to_end_ns.push_back(static_cast<std::uint64_t>(receive_done_ns - stamp->acqtime_ns()));
         full_end_to_end_ns.push_back(
-            static_cast<std::uint64_t>(receive_done_ns - stamp->time_ns()));
+            static_cast<std::uint64_t>(receive_done_ns - header->capture_timestamp_ns()));
       }
       measured_end_ns = receive_done_ns;
     }
@@ -1990,7 +1985,6 @@ template <typename CreateEndpoint>
   emit_optional_duration(output, "final_validation_ns", final_validation_ns);
   emit_throughput(output, options.samples, measured_start_ns, measured_end_ns);
   emit_percentiles(output, "channel_receive", summarize_percentiles(std::move(channel_receive_ns)));
-  emit_percentiles(output, "end_to_end", summarize_percentiles(std::move(end_to_end_ns)));
   emit_percentiles(output, "full_end_to_end", summarize_percentiles(std::move(full_end_to_end_ns)));
   output << "}\n";
   return validation_errors == 0U ? 0 : 7;

@@ -5,10 +5,13 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <utility>
 
+#include "compiler/tensor_provider_compatibility.hpp"
 #include "physical_plan_test_support.hpp"
 
 // GTest fatal assertions establish optional preconditions that clang-tidy does not model.
@@ -59,6 +62,88 @@ TEST(CompilePhysicalPlanValidation,
   EXPECT_EQ(parsed_state->endpoints.front().service_static.queue_policy, QueuePolicy::kDropOldest);
   EXPECT_EQ(parsed_state->endpoints.front().service_static.max_subscriber_depth, 5U);
   EXPECT_EQ(parsed_state->endpoints.front().service_static.max_subscriber_borrowed, 5U);
+}
+
+// REQ: CHAN-137
+TEST(CompilePhysicalPlanValidation, CatalogInlineCapacityAcceptsMaximumAndRejectsNextByte) {
+  {
+    Graph graph{"maximum-catalog-inline-capacity"};
+    test::add_compile_test_default_clock(graph);
+    TopicOptions options;
+    options.endpoint_name = "maximum-catalog-inline-capacity";
+    const auto imported = graph.import_topic<CompileMaximumCatalogInlinePod>(
+        "holomq://maximum-catalog-inline-capacity", std::move(options));
+    const auto sink =
+        graph.op<ExternalPodSinkOperator<CompileMaximumCatalogInlinePod>>("maximum-sink");
+    graph.add_flow(imported.output(), sink->input);
+
+    const ExecutionPlan plan = compile(graph);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+  }
+
+  Graph graph{"oversized-catalog-inline-capacity"};
+  test::add_compile_test_default_clock(graph);
+  TopicOptions options;
+  options.endpoint_name = "oversized-catalog-inline-capacity";
+  const auto imported = graph.import_topic<CompileOversizedCatalogInlinePod>(
+      "holomq://oversized-catalog-inline-capacity", std::move(options));
+  const auto sink =
+      graph.op<ExternalPodSinkOperator<CompileOversizedCatalogInlinePod>>("oversized-sink");
+  graph.add_flow(imported.output(), sink->input);
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_FALSE(plan.ok()) << plan.json();
+  const auto diagnostic =
+      std::find_if(plan.diagnostics().begin(), plan.diagnostics().end(), [](const auto& item) {
+        return item.token == "ENDPOINT_CATALOG_INLINE_CAPACITY_EXCEEDED";
+      });
+  ASSERT_NE(diagnostic, plan.diagnostics().end()) << plan.json();
+  EXPECT_EQ(diagnostic->json_pointer, "/endpoints/0/payload");
+  EXPECT_EQ(diagnostic->required, "required_frame<=maximum_frame;maximum_frame=32768");
+  EXPECT_EQ(diagnostic->provided,
+            "endpoint=oversized-catalog-inline-capacity;application_capacity=32745;framing_"
+            "overhead=24;required_frame=32769");
+}
+
+// The catalog carries normalization evidence as a `|key=value` record that lowering reparses and
+// reprojects as `;`-joined facts. Endpoint-name validation admits every one of those delimiters, so
+// a valid name must not be able to forge a neighboring field, truncate its own, or split a fact.
+// REQ: CHAN-140
+TEST(CompilePhysicalPlanValidation, CatalogInlineCapacityPreservesDelimiterBearingEndpointName) {
+  // Key setup: names that would otherwise inject a false maximum_frame, truncate the endpoint
+  // fact, split a projected fact, or collide with the escape character itself. TopicOptions holds
+  // a view, so these must name storage that outlives the declaration.
+  for (const std::string_view endpoint_name : {std::string_view{"frames|maximum_frame=1"},
+                                               std::string_view{"frames=1"},
+                                               std::string_view{"frames;role=x"},
+                                               std::string_view{"frames%7Cx"}}) {
+    Graph graph{"oversized-catalog-inline-capacity"};
+    test::add_compile_test_default_clock(graph);
+    TopicOptions options;
+    options.endpoint_name = endpoint_name;
+    const auto imported = graph.import_topic<CompileOversizedCatalogInlinePod>(
+        "holomq://oversized-catalog-inline-capacity", std::move(options));
+    const auto sink =
+        graph.op<ExternalPodSinkOperator<CompileOversizedCatalogInlinePod>>("oversized-sink");
+    graph.add_flow(imported.output(), sink->input);
+
+    const ExecutionPlan plan = compile(graph);
+    ASSERT_FALSE(plan.ok()) << plan.json();
+    const auto diagnostic =
+        std::find_if(plan.diagnostics().begin(), plan.diagnostics().end(), [](const auto& item) {
+          return item.token == "ENDPOINT_CATALOG_INLINE_CAPACITY_EXCEEDED";
+        });
+    ASSERT_NE(diagnostic, plan.diagnostics().end()) << plan.json();
+
+    // Key assertion: the true limit survives and the endpoint fact keeps the whole authored name.
+    EXPECT_EQ(diagnostic->json_pointer, "/endpoints/0/payload") << endpoint_name;
+    EXPECT_EQ(diagnostic->required, "required_frame<=maximum_frame;maximum_frame=32768")
+        << endpoint_name;
+    const std::string expected_provided =
+        std::string("endpoint=").append(endpoint_name) +
+        ";application_capacity=32745;framing_overhead=24;required_frame=32769";
+    EXPECT_EQ(diagnostic->provided, expected_provided) << endpoint_name;
+  }
 }
 
 // REQ: COMPILE-002
@@ -179,13 +264,16 @@ TEST(CompilePhysicalPlanValidation, RejectsZeroDepthExternalTensorExport) {
   constexpr std::array axes{TensorAxisBounds{.max_extent = 16U},
                             TensorAxisBounds{.max_extent = 16U}};
   TopicOptions options;
-  options.tensor = LogicalTensorRequirements{
-      .memory_kind = MemoryKind::kHost,
-      .dtype = DLDataType{kDLFloat, 32U, 1U},
-      .rank = 2U,
-      .logical_bounds = LogicalTensorBounds{.max_rank = 2U, .max_byte_span = 4096U, .axes = axes},
-      .foreign_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
-      .max_inline_bytes = 1024U,
+  options.tensor = TensorBoundaryContract{
+      .representation = {.memory_kind = MemoryKind::kHost,
+                         .dtype = DLDataType{kDLFloat, 32U, 1U},
+                         .rank = 2U},
+      .bounds = TensorBounds{.max_rank = 2U, .max_byte_span = 4096U, .axes = axes},
+      .transfer =
+          TensorTransferPolicy{
+              .foreign_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
+              .max_inline_bytes = 1024U,
+          },
   };
   auto exported = graph.export_topic<Tensor>("holomq://zero-depth-tensor", options);
   graph.add_flow(source->tensor, exported.input());
@@ -274,6 +362,47 @@ TEST(CompilePhysicalPlan, JoinsCatalogEndpointsByTheCompleteBoundaryContract) {
 }
 
 // REQ: COMPILE-040
+TEST(CompilePhysicalPlan, RejectedExternalTopicDoesNotReserveItsPortIdentity) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "boundary", VertexKind::kImportedTopic)};
+  snapshot.ports = {
+      output_port(1U, 1U, "topic", scalar_payload(), 1U, PortOwnerKind::kImportedTopic),
+  };
+  // Key setup: an invalid declaration precedes a valid declaration for the same boundary port.
+  snapshot.external_topics = {
+      ExternalTopicRecord{
+          .id = ExternalTopicId{1U},
+          .vertex = VertexId{1U},
+          .graph_port = GraphPortId{1U},
+          .imported = true,
+          .uri = "holomq://invalid",
+          .payload_identity = PayloadIdentityRecord{},
+      },
+      ExternalTopicRecord{
+          .id = ExternalTopicId{2U},
+          .vertex = VertexId{1U},
+          .graph_port = GraphPortId{1U},
+          .imported = true,
+          .uri = "holomq://valid",
+          .payload_identity = scalar_payload(),
+      },
+  };
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const auto endpoints = catalog_endpoints(snapshot);
+  const auto placements = default_process_placements(snapshot);
+  const auto package = runtime_package_capability_view();
+
+  const auto result =
+      lower_physical_plan(snapshot, 16U, profiles, package, {}, {}, endpoints, placements, {});
+
+  // Key assertion: rejecting the first topic does not block the valid topic from claiming the port.
+  EXPECT_TRUE(has_error(result, "PHYSICAL_SERVICE_CONTRACT_INVALID"));
+  ASSERT_EQ(result.channel_services.size(), 1U);
+  EXPECT_EQ(result.channel_services.front().service_id, "catalog-service-2");
+}
+
+// REQ: COMPILE-040
 // REQ: CHAN-075
 // REQ: CHAN-120
 TEST(CompilePhysicalPlan, RejectsCatalogSchemaCapacityMismatch) {
@@ -354,6 +483,173 @@ TEST(CompilePhysicalPlanValidation, RejectsExternalSchemaCapacityCorruption) {
   });
 }
 
+// One external descriptor schema keeps a fixed envelope while each Tensor field receives its
+// own transfer identity and, when copying is admitted, its own independently sized pool.
+//
+//   [holomq://descriptor] -- descriptor envelope --> sink
+//        field 2: CUDA device, 4096 B
+//        field 7: host,         512 B
+//
+// REQ: EXTERNAL-010
+TEST(CompilePhysicalPlan, ExternalDescriptorSchemaLowersCanonicalPerFieldTensorEvidence) {
+  const RuntimePortTypeOps* const type_ops = runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(type_ops, nullptr);
+  // Key setup: author one descriptor envelope with independently bounded CUDA-device and host
+  // Tensor fields, including a concrete CUDA placement for the device field.
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {
+      vertex(1U, "boundary", VertexKind::kImportedTopic),
+      vertex(2U, "sink"),
+  };
+  snapshot.ports = {
+      output_port(1U, 1U, "topic", image_payload(), 2U, PortOwnerKind::kImportedTopic),
+      input_port(2U, 2U, "in", image_payload(), 2U),
+  };
+  for (auto& port : snapshot.ports) {
+    port.serialized_payload_capacity_bytes = type_ops->wire_capacity;
+    port.descriptor_tensor_field_count = 2U;
+  }
+  snapshot.ports[0].setup.tensor_fields = {
+      tensor_field(2U, 0U, MemoryKind::kCudaDevice, 1U, 4096U),
+      tensor_field(7U, 1U, MemoryKind::kHost, 1U, 512U),
+  };
+  snapshot.ports[1].setup.tensor_fields = snapshot.ports[0].setup.tensor_fields;
+  snapshot.edges = {edge(1U, 1U, 2U, 2U)};
+  ExternalTopicRecord topic{
+      .id = ExternalTopicId{1U},
+      .vertex = VertexId{1U},
+      .graph_port = GraphPortId{1U},
+      .imported = true,
+      .uri = "holomq://descriptor",
+      .payload_identity = image_payload(),
+      .serialized_payload_capacity_bytes = type_ops->wire_capacity,
+  };
+  topic.bounds.publisher = PublisherEndpointBounds{.max_loaned_samples = 2U};
+  topic.tensor_fields = {
+      DescriptorTensorTopicFieldRecord{
+          .field_id = 2U,
+          .tensor_index = 0U,
+          .tensor =
+              TensorBoundaryContractRecord{
+                  .memory_kind = MemoryKind::kCudaDevice,
+                  .dtype = DLDataType{kDLUInt, 8U, 1U},
+                  .rank = 1U,
+                  .max_rank = 1U,
+                  .max_byte_span = 4096U,
+                  .strides = TensorStridePolicy::kContiguousOnly,
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+                  .memory_conversion = MemoryConversionPolicy::kDisable,
+              },
+      },
+      DescriptorTensorTopicFieldRecord{
+          .field_id = 7U,
+          .tensor_index = 1U,
+          .tensor =
+              TensorBoundaryContractRecord{
+                  .memory_kind = MemoryKind::kHost,
+                  .dtype = DLDataType{kDLUInt, 8U, 1U},
+                  .rank = 1U,
+                  .max_rank = 1U,
+                  .max_byte_span = 512U,
+                  .strides = TensorStridePolicy::kContiguousOnly,
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+                  .memory_conversion = MemoryConversionPolicy::kDisable,
+              },
+      },
+  };
+  snapshot.external_topics.push_back(std::move(topic));
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const std::array bindings{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{0}},
+  };
+
+  const auto result = lower_for_test(snapshot, 41U, profiles, {}, {}, {}, nullptr, bindings);
+
+  // Key assertion: lowering preserves both field identities and produces independent pools while
+  // rejecting malformed field bounds and recording restart-generation capacity when requested.
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  ASSERT_EQ(result.channel_services.size(), 1U);
+  EXPECT_TRUE(result.channel_services.front().tensor_payload);
+  ASSERT_EQ(result.channel_services.front().tensor_fields.size(), 2U);
+  EXPECT_EQ(result.channel_services.front().tensor_fields[0].field_id, 2U);
+  EXPECT_EQ(result.channel_services.front().tensor_fields[0].tensor.max_byte_span, 4096U);
+  EXPECT_EQ(result.channel_services.front().tensor_fields[1].field_id, 7U);
+  EXPECT_EQ(result.channel_services.front().tensor_fields[1].tensor.max_byte_span, 512U);
+  ASSERT_EQ(result.tensor_interface_pools.size(), 2U);
+  EXPECT_EQ(result.tensor_transfer_plans.size(), 14U);
+  EXPECT_EQ(result.tensor_interface_pools[0].field_id, 2U);
+  EXPECT_EQ(result.tensor_interface_pools[0].tensor_index, 0U);
+  EXPECT_EQ(result.tensor_interface_pools[0].memory_kind, MemoryKind::kCudaDevice);
+  EXPECT_EQ(result.tensor_interface_pools[0].device, DeviceId{0});
+  EXPECT_EQ(result.tensor_interface_pools[0].aggregate_byte_capacity,
+            result.tensor_interface_pools[0].slot_count * 4096U);
+  EXPECT_EQ(result.tensor_interface_pools[1].field_id, 7U);
+  EXPECT_EQ(result.tensor_interface_pools[1].tensor_index, 1U);
+  EXPECT_EQ(result.tensor_interface_pools[1].memory_kind, MemoryKind::kHost);
+  EXPECT_FALSE(result.tensor_interface_pools[1].device.valid());
+  EXPECT_EQ(result.tensor_interface_pools[1].aggregate_byte_capacity,
+            result.tensor_interface_pools[1].slot_count * 512U);
+  for (const auto& transfer : result.tensor_transfer_plans) {
+    EXPECT_TRUE(transfer.field_id == 2U || transfer.field_id == 7U);
+    ASSERT_TRUE(transfer.tensor_index.has_value());
+  }
+  EXPECT_EQ(result.ports.front().serialized_payload_capacity_bytes, type_ops->wire_capacity);
+
+  // Key setup: remove one generated field contract while retaining the descriptor schema's
+  // compiler-known field count.
+  auto incomplete_snapshot = snapshot;
+  incomplete_snapshot.external_topics.front().tensor_fields.pop_back();
+  const auto incomplete =
+      lower_for_test(incomplete_snapshot, 41U, profiles, {}, {}, {}, nullptr, bindings);
+  // Key assertion: lowering reports the dedicated external-topic inventory diagnostic before
+  // emitting any partial service or generation-capacity records.
+  EXPECT_TRUE(
+      has_error(incomplete, "PHYSICAL_DESCRIPTOR_TENSOR_EXTERNAL_TOPIC_LOWERING_UNAVAILABLE"));
+  EXPECT_TRUE(incomplete.channel_services.empty());
+  EXPECT_TRUE(incomplete.channel_publishers.empty());
+  EXPECT_TRUE(incomplete.channel_subscribers.empty());
+  EXPECT_TRUE(incomplete.imported_generation_capacities.empty());
+
+  auto malformed_snapshot = snapshot;
+  malformed_snapshot.external_topics.front().tensor_fields[1].tensor.max_byte_span.reset();
+  const auto malformed =
+      lower_for_test(malformed_snapshot, 41U, profiles, {}, {}, {}, nullptr, bindings);
+  EXPECT_TRUE(has_error(malformed, "PHYSICAL_TENSOR_LOGICAL_REQUIREMENTS_INVALID"));
+  EXPECT_TRUE(malformed.channel_services.empty());
+  EXPECT_TRUE(malformed.channel_publishers.empty());
+  EXPECT_TRUE(malformed.channel_subscribers.empty());
+  EXPECT_TRUE(malformed.imported_generation_capacities.empty());
+
+  auto monitored_snapshot = snapshot;
+  monitored_snapshot.external_topics.front().clock_health = ClockHealthOptions{
+      .capability = ClockHealthCapability::kStatusReports,
+      .requirement = ClockHealthRequirement::kFreshHealthyReport,
+      .max_report_age = std::chrono::milliseconds(10),
+  };
+  const auto monitored =
+      lower_for_test(monitored_snapshot, 41U, profiles, {}, {}, {}, nullptr, bindings);
+  EXPECT_TRUE(monitored.errors.empty())
+      << (monitored.errors.empty() ? std::string{} : monitored.errors.front().token);
+  ASSERT_EQ(monitored.imported_generation_capacities.size(), 1U);
+  EXPECT_EQ(monitored.imported_generation_capacities.front().endpoint_max_generations, 1U);
+  EXPECT_FALSE(monitored.imported_generation_capacities.front().restart_capable_minimum_two);
+
+  const std::array lifecycle_targets{LifecycleRestartTargetPlanRecord{
+      .target = OperatorRef{.id = 2U, .plan_generation = 41U, .run_generation = 0U},
+      .effective_profile = Profile::kStandard,
+      .disposition = LifecycleRestartTargetDisposition::kAdmitted,
+  }};
+  const auto restart_capable =
+      lower_for_test(snapshot, 41U, profiles, {}, {}, lifecycle_targets, nullptr, bindings);
+  EXPECT_TRUE(restart_capable.errors.empty())
+      << (restart_capable.errors.empty() ? std::string{} : restart_capable.errors.front().token);
+  ASSERT_EQ(restart_capable.imported_generation_capacities.size(), 1U);
+  EXPECT_EQ(restart_capable.imported_generation_capacities.front().endpoint_max_generations, 2U);
+  EXPECT_TRUE(restart_capable.imported_generation_capacities.front().restart_capable_minimum_two);
+}
+
 // REQ: COMPILE-040
 TEST(CompilePhysicalPlan, RejectsTensorTransferAdmissionWithoutFiniteLogicalBounds) {
   GraphSnapshotData snapshot;
@@ -405,7 +701,7 @@ TEST(CompilePhysicalPlan, TensorBoundaryPoolAdmitsRankZeroAndZeroExtentWithFinit
       .payload_identity = tensor_payload(),
   };
   topic.bounds.publisher = PublisherEndpointBounds{.max_loaned_samples = 2U};
-  topic.tensor = LogicalTensorRequirementsRecord{
+  topic.tensor = TensorBoundaryContractRecord{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 0U,
@@ -508,7 +804,10 @@ TEST(CompilePhysicalPlan, TensorBoundaryPoolAdmitsRankZeroAndZeroExtentWithFinit
 // REQ: COMPILE-009
 // REQ: COMPILE-040
 TEST(CompilePhysicalPlan, TensorBoundaryPoolUsesAdjacentExecutableForAllocationOwnership) {
-  const auto lower_boundary = [](bool imported) {
+  const auto lower_boundary = [](bool imported,
+                                 const TensorContractRecord* input_contract,
+                                 InterfaceTensorEmitPolicy emit_policy =
+                                     InterfaceTensorEmitPolicy::kCopyIfNeeded) {
     GraphSnapshotData snapshot;
     snapshot.generation = GraphGeneration{1U};
     snapshot.vertices = {
@@ -528,6 +827,9 @@ TEST(CompilePhysicalPlan, TensorBoundaryPoolUsesAdjacentExecutableForAllocationO
       };
       snapshot.edges = {edge(1U, 2U, 1U, 2U)};
     }
+    if (imported && input_contract != nullptr) {
+      snapshot.ports[1].setup.tensor_contract = *input_contract;
+    }
     ExternalTopicRecord topic{
         .id = ExternalTopicId{1U},
         .vertex = VertexId{1U},
@@ -542,14 +844,14 @@ TEST(CompilePhysicalPlan, TensorBoundaryPoolUsesAdjacentExecutableForAllocationO
       topic.bounds.subscriber =
           SubscriberEndpointBounds{.queue_depth = 2U, .max_borrowed_samples = 2U};
     }
-    topic.tensor = LogicalTensorRequirementsRecord{
+    topic.tensor = TensorBoundaryContractRecord{
         .memory_kind = MemoryKind::kHost,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 1U,
         .max_rank = 1U,
         .max_byte_span = 64U,
         .axes = {{.max_extent = 64U}},
-        .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+        .foreign_emit_policy = emit_policy,
     };
     snapshot.external_topics.push_back(std::move(topic));
     const auto profiles = standard_profiles(snapshot.vertices.size());
@@ -579,13 +881,163 @@ TEST(CompilePhysicalPlan, TensorBoundaryPoolUsesAdjacentExecutableForAllocationO
   };
 
   for (const bool imported : {true, false}) {
-    const auto result = lower_boundary(imported);
+    const auto result = lower_boundary(imported, nullptr);
     EXPECT_TRUE(result.errors.empty());
     ASSERT_EQ(result.tensor_interface_pools.size(), 1U);
     // Key assertion: pool owner is always the Operator process group (pg=4), not the boundary
     // (pg=9).
     EXPECT_EQ(result.tensor_interface_pools.front().allocator_process_group, ProcessGroupId{4U});
   }
+
+  const auto expect_import_rejected = [&](std::string_view label,
+                                          const TensorContractRecord& input_contract) {
+    SCOPED_TRACE(label);
+    const auto result = lower_boundary(true, &input_contract);
+    EXPECT_TRUE(has_error(result, "PHYSICAL_TENSOR_LAYOUT_MISMATCH"));
+    EXPECT_TRUE(result.channel_services.empty());
+    EXPECT_TRUE(result.process_local_channel_services.empty());
+  };
+  expect_import_rejected(
+      "memory kind",
+      TensorContractRecord{
+          .role = TensorContractRole::kInput,
+          .representation = TensorRepresentation{.memory_kind = MemoryKind::kCudaDevice},
+          .max_rank = 1U,
+          .max_byte_span = 64U,
+          .axes = {{.max_extent = 64U}},
+      });
+  expect_import_rejected("rank",
+                         TensorContractRecord{
+                             .role = TensorContractRole::kInput,
+                             .representation = TensorRepresentation{.rank = 2U},
+                             .max_rank = 2U,
+                             .max_byte_span = 64U,
+                             .axes = {{.max_extent = 8U}, {.max_extent = 8U}},
+                         });
+  expect_import_rejected("byte span",
+                         TensorContractRecord{
+                             .role = TensorContractRole::kInput,
+                             .representation = TensorRepresentation{},
+                             .max_rank = 1U,
+                             .max_byte_span = 32U,
+                             .axes = {{.max_extent = 64U}},
+                         });
+  expect_import_rejected("missing provider axis",
+                         TensorContractRecord{
+                             .role = TensorContractRole::kInput,
+                             .representation = TensorRepresentation{},
+                             .max_rank = 2U,
+                             .max_byte_span = 64U,
+                             .axes = {{.max_extent = 64U}, {.max_extent = 1U}},
+                         });
+
+  const TensorContractRecord compatible_input{
+      .role = TensorContractRole::kInput,
+      .representation = TensorRepresentation{.memory_kind = MemoryKind::kHost, .rank = 1U},
+      .max_rank = 1U,
+      .max_byte_span = 64U,
+      .axes = {{.max_extent = 64U}},
+  };
+  const auto require_exportable =
+      lower_boundary(true, &compatible_input, InterfaceTensorEmitPolicy::kRequireExportable);
+  EXPECT_TRUE(require_exportable.errors.empty());
+  EXPECT_EQ(require_exportable.channel_services.size(), 1U);
+  EXPECT_TRUE(require_exportable.tensor_interface_pools.empty());
+
+  const TensorContractRecord incompatible_input{
+      .role = TensorContractRole::kInput,
+      .representation = TensorRepresentation{.memory_kind = MemoryKind::kCudaDevice},
+      .max_rank = 1U,
+      .max_byte_span = 64U,
+      .axes = {{.max_extent = 64U}},
+  };
+  const auto incompatible_require_exportable =
+      lower_boundary(true, &incompatible_input, InterfaceTensorEmitPolicy::kRequireExportable);
+  EXPECT_TRUE(has_error(incompatible_require_exportable, "PHYSICAL_TENSOR_LAYOUT_MISMATCH"));
+  EXPECT_TRUE(incompatible_require_exportable.channel_services.empty());
+  EXPECT_TRUE(incompatible_require_exportable.tensor_interface_pools.empty());
+}
+
+TEST(CompilePhysicalPlan, TensorInterfacePoolMustSatisfyTheCompleteInputContract) {
+  const TensorInterfacePoolPlanRecord provider{
+      .logical =
+          TensorBoundaryContractRecord{
+              .memory_kind = MemoryKind::kHost,
+              .dtype = DLDataType{kDLUInt, 8U, 1U},
+              .rank = 1U,
+              .max_rank = 1U,
+              .max_byte_span = 64U,
+              .axes = {{.max_extent = 64U}},
+          },
+      .memory_kind = MemoryKind::kHost,
+  };
+  const auto accepts = [&](TensorContractRecord contract) {
+    return tensor_interface_pool_satisfies_input(provider, contract.representation, contract);
+  };
+  EXPECT_TRUE(accepts(TensorContractRecord{
+      .role = TensorContractRole::kInput,
+      .representation = TensorRepresentation{.memory_kind = MemoryKind::kHost, .rank = 1U},
+      .max_rank = 1U,
+      .max_byte_span = 64U,
+      .axes = {{.max_extent = 64U}},
+  }));
+  EXPECT_FALSE(accepts(TensorContractRecord{
+      .role = TensorContractRole::kInput,
+      .representation = TensorRepresentation{.memory_kind = MemoryKind::kCudaDevice},
+      .max_rank = 1U,
+      .max_byte_span = 64U,
+      .axes = {{.max_extent = 64U}},
+  }));
+  EXPECT_FALSE(accepts(TensorContractRecord{
+      .role = TensorContractRole::kInput,
+      .representation = TensorRepresentation{.rank = 2U},
+      .max_rank = 2U,
+      .max_byte_span = 64U,
+      .axes = {{.max_extent = 8U}, {.max_extent = 8U}},
+  }));
+  EXPECT_FALSE(accepts(TensorContractRecord{
+      .role = TensorContractRole::kInput,
+      .representation = TensorRepresentation{},
+      .max_rank = 1U,
+      .max_byte_span = 32U,
+      .axes = {{.max_extent = 64U}},
+  }));
+  EXPECT_FALSE(accepts(TensorContractRecord{
+      .role = TensorContractRole::kInput,
+      .representation = TensorRepresentation{},
+      .max_rank = 2U,
+      .max_byte_span = 64U,
+      .axes = {{.max_extent = 64U}, {.max_extent = 1U}},
+  }));
+
+  const TensorContractRecord two_axis_contract{
+      .role = TensorContractRole::kInput,
+      .representation = TensorRepresentation{.memory_kind = MemoryKind::kHost, .rank = 2U},
+      .max_rank = 2U,
+      .max_byte_span = 64U,
+      .axes = {{.max_extent = 8U}, {.max_extent = 8U}},
+  };
+  const TensorRepresentation two_axis_layout{
+      .memory_kind = MemoryKind::kHost,
+      .rank = 2U,
+  };
+  const std::array incomplete_axes{TensorAxisBounds{.max_extent = 8U}};
+  const std::array complete_axes{TensorAxisBounds{.max_extent = 8U},
+                                 TensorAxisBounds{.max_extent = 8U}};
+  EXPECT_FALSE(
+      tensor_provider_satisfies_input(MemoryKind::kHost,
+                                      TensorPoolBounds{.max_rank = 2U, .max_byte_span = 64U},
+                                      incomplete_axes,
+                                      two_axis_layout,
+                                      two_axis_layout,
+                                      two_axis_contract));
+  EXPECT_TRUE(
+      tensor_provider_satisfies_input(MemoryKind::kHost,
+                                      TensorPoolBounds{.max_rank = 2U, .max_byte_span = 64U},
+                                      complete_axes,
+                                      two_axis_layout,
+                                      two_axis_layout,
+                                      two_axis_contract));
 }
 
 }  // namespace

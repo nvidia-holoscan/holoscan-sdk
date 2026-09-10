@@ -70,7 +70,7 @@ each selector's behavior is observable without an anchor in play.
 From this `cpp/` folder:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

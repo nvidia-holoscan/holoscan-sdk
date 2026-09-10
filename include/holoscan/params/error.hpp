@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include <holoscan/holoscan_params_export.h>
@@ -45,8 +46,9 @@ class HOLOSCAN_PARAMS_EXPORT ParamToolError {
 
   /// @brief Construct one bounded tooling failure.
   /// @param code Stable tooling category.
-  /// @param token Stable uppercase diagnostic token. An empty or oversized token
-  /// maps to the bounded PARAM_TOOL_TOKEN_INVALID sentinel.
+  /// @param token Stable diagnostic token beginning with an ASCII uppercase letter and containing
+  /// only ASCII uppercase letters, digits, or underscores. An invalid or oversized token maps to
+  /// the bounded PARAM_TOOL_TOKEN_INVALID sentinel.
   /// @param core Optional owning Core cause to preserve structurally.
   /// @param config Optional owning Config cause to preserve structurally.
   /// @note Construction does not throw and does not log.
@@ -79,6 +81,16 @@ class HOLOSCAN_PARAMS_EXPORT ParamToolError {
   std::optional<Error> core_;
   std::optional<config::ConfigError> config_;
 };
+
+/// @brief Render a parameter tooling error as a single line for logs and diagnostics.
+///
+/// The result begins with the stable tooling token and includes any preserved Core or Config
+/// cause. Config source excerpts are never included. The wording is intended for people and is
+/// not a stable format; use ParamToolError accessors for programmatic decisions.
+///
+/// @param error Parameter tooling error to render.
+/// @return Human-readable text without a trailing newline.
+[[nodiscard]] HOLOSCAN_PARAMS_EXPORT std::string format_error(const ParamToolError& error);
 
 /// @brief Return an optional-tooling failure translated from a Core error.
 /// @param error Core failure to preserve structurally.

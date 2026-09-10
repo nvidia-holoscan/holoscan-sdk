@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -105,6 +107,67 @@ TEST(TemporalContract, EmptyInputfulContractMaterializesOwnedAnyInputDefault) {
   auto zero_input_deadline = detail::ContractTestAccess::normalize(deadline_default, 0U);
   ASSERT_FALSE(zero_input_deadline);
   EXPECT_EQ(zero_input_deadline.error().code, ErrorCode::kInvalidArgument);
+}
+
+// REQ: CONTRACT-020
+TEST(TemporalContract, ComputeCallsRequiresAnExplicitTrigger) {
+  Contract contract;
+  contract.complete_after(ComputeCalls{.limit = 1U});
+
+  auto normalized = detail::ContractTestAccess::normalize(contract, 2U);
+  ASSERT_FALSE(normalized);
+  EXPECT_EQ(normalized.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_NE(normalized.error().message.find("NO_TRIGGER"), std::string::npos);
+}
+
+// REQ: CONTRACT-020
+TEST(TemporalContract, DefaultComputeCallsCarriesZeroThroughNormalization) {
+  constexpr ComputeCalls calls;
+  static_assert(calls.limit == 0U);
+
+  Contract contract;
+  contract.trigger(OnClock{.period = 1ms}).complete_after(calls);
+
+  auto normalized = detail::ContractTestAccess::normalize(contract, 0U);
+  ASSERT_TRUE(normalized);
+  ASSERT_TRUE(normalized->compute_calls.has_value());
+  EXPECT_EQ(normalized->compute_calls->limit, 0U);
+}
+
+// REQ: CONTRACT-020
+TEST(TemporalContract, CompleteAfterPreservesComputeCallLimitsAcrossCopyAndMove) {
+  constexpr std::array<std::uint64_t, 3> kLimits{0U, 1U, std::numeric_limits<std::uint64_t>::max()};
+
+  for (const std::uint64_t limit : kLimits) {
+    Contract contract;
+    contract.trigger(OnClock{.period = 1ms});
+    // The mutable reference type is part of the fluent-builder contract under test.
+    // NOLINTNEXTLINE(misc-const-correctness)
+    Contract& chained = contract.complete_after(ComputeCalls{.limit = limit});
+    EXPECT_EQ(&chained, &contract);
+
+    Contract copied = contract;
+    const Contract moved = std::move(copied);
+    auto normalized = detail::ContractTestAccess::normalize(moved, 0U);
+    ASSERT_TRUE(normalized) << limit;
+    ASSERT_TRUE(normalized->compute_calls.has_value()) << limit;
+    // The fatal assertion above proves the optional is engaged.
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    EXPECT_EQ(normalized->compute_calls->limit, limit);
+  }
+}
+
+// REQ: CONTRACT-020
+TEST(TemporalContract, RepeatedCompleteAfterUsesTheLastAuthoredRule) {
+  Contract contract;
+  contract.trigger(OnClock{.period = 1ms})
+      .complete_after(ComputeCalls{.limit = 3U})
+      .complete_after(ComputeCalls{.limit = 7U});
+
+  auto normalized = detail::ContractTestAccess::normalize(contract, 0U);
+  ASSERT_TRUE(normalized);
+  ASSERT_TRUE(normalized->compute_calls.has_value());
+  EXPECT_EQ(normalized->compute_calls->limit, 7U);
 }
 
 // REQ: CONTRACT-001

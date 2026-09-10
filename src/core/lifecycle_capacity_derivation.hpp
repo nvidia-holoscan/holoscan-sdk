@@ -81,7 +81,8 @@ struct RequiredLifecycleCapacity {
 
 // Operator identities are dense in a valid immutable plan. The caller-owned topology-sized mark
 // span keeps this pass linear without allocating from untrusted transaction-capacity evidence.
-[[nodiscard]] inline LifecycleRestartCapacityMaxima admitted_lifecycle_restart_capacity(
+[[nodiscard]] inline LifecycleRestartCapacityMaxima
+admitted_lifecycle_restart_capacity(  // NOLINT(readability-function-cognitive-complexity)
     std::span<const LifecycleRestartTargetPlanRecord> targets,
     std::span<const LifecycleRestartClosurePlanRecord> closures, PlanGenerationId plan_generation,
     std::span<std::uint8_t> membership_marks) noexcept {
@@ -91,7 +92,7 @@ struct RequiredLifecycleCapacity {
     maxima.invalid_input = true;
     return maxima;
   }
-  std::fill(membership_marks.begin(), membership_marks.begin() + closures.size(), 0U);
+  std::fill_n(membership_marks.begin(), closures.size(), 0U);
   if (targets.size() != closures.size()) {
     maxima.invalid_input = true;
   }

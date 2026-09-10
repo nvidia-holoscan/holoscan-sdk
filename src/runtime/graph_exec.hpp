@@ -8,7 +8,9 @@
 #include <cuda_runtime_api.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -27,7 +29,13 @@
 #include "../time/clock_registry_internal.hpp"
 #include "parameter_update_coordinator.hpp"
 #include "runtime_package_capability.hpp"
+#include "runtime_rate_state.hpp"
 #include "runtime_replay_mismatch.hpp"
+
+#include <string>
+
+#include <nvtx3/nvToolsExt.h>
+#include <nvtx3/nvtx3.hpp>
 
 namespace holoscan::detail {
 
@@ -48,6 +56,9 @@ struct RuntimeOperatorInstance {
   // trampolines are process-local and cannot enter the immutable plan.
   std::unique_ptr<OperatorSpec> replay_spec;
   std::unique_ptr<TagAllocator> tags;
+  // Cold-bound immutable plan records keep activation dispatch from rescanning plan vectors.
+  const TemporalTriggerPlanRecord* temporal_trigger{};
+  const PredicateTriggerPlanRecord* predicate_trigger{};
   // Cold-bound compute resources are indexed with the reconstructed Operator so activation
   // dispatch never scans the Tensor resource registry. Host-only Operators retain the null/invalid
   // defaults and therefore issue no CUDA query or device switch.
@@ -57,6 +68,7 @@ struct RuntimeOperatorInstance {
   std::span<const ParameterDerivedTermPlanRecord> parameter_derived_terms;
   bool runtime_parameter_updates_enabled{};
   bool lifecycle_parameter_updates_enabled{};
+  nvtx3::message compute_nvtx_message{nvtxStringHandle_t{}};
 };
 
 /// @brief Own immutable plan state plus every fresh object for one RunSession.
@@ -81,6 +93,38 @@ class GraphExec {
   [[nodiscard]] std::span<const RuntimeOperatorInstance> operators() const noexcept {
     return operators_;
   }
+  /// Return whether this process reconstructed any callback-owning Operators.
+  [[nodiscard]] bool has_process_local_callback_owners() const noexcept {
+    return !operators_.empty();
+  }
+  /// @brief Resolve a local Operator receiver from its accepted plan-local vertex identity.
+  /// @param vertex Nonzero vertex identity from the retained accepted plan.
+  /// @return Receiver index while this GraphExec remains alive, or no value when the vertex is not
+  /// an Operator owned by this process group.
+  [[nodiscard]] std::optional<std::size_t> receiver_index(VertexId vertex) const noexcept;
+  /// @brief Resolve a local Operator receiver from its accepted plan-local Operator identity.
+  /// @param operator_id Nonzero generation-zero Operator identity from the retained accepted plan.
+  /// @return Receiver index while this GraphExec remains alive, or no value when the Operator is
+  /// not owned by this process group.
+  [[nodiscard]] std::optional<std::size_t> receiver_index(
+      OperatorInstanceId operator_id) const noexcept;
+  /// @brief Resolve a mutable reconstructed Operator by accepted plan-local vertex identity.
+  /// @param vertex Nonzero vertex identity from the retained accepted plan.
+  /// @return Borrowed instance valid while this GraphExec remains alive, or nullptr when absent.
+  [[nodiscard]] RuntimeOperatorInstance* operator_by_vertex(VertexId vertex) noexcept;
+  /// @brief Resolve a reconstructed Operator by accepted plan-local vertex identity.
+  /// @param vertex Nonzero vertex identity from the retained accepted plan.
+  /// @return Borrowed instance valid while this GraphExec remains alive, or nullptr when absent.
+  [[nodiscard]] const RuntimeOperatorInstance* operator_by_vertex(VertexId vertex) const noexcept;
+  /// @brief Resolve a mutable reconstructed Operator by accepted plan-local Operator identity.
+  /// @param operator_id Nonzero generation-zero Operator identity from the retained accepted plan.
+  /// @return Borrowed instance valid while this GraphExec remains alive, or nullptr when absent.
+  [[nodiscard]] RuntimeOperatorInstance* operator_by_id(OperatorInstanceId operator_id) noexcept;
+  /// @brief Resolve a reconstructed Operator by accepted plan-local Operator identity.
+  /// @param operator_id Nonzero generation-zero Operator identity from the retained accepted plan.
+  /// @return Borrowed instance valid while this GraphExec remains alive, or nullptr when absent.
+  [[nodiscard]] const RuntimeOperatorInstance* operator_by_id(
+      OperatorInstanceId operator_id) const noexcept;
   [[nodiscard]] const ExecutionPlanState& plan() const noexcept { return *plan_; }
   [[nodiscard]] ProcessGroupId process_group() const noexcept { return process_group_; }
   [[nodiscard]] ClockRef default_clock() const noexcept { return default_clock_; }
@@ -100,7 +144,10 @@ class GraphExec {
   /// @throws std::bad_alloc if bounded lifecycle execution storage cannot be allocated.
   [[nodiscard]] expected<void, Error> initialize_lifecycle(
       RunGenerationId run_generation, const std::atomic_bool* cancellation, ExecutionLaneSet* lanes,
-      RuntimeNotificationSourceRegistry* notifications = nullptr);
+      RuntimeNotificationSourceRegistry* notifications = nullptr, RuntimeRateState* rates = nullptr,
+      RuntimeRateMaterializationBinding rate_materialization = {});
+  [[nodiscard]] expected<void, Error> set_lifecycle_notifications(
+      RuntimeNotificationSourceRegistry* notifications) noexcept;
   [[nodiscard]] bool lifecycle_startup() noexcept;
   [[nodiscard]] LifecycleRestartExecutionOutcome lifecycle_restart(
       const LifecycleRestartExecutionRequest& request) noexcept;
@@ -109,13 +156,20 @@ class GraphExec {
   [[nodiscard]] ParameterUpdateCoordinator& parameter_updates() noexcept {
     return *parameter_updates_;
   }
+  [[nodiscard]] std::unique_ptr<ParameterUpdateCoordinator> take_parameter_updates() noexcept {
+    return std::move(parameter_updates_);
+  }
 
  private:
+  static constexpr std::size_t kNoReceiver = std::numeric_limits<std::size_t>::max();
+
   GraphExec(std::shared_ptr<const ExecutionPlanState> plan, ProcessGroupId process_group);
 
   std::shared_ptr<const ExecutionPlanState> plan_;
   ProcessGroupId process_group_{};
   std::vector<RuntimeOperatorInstance> operators_;
+  std::vector<std::size_t> receiver_by_vertex_;
+  std::vector<std::size_t> receiver_by_operator_id_;
   ClockRegistry clock_registry_;
   ClockRef default_clock_;
   std::unique_ptr<RuntimeLifecycleExecutor> lifecycle_;

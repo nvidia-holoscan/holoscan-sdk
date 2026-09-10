@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -22,23 +23,124 @@ from typing import Any
 from runtime_graph_runner_common import parse_integer_list
 from runtime_graph_runner_common import summarize_values as summarize_common_values
 
-RESULT_SCHEMA = "holoscan.ea1.runtime-benchmark/v1"
-SUMMARY_SCHEMA = "holoscan.ea1.runtime-benchmark-summary/v1"
-MANIFEST_SCHEMA = "holoscan.ea1.runtime-benchmark-manifest/v1"
+RESULT_SCHEMA = "holoscan.test.runtime-benchmark/v1"
+SUMMARY_SCHEMA = "holoscan.test.runtime-benchmark-summary/v1"
+MANIFEST_SCHEMA = "holoscan.test.runtime-benchmark-manifest/v1"
 PARTITION_ENVIRONMENT = "HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM"
-PARTITION_ALGORITHMS = {
-    "core_default": ("holoscan.partition.serial_baseline", "core_default"),
-}
+PARTITION_COVERS = ("legacy", "automatic", "include_all", "hybrid")
+SUPPORTED_CALLBACK_WORK_US = (0, 1, 5, 20, 100)
+NATIVE_SKIP_RETURN_CODE = 77
+NATIVE_FAILURE_LOG_LIMIT = 8_192
+MAXIMUM_OFFERED_RATE_HZ = 1_000_000
+MAXIMUM_OFFERED_BURST_SIZE = 64
+MAXIMUM_OFFERED_RATE_RELATIVE_ERROR = 0.02
 BENCHMARK_NAMES = {
     "source_only": "runtime_graph_source_activation",
     "pod": "runtime_graph_pod_1to1",
     "signal": "runtime_graph_signal_1to1",
     "sample_forward": "runtime_graph_pod_chain_1to1",
     "schema": "runtime_graph_schema_time_1to1",
+    "third_party_schema": "runtime_graph_third_party_telemetry_1to1",
     "tensor": "runtime_graph_tensor_1to1",
     "image": "runtime_graph_image_1to1",
     "multi_tensor": "runtime_graph_multi_tensor_1to1",
+    "multi_tensor_loan": "runtime_graph_multi_tensor_loan_1to1",
+    "multi_tensor_staging": "runtime_graph_multi_tensor_staging_1to1",
 }
+MULTI_TENSOR_SCENARIOS = {"multi_tensor_loan", "multi_tensor_staging"}
+TENSOR_BACKED_SCENARIOS = {"tensor", "image", "multi_tensor", *MULTI_TENSOR_SCENARIOS}
+DESCRIPTOR_ONLY_SCENARIOS = {"image", *MULTI_TENSOR_SCENARIOS}
+HOLOMQ_EVENT_WAKE_CONTROL_SCENARIOS = {
+    "pod",
+    "schema",
+    "third_party_schema",
+    *TENSOR_BACKED_SCENARIOS,
+}
+RUNTIME_PHASE_COUNTER_NAMES = (
+    "readiness_scans",
+    "no_progress_scans",
+    "wait_calls",
+    "wake_signals",
+    "wake_returns",
+    "timeout_returns",
+    "stop_signals",
+    "candidates_frozen",
+    "candidates_selected",
+    "readiness_poll_dispatches",
+    "direct_continuation_receipts_accepted",
+    "direct_continuation_poll_elisions",
+    "direct_composite_attempts",
+    "direct_composite_completions",
+    "direct_composite_fallbacks",
+    "direct_composite_failures",
+    "direct_composite_callbacks_attempted",
+    "direct_composite_callbacks_completed",
+    "compute_dispatches",
+    "activations_completed",
+    "channel_prepare_calls",
+    "channel_emit_attempts",
+    "channel_emit_accepted",
+    "channel_emit_backpressured",
+    "channel_samples_received",
+    "channel_readiness_published",
+    "channel_input_reads",
+    "channel_witness_retired",
+    "channel_retire_calls",
+    "channel_activation_cuts",
+    "channel_activation_cut_drains",
+    "channel_activation_cut_skips",
+    "channel_receive_backpressured",
+    "channel_activation_cut_inventory_scans",
+    "channel_activation_cut_subscriber_probes",
+    "channel_activation_cut_transport_probes",
+    "channel_activation_cut_materializations",
+    "candidate_source_lookup_probes",
+    "candidate_order_comparisons",
+    "candidate_order_moves",
+    "candidate_tag_time_reservations",
+    "lane_dispatches",
+    "lane_compute_dispatches",
+    "lane_dispatcher_dispatches",
+    "lane_lifecycle_dispatches",
+    "lane_unknown_dispatches",
+    "lane_busy_task_publications",
+    "lane_sleeping_wake_signals",
+    "lane_callbacks_entered",
+    "lane_callbacks_exited",
+    "lane_completions_observed",
+    "lane_serialization_contentions",
+    "lane_inline_owner_invocations",
+)
+
+# The single depth-one forced-HoloMQ POD row is a diagnostic attribution arm, not a performance
+# baseline. Keep enforcement of its staged-path fields conditional so ordinary counter-enabled
+# rows acquire no new predicates while this row fails closed if requested Pass-3 attribution
+# disappears.
+PRESSURED_STAGED_DIAGNOSTIC_COUNTER_NAMES = (
+    "channel_direct_ingress_promotion_passes",
+    "channel_direct_ingress_promotions",
+    "channel_staged_evidence_sweep_visits",
+    "channel_protected_terminal_probes_with_pending_data",
+    "temporal_reuse_last_retained_record_queries",
+    "temporal_reuse_last_comparator_calls",
+)
+PRESSURED_STAGED_EXISTING_ATTRIBUTION_COUNTER_NAMES = (
+    "channel_pre_witness_replacements",
+    "channel_freshness_reservation_release_deferred",
+    "channel_released_claim_refill_replacement_declined",
+    "channel_released_claim_refill_published",
+    "temporal_retention_candidates",
+    "temporal_retention_evictions",
+    "temporal_retention_declined_not_superseded",
+    "temporal_retention_declined_unbounded_round",
+    "temporal_retention_declined_uncomparable_coordinate",
+    "temporal_retention_declined_above_floor",
+    "temporal_retention_declined_eviction_refused",
+    "temporal_retention_floor_resolved",
+    "temporal_retention_floor_absent",
+    "temporal_retention_eviction_promoted",
+    "temporal_retention_eviction_promoted_nothing",
+)
 
 
 def direct_retained_scenario(scenario: str) -> bool:
@@ -47,14 +149,20 @@ def direct_retained_scenario(scenario: str) -> bool:
         "signal",
         "sample_forward",
         "schema",
-        "tensor",
-        "image",
-        "multi_tensor",
+        "third_party_schema",
+        *TENSOR_BACKED_SCENARIOS,
     }
 
 
 def fanout_scenario(scenario: str) -> bool:
-    return scenario in {"pod", "schema"}
+    return scenario in {
+        "pod",
+        "schema",
+        "third_party_schema",
+        "tensor",
+        "image",
+        *MULTI_TENSOR_SCENARIOS,
+    }
 
 
 def lossy_queue_policy(queue_policy: str) -> bool:
@@ -62,19 +170,89 @@ def lossy_queue_policy(queue_policy: str) -> bool:
 
 
 def lossy_scenario_supported(queue_policy: str, scenario: str) -> bool:
-    return queue_policy == "drop_oldest" and scenario in {"pod", "schema", "tensor", "image"}
+    return queue_policy == "drop_oldest" and scenario in {
+        "pod",
+        "schema",
+        "third_party_schema",
+        "tensor",
+        "image",
+        *MULTI_TENSOR_SCENARIOS,
+    }
 
 
-def uses_channel_pump(args: argparse.Namespace) -> bool:
+def uses_holomq(args: argparse.Namespace) -> bool:
     return direct_retained_scenario(args.scenario) and (
         args.force_holomq_process_local_inline or args.fanout > 1
     )
 
 
+def uses_channel_pump(args: argparse.Namespace) -> bool:
+    return uses_holomq(args) and (
+        args.force_process_local_channel_pump or event_wake_required(args)
+    )
+
+
+def source_output_count(args: argparse.Namespace) -> int:
+    if args.scenario == "source_only":
+        return 0
+    return 2 if args.multi_output or args.multi_input else 1
+
+
+def subscribers_per_output(args: argparse.Namespace) -> int:
+    return (
+        0
+        if args.scenario == "source_only"
+        else (1 if args.multi_output or args.multi_input else args.fanout)
+    )
+
+
+def source_emit_count(args: argparse.Namespace) -> int:
+    return 2 if args.multi_output or args.multi_input else 1
+
+
+def sink_operator_count(args: argparse.Namespace) -> int:
+    return 0 if args.scenario == "source_only" else (1 if args.multi_input else args.fanout)
+
+
+def inputs_per_sink(args: argparse.Namespace) -> int:
+    return 0 if args.scenario == "source_only" else (2 if args.multi_input else 1)
+
+
+def uses_notification_driver(args: argparse.Namespace) -> bool:
+    """Select completion-driven pacing except for fixed-rate clocked fanout rows."""
+    return args.workload != "latency" and not args.offered_rate_hz
+
+
 def process_local_delivery(args: argparse.Namespace) -> str:
     if not direct_retained_scenario(args.scenario):
         return "not_applicable"
-    return "holomq" if uses_channel_pump(args) else "direct_retained"
+    return "holomq" if uses_holomq(args) else "direct_retained"
+
+
+def event_wake_required(args: argparse.Namespace) -> bool:
+    """Return the compiler-derived event-wake expectation for this benchmark graph."""
+    eventless_scenarios = {
+        "pod",
+        "signal",
+        "sample_forward",
+        "schema",
+        "third_party_schema",
+        *TENSOR_BACKED_SCENARIOS,
+    }
+    eventless_shape = (args.fanout == 1 and args.scenario in eventless_scenarios) or (
+        args.fanout > 1 and fanout_scenario(args.scenario)
+    )
+    eventless = (
+        args.operator_lanes == "shared"
+        and args.queue_policy in {"blocking", "drop_oldest"}
+        and eventless_shape
+    )
+    return uses_holomq(args) and (args.force_holomq_event_wake or not eventless)
+
+
+def continuation_receipt_ineligible(args: argparse.Namespace) -> bool:
+    """Return whether this row must stay off the continuation-receipt path."""
+    return args.scenario in TENSOR_BACKED_SCENARIOS or process_local_delivery(args) == "holomq"
 
 
 def benchmark_name(
@@ -84,20 +262,39 @@ def benchmark_name(
     relay_count: int = 1,
     fanout: int = 1,
     queue_policy: str = "blocking",
+    force_holomq_event_wake: bool = False,
+    force_process_local_channel_pump: bool = False,
+    offered_rate_hz: int = 0,
+    offered_burst_size: int = 1,
+    multi_output: bool = False,
+    multi_input: bool = False,
+    mixed_policy_fanout: bool = False,
 ) -> str:
     name = BENCHMARK_NAMES[scenario]
-    if fanout_scenario(scenario):
+    if multi_input:
+        name = name.removesuffix("1to1") + "2to1"
+    elif multi_output:
+        name = name.removesuffix("1to1") + "2x1"
+    elif fanout_scenario(scenario):
         name = name.removesuffix("1to1") + f"1to{fanout}"
     if scenario == "sample_forward":
         name += f"_relays_{relay_count}"
     if force_holomq:
         name += "_holomq_fallback"
+    if force_holomq_event_wake:
+        name += "_event_wake_control"
+    if force_process_local_channel_pump:
+        name += "_channel_pump_control"
+    if mixed_policy_fanout:
+        name += "_mixed_policy"
     if queue_policy != "blocking":
         name += f"_{queue_policy}"
+    if offered_rate_hz:
+        name += f"_offered_{offered_rate_hz}hz_burst{offered_burst_size}"
     return f"{name}_{workload}" if workload != "latency" else name
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("benchmark_binary", type=Path)
     parser.add_argument(
@@ -110,9 +307,10 @@ def parse_args() -> argparse.Namespace:
         "--operator-lanes", choices=("separate", "shared", "per_sink"), default="separate"
     )
     parser.add_argument(
-        "--partition-algorithm",
-        choices=tuple(PARTITION_ALGORITHMS),
-        default="core_default",
+        "--partition-cover",
+        choices=PARTITION_COVERS,
+        default="legacy",
+        help="partition authoring shape; legacy preserves the benchmark's historical default",
     )
     parser.add_argument("--samples", type=int, default=100_000)
     parser.add_argument("--warmup", type=int, default=1_000)
@@ -122,10 +320,17 @@ def parse_args() -> argparse.Namespace:
         default="blocking",
     )
     parser.add_argument("--queue-depth", type=int, default=1)
+    parser.add_argument("--sink-queue-depths", type=parse_queue_depth_list, default=[])
     parser.add_argument("--relay-count", type=int, default=1)
     parser.add_argument("--fanout", type=int, default=1)
+    parser.add_argument("--multi-output", action="store_true")
+    parser.add_argument("--multi-input", action="store_true")
+    parser.add_argument("--mixed-policy-fanout", action="store_true")
     parser.add_argument("--notification-capacity", type=int, default=1)
+    parser.add_argument("--offered-rate-hz", type=int, default=0)
+    parser.add_argument("--offered-burst-size", type=int, default=1)
     parser.add_argument("--publisher-period-us", type=int, default=1_000)
+    parser.add_argument("--callback-work-us", type=int, default=0)
     parser.add_argument("--payload-validation", choices=("none", "final", "all"), default="final")
     parser.add_argument(
         "--tensor-storage",
@@ -151,20 +356,57 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--disable-direct-continuation-elision", action="store_true")
     parser.add_argument("--disable-closed-island-composite", action="store_true")
     parser.add_argument("--force-holomq-process-local-inline", action="store_true")
+    parser.add_argument("--force-holomq-event-wake", action="store_true")
+    parser.add_argument("--force-process-local-channel-pump", action="store_true")
+    parser.add_argument("--test-gate-pod-sink-for-pressure", action="store_true")
     parser.add_argument("--session-timeout-ms", type=int, default=30_000)
     parser.add_argument("--process-timeout-sec", type=float, default=60.0)
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--max-median-cv", type=float, default=0.10)
     parser.add_argument("--git-revision", default=None)
+    parser.add_argument("--source-state", default="unknown")
+    parser.add_argument("--source-snapshot-sha256", default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    """Keep each option combination within one benchmark row's evidence contract."""
     if args.samples <= 0:
         raise ValueError("--samples must be positive")
     if args.warmup < 0:
         raise ValueError("--warmup must be nonnegative")
+    if not args.source_state:
+        raise ValueError("--source-state must be nonempty")
+    if args.source_snapshot_sha256 is not None and not valid_sha256(args.source_snapshot_sha256):
+        raise ValueError("--source-snapshot-sha256 must be a lowercase SHA-256 digest")
+    if args.callback_work_us not in SUPPORTED_CALLBACK_WORK_US:
+        raise ValueError("--callback-work-us must be 0, 1, 5, 20, or 100")
+    if args.test_gate_pod_sink_for_pressure and not (
+        args.partition_cover == "legacy"
+        and args.workload == "saturated"
+        and args.scenario == "pod"
+        and args.operator_lanes == "separate"
+        and args.queue_policy == "drop_oldest"
+        and args.queue_depth == 1
+        and args.sink_queue_depths == []
+        and args.fanout == 1
+        and not args.multi_output
+        and not args.multi_input
+        and not args.mixed_policy_fanout
+        and args.notification_capacity == 1
+        and not args.offered_rate_hz
+        and args.offered_burst_size == 1
+        and args.callback_work_us == 0
+        and args.force_holomq_process_local_inline
+        and not args.force_holomq_event_wake
+        and not args.force_process_local_channel_pump
+        and args.runtime_phase_counters
+    ):
+        raise ValueError(
+            "--test-gate-pod-sink-for-pressure requires the counter-enabled saturated "
+            "separate-lane POD DropOldest depth-one fanout-one forced-HoloMQ diagnostic row"
+        )
     if args.workload in {"latency", "notification_latency"} and args.queue_depth not in {1, 2}:
         raise ValueError("latency workloads require --queue-depth 1 or 2")
     if args.workload == "saturated" and args.queue_depth <= 0:
@@ -172,19 +414,88 @@ def validate_args(args: argparse.Namespace) -> None:
     if lossy_queue_policy(args.queue_policy) and not lossy_scenario_supported(
         args.queue_policy, args.scenario
     ):
-        raise ValueError("--queue-policy drop_oldest supports pod, schema, tensor, or image")
-    if lossy_queue_policy(args.queue_policy) and args.fanout != 1:
-        raise ValueError("--queue-policy drop_oldest currently requires --fanout 1")
+        raise ValueError(
+            "--queue-policy drop_oldest supports pod, schema, third_party_schema, tensor, "
+            "image, multi_tensor_loan, or multi_tensor_staging"
+        )
+    if lossy_queue_policy(args.queue_policy) and args.fanout != 1 and not args.offered_rate_hz:
+        raise ValueError("--queue-policy drop_oldest fanout requires --offered-rate-hz")
     if args.relay_count <= 0 or args.relay_count > 64:
         raise ValueError("--relay-count must be between 1 and 64")
     if args.scenario != "sample_forward" and args.relay_count != 1:
         raise ValueError("--relay-count requires --scenario sample_forward")
-    if args.fanout <= 0 or args.fanout > 8:
-        raise ValueError("--fanout must be between 1 and 8")
+    if args.fanout <= 0 or args.fanout > 32:
+        raise ValueError("--fanout must be between 1 and 32")
+    if args.fanout > 8 and args.scenario not in {"pod", "schema", "third_party_schema"}:
+        raise ValueError(
+            "--fanout greater than 8 requires --scenario pod, schema, or third_party_schema"
+        )
     if not fanout_scenario(args.scenario) and args.fanout != 1:
-        raise ValueError("--fanout greater than one requires --scenario pod or schema")
+        raise ValueError(
+            "--fanout greater than one requires --scenario pod, schema, third_party_schema, "
+            "tensor, image, multi_tensor_loan, or multi_tensor_staging"
+        )
+    if args.multi_output and args.multi_input:
+        raise ValueError("--multi-output and --multi-input are mutually exclusive")
+    if args.mixed_policy_fanout and (
+        args.scenario != "pod"
+        or args.fanout != 2
+        or args.operator_lanes != "shared"
+        or args.queue_policy != "blocking"
+        or args.multi_output
+        or args.multi_input
+        or args.offered_rate_hz
+    ):
+        raise ValueError(
+            "--mixed-policy-fanout requires shared-lane blocking POD --fanout 2 "
+            "without multi-output, multi-input, or an offered rate"
+        )
+    if (args.multi_output or args.multi_input) and (
+        args.scenario != "pod"
+        or args.fanout != 2
+        or args.operator_lanes != "shared"
+        or args.queue_policy != "blocking"
+        or args.offered_rate_hz
+        or not args.force_holomq_process_local_inline
+    ):
+        raise ValueError(
+            "--multi-output/--multi-input requires shared-lane blocking POD --fanout 2 "
+            "--force-holomq-process-local-inline without an offered rate"
+        )
+    if args.sink_queue_depths:
+        if not fanout_scenario(args.scenario) or args.fanout <= 1:
+            raise ValueError("--sink-queue-depths requires supported --fanout greater than one")
+        if len(args.sink_queue_depths) != args.fanout:
+            raise ValueError("--sink-queue-depths must provide exactly one depth per fanout sink")
+        if any(depth <= 0 for depth in args.sink_queue_depths):
+            raise ValueError("--sink-queue-depths values must be positive")
+        if max(args.sink_queue_depths) != args.queue_depth:
+            raise ValueError("maximum --sink-queue-depths value must equal --queue-depth")
+        if (args.multi_output or args.multi_input) and len(set(args.sink_queue_depths)) != 1:
+            raise ValueError("--multi-output/--multi-input requires equal sink queue depths")
     if args.notification_capacity <= 0:
         raise ValueError("--notification-capacity must be positive")
+    if args.offered_rate_hz < 0 or args.offered_rate_hz > MAXIMUM_OFFERED_RATE_HZ:
+        raise ValueError("--offered-rate-hz must be between 1 and 1000000 when enabled")
+    if args.offered_rate_hz and (
+        args.workload != "saturated"
+        or not lossy_queue_policy(args.queue_policy)
+        or args.fanout <= 1
+        or args.scenario != "pod"
+        or args.operator_lanes != "shared"
+    ):
+        raise ValueError("--offered-rate-hz requires shared-lane saturated POD drop_oldest fanout")
+    if args.offered_rate_hz and (
+        args.offered_burst_size <= args.queue_depth
+        or args.offered_burst_size > MAXIMUM_OFFERED_BURST_SIZE
+    ):
+        raise ValueError("--offered-burst-size must exceed queue depth and not exceed 64")
+    if not args.offered_rate_hz and args.offered_burst_size != 1:
+        raise ValueError("--offered-burst-size requires --offered-rate-hz")
+    if args.offered_rate_hz and args.samples < args.offered_burst_size * 2:
+        raise ValueError("--offered-rate-hz requires at least two complete bursts")
+    if args.offered_rate_hz and args.samples % args.offered_burst_size != 0:
+        raise ValueError("--offered-rate-hz requires --samples to contain only complete bursts")
     if args.workload == "latency" and args.notification_capacity != 1:
         raise ValueError("--notification-capacity requires a notification workload")
     if args.workload == "notification_latency" and args.notification_capacity != 1:
@@ -209,47 +520,117 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("CPU values must be -1 or a nonnegative ordinal")
     if args.scenario != "sample_forward" and args.relay_cpu >= 0:
         raise ValueError("--relay-cpu requires --scenario sample_forward")
-    if args.partition_algorithm != "core_default":
+    if args.partition_cover == "automatic" and (
+        args.operator_lanes != "separate"
+        or args.source_cpu >= 0
+        or args.relay_cpu >= 0
+        or args.sink_cpu >= 0
+        or args.sink_cpus
+        or args.busy_poll
+    ):
         raise ValueError(
-            "--partition-algorithm must remain core_default for benchmark-authored partitions"
+            "--partition-cover automatic requires --operator-lanes separate and cannot bind "
+            "generated partition names to placement or Green Context requests"
+        )
+    if args.partition_cover == "automatic" and args.force_holomq_process_local_inline:
+        raise ValueError(
+            "--partition-cover automatic cannot force HoloMQ because compiler-derived ownership "
+            "is authoritative"
+        )
+    if args.partition_cover == "automatic" and args.runtime_phase_counters and args.fanout == 1:
+        raise ValueError(
+            "--partition-cover automatic without explicit fan-out cannot use "
+            "--runtime-phase-counters"
+        )
+    if args.partition_cover == "include_all" and (
+        args.operator_lanes != "shared"
+        or args.relay_cpu >= 0
+        or args.sink_cpu >= 0
+        or args.sink_cpus
+    ):
+        raise ValueError(
+            "--partition-cover include_all requires shared operator lanes and source-only CPU "
+            "placement"
+        )
+    if args.partition_cover == "hybrid" and (
+        args.operator_lanes != "separate"
+        or args.relay_cpu >= 0
+        or args.sink_cpu >= 0
+        or args.sink_cpus
+    ):
+        raise ValueError(
+            "--partition-cover hybrid requires separate operator lanes, source-only CPU "
+            "placement, and at most dedicated_to_residual Green Context placement"
         )
     if args.scenario == "source_only" and args.sink_cpu >= 0:
         raise ValueError("--sink-cpu is not used by --scenario source_only")
     if not uses_channel_pump(args) and args.channel_pump_cpu >= 0:
-        raise ValueError("--channel-pump-cpu requires a transport-backed scenario")
+        raise ValueError("--channel-pump-cpu requires an active channel pump")
     if args.force_holomq_process_local_inline and not direct_retained_scenario(args.scenario):
         raise ValueError(
             "--force-holomq-process-local-inline requires pod, signal, sample_forward, schema, "
-            "tensor, image, or multi_tensor"
+            "third_party_schema, tensor, image, multi_tensor, multi_tensor_loan, or "
+            "multi_tensor_staging"
         )
-    if args.force_holomq_process_local_inline and args.fanout != 1:
-        raise ValueError("--force-holomq-process-local-inline requires --fanout 1")
-    if args.disable_direct_continuation_elision and args.force_holomq_process_local_inline:
+    if (
+        args.force_holomq_process_local_inline
+        and args.fanout != 1
+        and not args.multi_output
+        and not args.multi_input
+    ):
         raise ValueError(
-            "--disable-direct-continuation-elision and --force-holomq-process-local-inline "
-            "are mutually exclusive"
+            "--force-holomq-process-local-inline requires --fanout 1, --multi-output, or "
+            "--multi-input"
         )
-    if args.scenario in {"image", "multi_tensor"} and args.tensor_storage != "pageable_host":
+    fanout_wake_control = fanout_scenario(args.scenario) and args.fanout > 1
+    exact_wake_control = (
+        args.force_holomq_process_local_inline
+        and (args.fanout == 1 or args.multi_output or args.multi_input)
+        and args.scenario in HOLOMQ_EVENT_WAKE_CONTROL_SCENARIOS
+    )
+    if args.force_holomq_event_wake and (
+        (not exact_wake_control and not fanout_wake_control) or args.operator_lanes != "shared"
+    ):
         raise ValueError(
-            "--scenario image and multi_tensor currently require --tensor-storage pageable_host"
+            "--force-holomq-event-wake requires a shared-lane POD, schema, third_party_schema, "
+            "Tensor, Image, or multi-Tensor fanout or 1:1 POD, schema, third_party_schema, "
+            "Tensor, Image, or multi-Tensor "
+            "--force-holomq-process-local-inline row"
         )
-    if args.scenario in {"image", "multi_tensor"} and args.tensor_device != 0:
-        raise ValueError("--scenario image and multi_tensor currently require --tensor-device 0")
+    if args.force_process_local_channel_pump and (
+        not uses_holomq(args) or args.operator_lanes != "shared" or args.force_holomq_event_wake
+    ):
+        raise ValueError(
+            "--force-process-local-channel-pump requires an otherwise eventless shared-lane "
+            "HoloMQ row without --force-holomq-event-wake"
+        )
+    if args.scenario in DESCRIPTOR_ONLY_SCENARIOS and args.bulk_work_profile != "descriptor_only":
+        raise ValueError(f"--scenario {args.scenario} requires --bulk-work-profile descriptor_only")
     if args.bulk_work_profile == "descriptor_only" and args.scenario not in {
         "tensor",
         "multi_tensor",
+        *DESCRIPTOR_ONLY_SCENARIOS,
     }:
         raise ValueError(
-            "--bulk-work-profile descriptor_only requires --scenario tensor or multi_tensor"
+            "--bulk-work-profile descriptor_only requires --scenario tensor, image, "
+            "multi_tensor, multi_tensor_loan, or multi_tensor_staging"
         )
     if args.operator_lanes == "shared" and args.sink_cpu >= 0:
         raise ValueError("--sink-cpu is not used with --operator-lanes shared")
     if args.operator_lanes == "shared" and args.relay_cpu >= 0:
         raise ValueError("--relay-cpu is not used with --operator-lanes shared")
+    if (
+        args.scenario in {"tensor", "image", *MULTI_TENSOR_SCENARIOS}
+        and args.fanout > 1
+        and args.operator_lanes != "shared"
+    ):
+        raise ValueError(
+            "Tensor, Image, and multi-Tensor fanout currently require --operator-lanes shared"
+        )
     if args.operator_lanes == "per_sink" and (
         not fanout_scenario(args.scenario) or args.fanout <= 1
     ):
-        raise ValueError("--operator-lanes per_sink requires pod or schema fanout greater than one")
+        raise ValueError("--operator-lanes per_sink requires supported fanout greater than one")
     if args.operator_lanes == "per_sink" and args.sink_cpu >= 0:
         raise ValueError("--sink-cpu is not used with --operator-lanes per_sink")
     if args.operator_lanes == "separate" and args.fanout > 1 and args.sink_cpu >= 0:
@@ -263,8 +644,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--sink-cpus must provide exactly one CPU per fanout sink")
     if args.scenario == "source_only" and args.workload == "latency":
         raise ValueError("--scenario source_only requires a notification workload")
-    if args.workload == "latency" and args.notification_driver_cpu >= 0:
+    if not uses_notification_driver(args) and args.notification_driver_cpu >= 0:
         raise ValueError("--notification-driver-cpu requires a notification workload")
+    if not uses_notification_driver(args) and args.notification_capacity != 1:
+        raise ValueError("--notification-capacity requires a notification workload")
     assigned_cpus = [
         args.source_cpu,
         (
@@ -278,7 +661,7 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.scenario == "sample_forward" and args.operator_lanes == "separate":
         assigned_cpus.append(args.relay_cpu)
     assigned_cpus.extend(args.sink_cpus)
-    if args.workload != "latency":
+    if uses_notification_driver(args):
         assigned_cpus.append(args.notification_driver_cpu)
     pinned_cpus = [cpu for cpu in assigned_cpus if cpu >= 0]
     if len(pinned_cpus) != len(set(pinned_cpus)):
@@ -313,14 +696,28 @@ def read_cpu_topology(role: str, cpu: int) -> dict[str, object]:
     core_id = read_text(cpu_path / "topology/core_id")
     try:
         result["package_id"] = int(package_id) if package_id is not None else None
-        result["core_id"] = int(core_id) if core_id is not None else None
-        result["topology_available"] = package_id is not None and core_id is not None
     except ValueError:
-        result["topology_available"] = False
-    result["thread_siblings"] = read_text(cpu_path / "topology/thread_siblings_list")
+        result["package_id"] = None
+    try:
+        result["core_id"] = int(core_id) if core_id is not None else None
+    except ValueError:
+        result["core_id"] = None
+    result["thread_siblings"] = read_text(cpu_path / "topology/thread_siblings_list") or None
+    result["topology_available"] = result["package_id"] is not None and (
+        result["thread_siblings"] is not None or result["core_id"] is not None
+    )
     result["core_type"] = read_text(cpu_path / "topology/core_type")
     result["governor"] = read_text(cpu_path / "cpufreq/scaling_governor")
     return result
+
+
+def physical_core_identity(item: dict[str, object]) -> tuple[object, str, object]:
+    siblings = item.get("thread_siblings")
+    return (
+        item.get("package_id"),
+        "siblings" if siblings else "core",
+        siblings if siblings else item.get("core_id"),
+    )
 
 
 def optional_cpu(cpu: int | None) -> int | None:
@@ -347,7 +744,24 @@ def complete_overlap_interval(latency: object, overlaps: object, expected_sample
     )
 
 
+def expected_sink_operator_count(args: argparse.Namespace) -> int:
+    """Return the logical sink-Operator count, not the number of input legs."""
+    if args.scenario == "source_only":
+        return 0
+    return 1 if args.multi_input else args.fanout
+
+
 def expected_operator_lane_count(args: argparse.Namespace) -> int:
+    sink_count = expected_sink_operator_count(args)
+    if args.partition_cover == "include_all":
+        return 1
+    if args.partition_cover == "automatic":
+        # The source-chain compiler, rather than a requested manual lane layout, owns this cover.
+        return sink_count + 1 if sink_count > 1 else 1
+    if args.partition_cover == "hybrid":
+        if args.operator_lanes == "per_sink" or sink_count > 1:
+            return sink_count + 1
+        return 1 if args.scenario == "source_only" else 2
     if args.operator_lanes == "shared" or args.scenario == "source_only":
         return 1
     if args.scenario == "sample_forward":
@@ -357,11 +771,38 @@ def expected_operator_lane_count(args: argparse.Namespace) -> int:
     return 2
 
 
-def expected_execution_lane_worker_count(args: argparse.Namespace) -> int:
+def effective_operator_lane_count(placement: dict[str, Any], args: argparse.Namespace) -> int:
+    """Read the accepted plan's effective lane count without inferring automatic layout."""
+    count = placement.get("operator_lane_count")
+    if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+        raise RuntimeError("result has an invalid effective Operator lane count")
+    if args.partition_cover != "automatic" and count != expected_operator_lane_count(args):
+        raise RuntimeError("result has an unexpected effective Operator lane count")
+    return count
+
+
+def expected_execution_lane_worker_count(
+    args: argparse.Namespace, effective_lane_count: int | None = None
+) -> int:
     """Return the number of execution-lane worker threads in the accepted plan."""
-    if args.operator_lanes == "shared" or args.scenario == "source_only":
+    lane_count = (
+        effective_lane_count
+        if effective_lane_count is not None
+        else expected_operator_lane_count(args)
+    )
+    if lane_count == 1:
         return 0
-    return expected_operator_lane_count(args)
+    return lane_count
+
+
+def expected_partitioning(args: argparse.Namespace) -> tuple[str, str]:
+    """Return the accepted algorithm and cover mode for one benchmark authoring shape."""
+    if args.partition_cover in {"automatic", "hybrid"}:
+        return (
+            "holoscan.partition.source_chain",
+            "automatic" if args.partition_cover == "automatic" else "constrained_automatic",
+        )
+    return "holoscan.partition.serial_baseline", "manual"
 
 
 def parse_cpu_list(value: str) -> list[int]:
@@ -372,8 +813,64 @@ def parse_cpu_list(value: str) -> list[int]:
     )
 
 
+def parse_queue_depth_list(value: str) -> list[int]:
+    return parse_integer_list(
+        value,
+        invalid_message="queue-depth list must contain integers",
+        empty_message="queue-depth list must not contain empty entries",
+    )
+
+
+def subscriber_queue_depths(args: argparse.Namespace) -> list[int]:
+    if args.scenario == "source_only":
+        return []
+    return args.sink_queue_depths or [args.queue_depth] * args.fanout
+
+
+def subscriber_queue_policies(args: argparse.Namespace) -> list[str]:
+    if args.scenario == "source_only":
+        return []
+    if args.mixed_policy_fanout:
+        return ["blocking", "drop_oldest"]
+    return [args.queue_policy] * args.fanout
+
+
+def has_lossy_subscriber(args: argparse.Namespace) -> bool:
+    return any(lossy_queue_policy(policy) for policy in subscriber_queue_policies(args))
+
+
+def pressured_staged_diagnostics_required(args: argparse.Namespace) -> bool:
+    """Identify the one opt-in CTest row that must exercise depth-one staged ingress."""
+    return (
+        args.partition_cover == "legacy"
+        and args.workload == "saturated"
+        and args.scenario == "pod"
+        and args.operator_lanes == "separate"
+        and args.queue_policy == "drop_oldest"
+        and args.queue_depth == 1
+        and args.sink_queue_depths == []
+        and args.fanout == 1
+        and not args.multi_output
+        and not args.multi_input
+        and not args.mixed_policy_fanout
+        and args.notification_capacity == 1
+        and not args.offered_rate_hz
+        and args.offered_burst_size == 1
+        and args.force_holomq_process_local_inline
+        and not args.force_holomq_event_wake
+        and not args.force_process_local_channel_pump
+        and args.test_gate_pod_sink_for_pressure
+    )
+
+
 def collect_cpu_topology(args: argparse.Namespace) -> list[dict[str, object]]:
-    if args.operator_lanes == "shared":
+    if args.partition_cover == "automatic":
+        # Automatic partition owners are compiler-selected and reported by the accepted plan.
+        placements = []
+    elif args.partition_cover != "legacy" and expected_operator_lane_count(args) == 1:
+        # A one-partition plan executes inline on the controller; do not invent worker roles.
+        placements = []
+    elif args.operator_lanes == "shared":
         placements = [read_cpu_topology("shared_operator_lane", args.source_cpu)]
     else:
         placements = [read_cpu_topology("source", args.source_cpu)]
@@ -393,14 +890,14 @@ def collect_cpu_topology(args: argparse.Namespace) -> list[dict[str, object]]:
     placements.append(read_cpu_topology("controller", args.controller_cpu))
     if uses_channel_pump(args):
         placements.append(read_cpu_topology("channel_pump", args.channel_pump_cpu))
-    if args.workload != "latency":
+    if uses_notification_driver(args):
         placements.append(read_cpu_topology("notification_driver", args.notification_driver_cpu))
     pinned = [item for item in placements if item["pinned"]]
-    physical_cores: set[tuple[object, object]] = set()
+    physical_cores: set[tuple[object, str, object]] = set()
     for item in pinned:
         if not item.get("topology_available"):
             continue
-        physical_core = (item.get("package_id"), item.get("core_id"))
+        physical_core = physical_core_identity(item)
         if physical_core in physical_cores:
             raise RuntimeError("Runtime benchmark CPUs share one physical core")
         physical_cores.add(physical_core)
@@ -475,6 +972,22 @@ def git_revision(explicit_revision: str | None) -> tuple[str | None, str]:
     return discovered_git_revision(), "source_tree"
 
 
+def valid_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def gpu_metadata() -> list[dict[str, str]]:
     if shutil.which("nvidia-smi") is None:
         return []
@@ -504,97 +1017,78 @@ def gpu_metadata() -> list[dict[str, str]]:
 def validate_runtime_phase_counters(
     phase_counters: object, counts: dict[str, Any], args: argparse.Namespace
 ) -> None:
+    """Validate opt-in phase evidence for direct, HoloMQ, fanout, and lossy rows."""
     if not args.runtime_phase_counters:
         if phase_counters not in (None, {"enabled": False}):
             raise RuntimeError("result unexpectedly enabled Runtime phase counters")
         return
     if not isinstance(phase_counters, dict) or phase_counters.get("enabled") is not True:
         raise RuntimeError("result is missing enabled Runtime phase counters")
-    required = (
-        "readiness_scans",
-        "no_progress_scans",
-        "wait_calls",
-        "wake_signals",
-        "wake_returns",
-        "timeout_returns",
-        "stop_signals",
-        "candidates_frozen",
-        "candidates_selected",
-        "readiness_poll_dispatches",
-        "direct_continuation_receipts_accepted",
-        "direct_continuation_poll_elisions",
-        "direct_composite_attempts",
-        "direct_composite_completions",
-        "direct_composite_fallbacks",
-        "direct_composite_failures",
-        "direct_composite_callbacks_attempted",
-        "direct_composite_callbacks_completed",
-        "compute_dispatches",
-        "activations_completed",
-        "channel_prepare_calls",
-        "channel_emit_attempts",
-        "channel_emit_accepted",
-        "channel_emit_backpressured",
-        "channel_samples_received",
-        "channel_readiness_published",
-        "channel_input_reads",
-        "channel_witness_retired",
-        "channel_retire_calls",
-        "channel_activation_cuts",
-        "channel_activation_cut_drains",
-        "channel_activation_cut_skips",
-        "channel_receive_backpressured",
-        "lane_dispatches",
-        "lane_compute_dispatches",
-        "lane_dispatcher_dispatches",
-        "lane_lifecycle_dispatches",
-        "lane_unknown_dispatches",
-        "lane_busy_task_publications",
-        "lane_sleeping_wake_signals",
-        "lane_callbacks_entered",
-        "lane_callbacks_exited",
-        "lane_completions_observed",
-        "lane_serialization_contentions",
-        "lane_inline_owner_invocations",
-    )
-    if any(not isinstance(phase_counters.get(name), int) for name in required):
+    required = RUNTIME_PHASE_COUNTER_NAMES
+    pressured_staged_diagnostics = pressured_staged_diagnostics_required(args)
+    if pressured_staged_diagnostics:
+        required += (
+            PRESSURED_STAGED_DIAGNOSTIC_COUNTER_NAMES
+            + PRESSURED_STAGED_EXISTING_ATTRIBUTION_COUNTER_NAMES
+        )
+    if any(type(phase_counters.get(name)) is not int for name in required):
         raise RuntimeError("result has incomplete Runtime phase counters")
+    if any(phase_counters[name] < 0 for name in required):
+        raise RuntimeError("result has negative Runtime phase counters")
     expected_compute = sum(
         counts.get(name, 0)
         for name in ("source_compute_entries", "relay_callbacks", "sink_callbacks")
     )
     frozen = phase_counters["candidates_frozen"]
-    expected_emit_attempts = counts.get("source_callbacks", 0) + counts.get("relay_callbacks", 0)
-    expected_accepted_emits = counts.get("publications", 0) + counts.get("relay_publications", 0)
-    expected_input_operations = counts.get("relay_callbacks", 0) + counts.get("sink_callbacks", 0)
-    channel_pump_used = uses_channel_pump(args)
+    expected_emit_attempts = (
+        counts.get("publications", 0) + counts.get("backpressured_emits", 0)
+    ) * source_emit_count(args) + counts.get("relay_callbacks", 0)
+    expected_accepted_emits = counts.get("publications", 0) * source_emit_count(args) + counts.get(
+        "relay_publications", 0
+    )
+    expected_input_operations = counts.get("relay_callbacks", 0) + counts.get(
+        "sink_callbacks", 0
+    ) * inputs_per_sink(args)
+    continuation_receipts = phase_counters["direct_continuation_receipts_accepted"]
+    holomq_used = uses_holomq(args)
+    activation_cuts = phase_counters["channel_activation_cuts"]
+    retry_cut_budget = (
+        0 if uses_channel_pump(args) else phase_counters["channel_receive_backpressured"]
+    )
     activation_cut_consistent = (
-        phase_counters["channel_activation_cut_drains"]
+        activation_cuts
+        == phase_counters["channel_activation_cut_drains"]
         + phase_counters["channel_activation_cut_skips"]
-        == frozen
-        if channel_pump_used
-        else phase_counters["channel_activation_cut_drains"] == 0
+        and expected_compute <= activation_cuts <= expected_compute + retry_cut_budget
+        if holomq_used
+        else activation_cuts == 0
+        and phase_counters["channel_activation_cut_drains"] == 0
         and phase_counters["channel_activation_cut_skips"] == 0
     )
-    expected_activation_cuts = frozen if channel_pump_used else 0
+    samples_received = phase_counters["channel_samples_received"]
+    readiness_published = phase_counters["channel_readiness_published"]
+    accepted_delivery_opportunities = expected_accepted_emits * subscribers_per_output(args)
+    retained_counts_consistent = (
+        samples_received == readiness_published
+        and expected_input_operations <= samples_received <= accepted_delivery_opportunities
+        if has_lossy_subscriber(args)
+        else samples_received == expected_input_operations
+        and readiness_published == expected_input_operations
+    )
     channel_consistent = (
-        phase_counters["channel_prepare_calls"] == frozen
+        phase_counters["channel_prepare_calls"] == expected_compute
         and phase_counters["channel_emit_attempts"] == expected_emit_attempts
         and phase_counters["channel_emit_accepted"] == expected_accepted_emits
         and phase_counters["channel_emit_backpressured"] == counts.get("backpressured_emits", 0)
-        and phase_counters["channel_samples_received"] == expected_input_operations
-        and phase_counters["channel_readiness_published"] == expected_input_operations
+        and retained_counts_consistent
         and phase_counters["channel_input_reads"] == expected_input_operations
         and phase_counters["channel_witness_retired"] == expected_input_operations
-        and phase_counters["channel_retire_calls"] == frozen
-        and phase_counters["channel_activation_cuts"] == expected_activation_cuts
+        and phase_counters["channel_retire_calls"] == expected_compute
         and activation_cut_consistent
     )
     if args.scenario == "source_only":
-        channel_consistent = (
-            phase_counters["channel_prepare_calls"] == 0
-            and phase_counters["channel_emit_attempts"] == 0
-            and phase_counters["channel_samples_received"] == 0
+        channel_consistent = all(
+            phase_counters[name] == 0 for name in required if name.startswith("channel_")
         )
     composite_attempts = phase_counters["direct_composite_attempts"]
     composite_callbacks_attempted = phase_counters["direct_composite_callbacks_attempted"]
@@ -623,7 +1117,7 @@ def validate_runtime_phase_counters(
     )
     lane_dispatches = phase_counters["lane_dispatches"]
     inline_owner_invocations = phase_counters["lane_inline_owner_invocations"]
-    expected_lane_compute_calls = frozen - composite_callbacks_attempted
+    expected_lane_compute_calls = expected_compute - composite_callbacks_attempted
     expected_lane_dispatcher_calls = (
         phase_counters["readiness_poll_dispatches"] + composite_attempts
     )
@@ -676,13 +1170,28 @@ def validate_runtime_phase_counters(
         and inline_owner_invocations >= expected_lane_compute_calls + expected_lane_dispatcher_calls
     )
     lane_consistent = ordinary_lane_consistent or inline_lane_consistent
+    pressured_staged_consistent = not pressured_staged_diagnostics or (
+        phase_counters["channel_direct_ingress_promotion_passes"] > 0
+        and phase_counters["channel_direct_ingress_promotions"] > 0
+        and phase_counters["channel_staged_evidence_sweep_visits"] > 0
+        and phase_counters["temporal_retention_candidates"] > 0
+        and phase_counters["temporal_retention_evictions"] > 0
+        and phase_counters["temporal_reuse_last_retained_record_queries"] > 0
+        and type(counts.get("consumer_visible_replacements")) is int
+        and counts["consumer_visible_replacements"] > 0
+        and type(counts.get("deliveries")) is int
+        and counts["deliveries"] >= 2
+        and counts.get("activation_completions") == counts["deliveries"]
+    )
     if (
-        frozen != expected_compute
-        or phase_counters["candidates_selected"] != frozen
-        or phase_counters["compute_dispatches"] != frozen
-        or phase_counters["activations_completed"] != frozen
+        not expected_compute <= frozen <= expected_compute + 1
+        or phase_counters["candidates_selected"] != expected_compute
+        or phase_counters["compute_dispatches"] != expected_compute
+        or phase_counters["activations_completed"] != expected_compute
         or phase_counters["direct_continuation_receipts_accepted"]
         != phase_counters["direct_continuation_poll_elisions"]
+        or continuation_receipts > expected_accepted_emits
+        or (continuation_receipt_ineligible(args) and continuation_receipts != 0)
         or (
             args.disable_direct_continuation_elision
             and phase_counters["direct_continuation_receipts_accepted"] != 0
@@ -693,12 +1202,16 @@ def validate_runtime_phase_counters(
         or not composite_consistent
         or not channel_consistent
         or not lane_consistent
+        or not pressured_staged_consistent
     ):
         raise RuntimeError("result has inconsistent Runtime phase counters")
 
 
 def validate_runtime_phase_trace(
-    phase_trace: object, counts: dict[str, Any], args: argparse.Namespace
+    phase_trace: object,
+    counts: dict[str, Any],
+    args: argparse.Namespace,
+    phase_counters: object = None,
 ) -> None:
     if not args.runtime_phase_counters:
         if phase_trace not in (None, {"enabled": False}):
@@ -726,6 +1239,7 @@ def validate_runtime_phase_trace(
         "readiness_polls",
         "unmatched_readiness_polls",
         "complete_activations",
+        "terminal_frozen_candidates",
         "source_activation_runs",
         "maximum_consecutive_source_activations",
         "source_to_source_transitions",
@@ -743,11 +1257,12 @@ def validate_runtime_phase_trace(
     )
     expected_tensor_emits = counts.get("publications", 0) if args.scenario == "tensor" else 0
     expected_tensor_transport_emits = (
-        expected_tensor_emits if args.force_holomq_process_local_inline else 0
+        expected_tensor_emits if args.force_holomq_process_local_inline or args.fanout > 1 else 0
     )
     expected_inline_payload_emits = (
-        counts.get("publications", 0) + counts.get("relay_publications", 0)
-        if args.scenario not in ("source_only", "tensor", "image", "multi_tensor")
+        counts.get("publications", 0) * source_emit_count(args)
+        + counts.get("relay_publications", 0)
+        if args.scenario not in {"source_only", *TENSOR_BACKED_SCENARIOS}
         else 0
     )
     expected_inline_transport_emits = (
@@ -768,6 +1283,7 @@ def validate_runtime_phase_trace(
             or phase_trace.get("dropped") != 0
             or phase_trace.get("unmatched_readiness_polls") != 0
             or phase_trace.get("complete_activations") != 0
+            or phase_trace.get("terminal_frozen_candidates") != 0
             or phase_trace.get("receivers") != []
         ):
             raise RuntimeError("result has inconsistent bounded concurrent-partition trace")
@@ -778,6 +1294,7 @@ def validate_runtime_phase_trace(
         or phase_trace.get("dropped") != 0
         or phase_trace.get("unmatched_readiness_polls") != 0
         or phase_trace.get("complete_activations") != expected_activations
+        or phase_trace.get("terminal_frozen_candidates") not in (0, 1)
         or phase_trace.get("source_activation_runs", 0) <= 0
         or phase_trace.get("maximum_consecutive_source_activations", 0) <= 0
         or phase_trace.get("complete_tensor_emits") != expected_tensor_emits
@@ -791,6 +1308,18 @@ def validate_runtime_phase_trace(
         != expected_activations
     ):
         raise RuntimeError("result has inconsistent Runtime phase trace")
+    if phase_counters is not None:
+        if not isinstance(phase_counters, dict):
+            raise RuntimeError("result has inconsistent terminal Runtime phase state")
+        frozen = phase_counters.get("candidates_frozen")
+        selected = phase_counters.get("candidates_selected")
+        if (
+            not isinstance(frozen, int)
+            or not isinstance(selected, int)
+            or frozen < selected
+            or frozen - selected != phase_trace["terminal_frozen_candidates"]
+        ):
+            raise RuntimeError("result has inconsistent terminal Runtime phase state")
     if sum(phase_trace[name] for name in transition_fields) != max(expected_activations - 1, 0):
         raise RuntimeError("result has inconsistent Runtime phase trace")
 
@@ -846,6 +1375,39 @@ def validate_runtime_phase_trace(
             timing = receiver.get(name)
             if not isinstance(timing, dict) or timing.get("samples") != activations:
                 raise RuntimeError("result has incomplete Runtime phase receiver trace")
+        callback_phase_names = (
+            "dispatch_start_to_callback_entry_ns",
+            "callback_entry_to_return_ns",
+            "callback_return_to_dispatch_return_ns",
+        )
+        callback_phases = [receiver.get(name) for name in callback_phase_names]
+        if any(timing is not None for timing in callback_phases) and any(
+            not isinstance(timing, dict) or timing.get("samples") != activations
+            for timing in callback_phases
+        ):
+            raise RuntimeError("result has incomplete Runtime callback phase trace")
+        preparation_phase_names = (
+            "candidate_to_selection_ns",
+            "selection_to_input_preparation_ns",
+            "input_preparation_to_activation_ns",
+            "activation_to_dispatch_start_ns",
+        )
+        preparation_phases = [receiver.get(name) for name in preparation_phase_names]
+        preparation_required = args.scenario == "sample_forward" or any(
+            timing is not None for timing in preparation_phases
+        )
+        if preparation_required and any(
+            not isinstance(timing, dict) or timing.get("samples") != activations
+            for timing in preparation_phases
+        ):
+            raise RuntimeError("result has incomplete Runtime activation-preparation trace")
+        previous_cut_to_candidate = receiver.get("previous_cut_to_candidate_ns")
+        if previous_cut_to_candidate is not None and (
+            not isinstance(previous_cut_to_candidate, dict)
+            or not is_nonnegative_integer(previous_cut_to_candidate.get("samples"))
+            or previous_cut_to_candidate["samples"] > activations
+        ):
+            raise RuntimeError("result has invalid candidate-attributed preceding-cut trace")
         readiness = receiver.get("readiness_poll_dispatch_source_fifo_proxy_ns")
         if readiness is not None and (
             not isinstance(readiness, dict)
@@ -855,7 +1417,9 @@ def validate_runtime_phase_trace(
             raise RuntimeError("result has invalid candidate-attributed readiness-poll trace")
 
 
-def validate_runtime_thread_usage(usage: object, args: argparse.Namespace) -> None:
+def validate_runtime_thread_usage(
+    usage: object, args: argparse.Namespace, effective_lane_count: int | None = None
+) -> None:
     if not args.runtime_phase_counters:
         if usage not in (None, {"enabled": False}):
             raise RuntimeError("result unexpectedly enabled Runtime thread-usage evidence")
@@ -877,9 +1441,12 @@ def validate_runtime_thread_usage(usage: object, args: argparse.Namespace) -> No
         raise RuntimeError("result has malformed Runtime thread-usage evidence")
     expected_samples = {
         "controller": 1,
-        "execution_lanes": expected_execution_lane_worker_count(args),
+        "execution_lanes": expected_execution_lane_worker_count(
+            args,
+            effective_lane_count,
+        ),
         "channel_pump": 1 if uses_channel_pump(args) else 0,
-        "notification_driver": 1 if args.workload != "latency" else 0,
+        "notification_driver": 1 if uses_notification_driver(args) else 0,
     }
     fields = (
         "samples",
@@ -933,7 +1500,10 @@ def valid_thread_identity_evidence(
 
 
 def validate_callback_thread_evidence(
-    evidence: object, counts: dict[str, Any], args: argparse.Namespace
+    evidence: object,
+    counts: dict[str, Any],
+    args: argparse.Namespace,
+    effective_lane_count: int | None = None,
 ) -> None:
     if not args.runtime_phase_counters:
         if evidence not in (None, {"enabled": False}):
@@ -943,6 +1513,10 @@ def validate_callback_thread_evidence(
         raise RuntimeError("result is missing callback-thread evidence")
     controller_tid = evidence.get("controller_native_tid")
     roles = evidence.get("roles")
+    sink_roles = evidence.get("sink_roles")
+    expected_sink_count = expected_sink_operator_count(args)
+    if effective_lane_count is None:
+        effective_lane_count = expected_operator_lane_count(args)
     callbacks_on_partition_owner = evidence.get("callbacks_on_partition_owner")
     if (
         evidence.get("enabled") is not True
@@ -957,6 +1531,8 @@ def validate_callback_thread_evidence(
         or not isinstance(callbacks_on_partition_owner, bool)
         or not isinstance(roles, list)
         or len(roles) != 3
+        or not isinstance(sink_roles, list)
+        or len(sink_roles) != expected_sink_count
     ):
         raise RuntimeError("result has invalid callback-thread evidence")
     expected_callbacks = {
@@ -990,13 +1566,49 @@ def validate_callback_thread_evidence(
             raise RuntimeError("result has invalid callback-thread evidence")
         if callbacks > 0:
             active_tids.add(native_tid)
-    if args.operator_lanes == "shared" and (
+    sink_tids: set[int] = set()
+    per_sink_counts = counts.get("per_sink")
+    expected_per_sink_count = 0 if args.scenario == "source_only" else args.fanout
+    if not isinstance(per_sink_counts, list) or len(per_sink_counts) != expected_per_sink_count:
+        raise RuntimeError("result has invalid per-sink callback-thread evidence")
+    for index, sink_role in enumerate(sink_roles):
+        sink_count = per_sink_counts[index]
+        expected_sink_callbacks = (
+            counts.get("sink_callbacks")
+            if args.multi_input
+            else sink_count.get("deliveries")
+            if isinstance(sink_count, dict)
+            else None
+        )
+        if (
+            not isinstance(sink_role, dict)
+            or sink_role.get("index") != index
+            or sink_role.get("callbacks") != expected_sink_callbacks
+            or not isinstance(sink_role.get("native_tid"), int)
+            or isinstance(sink_role.get("native_tid"), bool)
+            or sink_role["native_tid"] <= 0
+            or sink_role.get("multiple_threads") is not False
+        ):
+            raise RuntimeError("result has invalid per-sink callback-thread evidence")
+        sink_tids.add(sink_role["native_tid"])
+    expected_shared_owner_tid = (
+        controller_tid if callbacks_on_partition_owner else next(iter(active_tids), None)
+    )
+    expected_shared_sink_tids = set() if expected_sink_count == 0 else {expected_shared_owner_tid}
+    if effective_lane_count == 1 and (
         evidence.get("shared_lane_single_thread") is not True
         or len(active_tids) != 1
         or (controller_tid in active_tids) is not callbacks_on_partition_owner
         or any(role["multiple_threads"] for role in roles)
+        or sink_tids != expected_shared_sink_tids
     ):
         raise RuntimeError("result has inconsistent shared-lane callback-thread evidence")
+    if (
+        effective_lane_count > 1
+        and expected_sink_count > 1
+        and (len(sink_tids) != expected_sink_count or roles[0]["native_tid"] in sink_tids)
+    ):
+        raise RuntimeError("result has inconsistent per-partition callback-thread evidence")
 
 
 def validate_callback_counts(
@@ -1008,6 +1620,11 @@ def validate_callback_counts(
 ) -> None:
     backpressure = counts.get("backpressured_emits")
     source_backpressure = counts.get("source_backpressured_emits")
+    source_tensor_pool_retries = counts.get("source_tensor_pool_retries")
+    source_tensor_pool_in_activation_retries = counts.get(
+        "source_tensor_pool_in_activation_retries"
+    )
+    source_terminal_compute_entries = counts.get("source_terminal_compute_entries", 0)
     expected_relay = expected_total * args.relay_count if args.scenario == "sample_forward" else 0
     backpressure_valid = (
         isinstance(backpressure, int) and not isinstance(backpressure, bool) and backpressure >= 0
@@ -1019,12 +1636,74 @@ def validate_callback_counts(
         and backpressure_valid
         and source_backpressure <= backpressure
     )
-    expected_source = expected_total + source_backpressure if source_backpressure_valid else None
+    source_tensor_pool_retries_valid = (
+        isinstance(source_tensor_pool_retries, int)
+        and not isinstance(source_tensor_pool_retries, bool)
+        and source_tensor_pool_retries >= 0
+        and (args.scenario in {"tensor", "multi_tensor"} or source_tensor_pool_retries == 0)
+    )
+    source_tensor_pool_in_activation_retries_valid = (
+        isinstance(source_tensor_pool_in_activation_retries, int)
+        and not isinstance(source_tensor_pool_in_activation_retries, bool)
+        and source_tensor_pool_in_activation_retries >= 0
+        and (
+            args.scenario in {"tensor", "multi_tensor"}
+            or source_tensor_pool_in_activation_retries == 0
+        )
+    )
+    source_terminal_compute_entries_valid = (
+        isinstance(source_terminal_compute_entries, int)
+        and not isinstance(source_terminal_compute_entries, bool)
+        and source_terminal_compute_entries >= 0
+    )
+    if args.offered_rate_hz:
+        expected_source = math.ceil((args.warmup + 1) / args.offered_burst_size) + math.ceil(
+            args.samples / args.offered_burst_size
+        )
+        expected_measured_source = math.ceil(args.samples / args.offered_burst_size)
+    else:
+        expected_source = (
+            expected_total + source_backpressure if source_backpressure_valid else None
+        )
+        expected_measured_source = None
+    source_compute_entries = counts.get("source_compute_entries")
+    expected_source_compute_entries = (
+        expected_source + source_tensor_pool_retries + source_terminal_compute_entries
+        if (
+            expected_source is not None
+            and source_tensor_pool_retries_valid
+            and source_terminal_compute_entries_valid
+        )
+        else None
+    )
+    notifications_accepted = counts.get("notifications_accepted")
+    notification_compute_bound_valid = not uses_notification_driver(args) or (
+        isinstance(notifications_accepted, int)
+        and not isinstance(notifications_accepted, bool)
+        and expected_source_compute_entries is not None
+        and expected_source_compute_entries <= notifications_accepted
+    )
+    source_compute_entries_valid = (
+        isinstance(source_compute_entries, int)
+        and not isinstance(source_compute_entries, bool)
+        and expected_source_compute_entries is not None
+        and source_compute_entries == expected_source_compute_entries
+        and notification_compute_bound_valid
+    )
     # Aggregate backpressure also includes relay retries, which do not re-run the source.
     if (
         not backpressure_valid
         or not source_backpressure_valid
+        or not source_tensor_pool_retries_valid
+        or not source_tensor_pool_in_activation_retries_valid
+        or not source_terminal_compute_entries_valid
+        or (args.offered_rate_hz and source_backpressure != 0)
         or counts.get("source_callbacks") != expected_source
+        or not source_compute_entries_valid
+        or (
+            expected_measured_source is not None
+            and counts.get("measured_source_callbacks") != expected_measured_source
+        )
         or counts.get("relay_callbacks") != expected_relay
         or counts.get("relay_publications") != expected_relay
         or counts.get("sink_callbacks") != expected_sink
@@ -1033,6 +1712,14 @@ def validate_callback_counts(
             f"{path} reported inconsistent callback counts: "
             f"source_callbacks={counts.get('source_callbacks')}, "
             f"expected_source_callbacks={expected_source}, "
+            f"source_compute_entries={counts.get('source_compute_entries')}, "
+            f"expected_source_compute_entries={expected_source_compute_entries}, "
+            f"source_terminal_compute_entries={source_terminal_compute_entries}, "
+            f"source_tensor_pool_retries={source_tensor_pool_retries}, "
+            "source_tensor_pool_in_activation_retries="
+            f"{source_tensor_pool_in_activation_retries}, "
+            f"measured_source_callbacks={counts.get('measured_source_callbacks')}, "
+            f"expected_measured_source_callbacks={expected_measured_source}, "
             f"relay_callbacks={counts.get('relay_callbacks')}, "
             f"expected_relay_callbacks={expected_relay}, "
             f"relay_publications={counts.get('relay_publications')}, "
@@ -1044,7 +1731,51 @@ def validate_callback_counts(
         )
 
 
+def validate_pod_sink_pressure_gate(
+    pressure_gate: object,
+    counts: object,
+    args: argparse.Namespace,
+    path: Path,
+) -> None:
+    """Validate the cold, notification-gated depth-one attribution choreography."""
+    if not args.test_gate_pod_sink_for_pressure:
+        if pressure_gate is not None:
+            raise RuntimeError(f"{path} unexpectedly enabled the POD sink pressure gate")
+        return
+    if not isinstance(pressure_gate, dict) or not isinstance(counts, dict):
+        raise RuntimeError(f"{path} did not exercise the bounded POD sink pressure gate")
+    integer_fields = (
+        "first_readiness_published",
+        "first_witness_retired",
+        "first_delivery_publications",
+        "source_completion_publications",
+        "source_retirement_activations_completed",
+        "notification_attempts",
+        "notifications_accepted",
+        "notification_backpressure",
+        "notification_not_ready",
+    )
+    if any(type(pressure_gate.get(name)) is not int for name in integer_fields):
+        raise RuntimeError(f"{path} did not exercise the bounded POD sink pressure gate")
+    publications = counts.get("publications")
+    if (
+        type(publications) is not int
+        or publications < 2
+        or pressure_gate["first_readiness_published"] < 1
+        or pressure_gate["first_witness_retired"] < 1
+        or pressure_gate["first_delivery_publications"] != 1
+        or pressure_gate["source_completion_publications"] != publications
+        or pressure_gate["source_retirement_activations_completed"] != publications + 1
+        or not 2 <= pressure_gate["notifications_accepted"] <= publications
+        or pressure_gate["notification_attempts"] < pressure_gate["notifications_accepted"]
+        or pressure_gate["notification_backpressure"] < 0
+        or pressure_gate["notification_not_ready"] < 0
+    ):
+        raise RuntimeError(f"{path} reported an impossible POD sink pressure-gate boundary")
+
+
 def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
+    """Validate one native result against the exact contract of its requested row."""
     try:
         result = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -1058,19 +1789,37 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         args.relay_count,
         args.fanout,
         args.queue_policy,
+        args.force_holomq_event_wake,
+        args.force_process_local_channel_pump,
+        args.offered_rate_hz,
+        args.offered_burst_size,
+        args.multi_output,
+        args.multi_input,
+        args.mixed_policy_fanout,
     ):
         raise RuntimeError(f"{path} reported an unexpected benchmark")
     if result.get("scenario") != args.scenario:
         raise RuntimeError(f"{path} reported an unexpected scenario")
     if result.get("workload") != args.workload:
         raise RuntimeError(f"{path} reported an unexpected workload")
+    if result.get("source_trigger") != (
+        "notification" if uses_notification_driver(args) else "clock"
+    ):
+        raise RuntimeError(f"{path} reported an unexpected source trigger")
     if result.get("process_local_inline_delivery") != process_local_delivery(args):
         raise RuntimeError(f"{path} reported an unexpected process-local delivery")
     expected_runtime_controls = {
         "direct_continuation_elision_disabled": args.disable_direct_continuation_elision,
         "closed_island_composite_disabled": args.disable_closed_island_composite,
+        "holomq_event_wake_forced": args.force_holomq_event_wake,
+        "process_local_channel_pump_forced": args.force_process_local_channel_pump,
     }
-    if result.get("runtime_controls") != expected_runtime_controls:
+    runtime_controls = result.get("runtime_controls")
+    if not isinstance(runtime_controls, dict):
+        raise RuntimeError(f"{path} reported invalid private Runtime controls")
+    runtime_controls = dict(runtime_controls)
+    pressure_gate = runtime_controls.pop("pod_sink_pressure_gate", None)
+    if runtime_controls != expected_runtime_controls:
         raise RuntimeError(f"{path} reported unexpected private Runtime controls")
     if result.get("queue_policy") != args.queue_policy:
         raise RuntimeError(f"{path} reported an unexpected queue policy")
@@ -1084,6 +1833,7 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
     placement = result.get("placement")
     partitioning = result.get("partitioning")
     timestamp_instrumentation = result.get("timestamp_instrumentation")
+    validate_pod_sink_pressure_gate(pressure_gate, counts, args, path)
     if not all(
         isinstance(item, dict)
         for item in (
@@ -1116,7 +1866,7 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise RuntimeError(f"{path} reported invalid clock or timestamp calibration evidence")
     expected_wake = {
-        "event_wake": uses_channel_pump(args),
+        "event_wake": event_wake_required(args),
         "busy_poll": args.busy_poll,
         "receive_polling": False,
     }
@@ -1126,7 +1876,9 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         "source_compute_allocation_limit": 0,
         "relay_compute_allocation_limit": 0,
         "sink_compute_allocation_limit": (
-            6 if args.scenario == "image" else (4 if args.scenario == "multi_tensor" else 0)
+            6 * args.fanout
+            if args.scenario == "image"
+            else (4 if args.scenario == "multi_tensor" else 0)
         ),
     }
     allocations_valid = allocation_probe.get("excluded_from_measurement") is True
@@ -1143,11 +1895,25 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         )
     if not allocations_valid:
         raise RuntimeError(f"{path} reported compute-path allocations")
-    validate_runtime_phase_counters(result.get("runtime_phase_counters"), counts, args)
-    validate_runtime_phase_trace(result.get("runtime_phase_trace"), counts, args)
-    validate_runtime_thread_usage(result.get("runtime_thread_usage"), args)
-    validate_callback_thread_evidence(result.get("callback_thread_evidence"), counts, args)
-    expected_algorithm, expected_source = PARTITION_ALGORITHMS[args.partition_algorithm]
+    effective_lane_count = effective_operator_lane_count(placement, args)
+    runtime_phase_counters = result.get("runtime_phase_counters")
+    validate_runtime_phase_counters(runtime_phase_counters, counts, args)
+    validate_runtime_phase_trace(
+        result.get("runtime_phase_trace"), counts, args, runtime_phase_counters
+    )
+    validate_runtime_thread_usage(
+        result.get("runtime_thread_usage"),
+        args,
+        effective_lane_count,
+    )
+    validate_callback_thread_evidence(
+        result.get("callback_thread_evidence"),
+        counts,
+        args,
+        effective_lane_count,
+    )
+    expected_algorithm, expected_mode = expected_partitioning(args)
+    expected_source = "core_default"
     requested = partitioning.get("requested_algorithm")
     accepted = partitioning.get("accepted_algorithm")
     if (
@@ -1160,10 +1926,32 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         or partitioning.get("selection_source") != expected_source
     ):
         raise RuntimeError(f"{path} reported unexpected partitioning provenance")
+    expected_lane_count = effective_lane_count
+    expected_authored_count = {
+        "automatic": 0,
+        "include_all": 1,
+        "hybrid": 1,
+    }.get(args.partition_cover, expected_lane_count)
+    expected_automatic_count = (
+        expected_lane_count
+        if args.partition_cover == "automatic"
+        else expected_lane_count - 1
+        if args.partition_cover == "hybrid"
+        else 0
+    )
+    if (
+        partitioning.get("authoring") != args.partition_cover
+        or partitioning.get("mode") != expected_mode
+        or partitioning.get("partition_count") != expected_lane_count
+        or partitioning.get("authored_partition_count") != expected_authored_count
+        or partitioning.get("automatic_partition_count") != expected_automatic_count
+        or not isinstance(partitioning.get("cover_signature"), str)
+        or not partitioning["cover_signature"]
+    ):
+        raise RuntimeError(f"{path} reported unexpected partition-cover evidence")
     support_threads = placement.get("support_threads")
     if not isinstance(support_threads, list):
         raise RuntimeError(f"{path} is missing support-thread evidence")
-    expected_lane_count = expected_operator_lane_count(args)
     expected_sink_cpu = (
         None
         if args.scenario == "source_only"
@@ -1192,10 +1980,20 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         )
     )
     partition_uses = placement.get("operator_partition_uses")
+    expected_source_cpu = optional_cpu(args.source_cpu)
+    if args.partition_cover == "automatic":
+        expected_source_cpu = None
+        expected_sink_cpu = None
+        expected_relay_cpu = None
+        expected_sink_cpus = [None] * args.fanout if args.scenario != "source_only" else []
+    elif args.partition_cover == "hybrid":
+        expected_sink_cpu = None
+        expected_relay_cpu = None
+        expected_sink_cpus = [None] * args.fanout if args.scenario != "source_only" else []
     if (
         placement.get("operator_lanes") != args.operator_lanes
-        or placement.get("operator_lane_count") != expected_lane_count
-        or placement.get("source_compile_accepted_cpu") != optional_cpu(args.source_cpu)
+        or placement.get("requested_operator_lanes") != args.operator_lanes
+        or placement.get("source_compile_accepted_cpu") != expected_source_cpu
         or placement.get("sink_compile_accepted_cpu") != optional_cpu(expected_sink_cpu)
         or placement.get("sink_compile_accepted_cpus") != expected_sink_cpus
         or placement.get("relay_compile_accepted_cpu") != optional_cpu(expected_relay_cpu)
@@ -1214,7 +2012,21 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         if isinstance(item, dict) and isinstance(item.get("lane"), int) and item.get("lane") >= 0
     }
     expected_partitions = {"runtime-graph-source"}
-    if args.operator_lanes == "shared":
+    partition_names_valid = True
+    if args.partition_cover == "automatic":
+        partition_names_valid = len(partition_names) == expected_lane_count and all(
+            name.startswith("implicit-") for name in partition_names
+        )
+    elif args.partition_cover == "include_all":
+        expected_partitions = {"runtime-graph-all"}
+    elif args.partition_cover == "hybrid":
+        partition_names_valid = (
+            "runtime-graph-source" in partition_names
+            and len(partition_names) == expected_lane_count
+            and sum(name.startswith("implicit-") for name in partition_names)
+            == expected_automatic_count
+        )
+    elif args.operator_lanes == "shared":
         expected_partitions = {"runtime-graph-shared"}
     elif args.scenario == "sample_forward":
         expected_partitions.update(("runtime-graph-relay", "runtime-graph-sink"))
@@ -1224,7 +2036,12 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         )
     elif args.scenario != "source_only":
         expected_partitions.add("runtime-graph-sink")
-    if partition_names != expected_partitions or len(lane_ids) != expected_lane_count:
+    if (
+        args.partition_cover not in {"automatic", "hybrid"}
+        and partition_names != expected_partitions
+    ):
+        partition_names_valid = False
+    if not partition_names_valid or len(lane_ids) != expected_lane_count:
         raise RuntimeError(f"{path} reported unexpected Operator partition/lane inventory")
     by_role = {item.get("role"): item for item in support_threads if isinstance(item, dict)}
     expected_support_threads = {
@@ -1232,7 +2049,7 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
     }
     if uses_channel_pump(args):
         expected_support_threads["channel_pump"] = args.channel_pump_cpu
-    if args.workload != "latency":
+    if uses_notification_driver(args):
         expected_support_threads["notification_driver"] = args.notification_driver_cpu
     known_support_thread_roles = {"controller", "channel_pump", "notification_driver"}
     if (
@@ -1286,21 +2103,34 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
     )
     if (
         geometry.get("queue_depth") != args.queue_depth
+        or geometry.get("subscriber_queue_depths") != subscriber_queue_depths(args)
+        or geometry.get("subscriber_queue_policies") != subscriber_queue_policies(args)
+        or geometry.get("callback_work_us") != args.callback_work_us
         or geometry.get("fanout") != (0 if source_only else args.fanout)
+        or geometry.get("source_outputs") != source_output_count(args)
+        or geometry.get("subscribers_per_output") != subscribers_per_output(args)
+        or geometry.get("sink_operators") != sink_operator_count(args)
+        or geometry.get("inputs_per_sink") != inputs_per_sink(args)
         or geometry.get("relay_count")
         != (args.relay_count if args.scenario == "sample_forward" else 0)
         or geometry.get("pipeline_edges") != expected_pipeline_edges
         or geometry.get("publisher_period_us") != expected_period
         or geometry.get("notification_capacity")
-        != (args.notification_capacity if args.workload != "latency" else 0)
+        != (args.notification_capacity if uses_notification_driver(args) else 0)
+        or geometry.get("offered_publication_rate_per_second") != (args.offered_rate_hz or None)
+        or geometry.get("offered_publication_period_ns")
+        != (1_000_000_000 // args.offered_rate_hz if args.offered_rate_hz else None)
+        or geometry.get("offered_burst_size") != args.offered_burst_size
         or geometry.get("publication_backpressure_capacity") != args.queue_depth
     ):
         raise RuntimeError(f"{path} reported unexpected queue, notification, or pacing geometry")
-    bulk_payload = args.scenario in {"tensor", "image", "multi_tensor"}
+    bulk_payload = args.scenario in TENSOR_BACKED_SCENARIOS
     expected_bulk_work_profile = {
         "tensor": args.bulk_work_profile,
         "image": "descriptor_only",
         "multi_tensor": args.bulk_work_profile,
+        "multi_tensor_loan": "descriptor_only",
+        "multi_tensor_staging": "descriptor_only",
     }.get(args.scenario, "not_applicable")
     pool_slots = geometry.get("pool_slots")
     release_capacity = geometry.get("release_capacity")
@@ -1320,8 +2150,33 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         or (not bulk_payload and (pool_slots is not None or release_capacity is not None))
     ):
         raise RuntimeError(f"{path} reported unexpected bulk-resource geometry")
+    offered_rate = timing.get("accepted_publication_offer_rate_per_second")
+    offer_start = timing.get("publication_offer_start_ns")
+    offer_end = timing.get("publication_offer_end_ns")
+    maximum_offer_lateness = timing.get("maximum_publication_offer_lateness_ns")
+    if args.offered_rate_hz:
+        if (
+            isinstance(offered_rate, bool)
+            or not isinstance(offered_rate, (int, float))
+            or offered_rate <= 0
+            or abs(float(offered_rate) - args.offered_rate_hz) / args.offered_rate_hz
+            > MAXIMUM_OFFERED_RATE_RELATIVE_ERROR
+            or not isinstance(offer_start, int)
+            or not isinstance(offer_end, int)
+            or offer_end <= offer_start
+            or not isinstance(maximum_offer_lateness, int)
+            or maximum_offer_lateness < 0
+        ):
+            raise RuntimeError(f"{path} reported an invalid fixed publication-offer schedule")
+    elif any(
+        value is not None
+        for value in (offered_rate, offer_start, offer_end, maximum_offer_lateness)
+    ):
+        raise RuntimeError(f"{path} reported unexpected fixed publication-offer timing")
     expected_publications = 0 if source_only else expected_total
-    lossy = lossy_queue_policy(args.queue_policy)
+    expected_delivery_opportunities = expected_publications * args.fanout
+    sink_policies = subscriber_queue_policies(args)
+    lossy = has_lossy_subscriber(args)
     reported_deliveries = counts.get("deliveries")
     expected_deliveries = (
         0
@@ -1332,15 +2187,10 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
             else expected_total * args.fanout
         )
     )
-    expected_sink = expected_deliveries
-    expected_deliveries_per_sink = (
-        expected_total if source_only or not lossy else expected_deliveries
-    )
-    expected_completions = expected_total if source_only or not lossy else expected_deliveries
+    expected_sink = expected_publications if args.multi_input else expected_deliveries
     if (
         counts.get("publications") != expected_publications
         or counts.get("deliveries") != expected_deliveries
-        or counts.get("activation_completions") != expected_completions
     ):
         raise RuntimeError(f"{path} reported incomplete publication or delivery counts")
     replacements = counts.get("consumer_visible_replacements")
@@ -1353,13 +2203,15 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
             lossy
             and (
                 expected_deliveries <= 0
-                or expected_deliveries > expected_publications
-                or replacements != expected_publications - expected_deliveries
+                or expected_deliveries > expected_delivery_opportunities
+                or replacements != expected_delivery_opportunities - expected_deliveries
                 or not math.isclose(
                     float(replacement_rate),
-                    replacements / expected_publications,
-                    rel_tol=1.0e-12,
-                    abs_tol=1.0e-12,
+                    replacements / expected_delivery_opportunities,
+                    # Native JSON currently uses the stream's six-significant-digit precision.
+                    # Integer publication/delivery/replacement accounting remains exact above.
+                    rel_tol=5.0e-6,
+                    abs_tol=5.0e-7,
                 )
                 or (args.workload != "saturated" and replacements != 0)
             )
@@ -1373,14 +2225,17 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         "descriptor_backing_initializations_during_measurement"
     )
     descriptor_only = (
-        args.scenario in {"tensor", "multi_tensor"} and args.bulk_work_profile == "descriptor_only"
+        args.scenario in {"image", *MULTI_TENSOR_SCENARIOS}
+        or args.scenario in {"tensor", "multi_tensor"}
+        and args.bulk_work_profile == "descriptor_only"
     )
     invalid_descriptor_initializations = False
     if descriptor_only:
         invalid_descriptor_initializations = (
             not isinstance(descriptor_initializations, int)
             or not isinstance(measured_descriptor_initializations, int)
-            or descriptor_initializations < (2 if args.scenario == "multi_tensor" else 1)
+            or descriptor_initializations
+            < (2 if args.scenario in {"multi_tensor", *MULTI_TENSOR_SCENARIOS} else 1)
             or measured_descriptor_initializations != 0
         )
     elif descriptor_initializations is not None or measured_descriptor_initializations is not None:
@@ -1393,18 +2248,51 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
     if source_only:
         if per_sink != []:
             raise RuntimeError(f"{path} reported unexpected sink evidence")
-    elif (
-        not isinstance(per_sink, list)
-        or len(per_sink) != args.fanout
-        or any(
-            not isinstance(item, dict)
-            or item.get("index") != index
-            or item.get("deliveries") != expected_deliveries_per_sink
-            or item.get("final_sequence") != expected_total
-            for index, item in enumerate(per_sink)
+    else:
+        if not isinstance(per_sink, list) or len(per_sink) != args.fanout:
+            raise RuntimeError(f"{path} reported incomplete per-sink evidence")
+        for index, item in enumerate(per_sink):
+            sink_deliveries = item.get("deliveries") if isinstance(item, dict) else None
+            sink_replacements = item.get("replacements") if isinstance(item, dict) else None
+            sink_replacement_rate = item.get("replacement_rate") if isinstance(item, dict) else None
+            sink_lossy = lossy_queue_policy(sink_policies[index])
+            expected_sink_deliveries = sink_deliveries if sink_lossy else expected_total
+            if (
+                not isinstance(item, dict)
+                or item.get("index") != index
+                or not isinstance(sink_deliveries, int)
+                or sink_deliveries <= 0
+                or sink_deliveries != expected_sink_deliveries
+                or sink_deliveries > expected_publications
+                or item.get("final_sequence") != expected_total
+                or not isinstance(sink_replacements, int)
+                or sink_replacements != expected_publications - sink_deliveries
+                or isinstance(sink_replacement_rate, bool)
+                or not isinstance(sink_replacement_rate, (int, float))
+                or not math.isclose(
+                    float(sink_replacement_rate),
+                    sink_replacements / expected_publications,
+                    rel_tol=5.0e-6,
+                    abs_tol=5.0e-7,
+                )
+                or (args.offered_rate_hz and sink_replacements == 0)
+            ):
+                raise RuntimeError(f"{path} reported incomplete per-sink evidence")
+        if sum(item["deliveries"] for item in per_sink) != expected_deliveries:
+            raise RuntimeError(f"{path} reported inconsistent aggregate sink deliveries")
+    activation_completions = counts.get("activation_completions")
+    if source_only or not lossy:
+        completions_valid = activation_completions == expected_total
+    elif args.fanout == 1:
+        completions_valid = activation_completions == expected_deliveries
+    else:
+        completions_valid = (
+            isinstance(activation_completions, int)
+            and activation_completions > 0
+            and activation_completions <= min(item["deliveries"] for item in per_sink)
         )
-    ):
-        raise RuntimeError(f"{path} reported incomplete per-sink evidence")
+    if not completions_valid:
+        raise RuntimeError(f"{path} reported inconsistent activation completions")
     if counts.get("validation_errors") != 0 or validation.get("passed") is not True:
         raise RuntimeError(f"{path} reported payload validation failures")
     if validation.get("mode") != args.payload_validation:
@@ -1418,7 +2306,7 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError(f"{path} reported unexpected validation timing")
     final_validation_ns = validation.get("final_validation_ns")
     final_validation_expected = (
-        args.scenario in {"tensor", "image", "multi_tensor"} and args.payload_validation == "final"
+        args.scenario in TENSOR_BACKED_SCENARIOS and args.payload_validation == "final"
     )
     if (
         final_validation_expected
@@ -1438,6 +2326,8 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
             or tensor.get("storage") != args.tensor_storage
             or tensor.get("device") != args.tensor_device
             or tensor.get("direct_allocation_records") != 1
+            or tensor.get("memory_kind_plan_match") is not True
+            or tensor.get("observed_storage_checked") is not True
             or tensor.get("pointer_identity_checked") is not True
         ):
             raise RuntimeError(f"{path} reported unexpected Tensor evidence")
@@ -1446,32 +2336,66 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
             raise RuntimeError(f"{path} is missing Image Tensor evidence")
         if (
             geometry.get("payload_bytes") != args.tensor_bytes
-            or tensor.get("storage") != "pageable_host"
-            or tensor.get("device") != 0
-            or tensor.get("direct_allocation_records") != 0
+            or tensor.get("storage") != args.tensor_storage
+            or tensor.get("device") != args.tensor_device
+            or tensor.get("direct_allocation_records") != 1
+            or tensor.get("memory_kind_plan_match") is not True
+            or tensor.get("observed_storage_checked") is not True
             or tensor.get("pointer_identity_checked") is not True
             or tensor.get("descriptor_schema") is not True
         ):
             raise RuntimeError(f"{path} reported unexpected Image Tensor evidence")
-    elif args.scenario == "multi_tensor":
+    elif args.scenario in {"multi_tensor", *MULTI_TENSOR_SCENARIOS}:
         if not isinstance(tensor, dict):
             raise RuntimeError(f"{path} is missing multi-Tensor evidence")
         expected_fields = [
             {"name": "first", "dtype": "uint8", "rank": 1, "bytes": args.tensor_bytes},
             {"name": "second", "dtype": "uint8", "rank": 1, "bytes": args.tensor_bytes},
         ]
-        if (
+        reported_fields = tensor.get("fields")
+        field_pools: list[str] = []
+        fields_valid = isinstance(reported_fields, list) and len(reported_fields) == 2
+        if fields_valid:
+            for index, (reported, expected) in enumerate(
+                zip(reported_fields, expected_fields, strict=False)
+            ):
+                pool_id = reported.get("pool_id") if isinstance(reported, dict) else None
+                fields_valid = fields_valid and (
+                    isinstance(reported, dict)
+                    and all(reported.get(key) == value for key, value in expected.items())
+                    and reported.get("tensor_index") == index
+                    and isinstance(pool_id, str)
+                    and bool(pool_id)
+                    and isinstance(reported.get("pool_slots"), int)
+                    and reported["pool_slots"] > 0
+                    and isinstance(reported.get("release_capacity"), int)
+                    and reported["release_capacity"] > 0
+                )
+                if isinstance(pool_id, str):
+                    field_pools.append(pool_id)
+        invalid_common = (
             geometry.get("payload_bytes") != 2 * args.tensor_bytes
             or geometry.get("application_payload_bytes") != 2 * args.tensor_bytes
-            or tensor.get("storage") != "pageable_host"
-            or tensor.get("device") != 0
+            or tensor.get("storage") != args.tensor_storage
+            or tensor.get("device") != args.tensor_device
             or tensor.get("direct_allocation_records") != 2
+            or tensor.get("memory_kind_plan_match") is not True
+            or tensor.get("observed_storage_checked") is not True
             or tensor.get("pointer_identity_checked") is not True
             or tensor.get("descriptor_schema") is not True
             or tensor.get("native_type") != "runtime_benchmark::MultiTensorMessageT"
             or tensor.get("field_count") != 2
-            or tensor.get("fields") != expected_fields
-        ):
+            or tensor.get("field_pools_distinct") is not True
+            or not fields_valid
+            or len(set(field_pools)) != 2
+        )
+        invalid_mode = args.scenario in MULTI_TENSOR_SCENARIOS and (
+            geometry.get("external_buffer_bytes") != args.tensor_bytes * 2
+            or tensor.get("emission_mode")
+            != ("loan" if args.scenario == "multi_tensor_loan" else "staging")
+            or tensor.get("source_pointer_contract") != "preserved"
+        )
+        if invalid_common or invalid_mode:
             raise RuntimeError(f"{path} reported unexpected multi-Tensor evidence")
     if session.get("termination") != "stopped" or session.get("diagnostics") != []:
         raise RuntimeError(f"{path} reported an unsuccessful Runtime session")
@@ -1654,12 +2578,22 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
             or source_post_emit_to_sink_overlaps != 0
         ):
             raise RuntimeError(f"{path} reported latency samples for saturated throughput")
-        if (
-            not isinstance(accepted, int)
-            or not isinstance(attempts, int)
-            or accepted < expected_total
-            or attempts < accepted
-        ):
+        offered_notification_counts_valid = (
+            accepted == 0
+            and attempts == 0
+            and counts.get("notification_backpressure") == 0
+            and counts.get("notification_not_ready") == 0
+            if args.offered_rate_hz
+            else isinstance(accepted, int)
+            and isinstance(attempts, int)
+            and accepted >= expected_total
+            and accepted
+            <= expected_total
+            + counts.get("source_tensor_pool_retries", 0)
+            + args.notification_capacity
+            and attempts >= accepted
+        )
+        if not offered_notification_counts_valid:
             raise RuntimeError(f"{path} reported inconsistent notification counts")
     if isinstance(latency, dict):
         p999 = latency.get("p999")
@@ -1779,6 +2713,8 @@ def benchmark_command(args: argparse.Namespace, binary: Path, output: Path) -> l
         args.scenario,
         "--operator-lanes",
         args.operator_lanes,
+        "--partition-cover",
+        args.partition_cover,
         "--samples",
         str(args.samples),
         "--warmup",
@@ -1791,6 +2727,8 @@ def benchmark_command(args: argparse.Namespace, binary: Path, output: Path) -> l
         str(args.relay_count),
         "--fanout",
         str(args.fanout),
+        "--callback-work-us",
+        str(args.callback_work_us),
         "--payload-validation",
         args.payload_validation,
         "--tensor-storage",
@@ -1799,8 +2737,6 @@ def benchmark_command(args: argparse.Namespace, binary: Path, output: Path) -> l
         str(args.tensor_bytes),
         "--tensor-device",
         str(args.tensor_device),
-        "--bulk-work-profile",
-        args.bulk_work_profile,
         "--source-cpu",
         str(args.source_cpu),
         "--relay-cpu",
@@ -1818,11 +2754,26 @@ def benchmark_command(args: argparse.Namespace, binary: Path, output: Path) -> l
         "--output",
         str(output),
     ]
+    if args.scenario in {"tensor", "multi_tensor"}:
+        command.extend(["--bulk-work-profile", args.bulk_work_profile])
+    if args.sink_queue_depths:
+        command.extend(
+            ["--sink-queue-depths", ",".join(str(depth) for depth in args.sink_queue_depths)]
+        )
+    if args.offered_rate_hz:
+        command.extend(
+            [
+                "--offered-rate-hz",
+                str(args.offered_rate_hz),
+                "--offered-burst-size",
+                str(args.offered_burst_size),
+            ]
+        )
     if args.sink_cpus:
         command.extend(["--sink-cpus", ",".join(str(cpu) for cpu in args.sink_cpus)])
     if args.workload in {"latency", "notification_latency"}:
         command.extend(["--publisher-period-us", str(args.publisher_period_us)])
-    if args.workload != "latency":
+    if uses_notification_driver(args):
         command.extend(["--notification-capacity", str(args.notification_capacity)])
     if args.busy_poll:
         command.append("--busy-poll")
@@ -1834,6 +2785,18 @@ def benchmark_command(args: argparse.Namespace, binary: Path, output: Path) -> l
         command.append("--disable-closed-island-composite")
     if args.force_holomq_process_local_inline:
         command.append("--force-holomq-process-local-inline")
+    if args.multi_output:
+        command.append("--multi-output")
+    if args.multi_input:
+        command.append("--multi-input")
+    if args.mixed_policy_fanout:
+        command.append("--mixed-policy-fanout")
+    if args.force_holomq_event_wake:
+        command.append("--force-holomq-event-wake")
+    if args.force_process_local_channel_pump:
+        command.append("--force-process-local-channel-pump")
+    if args.test_gate_pod_sink_for_pressure:
+        command.append("--test-gate-pod-sink-for-pressure")
     return command
 
 
@@ -1841,6 +2804,55 @@ def benchmark_environment(_args: argparse.Namespace) -> dict[str, str]:
     environment = os.environ.copy()
     environment.pop(PARTITION_ENVIRONMENT, None)
     return environment
+
+
+def native_failure_details(stdout: str, stderr: str) -> str:
+    details: list[str] = []
+    for stream_name, content in (("stdout", stdout), ("stderr", stderr)):
+        if not content:
+            continue
+        truncated = len(content) > NATIVE_FAILURE_LOG_LIMIT
+        tail = content[-NATIVE_FAILURE_LOG_LIMIT:]
+        marker = "[... earlier output truncated ...]\n" if truncated else ""
+        details.append(f"--- native {stream_name}\n{marker}{tail.rstrip()}")
+    return "\n".join(details)
+
+
+def native_result_failure_details(result_path: Path) -> str:
+    if not result_path.is_file():
+        return ""
+    try:
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(result, dict):
+        return ""
+
+    phase_counters = result.get("runtime_phase_counters")
+    if isinstance(phase_counters, dict) and phase_counters.get("enabled") is True:
+        phase_counters = {
+            "enabled": True,
+            **{
+                name: phase_counters[name]
+                for name in RUNTIME_PHASE_COUNTER_NAMES
+                if name in phase_counters and phase_counters[name] != 0
+            },
+        }
+    details = {
+        "cold_timing_ns": result.get("cold_timing_ns"),
+        "counts": result.get("counts"),
+        "runtime_phase_counters": phase_counters,
+        "runtime_thread_usage": result.get("runtime_thread_usage"),
+        "session": result.get("session"),
+        "support_threads": (
+            result.get("placement", {}).get("support_threads")
+            if isinstance(result.get("placement"), dict)
+            else None
+        ),
+    }
+    return "--- native result diagnostics\n" + json.dumps(
+        details, separators=(",", ":"), sort_keys=True
+    )
 
 
 def run_repetition(
@@ -1865,15 +2877,31 @@ def run_repetition(
         stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else error.stderr or ""
         (repetition_dir / f"stdout_{run_token}.log").write_text(stdout, encoding="utf-8")
         (repetition_dir / f"stderr_{run_token}.log").write_text(stderr, encoding="utf-8")
+        details = native_failure_details(stdout, stderr)
+        details_suffix = f"\n{details}" if details else ""
         raise TimeoutError(
-            f"benchmark repetition {repetition} timed out after {args.process_timeout_sec} s"
+            f"benchmark repetition {repetition} timed out after {args.process_timeout_sec} s; "
+            f"logs are in {repetition_dir}"
+            f"{details_suffix}"
         ) from error
     (repetition_dir / f"stdout_{run_token}.log").write_text(completed.stdout, encoding="utf-8")
     (repetition_dir / f"stderr_{run_token}.log").write_text(completed.stderr, encoding="utf-8")
+    if completed.returncode == NATIVE_SKIP_RETURN_CODE:
+        raise SystemExit(NATIVE_SKIP_RETURN_CODE)
     if completed.returncode != 0:
+        details = "\n".join(
+            detail
+            for detail in (
+                native_failure_details(completed.stdout, completed.stderr),
+                native_result_failure_details(result_path),
+            )
+            if detail
+        )
+        details_suffix = f"\n{details}" if details else ""
         raise RuntimeError(
             f"benchmark repetition {repetition} exited with {completed.returncode}; "
             f"logs are in {repetition_dir}"
+            f"{details_suffix}"
         )
     return checked_result(result_path, args), command
 
@@ -1883,6 +2911,7 @@ def summarize_results(
     results: list[dict[str, Any]],
     cpu_topology: list[dict[str, object]],
 ) -> dict[str, object]:
+    """Aggregate only the timing and throughput metrics enabled by the selected row."""
     activation_rates = summarize_values(
         [numeric_path(result, "timing", "source_activations_per_second") for result in results]
     )
@@ -1895,7 +2924,7 @@ def summarize_results(
             [numeric_path(result, "counts", "replacement_rate") for result in results]
         ),
     }
-    if args.scenario in {"tensor", "image", "multi_tensor"} and args.payload_validation == "final":
+    if args.scenario in TENSOR_BACKED_SCENARIOS and args.payload_validation == "final":
         metrics["final_validation_ns_across_runs"] = summarize_values(
             [numeric_path(result, "validation", "final_validation_ns") for result in results]
         )
@@ -1914,6 +2943,17 @@ def summarize_results(
                 for result in results
             ]
         )
+        if args.offered_rate_hz:
+            metrics["accepted_publication_offer_rate_per_second_across_runs"] = summarize_values(
+                [
+                    numeric_path(
+                        result,
+                        "timing",
+                        "accepted_publication_offer_rate_per_second",
+                    )
+                    for result in results
+                ]
+            )
     else:
         metrics["configured_publication_rate_per_second"] = summarize_values(
             [
@@ -2327,6 +3367,13 @@ def summarize_results(
         "runtime_controls": {
             "direct_continuation_elision_disabled": args.disable_direct_continuation_elision,
             "closed_island_composite_disabled": args.disable_closed_island_composite,
+            "holomq_event_wake_forced": args.force_holomq_event_wake,
+            "process_local_channel_pump_forced": args.force_process_local_channel_pump,
+            **(
+                {"pod_sink_pressure_gate_enabled": True}
+                if args.test_gate_pod_sink_for_pressure
+                else {}
+            ),
         },
         "tensor": results[0].get("tensor", {}),
         "workload": args.workload,
@@ -2375,6 +3422,7 @@ def summarize_results(
         "runs": runs,
     }
     if args.runtime_phase_counters:
+        summary["callback_thread_evidence"] = results[0]["callback_thread_evidence"]
         summary["runtime_phase_counter_runs"] = [
             result["runtime_phase_counters"] for result in results
         ]
@@ -2419,10 +3467,20 @@ def main() -> int:
         "git_revision": revision,
         "git_revision_source": revision_source,
         "binary": str(binary),
+        "binary_sha256": file_sha256(binary),
+        "source_state": args.source_state,
+        "source_snapshot_sha256": args.source_snapshot_sha256,
         "partition_environment": benchmark_environment(args).get(PARTITION_ENVIRONMENT),
         "runtime_controls": {
             "direct_continuation_elision_disabled": args.disable_direct_continuation_elision,
             "closed_island_composite_disabled": args.disable_closed_island_composite,
+            "holomq_event_wake_forced": args.force_holomq_event_wake,
+            "process_local_channel_pump_forced": args.force_process_local_channel_pump,
+            **(
+                {"pod_sink_pressure_gate_enabled": True}
+                if args.test_gate_pod_sink_for_pressure
+                else {}
+            ),
         },
         "build": cmake_metadata(binary),
         "cpu_topology": cpu_topology,

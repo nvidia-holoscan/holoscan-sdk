@@ -1,0 +1,278 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+include "header.fbs";
+
+namespace holoscan.schema;
+
+// Sample organization of the bytes in Image.data. For every encoding named below except CUSTOM the
+// encoding is authoritative for the plane count, the plane order, each plane's active dimensions,
+// the component organization within a plane, and the bytes per sample -- except where an entry
+// defers the sample width to the Tensor element type, which only the Bayer entries do. Each MONO
+// entry names its own width, which is what distinguishes MONO8 from MONO16 from MONO32.
+//
+// Because the encoding is authoritative for that organization, the Tensor element carrying it is
+// scalar: interleaved channels are a trailing shape axis, as (height, width, 4) for RGBA8, and not a
+// lane count on the element type. A vectorized element would state the organization a second time
+// while leaving the frame width and the meaning of the lanes undecided, so every encoding but CUSTOM
+// requires exactly one lane. CUSTOM states no organization and so has nothing for a lane count to
+// contradict.
+//
+// A chroma-subsampled encoding rounds a subsampled extent up: a plane subsampled by two along a
+// dimension of odd extent N stores (N + 1) / 2 samples along it, so the final luma column or row
+// keeps a chroma group of its own instead of losing the samples that describe it. Rounding down
+// would be the cheaper rule and the wrong one, because the discarded group is the only description
+// of that edge. Stating the direction here is what lets a producer and a consumer agree on the
+// chroma plane size of a 1919x1079 frame without negotiating it.
+enum ImageEncoding : byte {
+  // Specifies a custom image encoding. Names no plane count, plane dimensions, or sample
+  // organization, so none of the facts the encodings below supply can be derived from it.
+  CUSTOM = 0,
+
+  // Specifies a three-component, 24-bit unsigned normalized format with 8-bit R, G, B in bytes 0,
+  // 1, 2 respectively.
+  RGB8 = 1,
+
+  // Specifies a four-component, 32-bit unsigned normalized format with 8-bit R, G, B, A in bytes
+  // 0, 1, 2, 3 respectively.
+  RGBA8 = 2,
+
+  // Specifies a three-component, 24-bit unsigned normalized format with 8-bit B, G, R in bytes 0, 1, 2
+  // respectively.
+  BGR8 = 3,
+
+  // Specifies a four-component, 32-bit unsigned normalized format with 8-bit B, G, R, A in bytes
+  // 0, 1, 2, 3 respectively.
+  BGRA8 = 4,
+
+  // Specifies a multiplanar, three-component, 24-bit unsigned normalized format with 8-bit R, G, B
+  // in separate planes.
+  R8_G8_B8 = 5,
+
+  // Specifies a multiplanar, three-component, 24-bit unsigned normalized format with 8-bit B, G, R
+  // in separate planes.
+  B8_G8_R8 = 6,
+
+  // Specifies a one-component, 8-bit unsigned integer format. Equivalent to GRAY8.
+  MONO8 = 7,
+
+  // Specifies a one-component, 16-bit unsigned integer format. Equivalent to GRAY16.
+  MONO16 = 8,
+
+  // Specifies a one-component, 32-bit unsigned integer format.
+  MONO32 = 9,
+
+  // Specifies a one-component, 32-bit floating point format.
+  MONO32F = 10,
+
+  // Specifies a packed 4:2:2 format with 8-bit Y, U, Y, V in bytes 0, 1, 2, 3 respectively. Two
+  // horizontally adjacent pixels share one chroma pair.
+  YUYV = 11,
+
+  // Specifies a packed 4:2:2 format with 8-bit U, Y, V, Y in bytes 0, 1, 2, 3 respectively.
+  UYVY = 12,
+
+  // Specifies a semi-planar 4:2:0 format with an 8-bit Y plane followed by an interleaved 8-bit
+  // U, V plane at half width and half height, each rounded up as above. A chroma row therefore
+  // holds two bytes per chroma column. plane_layouts locates both planes.
+  NV12 = 13,
+
+  // Specifies a planar 4:2:0 format with separate 8-bit Y, U, and V planes, the chroma planes at
+  // half width and half height, each rounded up as above. plane_layouts locates all three planes.
+  I420 = 14,
+
+  // Specifies a three-component, 96-bit floating point format with 32-bit R, G, B.
+  RGB32F = 15,
+
+  // Specifies a four-component, 128-bit floating point format with 32-bit R, G, B, A.
+  RGBA32F = 16,
+
+  // Specifies a three-component, 96-bit floating point format with 32-bit Y, U, V.
+  YUV32F = 17,
+
+  // Specifies a semi-planar 4:2:0 format with 10-bit samples stored in the high bits of 16-bit
+  // words, laid out as NV12 is and subsampled with the same rounding. significant_bits reports the
+  // 10-bit precision within the 16-bit container. plane_layouts locates both planes.
+  P010 = 18,
+
+  // Specifies a four-component, 32-bit format with 10-bit R, G, B and 2-bit A.
+  RGBA1010102 = 19,
+
+  // Bayer mosaics. The suffix names the 2x2 filter order reading left to right, top to bottom,
+  // starting at the pixel at roi_offset_x, roi_offset_y. Sample width comes from the Tensor
+  // element type, and the precision within it from significant_bits.
+  BAYER_RGGB = 20,
+  BAYER_BGGR = 21,
+  BAYER_GRBG = 22,
+  BAYER_GBRG = 23,
+}
+
+// Color primaries and transfer function the samples are encoded against. Identical bytes decode
+// to different colors under different primaries, so YUV and high dynamic range images are not
+// self-describing without this.
+enum ColorSpace : byte {
+  // The producer did not state a color space. Consumers must not assume one.
+  UNSPECIFIED = 0,
+
+  // sRGB primaries with the sRGB transfer function.
+  SRGB = 1,
+
+  // ITU-R BT.601 primaries, standard definition video.
+  REC601 = 2,
+
+  // ITU-R BT.709 primaries, high definition video.
+  REC709 = 3,
+
+  // ITU-R BT.2020 primaries with the BT.2020 transfer function.
+  REC2020 = 4,
+
+  // ITU-R BT.2020 primaries with the BT.2100 perceptual quantizer transfer function.
+  REC2020_PQ = 5,
+
+  // ITU-R BT.2020 primaries with the BT.2100 hybrid log-gamma transfer function.
+  REC2020_HLG = 6,
+}
+
+// Where one plane of a multi-planar encoding lives inside the single Tensor backing an Image.
+//
+// A row stride on its own cannot locate a plane. It states the distance between rows only for a
+// consumer that already knows where the rows begin, and the Image carries one Tensor whose single
+// shape and stride set cannot supply an independent base per plane. The offset is what makes the
+// plane addressable, and the extent is what makes it checkable: a consumer bounds its reads against
+// the Tensor span rather than trusting that the producer's arithmetic agreed with its own.
+//
+// Every plane of one Image lives inside the single allocation backing Image.data, and that is a
+// restriction rather than an incidental property of the field below. A consumer resolves a plane by
+// adding offset_bytes to the Tensor's base address, so independently allocated planes are out of
+// scope: an Image carries one Tensor and therefore one base address, and no choice of offsets can
+// name a second allocation. A producer holding its planes separately has to gather them into one
+// allocation, or wait for the bounded per-plane Tensor carriage this schema does not define.
+//
+// A struct rather than a table because these are three fixed integers describing a memory range,
+// which is how geometry.fbs and tensor.fbs already represent fixed numeric records. The vector is
+// therefore inline and its wire cost is exactly the plane count times this struct, with no offset or
+// vtable per plane, which is what keeps the Image inline capacity a computation rather than a guess.
+struct ImagePlaneLayout {
+  // Byte offset of this plane's first row from the start of Image.data's Tensor backing.
+  offset_bytes: uint64;
+
+  // Byte distance between consecutive rows of this plane. At least the plane's packed row width,
+  // and larger whenever the producer aligns rows for its own access pattern.
+  row_stride_bytes: uint32;
+
+  // Complete byte extent reserved for this plane, including any padding after its final row. Sized
+  // so a consumer can prove the rows it intends to read lie inside the Tensor.
+  size_bytes: uint64;
+}
+
+// Image data.
+table Image {
+  // Header.
+  header: Header (id: 0);
+
+  // Image height in pixels.
+  height: int32 (id: 1);
+
+  // Image width in pixels.
+  width: int32 (id: 2);
+
+  // Image data encoding.
+  encoding: ImageEncoding (id: 3);
+
+  // Image data, interpreted according to the encoding. The Tensor carries element type, device,
+  // and strides; height and width above describe the image geometry those samples represent.
+  //
+  // Where the encoding carries its frame in one plane, the Tensor must be able to address at least
+  // one packed frame at the height and width above. It may address more, since row padding is the
+  // producer's to choose; it may not address less, because a consumer told the encoding determines
+  // the byte organization computes its addresses from that geometry. A Bayer encoding reaches the
+  // same minimum through the element type it defers its container to. Only CUSTOM, which states no
+  // organization, implies no minimum; the multi-planar encodings state theirs through the plane
+  // rules below instead.
+  //
+  // For a single-plane encoding that names its own element type, this Tensor must carry either
+  // that type or an opaque uint8 byte buffer. Those are the two carriages a producer has: a typed
+  // view a consumer indexes directly, or a flat frame it casts. Any other element type states the
+  // sample organization twice and states it differently, which no consumer can resolve. The
+  // multi-planar encodings are exempt, because for them the Tensor is a byte-addressed backing
+  // that plane_layouts carves up rather than a typed view of the samples.
+  //
+  // Authoring and receive apply all of this from one shared verdict, as they do for plane
+  // containment.
+  data: Tensor (id: 4);
+
+  // Color primaries and transfer function for the samples in data.
+  color_space: ColorSpace (id: 5);
+
+  // Bits of real precision per component, or zero when it equals the container width. A 10-bit
+  // sensor packed into 16-bit words reports 10 here while the Tensor element type reports 16, so
+  // black level, normalization, and display mapping have the value they need.
+  //
+  // Bounded by the container the encoding gives a component, since precision within a container
+  // cannot exceed it: 8 for the 8-bit encodings, 16 for MONO16 and for P010's 16-bit words, 32 for
+  // the 32-bit ones, and 10 for RGBA1010102, whose widest colour component is 10 bits of the 32-bit
+  // word. The bound is the encoding's container and not the Tensor element type, so P010 carried as
+  // a byte buffer still admits the 10 bits it is defined to hold. A Bayer encoding takes the bound
+  // from the element type it defers to, and CUSTOM, which names no container, is bounded only by
+  // the widest component any element type provides.
+  significant_bits: uint8 (id: 6);
+
+  // Column of this image's first pixel within the full sensor frame. Nonzero when the image is a
+  // region of interest or one band of a subdivided frame; the Bayer phase follows this origin.
+  roi_offset_x: int32 (id: 7);
+
+  // Row of this image's first pixel within the full sensor frame.
+  roi_offset_y: int32 (id: 8);
+
+  // Layout of each plane of a multi-planar encoding, in the plane order the encoding defines.
+  //
+  // Required, with exactly one entry per plane, for every encoding this schema declares to be
+  // multi-planar. An empty vector is rejected for those encodings rather than read as deferral to
+  // the Tensor strides: one Tensor's shape and strides cannot supply an independent base per plane,
+  // so deferral left the plane offsets undefined while appearing to state them somewhere.
+  //
+  // Must be empty for a single-plane encoding, where the Tensor shape and strides are the single
+  // authority for the one plane's layout. CUSTOM names no plane count, so its producer defines its
+  // own, from none up to the four planes a receiver reserves capacity for.
+  //
+  // Each declared plane is checked against the geometry its encoding implies: row_stride_bytes must
+  // cover the plane's packed row width at the top-level width, and size_bytes must cover the rows
+  // that width and height require at the declared stride. Each plane is also checked against the
+  // Tensor it lives in: offset_bytes plus size_bytes must not reach past the Tensor's addressable
+  // extent, measured from its first logical element and accounting for its strides, so a padded
+  // backing is bounded by what it can address rather than by the product of its extents. Both the
+  // authoring encoder and the receive assignment apply that bound, from one shared verdict, so a
+  // descriptor one of them accepts is one the other accepts.
+  //
+  // The bound is enforcement of the containment restriction stated on ImagePlaneLayout above, not
+  // an additional requirement layered on top of it. A plane reaching past the allocation is a range
+  // this Image cannot address at all, since it carries one Tensor and therefore one base.
+  plane_layouts: [ImagePlaneLayout] (id: 9);
+
+  // Sensor integration time in nanoseconds, or zero when the producer does not report it.
+  //
+  // A duration, not an instant, and the companion to header.capture_timestamp_ns rather than a
+  // competitor to it. That field is normatively the start of integration, so a consumer fusing
+  // against an IMU reconstructs the instant the image is centred on as capture_timestamp_ns plus
+  // half of this. Publishing the midpoint in capture_timestamp_ns instead is not an alternative
+  // encoding of the same fact; it is a different fact under the same name, and it makes this field
+  // useless for the correction it exists to enable.
+  //
+  // Multi-exposure sensors report one integration time per exposure, and a single scalar cannot say
+  // which exposure of an HDR frame it describes. Rather than guess, this field is defined for
+  // single-exposure frames; representing the per-exposure case is deferred so that the integration
+  // times, the gains, and the white-balance gains can all adopt one shape at once instead of
+  // arriving as scalars that later have to be redone.
+  exposure_time_ns: int64 (id: 10);
+
+  // Linear sensor gain applied to the frame, or zero when the producer does not report it.
+  //
+  // One combined figure, not an analog stage to be paired with a digital one later. This was
+  // briefly named analog_gain, which implied a digital counterpart the sensor interfaces we target
+  // do not separate -- SIPL reports a single sensorGain -- and a field name that predicts a
+  // sibling that never arrives is worse than a plain one.
+  gain: float (id: 11);
+}
+
+root_type Image;

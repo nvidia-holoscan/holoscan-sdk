@@ -10,9 +10,7 @@ endif()
 
 add_executable(restart_control restart_control.cpp)
 target_link_libraries(restart_control PRIVATE holoscan::core)
-holoscan_configure_example_install(restart_control
-    INSTALL_RPATH "$ORIGIN/../../../../lib"
-)
+holoscan_configure_example_install(restart_control)
 
 if(BUILD_TESTING)
     # REQ: SYSTEM-015
@@ -26,6 +24,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS restart_control
-    RUNTIME DESTINATION examples/experimental/restart_control/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/restart_control/cpp"
     COMPONENT holoscan-examples
 )

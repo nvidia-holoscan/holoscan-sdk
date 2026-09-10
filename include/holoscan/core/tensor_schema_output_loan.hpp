@@ -40,7 +40,7 @@ struct TensorFieldLoanRequest {
   TensorLoanRequest tensor;            ///< Shape, dtype, and optional byte strides.
 };
 
-/// @brief Request one field shape while deriving dtype from the admitted output contract.
+/// @brief Request one field shape while deriving dtype from the admitted output spec.
 ///
 /// Shape and stride views are borrowed only for the duration of \c allocate_tensors. This request
 /// is valid only when the selected output field has one exact planned dtype.
@@ -58,7 +58,7 @@ struct TensorFieldShapeRequest {
 /// @param field Generated schema-typed field selector.
 /// @param shape Logical Tensor extents borrowed for the allocation call.
 /// @param byte_strides Optional explicit byte strides borrowed for the allocation call.
-/// @return Request whose dtype is resolved from the admitted field contract.
+/// @return Request whose dtype is resolved from the admitted output spec.
 template <typename SchemaT>
 [[nodiscard]] TensorFieldShapeRequest<SchemaT> tensor_shape(
     TensorFieldSelector<SchemaT> field, TensorShapeView shape,
@@ -269,7 +269,10 @@ class TensorSchemaOutputLoan {
   /// The operation performs no heap allocation or type-erased dispatch on the success path.
   template <typename... Writes>
     requires(detail::TensorSchemaFieldWriteFor<Writes, SchemaT> && ...)
-  [[nodiscard]] expected<void, Error> write_all(Writes&&... writes) & {
+  // Forwarding references preserve noncopyable lvalue callbacks, but each entry participates in
+  // validation, acquisition, and invocation and therefore cannot be forwarded more than once.
+  [[nodiscard]] expected<void, Error> write_all(
+      Writes&&... writes) & {  // NOLINT(cppcoreguidelines-missing-std-forward)
     constexpr std::size_t kFieldCount = sizeof...(Writes);
     static_assert(kFieldCount == detail::descriptor_tensor_schema_tensor_count_v<SchemaT>,
                   "write_all requires exactly one entry per schema Tensor field");
@@ -278,7 +281,7 @@ class TensorSchemaOutputLoan {
           Error{ErrorCode::kInvalidArgument, "TENSOR_SCHEMA_BATCH_WRITE_BUNDLE_INVALID"});
     }
 
-    std::array<bool, kMaximumTensorSchemaLoanFields> selected{};
+    auto selected = std::array<bool, kMaximumTensorSchemaLoanFields>{};
     std::optional<Error> validation_error;
     const auto validate = [&](const auto& write) {
       if (validation_error) {

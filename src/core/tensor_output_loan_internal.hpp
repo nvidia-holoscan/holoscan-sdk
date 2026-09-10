@@ -48,8 +48,9 @@ class TensorOutputLoanAccess {
     return TensorOutputLoan{state, ops};
   }
 
-  [[nodiscard]] static TensorOutputLoan loan(void* state, const TensorOutputLoanOps* ops,
-                                             std::shared_ptr<void> state_owner) noexcept {
+  [[nodiscard]] static TensorOutputLoan loan(
+      void* state, const TensorOutputLoanOps* ops,
+      std::shared_ptr<void> state_owner) noexcept {  // NOLINT(performance-unnecessary-value-param)
     return TensorOutputLoan{state, ops, std::move(state_owner)};
   }
 
@@ -60,7 +61,7 @@ class TensorOutputLoanAccess {
 
   [[nodiscard]] static TensorOutputWriteGuard write_guard(
       void* state, const TensorOutputWriteGuardOps* ops,
-      std::shared_ptr<void> state_owner) noexcept {
+      std::shared_ptr<void> state_owner) noexcept {  // NOLINT(performance-unnecessary-value-param)
     return TensorOutputWriteGuard{state, ops, std::move(state_owner)};
   }
 

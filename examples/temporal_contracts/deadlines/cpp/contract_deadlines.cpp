@@ -244,6 +244,8 @@ class DeadlineConsumer final : public holoscan::Operator<> {
       return "kRunning";
     case holoscan::RunTermination::kCompleted:
       return "kCompleted";
+    case holoscan::RunTermination::kRequestedCompleted:
+      return "kRequestedCompleted";
     case holoscan::RunTermination::kStopped:
       return "kStopped";
     case holoscan::RunTermination::kFailed:
@@ -277,6 +279,10 @@ int run_default() {
   graph.add_flow(ticks->output, overrun->input, holoscan::ConnectionOptions{.queue_depth = 32U});
   graph.add_flow(ticks->output, safe->input, holoscan::ConnectionOptions{.queue_depth = 32U});
   graph.add_flow(ticks->output, witness->input, holoscan::ConnectionOptions{.queue_depth = 32U});
+  // This example intentionally demonstrates deadline pressure from deterministic serial
+  // dispatch. Declare that one-partition execution contract instead of relying on the
+  // production automatic partitioner, which correctly separates fan-out legs.
+  graph.partition("deadline-serial-order").include_all();
   graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
 
   const holoscan::ExecutionPlan plan = holoscan::compile(graph);
@@ -333,6 +339,7 @@ int run_fail_run() {
   const auto fail = graph.op<DeadlineConsumer>("fail-run", holoscan::OnViolation::kFailRun);
   graph.add_flow(ticks->output, overrun->input, holoscan::ConnectionOptions{.queue_depth = 32U});
   graph.add_flow(ticks->output, fail->input, holoscan::ConnectionOptions{.queue_depth = 32U});
+  graph.partition("deadline-fail-run-serial-order").include_all();
   graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
 
   const holoscan::ExecutionPlan plan = holoscan::compile(graph);

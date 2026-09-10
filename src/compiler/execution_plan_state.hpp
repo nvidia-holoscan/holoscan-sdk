@@ -5,17 +5,19 @@
 
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include <holoscan/core/execution_plan.hpp>
 
 #include "../channel/endpoint_catalog_state.hpp"
+#include "../core/plan_record_contracts.hpp"
 #include "../runtime/executable_factory_inventory.hpp"
 #include "../runtime/runtime_diagnostic_sink.hpp"
 #include "parameter_generation_zero.hpp"
@@ -28,6 +30,85 @@ enum class ProcessLocalChannelDeliveryKind : std::uint8_t {
   kHoloMQ = 0,
   kDirectRetained = 1,
 };
+
+/// Classify the cold compiler proof for one process-local HoloMQ event wake.
+enum class ProcessLocalHoloMQEventWakeReason : std::uint8_t {
+  kSuppressed = 0,
+  kNotHoloMQ = 1,
+  kEdgeNotAccepted = 2,
+  kNonProcessLocal = 3,
+  kEmptyService = 4,
+  kIncompleteServiceFanout = 5,
+  kUnsupportedPayloadContract = 6,
+  kInvalidOperatorOwnership = 7,
+  kOwnerLoop = 8,
+  kCallbackShape = 9,
+  kUnsupportedQueuePolicy = 10,
+  kPartitionAmbiguity = 11,
+  kSplitExecutionPartition = 12,
+  kReplayAmbiguity = 13,
+  kUnclassified = 14,
+  kForcedControl = 15,
+};
+
+/// Return the stable diagnostic token for one event-wake reason.
+[[nodiscard]] constexpr std::string_view process_local_holomq_event_wake_reason_token(
+    const ProcessLocalHoloMQEventWakeReason reason) noexcept {
+  switch (reason) {
+    case ProcessLocalHoloMQEventWakeReason::kSuppressed:
+      return "suppressed";
+    case ProcessLocalHoloMQEventWakeReason::kNotHoloMQ:
+      return "not_holomq";
+    case ProcessLocalHoloMQEventWakeReason::kEdgeNotAccepted:
+      return "edge_not_accepted";
+    case ProcessLocalHoloMQEventWakeReason::kNonProcessLocal:
+      return "non_process_local";
+    case ProcessLocalHoloMQEventWakeReason::kEmptyService:
+      return "empty_service";
+    case ProcessLocalHoloMQEventWakeReason::kIncompleteServiceFanout:
+      return "incomplete_service_fanout";
+    case ProcessLocalHoloMQEventWakeReason::kUnsupportedPayloadContract:
+      return "unsupported_payload_contract";
+    case ProcessLocalHoloMQEventWakeReason::kInvalidOperatorOwnership:
+      return "invalid_operator_ownership";
+    case ProcessLocalHoloMQEventWakeReason::kOwnerLoop:
+      return "owner_loop";
+    case ProcessLocalHoloMQEventWakeReason::kCallbackShape:
+      return "callback_shape";
+    case ProcessLocalHoloMQEventWakeReason::kUnsupportedQueuePolicy:
+      return "unsupported_queue_policy";
+    case ProcessLocalHoloMQEventWakeReason::kPartitionAmbiguity:
+      return "partition_ambiguity";
+    case ProcessLocalHoloMQEventWakeReason::kSplitExecutionPartition:
+      return "split_execution_partition";
+    case ProcessLocalHoloMQEventWakeReason::kReplayAmbiguity:
+      return "replay_ambiguity";
+    case ProcessLocalHoloMQEventWakeReason::kUnclassified:
+      return "unclassified";
+    case ProcessLocalHoloMQEventWakeReason::kForcedControl:
+      return "forced_control";
+  }
+  return "unclassified";
+}
+
+/// Select one deterministic retained-wake reason across every service member.
+[[nodiscard]] constexpr ProcessLocalHoloMQEventWakeReason
+combine_process_local_holomq_event_wake_reasons(
+    const ProcessLocalHoloMQEventWakeReason current,
+    const ProcessLocalHoloMQEventWakeReason candidate) noexcept {
+  const auto retained = [](const ProcessLocalHoloMQEventWakeReason reason) {
+    return reason != ProcessLocalHoloMQEventWakeReason::kSuppressed &&
+           reason != ProcessLocalHoloMQEventWakeReason::kNotHoloMQ;
+  };
+  if (!retained(candidate)) {
+    return current;
+  }
+  if (!retained(current) ||
+      static_cast<std::uint8_t>(candidate) < static_cast<std::uint8_t>(current)) {
+    return candidate;
+  }
+  return current;
+}
 
 /// Freeze one field-specific descriptor-schema storage contract.
 struct TensorFieldServiceStorageContract {
@@ -43,14 +124,11 @@ struct TensorFieldServiceStorageContract {
 
   friend bool operator==(const TensorFieldServiceStorageContract& left,
                          const TensorFieldServiceStorageContract& right) noexcept {
-    const bool dtype_equal = left.dtype.has_value() == right.dtype.has_value() &&
-                             (!left.dtype || (left.dtype->code == right.dtype->code &&
-                                              left.dtype->bits == right.dtype->bits &&
-                                              left.dtype->lanes == right.dtype->lanes));
     return left.field_id == right.field_id && left.tensor_index == right.tensor_index &&
            left.max_byte_span == right.max_byte_span && left.pool_id == right.pool_id &&
-           dtype_equal && left.rank == right.rank && left.memory_kind == right.memory_kind &&
-           left.device == right.device && left.tensor_emit_policy == right.tensor_emit_policy;
+           dl_data_type_exactly_equal(left.dtype, right.dtype) && left.rank == right.rank &&
+           left.memory_kind == right.memory_kind && left.device == right.device &&
+           left.tensor_emit_policy == right.tensor_emit_policy;
   }
 };
 
@@ -199,6 +277,93 @@ struct PartitionRunnerPlanRecord {
              : ProcessLocalChannelDeliveryKind::kHoloMQ;
 }
 
+/// Return whether one member of a frozen HoloMQ service is covered by the synchronous
+/// activation-cut protocol.
+///
+/// Callers must evaluate every subscriber in the completed source family and suppress wake
+/// attachment only when every member returns `kSuppressed`. A fanout family is admitted only for
+/// scalar/POD values, bounded generated schemas, raw Tensor, or bounded descriptor Tensor schemas
+/// and only when its policy-specific sibling services collectively contain the source's complete
+/// fanout. Multiple source outputs share the same serialized post-compute activation cut, and each
+/// eligible source cut materializes its contribution to a multi-input target before the next
+/// temporal candidate freeze. Temporal and lifecycle records are intentionally absent because
+/// selectors consume typed readiness only after that cut.
+// This ordered classifier preserves one stable reason precedence across every eligibility fact;
+// splitting the decisions would obscure that diagnostic contract.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] inline ProcessLocalHoloMQEventWakeReason process_local_holomq_event_wake_reason(
+    const PayloadEdgePlanRecord& edge, const ProcessLocalChannelDeliveryKind delivery_kind,
+    const std::uint32_t service_max_subscribers,
+    const std::span<const ExecutionPartitionRecord> execution_partitions,
+    const VertexId source_owner, const VertexId target_owner) noexcept {
+  const bool inline_value = edge.payload_identity.payload_kind == PayloadKind::kInlineTyped &&
+                            ((edge.payload_identity.kind == PayloadIdentityKind::kScalar &&
+                              edge.payload_identity.scalar.has_value()) ||
+                             (edge.payload_identity.kind == PayloadIdentityKind::kPod &&
+                              edge.payload_identity.pod.has_value()));
+  const bool generated_schema =
+      edge.payload_identity.payload_kind == PayloadKind::kSerializedBytes &&
+      edge.payload_identity.kind == PayloadIdentityKind::kSchema &&
+      edge.payload_identity.schema.has_value();
+  const bool raw_tensor = edge.payload_identity.payload_kind == PayloadKind::kDescriptorBacked &&
+                          edge.payload_identity.kind == PayloadIdentityKind::kTensor;
+  const bool descriptor_tensor_schema =
+      edge.payload_identity.payload_kind == PayloadKind::kDescriptorBacked &&
+      edge.payload_identity.kind == PayloadIdentityKind::kSchema &&
+      edge.payload_identity.schema.has_value();
+  if (delivery_kind != ProcessLocalChannelDeliveryKind::kHoloMQ) {
+    return ProcessLocalHoloMQEventWakeReason::kNotHoloMQ;
+  }
+  if (edge.disposition != PlanDisposition::kAccepted) {
+    return ProcessLocalHoloMQEventWakeReason::kEdgeNotAccepted;
+  }
+  if (edge.locality != ChannelLocalityKind::kProcessLocal) {
+    return ProcessLocalHoloMQEventWakeReason::kNonProcessLocal;
+  }
+  if (service_max_subscribers == 0U) {
+    return ProcessLocalHoloMQEventWakeReason::kEmptyService;
+  }
+  if (!inline_value && !generated_schema && !raw_tensor && !descriptor_tensor_schema) {
+    return ProcessLocalHoloMQEventWakeReason::kUnsupportedPayloadContract;
+  }
+  if (!source_owner || !target_owner) {
+    return ProcessLocalHoloMQEventWakeReason::kInvalidOperatorOwnership;
+  }
+  if (source_owner == target_owner) {
+    return ProcessLocalHoloMQEventWakeReason::kOwnerLoop;
+  }
+  if (edge.queue_policy != QueuePolicy::kBlocking &&
+      edge.queue_policy != QueuePolicy::kDropOldest) {
+    return ProcessLocalHoloMQEventWakeReason::kUnsupportedQueuePolicy;
+  }
+
+  auto source_partition = ExecutionPartitionId{};
+  auto target_partition = ExecutionPartitionId{};
+  for (const auto& partition : execution_partitions) {
+    const auto source_membership =
+        std::count(partition.members.begin(), partition.members.end(), source_owner);
+    const auto target_membership =
+        std::count(partition.members.begin(), partition.members.end(), target_owner);
+    if (!partition.id || source_membership > 1 || target_membership > 1 ||
+        (source_membership != 0 && source_partition) ||
+        (target_membership != 0 && target_partition)) {
+      return ProcessLocalHoloMQEventWakeReason::kPartitionAmbiguity;
+    }
+    if (source_membership == 1) {
+      source_partition = partition.id;
+    }
+    if (target_membership == 1) {
+      target_partition = partition.id;
+    }
+  }
+  if (!source_partition || !target_partition) {
+    return ProcessLocalHoloMQEventWakeReason::kPartitionAmbiguity;
+  }
+  return source_partition == target_partition
+             ? ProcessLocalHoloMQEventWakeReason::kSuppressed
+             : ProcessLocalHoloMQEventWakeReason::kSplitExecutionPartition;
+}
+
 /// Freeze one private process-local Channel service shared by compatible fanout edges.
 ///
 /// Compiler lowering creates one record per source-port and queue-policy pair.
@@ -223,6 +388,8 @@ struct ProcessLocalChannelServicePlanRecord {
   std::uint32_t max_subscriber_borrowed_samples{};
   std::uint32_t publisher_history_depth{};
   bool event_wake{};
+  ProcessLocalHoloMQEventWakeReason event_wake_reason{
+      ProcessLocalHoloMQEventWakeReason::kUnclassified};
 };
 
 /// Freeze one private publisher-local request for a process-local Channel service.
@@ -278,53 +445,6 @@ struct CrossProcessChannelServicePlanRecord {
   std::vector<ProcessGroupId> target_process_groups;
 };
 
-[[nodiscard]] inline bool descriptor_tensor_schema_service(
-    const CrossProcessChannelServicePlanRecord& service) noexcept {
-  return service.tensor_payload && service.payload_identity.kind == PayloadIdentityKind::kSchema &&
-         service.payload_identity.payload_kind == PayloadKind::kDescriptorBacked;
-}
-
-[[nodiscard]] inline bool cross_process_tensor_service_requires_stream_in_group(
-    const CrossProcessChannelServicePlanRecord& service, ProcessGroupId process_group) noexcept {
-  const bool target_group = std::find(service.target_process_groups.begin(),
-                                      service.target_process_groups.end(),
-                                      process_group) != service.target_process_groups.end();
-  const bool participating_group = target_group || (descriptor_tensor_schema_service(service) &&
-                                                    service.source_process_group == process_group);
-  if (!service.tensor_payload || !participating_group) {
-    return false;
-  }
-  if (!service.tensor_fields.empty()) {
-    return std::any_of(
-        service.tensor_fields.begin(), service.tensor_fields.end(), [](const auto& field) {
-          return (field.memory_kind == MemoryKind::kCudaDevice ||
-                  field.memory_kind == MemoryKind::kPinnedHost) &&
-                 field.device.valid();
-        });
-  }
-  const bool stream_ordered = service.tensor_memory_kind == MemoryKind::kCudaDevice ||
-                              service.tensor_memory_kind == MemoryKind::kPinnedHost;
-  return stream_ordered && service.tensor_device.valid();
-}
-
-[[nodiscard]] inline bool cross_process_tensor_service_requires_stream_for_device_in_group(
-    const CrossProcessChannelServicePlanRecord& service, ProcessGroupId process_group,
-    DeviceId device) noexcept {
-  if (!device.valid() ||
-      !cross_process_tensor_service_requires_stream_in_group(service, process_group)) {
-    return false;
-  }
-  if (!service.tensor_fields.empty()) {
-    return std::any_of(
-        service.tensor_fields.begin(), service.tensor_fields.end(), [&](const auto& field) {
-          return (field.memory_kind == MemoryKind::kCudaDevice ||
-                  field.memory_kind == MemoryKind::kPinnedHost) &&
-                 field.device == device;
-        });
-  }
-  return service.tensor_device == device;
-}
-
 /// Freeze one private publisher-local request for a cross-process Channel edge.
 struct CrossProcessChannelPublisherPlanRecord {
   EdgeId edge{};
@@ -376,6 +496,8 @@ struct TensorServiceStorageContract {
 };
 
 /// Build the one common service contract projected into every private service family.
+// Payload identity and storage are ownership sinks transferred into the returned contract.
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
 [[nodiscard]] inline TensorServiceContract make_tensor_service_contract(
     PayloadIdentityRecord payload_identity, QueuePolicy queue_policy,
     std::uint32_t max_subscriber_queue_depth, std::uint32_t max_subscriber_borrowed_samples,
@@ -420,12 +542,15 @@ struct TensorServiceStorageContract {
   };
 }
 
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
 [[nodiscard]] inline ChannelServiceStaticPlanRecord make_channel_service_record(
-    ExternalTopicId topic, std::string service_id, const TensorServiceContract& contract) {
+    ExternalTopicId topic, std::string service_id, const TensorServiceContract& contract,
+    std::vector<DescriptorTensorTopicFieldRecord> tensor_fields = {}) {
   return ChannelServiceStaticPlanRecord{
       .topic = topic,
       .service_id = std::move(service_id),
       .payload_identity = contract.payload_identity,
+      .tensor_fields = std::move(tensor_fields),
       .queue_policy = contract.queue_policy,
       .max_subscriber_queue_depth = contract.max_subscriber_queue_depth,
       .max_subscriber_borrowed_samples = contract.max_subscriber_borrowed_samples,
@@ -436,6 +561,7 @@ struct TensorServiceStorageContract {
   };
 }
 
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
 [[nodiscard]] inline ProcessLocalChannelServicePlanRecord make_process_local_service_record(
     PortId source, std::string service_id, const TensorServiceContract& contract,
     std::uint32_t max_subscribers, bool cross_process_transport = false,
@@ -462,6 +588,7 @@ struct TensorServiceStorageContract {
   };
 }
 
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
 [[nodiscard]] inline CrossProcessChannelServicePlanRecord make_cross_process_service_record(
     EdgeId edge, PortId source, PortId target, std::string service_id,
     const TensorServiceContract& contract, std::uint32_t max_subscribers,
@@ -497,6 +624,14 @@ struct TensorServiceStorageContract {
 /// The state retains the frozen Graph snapshot plus normalized plan records.
 /// It intentionally contains no live Runtime/backend object, scheduler thread,
 /// channel endpoint, transport handle, or mutable authoring storage.
+struct ExecutionPartitionStringLookupEntry {
+  std::string key;              ///< Exact authored name or canonical Operator path.
+  std::uint32_t table_index{};  ///< One-based index into execution_partitions.
+
+  friend bool operator==(const ExecutionPartitionStringLookupEntry&,
+                         const ExecutionPartitionStringLookupEntry&) = default;
+};
+
 struct ExecutionPlanState {
   GraphView graph;                          ///< Deep-owning canonical compiler snapshot.
   GraphAuthoringIdentity graph_identity{};  ///< Source instance/version/content identity.
@@ -509,7 +644,13 @@ struct ExecutionPlanState {
   PartitioningPlanRecord partitioning_plan;                  ///< Partition selector evidence.
   std::vector<PartitionDecisionRecord> partition_decisions;  ///< Per-vertex decisions.
   std::vector<ExecutionPartitionRecord> execution_partitions;  ///< Disjoint cover.
-  std::vector<ScheduleEdgeRecord> schedule_edges;              ///< Cross-partition graph edges.
+  /// Dense and sorted immutable lookup indices derived by the authoritative cover publisher.
+  std::vector<std::uint32_t> execution_partition_index_by_id;
+  std::vector<std::uint32_t> execution_partition_index_by_operator_id;
+  std::vector<std::uint32_t> execution_partition_index_by_root_operator;
+  std::vector<ExecutionPartitionStringLookupEntry> execution_partition_index_by_authored_name;
+  std::vector<ExecutionPartitionStringLookupEntry> execution_partition_index_by_operator_path;
+  std::vector<ScheduleEdgeRecord> schedule_edges;  ///< Cross-partition graph edges.
   std::vector<ClosedIslandActivationPlanRecord>
       closed_island_activations;  ///< Private exact composite-dispatch authority.
   std::optional<InlinePartitionExecutionPlanRecord>
@@ -524,8 +665,15 @@ struct ExecutionPlanState {
   std::vector<ProcessSelectorPlanRecord>
       process_selectors;  ///< Canonical object-selector resolutions.
   std::vector<VertexProcessPlacementPlanRecord>
-      vertex_process_placements;      ///< Total compile-admitted process groups.
-  std::vector<PortPlanRecord> ports;  ///< Canonical physical port contracts.
+      vertex_process_placements;               ///< Total compile-admitted process groups.
+  std::vector<PortPlanRecord> ports;           ///< Canonical physical port contracts.
+  std::vector<PortRatePlanRecord> port_rates;  ///< Pointer-free rate declarations and domains.
+  std::vector<AccumulationHorizonPlanRecord>
+      accumulation_horizons;  ///< Exact finite sizing horizons.
+  std::vector<HardFloorContributorPlanRecord>
+      hard_floor_contributors;  ///< Reviewable hard-floor composition.
+  std::vector<QueueSizingRecipePlanRecord>
+      queue_sizing_recipes;  ///< Immutable logical edge-sizing recipes.
   std::vector<SchemaPackagePlanRecord>
       schema_packages;  ///< Deep-owned generated-package diagnostic provenance.
   std::vector<InterfacePortBindingPlanRecord>
@@ -543,7 +691,8 @@ struct ExecutionPlanState {
   std::vector<ProcessLocalChannelPublisherPlanRecord>
       process_local_channel_publishers;  ///< Internal publisher-local requests.
   std::vector<ProcessLocalChannelSubscriberPlanRecord>
-      process_local_channel_subscribers;  ///< Internal edge-local subscriber requests.
+      process_local_channel_subscribers;         ///< Internal edge-local subscriber requests.
+  bool force_process_local_holomq_event_wake{};  ///< Source-private exact A/B control.
   std::vector<CrossProcessChannelServicePlanRecord>
       cross_process_channel_services;  ///< Per-edge cross-process service contracts.
   std::vector<CrossProcessChannelPublisherPlanRecord>
@@ -554,12 +703,24 @@ struct ExecutionPlanState {
       generic_output_loans;  ///< Non-Tensor constructed-slot capabilities.
   std::vector<TensorAllocationPlanRecord>
       tensor_allocations;  ///< Explicit direct Tensor allocation capabilities.
+  std::vector<TensorByteSpanDerivationPlanRecord>
+      tensor_byte_span_derivations;  ///< Compile-evaluated Tensor slot-capacity evidence.
   std::vector<TensorFieldAllocationPlanRecord>
-      tensor_field_allocations;  ///< Per-field descriptor-schema allocations.
+      tensor_field_allocations;  ///< Allocations ordered canonically by (output, field_id).
   std::vector<TensorInterfacePoolPlanRecord>
       tensor_interface_pools;  ///< External Tensor pool contracts.
   std::vector<TensorDeviceResourcePlanRecord>
       tensor_device_resources;  ///< Process/device pool and stream materialization.
+  std::vector<CudaGreenContextPoolPlanRecord>
+      cuda_green_context_pools;  ///< Process/device Green Context pools.
+  std::vector<CudaGreenContextResourcePlanRecord>
+      cuda_green_context_resources;  ///< Structured context resources.
+  std::vector<CudaGreenContextRequestPlanRecord>
+      cuda_green_context_requests;  ///< Accepted and rejected author requests.
+  std::vector<CudaGreenContextAssignmentPlanRecord>
+      cuda_green_context_assignments;  ///< Partition-to-context joins.
+  std::vector<CudaComputeStreamPlanRecord>
+      cuda_compute_streams;  ///< Generalized partition and service streams.
   std::vector<TensorInlineRecordPlanRecord>
       tensor_inline_records;  ///< Generated-provider inline record buckets.
   std::vector<ImportedGenerationCapacityPlanRecord>
@@ -568,6 +729,10 @@ struct ExecutionPlanState {
       tensor_transfer_plans;  ///< Closed source-class/realization matrix.
   std::vector<PoolCapacityContributorRecord>
       pool_capacity_contributors;  ///< Unique-slot derivation evidence.
+  std::vector<PoolCapacityDependencyPlanRecord>
+      pool_capacity_dependencies;  ///< Stable many-to-many logical-claim to pool joins.
+  std::vector<ProviderAllocationPlanRecord>
+      provider_allocation_plans;  ///< Immutable provider dependency-range recipes.
   std::vector<PublicationOutcomePlanRecord>
       publication_outcomes;             ///< Pre/post-submit authority contracts.
   PlanGenerationId plan_generation{};   ///< Nonzero identity for all plan-bound records.
@@ -579,6 +744,8 @@ struct ExecutionPlanState {
   std::vector<EndpointClockHealthPlanRecord>
       endpoint_clock_health;                   ///< Immutable endpoint health contracts and bounds.
   std::vector<ReadinessPlanRecord> readiness;  ///< Logical source admission records.
+  std::vector<OperatorCompletionPlanRecord>
+      operator_completion_rules;  ///< Operator-owned natural completion policies.
   std::vector<TemporalTriggerPlanRecord> temporal_triggers;      ///< Total temporal triggers.
   std::vector<AlignedTriggerPlanRecord> aligned_triggers;        ///< Oldest-head aligned joins.
   std::vector<ClockTriggerPlanRecord> clock_triggers;            ///< Fixed-phase clock schedules.
@@ -631,12 +798,69 @@ struct ExecutionPlanState {
   ChannelEndpointCatalog endpoint_catalog;  ///< Immutable standalone-client handoff.
 };
 
+/// One cold inspection row for a process-local HoloMQ service's event-wake proof.
+struct ProcessLocalHoloMQEventWakeApplicabilityRecord {
+  PortId source{};
+  std::string service_id;
+  QueuePolicy queue_policy{QueuePolicy::kBlocking};
+  std::uint32_t planned_subscriber_count{};
+  std::size_t subscriber_record_count{};
+  std::size_t payload_edge_count{};
+  bool event_wake{};
+  ProcessLocalHoloMQEventWakeReason reason{ProcessLocalHoloMQEventWakeReason::kUnclassified};
+};
+
+/// Inspect private event-wake evidence without publishing it into Runtime bindings.
+///
+/// This opt-in cold helper allocates its result and scans private plan records. Compiler and
+/// Runtime hot paths do not invoke it.
+[[nodiscard]] inline std::vector<ProcessLocalHoloMQEventWakeApplicabilityRecord>
+inspect_process_local_holomq_event_wake_applicability(const ExecutionPlanState& state) {
+  std::vector<ProcessLocalHoloMQEventWakeApplicabilityRecord> result;
+  result.reserve(state.process_local_channel_services.size());
+  for (const auto& service : state.process_local_channel_services) {
+    if (service.delivery_kind != ProcessLocalChannelDeliveryKind::kHoloMQ) {
+      continue;
+    }
+    std::size_t subscriber_count = 0U;
+    std::size_t edge_count = 0U;
+    for (const auto& subscriber : state.process_local_channel_subscribers) {
+      if (subscriber.service_id != service.service_id) {
+        continue;
+      }
+      ++subscriber_count;
+      const auto edge = std::find_if(
+          state.payload_edges.begin(), state.payload_edges.end(), [&](const auto& candidate) {
+            return candidate.edge == subscriber.edge &&
+                   candidate.locality == ChannelLocalityKind::kProcessLocal &&
+                   candidate.disposition == PlanDisposition::kAccepted;
+          });
+      if (edge != state.payload_edges.end()) {
+        ++edge_count;
+      }
+    }
+    result.push_back(ProcessLocalHoloMQEventWakeApplicabilityRecord{
+        .source = service.source,
+        .service_id = service.service_id,
+        .queue_policy = service.queue_policy,
+        .planned_subscriber_count = service.max_subscribers,
+        .subscriber_record_count = subscriber_count,
+        .payload_edge_count = edge_count,
+        .event_wake = service.event_wake,
+        .reason = service.event_wake_reason,
+    });
+  }
+  return result;
+}
+
 /// @brief Provide compiler-only construction and inspection of plan state.
 class ExecutionPlanAccess {
  public:
   /// @brief Publish one complete immutable execution-plan state.
   /// @param state Deep-owning plan state, or null for an empty plan.
   /// @return Public copyable immutable plan facade.
+  // The shared state is an ownership sink and may be transferred by the compiler.
+  // NOLINTNEXTLINE(performance-unnecessary-value-param)
   [[nodiscard]] static ExecutionPlan make(
       std::shared_ptr<const ExecutionPlanState> state) noexcept {
     return ExecutionPlan{std::move(state)};

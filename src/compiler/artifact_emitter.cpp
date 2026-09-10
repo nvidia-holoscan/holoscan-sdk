@@ -42,6 +42,7 @@
 #include <holoscan/core/parameter_schema.hpp>
 
 #include "artifact_emitter_test_access.hpp"
+#include "core/canonical_text_encoding.hpp"
 #include "execution_plan_state.hpp"
 
 namespace holoscan {
@@ -63,62 +64,6 @@ struct PendingFile {
   std::string bytes;
   bool changed{};
 };
-
-[[nodiscard]] std::string json_string(std::string_view input) {
-  std::string output;
-  output.reserve(input.size() + 2U);
-  output.push_back('"');
-  for (const unsigned char character : input) {
-    switch (character) {
-      case '"':
-        output += "\\\"";
-        break;
-      case '\\':
-        output += "\\\\";
-        break;
-      case '\b':
-        output += "\\b";
-        break;
-      case '\f':
-        output += "\\f";
-        break;
-      case '\n':
-        output += "\\n";
-        break;
-      case '\r':
-        output += "\\r";
-        break;
-      case '\t':
-        output += "\\t";
-        break;
-      default:
-        if (character < 0x20U) {
-          constexpr std::string_view kHex = "0123456789abcdef";
-          output += "\\u00";
-          output.push_back(kHex[(character >> 4U) & 0x0FU]);
-          output.push_back(kHex[character & 0x0FU]);
-        } else {
-          output.push_back(static_cast<char>(character));
-        }
-        break;
-    }
-  }
-  output.push_back('"');
-  return output;
-}
-
-template <typename Bytes>
-[[nodiscard]] std::string sha256_text(const Bytes& bytes) {
-  constexpr std::string_view kHex = "0123456789abcdef";
-  std::string output{"sha256:"};
-  output.reserve(71U);
-  for (const std::byte byte : bytes) {
-    const auto value = std::to_integer<unsigned char>(byte);
-    output.push_back(kHex[(value >> 4U) & 0x0FU]);
-    output.push_back(kHex[value & 0x0FU]);
-  }
-  return output;
-}
 
 [[nodiscard]] ParamSchemaHash hash_bytes(std::string_view bytes) noexcept {
   detail::StableHashBuilder hash;
@@ -797,7 +742,8 @@ void discard_temporary_files(const ArtifactDirectory& directory,
 }
 
 [[nodiscard]] std::string manifest_prefix(std::string_view catalog_digest) {
-  return "{\"catalog_digest\":" + json_string(catalog_digest) + ",\"content_updated_at_ns\":";
+  return "{\"catalog_digest\":" + detail::json_string(catalog_digest) +
+         ",\"content_updated_at_ns\":";
 }
 
 [[nodiscard]] std::string manifest_suffix(const std::vector<PendingFile>& files) {
@@ -808,10 +754,13 @@ void discard_temporary_files(const ArtifactDirectory& directory,
       output.push_back(',');
     }
     first = false;
-    output += "{\"name\":" + json_string(file.destination.filename().generic_string());
-    output += ",\"sha256\":" + json_string(sha256_text(hash_bytes(file.bytes).value)) + "}";
+    output += "{\"name\":" + detail::json_string(file.destination.filename().generic_string());
+    output += ",\"sha256\":" +
+              detail::json_string(detail::lowercase_hex_text(hash_bytes(file.bytes).value,
+                                                             detail::HexPrefix::kSha256)) +
+              "}";
   }
-  output += "],\"schema\":" + json_string(kArtifactManifestSchema) + "}";
+  output += "],\"schema\":" + detail::json_string(kArtifactManifestSchema) + "}";
   return output;
 }
 
@@ -912,7 +861,8 @@ expected<ArtifactEmitResult, Error> emit_artifacts_impl(const ExecutionPlan& pla
         Error{ErrorCode::kPermissionDenied, "ENDPOINT_NAME_ARTIFACT_UNADMITTED"});
   }
 
-  const std::string graph_id = sha256_text(state->digest.value).substr(7U);
+  const std::string graph_id =
+      detail::lowercase_hex_text(state->digest.value, detail::HexPrefix::kNone);
   const std::filesystem::path directory = artifact_root(options) / graph_id / options.deployment_id;
   auto opened_directory = ArtifactDirectory::open_or_create(directory);
   if (!opened_directory) {

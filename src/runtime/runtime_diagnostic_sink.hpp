@@ -17,6 +17,7 @@
 #include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/lifecycle.hpp>
+#include <holoscan/core/run_session.hpp>
 #include <holoscan/core/source_id.hpp>
 #include <holoscan/core/tag.hpp>
 #include <holoscan/core/temporal_plan.hpp>
@@ -24,6 +25,7 @@
 
 #include "../core/lifecycle_kernel.hpp"
 #include "execution_lane.hpp"
+#include "runtime_cuda_execution_diagnostic.hpp"
 #include "runtime_replay_mismatch.hpp"
 
 namespace holoscan::detail {
@@ -140,6 +142,77 @@ struct RuntimeDeadlineMissDiagnostic {
 static_assert(std::is_standard_layout_v<RuntimeDeadlineMissDiagnostic>);
 static_assert(std::is_trivially_copyable_v<RuntimeDeadlineMissDiagnostic>);
 
+/// Bounded managed-shutdown-signal phase carried by private Runtime diagnostics.
+enum class RuntimeManagedSignalPhase : std::uint8_t {
+  kNone = 0,
+  kAcquireDomain,
+  kAcquireBinding,
+  kSnapshotMask,
+  kBlockMask,
+  kThreadCensus,
+  kQueryDisposition,
+  kCreateSignalFd,
+  kCreateNotification,
+  kNotifyController,
+  kDrainNotification,
+  kStartBroker,
+  kAcceptSignal,
+  kPoll,
+  kRead,
+  kFinalDrain,
+  kBindingCleanup,
+  kRestoreMask,
+  kCloseDomain,
+  kDelegateSignal,
+};
+
+enum class RuntimeManagedSignal : std::uint8_t {
+  kNone = 0,
+  kSigInt,
+  kSigTerm,
+};
+
+enum class RuntimeManagedSignalOccurrence : std::uint8_t {
+  kNone = 0,
+  kFirst,
+  kSecond,
+};
+
+enum class RuntimeManagedSignalDisposition : std::uint8_t {
+  kUnknown = 0,
+  kDefault,
+  kIgnored,
+  kCustom,
+};
+
+enum class RuntimeManagedSignalCensusReason : std::uint8_t {
+  kNone = 0,
+  kMultipleThreads,
+  kCensusUnavailable,
+  kCensusChanged,
+  kIncompatibleDomain,
+  kWrongThread,
+  kForkedProcess,
+};
+
+/// Pointer-free managed-signal evidence retained beside one structural diagnostic.
+struct RuntimeManagedSignalDiagnostic {
+  bool present{};
+  RuntimeManagedSignalPhase phase{RuntimeManagedSignalPhase::kNone};
+  RuntimeManagedSignal signal{RuntimeManagedSignal::kNone};
+  RuntimeManagedSignalOccurrence occurrence{RuntimeManagedSignalOccurrence::kNone};
+  RuntimeManagedSignalDisposition prior_disposition{RuntimeManagedSignalDisposition::kUnknown};
+  RuntimeManagedSignalCensusReason census_reason{RuntimeManagedSignalCensusReason::kNone};
+  bool originally_blocked{};
+  std::uint64_t domain_generation{};
+  std::uint64_t binding_generation{};
+  std::uint32_t observed_thread_count{};
+  std::int32_t os_error{};
+};
+
+static_assert(std::is_standard_layout_v<RuntimeManagedSignalDiagnostic>);
+static_assert(std::is_trivially_copyable_v<RuntimeManagedSignalDiagnostic>);
+
 /// Retain exact callback failure evidence beside one public structural diagnostic.
 ///
 /// Public `Diagnostic` remains a stable structural projection and does not overload endpoint or
@@ -162,6 +235,10 @@ struct RuntimeDiagnosticDetail {
   RuntimeDeadlineMissDiagnostic deadline_miss;
   /// Exact cold Operator replay context; absent for every non-reconstruction diagnostic.
   RuntimeReplayMismatchDetail replay_mismatch;
+  /// Pointer-free CUDA execution materialization or teardown evidence.
+  RuntimeCudaExecutionDiagnostic cuda_execution;
+  /// Pointer-free managed SIGINT/SIGTERM domain, acceptance, or cleanup evidence.
+  RuntimeManagedSignalDiagnostic managed_signal;
 };
 
 /// Own one run's fixed-capacity structural diagnostics and parallel private details.
@@ -217,6 +294,8 @@ class RuntimeDiagnosticBuffer {
       details_[index] = detail != nullptr ? *detail : RuntimeDiagnosticDetail{};
       count_.store(index + 1U, std::memory_order_release);
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+      // Diagnostic retention is best-effort after terminal state has already become authoritative.
+      // NOLINTNEXTLINE(bugprone-empty-catch)
     } catch (...) {
       // The terminal session state remains authoritative if cold diagnostic
       // string/detail storage itself cannot be copied. Count remains unchanged,
@@ -270,6 +349,17 @@ class RuntimeStructuralDiagnosticSink {
     static_cast<void>(details);
   }
 
+  /// Publish one managed-signal occurrence before possible prior-policy redelivery.
+  ///
+  /// This ordinary-context event hook is separate from the final session sequence so a default
+  /// second-signal disposition cannot make accepted RECEIVED/ESCALATED evidence unobservable.
+  /// Implementations must copy any record they retain beyond the call.
+  virtual void publish_managed_signal_event(const Diagnostic& diagnostic,
+                                            const RuntimeManagedSignalDiagnostic& detail) {
+    static_cast<void>(diagnostic);
+    static_cast<void>(detail);
+  }
+
   /// Publish terminal lifecycle receipt lineage retained by the originating session.
   ///
   /// The default preserves compatibility for sinks interested only in ordinary diagnostics.
@@ -287,6 +377,17 @@ class RuntimeStructuralDiagnosticSink {
   virtual void publish_lane_startup_evidence(
       std::span<const ExecutionLaneStartupEvidence> evidence) {
     static_cast<void>(evidence);
+  }
+
+  /// Publish `RUNTIME_OPERATOR_COMPUTE_CALL_PROGRESS_TERMINAL` records.
+  ///
+  /// The default preserves compatibility for diagnostic sinks that do not
+  /// consume Operator completion progress. Records are the selected session's
+  /// canonical process-group-local plan subsequence and are borrowed only for
+  /// this call.
+  virtual void publish_operator_completion_progress(
+      std::span<const OperatorCompletionProgressRecord> progress) {
+    static_cast<void>(progress);
   }
 };
 

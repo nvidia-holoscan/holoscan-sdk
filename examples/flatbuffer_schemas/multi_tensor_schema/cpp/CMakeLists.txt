@@ -37,9 +37,7 @@ target_link_libraries(multi_tensor_schema
 set_target_properties(multi_tensor_schema PROPERTIES CXX_EXTENSIONS OFF)
 
 if(COMMAND holoscan_configure_example_install)
-    holoscan_configure_example_install(multi_tensor_schema
-        INSTALL_RPATH "$ORIGIN/../../../../lib"
-    )
+    holoscan_configure_example_install(multi_tensor_schema)
 endif()
 
 if(BUILD_TESTING)
@@ -54,10 +52,10 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS multi_tensor_schema
-    RUNTIME DESTINATION examples/flatbuffer_schemas/multi_tensor_schema/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/flatbuffer_schemas/multi_tensor_schema/cpp"
     COMPONENT holoscan-examples
 )
 install(FILES stereo_frame.fbs
-    DESTINATION examples/flatbuffer_schemas/multi_tensor_schema/cpp
+    DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/flatbuffer_schemas/multi_tensor_schema/cpp"
     COMPONENT holoscan-examples
 )

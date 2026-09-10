@@ -10,7 +10,7 @@ Installation smoke test (not a tutorial) verifying that the installed SDK coexis
 From the `cpp/` folder:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

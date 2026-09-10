@@ -168,6 +168,7 @@ class Contract::Impl {
   std::size_t trigger_count_{};
   std::vector<detail::TemporalInputRecord> inputs_;
   std::vector<std::pair<std::string, std::variant<Skip, SafeDefault, ReuseLast>>> missing_;
+  std::optional<ComputeCalls> compute_calls_;
   std::optional<std::chrono::nanoseconds> deadline_;
   detail::ParamDurationDependency deadline_dependency_{};
   std::optional<OnViolation> violation_;
@@ -717,6 +718,11 @@ Contract& Contract::deadline(std::chrono::nanoseconds budget) {
   return *this;
 }
 
+Contract& Contract::complete_after(ComputeCalls rule) {
+  impl_->compute_calls_ = rule;
+  return *this;
+}
+
 Contract& Contract::deadline_dependency(detail::ParamDurationDependency dependency) {
   impl_->deadline_.reset();
   impl_->deadline_dependency_ = dependency;
@@ -742,14 +748,15 @@ expected<TemporalContractSnapshot, Error> ContractTestAccess::normalize(
     snapshot.trigger = contract.impl_->trigger_;
     snapshot.inputs = contract.impl_->inputs_;
     snapshot.connected_input_count = connected_input_count;
+    snapshot.compute_calls = contract.impl_->compute_calls_;
     snapshot.deadline = contract.impl_->deadline_;
     snapshot.deadline_dependency = contract.impl_->deadline_dependency_;
     snapshot.violation = contract.impl_->violation_;
 
     const bool has_nontrigger_content =
         !snapshot.inputs.empty() || !contract.impl_->missing_.empty() ||
-        snapshot.deadline.has_value() || snapshot.deadline_dependency ||
-        snapshot.violation.has_value();
+        snapshot.compute_calls.has_value() || snapshot.deadline.has_value() ||
+        snapshot.deadline_dependency || snapshot.violation.has_value();
     if (contract.impl_->trigger_count_ == 0U && !has_nontrigger_content &&
         connected_input_count > 0U) {
       snapshot.trigger.kind = TemporalTriggerKind::kAnyInput;
@@ -814,7 +821,8 @@ expected<TemporalContractSnapshot, Error> ContractTestAccess::normalize(
 bool ContractTestAccess::empty(const Contract& contract) noexcept {
   return contract.impl_->trigger_count_ == 0U && contract.impl_->inputs_.empty() &&
          contract.impl_->missing_.empty() && !contract.impl_->deadline_ &&
-         !contract.impl_->deadline_dependency_ && !contract.impl_->violation_;
+         !contract.impl_->compute_calls_ && !contract.impl_->deadline_dependency_ &&
+         !contract.impl_->violation_;
 }
 
 std::size_t ContractTestAccess::trigger_count(const Contract& contract) noexcept {

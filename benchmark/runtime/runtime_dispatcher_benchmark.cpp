@@ -31,6 +31,7 @@
 #include <holoscan/core/compile.hpp>
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/graph.hpp>
+#include <holoscan/core/managed_shutdown_signals.hpp>
 #include <holoscan/core/parameter_schema.hpp>
 #include <holoscan/core/run.hpp>
 #include <holoscan/time/clock.hpp>
@@ -46,6 +47,8 @@
 namespace {
 
 constexpr std::uint32_t kSteadyActivationCount = 65'536U;
+constexpr std::uint32_t kCompletionDrainMaximumComputeCalls = 1024U;
+constexpr std::uint32_t kMixedCompletionUnruledCallbackCount = 1024U;
 constexpr std::uint32_t kTensorActivationCount = 8192U;
 constexpr std::int64_t kParkedLatencyIterations = 1024;
 
@@ -91,6 +94,186 @@ class BenchmarkOperator final : public holoscan::Operator<> {
   holoscan::SpinSource spin_;
 };
 
+template <std::size_t QueryCount>
+class BenchmarkFixedRateQueryOperator final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.spin_source(spin_, "activation").capacity(1U);
+    spec.output(output_, "output").nominal_rate(holoscan::Rate::hz(60U));
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnSpin{.event = spin_});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext& context) override {
+    std::uint64_t checksum{};
+    for (std::size_t index = 0U; index < QueryCount; ++index) {
+      auto view = context.rate(output_);
+      if (!view) {
+        return holoscan::make_unexpected(std::move(view).error());
+      }
+      if (view->resolved_nominal_rate != holoscan::Rate::hz(60U)) {
+        return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kFailure});
+      }
+      checksum += view->rate_generation;
+    }
+    benchmark::DoNotOptimize(checksum);
+    return {};
+  }
+
+ private:
+  holoscan::SpinSource spin_;
+  holoscan::Output<std::uint32_t> output_;
+};
+
+class BenchmarkComputeCallCompletionOperator final : public holoscan::Operator<> {
+ public:
+  explicit BenchmarkComputeCallCompletionOperator(std::optional<std::uint64_t> completion_limit)
+      : completion_limit_(completion_limit) {}
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.spin_source(spin_, "compute-call-completion").capacity(1U);
+    spec.output(output_, "output");
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnSpin{.event = spin_});
+    if (completion_limit_) {
+      result.complete_after(holoscan::ComputeCalls{.limit = *completion_limit_});
+    }
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    return {};
+  }
+
+  holoscan::Output<std::uint32_t> output_;
+
+ private:
+  std::optional<std::uint64_t> completion_limit_;
+  holoscan::SpinSource spin_;
+};
+
+class BenchmarkCompletionChannelSource final : public holoscan::Operator<> {
+ public:
+  explicit BenchmarkCompletionChannelSource(std::uint64_t limit) : limit_(limit) {}
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.spin_source(spin_, "compute-call-completion").capacity(1U);
+    spec.output(output, "output").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnSpin{.event = spin_})
+        .complete_after(holoscan::ComputeCalls{.limit = limit_});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    return output.emit(7U);
+  }
+
+  holoscan::Output<std::uint32_t> output;
+
+ private:
+  std::uint64_t limit_{};
+  holoscan::SpinSource spin_;
+};
+
+class BenchmarkCompletionChannelSink final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override { spec.input(input, "input").queue_depth(64U); }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    auto received = input.receive();
+    if (!received) {
+      return holoscan::make_unexpected(std::move(received).error());
+    }
+    benchmark::DoNotOptimize(received->data);
+    calls.fetch_add(1U, std::memory_order_relaxed);
+    return {};
+  }
+
+  static inline std::atomic<std::uint64_t> calls{};
+  holoscan::Input<std::uint32_t> input;
+};
+
+class BenchmarkMixedCompletionBurstSource final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.spin_source(spin_, "mixed-completion-burst").capacity(1U);
+    spec.output(output, "output").max_emits_per_compute(kMixedCompletionUnruledCallbackCount);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnSpin{.event = spin_})
+        .complete_after(holoscan::ComputeCalls{.limit = 1U});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    for (std::uint32_t index = 0U; index < kMixedCompletionUnruledCallbackCount; ++index) {
+      auto emitted = output.emit(index);
+      if (!emitted) {
+        return holoscan::make_unexpected(std::move(emitted).error());
+      }
+    }
+    calls.fetch_add(1U, std::memory_order_relaxed);
+    return {};
+  }
+
+  static inline std::atomic<std::uint64_t> calls{};
+  holoscan::Output<std::uint32_t> output;
+
+ private:
+  holoscan::SpinSource spin_;
+};
+
+class BenchmarkMixedCompletionUnruledSink final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(input, "input").queue_depth(kMixedCompletionUnruledCallbackCount);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    auto received = input.receive();
+    if (!received) {
+      return holoscan::make_unexpected(std::move(received).error());
+    }
+    benchmark::DoNotOptimize(received->data);
+    calls.fetch_add(1U, std::memory_order_relaxed);
+    return {};
+  }
+
+  static inline std::atomic<std::uint64_t> calls{};
+  holoscan::Input<std::uint32_t> input;
+};
+
 struct BenchmarkParams {
   std::int32_t value{7};
 };
@@ -130,11 +313,15 @@ class BenchmarkTensorOperator final : public holoscan::Operator<> {
     spec.spin_source(spin_, "activation").capacity(1U);
     spec.output(output_, "output")
         .max_emits_per_compute(kBurstCapacity)
-        .produces_tensor(holoscan::TensorPortLayout{
-            .memory_kind = holoscan::MemoryKind::kHost,
-            .dtype = DLDataType{kDLUInt, 64U, 1U},
-        })
-        .tensor_allocation(holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 8U});
+        .produces_tensor(holoscan::TensorOutputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = holoscan::MemoryKind::kHost,
+                    .dtype = DLDataType{kDLUInt, 64U, 1U},
+                },
+            .bounds = holoscan::TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
+            .storage = holoscan::TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {
@@ -1027,25 +1214,154 @@ template <typename OperatorT>
   return holoscan::test::enable_direct_runtime(holoscan::compile(graph, options), activation_count);
 }
 
+[[nodiscard]] holoscan::ExecutionPlan make_compute_call_completion_run_plan(
+    const std::uint32_t activation_count, const std::optional<std::uint64_t> completion_limit) {
+  holoscan::Graph graph{"runtime-compute-call-completion-benchmark"};
+  const auto source = graph.op<BenchmarkComputeCallCompletionOperator>("source", completion_limit);
+  graph.partition("runtime-benchmark-worker").add(source);
+  const holoscan::ClockKey clock = graph.add_clock<BenchmarkClock>("benchmark-clock");
+  graph.set_default_clock(clock);
+  holoscan::CompileOptions options;
+  options.deployment.bind_thread_placement(
+      "runtime-benchmark-worker",
+      holoscan::ThreadPlacement{.wake_mode = holoscan::WakeMode::kBusyPoll});
+  return holoscan::test::enable_direct_runtime(holoscan::compile(graph, options), activation_count);
+}
+
+[[nodiscard]] holoscan::ExecutionPlan make_compute_call_completion_drain_plan(
+    const std::uint32_t compute_call_limit) {
+  holoscan::Graph graph{"runtime-compute-call-completion-drain-benchmark"};
+  const auto source = graph.op<BenchmarkCompletionChannelSource>("source", compute_call_limit);
+  const auto sink = graph.op<BenchmarkCompletionChannelSink>("sink");
+  graph.partition("runtime-source-worker").add(source);
+  graph.partition("runtime-sink-worker").add(sink);
+  graph.add_flow(source->output,
+                 sink->input,
+                 holoscan::ConnectionOptions{.queue_depth = kCompletionDrainMaximumComputeCalls});
+  const holoscan::ClockKey clock = graph.add_clock<BenchmarkClock>("benchmark-clock");
+  graph.set_default_clock(clock);
+  holoscan::CompileOptions options;
+  options.deployment
+      .bind_thread_placement("runtime-source-worker",
+                             holoscan::ThreadPlacement{.wake_mode = holoscan::WakeMode::kBusyPoll})
+      .bind_thread_placement("runtime-sink-worker",
+                             holoscan::ThreadPlacement{.wake_mode = holoscan::WakeMode::kBusyPoll});
+  return holoscan::test::enable_direct_runtime(holoscan::compile(graph, options),
+                                               compute_call_limit);
+}
+
+[[nodiscard]] holoscan::ExecutionPlan make_mixed_completion_unruled_run_plan() {
+  holoscan::Graph graph{"runtime-mixed-completion-unruled-benchmark"};
+  const auto source = graph.op<BenchmarkMixedCompletionBurstSource>("ruled-source");
+  const auto sink = graph.op<BenchmarkMixedCompletionUnruledSink>("unruled-sink");
+  graph.partition("runtime-mixed-completion-worker").add(source).add(sink);
+  graph.add_flow(source->output,
+                 sink->input,
+                 holoscan::ConnectionOptions{
+                     .queue_policy = holoscan::QueuePolicy::kBlocking,
+                     .queue_depth = kMixedCompletionUnruledCallbackCount,
+                 });
+  const holoscan::ClockKey clock = graph.add_clock<BenchmarkClock>("benchmark-clock");
+  graph.set_default_clock(clock);
+  holoscan::CompileOptions options;
+  options.deployment.bind_thread_placement(
+      "runtime-mixed-completion-worker",
+      holoscan::ThreadPlacement{.wake_mode = holoscan::WakeMode::kBusyPoll});
+  return holoscan::test::enable_direct_runtime(holoscan::compile(graph, options), 1U);
+}
+
 // REQ: RUNTIME-004
 // REQ: RUNTIME-007
-void BM_RunSessionOneDirectActivation(benchmark::State& state) {
+// REQ: RUNTIME-047
+// REQ: RUNTIME-049
+enum class DirectSessionSignalMode : std::uint8_t {
+  kCallerManaged,
+  kPersistentManagedLifecycle,
+  kTransientManagedDefault,
+};
+
+void run_direct_session_benchmark(benchmark::State& state, const char* graph_name,
+                                  const std::uint32_t activation_count,
+                                  const DirectSessionSignalMode signal_mode) {
+  const bool uses_persistent_domain =
+      signal_mode == DirectSessionSignalMode::kPersistentManagedLifecycle;
+  std::optional<holoscan::ManagedShutdownSignals> managed_signals;
+  const auto establish_managed_domain = [&]() {
+    auto created = holoscan::ManagedShutdownSignals::create();
+    if (!created) {
+      state.SkipWithError("failed to establish managed signal benchmark domain");
+      return false;
+    }
+    managed_signals.emplace(std::move(*created));
+    return true;
+  };
+  const auto close_managed_domain = [&]() {
+    if (!managed_signals) {
+      return true;
+    }
+    auto closed = managed_signals->close();
+    managed_signals.reset();
+    if (!closed) {
+      state.SkipWithError("failed to close managed signal benchmark domain");
+      return false;
+    }
+    return true;
+  };
+
+  // Managed admission must precede graph compilation and any participant threads it may start.
+  if (uses_persistent_domain && !establish_managed_domain()) {
+    return;
+  }
   const holoscan::ExecutionPlan plan =
-      make_direct_run_plan<BenchmarkOperator>("runtime-dispatcher-benchmark");
+      make_direct_run_plan<BenchmarkOperator>(graph_name, activation_count);
   if (!plan.ok()) {
+    close_managed_domain();
     state.SkipWithError("failed to compile direct Runtime benchmark plan");
+    return;
+  }
+  // The bootstrap domain protects compilation from creating an incompatible signal-mask lineage,
+  // but it is outside the measurement. Every managed iteration below measures the same complete
+  // create/run/close lifecycle; caller-managed rows measure only run(plan, kCallerManaged).
+  if (uses_persistent_domain && !close_managed_domain()) {
     return;
   }
 
   for (auto _ : state) {
-    int result = holoscan::run(plan);
+    if (uses_persistent_domain && !establish_managed_domain()) {
+      return;
+    }
+    int result = signal_mode == DirectSessionSignalMode::kCallerManaged
+                     ? holoscan::run(plan, holoscan::RunSignalPolicy::kCallerManaged)
+                     : holoscan::run(plan);
     benchmark::DoNotOptimize(result);
+    if (uses_persistent_domain && !close_managed_domain()) {
+      return;
+    }
     if (result != 0) {
       state.SkipWithError("direct Runtime benchmark did not complete successfully");
       return;
     }
   }
-  state.SetItemsProcessed(state.iterations());
+  state.SetItemsProcessed(state.iterations() * activation_count);
+}
+
+void BM_RunSessionOneDirectActivation(benchmark::State& state) {
+  run_direct_session_benchmark(
+      state, "runtime-dispatcher-benchmark", 1U, DirectSessionSignalMode::kCallerManaged);
+}
+
+void BM_RunSessionOneDirectActivationPersistentManagedLifecycle(benchmark::State& state) {
+  run_direct_session_benchmark(state,
+                               "runtime-dispatcher-managed-lifecycle-benchmark",
+                               1U,
+                               DirectSessionSignalMode::kPersistentManagedLifecycle);
+}
+
+void BM_RunSessionOneDirectActivationTransientManagedDefault(benchmark::State& state) {
+  run_direct_session_benchmark(state,
+                               "runtime-dispatcher-transient-managed-benchmark",
+                               1U,
+                               DirectSessionSignalMode::kTransientManagedDefault);
 }
 
 // REQ: PARAM-019
@@ -1059,7 +1375,8 @@ void BM_RunSessionOneDirectActivationRuntimeMutableNoUpdate(benchmark::State& st
   }
 
   for (auto _ : state) {
-    int result = holoscan::run(plan);
+    // PARAM-019 measures parameter access, not the default managed-signal lifecycle.
+    int result = holoscan::run(plan, holoscan::RunSignalPolicy::kCallerManaged);
     benchmark::DoNotOptimize(result);
     if (result != 0) {
       state.SkipWithError("parameter Runtime benchmark did not complete successfully");
@@ -1072,22 +1389,225 @@ void BM_RunSessionOneDirectActivationRuntimeMutableNoUpdate(benchmark::State& st
 // REQ: RUNTIME-004
 // REQ: RUNTIME-007
 void BM_RunSessionSteadyDirectActivations(benchmark::State& state) {
-  const holoscan::ExecutionPlan plan = make_direct_run_plan<BenchmarkOperator>(
-      "runtime-steady-dispatcher-benchmark", kSteadyActivationCount);
+  run_direct_session_benchmark(state,
+                               "runtime-steady-dispatcher-benchmark",
+                               kSteadyActivationCount,
+                               DirectSessionSignalMode::kCallerManaged);
+}
+
+void BM_RunSessionSteadyDirectActivationsPersistentManagedLifecycle(benchmark::State& state) {
+  run_direct_session_benchmark(state,
+                               "runtime-steady-managed-lifecycle-benchmark",
+                               kSteadyActivationCount,
+                               DirectSessionSignalMode::kPersistentManagedLifecycle);
+}
+
+void BM_RunSessionSteadyDirectActivationsTransientManagedDefault(benchmark::State& state) {
+  run_direct_session_benchmark(state,
+                               "runtime-steady-transient-managed-benchmark",
+                               kSteadyActivationCount,
+                               DirectSessionSignalMode::kTransientManagedDefault);
+}
+
+template <std::size_t QueryCount>
+void run_fixed_rate_query_benchmark(benchmark::State& state, const char* graph_name) {
+  const holoscan::ExecutionPlan plan =
+      make_direct_run_plan<BenchmarkFixedRateQueryOperator<QueryCount>>(graph_name,
+                                                                        kSteadyActivationCount);
   if (!plan.ok()) {
-    state.SkipWithError("failed to compile steady Runtime benchmark plan");
+    state.SkipWithError("failed to compile fixed-rate query benchmark plan");
     return;
   }
 
   for (auto _ : state) {
-    int result = holoscan::run(plan);
+    int result = holoscan::run(plan, holoscan::RunSignalPolicy::kCallerManaged);
     benchmark::DoNotOptimize(result);
     if (result != 0) {
-      state.SkipWithError("steady Runtime benchmark did not complete successfully");
+      state.SkipWithError("fixed-rate query benchmark did not complete successfully");
       return;
     }
   }
+  state.counters["rate_queries_per_activation"] = static_cast<double>(QueryCount);
   state.SetItemsProcessed(state.iterations() * kSteadyActivationCount);
+}
+
+// REQ: LIFECYCLE-012
+void BM_RunSessionSteadyFixedRateMetadataNoQuery(benchmark::State& state) {
+  run_fixed_rate_query_benchmark<0U>(state, "runtime-fixed-rate-no-query-benchmark");
+}
+
+// REQ: LIFECYCLE-012
+void BM_RunSessionSteadyFixedRateOneQuery(benchmark::State& state) {
+  run_fixed_rate_query_benchmark<1U>(state, "runtime-fixed-rate-one-query-benchmark");
+}
+
+// REQ: LIFECYCLE-012
+void BM_RunSessionSteadyFixedRateEightQueries(benchmark::State& state) {
+  run_fixed_rate_query_benchmark<8U>(state, "runtime-fixed-rate-eight-query-benchmark");
+}
+
+// Match BM_RunSessionSteadyComputeCallCompletion's Operator, output, session API, callback count,
+// and terminal validation while omitting only the completion rule.
+// REQ: RUNTIME-050
+void BM_RunSessionSteadyOutputNoCompletion(benchmark::State& state) {
+  const holoscan::ExecutionPlan plan =
+      make_compute_call_completion_run_plan(kSteadyActivationCount, std::nullopt);
+  if (!plan.ok() || !plan.operator_completion_rules().empty() || plan.ports().size() != 1U ||
+      !plan.payload_edges().empty()) {
+    state.SkipWithError("failed to compile matched no-completion benchmark plan");
+    return;
+  }
+
+  for (auto _ : state) {
+    holoscan::RunSession session = holoscan::run_async(plan);
+    session.wait();
+    state.PauseTiming();
+    const auto progress = session.operator_completion_progress();
+    benchmark::DoNotOptimize(progress.data());
+    if (session.termination() != holoscan::RunTermination::kCompleted || !progress.empty()) {
+      state.ResumeTiming();
+      state.SkipWithError("matched no-completion benchmark did not complete naturally");
+      return;
+    }
+    state.ResumeTiming();
+  }
+  state.counters["completion_rules"] = 0.0;
+  state.counters["terminal_progress_records"] = 0.0;
+  state.SetItemsProcessed(state.iterations() * kSteadyActivationCount);
+}
+
+// Compare only with BM_RunSessionSteadyOutputNoCompletion. The matched pair isolates the bounded
+// recurring admission check plus the final output-close and terminal-progress decisions.
+// REQ: RUNTIME-050
+void BM_RunSessionSteadyComputeCallCompletion(benchmark::State& state) {
+  const holoscan::ExecutionPlan plan = make_compute_call_completion_run_plan(
+      kSteadyActivationCount, std::uint64_t{kSteadyActivationCount});
+  if (!plan.ok() || plan.operator_completion_rules().size() != 1U || plan.ports().size() != 1U ||
+      !plan.payload_edges().empty()) {
+    state.SkipWithError("failed to compile compute-call completion benchmark plan");
+    return;
+  }
+
+  for (auto _ : state) {
+    holoscan::RunSession session = holoscan::run_async(plan);
+    session.wait();
+    state.PauseTiming();
+    const auto progress = session.operator_completion_progress();
+    benchmark::DoNotOptimize(progress.data());
+    if (session.termination() != holoscan::RunTermination::kCompleted || progress.size() != 1U ||
+        progress.front().successful_compute_calls != kSteadyActivationCount ||
+        !progress.front().limit_reached) {
+      state.ResumeTiming();
+      state.SkipWithError("compute-call completion benchmark did not reach its exact limit");
+      return;
+    }
+    state.ResumeTiming();
+  }
+  state.counters["completion_rules"] = 1.0;
+  state.counters["terminal_progress_records"] = 1.0;
+  state.SetItemsProcessed(state.iterations() * kSteadyActivationCount);
+}
+
+// Measure the limit-reaching callback, per-output EOS publication, downstream delivery, and
+// ordinary input-owner drain as one natural-completion transaction.
+// REQ: RUNTIME-050
+// REQ: CHAN-136
+void BM_RunSessionComputeCallCompletionAndDrain(benchmark::State& state) {
+  const auto compute_call_limit = static_cast<std::uint32_t>(state.range(0));
+  const holoscan::ExecutionPlan plan = make_compute_call_completion_drain_plan(compute_call_limit);
+  if (!plan.ok() || plan.operator_completion_rules().size() != 1U ||
+      plan.execution_partitions().size() != 2U || plan.schedule_edges().size() != 1U ||
+      plan.payload_edges().size() != 1U ||
+      plan.payload_edges().front().disposition != holoscan::PlanDisposition::kAccepted ||
+      plan.payload_edges().front().locality != holoscan::ChannelLocalityKind::kProcessLocal ||
+      plan.payload_edges().front().queue_policy != holoscan::QueuePolicy::kBlocking ||
+      plan.payload_edges().front().queue_depth != kCompletionDrainMaximumComputeCalls ||
+      plan.payload_edges().front().producer_max_emits_per_compute != 1U ||
+      plan.payload_edges().front().fanout != 1U) {
+    state.SkipWithError("failed to compile compute-call completion drain benchmark plan");
+    return;
+  }
+
+  std::uint64_t verified_receipts{};
+  for (auto _ : state) {
+    BenchmarkCompletionChannelSink::calls.store(0U, std::memory_order_relaxed);
+    holoscan::RunSession session = holoscan::run_async(plan);
+    session.wait();
+    state.PauseTiming();
+    const auto progress = session.operator_completion_progress();
+    const std::uint64_t received =
+        BenchmarkCompletionChannelSink::calls.load(std::memory_order_relaxed);
+    benchmark::DoNotOptimize(progress.data());
+    if (session.termination() != holoscan::RunTermination::kCompleted || progress.size() != 1U ||
+        progress.front().successful_compute_calls != compute_call_limit ||
+        !progress.front().limit_reached || received != compute_call_limit) {
+      state.ResumeTiming();
+      state.SkipWithError(
+          "compute-call completion drain benchmark did not deliver every accepted value");
+      return;
+    }
+    verified_receipts += received;
+    state.ResumeTiming();
+  }
+  state.counters["completion_rules"] = 1.0;
+  state.counters["terminal_progress_records"] = 1.0;
+  state.SetItemsProcessed(static_cast<std::int64_t>(verified_receipts));
+}
+
+// One finite ruled callback publishes a bounded burst, then the same partition executes only the
+// unruled sink. Every sink callback traverses the partition-level completion wrapper's no-rule
+// fallthrough, quantifying the deferred receiver-specialization opportunity while the source keeps
+// its exact limit.
+// REQ: RUNTIME-050
+void BM_RunSessionMixedCompletionUnruledCallbacks(benchmark::State& state) {
+  const holoscan::ExecutionPlan plan = make_mixed_completion_unruled_run_plan();
+  if (!plan.ok() || plan.operator_completion_rules().size() != 1U ||
+      plan.operator_completion_rules().front().limit != 1U ||
+      plan.execution_partitions().size() != 1U || plan.readiness().size() != 1U ||
+      plan.temporal_triggers().size() != 2U || !plan.schedule_edges().empty() ||
+      plan.payload_edges().size() != 1U ||
+      plan.payload_edges().front().disposition != holoscan::PlanDisposition::kAccepted ||
+      plan.payload_edges().front().locality != holoscan::ChannelLocalityKind::kProcessLocal ||
+      plan.payload_edges().front().queue_policy != holoscan::QueuePolicy::kBlocking ||
+      plan.payload_edges().front().queue_depth != kMixedCompletionUnruledCallbackCount ||
+      plan.payload_edges().front().producer_max_emits_per_compute !=
+          kMixedCompletionUnruledCallbackCount ||
+      plan.payload_edges().front().fanout != 1U) {
+    state.SkipWithError("failed to compile mixed completion/unruled benchmark plan");
+    return;
+  }
+
+  std::uint64_t verified_unruled_callbacks{};
+  for (auto _ : state) {
+    BenchmarkMixedCompletionBurstSource::calls.store(0U, std::memory_order_relaxed);
+    BenchmarkMixedCompletionUnruledSink::calls.store(0U, std::memory_order_relaxed);
+    holoscan::RunSession session = holoscan::run_async(plan);
+    session.wait();
+    state.PauseTiming();
+    const auto progress = session.operator_completion_progress();
+    const std::uint64_t ruled_calls =
+        BenchmarkMixedCompletionBurstSource::calls.load(std::memory_order_relaxed);
+    const std::uint64_t unruled_calls =
+        BenchmarkMixedCompletionUnruledSink::calls.load(std::memory_order_relaxed);
+    benchmark::DoNotOptimize(progress.data());
+    if (session.termination() != holoscan::RunTermination::kCompleted ||
+        !session.diagnostics().empty() || progress.size() != 1U ||
+        progress.front().configured_limit != 1U ||
+        progress.front().successful_compute_calls != 1U || !progress.front().limit_reached ||
+        ruled_calls != 1U || unruled_calls != kMixedCompletionUnruledCallbackCount) {
+      state.ResumeTiming();
+      state.SkipWithError("mixed completion/unruled benchmark violated its frozen invariants");
+      return;
+    }
+    verified_unruled_callbacks += unruled_calls;
+    state.ResumeTiming();
+  }
+  state.counters["completion_rules"] = 1.0;
+  state.counters["ruled_callbacks_per_iteration"] = 1.0;
+  state.counters["terminal_progress_records"] = 1.0;
+  state.counters["unruled_callbacks_per_iteration"] =
+      static_cast<double>(kMixedCompletionUnruledCallbackCount);
+  state.SetItemsProcessed(static_cast<std::int64_t>(verified_unruled_callbacks));
 }
 
 // REQ: PARAM-019
@@ -1101,7 +1621,8 @@ void BM_RunSessionSteadyDirectActivationsRuntimeMutableNoUpdate(benchmark::State
   }
 
   for (auto _ : state) {
-    int result = holoscan::run(plan);
+    // Keep the steady PARAM-019 row comparable with the one-activation row above.
+    int result = holoscan::run(plan, holoscan::RunSignalPolicy::kCallerManaged);
     benchmark::DoNotOptimize(result);
     if (result != 0) {
       state.SkipWithError("steady Parameter benchmark did not complete successfully");
@@ -1124,7 +1645,7 @@ void run_tensor_pool_capacity_benchmark(benchmark::State& state) {
   }
 
   for (auto _ : state) {
-    int result = holoscan::run(plan);
+    int result = holoscan::run(plan, holoscan::RunSignalPolicy::kCallerManaged);
     benchmark::DoNotOptimize(result);
     if (result != 0) {
       state.SkipWithError("direct Tensor pool benchmark did not complete successfully");
@@ -1180,8 +1701,22 @@ BENCHMARK_CAPTURE(BM_ExecutionLaneDispatchAfterIdle, busy_poll, holoscan::WakeMo
     ->Iterations(kParkedLatencyIterations)
     ->UseManualTime();
 BENCHMARK(BM_RunSessionOneDirectActivation)->UseRealTime();
+BENCHMARK(BM_RunSessionOneDirectActivationPersistentManagedLifecycle)->UseRealTime();
+BENCHMARK(BM_RunSessionOneDirectActivationTransientManagedDefault)->UseRealTime();
 BENCHMARK(BM_RunSessionOneDirectActivationRuntimeMutableNoUpdate)->UseRealTime();
 BENCHMARK(BM_RunSessionSteadyDirectActivations)->UseRealTime();
+BENCHMARK(BM_RunSessionSteadyDirectActivationsPersistentManagedLifecycle)->UseRealTime();
+BENCHMARK(BM_RunSessionSteadyDirectActivationsTransientManagedDefault)->UseRealTime();
+BENCHMARK(BM_RunSessionSteadyFixedRateMetadataNoQuery)->UseRealTime();
+BENCHMARK(BM_RunSessionSteadyFixedRateOneQuery)->UseRealTime();
+BENCHMARK(BM_RunSessionSteadyFixedRateEightQueries)->UseRealTime();
+BENCHMARK(BM_RunSessionSteadyOutputNoCompletion)->UseRealTime();
+BENCHMARK(BM_RunSessionSteadyComputeCallCompletion)->UseRealTime();
+BENCHMARK(BM_RunSessionComputeCallCompletionAndDrain)
+    ->Arg(1)
+    ->Arg(kCompletionDrainMaximumComputeCalls)
+    ->UseRealTime();
+BENCHMARK(BM_RunSessionMixedCompletionUnruledCallbacks)->UseRealTime();
 BENCHMARK(BM_RunSessionSteadyDirectActivationsRuntimeMutableNoUpdate)->UseRealTime();
 BENCHMARK(BM_DirectTensorPoolCycleBySlotCapacity)
     ->Arg(2)

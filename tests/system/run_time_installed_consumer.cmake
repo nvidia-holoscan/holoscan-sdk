@@ -21,8 +21,23 @@ if(WIN32)
 endif()
 file(REMOVE_RECURSE "${install_prefix}" "${consumer_build_dir}")
 
+# sensor_io belongs here even though this consumer never names a sensor type. The install exports one
+# holoscan-targets.cmake covering every exported target, and find_package fails outright if any of the
+# files it references is missing -- so omitting a target here breaks the consumer for a reason that
+# looks nothing like the actual cause.
+set(sdk_build_targets core holoscan_schema sensor_io)
+if(DEFINED HOLOSCAN_BUILD_SHARED_LIBS AND NOT HOLOSCAN_BUILD_SHARED_LIBS)
+    # Static package installation exports the compiled spdlog archive even though Core consumes
+    # only its header-only target. Build that installed dependency in this intentionally focused
+    # target set before installing the holoscan-dependencies component.
+    list(APPEND sdk_build_targets spdlog)
+endif()
+if(DEFINED HOLOSCAN_EXTRA_BUILD_TARGETS)
+    list(APPEND sdk_build_targets ${HOLOSCAN_EXTRA_BUILD_TARGETS})
+endif()
+list(REMOVE_DUPLICATES sdk_build_targets)
 set(sdk_build_command
-    "${CMAKE_COMMAND}" --build "${HOLOSCAN_BUILD_DIR}" --target core holoscan_schema --parallel 4
+    "${CMAKE_COMMAND}" --build "${HOLOSCAN_BUILD_DIR}" --target ${sdk_build_targets} --parallel 4
 )
 if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
     list(APPEND sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
@@ -32,13 +47,24 @@ if(NOT sdk_build_result EQUAL 0)
     message(FATAL_ERROR "Failed to build SDK targets required by the installed-package consumer")
 endif()
 
-foreach(component IN ITEMS
-        holoscan
-        holoscan-dependencies
-        holomq-iceoryx2-libraries
-        dev
-        holomq
-        holoscan-core)
+# holoscan-sensor-io belongs to the base set rather than arriving through
+# HOLOSCAN_EXTRA_INSTALL_COMPONENTS: it is built with the SDK, and the sensor schemas several of
+# these consumers compile against are installed by it, so every consumer needs it rather than one.
+# The extra-components hook stays for a module that is optional and wanted by a single fixture.
+set(install_components
+    holoscan
+    holoscan-dependencies
+    iceoryx2-lib
+    dev
+    holomq
+    holoscan-core
+    holoscan-sensor-io
+)
+if(DEFINED HOLOSCAN_EXTRA_INSTALL_COMPONENTS)
+    list(APPEND install_components ${HOLOSCAN_EXTRA_INSTALL_COMPONENTS})
+endif()
+list(REMOVE_DUPLICATES install_components)
+foreach(component IN LISTS install_components)
     set(install_command
         "${CMAKE_COMMAND}" --install "${HOLOSCAN_BUILD_DIR}"
         --prefix "${install_prefix}"
@@ -52,9 +78,11 @@ foreach(component IN ITEMS
         message(FATAL_ERROR "Failed to install SDK component ${component}")
     endif()
 endforeach()
+unset(install_components)
 
 foreach(required_install_path IN ITEMS
         "${install_prefix}/bin/${installed_flatc_name}"
+        "${install_prefix}/include/holoscan/core/managed_shutdown_signals.hpp"
         "${install_prefix}/include/holoscan/core/source_id.hpp"
         "${install_prefix}/include/holoscan/core/tag.hpp"
         "${install_prefix}/include/holoscan/schemas/tensor_bfbs_generated.h"
@@ -66,7 +94,11 @@ foreach(required_install_path IN ITEMS
         "${install_prefix}/lib/cmake/holoscan/HoloscanSchemaTraitsConfig.cmake.in"
         "${install_prefix}/lib/cmake/holoscan/holoscan-config.cmake"
         "${install_prefix}/share/holoscan/schemas/flatbuffers/reflection.fbs"
-        "${install_prefix}/share/holoscan/schemas/tensor.fbs")
+        "${install_prefix}/share/holoscan/schemas/tensor.fbs"
+        # Fails here with a readable message if holoscan-sensor-io is dropped from the list above,
+        # rather than later as an unexplained find_package error about the exported target set.
+        "${install_prefix}/include/holoscan/sensor_io/schemas/image_generated.h"
+        "${install_prefix}/share/holoscan/schemas/sensor_io/image.fbs")
     if(NOT EXISTS "${required_install_path}")
         message(FATAL_ERROR "Installed consumer prerequisite is missing: ${required_install_path}")
     endif()

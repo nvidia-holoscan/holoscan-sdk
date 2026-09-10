@@ -27,7 +27,7 @@ if(NOT TARGET holoscan::schema)
     message(FATAL_ERROR "Installed package did not define holoscan::schema")
 endif()
 
-add_executable(channel_schema_installed_consumer ../ea1_holomq_schema_smoke.cpp)
+add_executable(channel_schema_installed_consumer ../holomq_schema_smoke.cpp)
 target_compile_features(channel_schema_installed_consumer PRIVATE cxx_std_20)
 set_target_properties(channel_schema_installed_consumer PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(channel_schema_installed_consumer PRIVATE holoscan::core holoscan::schema)

@@ -19,7 +19,30 @@
 
 namespace holoscan {
 
+struct SingularTensorSchema {};
 struct BatchTensorSchema {};
+
+template <>
+consteval SchemaIdentity schema_identity<SingularTensorSchema>() {
+  return SchemaIdentity{
+      .canonical_name = "holoscan.test.SingularTensorSchema",
+      .version = 1U,
+      .schema_sha256 = {std::byte{0x15}},
+      .id = SchemaId{.value = {std::byte{0x51}}},
+  };
+}
+
+template <>
+struct DescriptorTensorSchemaNativeTraits<SingularTensorSchema> {
+  using root_type = SingularTensorSchema;
+  static constexpr std::size_t metadata_capacity = 32U;
+  static constexpr std::size_t tensor_count = 1U;
+  static constexpr std::array<std::uint16_t, 1U> tensor_field_ids{1U};
+
+  [[nodiscard]] static const Tensor* tensor_at(const SingularTensorSchema&, std::size_t) noexcept {
+    return nullptr;
+  }
+};
 
 template <>
 struct DescriptorTensorSchemaNativeTraits<BatchTensorSchema> {
@@ -325,6 +348,67 @@ TEST(TensorOutputLoan, PrivateBindingConstructsWritesAndPublishesOneBoundedLoan)
   EXPECT_FALSE(state.live);
   EXPECT_FALSE(state.abandoned);
   EXPECT_EQ(std::to_integer<std::uint8_t>(state.storage[3]), 0x5A);
+}
+
+// REQ: OPERATOR-040
+TEST(TensorOutputLoan, ShapeOnlyAllocationUsesBoundExactDtype) {
+  Output<Tensor> output{"tensor"};
+  TensorLoanState state;
+  // Key setup: bind the runtime allocator with the exact dtype projected from the output spec.
+  detail::TensorOutputPortBindingAccess::bind(
+      output, {.state = &state, .ops = &kOutputOps, .tensor_dtype = state.dtype});
+
+  // Key assertion: shapes-only allocation supplies that dtype to the unchanged allocator callback.
+  const auto allocated = output.allocate_tensor(state.shape);
+  ASSERT_TRUE(allocated) << allocated.error().message;
+  EXPECT_EQ(allocated->dtype().code, state.dtype.code);
+  EXPECT_EQ(allocated->dtype().bits, state.dtype.bits);
+  EXPECT_EQ(state.allocations, 1U);
+}
+
+// REQ: OPERATOR-040
+TEST(TensorOutputLoan, ShapeOnlyAllocationRejectsUnresolvedDtype) {
+  Output<Tensor> output{"tensor"};
+  TensorLoanState state;
+  // Key setup: bind an otherwise valid output allocator without an exact contract dtype.
+  detail::TensorOutputPortBindingAccess::bind(output, {.state = &state, .ops = &kOutputOps});
+
+  // Key assertion: shapes-only allocation fails before calling the allocator or guessing dtype.
+  const auto rejected = output.allocate_tensor(state.shape);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(rejected.error().message, "TENSOR_OUTPUT_DTYPE_UNRESOLVED");
+  EXPECT_EQ(state.allocations, 0U);
+}
+
+// REQ: OPERATOR-040
+TEST(TensorOutputLoan, SingularDescriptorShapeOnlyAllocationUsesBoundExactDtype) {
+  Output<SingularTensorSchema> output{"image"};
+  TensorLoanState state;
+  detail::TensorOutputPortBindingAccess::bind(
+      output, {.state = &state, .ops = &kOutputOps, .tensor_dtype = state.dtype});
+
+  const auto allocated = output.allocate_tensor(state.shape);
+
+  ASSERT_TRUE(allocated) << allocated.error().message;
+  EXPECT_EQ(allocated->dtype().code, state.dtype.code);
+  EXPECT_EQ(allocated->dtype().bits, state.dtype.bits);
+  EXPECT_EQ(allocated->dtype().lanes, state.dtype.lanes);
+  EXPECT_EQ(state.allocations, 1U);
+}
+
+// REQ: OPERATOR-040
+TEST(TensorOutputLoan, SingularDescriptorShapeOnlyAllocationRejectsUnresolvedDtype) {
+  Output<SingularTensorSchema> output{"image"};
+  TensorLoanState state;
+  detail::TensorOutputPortBindingAccess::bind(output, {.state = &state, .ops = &kOutputOps});
+
+  const auto rejected = output.allocate_tensor(state.shape);
+
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(rejected.error().message, "TENSOR_OUTPUT_DTYPE_UNRESOLVED");
+  EXPECT_EQ(state.allocations, 0U);
 }
 
 // The fused helpers preserve the checked acquisition/fill/commit state machine while removing

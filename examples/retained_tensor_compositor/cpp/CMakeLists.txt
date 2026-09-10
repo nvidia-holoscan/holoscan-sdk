@@ -69,6 +69,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS retained_tensor_compositor
-    RUNTIME DESTINATION examples/retained_tensor_compositor/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/retained_tensor_compositor/cpp"
     COMPONENT holoscan-examples
 )

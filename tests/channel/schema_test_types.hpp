@@ -8,8 +8,9 @@
 #include <cstddef>
 
 #include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
-#include <holoscan/schema/image_metadata.hpp>
 #include <holoscan/schema/inline_flatbuffer_payload.hpp>
+#include <holoscan/sensor_io/image_metadata.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "custom_control_generated.h"
 

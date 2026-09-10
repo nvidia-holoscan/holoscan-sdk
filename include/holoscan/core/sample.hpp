@@ -6,6 +6,7 @@
 #pragma once
 
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <type_traits>
@@ -28,7 +29,7 @@ inline constexpr bool kPublishedScalar = std::is_arithmetic_v<T> || std::is_enum
 
 /// @brief Constrain a public typed port to an explicitly admitted payload family.
 ///
-/// The EA1 families are unqualified arithmetic or enum scalars, generated self-contained
+/// The baseline families are unqualified arithmetic or enum scalars, generated self-contained
 /// copy-constructible schema roots with an explicit \ref schema_identity specialization,
 /// descriptor-backed schema owning types with explicit identity and Tensor-schema traits, raw POD
 /// types with both explicit `ChannelTypeIdentity<T>` and `ChannelPodLayout<T>` specializations, and
@@ -209,9 +210,27 @@ struct SampleMetadata {
   }
 
   /// @brief Return the publication time carried by this sample.
+  ///
+  /// Publication time is the coordinate at which Runtime submitted this sample for publication.
+  /// Runtime reads its publish clock once per publication, immediately after it assigns
+  /// \ref sequence and before any recipient or transport accepts the sample. Every fanout copy of
+  /// one publication therefore reports a single coordinate, which is what lets two recipients
+  /// measure delivery latency against the same event. The coordinate precedes transport queueing,
+  /// serialization, and delivery, so it does not describe when any recipient observed the sample.
+  ///
+  /// In-graph publications carry the Graph default clock. An exported sample carries the same
+  /// instant on the same clock, but named in the receiving endpoint catalog's clock namespace,
+  /// because that catalog numbers its clocks independently of the publishing plan. An external
+  /// client resolves \ref publish_clock_id against the clock records its catalog declares.
+  ///
+  /// A sample imported into this graph across an external boundary carries no publication time. Its
+  /// publication belongs to the peer that produced it, whose clock this graph cannot place.
+  ///
   /// @return Publication coordinate and publish clock, or canonical absent time
   /// when the publish clock identity is zero.
-  /// @note The result remains scoped to this sample's validated clock catalog.
+  /// @note Publication is never capture. Core does not substitute this coordinate for an omitted
+  /// \ref capture_time, and an author-supplied publication coordinate does not survive
+  /// publication. The result remains scoped to this sample's validated clock catalog.
   [[nodiscard]] constexpr TimePoint publish_time() const noexcept {
     return TimePoint{.timestamp_ns = publish_timestamp_ns, .clock_id = publish_clock_id};
   }
@@ -272,10 +291,14 @@ using EmitFlags = SampleFlags;
 ///
 /// Capture time is optional unless the compiled binding requires it. Omission
 /// remains canonical absence and never authorizes an implicit clock read or
-/// timestamp substitution. Runtime stamps sequence, publication time, payload
-/// kind, and logical byte size according to the admitted output binding. A
-/// supplied capture time must belong to the clock-catalog scope admitted for
-/// that binding; numeric \ref ClockId equality alone does not establish this.
+/// timestamp substitution. Runtime stamps sequence, payload kind, and logical
+/// byte size according to the admitted output binding, and stamps publication
+/// time from the Graph default clock at the submission boundary. There is no
+/// option here for publication time because it is not the author's to state: a
+/// value naming when Runtime submitted the sample can only be measured at that
+/// boundary. A supplied capture time must belong to the clock-catalog scope
+/// admitted for that binding; numeric \ref ClockId equality alone does not
+/// establish this.
 struct EmitOptions {
   std::optional<TimePoint> capture_time{};  ///< Genuine capture/acquisition time when supplied.
   std::optional<std::uint64_t> frame_id{};  ///< Application frame/sample identity when supplied.
@@ -285,7 +308,24 @@ struct EmitOptions {
 
 static_assert(std::is_standard_layout_v<SampleMetadataVersion>);
 static_assert(std::is_trivially_copyable_v<SampleMetadataVersion>);
+static_assert(sizeof(SampleMetadataVersion) == 4U);
+static_assert(alignof(SampleMetadataVersion) == 2U);
+static_assert(offsetof(SampleMetadataVersion, major) == 0U);
+static_assert(offsetof(SampleMetadataVersion, minor) == 2U);
 static_assert(std::is_standard_layout_v<SampleMetadata>);
 static_assert(std::is_trivially_copyable_v<SampleMetadata>);
+static_assert(sizeof(SampleMetadata) == 80U);
+static_assert(alignof(SampleMetadata) == 8U);
+static_assert(offsetof(SampleMetadata, version) == 0U);
+static_assert(offsetof(SampleMetadata, sequence) == 8U);
+static_assert(offsetof(SampleMetadata, capture_timestamp_ns) == 16U);
+static_assert(offsetof(SampleMetadata, source_clock_id) == 24U);
+static_assert(offsetof(SampleMetadata, publish_timestamp_ns) == 32U);
+static_assert(offsetof(SampleMetadata, publish_clock_id) == 40U);
+static_assert(offsetof(SampleMetadata, trace_id) == 48U);
+static_assert(offsetof(SampleMetadata, frame_id) == 56U);
+static_assert(offsetof(SampleMetadata, byte_size) == 64U);
+static_assert(offsetof(SampleMetadata, payload_kind) == 72U);
+static_assert(offsetof(SampleMetadata, flags) == 76U);
 
 }  // namespace holoscan

@@ -10,8 +10,6 @@
 #include <string>
 #include <string_view>
 
-#include <magic_enum/magic_enum.hpp>
-
 #include <holoscan/holoscan_core_export.h>
 
 namespace holoscan {
@@ -76,6 +74,12 @@ enum class ErrorCode : std::uint32_t {
   /// carries the observed and expected counts. Publication authority is consumed and the same
   /// logical sample must not be retried.
   kPublicationPartial = 36,
+  /// A lifecycle-selected nominal rate is zero or has a zero denominator.
+  kRateBindingInvalid = 37,
+  /// A lifecycle-selected nominal rate exceeds the declaration's admitted finite maximum.
+  kRateBindingAboveMaximum = 38,
+  /// A lifecycle callback repeated one binding with a semantically different nominal rate.
+  kRateBindingConflict = 39,
 };
 
 /**
@@ -94,17 +98,14 @@ enum class ErrorCode : std::uint32_t {
 /**
  * @brief Get the name of an error code.
  *
- * Returns the enumerator's spelling via magic_enum (e.g. ErrorCode::kInvalidArgument ->
- * "kInvalidArgument"), so new ErrorCode values are named automatically with no separate table to
- * maintain. The returned string_view points at static storage.
+ * Returns the enumerator's spelling (e.g. ErrorCode::kInvalidArgument -> "kInvalidArgument"), so
+ * new ErrorCode values are named automatically with no separate table to maintain. The returned
+ * string_view points at static storage.
  *
  * @param code The error code.
  * @return The enumerator name as a string_view ("unknown" if it is not a named enumerator).
  */
-[[nodiscard]] inline std::string_view error_code_name(ErrorCode code) noexcept {
-  const std::string_view name = magic_enum::enum_name(code);
-  return name.empty() ? std::string_view{"unknown"} : name;
-}
+[[nodiscard]] HOLOSCAN_CORE_EXPORT std::string_view error_code_name(ErrorCode code) noexcept;
 
 /**
  * @brief Lightweight error value for the expected<T, Error> return path.
@@ -141,7 +142,7 @@ struct Error {
 /**
  * @brief Render an Error as a human-readable string for logs and diagnostics.
  *
- * Produces the code's name when the message is empty, otherwise "<code name>: <message>" — the same
+ * Produces the code's name when the message is empty, otherwise `<code name>: <message>` — the same
  * rendering used by the RuntimeError(const Error&) bridge. Used by library code that logs a failed
  * expected<T, Error> (e.g. in HOLOSCAN_LOG_ERROR) and by tests for assertion messages, without
  * having to construct a RuntimeError just to format.
@@ -163,7 +164,7 @@ struct Error {
  *  This class is used to hold runtime error message in Holoscan SDK.
  *
  * New error codes are added by appending to the ErrorCode enum; their names are derived
- * automatically by error_code_name() (via magic_enum).
+ * automatically by error_code_name().
  */
 class RuntimeError : public std::runtime_error {
  public:
@@ -181,7 +182,7 @@ class RuntimeError : public std::runtime_error {
    *
    * The error code is preserved (see code()) and the message mirrors the (ErrorCode, message)
    * constructor: the code's name when the Error message is empty, otherwise
-   * "<code name>: <message>".
+   * `<code name>: <message>`.
    *
    * @param error The error value to convert.
    */
@@ -195,7 +196,7 @@ class RuntimeError : public std::runtime_error {
   [[nodiscard]] holoscan::ErrorCode code() const noexcept { return code_; }
 
  private:
-  // Helper function to construct the error message ("<code name>" or "<code name>: <what_arg>").
+  // Helper function to construct the error message (`<code name>` or `<code name>: <what_arg>`).
   static std::string construct_error_message(holoscan::ErrorCode error_code, const char* what_arg);
   static std::string construct_error_message(holoscan::ErrorCode error_code,
                                              std::string_view what_arg);
@@ -208,7 +209,7 @@ class RuntimeError : public std::runtime_error {
  * @brief Build an Error value from a RuntimeError (the reverse of RuntimeError(const Error&)).
  *
  * The code is taken from error.code(). The message is recovered from what() with the generated
- * "<code name>: " prefix stripped, so round-tripping (Error -> RuntimeError -> Error) does not
+ * `<code name>: ` prefix stripped, so round-tripping (Error -> RuntimeError -> Error) does not
  * duplicate the prefix; a code-only RuntimeError maps to an empty message. A message that does not
  * carry the generated prefix (e.g. from an inherited std::runtime_error constructor) is kept
  * verbatim.

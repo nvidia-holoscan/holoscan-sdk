@@ -18,7 +18,8 @@
 #include <holoscan/core/parameter_schema.hpp>
 
 #include "compiler/detail/canonical_utils.hpp"
-#include "compiler/detail/snapshot_lookup.hpp"
+#include "compiler/execution_plan_contracts.hpp"
+#include "compiler/snapshot_lookup.hpp"
 
 namespace holoscan::detail {
 namespace {
@@ -34,32 +35,16 @@ struct Scope {
   std::vector<RegionId> contributors;
 };
 
-[[nodiscard]] std::optional<std::uint8_t> semantic_rank(Profile profile) noexcept {
-  // REQ: COMPILE-003 - semantic dominance is policy data, never enum ordinal order.
-  switch (profile) {
-    case Profile::kResearch:
-      return 0U;
-    case Profile::kStandard:
-      return 1U;
-    case Profile::kRobotics:
-      return 2U;
-    case Profile::kRealTime:
-      return 3U;
-    case Profile::kRegulated:
-      return 4U;
-  }
-  return std::nullopt;
-}
-
 [[nodiscard]] bool tightens_or_equals(Profile candidate, Profile baseline) noexcept {
-  const auto candidate_rank = semantic_rank(candidate);
-  const auto baseline_rank = semantic_rank(baseline);
+  // REQ: COMPILE-003 - semantic dominance is policy data, never enum ordinal order.
+  const auto candidate_rank = profile_semantic_rank(candidate);
+  const auto baseline_rank = profile_semantic_rank(baseline);
   return candidate_rank && baseline_rank && *candidate_rank >= *baseline_rank;
 }
 
 [[nodiscard]] std::optional<Profile> strictest(Profile lhs, Profile rhs) noexcept {
-  const auto lhs_rank = semantic_rank(lhs);
-  const auto rhs_rank = semantic_rank(rhs);
+  const auto lhs_rank = profile_semantic_rank(lhs);
+  const auto rhs_rank = profile_semantic_rank(rhs);
   if (!lhs_rank || !rhs_rank) {
     return std::nullopt;
   }
@@ -98,45 +83,21 @@ void canonicalize_contributors(std::vector<RegionId>& contributors) {
 
 [[nodiscard]] std::optional<std::size_t> vertex_index(const GraphSnapshotData& snapshot,
                                                       VertexId id) noexcept {
-  if (id.value == 0U || id.value > snapshot.vertices.size()) {
-    return std::nullopt;
-  }
-  const std::size_t index = static_cast<std::size_t>(id.value - 1U);
-  if (snapshot.vertices[index].id != id) {
-    return std::nullopt;
-  }
-  return index;
+  return find_vertex(snapshot, id) == nullptr
+             ? std::nullopt
+             : std::optional<std::size_t>{static_cast<std::size_t>(id.value - 1U)};
 }
 
 [[nodiscard]] std::optional<std::size_t> port_index(const GraphSnapshotData& snapshot,
                                                     GraphPortId id) noexcept {
-  if (id.value == 0U || id.value > snapshot.ports.size()) {
-    return std::nullopt;
-  }
-  const std::size_t index = static_cast<std::size_t>(id.value - 1U);
-  if (snapshot.ports[index].id != id) {
-    return std::nullopt;
-  }
-  return index;
-}
-
-[[nodiscard]] GraphPortId resolve_internal_port(const GraphSnapshotData& snapshot,
-                                                GraphPortId port) {
-  for (std::size_t depth = 0; depth <= snapshot.interface_bindings.size(); ++depth) {
-    const auto binding = std::find_if(snapshot.interface_bindings.begin(),
-                                      snapshot.interface_bindings.end(),
-                                      [port](const auto& b) { return b.public_port == port; });
-    if (binding == snapshot.interface_bindings.end()) {
-      return port;
-    }
-    port = binding->internal_port;
-  }
-  return {};
+  return find_port(snapshot, id) == nullptr
+             ? std::nullopt
+             : std::optional<std::size_t>{static_cast<std::size_t>(id.value - 1U)};
 }
 
 [[nodiscard]] std::optional<VertexId> resolved_port_owner(const GraphSnapshotData& snapshot,
                                                           GraphPortId port) {
-  const GraphPortId resolved = resolve_internal_port(snapshot, port);
+  const GraphPortId resolved = resolve_interface_port(snapshot, port);
   const auto index = port_index(snapshot, resolved);
   return index ? std::optional<VertexId>{snapshot.ports[*index].owner} : std::nullopt;
 }
@@ -179,7 +140,8 @@ void append_error(std::vector<std::string>& errors, std::string_view token) {
     record.origin = region.profile ? RegionProfileOrigin::kExplicitRegion
                                    : RegionProfileOrigin::kInheritedGraph;
 
-    const bool request_is_valid = !region.profile || semantic_rank(*region.profile).has_value();
+    const bool request_is_valid =
+        !region.profile || profile_semantic_rank(*region.profile).has_value();
     if (region.profile && request_is_valid) {
       record.requested_profile = region.profile;
     } else if (!request_is_valid) {
@@ -273,11 +235,11 @@ void apply_alias_scopes(const GraphSnapshotData& snapshot, std::optional<Profile
 [[nodiscard]] std::optional<GraphPortId> opposite_boundary_port(const GraphSnapshotData& snapshot,
                                                                 const EdgeRecord& edge,
                                                                 GraphPortId boundary_port) {
-  const GraphPortId resolved_boundary = resolve_internal_port(snapshot, boundary_port);
-  if (resolve_internal_port(snapshot, edge.source) == resolved_boundary) {
+  const GraphPortId resolved_boundary = resolve_interface_port(snapshot, boundary_port);
+  if (resolve_interface_port(snapshot, edge.source) == resolved_boundary) {
     return edge.target;
   }
-  if (resolve_internal_port(snapshot, edge.target) == resolved_boundary) {
+  if (resolve_interface_port(snapshot, edge.target) == resolved_boundary) {
     return edge.source;
   }
   return std::nullopt;
@@ -332,8 +294,8 @@ void emit_scope_rows(const GraphSnapshotData& snapshot, std::span<const Scope> v
   }
 
   for (const auto& edge : snapshot.edges) {
-    const auto source_index = port_index(snapshot, resolve_internal_port(snapshot, edge.source));
-    const auto target_index = port_index(snapshot, resolve_internal_port(snapshot, edge.target));
+    const auto source_index = port_index(snapshot, resolve_interface_port(snapshot, edge.source));
+    const auto target_index = port_index(snapshot, resolve_interface_port(snapshot, edge.target));
     if (source_index && target_index) {
       const Scope scope = join_scopes(port_scopes[*source_index], port_scopes[*target_index]);
       append_scope(manifest, "edge", object_id("edge", edge.id.value), scope);
@@ -410,6 +372,37 @@ void emit_robotics_critical_records(const GraphSnapshotData& snapshot,
             });
 }
 
+[[nodiscard]] bool robotics_region_requires_bounded_rate_evidence(
+    const RegionRecord& region) noexcept {
+  return std::ranges::any_of(region.constraints, [](const RegionConstraint& constraint) {
+    return constraint.kind() == RegionConstraintKind::kLatencyBudget ||
+           constraint.kind() == RegionConstraintKind::kBoundedMemory;
+  });
+}
+
+void resolve_rate_evidence_requirements(const GraphSnapshotData& snapshot,
+                                        ProfileAdmissionResult& result) {
+  result.rate_evidence_requirements_by_vertex.assign(snapshot.vertices.size(),
+                                                     RateBoundedEvidenceRequirement::kNotRequired);
+  for (std::size_t index = 0U; index < snapshot.vertices.size(); ++index) {
+    const auto profile = result.effective_vertex_profiles[index];
+    bool required = profile == Profile::kRealTime || profile == Profile::kRegulated;
+    if (!required && profile == Profile::kRobotics) {
+      for (const RegionId region_id : result.contributing_regions_by_vertex[index]) {
+        const auto region = std::ranges::find(snapshot.regions, region_id, &RegionRecord::id);
+        if (region != snapshot.regions.end() &&
+            robotics_region_requires_bounded_rate_evidence(*region)) {
+          required = true;
+          break;
+        }
+      }
+    }
+    result.rate_evidence_requirements_by_vertex[index] =
+        required ? RateBoundedEvidenceRequirement::kRequired
+                 : RateBoundedEvidenceRequirement::kNotRequired;
+  }
+}
+
 }  // namespace
 
 std::string_view profile_policy_canonical_json_v1() noexcept {
@@ -456,12 +449,12 @@ ProfileAdmissionResult resolve_profile_admission(const GraphSnapshotData& snapsh
   ProfileAdmissionResult result;
   ProfileManifest& manifest = result.manifest;
   manifest.profile_policy_id = make_policy_id();
-  manifest.plan_schema_version = "holoscan.execution_plan.private.v1";
+  manifest.plan_schema_version = "holoscan.execution_plan.private.v4";
   result.effective_vertex_profiles.resize(snapshot.vertices.size());
   result.contributing_regions_by_vertex.resize(snapshot.vertices.size());
 
   std::optional<Profile> root_profile;
-  if (!semantic_rank(requested_profile)) {
+  if (!profile_semantic_rank(requested_profile)) {
     append_error(result.error_tokens, kProfileValueUnknownToken);
   } else {
     root_profile = requested_profile;
@@ -477,6 +470,7 @@ ProfileAdmissionResult resolve_profile_admission(const GraphSnapshotData& snapsh
   apply_boundary_scopes(snapshot, root_profile, vertex_scopes);
   emit_scope_rows(snapshot, vertex_scopes, result);
   emit_robotics_critical_records(snapshot, effective_region_profiles, manifest);
+  resolve_rate_evidence_requirements(snapshot, result);
 
   canonicalize_tokens(result.error_tokens);
   manifest.disposition = result.error_tokens.empty() ? ProfileAdmissionDisposition::kAccepted

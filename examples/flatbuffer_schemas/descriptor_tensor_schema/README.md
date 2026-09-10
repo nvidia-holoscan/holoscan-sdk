@@ -37,7 +37,10 @@ requires explicit IDs throughout the schema closure so declaration order cannot 
 ordering convention.
 
 The generated header retains both `kDescriptorTensorFields` and
-`kDescriptorTensorFieldIds`. The Runtime currently admits exactly one Tensor member per schema.
+`kDescriptorTensorFieldIds`. Runtime admission uses the complete reflected Tensor-field inventory,
+ordered by FlatBuffers field ID; multi-field schemas receive one bounded provider per authoritative
+field. See the
+[multi-field bundle and lifecycle-rate guidance](../../../docs/custom_flatbuffer_schemas.mdx#bound-lifecycle-selected-multi-field-rates).
 
 ## Custom-codec escape hatch
 

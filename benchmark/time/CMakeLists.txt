@@ -3,7 +3,9 @@
 
 add_executable(time_benchmark time_benchmark.cpp)
 add_dependencies(holoscan-benchmark-targets time_benchmark)
-target_include_directories(time_benchmark PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(time_benchmark
+    PRIVATE ${holoscan_SOURCE_DIR}/src
+)
 target_link_libraries(time_benchmark
     PRIVATE
         benchmark::benchmark_main

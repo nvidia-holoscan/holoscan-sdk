@@ -16,16 +16,19 @@
 
 #include "../core/graph_snapshot.hpp"
 #include "../core/lifecycle_kernel.hpp"
+#include "plan_lowering_diagnostic.hpp"
 
 namespace holoscan::detail {
 
-/// Bounded diagnostic evidence produced while lowering lifecycle declarations.
-struct LifecyclePlanDiagnostic {
-  std::string token;
-  DiagnosticSource source{};
-  std::string json_pointer;
-  std::string required;
-  std::string provided;
+/// Lifecycle-plan spelling of the common lowering diagnostic value.
+using LifecyclePlanDiagnostic = PlanLoweringDiagnostic;
+
+/// Compiler-private owner relation that widens restart membership without callback ordering.
+struct LifecycleRestartClosureDependency {
+  VertexId source_owner{};
+  VertexId dependent_owner{};
+  friend constexpr bool operator==(const LifecycleRestartClosureDependency&,
+                                   const LifecycleRestartClosureDependency&) noexcept = default;
 };
 
 /// Pointer-free lifecycle portion of one accepted or rejected execution plan.
@@ -66,6 +69,7 @@ struct LifecyclePlanLowering {
     std::span<const LifecycleMutableFieldPlanRecord> lifecycle_mutable_fields,
     const std::optional<ParameterRuntimeCapacityPlanRecord>& parameter_capacity,
     const std::optional<LifecycleTransactionOptions>& transaction_options,
-    PlanGenerationId plan_generation);
+    PlanGenerationId plan_generation,
+    std::span<const LifecycleRestartClosureDependency> closure_dependencies = {});
 
 }  // namespace holoscan::detail

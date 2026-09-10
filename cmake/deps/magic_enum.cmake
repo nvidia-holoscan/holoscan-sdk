@@ -6,6 +6,8 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 
 # Retrieves the magic_enum header-only library.
 set(magic_enum_VERSION 0.9.7)
+holoscan_generate_dependency_patch_command(_holoscan_magic_enum_patch_command
+    PATCHES "${CMAKE_CURRENT_LIST_DIR}/patches/magic_enum.patch")
 rapids_cpm_find(magic_enum ${magic_enum_VERSION}
     GLOBAL_TARGETS magic_enum::magic_enum
     BUILD_EXPORT_SET ${HOLOSCAN_DEPEND_EXPORT_SET}
@@ -14,19 +16,19 @@ rapids_cpm_find(magic_enum ${magic_enum_VERSION}
         GITHUB_REPOSITORY Neargye/magic_enum
         GIT_TAG v${magic_enum_VERSION}
         GIT_SHALLOW TRUE
-        PATCH_COMMAND bash -c "patch -Np1 -i ${CMAKE_CURRENT_LIST_DIR}/patches/magic_enum.patch || [ \$? -eq 1 ]"
+        PATCH_COMMAND ${_holoscan_magic_enum_patch_command}
         EXCLUDE_FROM_ALL
 )
+unset(_holoscan_magic_enum_patch_command)
 
-# magic_enum is a PUBLIC compile dependency of holoscan::core (errors.hpp includes
-# <magic_enum/magic_enum.hpp>), so it is registered in the holoscan export set above and the
-# installed holoscan-dependencies.cmake will find_dependency(magic_enum). EXCLUDE_FROM_ALL suppresses
-# magic_enum's own install rules, so install both the headers and a minimal find-package config that
-# defines the magic_enum::magic_enum INTERFACE target pointing at those headers.
+# magic_enum is a private compiled dependency of holoscan::core. Static SDK exports retain private
+# libraries as link-only requirements, so the installed dependency closure still provides the
+# magic_enum target. EXCLUDE_FROM_ALL suppresses magic_enum's own install rules; install both the
+# headers and a minimal find-package config that defines the magic_enum::magic_enum INTERFACE target.
 if(magic_enum_ADDED)
     include(GNUInstallDirs)
     install(DIRECTORY "${magic_enum_SOURCE_DIR}/include/magic_enum"
-        DESTINATION include
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         COMPONENT ${HOLOSCAN_DEPEND_INSTALL_COMPONENT}
     )
     install(FILES

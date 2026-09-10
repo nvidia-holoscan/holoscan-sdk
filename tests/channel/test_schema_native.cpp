@@ -15,6 +15,7 @@
 // Provides generated owning types and schema-trait specializations.
 #include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/schema/inline_flatbuffer_payload.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "../common/allocation_counter.hpp"
 

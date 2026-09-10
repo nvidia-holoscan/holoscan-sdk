@@ -6,10 +6,14 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
 
+#include "compiler/cuda_service_stream_plan.hpp"
+#include "compiler/execution_plan_contracts.hpp"
 #include "physical_plan_test_support.hpp"
 
 // GTest fatal assertions establish optional preconditions that clang-tidy does not model.
@@ -18,6 +22,27 @@ namespace holoscan::detail {
 namespace {
 
 using namespace physical_plan_test;
+
+class CanonicalOperatorPathTensorGraph final : public Graph {
+ public:
+  explicit CanonicalOperatorPathTensorGraph(std::string operator_name)
+      : operator_name_(std::move(operator_name)) {}
+
+  [[nodiscard]] ClockKey clock_import() const noexcept { return clock_import_; }
+
+ protected:
+  void compose() override {
+    clock_import_ = import_clock("timeline");
+    set_default_clock(clock_import_);
+    const auto source = op<DeviceTensorOperator>(operator_name_);
+    const auto sink = op<ManifestTensorSinkOperator>("sink");
+    add_flow(source->tensor, sink->input);
+  }
+
+ private:
+  std::string operator_name_;
+  ClockKey clock_import_{};
+};
 
 // One compatible descriptor-schema service fans out to both consumers. The right consumer also
 // owns an unrelated Tensor output on another device:
@@ -40,7 +65,7 @@ TEST(CompilePhysicalPlan, CrossProcessTensorFanoutValidatesEverySubscriberDevice
       input_port(3U, 3U, "image", payload),
       output_port(4U, 3U, "tensor-out", tensor_payload()),
   };
-  const TensorPortLayout layout{
+  const TensorRepresentation layout{
       .memory_kind = MemoryKind::kCudaDevice,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -51,7 +76,7 @@ TEST(CompilePhysicalPlan, CrossProcessTensorFanoutValidatesEverySubscriberDevice
   }
   snapshot.ports[3].setup.tensor_layout = layout;
   snapshot.ports[3].setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
   snapshot.edges = {edge(1U, 1U, 2U), edge(2U, 1U, 3U)};
   for (auto& item : snapshot.edges) {
     item.effective_tensor_payload = PayloadOptionsRecord{
@@ -119,17 +144,13 @@ TEST(CompilePhysicalPlan, CrossProcessGeneratedSchemaUsesCanonicalWireCapacity) 
   auto result = lower_physical_plan(
       snapshot, 42U, profiles, package, {}, {}, endpoints, placements, {}, partitions, {});
 
-  ASSERT_TRUE(result.errors.empty())
-      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  ASSERT_TRUE(result.errors.empty());
   EXPECT_TRUE(result.process_local_channel_services.empty());
   ASSERT_EQ(result.cross_process_channel_services.size(), 1U);
   EXPECT_EQ(result.cross_process_channel_services.front().payload_size_bytes,
             type_ops->wire_capacity);
 
-  ExecutionPlanState state;
-  state.plan_generation = 42U;
-  state.vertex_process_placements = placements;
-  detail::publish_physical_plan_records(std::move(result), state);
+  auto state = published_physical_plan_state(std::move(result), 42U, placements);
   ASSERT_EQ(state.payload_edges.size(), 1U);
   ASSERT_EQ(state.channel_locality.size(), 1U);
   state.payload_edges.front().locality = ChannelLocalityKind::kCrossProcess;
@@ -149,6 +170,7 @@ TEST(CompilePhysicalPlan, CrossProcessGeneratedSchemaUsesCanonicalWireCapacity) 
 // REQ: CHAN-099
 // REQ: CHAN-105
 // REQ: CHAN-106
+// REQ: CHAN-135
 // REQ: TENSOR-SCHEMA-005
 TEST(CompilePhysicalPlan, CrossProcessImageRequiresAndCarriesBoundedMemoryPreservingStaging) {
   constexpr std::uint64_t kMaximumTensorBytes = 1024U;
@@ -165,7 +187,7 @@ TEST(CompilePhysicalPlan, CrossProcessImageRequiresAndCarriesBoundedMemoryPreser
   };
   snapshot.ports[0].serialized_payload_capacity_bytes = type_ops->wire_capacity;
   snapshot.ports[1].serialized_payload_capacity_bytes = type_ops->wire_capacity;
-  const TensorPortLayout layout{
+  const TensorRepresentation layout{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -223,20 +245,62 @@ TEST(CompilePhysicalPlan, CrossProcessImageRequiresAndCarriesBoundedMemoryPreser
         << (placed_result.errors.empty() ? std::string{} : placed_result.errors.front().token);
     ASSERT_EQ(placed_result.cross_process_channel_services.size(), 1U);
     const auto& placed_service = placed_result.cross_process_channel_services.front();
-    // Key assertion: no pageable-host fallback is admitted; both process groups receive the same
-    // exact stream device needed to produce and import the memory-preserving BufferHandle.
+    // Key assertion: no pageable-host fallback is admitted; both placements retain the exact
+    // device identity needed for their memory-preserving BufferHandle contract.
     EXPECT_EQ(placed_service.tensor_memory_kind, memory_kind);
     EXPECT_EQ(placed_service.tensor_device, kDevice);
-    ASSERT_EQ(placed_result.tensor_device_resources.size(), 2U);
-    EXPECT_TRUE(
-        std::ranges::all_of(placed_result.tensor_device_resources,
-                            [&](const auto& resource) { return resource.device == kDevice; }));
+    ExecutionPlanState service_state;
+    service_state.cross_process_channel_services = placed_result.cross_process_channel_services;
+    const auto requirements = lower_cuda_service_stream_requirements(service_state);
+    if (memory_kind == MemoryKind::kCudaDevice) {
+      ASSERT_EQ(placed_result.tensor_device_resources.size(), 2U);
+      EXPECT_TRUE(
+          std::ranges::all_of(placed_result.tensor_device_resources,
+                              [&](const auto& resource) { return resource.device == kDevice; }));
+      ASSERT_EQ(requirements.size(), 2U);
+      EXPECT_EQ(requirements[0].process_group, ProcessGroupId{1U});
+      EXPECT_EQ(requirements[1].process_group, ProcessGroupId{2U});
+      EXPECT_EQ(requirements[0].device, kDevice);
+      EXPECT_EQ(requirements[1].device, kDevice);
+      EXPECT_NE(requirements[0].owner_id, requirements[1].owner_id);
+      EXPECT_TRUE(requirements[0].owner_id.starts_with("service.channel.cross.source.1."));
+      EXPECT_TRUE(requirements[1].owner_id.starts_with("service.channel.cross.source.1."));
+    } else {
+      // Key assertion: pinned-host schema staging is host-to-host and emits neither an unused
+      // CUDA service stream nor a zero-pool device resource for either process.
+      EXPECT_TRUE(requirements.empty());
+      EXPECT_TRUE(placed_result.cuda_compute_streams.empty());
+      EXPECT_TRUE(placed_result.tensor_device_resources.empty());
+    }
   }
 
-  ExecutionPlanState state;
-  state.plan_generation = 42U;
-  state.vertex_process_placements = placements;
-  detail::publish_physical_plan_records(std::move(result), state);
+  auto managed = snapshot;
+  managed.ports[0].setup.tensor_layout->memory_kind = MemoryKind::kCudaManaged;
+  managed.ports[1].setup.tensor_layout->memory_kind = MemoryKind::kCudaManaged;
+  constexpr DeviceId kManagedDevice{0};
+  const std::array managed_binding{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = kManagedDevice}};
+
+  // Key setup: request managed storage for the otherwise valid descriptor-schema boundary.
+  const auto managed_result = lower_physical_plan(managed,
+                                                  44U,
+                                                  profiles,
+                                                  package,
+                                                  {},
+                                                  {},
+                                                  endpoints,
+                                                  placements,
+                                                  {},
+                                                  partitions,
+                                                  managed_binding);
+
+  // Key assertion: HoloMQ has no cross-process managed provider, so no managed-only service can
+  // reach Runtime stream admission without a compiler-planned device resource.
+  EXPECT_TRUE(has_error(managed_result, "PHYSICAL_TENSOR_PROVIDER_UNSUPPORTED"));
+  EXPECT_TRUE(managed_result.cross_process_channel_services.empty());
+  EXPECT_TRUE(managed_result.tensor_device_resources.empty());
+
+  auto state = published_physical_plan_state(std::move(result), 42U, placements);
   ASSERT_EQ(state.payload_edges.size(), 1U);
   ASSERT_EQ(state.channel_locality.size(), 1U);
   state.payload_edges.front().locality = ChannelLocalityKind::kCrossProcess;
@@ -312,6 +376,21 @@ TEST(CompilePhysicalPlan,
   EXPECT_FALSE(result.tensor_field_allocations[0].device.valid());
   EXPECT_EQ(result.tensor_field_allocations[1].device, kDevice);
   EXPECT_EQ(result.tensor_field_allocations[2].device, kDevice);
+  EXPECT_TRUE(validate_tensor_field_allocation_order(result.tensor_field_allocations));
+
+  // Key setup: corrupt the canonical output/field order that enables allocation-free spans.
+  auto noncanonical_allocations = result.tensor_field_allocations;
+  std::swap(noncanonical_allocations.front(), noncanonical_allocations.back());
+  // Key assertion: publication validation rejects an order that would truncate a binary lookup.
+  EXPECT_FALSE(validate_tensor_field_allocation_order(noncanonical_allocations));
+  auto noncanonical_result = result;
+  noncanonical_result.tensor_field_allocations = std::move(noncanonical_allocations);
+  auto noncanonical_state =
+      published_physical_plan_state(std::move(noncanonical_result), 42U, fixture.placements);
+  const auto noncanonical_finalized = finalize_plan_artifact(noncanonical_state);
+  ASSERT_FALSE(noncanonical_finalized);
+  EXPECT_EQ(noncanonical_finalized.error().message,
+            "PHYSICAL_TENSOR_FIELD_ALLOCATION_ORDER_INVALID");
 
   ASSERT_EQ(result.cross_process_channel_services.size(), 1U);
   const auto& service = result.cross_process_channel_services.front();
@@ -342,10 +421,7 @@ TEST(CompilePhysicalPlan,
     EXPECT_TRUE(validate_tensor_field_capacity_contributors(allocation, reversed));
   }
 
-  ExecutionPlanState state;
-  state.plan_generation = 42U;
-  state.vertex_process_placements = fixture.placements;
-  detail::publish_physical_plan_records(std::move(result), state);
+  auto state = published_physical_plan_state(std::move(result), 42U, fixture.placements);
   ASSERT_EQ(state.payload_edges.size(), 1U);
   ASSERT_EQ(state.channel_locality.size(), 1U);
   state.payload_edges.front().locality = ChannelLocalityKind::kCrossProcess;
@@ -431,7 +507,7 @@ TEST(CompilePhysicalPlan, MultiTensorSchemaRejectsUnboundedUnsupportedAndAggrega
   EXPECT_TRUE(result.tensor_field_allocations.empty());
 
   auto mixed_carriage = snapshot;
-  mixed_carriage.ports[0].setup.tensor_fields[0].payload_options = TensorFieldPayloadOptions{
+  mixed_carriage.ports[0].setup.tensor_fields[0].payload_options = TensorFieldTransferRecord{
       .max_inline_bytes = 64U,
       .max_tensor_byte_span = 128U,
       .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
@@ -476,7 +552,7 @@ TEST(CompilePhysicalPlan, CrossProcessImageFanoutSplitsPerArmStagingIncompatibil
       input_port(2U, 2U, "image", payload),
       input_port(3U, 3U, "image", payload),
   };
-  const TensorPortLayout layout{
+  const TensorRepresentation layout{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -551,14 +627,14 @@ TEST(CompilePhysicalPlan, CrossProcessImageOutputAllocationAdmitsFinalProviderBa
   };
   snapshot.ports[0].serialized_payload_capacity_bytes = type_ops->wire_capacity;
   snapshot.ports[1].serialized_payload_capacity_bytes = type_ops->wire_capacity;
-  const TensorPortLayout layout{
+  const TensorRepresentation layout{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
   };
   snapshot.ports[0].setup.tensor_layout = layout;
   snapshot.ports[0].setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = kMaximumTensorBytes};
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = kMaximumTensorBytes};
   snapshot.ports[1].setup.tensor_layout = layout;
   snapshot.edges = {edge(1U, 1U, 2U)};
   snapshot.edges.front().effective_tensor_payload = PayloadOptionsRecord{
@@ -606,7 +682,7 @@ TEST(CompilePhysicalPlan, DirectTensorAllocationIsOptInAndOverrideMayOnlyTighten
   snapshot.generation = GraphGeneration{1U};
   snapshot.vertices = {vertex(1U, "tensor")};
   snapshot.ports = {output_port(1U, 1U, "out", tensor_payload(), 2U)};
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLFloat, 32U, 1U},
       .rank = 2U,
@@ -620,9 +696,9 @@ TEST(CompilePhysicalPlan, DirectTensorAllocationIsOptInAndOverrideMayOnlyTighten
 
   // Key setup phase 2: operator declares max_rank=4/4096B, graph override tightens to 2/1024B.
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 4U, .max_byte_span = 4096U};
+      TensorPoolBounds{.max_rank = 4U, .max_byte_span = 4096U};
   snapshot.ports.front().graph_override.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 1024U};
+      TensorPoolBounds{.max_rank = 2U, .max_byte_span = 1024U};
   result = lower_for_test(snapshot, 9U, profiles);
   EXPECT_TRUE(result.errors.empty());
   ASSERT_EQ(result.tensor_allocations.size(), 1U);
@@ -642,7 +718,7 @@ TEST(CompilePhysicalPlan, DirectTensorAllocationIsOptInAndOverrideMayOnlyTighten
             ErrorCode::kPublicationPartial);
 
   snapshot.ports.front().graph_override.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 5U, .max_byte_span = 1024U};
+      TensorPoolBounds{.max_rank = 5U, .max_byte_span = 1024U};
   result = lower_for_test(snapshot, 9U, profiles);
   EXPECT_TRUE(has_error(result, "PHYSICAL_TENSOR_ALLOCATION_WIDENING"));
   EXPECT_TRUE(result.tensor_allocations.empty());
@@ -656,16 +732,17 @@ TEST(CompilePhysicalPlan, DirectTensorAllocationUsesSharedFrozenRecordValidation
   snapshot.generation = GraphGeneration{1U};
   snapshot.vertices = {vertex(1U, "tensor")};
   snapshot.ports = {output_port(1U, 1U, "out", tensor_payload(), 2U)};
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLFloat, 32U, 1U},
       .rank = 2U,
   };
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 1024U};
+      TensorPoolBounds{.max_rank = 2U, .max_byte_span = 1024U};
 
   const auto result = lower_for_test(snapshot, 9U, standard_profiles(snapshot.vertices.size()));
-  ASSERT_TRUE(result.errors.empty());
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
   ASSERT_EQ(result.tensor_allocations.size(), 1U);
   EXPECT_TRUE(validate_tensor_allocation_record(result.tensor_allocations.front(), 9U));
 
@@ -711,9 +788,10 @@ TEST(CompilePhysicalPlan, SubtokenizesTensorContractFailuresWithBoundedEvidence)
   snapshot.generation = GraphGeneration{1U};
   snapshot.vertices = {vertex(1U, "tensor")};
   snapshot.ports = {output_port(1U, 1U, "out", tensor_payload())};
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{.memory_kind = MemoryKind::kHost};
+  snapshot.ports.front().setup.tensor_layout =
+      TensorRepresentation{.memory_kind = MemoryKind::kHost};
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 0U, .max_byte_span = 64U};
+      TensorPoolBounds{.max_rank = 0U, .max_byte_span = 64U};
   const auto profiles = standard_profiles(snapshot.vertices.size());
   const auto expect_evidence = [](const PhysicalPlanLoweringResult& lowered,
                                   std::string_view token,
@@ -734,15 +812,16 @@ TEST(CompilePhysicalPlan, SubtokenizesTensorContractFailuresWithBoundedEvidence)
   EXPECT_EQ(result.errors.front().provided, "max_rank=0,max_byte_span=64");
 
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 64U};
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{};
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 64U};
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{};
   result = lower_for_test(snapshot, 9U, profiles);
   ASSERT_EQ(result.errors.size(), 1U);
   EXPECT_EQ(result.errors.front().token, "PHYSICAL_TENSOR_MEMORY_KIND_UNRESOLVED");
   EXPECT_EQ(result.errors.front().json_pointer, "/ports/1/tensor_layout/memory_kind");
   EXPECT_EQ(result.errors.front().provided, "kUnknown");
 
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{.memory_kind = MemoryKind::kHost};
+  snapshot.ports.front().setup.tensor_layout =
+      TensorRepresentation{.memory_kind = MemoryKind::kHost};
   const std::array binding{TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{3}}};
   result = lower_for_test(snapshot, 9U, profiles, {}, {}, {}, nullptr, binding);
   ASSERT_EQ(result.errors.size(), 1U);
@@ -787,7 +866,7 @@ TEST(CompilePhysicalPlan, SubtokenizesTensorContractFailuresWithBoundedEvidence)
 
   auto duplicate_binding_snapshot = snapshot;
   duplicate_binding_snapshot.ports.front().setup.tensor_layout =
-      TensorPortLayout{.memory_kind = MemoryKind::kCudaDevice};
+      TensorRepresentation{.memory_kind = MemoryKind::kCudaDevice};
   const std::array duplicate_bindings{
       TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{0}},
       TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{1}},
@@ -829,7 +908,7 @@ TEST(CompilePhysicalPlan, SubtokenizesTensorContractFailuresWithBoundedEvidence)
       .uri = "holomq://detached-tensor",
       .payload_identity = tensor_payload(),
   };
-  topic.tensor = LogicalTensorRequirementsRecord{
+  topic.tensor = TensorBoundaryContractRecord{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -848,15 +927,14 @@ TEST(CompilePhysicalPlan, SubtokenizesTensorContractFailuresWithBoundedEvidence)
   EXPECT_EQ(result.errors.front().provided, "edge=absent");
 
   for (const auto& [label, mutate, provided] : std::array{
-           std::tuple{
-               "missing memory kind",
-               +[](LogicalTensorRequirementsRecord& logical) { logical.memory_kind.reset(); },
-               "memory_kind=absent"},
+           std::tuple{"missing memory kind",
+                      +[](TensorBoundaryContractRecord& logical) { logical.memory_kind.reset(); },
+                      "memory_kind=absent"},
            std::tuple{"malformed logical requirements",
-                      +[](LogicalTensorRequirementsRecord& logical) { logical.max_rank = 0U; },
+                      +[](TensorBoundaryContractRecord& logical) { logical.max_rank = 0U; },
                       "malformed_logical_requirements"},
            std::tuple{"logical span exceeds bound",
-                      +[](LogicalTensorRequirementsRecord& logical) { logical.max_byte_span = 1U; },
+                      +[](TensorBoundaryContractRecord& logical) { logical.max_byte_span = 1U; },
                       "logical_span_exceeds_bound_or_overflows"},
        }) {
     SCOPED_TRACE(label);
@@ -901,13 +979,13 @@ TEST(CompilePhysicalPlan, RecordsOnlyTensorClaimReasonsDerivedFromAcceptedFacts)
       input_port(2U, 2U, "in", tensor_payload()),
       input_port(3U, 3U, "in", tensor_payload()),
   };
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kCudaDevice,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
   };
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
   snapshot.edges = {edge(1U, 1U, 2U, 3U), edge(2U, 1U, 3U, 2U)};
   // Key setup: copy policy on edge 1; DrainAll+window on left input; ReuseLast on right input.
   snapshot.edges.front().effective_tensor_payload = PayloadOptionsRecord{
@@ -990,13 +1068,13 @@ TEST(CompilePhysicalPlan, LateJoinerHistoryAlonePreservesTensorRetentionContribu
   snapshot.generation = GraphGeneration{1U};
   snapshot.vertices = {vertex(1U, "source")};
   snapshot.ports = {output_port(1U, 1U, "out", tensor_payload())};
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
   };
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
   // Key setup: history is the only temporal/cache source contributing retained Tensor slots.
   snapshot.ports.front().setup.late_joiner_history_depth = 3U;
 
@@ -1037,20 +1115,21 @@ TEST(CompilePhysicalPlan, SeparatesHoloMQTensorQueueAndImportedRetentionCapacity
       output_port(1U, 1U, "out", tensor_payload()),
       input_port(2U, 2U, "in", tensor_payload(), 2U),
   };
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
   };
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
   snapshot.edges = {edge(1U, 1U, 2U, 2U)};
   const auto profiles = standard_profiles(snapshot.vertices.size());
 
   // Key setup: lower the same allocation once through direct retention and once through the
   // explicit process-local HoloMQ fallback.
   const auto direct = lower_for_test(snapshot, 10U, profiles);
-  const auto holomq = lower_for_test(snapshot, 10U, profiles, {}, {}, {}, nullptr, {}, {}, true);
+  const auto holomq = lower_for_test(
+      snapshot, 10U, profiles, {}, {}, {}, nullptr, {}, {}, kForceHoloMQProcessLocalInline);
 
   ASSERT_TRUE(direct.errors.empty());
   ASSERT_TRUE(holomq.errors.empty());
@@ -1102,18 +1181,19 @@ TEST(CompilePhysicalPlan, DropOldestTensorUsesSplitIngressAndTypedCapacity) {
       output_port(1U, 1U, "out", tensor_payload()),
       input_port(2U, 2U, "in", tensor_payload(), 5U),
   };
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
   };
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
   snapshot.edges = {edge(1U, 1U, 2U, 5U, QueuePolicy::kDropOldest)};
   const auto profiles = standard_profiles(snapshot.vertices.size());
 
   const auto direct = lower_for_test(snapshot, 10U, profiles);
-  const auto holomq = lower_for_test(snapshot, 10U, profiles, {}, {}, {}, nullptr, {}, {}, true);
+  const auto holomq = lower_for_test(
+      snapshot, 10U, profiles, {}, {}, {}, nullptr, {}, {}, kForceHoloMQProcessLocalInline);
 
   ASSERT_TRUE(direct.errors.empty());
   ASSERT_TRUE(holomq.errors.empty());
@@ -1365,7 +1445,7 @@ TEST(CompilePhysicalPlan, DerivesRestartGenerationAndInlineRealizationFromFrozen
       .peer = PeerRequirement::kRequired,
       .max_wait = std::chrono::milliseconds{25},
   };
-  topic.tensor = LogicalTensorRequirementsRecord{
+  topic.tensor = TensorBoundaryContractRecord{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -1374,6 +1454,7 @@ TEST(CompilePhysicalPlan, DerivesRestartGenerationAndInlineRealizationFromFrozen
       .axes = {{.max_extent = 4096U}},
       .foreign_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
       .max_inline_bytes = 256U,
+      .max_staging_byte_span = 1024U,
   };
   snapshot.external_topics.push_back(std::move(topic));
   const auto profiles = standard_profiles(snapshot.vertices.size());
@@ -1422,7 +1503,26 @@ TEST(CompilePhysicalPlan, DerivesRestartGenerationAndInlineRealizationFromFrozen
   ASSERT_NE(oversized_host, result.tensor_transfer_plans.end());
   ASSERT_TRUE(oversized_host->realization.has_value());
   EXPECT_EQ(*oversized_host->realization, TensorTransferRealization::kCopiedToExportablePool);
-  EXPECT_EQ(oversized_host->max_logical_bytes, 4096U);
+  EXPECT_EQ(oversized_host->max_logical_bytes, 1024U);
+  const auto staging_exceeded =
+      std::find_if(result.tensor_transfer_plans.begin(),
+                   result.tensor_transfer_plans.end(),
+                   [](const auto& cell) {
+                     return cell.source_class == TensorSourceClass::kOrdinaryHostContiguous &&
+                            cell.min_logical_bytes == 1025U;
+                   });
+  ASSERT_NE(staging_exceeded, result.tensor_transfer_plans.end());
+  EXPECT_EQ(staging_exceeded->disposition, PlanDisposition::kRejected);
+  EXPECT_FALSE(staging_exceeded->realization);
+  EXPECT_EQ(staging_exceeded->max_logical_bytes, 4096U);
+  const auto exportable = std::find_if(
+      result.tensor_transfer_plans.begin(),
+      result.tensor_transfer_plans.end(),
+      [](const auto& cell) { return cell.source_class == TensorSourceClass::kAlreadyExportable; });
+  ASSERT_NE(exportable, result.tensor_transfer_plans.end());
+  ASSERT_TRUE(exportable->realization);
+  EXPECT_EQ(*exportable->realization, TensorTransferRealization::kZeroCopyExportable);
+  EXPECT_EQ(exportable->max_logical_bytes, 4096U);
   ASSERT_EQ(result.tensor_inline_records.size(), 1U);
   const auto& inline_record = result.tensor_inline_records.front();
   EXPECT_EQ(inline_record.service_id, "catalog-service-1");
@@ -1465,7 +1565,7 @@ TEST(CompilePhysicalPlan, RejectsInlineProviderCapCapabilityAndRecordSchemaMisma
         .uri = "holomq://inline-provider",
         .payload_identity = tensor_payload(),
     };
-    topic.tensor = LogicalTensorRequirementsRecord{
+    topic.tensor = TensorBoundaryContractRecord{
         .memory_kind = MemoryKind::kHost,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 1U,
@@ -1530,8 +1630,8 @@ TEST(CompilePhysicalPlan, RejectsStridedGeometryOverflowAndDistinctSlotOverflow)
   };
   snapshot.edges = {edge(1U, 1U, 2U)};
   snapshot.ports[2].setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 64U};
-  snapshot.ports[2].setup.tensor_layout = TensorPortLayout{
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 64U};
+  snapshot.ports[2].setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -1544,7 +1644,7 @@ TEST(CompilePhysicalPlan, RejectsStridedGeometryOverflowAndDistinctSlotOverflow)
       .uri = "holomq://overflow",
       .payload_identity = tensor_payload(),
   };
-  topic.tensor = LogicalTensorRequirementsRecord{
+  topic.tensor = TensorBoundaryContractRecord{
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .max_rank = 1U,
       .max_byte_span = 64U,
@@ -1568,12 +1668,12 @@ TEST(CompilePhysicalPlan, RejectsCheckedAggregateTensorByteCapacityOverflow) {
   snapshot.generation = GraphGeneration{1U};
   snapshot.vertices = {vertex(1U, "tensor")};
   snapshot.ports = {output_port(1U, 1U, "out", tensor_payload(), 2U)};
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
   };
-  snapshot.ports.front().setup.tensor_allocation = TensorAllocationBounds{
+  snapshot.ports.front().setup.tensor_allocation = TensorPoolBounds{
       .max_rank = 1U,
       .max_byte_span = std::numeric_limits<std::size_t>::max(),
   };
@@ -1601,9 +1701,7 @@ TEST(CompilePhysicalPlan, PreservesUnresolvedProfileWithoutFabricatingStandardCa
   EXPECT_TRUE(result.generic_output_loans.empty());
   EXPECT_TRUE(result.publication_outcomes.empty());
 
-  ExecutionPlanState state;
-  state.plan_generation = 30U;
-  detail::publish_physical_plan_records(std::move(result), state);
+  auto state = published_physical_plan_state(std::move(result), 30U);
   const auto finalized = finalize_plan_artifact(state);
   ASSERT_TRUE(finalized) << finalized.error().message;
   EXPECT_NE(state.json.find("\"effective_profile\":null"), std::string::npos);
@@ -1618,11 +1716,11 @@ TEST(CompilePhysicalPlan, RejectsDeviceVisiblePoolsUntilCompileHasDeviceSelectio
   snapshot.vertices = {vertex(1U, "tensor")};
   snapshot.ports = {output_port(1U, 1U, "out", tensor_payload())};
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 4096U};
+      TensorPoolBounds{.max_rank = 2U, .max_byte_span = 4096U};
   const auto profiles = standard_profiles(snapshot.vertices.size());
 
   for (const MemoryKind memory : {MemoryKind::kCudaDevice, MemoryKind::kCudaManaged}) {
-    snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+    snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
         .memory_kind = memory,
         .dtype = DLDataType{kDLFloat, 32U, 1U},
         .rank = 2U,
@@ -1642,6 +1740,7 @@ TEST(CompilePhysicalPlan, RejectsDeviceVisiblePoolsUntilCompileHasDeviceSelectio
 //   [holomq://device-boundary] (port 2, device=0) --> boundary-sink
 //
 // REQ: COMPILE-048
+// REQ: COMPILE-064
 TEST(CompilePhysicalPlan,
      ExplicitDeviceBindingsRealizeDirectAndInterfacePoolsWithOneRunDeviceStream) {
   GraphSnapshotData snapshot;
@@ -1659,8 +1758,8 @@ TEST(CompilePhysicalPlan,
       input_port(4U, 4U, "boundary-sink", tensor_payload(), 2U),
   };
   snapshot.ports[0].setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 4096U};
-  snapshot.ports[0].setup.tensor_layout = TensorPortLayout{
+      TensorPoolBounds{.max_rank = 2U, .max_byte_span = 4096U};
+  snapshot.ports[0].setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kCudaDevice,
       .dtype = DLDataType{kDLFloat, 32U, 1U},
       .rank = 2U,
@@ -1675,7 +1774,7 @@ TEST(CompilePhysicalPlan,
       .payload_identity = tensor_payload(),
   };
   topic.bounds.publisher = PublisherEndpointBounds{.max_loaned_samples = 2U};
-  topic.tensor = LogicalTensorRequirementsRecord{
+  topic.tensor = TensorBoundaryContractRecord{
       .memory_kind = MemoryKind::kCudaDevice,
       .dtype = DLDataType{kDLFloat, 32U, 1U},
       .rank = 2U,
@@ -1737,8 +1836,6 @@ TEST(CompilePhysicalPlan,
   EXPECT_EQ(resource.run_generation, 0U);
   EXPECT_EQ(resource.process_group, ProcessGroupId{1U});
   EXPECT_EQ(resource.device, DeviceId{0});
-  ASSERT_EQ(resource.fused_linear_edges.size(), 1U);
-  EXPECT_EQ(resource.fused_linear_edges.front(), EdgeId{1U});
   EXPECT_EQ(resource.pool_count, 2U);
   EXPECT_EQ(resource.slot_capacity,
             result.tensor_allocations.front().slot_count +
@@ -1753,15 +1850,22 @@ TEST(CompilePhysicalPlan,
             result.tensor_allocations.front().release_capacity +
                 result.tensor_interface_pools.front().release_capacity);
   EXPECT_EQ(resource.materialize_before, LifecycleStage::kArm);
-  EXPECT_FALSE(resource.per_partition_stream);
-  EXPECT_FALSE(resource.per_partition_event);
-  EXPECT_FALSE(resource.per_partition_green_context);
   EXPECT_FALSE(resource.gpu_resident_backend_selected);
   EXPECT_TRUE(resource.fallback_rejected);
+  ASSERT_EQ(result.cuda_compute_streams.size(), 1U);
+  const auto& stream = result.cuda_compute_streams.front();
+  EXPECT_EQ(stream.plan_generation, resource.plan_generation);
+  EXPECT_EQ(stream.process_group, resource.process_group);
+  EXPECT_EQ(stream.device, resource.device);
+  EXPECT_EQ(stream.owner_id, resource.allocator_root_id);
+  EXPECT_FALSE(stream.partition);
+  EXPECT_EQ(stream.stream_id, "tensor-stream.32.process.1.device.0");
+  EXPECT_FALSE(stream.green_context_id);
+  ASSERT_EQ(stream.fused_linear_edges.size(), 1U);
+  EXPECT_EQ(stream.fused_linear_edges.front(), EdgeId{1U});
+  EXPECT_EQ(stream.materialize_before, LifecycleStage::kArm);
 
-  ExecutionPlanState state;
-  state.plan_generation = 32U;
-  detail::publish_physical_plan_records(std::move(result), state);
+  auto state = published_physical_plan_state(std::move(result), 32U);
   EXPECT_TRUE(valid_process_local_channel_plan(state));
 }
 
@@ -1775,6 +1879,7 @@ TEST(CompilePhysicalPlan,
 // The fanout Operators currently resolve to the same process/device stream resource, but neither
 // fanout edge receives linear-chain fusion evidence.
 // REQ: COMPILE-049
+// REQ: COMPILE-065
 TEST(CompilePhysicalPlan, AssignsOnlyStrictLinearTensorChainsToTheSharedDeviceStream) {
   GraphSnapshotData snapshot;
   snapshot.generation = GraphGeneration{1U};
@@ -1797,8 +1902,8 @@ TEST(CompilePhysicalPlan, AssignsOnlyStrictLinearTensorChainsToTheSharedDeviceSt
   };
   for (const std::size_t port_index : {0U, 2U, 4U}) {
     snapshot.ports[port_index].setup.tensor_allocation =
-        TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
-    snapshot.ports[port_index].setup.tensor_layout = TensorPortLayout{
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+    snapshot.ports[port_index].setup.tensor_layout = TensorRepresentation{
         .memory_kind = MemoryKind::kCudaDevice,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 1U,
@@ -1821,8 +1926,9 @@ TEST(CompilePhysicalPlan, AssignsOnlyStrictLinearTensorChainsToTheSharedDeviceSt
 
   ASSERT_TRUE(result.errors.empty());
   ASSERT_EQ(result.tensor_device_resources.size(), 1U);
+  ASSERT_EQ(result.cuda_compute_streams.size(), 1U);
   const std::vector expected{EdgeId{1U}, EdgeId{2U}};
-  EXPECT_EQ(result.tensor_device_resources.front().fused_linear_edges, expected);
+  EXPECT_EQ(result.cuda_compute_streams.front().fused_linear_edges, expected);
 }
 
 // The Operator has one process-local Tensor successor, but its catalog export makes total fanout
@@ -1833,6 +1939,7 @@ TEST(CompilePhysicalPlan, AssignsOnlyStrictLinearTensorChainsToTheSharedDeviceSt
 //   source -----> local-sink
 //          `----> catalog-export
 // REQ: COMPILE-049
+// REQ: COMPILE-065
 TEST(CompilePhysicalPlan, CatalogFanoutDoesNotReceiveLinearStreamAuthority) {
   GraphSnapshotData snapshot;
   snapshot.generation = GraphGeneration{1U};
@@ -1847,8 +1954,8 @@ TEST(CompilePhysicalPlan, CatalogFanoutDoesNotReceiveLinearStreamAuthority) {
       input_port(3U, 3U, "topic", tensor_payload(), 1U, PortOwnerKind::kExportedTopic),
   };
   snapshot.ports[0].setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
-  snapshot.ports[0].setup.tensor_layout = TensorPortLayout{
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+  snapshot.ports[0].setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kPinnedHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -1862,7 +1969,7 @@ TEST(CompilePhysicalPlan, CatalogFanoutDoesNotReceiveLinearStreamAuthority) {
       .payload_identity = tensor_payload(),
   };
   topic.bounds.subscriber = SubscriberEndpointBounds{.queue_depth = 1U, .max_borrowed_samples = 1U};
-  topic.tensor = LogicalTensorRequirementsRecord{
+  topic.tensor = TensorBoundaryContractRecord{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -1893,7 +2000,8 @@ TEST(CompilePhysicalPlan, CatalogFanoutDoesNotReceiveLinearStreamAuthority) {
   ASSERT_EQ(result.tensor_allocations.size(), 1U);
   EXPECT_EQ(result.tensor_allocations.front().device, DeviceId{0});
   ASSERT_EQ(result.tensor_device_resources.size(), 1U);
-  EXPECT_TRUE(result.tensor_device_resources.front().fused_linear_edges.empty());
+  ASSERT_EQ(result.cuda_compute_streams.size(), 1U);
+  EXPECT_TRUE(result.cuda_compute_streams.front().fused_linear_edges.empty());
 }
 
 // The middle Operator would need both S0/device 0 and S1/device 1, so neither edge acquires
@@ -1901,6 +2009,7 @@ TEST(CompilePhysicalPlan, CatalogFanoutDoesNotReceiveLinearStreamAuthority) {
 //
 //   source --S0/device0--> middle --S1/device1--> sink
 // REQ: COMPILE-049
+// REQ: COMPILE-065
 // REQ: COMPILE-052
 TEST(CompilePhysicalPlan, RejectsOperatorsWithAmbiguousDeviceObligations) {
   GraphSnapshotData snapshot;
@@ -1914,8 +2023,8 @@ TEST(CompilePhysicalPlan, RejectsOperatorsWithAmbiguousDeviceObligations) {
   };
   for (const std::size_t port_index : {0U, 2U}) {
     snapshot.ports[port_index].setup.tensor_allocation =
-        TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
-    snapshot.ports[port_index].setup.tensor_layout = TensorPortLayout{
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+    snapshot.ports[port_index].setup.tensor_layout = TensorRepresentation{
         .memory_kind = MemoryKind::kCudaDevice,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 1U,
@@ -1935,8 +2044,9 @@ TEST(CompilePhysicalPlan, RejectsOperatorsWithAmbiguousDeviceObligations) {
   EXPECT_NE(result.errors.front().provided.find("reason=operator_device_conflict"),
             std::string::npos);
   ASSERT_EQ(result.tensor_device_resources.size(), 2U);
-  EXPECT_TRUE(result.tensor_device_resources[0].fused_linear_edges.empty());
-  EXPECT_TRUE(result.tensor_device_resources[1].fused_linear_edges.empty());
+  ASSERT_EQ(result.cuda_compute_streams.size(), 2U);
+  EXPECT_TRUE(result.cuda_compute_streams[0].fused_linear_edges.empty());
+  EXPECT_TRUE(result.cuda_compute_streams[1].fused_linear_edges.empty());
 }
 
 // REQ: COMPILE-052
@@ -1967,6 +2077,91 @@ TEST(CompilePhysicalPlan, PublicTensorOutputPlacementResolvesStableNamesAndOwnsS
   EXPECT_EQ(plan.tensor_device_resources().front().device, DeviceId{1});
 }
 
+// REQ: COMPILE-019
+// REQ: COMPILE-052
+// REQ: COMPILE-068
+TEST(CompilePhysicalPlan, CanonicalOperatorPathJoinsParameterPartitionAndTensorPlacement) {
+  Graph graph{"canonical-operator-path-surfaces"};
+  const auto first = graph.embed<CanonicalOperatorPathTensorGraph>("a", "b/c");
+  const auto second = graph.embed<CanonicalOperatorPathTensorGraph>("a/b", "c");
+  const ClockKey root_clock = test::add_compile_test_default_clock(graph);
+  graph.bind_clock(first, first->clock_import(), root_clock);
+  graph.bind_clock(second, second->clock_import(), root_clock);
+
+  constexpr std::string_view kFirst{"a/b%2Fc"};
+  constexpr std::string_view kSecond{"a%2Fb/c"};
+  CompileOptions options;
+  options.deployment
+      .bind_tensor_output_device(TensorOutputDevicePlacement{
+          .operator_path = kFirst, .output_port = "tensor", .device = DeviceId{0}})
+      .bind_tensor_output_device(TensorOutputDevicePlacement{
+          .operator_path = kSecond, .output_port = "tensor", .device = DeviceId{1}});
+
+  const ExecutionPlan plan = compile(graph, std::move(options));
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto first_partition = plan.partitions().lookup_for_path(kFirst);
+  const auto second_partition = plan.partitions().lookup_for_path(kSecond);
+  ASSERT_TRUE(first_partition);
+  ASSERT_TRUE(second_partition);
+  EXPECT_NE(first_partition->id(), second_partition->id());
+  EXPECT_EQ(plan.partitions().lookup_for_path("a/b/c").error().code, ErrorCode::kNotFound);
+  ASSERT_EQ(plan.tensor_allocations().size(), 2U);
+  const std::array expected_placements{
+      std::pair{kFirst, DeviceId{0}},
+      std::pair{kSecond, DeviceId{1}},
+  };
+  for (const auto& [path, device] : expected_placements) {
+    const auto parameter = std::ranges::find(
+        plan.operator_parameters(), path, &OperatorParameterPlanRecord::operator_path);
+    ASSERT_NE(parameter, plan.operator_parameters().end());
+    const auto output = std::ranges::find_if(plan.ports(), [&](const PortPlanRecord& port) {
+      return port.owner_kind == PortOwnerKind::kOperator &&
+             port.owner.value == parameter->owner.id && port.direction == PortDirection::kOutput &&
+             port.local_name == "tensor";
+    });
+    ASSERT_NE(output, plan.ports().end());
+    const auto allocation = std::ranges::find(
+        plan.tensor_allocations(), output->id, &TensorAllocationPlanRecord::output);
+    ASSERT_NE(allocation, plan.tensor_allocations().end());
+    EXPECT_EQ(allocation->device, device);
+  }
+}
+
+// A CUDA-device output requires explicit deployment placement. The rejected plan must identify
+// the authored output and the missing binding rather than reporting only a broad plan failure.
+// REQ: COMPILE-052
+TEST(CompilePhysicalPlan, MissingPublicTensorOutputDeviceBindingNamesAffectedOutput) {
+  Graph graph{"missing-public-tensor-placement"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<DeviceTensorOperator>("source");
+  const auto sink = graph.op<ManifestTensorSinkOperator>("sink");
+  graph.add_flow(source->tensor, sink->input);
+
+  // Key setup: the CUDA-device Tensor output has no deployment device binding.
+  const auto plan = compile(graph);
+
+  // Key assertion: the specific diagnostic names the output and tells the author what is missing.
+  ASSERT_FALSE(plan.ok());
+  const auto diagnostic =
+      std::find_if(plan.diagnostics().begin(), plan.diagnostics().end(), [](const auto& item) {
+        return item.token == "IMPLICIT_DEVICE_ZERO_REJECTED";
+      });
+  ASSERT_NE(diagnostic, plan.diagnostics().end()) << plan.json();
+  const auto output = std::find_if(plan.ports().begin(), plan.ports().end(), [](const auto& port) {
+    return port.direction == PortDirection::kOutput && port.local_name == "tensor";
+  });
+  ASSERT_NE(output, plan.ports().end());
+  EXPECT_EQ(diagnostic->json_pointer,
+            "/ports/" + std::to_string(output->id.value()) + "/tensor_device_binding");
+  EXPECT_NE(diagnostic->required.find("bind_tensor_output_device"), std::string::npos);
+  EXPECT_EQ(diagnostic->provided, "operator_path=source,output_port=tensor,device_binding=missing");
+  EXPECT_TRUE(
+      std::none_of(plan.diagnostics().begin(), plan.diagnostics().end(), [](const auto& item) {
+        return item.token == "PROCESS_LOCAL_CHANNEL_PLAN_INVALID";
+      }));
+}
+
 // A pinned catalog pool uses the adjacent output's public placement as private synchronization
 // evidence. Without that explicit device, compilation must not infer ordinal zero.
 // REQ: CHAN-095
@@ -1982,13 +2177,14 @@ TEST(CompilePhysicalPlan, PinnedCatalogPoolUsesPublicOutputDevicePlacement) {
       .queue_depth = 1U,
       .max_borrowed_samples = 1U,
   };
-  topic_options.tensor = LogicalTensorRequirements{
-      .memory_kind = MemoryKind::kPinnedHost,
-      .dtype = DLDataType{kDLUInt, 8U, 1U},
-      .rank = 1U,
-      .logical_bounds = LogicalTensorBounds{.max_rank = 1U, .max_byte_span = 1024U, .axes = axes},
-      .strides = TensorStridePolicy::kContiguousOnly,
-      .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+  topic_options.tensor = TensorBoundaryContract{
+      .representation = {.memory_kind = MemoryKind::kPinnedHost,
+                         .dtype = DLDataType{kDLUInt, 8U, 1U},
+                         .rank = 1U,
+                         .strides = TensorStridePolicy::kContiguousOnly},
+      .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 1024U, .axes = axes},
+      .transfer =
+          TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
   };
   auto exported =
       graph.export_topic<Tensor>("holomq://public-pinned-catalog-placement", topic_options);
@@ -2013,16 +2209,31 @@ TEST(CompilePhysicalPlan, PinnedCatalogPoolUsesPublicOutputDevicePlacement) {
   EXPECT_EQ(explicit_plan.tensor_interface_pools().front().device, DeviceId{1});
   ASSERT_EQ(explicit_plan.tensor_allocations().size(), 1U);
   EXPECT_EQ(explicit_plan.tensor_allocations().front().device, DeviceId{1});
+  const auto copied_transfer =
+      std::find_if(explicit_plan.tensor_transfer_plans().begin(),
+                   explicit_plan.tensor_transfer_plans().end(),
+                   [](const auto& transfer) {
+                     return transfer.disposition == PlanDisposition::kAccepted &&
+                            transfer.requires_exportable_copy_pool;
+                   });
+  ASSERT_NE(copied_transfer, explicit_plan.tensor_transfer_plans().end());
+
+  // Key assertion: raw Tensor transfer evidence carries the same placement as its staging pool.
+  EXPECT_EQ(copied_transfer->interface_process_group,
+            explicit_plan.tensor_interface_pools().front().allocator_process_group);
+  EXPECT_EQ(copied_transfer->interface_device,
+            explicit_plan.tensor_interface_pools().front().device);
+  EXPECT_TRUE(copied_transfer->service_owner_id.starts_with("service.tensor.transfer.topic."));
   const auto state = ExecutionPlanAccess::retain(explicit_plan);
   ASSERT_NE(state, nullptr);
   const auto transport_retention =
-      std::find_if(state->pool_capacity_contributors.begin(),
-                   state->pool_capacity_contributors.end(),
-                   [&](const auto& contributor) {
-                     return contributor.contributor_id ==
-                            state->tensor_allocations.front().pool_id + ".transport-retention";
+      std::find_if(state->pool_capacity_dependencies.begin(),
+                   state->pool_capacity_dependencies.end(),
+                   [&](const auto& dependency) {
+                     return dependency.pool_id == state->tensor_allocations.front().pool_id &&
+                            dependency.origin == PoolClaimOrigin::kTransportRetention;
                    });
-  ASSERT_NE(transport_retention, state->pool_capacity_contributors.end());
+  ASSERT_NE(transport_retention, state->pool_capacity_dependencies.end());
   // Key assertion: an exported direct output keeps relay/re-export ownership on the separate
   // imported-retention live set rather than folding it into queue delivery.
   EXPECT_NE(std::find(transport_retention->reasons.begin(),
@@ -2163,6 +2374,7 @@ TEST(CompilePhysicalPlan, PublicTensorOutputPlacementRejectsTwoDevicesForOneOper
 // REQ: CHAN-098
 // REQ: CHAN-118
 // REQ: COMPILE-048
+// REQ: COMPILE-064
 TEST(CompilePhysicalPlan, PassThroughTensorUsesTypedServiceWithoutFabricatingPoolEvidence) {
   GraphSnapshotData snapshot;
   snapshot.generation = GraphGeneration{1U};
@@ -2194,19 +2406,185 @@ TEST(CompilePhysicalPlan, PassThroughTensorUsesTypedServiceWithoutFabricatingPoo
   ASSERT_EQ(result.process_local_channel_subscribers.size(), 1U);
   EXPECT_FALSE(result.process_local_channel_subscribers.front().event_wake);
 
-  ExecutionPlanState state;
-  state.plan_generation = 35U;
-  detail::publish_physical_plan_records(std::move(result), state);
+  auto state = published_physical_plan_state(std::move(result), 35U);
   EXPECT_TRUE(valid_process_local_channel_plan(state));
 
-  const auto fallback = lower_for_test(snapshot, 35U, profiles, {}, {}, {}, nullptr, {}, {}, true);
+  auto fallback = lower_for_test(
+      snapshot, 35U, profiles, {}, {}, {}, nullptr, {}, {}, kForceHoloMQProcessLocalInline);
   ASSERT_TRUE(fallback.errors.empty());
   ASSERT_EQ(fallback.process_local_channel_services.size(), 1U);
   EXPECT_EQ(fallback.process_local_channel_services.front().delivery_kind,
             ProcessLocalChannelDeliveryKind::kHoloMQ);
-  EXPECT_TRUE(fallback.process_local_channel_services.front().event_wake);
+  EXPECT_FALSE(fallback.process_local_channel_services.front().event_wake);
   ASSERT_EQ(fallback.process_local_channel_subscribers.size(), 1U);
-  EXPECT_TRUE(fallback.process_local_channel_subscribers.front().event_wake);
+  EXPECT_FALSE(fallback.process_local_channel_subscribers.front().event_wake);
+  ExecutionPlanState fallback_state;
+  fallback_state.plan_generation = 35U;
+  fallback_state.execution_partitions = default_execution_partitions(snapshot);
+  detail::publish_physical_plan_records(std::move(fallback), fallback_state);
+  EXPECT_TRUE(valid_process_local_channel_plan(fallback_state));
+
+  // Key setup: put the otherwise exact forced-HoloMQ Tensor edge on two execution partitions.
+  const std::array split_partitions{
+      ExecutionPartitionRecord{
+          .id = ExecutionPartitionId{1U}, .members = {VertexId{1U}}, .execution_lane = 0U},
+      ExecutionPartitionRecord{
+          .id = ExecutionPartitionId{2U}, .members = {VertexId{2U}}, .execution_lane = 1U},
+  };
+  const auto split = lower_for_test(snapshot,
+                                    35U,
+                                    profiles,
+                                    {},
+                                    {},
+                                    {},
+                                    nullptr,
+                                    {},
+                                    split_partitions,
+                                    kForceHoloMQProcessLocalInline);
+  ASSERT_TRUE(split.errors.empty());
+  // Key assertion: cross-partition Tensor delivery retains its transport event wake.
+  EXPECT_TRUE(split.process_local_channel_services.front().event_wake);
+  EXPECT_TRUE(split.process_local_channel_subscribers.front().event_wake);
+}
+
+// A complete raw-Tensor fanout uses the serialized activation cut while retaining one independent
+// descriptor/sidecar claim per subscriber; descriptor-backed schemas remain a later payload gate.
+// REQ: CHAN-098
+// REQ: CHAN-101
+// REQ: RUNTIME-019
+TEST(CompilePhysicalPlan, SuppressesRawTensorFanoutEventWakeServiceWide) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "left"), vertex(3U, "right")};
+  snapshot.ports = {
+      output_port(1U, 1U, "out", tensor_payload()),
+      input_port(2U, 2U, "in", tensor_payload()),
+      input_port(3U, 3U, "in", tensor_payload()),
+  };
+  snapshot.edges = {edge(1U, 1U, 2U), edge(2U, 1U, 3U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const auto partitions = default_execution_partitions(snapshot);
+
+  // Key setup: lower one complete two-target raw-Tensor service on a shared execution partition.
+  auto result = lower_for_test(snapshot, 35U, profiles, {}, {}, {}, nullptr, {}, partitions);
+
+  // Key assertion: HoloMQ wake suppression is uniform across both Tensor subscribers and replay
+  // rejects a changed subscriber wake fact.
+  ASSERT_TRUE(result.errors.empty());
+  ASSERT_EQ(result.process_local_channel_services.size(), 1U);
+  ASSERT_EQ(result.process_local_channel_subscribers.size(), 2U);
+  const auto& service = result.process_local_channel_services.front();
+  EXPECT_EQ(service.delivery_kind, ProcessLocalChannelDeliveryKind::kHoloMQ);
+  EXPECT_TRUE(service.tensor_payload);
+  EXPECT_EQ(service.payload_identity.kind, PayloadIdentityKind::kTensor);
+  EXPECT_EQ(service.payload_identity.payload_kind, PayloadKind::kDescriptorBacked);
+  EXPECT_FALSE(service.event_wake);
+  EXPECT_TRUE(std::ranges::none_of(result.process_local_channel_subscribers,
+                                   [](const auto& subscriber) { return subscriber.event_wake; }));
+  ExecutionPlanState state;
+  state.plan_generation = 35U;
+  state.execution_partitions = partitions;
+  detail::publish_physical_plan_records(std::move(result), state);
+  EXPECT_TRUE(valid_process_local_channel_plan(state));
+  state.process_local_channel_subscribers.back().event_wake = true;
+  EXPECT_FALSE(valid_process_local_channel_plan(state));
+}
+
+// A complete single-Tensor descriptor schema fanout uses the same serialized activation cut while
+// preserving one verified owning schema envelope and sidecar claim per subscriber.
+// REQ: CHAN-099
+// REQ: CHAN-101
+// REQ: CHAN-119
+// REQ: RUNTIME-019
+TEST(CompilePhysicalPlan, SuppressesSingleDescriptorTensorSchemaFanoutEventWakeServiceWide) {
+  const auto payload = image_payload();
+  const RuntimePortTypeOps* const type_ops = runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(type_ops, nullptr);
+
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "left"), vertex(3U, "right")};
+  snapshot.ports = {
+      output_port(1U, 1U, "out", payload),
+      input_port(2U, 2U, "in", payload),
+      input_port(3U, 3U, "in", payload),
+  };
+  for (auto& port : snapshot.ports) {
+    port.serialized_payload_capacity_bytes = type_ops->wire_capacity;
+  }
+  snapshot.edges = {edge(1U, 1U, 2U), edge(2U, 1U, 3U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const auto partitions = default_execution_partitions(snapshot);
+
+  // Key setup: lower one complete two-target Image service on a shared execution partition.
+  auto result = lower_for_test(snapshot, 35U, profiles, {}, {}, {}, nullptr, {}, partitions);
+
+  // Key assertion: both descriptor-sidecar subscribers are uniformly eventless, while replay
+  // rejects a changed subscriber wake fact.
+  ASSERT_TRUE(result.errors.empty());
+  ASSERT_EQ(result.process_local_channel_services.size(), 1U);
+  ASSERT_EQ(result.process_local_channel_subscribers.size(), 2U);
+  const auto& service = result.process_local_channel_services.front();
+  EXPECT_EQ(service.delivery_kind, ProcessLocalChannelDeliveryKind::kHoloMQ);
+  EXPECT_TRUE(service.tensor_payload);
+  EXPECT_EQ(service.payload_identity.kind, PayloadIdentityKind::kSchema);
+  EXPECT_EQ(service.payload_identity.payload_kind, PayloadKind::kDescriptorBacked);
+  EXPECT_LE(service.tensor_fields.size(), 1U);
+  EXPECT_FALSE(service.event_wake);
+  EXPECT_TRUE(std::ranges::none_of(result.process_local_channel_subscribers,
+                                   [](const auto& subscriber) { return subscriber.event_wake; }));
+  ExecutionPlanState state;
+  state.plan_generation = 35U;
+  state.execution_partitions = partitions;
+  detail::publish_physical_plan_records(std::move(result), state);
+  EXPECT_TRUE(valid_process_local_channel_plan(state));
+  state.process_local_channel_subscribers.back().event_wake = true;
+  EXPECT_FALSE(valid_process_local_channel_plan(state));
+}
+
+// A multi-Tensor descriptor schema shares one publication/readiness sequence while preserving the
+// complete frozen field-storage inventory for every subscriber.
+// REQ: CHAN-099
+// REQ: CHAN-101
+// REQ: CHAN-120
+TEST(CompilePhysicalPlan, SuppressesMultiDescriptorTensorSchemaFanoutEventWakeServiceWide) {
+  const RuntimePortTypeOps* const type_ops = runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(type_ops, nullptr);
+  auto fixture = make_multi_tensor_snapshot(type_ops->wire_capacity);
+  fixture.graph.vertices.push_back(vertex(3U, "second-sink"));
+  fixture.graph.ports.push_back(input_port(3U, 3U, "frames", image_payload(), 2U));
+  auto& second_input = fixture.graph.ports.back();
+  second_input.serialized_payload_capacity_bytes = type_ops->wire_capacity;
+  second_input.descriptor_tensor_field_count = 3U;
+  second_input.setup.tensor_fields = fixture.graph.ports.front().setup.tensor_fields;
+  fixture.graph.edges.push_back(edge(2U, 1U, 3U, 2U));
+  fixture.profiles = standard_profiles(fixture.graph.vertices.size());
+  fixture.partitions = default_execution_partitions(fixture.graph);
+
+  // Key setup: lower one complete two-target, three-field descriptor schema service on a shared
+  // execution partition.
+  auto result = lower_for_test(
+      fixture.graph, 35U, fixture.profiles, {}, {}, {}, nullptr, {}, fixture.partitions);
+
+  // Key assertion: the complete three-field service is uniformly eventless with its per-field
+  // contracts intact, while replay rejects a changed subscriber wake fact.
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  ASSERT_EQ(result.process_local_channel_services.size(), 1U);
+  ASSERT_EQ(result.process_local_channel_subscribers.size(), 2U);
+  const auto& service = result.process_local_channel_services.front();
+  EXPECT_EQ(service.delivery_kind, ProcessLocalChannelDeliveryKind::kHoloMQ);
+  ASSERT_EQ(service.tensor_fields.size(), 3U);
+  EXPECT_FALSE(service.event_wake);
+  EXPECT_TRUE(std::ranges::none_of(result.process_local_channel_subscribers,
+                                   [](const auto& subscriber) { return subscriber.event_wake; }));
+  ExecutionPlanState state;
+  state.plan_generation = 35U;
+  state.execution_partitions = fixture.partitions;
+  detail::publish_physical_plan_records(std::move(result), state);
+  EXPECT_TRUE(valid_process_local_channel_plan(state));
+  state.process_local_channel_subscribers.back().event_wake = true;
+  EXPECT_FALSE(valid_process_local_channel_plan(state));
 }
 
 // A cross-process direct Tensor edge is represented by one BufferHandle-capable service
@@ -2215,6 +2593,7 @@ TEST(CompilePhysicalPlan, PassThroughTensorUsesTypedServiceWithoutFabricatingPoo
 //   source [process A] --[cross-process, drop-oldest, depth=2]--> sink [process B]
 //
 // REQ: COMPILE-048
+// REQ: COMPILE-064
 // REQ: CHAN-085
 // REQ: CHAN-088
 TEST(CompilePhysicalPlan, CrossProcessTensorCarriesPoolFactsIntoDedicatedService) {
@@ -2226,8 +2605,8 @@ TEST(CompilePhysicalPlan, CrossProcessTensorCarriesPoolFactsIntoDedicatedService
       input_port(2U, 2U, "in", tensor_payload(), 2U),
   };
   snapshot.ports[0].setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
-  snapshot.ports[0].setup.tensor_layout = TensorPortLayout{
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+  snapshot.ports[0].setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -2259,10 +2638,7 @@ TEST(CompilePhysicalPlan, CrossProcessTensorCarriesPoolFactsIntoDedicatedService
   EXPECT_FALSE(service.tensor_device.valid());
   EXPECT_NE(service.source_process_group, service.target_process_group);
 
-  ExecutionPlanState state;
-  state.plan_generation = 37U;
-  state.vertex_process_placements = placements;
-  detail::publish_physical_plan_records(std::move(result), state);
+  auto state = published_physical_plan_state(std::move(result), 37U, placements);
   // The top-level compile reconciliation stamps the partition-derived locality after physical
   // lowering. This source-private fixture invokes the physical pass directly, so mirror that one
   // final-plan transformation before exercising the cross-process validator.
@@ -2349,7 +2725,7 @@ TEST(CompilePhysicalPlan, CrossProcessTensorCarriesPoolFactsIntoDedicatedService
 // REQ: CHAN-088
 // REQ: CHAN-093
 TEST(CompilePhysicalPlan, CrossProcessTensorRejectsUnrealizableDirectLayouts) {
-  const auto lower_with_target = [](TensorPortLayout target_layout,
+  const auto lower_with_target = [](TensorRepresentation target_layout,
                                     MemoryKind source_memory = MemoryKind::kHost,
                                     std::uint32_t maximum_rank = 1U,
                                     bool provide_device_binding = true) {
@@ -2361,8 +2737,8 @@ TEST(CompilePhysicalPlan, CrossProcessTensorRejectsUnrealizableDirectLayouts) {
         input_port(2U, 2U, "in", tensor_payload(), 1U),
     };
     snapshot.ports[0].setup.tensor_allocation =
-        TensorAllocationBounds{.max_rank = maximum_rank, .max_byte_span = 1024U};
-    snapshot.ports[0].setup.tensor_layout = TensorPortLayout{
+        TensorPoolBounds{.max_rank = maximum_rank, .max_byte_span = 1024U};
+    snapshot.ports[0].setup.tensor_layout = TensorRepresentation{
         .memory_kind = source_memory,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 1U,
@@ -2396,9 +2772,10 @@ TEST(CompilePhysicalPlan, CrossProcessTensorRejectsUnrealizableDirectLayouts) {
   };
 
   const std::array incompatible{
-      TensorPortLayout{.memory_kind = MemoryKind::kCudaDevice},
-      TensorPortLayout{.dtype = DLDataType{kDLFloat, 8U, 1U}},
-      TensorPortLayout{.rank = 2U},
+      TensorRepresentation{.memory_kind = MemoryKind::kCudaDevice},
+      TensorRepresentation{.dtype = DLDataType{kDLFloat, 8U, 1U}},
+      TensorRepresentation{.rank = 2U},
+      TensorRepresentation{.strides = TensorStridePolicy::kBoundedStrided},
   };
   for (const auto& target : incompatible) {
     const auto result = lower_with_target(target);
@@ -2427,7 +2804,7 @@ TEST(CompilePhysicalPlan, CrossProcessTensorRejectsUnrealizableDirectLayouts) {
       }));
   EXPECT_TRUE(excessive_rank.cross_process_channel_services.empty());
 
-  const auto compatible = lower_with_target(TensorPortLayout{
+  const auto compatible = lower_with_target(TensorRepresentation{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -2436,7 +2813,7 @@ TEST(CompilePhysicalPlan, CrossProcessTensorRejectsUnrealizableDirectLayouts) {
   EXPECT_EQ(compatible.cross_process_channel_services.size(), 1U);
 
   const auto pinned = lower_with_target(
-      TensorPortLayout{
+      TensorRepresentation{
           .memory_kind = MemoryKind::kPinnedHost,
           .dtype = DLDataType{kDLUInt, 8U, 1U},
           .rank = 1U,
@@ -2457,8 +2834,8 @@ TEST(CompilePhysicalPlan, CrossProcessTensorRejectsUnrealizableDirectLayouts) {
 // joins the resolved direct-pool contract so an implicit host default cannot contradict a target.
 // REQ: GRAPH-025
 TEST(CompilePhysicalPlan, SameProcessDirectTensorPoolSatisfiesEveryTargetLayout) {
-  const auto lower_with_layouts = [](std::optional<TensorPortLayout> source_layout,
-                                     TensorPortLayout target_layout) {
+  const auto lower_with_layouts = [](std::optional<TensorRepresentation> source_layout,
+                                     TensorRepresentation target_layout) {
     GraphSnapshotData snapshot;
     snapshot.generation = GraphGeneration{1U};
     snapshot.vertices = {vertex(1U, "source"), vertex(2U, "sink")};
@@ -2467,7 +2844,7 @@ TEST(CompilePhysicalPlan, SameProcessDirectTensorPoolSatisfiesEveryTargetLayout)
         input_port(2U, 2U, "in", tensor_payload(), 1U),
     };
     snapshot.ports[0].setup.tensor_allocation =
-        TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 1024U};
+        TensorPoolBounds{.max_rank = 2U, .max_byte_span = 1024U};
     snapshot.ports[0].setup.tensor_layout = source_layout;
     snapshot.ports[1].setup.tensor_layout = target_layout;
     snapshot.edges = {edge(1U, 1U, 2U, 1U)};
@@ -2482,9 +2859,9 @@ TEST(CompilePhysicalPlan, SameProcessDirectTensorPoolSatisfiesEveryTargetLayout)
   };
 
   const auto expect_rejected = [&](std::string_view label,
-                                   std::optional<TensorPortLayout>
+                                   std::optional<TensorRepresentation>
                                        source_layout,
-                                   TensorPortLayout target_layout,
+                                   TensorRepresentation target_layout,
                                    std::string_view expected_token) {
     SCOPED_TRACE(label);
     const auto result = lower_with_layouts(std::move(source_layout), std::move(target_layout));
@@ -2494,26 +2871,82 @@ TEST(CompilePhysicalPlan, SameProcessDirectTensorPoolSatisfiesEveryTargetLayout)
     EXPECT_TRUE(result.process_local_channel_services.empty());
   };
 
-  const TensorPortLayout compatible{
-      .memory_kind = MemoryKind::kHost, .dtype = DLDataType{kDLUInt, 8U, 1U}, .rank = 1U};
+  const TensorRepresentation compatible{.memory_kind = MemoryKind::kHost,
+                                        .dtype = DLDataType{kDLUInt, 8U, 1U},
+                                        .rank = 1U,
+                                        .strides = TensorStridePolicy::kContiguousOnly};
   expect_rejected("implicit host",
                   std::nullopt,
-                  TensorPortLayout{.memory_kind = MemoryKind::kCudaDevice},
+                  TensorRepresentation{.memory_kind = MemoryKind::kCudaDevice},
                   "PHYSICAL_TENSOR_MEMORY_KIND_UNRESOLVED");
   expect_rejected("memory kind",
                   compatible,
-                  TensorPortLayout{.memory_kind = MemoryKind::kCudaDevice},
+                  TensorRepresentation{.memory_kind = MemoryKind::kCudaDevice},
                   "PHYSICAL_TENSOR_LAYOUT_MISMATCH");
   expect_rejected("dtype",
                   compatible,
-                  TensorPortLayout{.dtype = DLDataType{kDLFloat, 8U, 1U}},
+                  TensorRepresentation{.dtype = DLDataType{kDLFloat, 8U, 1U}},
                   "PHYSICAL_TENSOR_LAYOUT_MISMATCH");
   expect_rejected(
-      "rank", compatible, TensorPortLayout{.rank = 2U}, "PHYSICAL_TENSOR_LAYOUT_MISMATCH");
+      "rank", compatible, TensorRepresentation{.rank = 2U}, "PHYSICAL_TENSOR_LAYOUT_MISMATCH");
+  expect_rejected("strides",
+                  compatible,
+                  TensorRepresentation{.strides = TensorStridePolicy::kBoundedStrided},
+                  "PHYSICAL_TENSOR_LAYOUT_MISMATCH");
 
   const auto accepted = lower_with_layouts(compatible, compatible);
   EXPECT_TRUE(accepted.errors.empty());
   EXPECT_EQ(accepted.process_local_channel_services.size(), 1U);
+}
+
+// A direct allocation can leave some axis bounds unconstrained, but it cannot satisfy an input
+// that requires bounds for more axes than the allocation records.
+//
+// Graph topology:
+//   source.out -- Tensor --> sink.in
+// REQ: GRAPH-025
+TEST(CompilePhysicalPlan, SameProcessDirectTensorPoolRejectsIncompleteAxisInventory) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "sink")};
+  snapshot.ports = {
+      output_port(1U, 1U, "out", tensor_payload(), 1U),
+      input_port(2U, 2U, "in", tensor_payload(), 1U),
+  };
+  const TensorRepresentation layout{
+      .memory_kind = MemoryKind::kHost,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = 2U,
+      .strides = TensorStridePolicy::kContiguousOnly,
+  };
+  snapshot.ports[0].setup.tensor_allocation =
+      TensorPoolBounds{.max_rank = 2U, .max_byte_span = 64U};
+  snapshot.ports[0].setup.tensor_layout = layout;
+  snapshot.ports[0].setup.tensor_contract = TensorContractRecord{
+      .role = TensorContractRole::kOutput,
+      .representation = layout,
+      .max_rank = 2U,
+      .max_byte_span = 64U,
+      .axes = {{.max_extent = 8U}},
+  };
+  snapshot.ports[1].setup.tensor_layout = layout;
+  snapshot.ports[1].setup.tensor_contract = TensorContractRecord{
+      .role = TensorContractRole::kInput,
+      .representation = layout,
+      .max_rank = 2U,
+      .max_byte_span = 64U,
+      .axes = {{.max_extent = 8U}, {.max_extent = 8U}},
+  };
+  snapshot.edges = {edge(1U, 1U, 2U, 1U)};
+
+  // Key setup: the direct provider has one axis row while the input requires two.
+  const auto result = lower_for_test(snapshot, 42U, standard_profiles(snapshot.vertices.size()));
+
+  // Key assertion: direct admission delegates to the complete provider-compatibility contract.
+  EXPECT_TRUE(std::ranges::any_of(result.errors, [](const auto& error) {
+    return error.token == "PHYSICAL_TENSOR_LAYOUT_MISMATCH";
+  }));
+  EXPECT_TRUE(result.process_local_channel_services.empty());
 }
 
 // Every policy layer is retained for future converter insertion. Until that lowerer exists, the
@@ -2534,10 +2967,10 @@ TEST(CompilePhysicalPlan, SameProcessTensorRejectsUnimplementedMemoryConversionP
         output_port(1U, 1U, "out", tensor_payload(), 1U),
         input_port(2U, 2U, "in", tensor_payload(), 1U),
     };
-    const TensorPortLayout layout{
+    const TensorRepresentation layout{
         .memory_kind = MemoryKind::kHost, .dtype = DLDataType{kDLUInt, 8U, 1U}, .rank = 1U};
     snapshot.ports[0].setup.tensor_allocation =
-        TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
     snapshot.ports[0].setup.tensor_layout = layout;
     snapshot.ports[1].setup.tensor_layout = layout;
     snapshot.ports[1].setup.memory_conversion = input_setup;
@@ -2587,10 +3020,64 @@ TEST(CompilePhysicalPlan, SameProcessTensorRejectsUnimplementedMemoryConversionP
   EXPECT_EQ(reset_by_edge_override.process_local_channel_services.size(), 1U);
 }
 
+// Descriptor-schema bindings are discovered before raw Tensor bindings, but the final private
+// Channel families must be canonical regardless of that lowering-phase insertion order.
+//
+//   raw-source   --[edge 1]--> raw-sink
+//   image-source --[edge 2]--> image-sink
+//
+// REQ: COMPILE-009
+// REQ: CHAN-096
+// REQ: CHAN-119
+TEST(CompilePhysicalPlan, CanonicalizesDescriptorAndRawTensorBindingsAfterCompleteLowering) {
+  const auto image = image_payload();
+  const RuntimePortTypeOps* const image_ops = runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(image_ops, nullptr);
+
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "raw-source"),
+                       vertex(2U, "raw-sink"),
+                       vertex(3U, "image-source"),
+                       vertex(4U, "image-sink")};
+  snapshot.ports = {
+      output_port(1U, 1U, "raw", tensor_payload()),
+      input_port(2U, 2U, "raw", tensor_payload()),
+      output_port(3U, 3U, "image", image),
+      input_port(4U, 4U, "image", image),
+  };
+  snapshot.ports[2].serialized_payload_capacity_bytes = image_ops->wire_capacity;
+  snapshot.ports[3].serialized_payload_capacity_bytes = image_ops->wire_capacity;
+  snapshot.edges = {edge(1U, 1U, 2U), edge(2U, 3U, 4U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+
+  // Key setup: descriptor lowering appends source 3 before raw Tensor lowering appends source 1,
+  // making insertion order the reverse of the canonical source key.
+  const auto result = lower_for_test(snapshot, 35U, profiles);
+  ASSERT_TRUE(result.errors.empty());
+  ASSERT_EQ(result.process_local_channel_services.size(), 2U);
+  ASSERT_EQ(result.process_local_channel_publishers.size(), 2U);
+  ASSERT_EQ(result.process_local_channel_subscribers.size(), 2U);
+
+  // Key assertion: one final canonicalization orders every private Channel family by its complete
+  // key after both binding paths have contributed records.
+  EXPECT_EQ(result.process_local_channel_services[0].source, PortId{1U});
+  EXPECT_EQ(result.process_local_channel_services[0].payload_identity.kind,
+            PayloadIdentityKind::kTensor);
+  EXPECT_EQ(result.process_local_channel_services[1].source, PortId{3U});
+  EXPECT_EQ(result.process_local_channel_services[1].payload_identity.kind,
+            PayloadIdentityKind::kSchema);
+  EXPECT_EQ(result.process_local_channel_publishers[0].source, PortId{1U});
+  EXPECT_EQ(result.process_local_channel_publishers[1].source, PortId{3U});
+  EXPECT_EQ(result.process_local_channel_subscribers[0].edge, EdgeId{1U});
+  EXPECT_EQ(result.process_local_channel_subscribers[1].edge, EdgeId{2U});
+}
+
 // Descriptor-backed generated Image values carry bounded metadata beside one retained Tensor.
 // Process-local lowering must therefore select the Tensor-aware service while leaving storage
 // authority in the published Image sample rather than fabricating a direct-output allocation pool.
 // REQ: COMPILE-048
+// REQ: COMPILE-064
 // REQ: CHAN-084
 // REQ: CHAN-099
 // REQ: CHAN-119
@@ -2645,18 +3132,22 @@ TEST(CompilePhysicalPlan, DescriptorTensorImageUsesTypedServiceWithoutFabricatin
   EXPECT_TRUE(result.process_local_channel_publishers.front().replacement_attribution_required);
   EXPECT_FALSE(result.process_local_channel_subscribers.front().event_wake);
 
-  ExecutionPlanState state;
-  state.plan_generation = 36U;
-  detail::publish_physical_plan_records(std::move(result), state);
+  auto state = published_physical_plan_state(std::move(result), 36U);
   EXPECT_TRUE(valid_process_local_channel_plan(state));
 
-  const auto fallback = lower_for_test(snapshot, 36U, profiles, {}, {}, {}, nullptr, {}, {}, true);
+  auto fallback = lower_for_test(
+      snapshot, 36U, profiles, {}, {}, {}, nullptr, {}, {}, kForceHoloMQProcessLocalInline);
   ASSERT_TRUE(fallback.errors.empty());
   ASSERT_EQ(fallback.process_local_channel_services.size(), 1U);
   EXPECT_EQ(fallback.process_local_channel_services.front().delivery_kind,
             ProcessLocalChannelDeliveryKind::kHoloMQ);
-  EXPECT_TRUE(fallback.process_local_channel_services.front().event_wake);
-  EXPECT_TRUE(fallback.process_local_channel_subscribers.front().event_wake);
+  EXPECT_FALSE(fallback.process_local_channel_services.front().event_wake);
+  EXPECT_FALSE(fallback.process_local_channel_subscribers.front().event_wake);
+  ExecutionPlanState fallback_state;
+  fallback_state.plan_generation = 36U;
+  fallback_state.execution_partitions = default_execution_partitions(snapshot);
+  detail::publish_physical_plan_records(std::move(fallback), fallback_state);
+  EXPECT_TRUE(valid_process_local_channel_plan(fallback_state));
 }
 
 // A second Tensor-bearing root must select the same bounded descriptor service as Image. Its
@@ -2692,7 +3183,18 @@ TEST(CompilePhysicalPlan, DescriptorTensorPacketUsesGenericBoundedServiceAndStag
   EXPECT_TRUE(local.tensor_allocations.empty());
   EXPECT_TRUE(local.tensor_interface_pools.empty());
 
-  const TensorPortLayout layout{
+  // Key setup: force the exact 1:1 descriptor schema through HoloMQ instead of direct retention.
+  const auto fallback = lower_for_test(
+      snapshot, 37U, profiles, {}, {}, {}, nullptr, {}, {}, kForceHoloMQProcessLocalInline);
+  ASSERT_TRUE(fallback.errors.empty());
+  ASSERT_EQ(fallback.process_local_channel_services.size(), 1U);
+  // Key assertion: Schema+Tensor(s) uses the same eventless activation-cut contract as Image.
+  EXPECT_EQ(fallback.process_local_channel_services.front().delivery_kind,
+            ProcessLocalChannelDeliveryKind::kHoloMQ);
+  EXPECT_FALSE(fallback.process_local_channel_services.front().event_wake);
+  EXPECT_FALSE(fallback.process_local_channel_subscribers.front().event_wake);
+
+  const TensorRepresentation layout{
       .memory_kind = MemoryKind::kHost,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -2777,12 +3279,16 @@ TEST(CompilePhysicalPlan, RejectsAggregateDescriptorTensorFanoutAboveMemoryBuffe
   EXPECT_TRUE(admitted_result.errors.empty());
   ASSERT_EQ(admitted_result.process_local_channel_services.size(), 2U);
   EXPECT_EQ(admitted_result.process_local_channel_subscribers.size(), maximum);
-  // Key assertion: raw Tensor fanout remains on HoloMQ for both queue-policy services.
+  // Key assertion: raw Tensor fanout remains on HoloMQ, while the complete same-partition sibling
+  // family suppresses event wakes for both queue-policy services.
   EXPECT_TRUE(
       std::ranges::all_of(admitted_result.process_local_channel_services, [](const auto& service) {
         return service.delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ &&
-               service.event_wake;
+               !service.event_wake &&
+               service.event_wake_reason == ProcessLocalHoloMQEventWakeReason::kSuppressed;
       }));
+  EXPECT_TRUE(std::ranges::none_of(admitted_result.process_local_channel_subscribers,
+                                   [](const auto& subscriber) { return subscriber.event_wake; }));
 
   const RuntimePortTypeOps* const image_ops = runtime_port_type_ops<schema::ImageT>();
   ASSERT_NE(image_ops, nullptr);
@@ -2791,12 +3297,16 @@ TEST(CompilePhysicalPlan, RejectsAggregateDescriptorTensorFanoutAboveMemoryBuffe
       lower_for_test(admitted_image, 37U, standard_profiles(admitted_image.vertices.size()));
   ASSERT_TRUE(admitted_image_result.errors.empty());
   ASSERT_EQ(admitted_image_result.process_local_channel_services.size(), 2U);
-  // Key assertion: descriptor-Tensor schema fanout also retains the sidecar-backed HoloMQ path.
+  // Key assertion: descriptor-Tensor schema fanout retains HoloMQ and suppresses both sibling
+  // service wakes under the same complete-family proof.
   EXPECT_TRUE(std::ranges::all_of(
       admitted_image_result.process_local_channel_services, [](const auto& service) {
         return service.delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ &&
-               service.event_wake;
+               !service.event_wake &&
+               service.event_wake_reason == ProcessLocalHoloMQEventWakeReason::kSuppressed;
       }));
+  EXPECT_TRUE(std::ranges::none_of(admitted_image_result.process_local_channel_subscribers,
+                                   [](const auto& subscriber) { return subscriber.event_wake; }));
 
   auto tensor = make_snapshot(maximum + 1U, tensor_payload(), 0U);
   auto tensor_result = lower_for_test(tensor, 38U, standard_profiles(tensor.vertices.size()));
@@ -2814,14 +3324,15 @@ TEST(CompilePhysicalPlan, RejectsAggregateDescriptorTensorFanoutAboveMemoryBuffe
 }
 
 // REQ: COMPILE-048
+// REQ: COMPILE-064
 TEST(CompilePhysicalPlan, DeviceResourceLoweringRequiresTheFinalAcceptedCover) {
   GraphSnapshotData snapshot;
   snapshot.generation = GraphGeneration{1U};
   snapshot.vertices = {vertex(1U, "source"), vertex(2U, "other")};
   snapshot.ports = {output_port(1U, 1U, "out", tensor_payload())};
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 64U};
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 64U};
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kCudaDevice,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -2847,6 +3358,7 @@ TEST(CompilePhysicalPlan, DeviceResourceLoweringRequiresTheFinalAcceptedCover) {
 }
 
 // REQ: COMPILE-048
+// REQ: COMPILE-064
 TEST(PartitionResourceSeparationTest, NoImplicitStreamPoolOrGreenContext) {
   GraphSnapshotData snapshot;
   snapshot.generation = GraphGeneration{1U};
@@ -2857,8 +3369,8 @@ TEST(PartitionResourceSeparationTest, NoImplicitStreamPoolOrGreenContext) {
   };
   snapshot.edges = {edge(1U, 1U, 2U, 2U)};
   snapshot.ports.front().setup.tensor_allocation =
-      TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1024U};
-  snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
       .memory_kind = MemoryKind::kCudaDevice,
       .dtype = DLDataType{kDLUInt, 8U, 1U},
       .rank = 1U,
@@ -2903,9 +3415,9 @@ TEST(PartitionResourceSeparationTest, NoImplicitStreamPoolOrGreenContext) {
   ASSERT_EQ(baseline.tensor_device_resources.size(), 1U);
   ASSERT_EQ(source_chain.tensor_device_resources.size(), 1U);
   EXPECT_EQ(baseline.tensor_device_resources.front(), source_chain.tensor_device_resources.front());
-  EXPECT_FALSE(baseline.tensor_device_resources.front().per_partition_stream);
-  EXPECT_FALSE(baseline.tensor_device_resources.front().per_partition_event);
-  EXPECT_FALSE(baseline.tensor_device_resources.front().per_partition_green_context);
+  ASSERT_EQ(baseline.cuda_compute_streams.size(), 1U);
+  ASSERT_EQ(source_chain.cuda_compute_streams.size(), 1U);
+  EXPECT_EQ(baseline.cuda_compute_streams.front(), source_chain.cuda_compute_streams.front());
   EXPECT_FALSE(baseline.tensor_device_resources.front().gpu_resident_backend_selected);
 }
 

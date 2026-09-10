@@ -9,8 +9,10 @@
 
 #include <array>
 #include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
@@ -30,6 +32,7 @@
 #include <holoscan/core/parameter_catalog.hpp>
 #include <holoscan/core/parameter_schema.hpp>
 #include <holoscan/core/port.hpp>
+#include <holoscan/core/rate.hpp>
 #include <holoscan/core/readiness_source.hpp>
 #include <holoscan/core/source_id.hpp>
 #include <holoscan/core/temporal_plan.hpp>
@@ -158,7 +161,7 @@ enum class AlgorithmMaturity : std::uint8_t {
 enum class PlanDisposition : std::uint8_t {
   kAccepted = 0,          ///< The requested algorithm produced the accepted cover.
   kRejected = 1,          ///< Selection or planning failed without fallback.
-  kExplicitFallback = 2,  ///< Reserved schema value; EA1 never produces it.
+  kExplicitFallback = 2,  ///< Reserved schema value; baseline never produces it.
 };
 
 /// @brief Record the authority that selected one planning algorithm.
@@ -167,8 +170,8 @@ enum class PlanSelectionSource : std::uint8_t {
   kCompilerPolicy = 1,       ///< Reserved compiler-policy selection.
   kCompilerService = 2,      ///< A private compiler service supplied the request.
   kTestOverride = 3,         ///< A source-tree conformance seam supplied the request.
-  kEnvironmentOverride = 4,  ///< The exact EA1 experimental environment path supplied it.
-  kExplicitFallback = 5,     ///< Reserved schema value; EA1 never produces it.
+  kEnvironmentOverride = 4,  ///< The exact baseline experimental environment path supplied it.
+  kExplicitFallback = 5,     ///< Reserved schema value; baseline never produces it.
 };
 
 /// @brief Identify one compiler-produced execution partition within a plan.
@@ -189,6 +192,7 @@ enum class PartitionDecisionKind : std::uint8_t {
   kFanInSplit = 3,        ///< Split at a join of distinct predecessor partitions.
   kFanOutLegSplit = 4,    ///< Split one distinct fan-out successor leg.
   kCollapseRejected = 5,  ///< Split because a proposed collapse was illegal.
+  kAuthored = 6,          ///< Preserve an exact developer-authored partition anchor.
 };
 
 /// @brief Explain one partition start, join, or rejected collapse.
@@ -200,14 +204,28 @@ enum class PartitionDecisionReason : std::uint8_t {
   kDeviceTransferIncompatibility = 2,  ///< Separate incompatible device movement domains.
   kRegionBackendAdmission = 3,         ///< Preserve region/backend admission boundaries.
   kExplicitThreadPlacement = 4,        ///< Preserve explicitly distinct thread placement.
-  kLifecycleIsolation = 5,             ///< Preserve lifecycle transaction isolation.
-  kReadinessIsolation = 6,             ///< Preserve incompatible readiness behavior.
-  kIndependentReadinessRoot = 7,       ///< Start at an independently triggered root.
-  kSourceRoot = 8,                     ///< Start at a source vertex with no executable predecessor.
-  kFanIn = 9,                          ///< Split at predecessors belonging to distinct partitions.
-  kFanOutLeg = 10,                     ///< Give one fan-out successor leg a distinct partition.
-  kCollapseRejected = 11,              ///< Preserve a validator-rejected collapse boundary.
-  kLinearChainJoin = 12,               ///< Join one compatible serial linear-chain successor.
+  kLifecycleIsolation = 5,        ///< Reserved; the source-chain planner does not emit this reason.
+  kReadinessIsolation = 6,        ///< Preserve incompatible readiness behavior.
+  kIndependentReadinessRoot = 7,  ///< Start at an independently triggered root.
+  kSourceRoot = 8,                ///< Start at a source vertex with no executable predecessor.
+  kFanIn = 9,                     ///< Split at predecessors belonging to distinct partitions.
+  kFanOutLeg = 10,                ///< Give one fan-out successor leg a distinct partition.
+  kCollapseRejected = 11,         ///< Preserve a validator-rejected collapse boundary.
+  kLinearChainJoin = 12,          ///< Join one compatible serial linear-chain successor.
+  kAuthoredPartitionBoundary = 13,  ///< Preserve an exact authored-anchor boundary.
+};
+
+/// @brief Identify the authority that produced one accepted partition cover.
+enum class PartitioningMode : std::uint8_t {
+  kAutomatic = 0,             ///< The production planner produced the complete cover.
+  kConstrainedAutomatic = 1,  ///< Authored exact anchors constrain an automatic remainder.
+  kManual = 2,                ///< Authored declarations produced the complete exact cover.
+};
+
+/// @brief Identify whether one accepted execution partition was authored or automatic.
+enum class ExecutionPartitionOrigin : std::uint8_t {
+  kAuthored = 0,   ///< The partition has an exact developer-authored name and membership.
+  kAutomatic = 1,  ///< The partition is an unnamed planner result.
 };
 
 /// @brief Preserve selection and admission evidence for the partition planner.
@@ -220,6 +238,11 @@ struct PartitioningPlanRecord {
   PlanSelectionSource selection_source{PlanSelectionSource::kCoreDefault};  ///< Provenance.
   PlanDigest config_digest{};  ///< Digest of normalized selector/profile configuration.
   DiagnosticId reason{};       ///< Primary stable selection or rejection reason.
+  /// Accepted-cover authority. Meaningful only when \ref disposition is \c kAccepted; rejected
+  /// records retain the aggregate default as storage, not as accepted partitioning evidence.
+  PartitioningMode mode{PartitioningMode::kAutomatic};
+  std::uint32_t authored_partition_count{};   ///< Number of exact authored partitions.
+  std::uint32_t automatic_partition_count{};  ///< Number of unnamed planner partitions.
 };
 
 /// @brief Record the canonical partition decision for one executable vertex.
@@ -235,7 +258,156 @@ struct ExecutionPartitionRecord {
   ExecutionPartitionId id{};                 ///< Dense final partition identity.
   std::optional<std::string> authored_name;  ///< Manual name, absent for implicit partitions.
   std::vector<VertexId> members;             ///< Canonically ordered executable vertices.
-  std::uint32_t execution_lane{};            ///< Dense serial lane index, starting at zero.
+  /// Canonical logical Operator lookup keys in plan-Graph order; excludes synthetic members.
+  /// Each decoded Graph/Operator UTF-8 segment is URI-percent-encoded bytewise with uppercase
+  /// hexadecimal before slash joining. Keys use the no-leading-slash OperatorPath grammar.
+  std::vector<std::string> operator_paths;
+  std::uint32_t execution_lane{};  ///< Dense serial lane index, starting at zero.
+};
+
+/// @brief Retain immutable inspection of one accepted execution partition.
+///
+/// Copies share immutable plan-owned state. Accessor spans and string views remain valid for this
+/// element-view lifetime, independently of the source plan, collection, or iterator.
+class HOLOSCAN_CORE_EXPORT ExecutionPartitionView {
+ public:
+  ExecutionPartitionView() = delete;
+
+  /// @brief Return the dense accepted partition identity.
+  [[nodiscard]] ExecutionPartitionId id() const noexcept;
+
+  /// @brief Return whether exact authoring or automatic planning produced this partition.
+  [[nodiscard]] ExecutionPartitionOrigin origin() const noexcept;
+
+  /// @brief Return the exact authored name, absent for automatic partitions.
+  [[nodiscard]] std::optional<std::string_view> authored_name() const noexcept;
+
+  /// @brief Return the complete canonical executable member set.
+  [[nodiscard]] std::span<const VertexId> members() const noexcept;
+
+  /// @brief Return exact canonical logical Operator lookup keys, excluding synthetic members.
+  /// @note Reserved and non-ASCII bytes are percent-encoded per decoded path segment. Keys use the
+  /// no-leading-slash OperatorPath grammar shared by Parameter records and Tensor placement.
+  [[nodiscard]] std::span<const std::string> operator_paths() const noexcept;
+
+  /// @brief Return the dense serial execution lane.
+  [[nodiscard]] std::uint32_t execution_lane() const noexcept;
+
+ private:
+  ExecutionPartitionView(std::shared_ptr<const detail::ExecutionPlanState> state,
+                         std::size_t index) noexcept
+      : state_(std::move(state)), index_(index) {}
+
+  std::shared_ptr<const detail::ExecutionPlanState> state_;
+  std::size_t index_{};
+  friend class ExecutionPartitionsView;
+};
+
+/// @brief Retain immutable range and lookup access to an accepted partition cover.
+///
+/// The range is intentionally not borrowed. Copies and copied iterators independently retain the
+/// immutable state, and iterator dereference returns an independently retained element value.
+class HOLOSCAN_CORE_EXPORT ExecutionPartitionsView {
+ public:
+  /// @brief Iterate retained partition element values in canonical ID order.
+  class const_iterator {
+   public:
+    using iterator_concept = std::forward_iterator_tag;
+    using iterator_category = std::input_iterator_tag;
+    using value_type = ExecutionPartitionView;
+    using difference_type = std::ptrdiff_t;
+
+    const_iterator() noexcept = default;
+
+    [[nodiscard]] ExecutionPartitionView operator*() const noexcept {
+      return ExecutionPartitionView{state_, index_};
+    }
+    const_iterator& operator++() noexcept {
+      ++index_;
+      return *this;
+    }
+    const_iterator operator++(int) noexcept {
+      const_iterator previous = *this;
+      ++*this;
+      return previous;
+    }
+    friend bool operator==(const const_iterator&, const const_iterator&) noexcept = default;
+
+   private:
+    const_iterator(std::shared_ptr<const detail::ExecutionPlanState> state,
+                   std::size_t index) noexcept
+        : state_(std::move(state)), index_(index) {}
+
+    std::shared_ptr<const detail::ExecutionPlanState> state_;
+    std::size_t index_{};
+    friend class ExecutionPartitionsView;
+  };
+
+  ExecutionPartitionsView() = delete;
+
+  /// @brief Return the accepted cover authority.
+  [[nodiscard]] PartitioningMode mode() const noexcept;
+
+  /// @brief Return the number of exact authored partitions.
+  [[nodiscard]] std::uint32_t authored_count() const noexcept;
+
+  /// @brief Return the number of unnamed automatic partitions.
+  [[nodiscard]] std::uint32_t automatic_count() const noexcept;
+
+  /// @brief Return the number of accepted execution partitions.
+  [[nodiscard]] std::size_t size() const noexcept;
+
+  /// @brief Return whether the accepted cover contains no partitions.
+  [[nodiscard]] bool empty() const noexcept;
+
+  [[nodiscard]] const_iterator begin() const noexcept { return const_iterator{state_, 0U}; }
+  [[nodiscard]] const_iterator end() const noexcept { return const_iterator{state_, size()}; }
+
+  /// @brief Return the unique partition containing one root-Graph Operator handle.
+  /// @throws RuntimeError with a typed code for unusable, foreign, stale, or unknown identity.
+  template <std::derived_from<OperatorBase> Op>
+  [[nodiscard]] ExecutionPartitionView of(const OperatorHandle<Op>& op) const {
+    if (!usable()) {
+      throw RuntimeError{ErrorCode::kInvalidArgument};
+    }
+    const auto graph_state = op.state_.lock();
+    if (!graph_state) {
+      throw RuntimeError{ErrorCode::kInvalidArgument};
+    }
+    auto locator = detail::graph_operator_locator(graph_state, op.index_);
+    if (!locator) {
+      throw RuntimeError{locator.error()};
+    }
+    return of_root_locator(locator.value());
+  }
+
+  /// @brief Return the unique partition containing one plan-bound Operator reference.
+  /// @throws RuntimeError with a typed code for unusable, invalid, stale, or unknown identity.
+  [[nodiscard]] ExecutionPartitionView of(OperatorRef plan_operator) const;
+
+  /// @brief Look up one partition by exact nonzero dense ID.
+  [[nodiscard]] expected<ExecutionPartitionView, Error> lookup(
+      ExecutionPartitionId id) const noexcept;
+
+  /// @brief Look up one partition by exact authored name.
+  [[nodiscard]] expected<ExecutionPartitionView, Error> lookup_named(
+      std::string_view authored_name) const noexcept;
+
+  /// @brief Look up one partition by an exact published canonical logical Operator key.
+  /// @note Input is compared byte-for-byte without decoding or normalization. Obtain the key from
+  /// \ref ExecutionPartitionView::operator_paths when an Operator or Graph name needs encoding.
+  [[nodiscard]] expected<ExecutionPartitionView, Error> lookup_for_path(
+      std::string_view canonical_operator_path) const noexcept;
+
+ private:
+  explicit ExecutionPartitionsView(std::shared_ptr<const detail::ExecutionPlanState> state) noexcept
+      : state_(std::move(state)) {}
+  [[nodiscard]] bool usable() const noexcept;
+  [[nodiscard]] ExecutionPartitionView of_root_locator(
+      const detail::GraphOperatorLocator& locator) const;
+
+  std::shared_ptr<const detail::ExecutionPlanState> state_;
+  friend class ExecutionPlan;
 };
 
 /// @brief Preserve one original graph edge that crosses accepted partitions.
@@ -256,7 +428,7 @@ struct ScheduleEdgeRecord {
 struct SchedulerPlanRecord {
   AlgorithmKey ready_policy{};           ///< Accepted partition-local READY-policy identity.
   std::uint32_t execution_lane_count{};  ///< Number of accepted partition topology lanes.
-  /// Maximum concurrently active partition owners; zero only for a zero-work plan.
+  /// Maximum concurrently active callback owners; zero for zero-work or endpoint-only plans.
   std::uint32_t max_concurrent_activations{};
   /// True exactly when distinct partition owners may overlap.
   bool activation_overlap{};
@@ -342,11 +514,13 @@ struct PortPlanRecord {
   bool generic_loan_supported{};
   /// Exact native constructed-value slot size when generic loans are supported; otherwise zero.
   std::uint64_t generic_loan_slot_size_bytes{};
-  std::uint32_t queue_depth{};                    ///< Input queue depth; zero for outputs.
-  std::uint32_t max_emits_per_compute{};          ///< Output burst bound; zero for inputs.
-  std::uint32_t late_joiner_history_depth{};      ///< Output history; zero in the EA1 baseline.
-  std::optional<TensorPortLayout> tensor_layout;  ///< Accepted logical Tensor facts.
-  std::optional<Profile> effective_profile;       ///< Resolved owner profile, absent on rejection.
+  std::uint32_t queue_depth{};                        ///< Input queue depth; zero for outputs.
+  std::uint32_t max_emits_per_compute{};              ///< Output burst bound; zero for inputs.
+  std::uint32_t late_joiner_history_depth{};          ///< Output history; zero in the baseline.
+  std::optional<TensorRepresentation> tensor_layout;  ///< Accepted logical Tensor facts.
+  /// Complete normalized input requirements or output promises when authored.
+  std::optional<TensorContractRecord> tensor_contract;
+  std::optional<Profile> effective_profile;  ///< Resolved owner profile, absent on rejection.
 };
 
 /// @brief Preserve a reusable-Graph interface alias in plan-local port identities.
@@ -379,6 +553,146 @@ struct PayloadEdgePlanRecord {
   DiagnosticId reason{};                                    ///< Stable rejection reason, or zero.
 };
 
+/// @brief Identify one immutable queue-sizing recipe.
+struct QueueSizingRecipeId {
+  std::uint32_t value{};
+  [[nodiscard]] explicit constexpr operator bool() const noexcept { return value != 0U; }
+  friend constexpr bool operator==(QueueSizingRecipeId, QueueSizingRecipeId) noexcept = default;
+};
+
+/// @brief Identify one immutable accumulation-horizon record.
+struct HorizonRecordId {
+  std::uint32_t value{};
+  [[nodiscard]] explicit constexpr operator bool() const noexcept { return value != 0U; }
+  friend constexpr bool operator==(HorizonRecordId, HorizonRecordId) noexcept = default;
+};
+
+/// @brief Identify one immutable hard-floor contribution.
+struct HardFloorContributorId {
+  std::uint32_t value{};
+  [[nodiscard]] explicit constexpr operator bool() const noexcept { return value != 0U; }
+  friend constexpr bool operator==(HardFloorContributorId,
+                                   HardFloorContributorId) noexcept = default;
+};
+
+struct HardFloorScenarioId {
+  std::uint32_t value{};
+  friend constexpr bool operator==(HardFloorScenarioId, HardFloorScenarioId) noexcept = default;
+};
+
+struct HardFloorAlternativeGroupId {
+  std::uint32_t value{};
+  friend constexpr bool operator==(HardFloorAlternativeGroupId,
+                                   HardFloorAlternativeGroupId) noexcept = default;
+};
+
+/// @brief Preserve an exact positive rational duration in nanoseconds.
+struct ExactDuration {
+  std::uint64_t numerator_ns{};
+  std::uint64_t denominator{1U};
+  friend constexpr bool operator==(ExactDuration, ExactDuration) noexcept = default;
+};
+
+enum class AccumulationHorizonOrigin : std::uint8_t {
+  kProducerInterarrival = 0,
+  kDriverInterarrival = 1,
+  kClockPeriod = 2,
+  kTemporalWindowBound = 3,
+  kExternalCadence = 4,
+};
+
+enum class HardFloorOrigin : std::uint8_t {
+  kMinimumQueue = 0,
+  kProducerBurst = 1,
+  kSelectorRetention = 2,
+  kWindowRetention = 3,
+  kPendingActivation = 4,
+  kProviderMinimum = 5,
+};
+
+/// @brief Identify the authority that selected an effective logical queue depth.
+enum class QueueDepthOrigin : std::uint8_t {
+  kGraphEdgeOverride = 0,
+  kAddFlowOption = 1,
+  kGraphInputOverride = 2,
+  kOperatorSetup = 3,
+  kRateAndContractDerived = 4,
+  kContractDerived = 5,
+  kFrameworkFallback = 6,
+};
+
+/// @brief Classify nominal stability independently of depth authority.
+enum class StabilityClass : std::uint8_t {
+  kStableNominalEstimate = 0,
+  kPredictedSustainedBlocking = 1,
+  kPredictedReplacementOrDrop = 2,
+  kUnresolvedBoundedEvidence = 3,
+};
+
+enum class RateComparison : std::uint8_t {
+  kNotCompared = 0,
+  kEqual = 1,
+  kMismatch = 2,
+};
+
+/// @brief Freeze pointer-free rate declaration and selection-domain authority for one port.
+struct PortRatePlanRecord {
+  PortId port{};
+  PortRateKind kind{PortRateKind::kUnspecified};
+  std::optional<Rate> declared_nominal_rate;
+  std::optional<Rate> declared_expected_rate;
+  std::optional<PortId> follows_input;
+  std::optional<RateRatio> follows_ratio;
+  std::optional<LifecycleStage> lifecycle_binding_stage;
+  std::optional<Rate> declared_max_nominal_rate;
+  PlanDisposition disposition{PlanDisposition::kRejected};
+  DiagnosticId reason{};
+};
+
+/// @brief Preserve one exact finite accumulation horizon used by a sizing recipe.
+struct AccumulationHorizonPlanRecord {
+  HorizonRecordId id{};
+  EdgeId edge{};
+  std::optional<ExactDuration> horizon;
+  std::optional<PortId> inverse_rate_port;
+  AccumulationHorizonOrigin origin{AccumulationHorizonOrigin::kProducerInterarrival};
+  std::uint32_t source_record{};
+};
+
+/// @brief Preserve one reviewable hard-floor contribution and its composition identity.
+struct HardFloorContributorPlanRecord {
+  HardFloorContributorId id{};
+  EdgeId edge{};
+  HardFloorOrigin origin{HardFloorOrigin::kMinimumQueue};
+  std::uint32_t required_slots{};
+  HardFloorScenarioId scenario{};
+  HardFloorAlternativeGroupId alternative_group{};
+};
+
+enum class ProviderReusePolicy : std::uint8_t {
+  kCompatibleExactOrLarger = 0,
+  kFreshOnly = 1,
+};
+
+enum class AllocationGeometryMode : std::uint8_t {
+  kCompileConcrete = 0,
+  kLifecycleCandidate = 1,
+};
+
+/// @brief Freeze the immutable sizing formula and authoring authority for one logical edge.
+struct QueueSizingRecipePlanRecord {
+  QueueSizingRecipeId id{};
+  EdgeId edge{};
+  QueueDepthOrigin origin{QueueDepthOrigin::kFrameworkFallback};
+  std::optional<std::uint32_t> explicit_depth;
+  RateRatio headroom_ratio{};
+  std::optional<LifecycleStage> latest_binding_stage;
+  ProviderReusePolicy reuse_policy{ProviderReusePolicy::kCompatibleExactOrLarger};
+  AllocationGeometryMode geometry_mode{AllocationGeometryMode::kCompileConcrete};
+  PlanDisposition disposition{PlanDisposition::kRejected};
+  DiagnosticId reason{};
+};
+
 /// @brief Record requested and accepted locality for one payload edge.
 struct ChannelLocalityRecord {
   EdgeId edge{};  ///< Canonical source Graph edge.
@@ -392,13 +706,15 @@ struct ChannelLocalityRecord {
 /// Publisher and subscriber endpoint-local requests live in distinct records;
 /// neither may redefine this service-static contract at startup.
 struct ChannelServiceStaticPlanRecord {
-  ExternalTopicId topic{};                           ///< Canonical external boundary identity.
-  std::string service_id;                            ///< Stable plan-owned service identity.
-  PayloadIdentityRecord payload_identity;            ///< Complete wire/payload identity.
+  ExternalTopicId topic{};                 ///< Canonical external boundary identity.
+  std::string service_id;                  ///< Stable plan-owned service identity.
+  PayloadIdentityRecord payload_identity;  ///< Complete wire/payload identity.
+  /// Canonical logical field contracts for a descriptor-backed schema, otherwise empty.
+  std::vector<DescriptorTensorTopicFieldRecord> tensor_fields;
   QueuePolicy queue_policy{QueuePolicy::kBlocking};  ///< Accepted service queue family.
   std::uint32_t max_subscriber_queue_depth{};        ///< Positive service-wide maximum.
   std::uint32_t max_subscriber_borrowed_samples{};   ///< Positive service-wide maximum.
-  std::uint32_t publisher_history_depth{};           ///< Exactly zero for EA1.
+  std::uint32_t publisher_history_depth{};           ///< Exactly zero for baseline.
   bool event_wake{};                                 ///< Whether event wake is required.
   bool tensor_payload{};                             ///< Whether Tensor wire policy applies.
   InterfaceTensorEmitPolicy tensor_emit_policy{
@@ -448,7 +764,7 @@ struct GenericOutputLoanPlanRecord {
   std::optional<Profile> effective_profile;                 ///< Resolved owner profile.
   PlanDisposition disposition{PlanDisposition::kRejected};  ///< Total capability admission.
   bool pre_submit_preserves_same_activation_loan{true};     ///< Explicit caller retry rule.
-  bool runtime_retry_enabled{false};                        ///< Always false in EA1.
+  bool runtime_retry_enabled{false};                        ///< Always false in baseline.
   bool fallback_rejected{true};                             ///< No heap/growth fallback.
 };
 
@@ -490,6 +806,143 @@ struct PoolCapacityContributorRecord {
   std::vector<TensorSlotClaimReason> reasons;  ///< Canonically sorted covered reasons.
 };
 
+/// @brief Identify one immutable stable-pool capacity dependency.
+struct PoolCapacityDependencyId {
+  std::uint32_t value{};
+  [[nodiscard]] explicit constexpr operator bool() const noexcept { return value != 0U; }
+  friend constexpr bool operator==(PoolCapacityDependencyId,
+                                   PoolCapacityDependencyId) noexcept = default;
+};
+
+/// @brief Identify one immutable provider-allocation recipe.
+struct ProviderAllocationPlanRecordId {
+  std::uint32_t value{};
+  [[nodiscard]] explicit constexpr operator bool() const noexcept { return value != 0U; }
+  friend constexpr bool operator==(ProviderAllocationPlanRecordId,
+                                   ProviderAllocationPlanRecordId) noexcept = default;
+};
+
+struct PoolCapacityScenarioId {
+  std::uint32_t value{};
+  friend constexpr bool operator==(PoolCapacityScenarioId,
+                                   PoolCapacityScenarioId) noexcept = default;
+};
+
+struct PoolCapacityAlternativeGroupId {
+  std::uint32_t value{};
+  friend constexpr bool operator==(PoolCapacityAlternativeGroupId,
+                                   PoolCapacityAlternativeGroupId) noexcept = default;
+};
+
+/// @brief Classify the logical lifetime represented by one stable-pool dependency.
+enum class PoolClaimOrigin : std::uint8_t {
+  kEdgeDelivery = 0,
+  kTransportRetention = 1,
+  kTemporalRetention = 2,
+  kProducerLoan = 3,
+  kHistory = 4,
+  kCopyOrExport = 5,
+  kCancellationOrQuarantine = 6,
+  kRetirement = 7,
+  kProviderSpecific = 8,
+};
+
+/// @brief Select the sole immutable authority for one pool-capacity dependency.
+enum class PoolCapacityDependencySource : std::uint8_t {
+  kQueueSizingRecipe = 0,
+  kPredecessorContributor = 1,
+};
+
+/// @brief Join one logical queue or predecessor claim to one stable provider pool.
+struct PoolCapacityDependencyPlanRecord {
+  PoolCapacityDependencyId id{};
+  std::string pool_id;
+  PoolClaimOrigin origin{PoolClaimOrigin::kEdgeDelivery};
+  PoolCapacityDependencySource source{PoolCapacityDependencySource::kQueueSizingRecipe};
+  QueueSizingRecipeId queue_sizing_recipe{};
+  std::string predecessor_contributor_id;
+  PoolCapacityScenarioId scenario{};
+  PoolCapacityAlternativeGroupId alternative_group{};
+  std::uint32_t mapping_multiplicity{1U};
+  /// Queue-recipe dependencies own their canonical claim-reason evidence. Fixed dependencies
+  /// inherit it from the referenced predecessor contributor and leave this vector empty.
+  std::vector<TensorSlotClaimReason> reasons;
+};
+
+enum class ProviderAllocationKind : std::uint8_t {
+  kGenericOutputLoan = 0,
+  kTensorOutput = 1,
+  kTensorFieldOutput = 2,
+  kTensorInterface = 3,
+};
+
+/// @brief Freeze static Tensor-provider facts without inventing allocation geometry.
+struct TensorProviderTemplatePlanRecord {
+  std::string allocator_root_id;
+  ProcessGroupId allocator_process_group{};
+  TensorPoolBounds bounds{};
+  std::vector<TensorAxisBounds> axes;
+  std::optional<TensorRepresentation> layout;
+  MemoryKind memory_kind{MemoryKind::kUnknown};
+  DeviceId device{};
+  std::uint32_t max_outstanding_loans{};
+  std::uint32_t max_emits_per_compute{};
+  std::optional<Profile> effective_profile;
+  bool fallback_rejected{true};
+};
+
+/// @brief Freeze the dependency range and stable join for one provider allocation.
+struct ProviderAllocationPlanRecord {
+  ProviderAllocationPlanRecordId id{};
+  std::string pool_id;
+  PoolCapacityDependencyId first_sizing_dependency{};
+  std::uint32_t sizing_dependency_count{};
+  ProviderAllocationKind allocation_kind{ProviderAllocationKind::kTensorOutput};
+  AllocationGeometryMode geometry_mode{AllocationGeometryMode::kCompileConcrete};
+  std::optional<PortId> output;
+  std::optional<std::uint16_t> tensor_field_id;
+  std::optional<std::uint16_t> tensor_index;
+  std::optional<ExternalTopicId> interface_topic;
+  std::optional<TensorProviderTemplatePlanRecord> tensor_template;
+  LifecycleStage complete_before{LifecycleStage::kAllocate};
+  PlanDisposition disposition{PlanDisposition::kRejected};
+  DiagnosticId reason{};
+};
+
+/// @brief Classify the strongest update boundary of a derived Tensor byte-span dependency.
+enum class TensorByteSpanDerivationUpdateDisposition : std::uint8_t {
+  kFrozenCompileTime = 0,  ///< Every Parameter dependency is compile-time immutable.
+  kRecompileRequired = 1,  ///< At least one dependency requires compiling a new plan.
+};
+
+/// @brief Preserve one evaluated node of a derived Tensor byte-span expression.
+struct TensorByteSpanDerivationNodePlanRecord {
+  TensorByteSpanOperation operation{TensorByteSpanOperation::kPositiveConstant};  ///< Node kind.
+  std::uint32_t left{};            ///< Left child index for compound operations.
+  std::uint32_t right{};           ///< Right child index for binary operations.
+  std::uint64_t operand{};         ///< Literal or alignment operand, otherwise zero.
+  ParamFieldId parameter_field{};  ///< Parameter dependency, or zero.
+  PortId input{};                  ///< Input dependency, or zero.
+  std::uint64_t resolved_value{};  ///< Checked positive node result in bytes.
+};
+
+/// @brief Record compiler evidence for one derived Tensor output-pool slot capacity.
+struct TensorByteSpanDerivationPlanRecord {
+  PortId output{};  ///< Owning runtime-pooled Tensor output.
+  /// Descriptor-schema field id, or no value for a raw Tensor output.
+  std::optional<std::uint16_t> field_id;
+  /// Dense descriptor-schema Tensor index, or no value for a raw Tensor output.
+  std::optional<std::uint16_t> tensor_index;
+  PlanGenerationId plan_generation{};      ///< Nonzero enclosing plan identity.
+  RunGenerationId run_generation{};        ///< Zero for this immutable plan-bound evidence.
+  std::uint64_t resolved_max_byte_span{};  ///< Concrete per-slot byte capacity.
+  std::optional<std::uint64_t>
+      resolved_max_staging_byte_span;  ///< Concrete staging capacity when copy-capable.
+  TensorByteSpanDerivationUpdateDisposition update_disposition{
+      TensorByteSpanDerivationUpdateDisposition::kFrozenCompileTime};  ///< Strongest dependency.
+  std::vector<TensorByteSpanDerivationNodePlanRecord> nodes;  ///< Canonical evaluated postorder.
+};
+
 /// @brief Freeze one Tensor-backed output allocation capability and capacity.
 struct TensorAllocationPlanRecord {
   PortId output{};                               ///< Tensor-backed output identity.
@@ -498,8 +951,9 @@ struct TensorAllocationPlanRecord {
   std::string pool_id;                           ///< Stable output pool identity.
   std::string allocator_root_id;                 ///< Stable process/device allocator lineage.
   ProcessGroupId allocator_process_group{};      ///< Compile-admitted process lineage.
-  TensorAllocationBounds bounds{};               ///< Tightened maximum rank and byte span.
-  std::optional<TensorPortLayout> layout;        ///< Accepted logical output constraints.
+  TensorPoolBounds bounds{};                     ///< Tightened maximum rank and byte span.
+  std::vector<TensorAxisBounds> axes;            ///< Per-axis extent and byte-stride maxima.
+  std::optional<TensorRepresentation> layout;    ///< Accepted logical output constraints.
   MemoryKind memory_kind{MemoryKind::kUnknown};  ///< Frozen physical storage class.
   DeviceId device{};                             ///< Resolved device, or invalid for host storage.
   std::uint32_t slot_count{};                    ///< Peak distinct live-slot capacity.
@@ -530,8 +984,9 @@ struct TensorFieldAllocationPlanRecord {
   std::string pool_id;                           ///< Stable field-specific logical pool identity.
   std::string allocator_root_id;                 ///< Stable process/device allocator lineage.
   ProcessGroupId allocator_process_group{};      ///< Compile-admitted process lineage.
-  TensorAllocationBounds bounds{};               ///< Field-specific rank and byte-span bounds.
-  std::optional<TensorPortLayout> layout;        ///< Accepted logical field constraints.
+  TensorPoolBounds bounds{};                     ///< Field-specific rank and byte-span bounds.
+  std::vector<TensorAxisBounds> axes;            ///< Field-specific axis/stride maxima.
+  std::optional<TensorRepresentation> layout;    ///< Accepted logical field constraints.
   MemoryKind memory_kind{MemoryKind::kUnknown};  ///< Frozen physical storage class.
   DeviceId device{};                             ///< Shared port device, or invalid for host.
   std::uint32_t slot_count{};                    ///< Peak distinct live slots for this field.
@@ -554,15 +1009,19 @@ inline constexpr std::uint32_t kMaximumDescriptorTensorFieldPoolSlots = 4096U;
 
 /// @brief Freeze one logical Tensor boundary pool and exporter-generation lineage.
 struct TensorInterfacePoolPlanRecord {
-  ExternalTopicId topic{};                       ///< Canonical external Tensor boundary.
-  PortId graph_port{};                           ///< Plan-local Graph-side boundary port.
+  ExternalTopicId topic{};  ///< Canonical external Tensor boundary.
+  PortId graph_port{};      ///< Plan-local Graph-side boundary port.
+  /// Canonical descriptor-schema field id, or no value for a raw Tensor topic.
+  std::optional<std::uint16_t> field_id;
+  /// Dense descriptor-schema Tensor index, or no value for a raw Tensor topic.
+  std::optional<std::uint16_t> tensor_index;
   PlanGenerationId plan_generation{};            ///< Nonzero enclosing plan identity.
   RunGenerationId run_generation{};              ///< Zero for this immutable plan-bound record.
   std::string pool_id;                           ///< Stable endpoint-generation pool identity.
   std::string allocator_root_id;                 ///< Stable process/device allocator root.
   ProcessGroupId allocator_process_group{};      ///< Compile-admitted process lineage.
   std::string exporter_subpool_id;               ///< Stable endpoint exporter-sub-pool lineage.
-  LogicalTensorRequirementsRecord logical;       ///< Complete finite logical Tensor contract.
+  TensorBoundaryContractRecord logical;          ///< Complete finite logical Tensor contract.
   MemoryKind memory_kind{MemoryKind::kUnknown};  ///< Frozen accepted storage class.
   DeviceId device{};                             ///< Resolved device, or invalid for host storage.
   std::uint32_t slot_count{};                    ///< Peak distinct live-slot capacity.
@@ -579,27 +1038,167 @@ struct TensorInterfacePoolPlanRecord {
   std::optional<Profile> effective_profile;            ///< Resolved boundary profile.
 };
 
+/// @brief Request or record one exact structured SM allocation.
+///
+/// The CUDA ordinal and SM count are target-specific deployment facts. An unresolved/negative
+/// device or a zero SM count is invalid and is never interpreted as device zero or automatic
+/// sizing policy.
+struct CudaGreenContextPlacement {
+  DeviceId device;           ///< Explicit nonnegative process-local CUDA device ordinal.
+  std::uint32_t sm_count{};  ///< Exact positive structured SM count.
+
+  /// @brief Compare exact device and SM-count placement semantics.
+  friend constexpr bool operator==(CudaGreenContextPlacement lhs,
+                                   CudaGreenContextPlacement rhs) noexcept = default;
+};
+
+/// @brief Record the authority that requested a Green Context assignment.
+enum class CudaGreenContextAssignmentSource : std::uint8_t {
+  kDeveloperBinding = 0,  ///< Exact public deployment binding.
+  kAutomaticPolicy = 1,   ///< Reserved for phase-2 automatic partitioning.
+  kResidualPolicy = 2,    ///< Compiler-defined residual service assignment.
+};
+
+/// @brief Classify one materialized Green Context resource.
+enum class CudaGreenContextResourceRole : std::uint8_t {
+  kDedicatedPartition = 0,     ///< Dedicated exact manual-partition resource.
+  kSharedServiceResidual = 1,  ///< Structured residual used by unbound HSDK CUDA work.
+  kReservedResidual = 2,       ///< Structured residual reserved without assigned work.
+};
+
+/// @brief Record the admitted SM co-scheduling policy.
+enum class CudaGreenContextCoScheduling : std::uint8_t {
+  kPreserveDeviceAlignment = 0,  ///< Preserve driver-reported structured alignment.
+  kRelaxed = 1,                  ///< Reserved unsupported relaxed policy.
+};
+
+/// @brief Record Green Context workqueue ownership scope.
+enum class CudaGreenContextWorkqueueScope : std::uint8_t {
+  kDeviceContext = 0,         ///< Workqueues remain device-context scoped.
+  kGreenContextBalanced = 1,  ///< Reserved future balanced workqueue policy.
+};
+
+/// @brief Record the strength of the admitted SM-set guarantee.
+enum class CudaGreenContextSmSetGuarantee : std::uint8_t {
+  /// CUDA-documented SM set, including documented superset exceptions; no concurrency/QoS claim.
+  kDriverDocumented = 0,
+  kStrictNoKnownSuperset = 1,  ///< Reserved stronger deployment guarantee.
+};
+
+/// @brief Freeze one process/device Green Context pool declaration.
+struct CudaGreenContextPoolPlanRecord {
+  PlanGenerationId plan_generation{};            ///< Nonzero enclosing plan identity.
+  RunGenerationId run_generation{};              ///< Zero for immutable plan-bound evidence.
+  ProcessGroupId process_group{};                ///< Runtime process owning the native split.
+  DeviceId device{};                             ///< Process-local CUDA ordinal.
+  std::string deployment_device_id;              ///< Stable deployment physical-device identity.
+  std::string pool_id;                           ///< Stable plan-local pool lineage.
+  std::uint32_t device_sm_count{};               ///< Qualified total SM count.
+  std::uint32_t min_sm_partition_size{};         ///< Qualified driver minimum.
+  std::uint32_t sm_coscheduled_alignment{};      ///< Qualified co-scheduling alignment.
+  std::uint32_t structured_sm_quantum{};         ///< LCM of minimum size and alignment.
+  std::uint32_t max_structured_context_count{};  ///< Qualified structured-context budget.
+  std::uint32_t unprovisioned_sm_count{};        ///< Tail not admitted for HSDK work.
+  CudaGreenContextCoScheduling co_scheduling{
+      CudaGreenContextCoScheduling::kPreserveDeviceAlignment};  ///< Split policy.
+  CudaGreenContextWorkqueueScope workqueue_scope{
+      CudaGreenContextWorkqueueScope::kDeviceContext};  ///< Workqueue ownership contract.
+  std::uint32_t workqueue_concurrency_limit{};          ///< Zero selects driver default.
+  CudaGreenContextSmSetGuarantee sm_set_guarantee{
+      CudaGreenContextSmSetGuarantee::kDriverDocumented};   ///< Qualified SM-set strength.
+  LifecycleStage materialize_before{LifecycleStage::kArm};  ///< Latest creation stage.
+  bool fallback_rejected{true};                             ///< No ordinary-context fallback.
+
+  friend bool operator==(const CudaGreenContextPoolPlanRecord&,
+                         const CudaGreenContextPoolPlanRecord&) = default;
+};
+
+/// @brief Freeze one context resource produced by a pool split.
+struct CudaGreenContextResourcePlanRecord {
+  PlanGenerationId plan_generation{};  ///< Nonzero enclosing plan identity.
+  RunGenerationId run_generation{};    ///< Zero for immutable plan-bound evidence.
+  ProcessGroupId process_group{};      ///< Owning runtime process.
+  DeviceId device{};                   ///< Process-local CUDA ordinal.
+  std::string pool_id;                 ///< Owning pool lineage.
+  std::string green_context_id;        ///< Stable plan-local context lineage.
+  std::uint32_t accepted_sm_count{};   ///< Exact admitted structured SM count.
+  CudaGreenContextResourceRole role{
+      CudaGreenContextResourceRole::kDedicatedPartition};  ///< Resource purpose.
+
+  friend bool operator==(const CudaGreenContextResourcePlanRecord&,
+                         const CudaGreenContextResourcePlanRecord&) = default;
+};
+
+/// @brief Freeze one accepted or rejected authored Green Context request.
+struct CudaGreenContextRequestPlanRecord {
+  PlanGenerationId plan_generation{};     ///< Nonzero enclosing plan identity.
+  RunGenerationId run_generation{};       ///< Zero for immutable plan-bound evidence.
+  ExecutionPartitionId partition{};       ///< Resolved partition, or zero when unknown.
+  std::string authored_name;              ///< Deep-owned exact author selector.
+  std::uint32_t execution_lane{};         ///< Dense lane identity, or zero if unresolved.
+  CudaGreenContextPlacement requested{};  ///< Exact authored target request.
+  std::optional<CudaGreenContextPlacement> accepted;  ///< Equal accepted placement, or empty.
+  CudaGreenContextAssignmentSource source{
+      CudaGreenContextAssignmentSource::kDeveloperBinding};  ///< Request authority.
+  PlanDisposition disposition{PlanDisposition::kRejected};   ///< Total admission result.
+  DiagnosticId reason{};                                     ///< Stable rejection reason.
+
+  friend bool operator==(const CudaGreenContextRequestPlanRecord&,
+                         const CudaGreenContextRequestPlanRecord&) = default;
+};
+
+/// @brief Join one execution partition to one admitted Green Context resource.
+struct CudaGreenContextAssignmentPlanRecord {
+  PlanGenerationId plan_generation{};  ///< Nonzero enclosing plan identity.
+  RunGenerationId run_generation{};    ///< Zero for immutable plan-bound evidence.
+  ExecutionPartitionId partition{};    ///< Accepted execution partition.
+  std::uint32_t execution_lane{};      ///< Dense partition lane identity.
+  ProcessGroupId process_group{};      ///< Owning runtime process.
+  DeviceId device{};                   ///< Process-local CUDA ordinal.
+  std::string pool_id;                 ///< Owning pool lineage.
+  std::string green_context_id;        ///< Assigned context lineage.
+  CudaGreenContextAssignmentSource source{
+      CudaGreenContextAssignmentSource::kDeveloperBinding};  ///< Assignment authority.
+
+  friend bool operator==(const CudaGreenContextAssignmentPlanRecord&,
+                         const CudaGreenContextAssignmentPlanRecord&) = default;
+};
+
+/// @brief Freeze one process-owned CUDA compute-stream materialization contract.
+struct CudaComputeStreamPlanRecord {
+  PlanGenerationId plan_generation{};             ///< Nonzero enclosing plan identity.
+  RunGenerationId run_generation{};               ///< Zero for immutable plan-bound evidence.
+  ProcessGroupId process_group{};                 ///< Owning runtime process.
+  DeviceId device{};                              ///< Process-local CUDA ordinal.
+  std::string owner_id;                           ///< Stable partition or compiler-service owner.
+  std::optional<ExecutionPartitionId> partition;  ///< Partition owner, or empty for a service.
+  std::string stream_id;                          ///< Stable plan-local stream lineage.
+  std::optional<std::string> green_context_id;    ///< Assigned Green Context, or ordinary stream.
+  std::vector<EdgeId> fused_linear_edges;         ///< Canonical same-stream Tensor edges.
+  LifecycleStage materialize_before{LifecycleStage::kArm};  ///< Latest creation stage.
+
+  friend bool operator==(const CudaComputeStreamPlanRecord&,
+                         const CudaComputeStreamPlanRecord&) = default;
+};
+
 /// @brief Freeze one process/device Tensor resource materialization contract.
 ///
 /// The compiler aggregates accepted direct, descriptor-field, and interface
 /// Tensor pools by process and explicit device. A cross-process CUDA-device or
-/// pinned-host receiver with no local Tensor pool uses a stream-only record
+/// pinned-host receiver with no local Tensor pool uses a capacity-only record
 /// with zero pool and capacity fields. The pinned Tensor's public DLPack device
 /// remains zero; this private device selects only its CUDA synchronization
 /// context.
-/// Runtime materializes the logical stream identity once per run before \ref
-/// LifecycleStage::kArm. Logical partitions do not multiply these resources.
-/// This record contains no CUDA handle, context, event, allocator object, or
-/// Runtime-owned address.
+/// Compute-stream identity and fusion belong exclusively to
+/// \ref CudaComputeStreamPlanRecord. Logical partitions do not multiply these
+/// aggregate capacity resources. This record contains no CUDA handle, context,
+/// event, allocator object, or Runtime-owned address.
 struct TensorDeviceResourcePlanRecord {
   PlanGenerationId plan_generation{};  ///< Nonzero enclosing plan identity.
   RunGenerationId run_generation{};    ///< Zero for immutable plan-bound evidence.
   ProcessGroupId process_group{};      ///< Compile-admitted process ownership.
   DeviceId device{};                   ///< Explicit nonnegative CUDA device identity.
   std::string allocator_root_id;       ///< Stable process/device resource lineage.
-  std::string stream_id;               ///< Stable run/device stream materialization identity.
-  /// @brief Canonical process-local Tensor edges intentionally fused onto this stream.
-  std::vector<EdgeId> fused_linear_edges;
   std::uint32_t pool_count{};     ///< Accepted pools, or zero for a receive-only stream resource.
   std::uint32_t slot_capacity{};  ///< Sum of finite distinct-slot capacities.
   std::uint32_t loan_credit_capacity{};  ///< Sum of producer/publisher loan credits.
@@ -609,9 +1208,6 @@ struct TensorDeviceResourcePlanRecord {
   std::uint32_t retirement_capacity{};   ///< Sum of retirement records.
   std::uint32_t quarantine_capacity{};   ///< Sum of safety-hold records.
   LifecycleStage materialize_before{LifecycleStage::kArm};  ///< Latest construction stage.
-  bool per_partition_stream{};           ///< Always false in the EA1 physical model.
-  bool per_partition_event{};            ///< Always false in the EA1 physical model.
-  bool per_partition_green_context{};    ///< Always false in the EA1 physical model.
   bool gpu_resident_backend_selected{};  ///< False until a separately admitted backend exists.
   bool fallback_rejected{true};          ///< No implicit device/copy/backend fallback.
 
@@ -712,11 +1308,20 @@ enum class TensorTransferRealization : std::uint8_t {
 /// whether its backing bytes were copied.
 struct TensorTransferPlanRecord {
   ExternalTopicId topic{};  ///< Canonical external Tensor boundary.
+  /// Canonical descriptor-schema field id, or no value for a raw Tensor topic.
+  std::optional<std::uint16_t> field_id;
+  /// Dense descriptor-schema Tensor index, or no value for a raw Tensor topic.
+  std::optional<std::uint16_t> tensor_index;
+  /// Process group that owns this transfer's copy-pool attachment, when one is required.
+  ProcessGroupId interface_process_group{};
+  /// Resolved CUDA copy-pool device, invalid for ordinary host or placement-free transfers.
+  DeviceId interface_device{};
   TensorSourceClass source_class{TensorSourceClass::kOrdinaryHostContiguous};
   std::optional<TensorTransferRealization> realization;  ///< Exact success arm when admitted.
   std::uint64_t min_logical_bytes{};  ///< Inclusive logical byte lower bound; zero is valid.
   std::uint64_t max_logical_bytes{};  ///< Inclusive positive finite logical byte upper bound.
   std::string evidence_id;            ///< Stable capability or rejection-evidence identity.
+  std::string service_owner_id;       ///< Stable CUDA transfer-service stream lineage, if needed.
   bool source_must_be_host_ready{};   ///< Inline performs no wait or async copy.
   bool source_must_be_exportable{};   ///< Zero-copy requires compatible exportability evidence.
   bool source_retained_until_materialization{};  ///< Source claim outlives inline/copy completion.
@@ -747,7 +1352,7 @@ struct PublicationOutcomePlanRecord {
   bool post_submit_assigns_sequence{true};    ///< Submission consumes one sequence.
   bool post_submit_consumes_authority{true};  ///< No retry after uncertainty.
   bool retain_claims_until_retirement{true};  ///< Preserve applicable canonical claims.
-  bool runtime_retry_enabled{};               ///< Always false in EA1.
+  bool runtime_retry_enabled{};               ///< Always false in baseline.
 };
 
 /// @brief Report whether profile admission accepted the normalized plan.
@@ -932,7 +1537,7 @@ class HOLOSCAN_CORE_EXPORT ClockCatalogView {
 
 /// @brief Describe one admitted direct affine conversion between clock domains.
 ///
-/// EA1 records only explicitly authored directions. It never synthesizes an
+/// baseline records only explicitly authored directions. It never synthesizes an
 /// inverse or multi-hop conversion.
 struct ClockConversionRecord {
   std::uint64_t id{};                  ///< Dense nonzero conversion identity.
@@ -1396,7 +2001,15 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
 
   /// @brief Return partition algorithm selection evidence.
   /// @return Plan-owned record, or a stable empty rejected record.
+  /// @note Inspect \ref PartitioningPlanRecord::disposition before interpreting accepted-cover
+  /// fields such as \ref PartitioningPlanRecord::mode and the partition counts.
   [[nodiscard]] const PartitioningPlanRecord& partitioning_plan() const noexcept;
+
+  /// @brief Return the retained high-level partition inspection range.
+  /// @return Immutable range and lookup facade retaining plan state independently.
+  /// @throws RuntimeError with ErrorCode::kInvalidArgument when this plan is default-constructed
+  /// or rejected.
+  [[nodiscard]] ExecutionPartitionsView partitions() const;
 
   /// @brief Return canonical per-vertex partition decisions.
   /// @return Plan-owned immutable records, or an empty span.
@@ -1432,6 +2045,24 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @brief Return canonical compiled ports with resolved finite bounds.
   /// @return Plan-owned records in dense \ref PortId order.
   [[nodiscard]] std::span<const PortPlanRecord> ports() const noexcept;
+
+  /// @brief Return pointer-free rate declarations and lifecycle selection domains.
+  /// @return Plan-owned records in dense \ref PortId order.
+  [[nodiscard]] std::span<const PortRatePlanRecord> port_rates() const noexcept;
+
+  /// @brief Return exact finite accumulation horizons used by queue sizing.
+  /// @return Plan-owned records in canonical edge and horizon order.
+  [[nodiscard]] std::span<const AccumulationHorizonPlanRecord> accumulation_horizons()
+      const noexcept;
+
+  /// @brief Return reviewable hard-floor contributions and composition identities.
+  /// @return Plan-owned records in canonical edge and contributor order.
+  [[nodiscard]] std::span<const HardFloorContributorPlanRecord> hard_floor_contributors()
+      const noexcept;
+
+  /// @brief Return immutable logical queue-sizing recipes.
+  /// @return Plan-owned records in canonical \ref EdgeId order.
+  [[nodiscard]] std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes() const noexcept;
 
   /// @brief Return deep-owned generated-package provenance used by this local plan.
   /// @return Records ordered by SchemaId and complete evidence, or an empty span.
@@ -1471,8 +2102,25 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   [[nodiscard]] std::span<const GenericOutputLoanPlanRecord> generic_output_loans() const noexcept;
 
   /// @brief Return direct Tensor output-allocation capabilities.
-  /// @return Plan-owned records only for explicitly admitted \c tensor_allocation outputs.
+  /// @return Plan-owned records only for outputs admitted with runtime-pool storage intent.
   [[nodiscard]] std::span<const TensorAllocationPlanRecord> tensor_allocations() const noexcept;
+
+  /// @brief Return compile-time evidence for Parameter/input-derived Tensor slot capacities.
+  /// @return Immutable records in output PortId order.
+  [[nodiscard]] std::span<const TensorByteSpanDerivationPlanRecord> tensor_byte_span_derivations()
+      const noexcept;
+
+  /// @brief Find derived Tensor capacity evidence by authored Operator and output names.
+  /// @param operator_path Canonical Operator path, such as `resize` or `child/resize`.
+  /// @param output_name Declaration-local output name.
+  /// @param field_id Optional descriptor-schema field identity.
+  /// @param tensor_index Optional descriptor-schema Tensor index paired with `field_id`.
+  /// @return A plan-owned record, or `nullptr` when the names are absent, the field selector is
+  /// incomplete, or an omitted field selector would be ambiguous for a multi-Tensor output.
+  [[nodiscard]] const TensorByteSpanDerivationPlanRecord* find_tensor_byte_span_derivation(
+      std::string_view operator_path, std::string_view output_name,
+      std::optional<std::uint16_t> field_id = std::nullopt,
+      std::optional<std::uint16_t> tensor_index = std::nullopt) const noexcept;
 
   /// @brief Return field-specific allocation records for multi-Tensor schema outputs.
   /// @return Immutable records in output then canonical field-id order.
@@ -1488,6 +2136,30 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @return Plan-owned records in process-group then device order.
   [[nodiscard]] std::span<const TensorDeviceResourcePlanRecord> tensor_device_resources()
       const noexcept;
+
+  /// @brief Return Green Context pool declarations in process/device order.
+  /// @return Plan-owned records in canonical process-group then device order.
+  [[nodiscard]] std::span<const CudaGreenContextPoolPlanRecord> cuda_green_context_pools()
+      const noexcept;
+
+  /// @brief Return Green Context resources in pool/context order.
+  /// @return Plan-owned records in canonical process-group, device, then context order.
+  [[nodiscard]] std::span<const CudaGreenContextResourcePlanRecord> cuda_green_context_resources()
+      const noexcept;
+
+  /// @brief Return accepted and rejected Green Context requests in canonical selector order.
+  /// @return Plan-owned records ordered by authored selector, device, then requested SM count.
+  [[nodiscard]] std::span<const CudaGreenContextRequestPlanRecord> cuda_green_context_requests()
+      const noexcept;
+
+  /// @brief Return partition-to-context assignments in canonical partition order.
+  /// @return Plan-owned records ordered by process group, device, then execution partition.
+  [[nodiscard]] std::span<const CudaGreenContextAssignmentPlanRecord>
+  cuda_green_context_assignments() const noexcept;
+
+  /// @brief Return generalized CUDA compute streams in canonical owner order.
+  /// @return Plan-owned records ordered by process group, device, then stable owner identity.
+  [[nodiscard]] std::span<const CudaComputeStreamPlanRecord> cuda_compute_streams() const noexcept;
 
   /// @brief Return generated-provider inline Tensor record bucket contracts.
   /// @return Plan-owned records ordered by external topic identity.
@@ -1506,6 +2178,16 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @brief Return canonical unique-slot capacity contributors.
   /// @return Plan-owned records ordered by pool and contributor identity.
   [[nodiscard]] std::span<const PoolCapacityContributorRecord> pool_capacity_contributors()
+      const noexcept;
+
+  /// @brief Return stable many-to-many logical-claim to provider-pool dependencies.
+  /// @return Plan-owned records ordered by pool, scenario, group, and record identity.
+  [[nodiscard]] std::span<const PoolCapacityDependencyPlanRecord> pool_capacity_dependencies()
+      const noexcept;
+
+  /// @brief Return immutable provider allocation recipes and dependency ranges.
+  /// @return Plan-owned records ordered by stable pool identity.
+  [[nodiscard]] std::span<const ProviderAllocationPlanRecord> provider_allocation_plans()
       const noexcept;
 
   /// @brief Return per-output publication-boundary retry and authority contracts.
@@ -1528,6 +2210,11 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @brief Return normalized clock-health contracts for external endpoints.
   /// @return One plan-owned record per external endpoint in boundary-port order.
   [[nodiscard]] std::span<const EndpointClockHealthPlanRecord> endpoint_clock_health()
+      const noexcept;
+
+  /// @brief Return compile-admitted Operator completion rules.
+  /// @return Plan-owned records in canonical logical Operator order.
+  [[nodiscard]] std::span<const OperatorCompletionPlanRecord> operator_completion_rules()
       const noexcept;
 
   /// @brief Return one total pointer-free record per admitted temporal trigger.
@@ -1623,7 +2310,7 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   [[nodiscard]] std::span<const ParameterFieldPlanRecord> parameter_fields() const noexcept;
 
   /// @brief Return an owning policy-filtered plan-bound Parameter catalog.
-  /// @param policy Public policy projection. EA1 exposes no privileged catalog policy.
+  /// @param policy Public policy projection. The baseline exposes no privileged catalog policy.
   /// @return Immutable catalog copy with no startup values, value digests, or local operations.
   /// @note Copying a nonempty catalog may allocate. The returned copy owns its records and remains
   /// valid independently of this ExecutionPlan. An empty or unsupported-policy request returns an

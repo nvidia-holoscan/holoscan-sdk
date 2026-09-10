@@ -22,6 +22,7 @@
 #include <holoscan/core/run.hpp>
 #include <holoscan/core/temporal_contract.hpp>
 #include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
 namespace {
@@ -95,9 +96,14 @@ struct SchemaObservation {
     {
       const std::lock_guard lock(mutex);
       ++imus;
-      const bool fields_ok =
-          sample.data.header != nullptr && sample.data.header->frame_id == "imu_link" &&
-          sample.data.orientation.w() == 1.0F && sample.data.linear_acceleration.z() == -9.81F;
+      // Read the orientation only after the producer claims it means something; the quaternion
+      // is inline, so an unset one is indistinguishable from a real value without this bit.
+      const bool orientation_claimed =
+          (sample.data.flags & holoscan::schema::ImuFlags_ORIENTATION_VALID) != 0;
+      const bool fields_ok = sample.data.header != nullptr &&
+                             sample.data.header->frame_id == "imu_link" && orientation_claimed &&
+                             sample.data.orientation.w() == 1.0F &&
+                             sample.data.linear_acceleration.z() == -9.81F;
       imu_fields_ok = imu_fields_ok && fields_ok;
       std::cout << "imu #" << imus << ": frame=\""
                 << (sample.data.header ? sample.data.header->frame_id : std::string{"<none>"})
@@ -277,11 +283,16 @@ class IMUSource final : public holoscan::Operator<> {
     holoscan::schema::ImuT value;
     value.header = std::make_shared<holoscan::schema::HeaderT>();
     value.header->frame_id = "imu_link";
-    value.header->stamp = std::make_shared<holoscan::schema::TimeT>();
-    value.header->stamp->time_ns = activation_time.timestamp_ns;
-    value.orientation = holoscan::schema::Quaternionf{1.0F, 0.0F, 0.0F, 0.0F};
+    value.header->capture_timestamp_ns = activation_time.timestamp_ns;
+    value.header->device_sequence = emitted_;
+    // Wire order is (x, y, z, w), so identity is the last component. Writing {1, 0, 0, 0} here
+    // would compile and produce a zero-norm quaternion that normalizes to NaN.
+    value.orientation = holoscan::schema::Quaternionf{0.0F, 0.0F, 0.0F, 1.0F};
     value.angular_velocity = holoscan::schema::Vector3f{0.0F, 0.0F, 0.5F};
     value.linear_acceleration = holoscan::schema::Vector3f{0.0F, 0.0F, -9.81F};
+    // An identity quaternion and an unset one are the same bytes to a reader, so a producer that
+    // means the former has to say so. A raw accelerometer/gyroscope source leaves this bit clear.
+    value.flags = holoscan::schema::ImuFlags_ORIENTATION_VALID;
     return output.emit(holoscan::Sample<holoscan::schema::ImuT>{
         std::move(value),
         holoscan::SampleMetadata{.capture_timestamp_ns = activation_time.timestamp_ns,

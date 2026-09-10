@@ -31,7 +31,7 @@ through a `RunSession`. It builds on
   still join that successor, while a request that would need another
   transaction is rejected as `kLifecycleRestartQueueFull`.
 
-  **Not yet in EA1:** restart requests from inside a lifecycle callback, a
+  **Not yet in baseline:** restart requests from inside a lifecycle callback, a
   graph-wide atomic restart, quiescing of interprocess neighbors, automatic
   retry of failed stages, and clock- or tag-timed restarts. Lifecycle
   transactions are unavailable under the `real_time` and `regulated` profiles;

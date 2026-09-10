@@ -18,9 +18,7 @@ target_compile_features(custom_schema PRIVATE cxx_std_20)
 target_include_directories(custom_schema PRIVATE "${CUSTOM_SCHEMA_GENERATED_DIR}")
 target_link_libraries(custom_schema PRIVATE holoscan::core holoscan::schema)
 set_target_properties(custom_schema PROPERTIES CXX_EXTENSIONS OFF)
-holoscan_configure_example_install(custom_schema
-    INSTALL_RPATH "$ORIGIN/../../../../lib"
-)
+holoscan_configure_example_install(custom_schema)
 
 if(BUILD_TESTING)
     add_test(NAME EXAMPLE_CPP_CUSTOM_SCHEMA_TEST COMMAND custom_schema)
@@ -33,11 +31,11 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS custom_schema
-    RUNTIME DESTINATION examples/flatbuffer_schemas/custom_schema/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/flatbuffer_schemas/custom_schema/cpp"
     COMPONENT holoscan-examples
 )
 install(FILES
     custom_control.fbs
-    DESTINATION examples/flatbuffer_schemas/custom_schema/cpp
+    DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/flatbuffer_schemas/custom_schema/cpp"
     COMPONENT holoscan-examples
 )

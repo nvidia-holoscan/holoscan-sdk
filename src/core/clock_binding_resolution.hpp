@@ -89,8 +89,12 @@ struct AuthoredClockResolution {
     });
     const auto child = std::find_if(
         graphs.begin(), graphs.end(), [&](const auto& row) { return row.id == graph; });
-    if (child == graphs.end() || !child->parent || *child->parent != binding->parent_graph ||
-        binding->parent_clock.is_default() || binding->parent_clock.name().empty()) {
+    if (child == graphs.end()) {
+      return {.status = AuthoredClockResolutionStatus::kBindingInvalid};
+    }
+    const auto& parent = child->parent;
+    if (!parent || *parent != binding->parent_graph || binding->parent_clock.is_default() ||
+        binding->parent_clock.name().empty()) {
       return {.status = AuthoredClockResolutionStatus::kBindingInvalid};
     }
     graph = binding->parent_graph;

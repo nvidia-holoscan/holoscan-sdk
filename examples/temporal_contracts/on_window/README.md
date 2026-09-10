@@ -42,7 +42,7 @@ in-tree `CMakeLists.txt`. As a standalone consumer against an installed SDK,
 configure with the min project file:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

@@ -13,6 +13,7 @@ target_link_libraries(channel_interprocess_benchmark
         holomq::holomq
         holoscan::core
         holoscan::schema
+        holoscan::sensor_io
 )
 
 if(BUILD_TESTING)

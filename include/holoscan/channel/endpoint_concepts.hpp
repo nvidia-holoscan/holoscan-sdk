@@ -79,9 +79,16 @@ concept CatalogChannelValue = CatalogChannelScalar<T> || CatalogChannelPod<T>;
 /// @return True when the generated package supplies explicit identity, owning copy semantics, and
 /// a positive finite serialized capacity.
 /// @note Generated table views, byte wrappers, arbitrary copyable classes, and the Core
-/// \ref Tensor value are excluded. An owning generated type that contains a Core Tensor, such as
-/// the current SDK `schema::ImageT`, is likewise excluded until EA1-014 supplies admitted Tensor
-/// allocation and retirement bounds. Generated packages specialize
+/// \ref Tensor value are excluded. An owning generated type that embeds a Core Tensor, such as the
+/// SDK `schema::ImageT`, is permanently excluded from this ordinary inline path rather than
+/// pending on it: serializing Tensor bytes into the payload would make transport cost depend on
+/// Tensor size. Such a schema is carried instead by the descriptor-backed path, which keeps Tensor
+/// data in retained or imported backing and sends only descriptors. Use
+/// \ref ChannelDescriptorFlatBufferPayload with \c ChannelRuntime::create_tensor_schema_publisher
+/// and \c create_tensor_schema_subscriber; both have catalog-attaching overloads that bind a
+/// standalone client to a graph endpoint exactly as \c create_publisher and \c create_subscriber
+/// do here. `schema::Image` is available that way as
+/// \c schema::DescriptorFlatBufferPayloadFor<schema::Image>. Generated packages specialize
 /// \ref GeneratedSchemaNativeTraits only for their owning application-facing native type.
 /// The package specialization must be visible where this concept is evaluated. Owning values must
 /// also be no-throw movable because Runtime materializes them behind checked, non-throwing type-

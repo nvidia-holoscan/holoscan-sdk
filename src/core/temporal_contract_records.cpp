@@ -280,8 +280,8 @@ template <typename Value>
 
 [[nodiscard]] std::optional<std::string_view> token(TemporalPredicateResetPolicy value) noexcept {
   switch (value) {
-    case TemporalPredicateResetPolicy::kEa1ResetEventsV1:
-      return "ea1_reset_events_v1";
+    case TemporalPredicateResetPolicy::kResetEventsV1:
+      return "reset_events_v1";
   }
   return std::nullopt;
 }
@@ -1200,7 +1200,7 @@ void write_edge(CanonicalJson& json, const EdgeSelectionRecord& edge) {
   }
 
   // AnyInput and OnEach pin the readiness-causing sample without manufacturing an explicit
-  // selector edge. EA1-009 proves the AnyInput connected catalog; OnEach must remain absent from
+  // selector edge. HSDK5-009 proves the AnyInput connected catalog; OnEach must remain absent from
   // selector edges because reselecting its pinned driver is structurally invalid.
   if (contract.trigger == TemporalRecordTriggerKind::kEach &&
       contains_edge(edges, contract.trigger_input)) {

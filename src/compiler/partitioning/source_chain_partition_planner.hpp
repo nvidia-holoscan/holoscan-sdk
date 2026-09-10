@@ -11,7 +11,7 @@
 
 namespace holoscan::detail::partitioning {
 
-/// Produce deterministic source/fan-in/fan-out chain partitions for controlled EA1 evidence.
+/// Produce deterministic source/fan-in/fan-out chain partitions for controlled baseline evidence.
 class SourceChainPartitionPlanner final : public PartitionPlanner {
  public:
   [[nodiscard]] PartitionPlannerDescriptor descriptor() const noexcept override;

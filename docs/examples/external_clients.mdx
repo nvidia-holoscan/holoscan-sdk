@@ -1,12 +1,12 @@
 Every example so far has lived inside a single graph: operators wired with
 `add_flow()`, compiled into one plan, run by one process. This walkthrough
-crosses the process boundary. The `ea1_external_clients` example ships two
+crosses the process boundary. The `external_clients` example ships two
 small standalone programs — a **sensor daemon** that publishes IMU samples
 into a running graph, and a **recorder** that consumes the graph's exported
 control result — and neither of them is an operator, contains a graph, or
 links against anything beyond `holoscan::core`.
 
-The runnable source lives at `public/examples/ea1_external_clients/` in the
+The runnable source lives at `public/examples/external_clients/` in the
 SDK tree.
 
 What makes this work is a deliberately narrow contract: the graph process
@@ -63,9 +63,9 @@ side assigns when declaring the topic:
 
 ```cpp
 holoscan::TopicOptions options;
-options.endpoint_name = "ea1.camera_imu.imu";  // the name external clients attach by
+options.endpoint_name = "baseline.camera_imu.imu";  // the name external clients attach by
 auto imported = graph.import_topic<std::uint32_t>(
-    "holomq://ea1.camera_imu.imu", options);
+    "holomq://baseline.camera_imu.imu", options);
 ```
 
 <Warning>
@@ -82,7 +82,7 @@ auto imported = graph.import_topic<std::uint32_t>(
 Both clients open identically. Load the catalog, create a `ChannelRuntime`,
 and attach to the named endpoint — every step returns
 `holoscan::expected`, so a standalone client gets the same errors-as-values
-discipline as an operator. From `ea1_sensor_daemon`:
+discipline as an operator. From `sensor_daemon`:
 
 ```cpp
 auto catalog = holoscan::ChannelEndpointCatalog::load_json(argv[1]);
@@ -179,23 +179,32 @@ recipient deliveries, and the catalog digest (`catalog->digest()`, a
 normalized fingerprint that both sides can log to confirm they loaded the
 same contract).
 
-## The recorder: poll until connected
+## The recorder: wait until a sample arrives
 
-The consuming side is simpler because the poll loop does double duty:
-`receive_sample()` returns `kNotReady` both while the transport is still
-connecting *and* while no sample is pending, so one deadline-bounded loop
-handles attach and receive together. From `ea1_result_recorder`:
+The consuming side is a single call. `wait_and_receive_sample()` blocks on the
+endpoint's transport event lane and covers both waits at once: it absorbs the
+`kNotReady` the transport reports while it is still connecting *and* the
+`kNotReady` it reports while no sample is pending. From `result_recorder`:
 
 ```cpp
-const auto deadline = std::chrono::steady_clock::now() + 10s;
-while (std::chrono::steady_clock::now() < deadline) {
-  auto sample = subscriber.receive_sample();
-  if (sample || sample.error().code != holoscan::ErrorCode::kNotReady) {
-    return sample;  // got one, or hit a real error
-  }
-  std::this_thread::sleep_for(2ms);
-}
+auto sample = subscriber->wait_and_receive_sample(
+    std::chrono::steady_clock::now() + 10s);
 ```
+
+The deadline is an absolute coordinate rather than a per-attempt duration, so a
+spurious wake cannot silently restart the budget. `kNotReady` never escapes the
+call; a subscriber that is still connecting simply keeps waiting. Because the
+catalog always admits event wake, the recorder sets no option to get this — a
+publication wakes the recorder from a kernel wait instead of finding it mid-sleep.
+
+The wait is event-driven but not purely so. Transport notification is best
+effort — its result is not reported to the publisher — so a blocked wait also
+re-checks readiness once a second as a bounded fallback, and readiness that
+arrives on a clock-health lane rather than a data lane is discovered on that
+fallback rather than by a wake. An idle recorder therefore costs one wakeup per
+second rather than nothing at all: far below the 2 ms poll loop it replaced, but
+not zero, and enough to keep a fully idle process out of the deepest sleep
+states. Treat the one-second figure as an implementation bound, not a contract.
 
 A received sample carries its payload in `sample->data` and public
 `SampleMetadata` in `sample->metadata` — the publication `sequence`, the
@@ -222,17 +231,18 @@ line; the daemon additionally accepts a sample count, period, and first
 value:
 
 ```bash
-ea1_sensor_daemon <catalog.json> <endpoint> [count] [period-ms] [first-value]
-ea1_result_recorder <catalog.json> <endpoint>
+sensor_daemon <catalog.json> <endpoint> [count] [period-ms] [first-value]
+result_recorder <catalog.json> <endpoint>
 ```
 
 These commands require a separately running deployed graph that owns the
-catalog endpoints. `ea1_camera_imu_control --emit-artifacts` only writes the
-deployment bundle; it does not start that graph or its Channel services. EA1
+catalog endpoints. `camera_imu_control --emit-artifacts` only writes the
+deployment bundle; it does not start that graph or its Channel services. The baseline release
 does not ship an author-facing graph-only launcher for this manual
 three-process recipe, so use the no-argument camera/IMU reference executable
 for an end-to-end smoke test. Once the deployed graph is running, launch either
-client in any order — the retry loops absorb the startup race. These
+client in any order — the recorder's wait and the daemon's retry loops absorb
+the startup race. These
 intentionally small acceptance companions are independently tested
 attach-and-retry templates, not a general device-adapter or recording product.
 
@@ -244,9 +254,11 @@ attach-and-retry templates, not a general device-adapter or recording product.
 - Graphs use ports and `add_flow()`; standalone processes use
   `ChannelRuntime` with `create_publisher` / `create_subscriber`. Never mix
   the two vocabularies.
-- Attach is asynchronous: wrap `emit_captured`, `receive_sample`, and
+- Attach is asynchronous. On the publish side, wrap `emit_captured` and
   `close` in deadline-bounded retry loops, refreshing with
-  `update_connections()` on the publish side.
+  `update_connections()`. On the subscribe side, prefer
+  `wait_and_receive_sample` with an absolute deadline over a
+  `receive_sample` poll loop.
 - Retry only provably-unpublished outcomes — pre-submit `kNotReady` or
   `kBackpressured`. Partial and indeterminate publications are terminal. For
   `close()`, retry only `kNotReady`; every other close failure is terminal.

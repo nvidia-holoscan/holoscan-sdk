@@ -147,7 +147,7 @@ class TestCPUTopology:
             },
         ]
 
-        with pytest.raises(RuntimeError, match="share package/core"):
+        with pytest.raises(RuntimeError, match="share physical core"):
             runner.validate_distinct_physical_cores(placements)
 
     def test_distinct_physical_cores_are_accepted(self) -> None:
@@ -168,6 +168,22 @@ class TestCPUTopology:
                 "package_id": 0,
                 "core_id": 3,
             },
+        ]
+
+        runner.validate_distinct_physical_cores(placements)
+
+    def test_singleton_sibling_sets_override_ambiguous_core_ids(self) -> None:
+        placements = [
+            {
+                "role": f"subscriber_{cpu}",
+                "cpu": cpu,
+                "pinned": True,
+                "topology_available": True,
+                "package_id": 0,
+                "core_id": 0,
+                "thread_siblings": str(cpu),
+            }
+            for cpu in range(8)
         ]
 
         runner.validate_distinct_physical_cores(placements)

@@ -65,6 +65,9 @@ struct RuntimePackageCapabilityMatchContext {
   std::uint64_t startup_attempt{};
   PlanGenerationId plan_generation{};
   RunGenerationId run_generation{};
+
+  friend bool operator==(const RuntimePackageCapabilityMatchContext&,
+                         const RuntimePackageCapabilityMatchContext&) = default;
 };
 
 /// @brief Preserve one bounded required-versus-observed capability match.

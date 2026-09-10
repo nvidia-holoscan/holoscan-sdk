@@ -19,8 +19,8 @@
 namespace holoscan::detail {
 
 // These records are the explicit compiler-owned facts that cold Contract normalization cannot
-// infer. Requiring them at the seam prevents EA1-005 from manufacturing graph identities, clock
-// conversions, retention bounds, or predicate evidence assigned to EA1-009.
+// infer. Requiring them at the seam prevents HSDK5-005 from manufacturing graph identities, clock
+// conversions, retention bounds, or predicate evidence assigned to HSDK5-009.
 struct TemporalResolvedReferenceFacts {
   bool resolved{};
   TemporalClockKeyRecord clock{};
@@ -79,7 +79,7 @@ struct LoweredTemporalRecords {
   std::vector<EdgeSelectionRecord> edges;
 };
 
-// Lowering is deliberately private and compiler-consumable. It maps every EA1-005 normalized
+// Lowering is deliberately private and compiler-consumable. It maps every HSDK5-005 normalized
 // shape but cannot resolve any graph-owned fact; callers must provide those facts explicitly.
 [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<LoweredTemporalRecords, Error>
 lower_temporal_contract_records(const TemporalContractSnapshot& snapshot,

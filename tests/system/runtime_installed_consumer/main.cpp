@@ -16,6 +16,7 @@
 #include <holoscan/core/compile.hpp>
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/lifecycle_control.hpp>
+#include <holoscan/core/managed_shutdown_signals.hpp>
 #include <holoscan/core/parameter_compute_control.hpp>
 #include <holoscan/core/parameter_control.hpp>
 #include <holoscan/core/parameter_snapshot.hpp>
@@ -165,6 +166,15 @@ static_assert(std::move_constructible<holoscan::RunSession>);
 static_assert(std::is_nothrow_move_constructible_v<holoscan::RunSession>);
 static_assert(std::is_nothrow_destructible_v<holoscan::RunSession>);
 static_assert(!std::copyable<holoscan::RunSession>);
+// REQ: RUNTIME-047
+// REQ: RUNTIME-049
+static_assert(std::move_constructible<holoscan::ManagedShutdownSignals>);
+static_assert(std::is_nothrow_move_constructible_v<holoscan::ManagedShutdownSignals>);
+static_assert(std::is_nothrow_destructible_v<holoscan::ManagedShutdownSignals>);
+static_assert(!std::copyable<holoscan::ManagedShutdownSignals>);
+static_assert(!std::is_move_assignable_v<holoscan::ManagedShutdownSignals>);
+static_assert(static_cast<std::uint8_t>(holoscan::RunSignalPolicy::kManaged) == 0U);
+static_assert(static_cast<std::uint8_t>(holoscan::RunSignalPolicy::kCallerManaged) == 1U);
 
 [[nodiscard]] bool has_diagnostic(const holoscan::RunSession& session, std::string_view token) {
   return std::any_of(session.diagnostics().begin(),
@@ -185,8 +195,14 @@ static_assert(!std::copyable<holoscan::RunSession>);
 // REQ: CHAN-077
 int main() {
   const auto run_sync = static_cast<int (*)(const holoscan::ExecutionPlan&)>(&holoscan::run);
+  const auto run_sync_policy =
+      static_cast<int (*)(const holoscan::ExecutionPlan&, holoscan::RunSignalPolicy)>(
+          &holoscan::run);
   const auto run_async =
       static_cast<holoscan::RunSession (*)(const holoscan::ExecutionPlan&)>(&holoscan::run_async);
+  using ManagedRunAsync =
+      holoscan::RunSession (*)(const holoscan::ExecutionPlan&, holoscan::ManagedShutdownSignals&);
+  const auto run_async_managed = static_cast<ManagedRunAsync>(&holoscan::run_async);
   const auto session_wait = &holoscan::RunSession::wait;
   const auto session_stop = &holoscan::RunSession::request_stop;
   const auto session_running = &holoscan::RunSession::is_running;
@@ -216,8 +232,9 @@ int main() {
       static_cast<holoscan::expected<holoscan::ParamSnapshot, holoscan::Error> (
           holoscan::ParamSnapshot::*)(const holoscan::ParamSnapshotScope&) const>(
           &holoscan::ParamSnapshot::slice);
-  if (run_sync == nullptr || run_async == nullptr || session_wait == nullptr ||
-      session_stop == nullptr || session_running == nullptr || session_termination == nullptr ||
+  if (run_sync == nullptr || run_sync_policy == nullptr || run_async == nullptr ||
+      run_async_managed == nullptr || session_wait == nullptr || session_stop == nullptr ||
+      session_running == nullptr || session_termination == nullptr ||
       session_diagnostics == nullptr || session_operator_ref == nullptr ||
       session_lifecycle_control == nullptr || session_parameter_control == nullptr ||
       session_close_parameter_ingress == nullptr || session_capture_params == nullptr ||
@@ -227,6 +244,22 @@ int main() {
       snapshot_slice_scope == nullptr) {
     return 1;
   }
+
+  auto managed_signals = holoscan::ManagedShutdownSignals::create();
+#if defined(__linux__)
+  if (!managed_signals) {
+    return 9;
+  }
+  auto moved_managed_signals = std::move(*managed_signals);
+  const auto managed_signals_close = moved_managed_signals.close();
+  if (!managed_signals_close) {
+    return 10;
+  }
+#else
+  if (managed_signals || managed_signals.error().code != holoscan::ErrorCode::kNotSupported) {
+    return 9;
+  }
+#endif
 
   holoscan::Graph graph{"installed-runtime-consumer"};
   const auto runtime_operator = graph.op<InstalledRuntimeOperator>("operator");

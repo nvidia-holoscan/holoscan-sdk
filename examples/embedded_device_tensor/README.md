@@ -27,8 +27,7 @@ accessor, implicit device zero, or build-tree-only dependency.
 From an installed SDK prefix:
 
 ```bash
-cmake -S cpp -B build \
-  -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -S cpp -B build
 cmake --build build -j
 ./build/embedded_device_tensor
 ```
@@ -84,7 +83,7 @@ compile-time error, not a Runtime fallback to another clock.
 
 ```cpp
 options.deployment.bind_tensor_output_device({
-    .operator_path = "/device-stage/source",
+    .operator_path = "device-stage/source",
     .output_port = "frame",
     .device = DeviceId{0},
 });
@@ -124,7 +123,7 @@ in-memory plan, not deserializing arbitrary JSON as executable authority.
 
 ## Limitations
 
-- Device placement is explicit per Tensor-producing output in EA1; typed
+- Device placement is explicit per Tensor-producing output in baseline; typed
   subtree and root defaults are later work.
 - The demonstration uses one CUDA device.
 - The sink validates Tensor metadata and the Runtime readiness-stream contract.

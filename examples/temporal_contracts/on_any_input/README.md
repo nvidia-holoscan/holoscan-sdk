@@ -58,7 +58,7 @@ cmake --build build
 If the SDK is not installed in a default location, point CMake at it:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S . -DCMAKE_PREFIX_PATH=<install-prefix>
 ```
 
 (The in-tree `CMakeLists.txt` builds as part of the SDK examples tree; the

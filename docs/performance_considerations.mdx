@@ -14,7 +14,7 @@ For operators with trivial computations (e.g., basic arithmetic operations like 
 
 ### Measured Overhead
 
-The following measurements were obtained using the `scheduler_overhead_benchmark.py` script (installed to `/opt/nvidia/holoscan/bin/` or available at `scripts/` in the source tree). These values are illustrative and will vary depending on your hardware, OS, and Python environment—run the benchmark on your target system to obtain accurate figures:
+The following measurements were obtained using the `scheduler_overhead_benchmark.py` script (installed to `/usr/bin/` or available at `scripts/` in the source tree). These values are illustrative and will vary depending on your hardware, OS, and Python environment—run the benchmark on your target system to obtain accurate figures:
 
 #### Operator execution only (no messaging, two operators)
 
@@ -30,7 +30,7 @@ The following measurements were obtained using the `scheduler_overhead_benchmark
 
 The measurements above were obtained using the following configuration:
 
-- **Script:** `scripts/scheduler_overhead_benchmark.py` (installed to `/opt/nvidia/holoscan/bin/scheduler_overhead_benchmark.py`)
+- **Script:** `scripts/scheduler_overhead_benchmark.py` (installed to `/usr/bin/scheduler_overhead_benchmark.py`)
 - **Command-line flags:**
 
   ```bash
@@ -70,7 +70,7 @@ To reproduce the measurements on your system, run the benchmark script:
 
 ```bash
 # From SDK installation
-HOLOSCAN_LOG_LEVEL=ERROR python3 /opt/nvidia/holoscan/bin/scheduler_overhead_benchmark.py
+HOLOSCAN_LOG_LEVEL=ERROR python3 /usr/bin/scheduler_overhead_benchmark.py
 
 # Or from source tree
 HOLOSCAN_LOG_LEVEL=ERROR python3 scripts/scheduler_overhead_benchmark.py

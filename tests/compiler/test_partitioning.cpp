@@ -15,6 +15,7 @@
 
 #include <holoscan/core/compile.hpp>
 
+#include "compiler/partitioning/partition_canonicalization.hpp"
 #include "compiler/partitioning/partition_planner_catalog.hpp"
 #include "compiler/partitioning/partitioning_pass.hpp"
 #include "partition_test_helpers.hpp"
@@ -34,6 +35,33 @@ using detail::partitioning::PartitionProblem;
 using detail::partitioning::PartitionProposal;
 using detail::partitioning::PartitionSelectionInput;
 using detail::partitioning::ValidatedPartitionPlan;
+
+// Every mandatory boundary bit maps to one stable, canonical reason sequence.
+// Used to keep serial planning, source-chain planning, and validation on one authority.
+TEST(PartitionCanonicalizationTest, ProjectsEveryBoundaryReasonInCanonicalOrder) {
+  // Key setup: add every mandatory boundary in deliberately noncanonical order.
+  detail::partitioning::PartitionBoundaryMask mask;
+  mask.add(PartitionBoundary::kReadiness);
+  mask.add(PartitionBoundary::kLifecycle);
+  mask.add(PartitionBoundary::kExplicitThreadPlacement);
+  mask.add(PartitionBoundary::kRegionBackend);
+  mask.add(PartitionBoundary::kDeviceTransfer);
+  mask.add(PartitionBoundary::kExternalEndpoint);
+  mask.add(PartitionBoundary::kProcess);
+
+  std::vector<PartitionDecisionReason> reasons;
+  detail::partitioning::append_boundary_reasons(mask, reasons);
+
+  // Key assertion: projection follows the one stable boundary-reason authority.
+  EXPECT_EQ(reasons,
+            (std::vector{PartitionDecisionReason::kProcessBoundary,
+                         PartitionDecisionReason::kExternalEndpointBoundary,
+                         PartitionDecisionReason::kDeviceTransferIncompatibility,
+                         PartitionDecisionReason::kRegionBackendAdmission,
+                         PartitionDecisionReason::kExplicitThreadPlacement,
+                         PartitionDecisionReason::kLifecycleIsolation,
+                         PartitionDecisionReason::kReadinessIsolation}));
+}
 
 // Returns the canonical partition ID assigned to vertex_id, or 0 if the vertex is absent.
 // Used throughout topology-assertion tests to compare partition membership.
@@ -71,7 +99,7 @@ class InvalidSourceChainPlanner final : public PartitionPlanner {
   [[nodiscard]] PartitionPlannerDescriptor descriptor() const noexcept override {
     return {detail::partitioning::source_chain_algorithm(),
             detail::partitioning::kPartitionPlannerInterfaceVersion,
-            AlgorithmMaturity::kExperimental,
+            AlgorithmMaturity::kProduction,
             detail::partitioning::kAllPartitionPlannerCapabilities};
   }
 
@@ -104,7 +132,7 @@ concept HasAuthoringGeneration = requires(T value) { value.generation; };
 TEST(PartitioningPrivacyTest, PrivateHeadersAndNeutralNames) {
   EXPECT_EQ(detail::partitioning::kSerialBaselineAlgorithmId, "holoscan.partition.serial_baseline");
   EXPECT_EQ(detail::partitioning::kSourceChainAlgorithmId, "holoscan.partition.source_chain");
-  EXPECT_EQ(detail::partitioning::kPartitionPlannerInterfaceVersion, 1U);
+  EXPECT_EQ(detail::partitioning::kPartitionPlannerInterfaceVersion, 2U);
   EXPECT_EQ(detail::partitioning::kPartitionAlgorithmVersion, 1U);
   EXPECT_EQ(detail::partitioning::partition_environment_variable(),
             "HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM");
@@ -122,26 +150,26 @@ TEST(PartitioningPrivacyTest, PlannerProblemWithholdsProfilesAndWholeGraphIdenti
 
 // REQ: COMPILE-004
 TEST(PartitionPlannerCatalogTest, RegistersExactBuiltins) {
-  auto catalog = PartitionPlannerCatalog::create_ea1_builtins();
+  auto catalog = PartitionPlannerCatalog::create_default_builtins();
   ASSERT_TRUE(catalog);
   auto baseline = catalog->make(detail::partitioning::serial_baseline_algorithm());
   auto source_chain = catalog->make(detail::partitioning::source_chain_algorithm());
   ASSERT_TRUE(baseline);
   ASSERT_TRUE(source_chain);
   EXPECT_EQ(baseline.value()->descriptor().maturity, AlgorithmMaturity::kProduction);
-  EXPECT_EQ(source_chain.value()->descriptor().maturity, AlgorithmMaturity::kExperimental);
+  EXPECT_EQ(source_chain.value()->descriptor().maturity, AlgorithmMaturity::kProduction);
   EXPECT_FALSE(catalog->make(AlgorithmKey{"holoscan.partition.unknown", 1U}));
 }
 
-// REQ: COMPILE-004
-TEST(PartitionPlannerSelectorTest, OrdinaryCompileUsesSerialBaseline) {
-  auto catalog = PartitionPlannerCatalog::create_ea1_builtins();
+// REQ: COMPILE-068
+TEST(PartitionPlannerSelectorTest, OrdinaryCompileUsesSourceChain) {
+  auto catalog = PartitionPlannerCatalog::create_default_builtins();
   ASSERT_TRUE(catalog);
   const test::PartitionProblemStorage storage{2U, {{0U, 1U}}};
   const PartitionSelectionInput selection{};
   auto result = PartitioningPass(*catalog).run(selection, storage.problem());
   ASSERT_TRUE(result);
-  EXPECT_EQ(result->requested_algorithm, detail::partitioning::serial_baseline_algorithm());
+  EXPECT_EQ(result->requested_algorithm, detail::partitioning::source_chain_algorithm());
   EXPECT_EQ(result->selection_source, PlanSelectionSource::kCoreDefault);
   EXPECT_EQ(result->maturity, AlgorithmMaturity::kProduction);
   EXPECT_FALSE(result->experimental_warning_required);
@@ -170,18 +198,18 @@ TEST(PartitioningPublicSurfaceTest, NoPublicSelectorOrPrivateHeaderLeak) {
   EXPECT_FALSE((std::is_constructible_v<PartitioningPass, CompileOptions>));
 }
 
-// REQ: COMPILE-005
+// REQ: COMPILE-068
 TEST(PartitionPlannerSelectorTest, RecordsInternalSourceChainSelection) {
-  auto catalog = PartitionPlannerCatalog::create_ea1_builtins();
+  auto catalog = PartitionPlannerCatalog::create_default_builtins();
   ASSERT_TRUE(catalog);
   const test::PartitionProblemStorage storage{2U, {{0U, 1U}}};
-  const std::string_view requested{"source_chain/v1"};
+  const auto requested = detail::partitioning::source_chain_algorithm();
   const PartitionSelectionInput selection{requested};
   auto result = PartitioningPass(*catalog).run(selection, storage.problem());
   ASSERT_TRUE(result);
   EXPECT_EQ(result->requested_algorithm, detail::partitioning::source_chain_algorithm());
-  EXPECT_EQ(result->selection_source, PlanSelectionSource::kEnvironmentOverride);
-  EXPECT_TRUE(result->experimental_warning_required);
+  EXPECT_EQ(result->selection_source, PlanSelectionSource::kCompilerService);
+  EXPECT_FALSE(result->experimental_warning_required);
 }
 
 // A single vertex and a fully-connected linear chain each collapse to one partition.
@@ -568,6 +596,36 @@ TEST(PartitionPlanValidatorTest, RejectsCyclicQuotientGraph) {
   EXPECT_EQ(result.error().message, "PARTITION_QUOTIENT_CYCLE");
 }
 
+// REQ: COMPILE-068
+TEST(PartitionPlanValidatorTest, RejectsPlannerGrowthOrSplitOfExactAnchor) {
+  const test::PartitionProblemStorage storage{3U, {{0U, 1U}, {1U, 2U}}};
+  const std::array anchor_members{1U, 2U};
+  const std::array constraints{detail::partitioning::AuthoredPartitionConstraintView{
+      detail::partitioning::AuthoredPartitionConstraintId{7U}, anchor_members}};
+  auto problem = storage.problem();
+  problem.authored_constraints = constraints;
+  const detail::partitioning::SourceChainPartitionPlanner planner;
+  auto proposal = planner.propose(problem);
+  ASSERT_TRUE(proposal);
+
+  const CandidatePartitionId anchor_candidate = proposal->assignments[1].partition;
+  auto grown = *proposal;
+  grown.assignments[0].partition = anchor_candidate;
+  grown.decisions[0].partition = anchor_candidate;
+  auto grown_result =
+      detail::partitioning::validate_partition_proposal(problem, planner.descriptor(), grown);
+  ASSERT_FALSE(grown_result);
+  EXPECT_EQ(grown_result.error().message, "PARTITION_PROPOSAL_CONSTRAINT_VIOLATION");
+
+  auto split = *proposal;
+  split.assignments[2].partition = CandidatePartitionId{99U};
+  split.decisions[2].partition = CandidatePartitionId{99U};
+  auto split_result =
+      detail::partitioning::validate_partition_proposal(problem, planner.descriptor(), split);
+  ASSERT_FALSE(split_result);
+  EXPECT_EQ(split_result.error().message, "PARTITION_PROPOSAL_CONSTRAINT_VIOLATION");
+}
+
 // REQ: COMPILE-006
 TEST(PartitionPlanValidatorTest, EnforcesPartitionLimit) {
   const test::PartitionProblemStorage storage{2U};
@@ -637,8 +695,7 @@ TEST(PartitioningPassTest, InvalidExperimentalProposalDoesNotFallback) {
   ASSERT_TRUE(catalog);
   const test::PartitionProblemStorage storage{1U};
   const auto source_chain = detail::partitioning::source_chain_algorithm();
-  const PartitionSelectionInput selection{
-      std::nullopt, std::nullopt, source_chain, Profile::kStandard, {}};
+  const PartitionSelectionInput selection{std::nullopt, source_chain, Profile::kStandard, {}};
   auto result = PartitioningPass(*catalog).run(selection, storage.problem());
   ASSERT_FALSE(result);
   EXPECT_EQ(result.error().message, "PARTITION_COVER_INVALID");
@@ -653,8 +710,7 @@ TEST(PartitioningPassTest, FailedPlanRetainsAttemptProvenance) {
   ASSERT_TRUE(catalog);
   const test::PartitionProblemStorage storage{1U};
   const auto requested = detail::partitioning::source_chain_algorithm();
-  const PartitionSelectionInput selection{
-      std::nullopt, requested, std::nullopt, Profile::kStandard, {}};
+  const PartitionSelectionInput selection{requested, std::nullopt, Profile::kStandard, {}};
   auto result = PartitioningPass(*catalog).run(selection, storage.problem());
   EXPECT_FALSE(result);
   ASSERT_TRUE(selection.compiler_service_request.has_value());
@@ -669,12 +725,11 @@ TEST(PartitioningPassTest, FailedPlanRetainsAttemptProvenance) {
 //
 // REQ: COMPILE-006
 TEST(PartitioningPassTest, ShadowProposalIsNotAcceptedPlanEvidence) {
-  auto catalog = PartitionPlannerCatalog::create_ea1_builtins();
+  auto catalog = PartitionPlannerCatalog::create_default_builtins();
   ASSERT_TRUE(catalog);
   const test::PartitionProblemStorage storage{3U, {{0U, 1U}, {0U, 2U}}};
   const auto requested = detail::partitioning::source_chain_algorithm();
-  const PartitionSelectionInput selection{
-      std::nullopt, requested, std::nullopt, Profile::kStandard, {}};
+  const PartitionSelectionInput selection{requested, std::nullopt, Profile::kStandard, {}};
   auto result = PartitioningPass(*catalog).run(selection, storage.problem());
   ASSERT_TRUE(result);
   EXPECT_EQ(result->plan.algorithm, requested);

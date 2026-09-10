@@ -57,11 +57,11 @@ struct PodFieldIdentityRecord {
 
 /// @brief Preserve complete pointer-free raw-POD authoring identity.
 ///
-/// EA1-006 requires ordered fields to cover every object byte exactly once,
+/// HSDK5-006 requires ordered fields to cover every object byte exactly once,
 /// with no gap, overlap, or tail padding. Within one Graph, every use of the
 /// same canonical name and version must carry this exact complete layout.
 /// Canonical layout digests and the fieldwise transport codec are deferred to
-/// EA1-013.
+/// HSDK5-013.
 struct PodIdentityRecord {
   std::string canonical_name;        ///< Owned exact type name.
   std::uint32_t version{};           ///< Nonzero exact type version.

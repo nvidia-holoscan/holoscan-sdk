@@ -469,21 +469,28 @@ TEST(ParameterUpdateCoordinatorTest,
   EXPECT_EQ(capacity.max_event_cursors, 0U);
   EXPECT_EQ(capacity.parameter_arena_bytes, 0U);
 
-  // OperatorRuntimeAccess exposes the mutable aggregate address required by reconstruction.
+  // Key setup: reconstruct an inactive coordinator from one mutable Operator-owned aggregate,
+  // then change that source after reconstruction.
   // NOLINTNEXTLINE(misc-const-correctness)
   test::RuntimeParamProbeOperator op;
   const auto binding = make_direct_parameter_binding(plan, op);
   auto coordinator = detail::ParameterUpdateCoordinator::create(
       std::span<const detail::ParameterRuntimeOperatorBinding>{&binding, 1U}, capacity);
   ASSERT_TRUE(coordinator) << static_cast<int>(coordinator.error().code);
+  auto* const source_value = const_cast<test::RuntimeProbeParams*>(
+      static_cast<const test::RuntimeProbeParams*>(binding.initial_value));
+  source_value->value = 19;
 
   const OperatorRef owner = binding.run_bound_owner;
   auto direct_coordinator = checked_value(std::move(coordinator));
   auto pin = direct_coordinator->pin_published(owner);
   ASSERT_TRUE(pin);
   ASSERT_NE(pin->header(), nullptr);
+  // Key assertion: generation zero is immutable and independent of the reconstructed Operator,
+  // without being counted as an update-generation arena or observer allocation.
   EXPECT_EQ(pin->header()->generation, 0U);
-  EXPECT_EQ(pin->header()->value, binding.initial_value);
+  EXPECT_NE(pin->header()->value, binding.initial_value);
+  EXPECT_EQ(static_cast<const test::RuntimeProbeParams*>(pin->header()->value)->value, 7);
   EXPECT_EQ(direct_coordinator->max_event_cursors(), 0U);
   const auto cursor = direct_coordinator->register_event_cursor(full_local_parameter_policy());
   ASSERT_FALSE(cursor);
@@ -2756,6 +2763,127 @@ TEST(ParameterUpdateCoordinatorTest, StoppedCaptureFrontierTreatsAcceptedNoChang
   ASSERT_TRUE(stopped->published_through().has_value());
   EXPECT_EQ(checked_value(stopped->accepted_through()), accepted.update_sequence);
   EXPECT_EQ(checked_value(stopped->published_through()), accepted.update_sequence);
+}
+
+// Result lookup and terminal waiting intentionally expose different zero/absent errors, while a
+// restricted capability must never distinguish an absent sequence from a hidden one. Detach
+// preserves retained terminal evidence but changes unrestricted missing-result errors to closed.
+// REQ: PARAM-020
+// REQ: PARAM-023
+TEST(ParameterUpdateCoordinatorTest, ResultWaitAndDisclosureMatrixRemainsExactAfterDetach) {
+  const ExecutionPlan plan = test::make_runtime_param_test_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const ParameterFieldPlanRecord field = runtime_value_field(plan);
+  const OperatorRef owner = run_owner(field);
+  auto direct = make_direct_parameter_coordinator(plan);
+  auto& coordinator = *direct.coordinator;
+  const std::array patch{
+      ParamPatch{
+          .target = ParamAddress{.operator_instance = owner, .field = field.field},
+          .value = ParamValue::from(std::int32_t{42}),
+      },
+  };
+  const ParamBatchUpdateResult accepted = coordinator.submit(patch);
+  ASSERT_TRUE(accepted.committed);
+
+  ParamAccessPolicy hidden_policy = full_local_parameter_policy();
+  OperatorRef hidden_owner = owner;
+  ++hidden_owner.id;
+  hidden_policy.allowed_scope = ParamScopeFilter::for_operator(hidden_owner);
+  constexpr ParamUpdateSequence kUnknownSequence = 999U;
+
+  // Key setup: inspect zero, absent, hidden, and accepted-but-nonterminal identities before
+  // terminalization, then repeat the retained/absent projections after detach.
+  const auto zero_result = coordinator.result(0U);
+  ASSERT_FALSE(zero_result);
+  EXPECT_EQ(zero_result.error().code, ErrorCode::kNotFound);
+  const auto zero_wait = coordinator.await(0U, 0ns);
+  ASSERT_FALSE(zero_wait);
+  EXPECT_EQ(zero_wait.error().code, ErrorCode::kInvalidArgument);
+  const auto absent = coordinator.await(kUnknownSequence, 0ns);
+  ASSERT_FALSE(absent);
+  EXPECT_EQ(absent.error().code, ErrorCode::kNotFound);
+  const auto hidden_absent = coordinator.await_authorized(kUnknownSequence, 0ns, hidden_policy);
+  ASSERT_FALSE(hidden_absent);
+  EXPECT_EQ(hidden_absent.error().code, ErrorCode::kPermissionDenied);
+  const auto hidden_present =
+      coordinator.await_authorized(accepted.update_sequence, 0ns, hidden_policy);
+  ASSERT_FALSE(hidden_present);
+  EXPECT_EQ(hidden_present.error().code, ErrorCode::kPermissionDenied);
+  const auto pending = coordinator.await(accepted.update_sequence, 0ns);
+  ASSERT_FALSE(pending);
+  EXPECT_EQ(pending.error().code, ErrorCode::kTimeout);
+
+  coordinator.terminalize_unpublished_at_run_end();
+  const auto terminal = coordinator.await(accepted.update_sequence, 0ns);
+  ASSERT_TRUE(terminal);
+  EXPECT_EQ(terminal->state, ParamUpdateState::kCanceled);
+  coordinator.begin_detach();
+
+  // Key assertion: retained terminal evidence remains observable after detach, unrestricted
+  // absent queries become kClosed, and restricted absent queries remain kPermissionDenied so the
+  // capability cannot use guessed sequence numbers as an existence oracle.
+  const auto retained = coordinator.await(accepted.update_sequence, 0ns);
+  ASSERT_TRUE(retained);
+  EXPECT_EQ(retained->state, ParamUpdateState::kCanceled);
+  const auto closed_result = coordinator.result(kUnknownSequence);
+  ASSERT_FALSE(closed_result);
+  EXPECT_EQ(closed_result.error().code, ErrorCode::kClosed);
+  const auto closed_wait = coordinator.await(kUnknownSequence, 0ns);
+  ASSERT_FALSE(closed_wait);
+  EXPECT_EQ(closed_wait.error().code, ErrorCode::kClosed);
+  const auto hidden_after_detach =
+      coordinator.await_authorized(kUnknownSequence, 0ns, hidden_policy);
+  ASSERT_FALSE(hidden_after_detach);
+  EXPECT_EQ(hidden_after_detach.error().code, ErrorCode::kPermissionDenied);
+}
+
+// Capacity preflight and reservation must agree on the exact reusable ledger population. Empty
+// slots remain preferable to acknowledged terminal evidence; once full, the oldest acknowledged
+// non-Published sequence is recycled first.
+// REQ: PARAM-020
+// REQ: PARAM-023
+TEST(ParameterUpdateCoordinatorTest, ResultLedgerReusesOldestAcknowledgedTerminalSlot) {
+  const ExecutionPlan plan = test::make_runtime_param_test_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const ParameterFieldPlanRecord field = runtime_value_field(plan);
+  const OperatorRef owner = run_owner(field);
+  auto op = std::make_unique<test::RuntimeParamProbeOperator>();
+  const auto binding = make_direct_parameter_binding(plan, *op);
+  auto capacity = checked_value(plan.parameter_runtime_capacity());
+  capacity.audit_capacity = 2U;
+  auto coordinator_result = detail::ParameterUpdateCoordinator::create(
+      std::span<const detail::ParameterRuntimeOperatorBinding>{&binding, 1U}, capacity);
+  ASSERT_TRUE(coordinator_result);
+  auto coordinator = std::move(coordinator_result).value();
+  const auto submit_no_change = [&] {
+    const std::array patch{
+        ParamPatch{
+            .target = ParamAddress{.operator_instance = owner, .field = field.field},
+            .value = ParamValue::from(std::int32_t{7}),
+        },
+    };
+    return coordinator->submit(patch);
+  };
+
+  // Key setup: fill both ledger slots with terminal no-change results and acknowledge them in
+  // sequence order, leaving no empty slot for the third submission.
+  const ParamBatchUpdateResult first = submit_no_change();
+  const ParamBatchUpdateResult second = submit_no_change();
+  ASSERT_TRUE(first.committed);
+  ASSERT_TRUE(second.committed);
+  ASSERT_TRUE(coordinator->result(first.update_sequence));
+  ASSERT_TRUE(coordinator->result(second.update_sequence));
+  const ParamBatchUpdateResult third = submit_no_change();
+  ASSERT_TRUE(third.committed);
+
+  // Key assertion: successful admission proves preflight and reservation selected the same
+  // eligible population; only the oldest acknowledged sequence was evicted.
+  const auto evicted = coordinator->result(first.update_sequence);
+  ASSERT_FALSE(evicted);
+  EXPECT_EQ(evicted.error().code, ErrorCode::kNotFound);
+  EXPECT_TRUE(coordinator->result(second.update_sequence));
+  EXPECT_TRUE(coordinator->result(third.update_sequence));
 }
 
 // REQ: PARAM-018

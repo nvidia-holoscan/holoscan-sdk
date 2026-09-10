@@ -14,6 +14,8 @@
 
 #include <holoscan/cuda_execution/cuda_stream_pool.hpp>
 
+#include "cuda_execution/cuda_driver_entry_points.hpp"
+
 namespace holoscan {
 using ::holoscan::test::invalid_cuda_device_id;
 using ::holoscan::test::ScopedAllocationCounter;
@@ -332,20 +334,22 @@ TEST(CudaStreamPool, LeaseReleaseAfterPoolDestructionDoesNotTouchPool) {
 TEST(CudaStreamPool, CreatesStreamsInProvidedContext) {
   skip_without_cuda_device();
 
-  // Resolve the driver entry points needed to capture and verify the context.
+  // Resolve the driver entry points needed to capture and verify the context. The version argument
+  // selects the driver-function ABI, so keep it aligned with these function-pointer signatures.
+  // Requesting CUDA 13 for cuStreamGetCtx can resolve cuStreamGetCtx_v2, whose third CUgreenCtx*
+  // parameter is incompatible with the legacy two-argument pointer used here.
   CUresult (*ctx_get_current)(CUcontext*) = nullptr;
   CUresult (*stream_get_ctx)(CUstream, CUcontext*) = nullptr;
-  int version = 0;
-  cudaRuntimeGetVersion(&version);
   cudaDriverEntryPointQueryResult driver_status{};
+  constexpr auto kAbi = cuda_execution_detail::kCUDADriverABIVersion12030;
   cudaGetDriverEntryPointByVersion("cuCtxGetCurrent",
                                    reinterpret_cast<void**>(&ctx_get_current),
-                                   version,
+                                   kAbi,
                                    cudaEnableDefault,
                                    &driver_status);
   cudaGetDriverEntryPointByVersion("cuStreamGetCtx",
                                    reinterpret_cast<void**>(&stream_get_ctx),
-                                   version,
+                                   kAbi,
                                    cudaEnableDefault,
                                    &driver_status);
   if (ctx_get_current == nullptr || stream_get_ctx == nullptr) {
@@ -391,12 +395,10 @@ TEST(CudaStreamPool, RejectsContextOnDifferentDevice) {
   }
 
   CUresult (*ctx_get_current)(CUcontext*) = nullptr;
-  int version = 0;
-  cudaRuntimeGetVersion(&version);
   cudaDriverEntryPointQueryResult driver_status{};
   cudaGetDriverEntryPointByVersion("cuCtxGetCurrent",
                                    reinterpret_cast<void**>(&ctx_get_current),
-                                   version,
+                                   cuda_execution_detail::kCUDADriverABIVersion12030,
                                    cudaEnableDefault,
                                    &driver_status);
   if (ctx_get_current == nullptr) {

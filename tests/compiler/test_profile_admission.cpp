@@ -45,7 +45,11 @@ constexpr std::string_view kRuntimePackageX8664Golden =
     R"gold(can.runtime.channel.pod_codec","version":1},{"evidence_id":"holoscan.compile.endpoint_ca)gold"
     R"gold(talog/v1","id":"holoscan.runtime.channel_endpoint_catalog","version":1},{"evidence_id":")gold"
     R"gold(holoscan.compile.channel_service_plan/v1","id":"holoscan.runtime.channel_service_attach")gold"
-    R"gold(,"version":1},{"evidence_id":"holoscan.compile.execution_plan.private.v1","id":"holoscan)gold"
+    R"gold(,"version":1},{"evidence_id":"holoscan.compile.cuda_compute_stream_plan/v1","id":)gold"
+    R"gold("holoscan.runtime.cuda_compute_stream_materialization","version":1},{"evidence_id":)gold"
+    R"gold("holoscan.compile.cuda_green_context_plan/v1","id":"holoscan.runtime.cuda_green_)gold"
+    R"gold(context_materialization","version":1},{"evidence_id":)gold"
+    R"gold("holoscan.compile.execution_plan.private.v1","id":"holoscan)gold"
     R"gold(.runtime.execution_plan","version":1},{"evidence_id":"holoscan.compile.generic_output_lo)gold"
     R"gold(an_plan/v1","id":"holoscan.runtime.generic_output_loans","version":1},{"evidence_id":"ho)gold"
     R"gold(loscan.compile.physical_plan/v1","id":"holoscan.runtime.payload_edges","version":1},{"ev)gold"
@@ -54,8 +58,6 @@ constexpr std::string_view kRuntimePackageX8664Golden =
     R"gold(n.runtime.ready.deterministic_serial","version":1},{"evidence_id":"holoscan.runtime.targ)gold"
     R"gold(et.current/v1","id":"holoscan.runtime.target.current","version":1},{"evidence_id":"holos)gold"
     R"gold(can.compile.temporal_plan/v1","id":"holoscan.runtime.temporal_contracts","version":1},{")gold"
-    R"gold(evidence_id":"holoscan.compile.tensor_device_resource_plan/v1","id":"holoscan.runt)gold"
-    R"gold(ime.tensor_device_stream_materialization","version":1},{")gold"
     R"gold(evidence_id":"holoscan.runtime.tensor_inline_record/generated/v1","id":"holoscan.runtime)gold"
     R"gold(.tensor_inline_record","version":1},{"evidence_id":"holoscan.compile.tensor_pool_plan/v1)gold"
     R"gold(","id":"holoscan.runtime.tensor_pool_materialization","version":1},{"evidence_id":"holos)gold"
@@ -63,11 +65,11 @@ constexpr std::string_view kRuntimePackageX8664Golden =
     R"gold(sion":1},{"evidence_id":"holoscan.runtime.thread_placement.apply_readback/v1","id":"holo)gold"
     R"gold(scan.runtime.thread_placement.apply_readback","version":1},{"evidence_id":"holoscan.runt)gold"
     R"gold(ime.trace_context/v1","id":"holoscan.runtime.trace_context","version":1}],"digest":"sha2)gold"
-    R"gold(56:918f05ff8a7ac16b020b8c1b6cdd0b118690d9082f5ff177315a4cb7974fcdd1","package_id":"holos)gold"
+    R"gold(56:23a024df6190ed80de6de176425ca3c01a1a174e550a3ef6f5e1ffd6e1115669","package_id":"holos)gold"
     R"gold(can-core","profile_policies":[{"digest":"sha256:deb27bac29f1e11ef258d8208fc4d9324baeeb73)gold"
     R"gold(bc45d4c6a5d1eeadf312738d","major":1,"minor":0}],"runtime_abi_versions":["holoscan.runtim)gold"
     R"gold(e_abi.v1"],"schema":"holoscan.runtime_package_capabilities.canonical_json.v1","schema_ve)gold"
-    R"gold(rsion":1,"supported_plan_schemas":["holoscan.execution_plan.private.v1"],"target_triples)gold"
+    R"gold(rsion":1,"supported_plan_schemas":["holoscan.execution_plan.private.v4"],"target_triples)gold"
     R"gold(":["x86_64-linux-gnu"],"tensor_inline_record_capability":{"capability_id":"holoscan.runt)gold"
     R"gold(ime.tensor_inline_record","capability_version":1,"evidence_id":"holoscan.runtime.tensor_)gold"
     R"gold(inline_record/generated/v1","fixed_metadata_overhead_bytes":512,"inline_arm_schema_id":")gold"
@@ -131,7 +133,7 @@ constexpr std::string_view kRuntimePackageX8664Golden =
   manifest.requested_profile = profile;
   manifest.effective_graph_profile = profile;
   manifest.profile_policy_id = detail::profile_policy_id_v1();
-  manifest.plan_schema_version = "holoscan.execution_plan.private.v1";
+  manifest.plan_schema_version = "holoscan.execution_plan.private.v4";
   manifest.runtime_abi_version = "holoscan.runtime_abi.v1";
   manifest.target_triple = std::string(detail::compile_target_triple());
   manifest.producer_build_id = "diagnostic-build";
@@ -243,10 +245,14 @@ TEST(ProfileAdmission, PolicyIdentityEvolutionUsesExplicitCompatibilityVersions)
 
 // REQ: COMPILE-003
 TEST(ProfileAdmission, CanonicalizesEveryRecordFamilyAndRejectsDuplicateKeys) {
-  // Key setup: all six sortable record families populated with out-of-order pairs
+  // Key setup: all eight sortable record families populated with out-of-order pairs
   // ("test.z" before "test.a") to verify that finalize_profile_manifest sorts each.
   detail::ExecutionPlanState state = profile_state(Profile::kStandard);
   auto& manifest = state.profile_manifest;
+  manifest.scope_resolutions = {
+      {.object_id = "test:z", .object_kind = "test"},
+      {.object_id = "test:a", .object_kind = "test"},
+  };
   manifest.required_capabilities = {
       {.capability_id = "test.z", .version = 1U, .evidence_id = "test.z/v1"},
       {.capability_id = "test.a", .version = 1U, .evidence_id = "test.a/v1"},
@@ -275,6 +281,10 @@ TEST(ProfileAdmission, CanonicalizesEveryRecordFamilyAndRejectsDuplicateKeys) {
       {.feature_id = "test.z", .fallback_id = "test.fallback"},
       {.feature_id = "test.a", .fallback_id = "test.fallback"},
   };
+  manifest.generated_endpoint_names = {
+      {.final_name = "test.z", .algorithm = "test.algorithm", .version = 1U},
+      {.final_name = "test.a", .algorithm = "test.algorithm", .version = 1U},
+  };
   auto package = detail::runtime_package_capability_manifest();
   package.offers.push_back({"test.a", 1U, "test.a/v1"});
   package.offers.push_back({"test.z", 1U, "test.z/v1"});
@@ -283,6 +293,12 @@ TEST(ProfileAdmission, CanonicalizesEveryRecordFamilyAndRejectsDuplicateKeys) {
   ASSERT_TRUE(package_view);
   ASSERT_TRUE(detail::finalize_profile_manifest(CompileOptions{}, state, package_view.value()));
   // Key assertion: every family is sorted by its primary key after finalization.
+  EXPECT_TRUE(std::is_sorted(manifest.scope_resolutions.begin(),
+                             manifest.scope_resolutions.end(),
+                             [](const auto& lhs, const auto& rhs) {
+                               return std::pair{lhs.object_kind, lhs.object_id} <
+                                      std::pair{rhs.object_kind, rhs.object_id};
+                             }));
   EXPECT_TRUE(std::is_sorted(manifest.required_capabilities.begin(),
                              manifest.required_capabilities.end(),
                              [](const auto& lhs, const auto& rhs) {
@@ -315,12 +331,25 @@ TEST(ProfileAdmission, CanonicalizesEveryRecordFamilyAndRejectsDuplicateKeys) {
                                return std::pair{lhs.feature_id, lhs.fallback_id} <
                                       std::pair{rhs.feature_id, rhs.fallback_id};
                              }));
+  EXPECT_TRUE(std::is_sorted(manifest.generated_endpoint_names.begin(),
+                             manifest.generated_endpoint_names.end(),
+                             [](const auto& lhs, const auto& rhs) {
+                               return std::tuple{lhs.final_name, lhs.algorithm, lhs.version} <
+                                      std::tuple{rhs.final_name, rhs.algorithm, rhs.version};
+                             }));
 
   const auto rejects_duplicates = [](auto add_duplicates) {
     detail::ExecutionPlanState duplicate_state;
     add_duplicates(duplicate_state.profile_manifest);
     return !detail::finalize_profile_manifest(CompileOptions{}, duplicate_state);
   };
+  EXPECT_TRUE(rejects_duplicates([](ProfileManifest& duplicate) {
+    duplicate.scope_resolutions = {
+        {.object_id = "duplicate", .object_kind = "test"},
+        {.object_id = "distinct", .object_kind = "test"},
+        {.object_id = "duplicate", .object_kind = "test"},
+    };
+  }));
   EXPECT_TRUE(rejects_duplicates([](ProfileManifest& duplicate) {
     duplicate.required_capabilities = {
         {.capability_id = "duplicate", .version = 1U},
@@ -355,6 +384,12 @@ TEST(ProfileAdmission, CanonicalizesEveryRecordFamilyAndRejectsDuplicateKeys) {
     duplicate.explicit_fallbacks = {
         {.feature_id = "duplicate", .fallback_id = "fallback"},
         {.feature_id = "duplicate", .fallback_id = "fallback"},
+    };
+  }));
+  EXPECT_TRUE(rejects_duplicates([](ProfileManifest& duplicate) {
+    duplicate.generated_endpoint_names = {
+        {.final_name = "duplicate", .algorithm = "test", .version = 1U},
+        {.final_name = "duplicate", .algorithm = "test", .version = 1U},
     };
   }));
 }
@@ -439,8 +474,11 @@ TEST(ProfileAdmission, ExposesCanonicalPerVertexEffectiveProfilesToDownstreamLow
 
   ASSERT_NE(operator_vertex, snapshot->vertices.end());
   ASSERT_EQ(admission.effective_profiles().size(), snapshot->vertices.size());
+  ASSERT_EQ(admission.rate_evidence_requirements().size(), snapshot->vertices.size());
   EXPECT_EQ(admission.effective_profile(operator_vertex->id), Profile::kRealTime);
   EXPECT_EQ(admission.effective_profiles()[operator_vertex->id.value - 1U], Profile::kRealTime);
+  EXPECT_EQ(admission.rate_evidence_requirements()[operator_vertex->id.value - 1U],
+            detail::RateBoundedEvidenceRequirement::kRequired);
   EXPECT_FALSE(admission.effective_profile(VertexId{}).has_value());
   EXPECT_FALSE(
       admission
@@ -680,6 +718,7 @@ TEST(ProfileAdmission, DoesNotSelectOrRewritePartitionCover) {
 }
 
 // REQ: COMPILE-030
+// REQ: COMPILE-068
 TEST(ProfileAdmission, CanonicalPackageCapabilityCodecIsDistinctSealedAndOrderIndependent) {
   // Key setup: all five list fields (offers, schemas, policies, ABI versions, triples)
   // are reversed before re-sealing to verify that canonical JSON output is order-stable
@@ -706,8 +745,10 @@ TEST(ProfileAdmission, CanonicalPackageCapabilityCodecIsDistinctSealedAndOrderIn
   auto golden = generated;
   golden.target_triples = {"x86_64-linux-gnu"};
   ASSERT_TRUE(detail::seal_runtime_package_capability_manifest(golden));
+  // Task041's private-v4 rate metadata changes the supported-plan-schema byte and therefore the
+  // sealed package identity; all other canonical package fields remain byte-identical.
   EXPECT_EQ(golden.digest,
-            "sha256:918f05ff8a7ac16b020b8c1b6cdd0b118690d9082f5ff177315a4cb7974fcdd1");
+            "sha256:23a024df6190ed80de6de176425ca3c01a1a174e550a3ef6f5e1ffd6e1115669");
   EXPECT_EQ(detail::runtime_package_capability_canonical_json_v1(golden, true),
             kRuntimePackageX8664Golden);
 
@@ -717,6 +758,7 @@ TEST(ProfileAdmission, CanonicalPackageCapabilityCodecIsDistinctSealedAndOrderIn
   std::reverse(reordered.runtime_abi_versions.begin(), reordered.runtime_abi_versions.end());
   std::reverse(reordered.target_triples.begin(), reordered.target_triples.end());
   std::reverse(reordered.offers.begin(), reordered.offers.end());
+  EXPECT_EQ(detail::runtime_package_capability_canonical_json_v1(reordered, true), bytes);
   EXPECT_FALSE(detail::validate_runtime_package_capability_manifest(reordered));
   ASSERT_TRUE(detail::seal_runtime_package_capability_manifest(reordered));
   // Key assertion: reordered and re-sealed manifest produces the same digest and JSON.
@@ -736,6 +778,23 @@ TEST(ProfileAdmission, CanonicalPackageCapabilityCodecIsDistinctSealedAndOrderIn
   conflicting.evidence_id = "conflicting/evidence";
   duplicate.offers.push_back(std::move(conflicting));
   EXPECT_FALSE(detail::seal_runtime_package_capability_manifest(duplicate));
+  const auto rejects_duplicate_collection = [&](auto add_duplicate) {
+    auto candidate = generated;
+    add_duplicate(candidate);
+    return !detail::seal_runtime_package_capability_manifest(candidate);
+  };
+  EXPECT_TRUE(rejects_duplicate_collection([](auto& candidate) {
+    candidate.supported_plan_schemas.push_back(candidate.supported_plan_schemas.front());
+  }));
+  EXPECT_TRUE(rejects_duplicate_collection([](auto& candidate) {
+    candidate.profile_policies.push_back(candidate.profile_policies.front());
+  }));
+  EXPECT_TRUE(rejects_duplicate_collection([](auto& candidate) {
+    candidate.runtime_abi_versions.push_back(candidate.runtime_abi_versions.front());
+  }));
+  EXPECT_TRUE(rejects_duplicate_collection([](auto& candidate) {
+    candidate.target_triples.push_back(candidate.target_triples.front());
+  }));
 }
 
 // REQ: COMPILE-030
@@ -854,6 +913,13 @@ TEST(ProfileAdmission, RecordsOnlyExplicitRoboticsCriticalConstraintsAndEvidence
       .constrain(RegionConstraint::device_compatible_ops())
       .constrain(RegionConstraint::latency_budget(std::chrono::microseconds{250}))
       .constrain(RegionConstraint::bounded_memory());
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(critical);
+  const auto admission = detail::resolve_profile_admission(*snapshot, Profile::kStandard);
+  const auto operator_vertex =
+      std::ranges::find(snapshot->vertices, VertexKind::kOperator, &VertexRecord::kind);
+  ASSERT_NE(operator_vertex, snapshot->vertices.end());
+  EXPECT_EQ(admission.rate_evidence_requirements()[operator_vertex->id.value - 1U],
+            detail::RateBoundedEvidenceRequirement::kRequired);
   const ExecutionPlan plan = compile(critical);
   ASSERT_TRUE(plan.ok()) << plan.json();
   const auto& manifest = plan.profile_manifest();

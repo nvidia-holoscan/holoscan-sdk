@@ -1,0 +1,12 @@
+# Holoscan Visualization design notes
+
+Short notes on decisions that shaped the module and are hard to recover from the
+code. They are deliberately few: Holoscan Visualization is early, and documentation is expected to
+grow with the implementation rather than ahead of it. The
+[module README](../README.md) is the entry point; these cover background it does not
+have room for.
+
+| Note | What it answers |
+|---|---|
+| [Why not 4.x immediate mode](design-notes/why-not-immediate-mode.mdx) | What the 4.x per-frame cost actually is, and why declaring the scene up front removes it |
+| [CUDA synchronization contract](design-notes/cuda-synchronization-contract.mdx) | How CUDA streams and the device timeline order each other's work, and why the join policy stays with the caller |

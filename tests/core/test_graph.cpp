@@ -378,6 +378,84 @@ class ParamOp : public Operator<GraphParams> {
   Output<std::uint32_t> extra;
 };
 
+// Declares the derived output before its followed input so Graph capture must canonicalize the
+// complete owner-local declaration set rather than depend on setup declaration order.
+class OutputFirstRateOp : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output").follows(input, RateRatio{1U, 4U});
+    spec.input(input, "input").expected_rate(Rate::hz(240U));
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<std::uint32_t> output;
+  Input<std::uint32_t> input;
+};
+
+// Rate metadata is authored through the same declarations in several equivalent forms. The
+// graph snapshot must retain normalized values and canonical declaration IDs rather than the
+// source spelling or setup order.
+class RateIdentityOp : public Operator<> {
+ public:
+  explicit RateIdentityOp(bool output_first = false, bool noncanonical = false,
+                          bool changed_rate = false, bool explicit_depth = false)
+      : output_first_(output_first),
+        noncanonical_(noncanonical),
+        changed_rate_(changed_rate),
+        explicit_depth_(explicit_depth) {}
+
+  void setup(OperatorSpec& spec) override {
+    const Rate input_rate =
+        changed_rate_ ? Rate::hz(121U) : (noncanonical_ ? Rate::hz(240U, 2U) : Rate::hz(120U));
+    const RateRatio follows_ratio = noncanonical_ ? RateRatio{2U, 8U} : RateRatio{1U, 4U};
+    if (output_first_) {
+      spec.output(output, "output").follows(input, follows_ratio);
+    }
+    auto& input_spec = spec.input(input, "input").expected_rate(input_rate);
+    if (explicit_depth_) {
+      input_spec.queue_depth(3U);
+    }
+    if (!output_first_) {
+      spec.output(output, "output").follows(input, follows_ratio);
+    }
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<std::uint32_t> input;
+  Output<std::uint32_t> output;
+
+ private:
+  bool output_first_{};
+  bool noncanonical_{};
+  bool changed_rate_{};
+  bool explicit_depth_{};
+};
+
+// Reusable embedded graph for verifying that a follows declaration is canonicalized to the
+// child-local PortId even though the authoring reference is a C++ declaration pointer.
+class EmbeddedRateGraph : public Graph {
+ protected:
+  void compose() override { (void)op<RateIdentityOp>("rate"); }
+};
+
+// Deliberately follows a declaration outside this Operator so Graph capture can reject the raw
+// authoring reference before any pointer escapes into an immutable snapshot.
+class ForeignRateReferenceOp : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input");
+    spec.output(output, "output").follows(*foreign);
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<std::uint32_t> input;
+  Output<std::uint32_t> output;
+  static inline const Input<std::uint32_t>* foreign{};
+};
+
 // Counts constructor calls to verify that parameter replacement constructs exactly one
 // candidate instance rather than building tentative copies.
 // Representative test: ParameterReplacementConstructsExactlyOneCandidate.
@@ -454,6 +532,36 @@ class LazyGraph final : public Graph {
   void compose() override {
     ++compose_calls;
     (void)op<PassOp>("lazy");
+  }
+};
+
+// Supplies one embedded Operator so include_all authoring can prove that it retains a late
+// expansion directive instead of capturing only the root members present at the call site.
+class SinglePassGraph final : public Graph {
+ protected:
+  void compose() override { (void)op<PassOp>("embedded"); }
+};
+
+// Attempts to carry a child-local include_all directive across an embed boundary. Only the
+// compile root may own that directive, so parent publication must reject the child atomically.
+class IncludeAllChildGraph final : public Graph {
+ protected:
+  void compose() override { partition("child-all").include_all(); }
+};
+
+// Attempts to carry compile-root automatic-remainder intent across an embed boundary.
+class AutomaticRemainderChildGraph final : public Graph {
+ protected:
+  void compose() override { auto_partition_remaining(); }
+};
+
+// Supplies an ordinary child-local manual partition. A root include_all directive cannot coexist
+// with that second composed declaration even though neither child directive is include_all.
+class ManualPartitionChildGraph final : public Graph {
+ protected:
+  void compose() override {
+    auto op = this->op<PassOp>("embedded");
+    partition("child-manual").add(op);
   }
 };
 
@@ -1013,6 +1121,88 @@ TEST(GraphComposition, TypedFlowRetainsSeparateSetupAndGraphOverrideLayers) {
   EXPECT_EQ(found->graph_override.diagnostic_alias, "sink");
 }
 
+// REQ: GRAPH-033
+TEST(GraphComposition, RateCaptureCanonicalizesOutputFirstFollowsAndPreservesDepthPresence) {
+  Graph graph{"root"};
+  (void)graph.op<OutputFirstRateOp>("rate");
+
+  const GraphView view = graph.view();
+  ASSERT_EQ(view.ports().size(), 2U);
+  const auto input = std::ranges::find(view.ports(), std::string_view{"input"}, &PortRecord::name);
+  const auto output =
+      std::ranges::find(view.ports(), std::string_view{"output"}, &PortRecord::name);
+  ASSERT_NE(input, view.ports().end());
+  ASSERT_NE(output, view.ports().end());
+
+  EXPECT_FALSE(input->setup.queue_depth.has_value());
+  EXPECT_EQ(input->setup.rate_kind, PortRateKind::kExpectedInput);
+  EXPECT_EQ(input->setup.declared_expected_rate, Rate::hz(240U));
+  EXPECT_EQ(output->setup.rate_kind, PortRateKind::kFollowsInput);
+  EXPECT_EQ(output->setup.follows_input, input->id);
+  EXPECT_EQ(output->setup.follows_ratio, (RateRatio{1U, 4U}));
+}
+
+// REQ: GRAPH-009
+// REQ: GRAPH-033
+// Equivalent rate spellings and owner-local declaration order must produce one semantic graph
+// identity. A changed rate or authored queue depth is semantic and must change that identity.
+TEST(GraphComposition, RateMetadataCanonicalizesEquivalentFormsAndHashesSemanticChanges) {
+  Graph normalized{"rate-identity"};
+  (void)normalized.op<RateIdentityOp>("rate");
+
+  Graph equivalent_spelling{"rate-identity"};
+  (void)equivalent_spelling.op<RateIdentityOp>("rate", true, true);
+
+  // Key assertion: reduced rates/ratios and declaration order are not part of the identity.
+  EXPECT_EQ(normalized.view().identity().hash, equivalent_spelling.view().identity().hash);
+
+  Graph changed_rate{"rate-identity"};
+  (void)changed_rate.op<RateIdentityOp>("rate", false, false, true);
+  EXPECT_NE(normalized.view().identity().hash, changed_rate.view().identity().hash);
+
+  Graph changed_depth{"rate-identity"};
+  (void)changed_depth.op<RateIdentityOp>("rate", false, false, false, true);
+  EXPECT_NE(normalized.view().identity().hash, changed_depth.view().identity().hash);
+}
+
+// REQ: GRAPH-009
+// REQ: GRAPH-033
+// Embedded instances are keyed by decoded graph paths, while follows references are rewritten to
+// canonical child-local IDs. Reversing instance declaration order must not perturb the hash.
+TEST(GraphComposition, EmbeddedRateInstancesCanonicalizeFollowsReferencesAndOrder) {
+  Graph first{"embedded-rate-identity"};
+  (void)first.embed<EmbeddedRateGraph>("z");
+  (void)first.embed<EmbeddedRateGraph>("a");
+
+  Graph second{"embedded-rate-identity"};
+  (void)second.embed<EmbeddedRateGraph>("a");
+  (void)second.embed<EmbeddedRateGraph>("z");
+
+  EXPECT_EQ(first.view().identity().hash, second.view().identity().hash);
+
+  const GraphView view = first.view();
+  const auto input = std::ranges::find(view.ports(), std::string_view{"input"}, &PortRecord::name);
+  const auto output =
+      std::ranges::find(view.ports(), std::string_view{"output"}, &PortRecord::name);
+  ASSERT_NE(input, view.ports().end());
+  ASSERT_NE(output, view.ports().end());
+  ASSERT_TRUE(output->setup.follows_input.has_value());
+  EXPECT_EQ(output->setup.follows_input, input->id);
+}
+
+// REQ: GRAPH-033
+TEST(GraphComposition, RateCaptureRejectsForeignFollowsReferenceWithoutPublishingState) {
+  Graph graph{"root"};
+  Input<std::uint32_t> foreign{"foreign"};
+  ForeignRateReferenceOp::foreign = &foreign;
+
+  const Error error = graph_error_from([&] { (void)graph.op<ForeignRateReferenceOp>("bad"); });
+  ForeignRateReferenceOp::foreign = nullptr;
+  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(error.message, "PORT_RATE_REFERENCE_INVALID");
+  EXPECT_TRUE(graph.view().ports().empty());
+}
+
 // REQ: GRAPH-027
 // REQ: GRAPH-028
 TEST(GraphComposition, DropOldestQueuePolicyRetainsAuthoredDepthAndIdentity) {
@@ -1535,6 +1725,7 @@ TEST(GraphComposition, ExternalScalarKindsCoverThePortableFamily) {
 
 // REQ: GRAPH-012
 // REQ: GRAPH-018
+// REQ: GRAPH-031
 TEST(GraphComposition, RejectsUnicodeEdgeWhitespaceAndInvalidClosedEnumValues) {
   Graph graph{"root"};
   TopicOptions options;
@@ -1553,22 +1744,42 @@ TEST(GraphComposition, RejectsUnicodeEdgeWhitespaceAndInvalidClosedEnumValues) {
   EXPECT_THROW(graph.region("bad_profile").profile(static_cast<Profile>(0xFF)), RuntimeError);
   EXPECT_THROW(graph.lifecycle().before(source, target, static_cast<LifecycleStage>(0xFF)),
                RuntimeError);
-  EXPECT_THROW(graph.configure(source->input)
-                   .expects_tensor(TensorPortLayout{.memory_kind = static_cast<MemoryKind>(0xFF)}),
-               RuntimeError);
-  EXPECT_THROW(graph.configure(source->output)
-                   .produces_tensor(TensorPortLayout{.memory_kind = static_cast<MemoryKind>(0xFF)}),
-               RuntimeError);
-  EXPECT_THROW(graph.configure(source->input)
-                   .expects_tensor(TensorPortLayout{
-                       .dtype = DLDataType{static_cast<std::uint8_t>(0xFF), 8, 1}}),
-               RuntimeError);
-  EXPECT_THROW(graph.configure(source->output)
-                   .produces_tensor(TensorPortLayout{.dtype = DLDataType{kDLUInt, 0, 1}}),
-               RuntimeError);
-  EXPECT_THROW(graph.configure(source->input)
-                   .expects_tensor(TensorPortLayout{.dtype = DLDataType{kDLUInt, 8, 0}}),
-               RuntimeError);
+
+  // Key setup: exercise the Tensor-spec enum validator through ports whose Operator setup
+  // explicitly admitted Tensor configuration.
+  auto tensor = graph.op<TensorPassOp>("tensor");
+  const Error invalid_input_memory = graph_error_from([&] {
+    graph.configure(tensor->input)
+        .expects_tensor(
+            TensorInputSpec{.representation = {.memory_kind = static_cast<MemoryKind>(0xFF)}});
+  });
+  const Error invalid_output_memory = graph_error_from([&] {
+    graph.configure(tensor->output)
+        .produces_tensor(
+            TensorOutputSpec{.representation = {.memory_kind = static_cast<MemoryKind>(0xFF)}});
+  });
+  // Key assertion: both directions reject the fabricated closed-enum value at the Tensor-spec
+  // boundary with the exact diagnostic.
+  EXPECT_EQ(invalid_input_memory.message, "GRAPH_TENSOR_ENUM_INVALID");
+  EXPECT_EQ(invalid_output_memory.message, "GRAPH_TENSOR_ENUM_INVALID");
+  const Error invalid_input_dtype_code = graph_error_from([&] {
+    graph.configure(tensor->input)
+        .expects_tensor(TensorInputSpec{
+            .representation = {.dtype = DLDataType{static_cast<std::uint8_t>(0xFF), 8, 1}}});
+  });
+  const Error invalid_output_dtype_bits = graph_error_from([&] {
+    graph.configure(tensor->output)
+        .produces_tensor(TensorOutputSpec{.representation = {.dtype = DLDataType{kDLUInt, 0, 1}}});
+  });
+  const Error invalid_input_dtype_lanes = graph_error_from([&] {
+    graph.configure(tensor->input)
+        .expects_tensor(TensorInputSpec{.representation = {.dtype = DLDataType{kDLUInt, 8, 0}}});
+  });
+  // Key assertion: every malformed dtype reaches the dtype validator rather than an earlier
+  // Tensor-carrier rejection.
+  EXPECT_EQ(invalid_input_dtype_code.message, "GRAPH_TENSOR_DTYPE_INVALID");
+  EXPECT_EQ(invalid_output_dtype_bits.message, "GRAPH_TENSOR_DTYPE_INVALID");
+  EXPECT_EQ(invalid_input_dtype_lanes.message, "GRAPH_TENSOR_DTYPE_INVALID");
   EXPECT_THROW((void)graph.op<InvalidInlineOptionsOp>("invalid_inline_policy"), RuntimeError);
   // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
 }
@@ -1815,6 +2026,173 @@ TEST(GraphComposition, PartitionsRemainDeepOwnedCanonicalSnapshotRecords) {
   EXPECT_EQ(retained.identity().hash, second.view().identity().hash);
 }
 
+// REQ: GRAPH-032
+TEST(GraphComposition, PartitionVariadicAddCommitsTheCompleteBatchAtomically) {
+  Graph graph{"root"};
+  auto first = graph.op<PassOp>("first");
+  auto second = graph.op<PassOp>("second");
+  auto third = graph.op<PassOp>("third");
+  auto partition = graph.partition("serial");
+
+  partition.add(first, second, third);
+  const GraphView accepted = graph.view();
+  ASSERT_EQ(accepted.partitions().size(), 1);
+  ASSERT_EQ(accepted.partitions()[0].members.size(), 3);
+
+  Graph foreign_graph{"foreign"};
+  auto foreign = foreign_graph.op<PassOp>("foreign");
+  const Error foreign_error = graph_error_from([&] { partition.add(first, foreign); });
+  EXPECT_EQ(foreign_error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(foreign_error.message, "GRAPH_PARTITION_MEMBER_FOREIGN");
+  EXPECT_EQ(graph.view().identity(), accepted.identity());
+
+  auto duplicate_partition = graph.partition("duplicates");
+  const GraphView before_existing_duplicate = graph.view();
+  EXPECT_EQ(graph_error_from([&] { duplicate_partition.add(first, second); }).message,
+            "GRAPH_PARTITION_MEMBER_DUPLICATE");
+  EXPECT_EQ(graph.view().identity(), before_existing_duplicate.identity());
+
+  Graph batch_duplicate_graph{"batch-duplicate"};
+  auto batch_first = batch_duplicate_graph.op<PassOp>("first");
+  auto batch_second = batch_duplicate_graph.op<PassOp>("second");
+  auto batch_partition = batch_duplicate_graph.partition("serial");
+  const GraphView before_batch_duplicate = batch_duplicate_graph.view();
+  EXPECT_EQ(graph_error_from([&] { batch_partition.add(batch_first, batch_first); }).message,
+            "GRAPH_PARTITION_MEMBER_DUPLICATE");
+  EXPECT_EQ(batch_duplicate_graph.view().identity(), before_batch_duplicate.identity());
+  EXPECT_TRUE(batch_duplicate_graph.view().partitions()[0].members.empty());
+
+  const GraphView before_allocation_failure = batch_duplicate_graph.view();
+  detail::GraphCompilerAccess::fail_mutation_after(batch_duplicate_graph, 0);
+  EXPECT_THROW(batch_partition.add(batch_first, batch_second), std::bad_alloc);
+  EXPECT_EQ(batch_duplicate_graph.view().identity(), before_allocation_failure.identity());
+  EXPECT_TRUE(batch_duplicate_graph.view().partitions()[0].members.empty());
+  EXPECT_NO_THROW(batch_partition.add(batch_first, batch_second));
+
+  auto stale = [] {
+    auto owner = std::make_unique<Graph>("temporary");
+    auto op = owner->op<PassOp>("op");
+    auto authored = owner->partition("partition");
+    return std::pair{std::move(authored), std::move(op)};
+  }();
+  EXPECT_EQ(graph_error_from([&] { stale.first.add(stale.second, stale.second); }).message,
+            "GRAPH_PARTITION_HANDLE_INVALID");
+}
+
+// REQ: GRAPH-032
+TEST(GraphComposition, AutomaticRemainderDirectiveIsIdempotentOrderIndependentAndHashed) {
+  Graph first{"root"};
+  auto first_a = first.op<PassOp>("a");
+  (void)first.op<PassOp>("b");
+  first.partition("anchor").add(first_a);
+  first.auto_partition_remaining();
+  const GraphView once = first.view();
+  EXPECT_TRUE(once.automatic_partition_remaining());
+  first.auto_partition_remaining();
+  EXPECT_EQ(first.view().identity(), once.identity());
+
+  const auto first_snapshot = detail::GraphCompilerAccess::canonical_snapshot(first);
+  EXPECT_TRUE(first_snapshot->automatic_partition_remaining);
+
+  Graph second{"root"};
+  second.auto_partition_remaining();
+  auto second_a = second.op<PassOp>("a");
+  (void)second.op<PassOp>("b");
+  second.partition("anchor").add(second_a);
+  EXPECT_EQ(first.view().identity().hash, second.view().identity().hash);
+
+  Graph manual{"root"};
+  auto manual_a = manual.op<PassOp>("a");
+  (void)manual.op<PassOp>("b");
+  manual.partition("anchor").add(manual_a);
+  EXPECT_FALSE(manual.view().automatic_partition_remaining());
+  EXPECT_NE(first.view().identity().hash, manual.view().identity().hash);
+}
+
+// REQ: GRAPH-032
+TEST(GraphComposition, IncludeAllRetainsLateRootExpansionMetadataAndCanonicalIdentity) {
+  Graph first{"root"};
+  auto all = first.partition("application");
+  all.include_all().include_all();
+  (void)first.op<PassOp>("root-op");
+  (void)first.embed<SinglePassGraph>("child");
+
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(first);
+  ASSERT_EQ(snapshot->partitions.size(), 1);
+  EXPECT_TRUE(snapshot->partitions[0].include_all);
+  EXPECT_TRUE(snapshot->partitions[0].members.empty());
+  EXPECT_EQ(std::ranges::count(snapshot->vertices, VertexKind::kOperator, &VertexRecord::kind), 2);
+
+  Graph second{"root"};
+  (void)second.op<PassOp>("root-op");
+  (void)second.embed<SinglePassGraph>("child");
+  second.partition("application").include_all();
+  EXPECT_EQ(first.view().identity().hash, second.view().identity().hash);
+}
+
+// REQ: GRAPH-032
+TEST(GraphComposition, IncludeAllAndAutomaticRemainderConflictsAreTransactional) {
+  Graph explicit_members{"explicit"};
+  auto op = explicit_members.op<PassOp>("op");
+  auto explicit_partition = explicit_members.partition("application");
+  explicit_partition.add(op);
+  const GraphView before_explicit_conflict = explicit_members.view();
+  EXPECT_EQ(graph_error_from([&] { explicit_partition.include_all(); }).message,
+            "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT");
+  EXPECT_EQ(explicit_members.view().identity(), before_explicit_conflict.identity());
+
+  Graph include_first{"include-first"};
+  auto include_first_op = include_first.op<PassOp>("op");
+  auto include_first_partition = include_first.partition("application");
+  include_first_partition.include_all();
+  const GraphView before_member_conflict = include_first.view();
+  EXPECT_EQ(graph_error_from([&] { include_first_partition.add(include_first_op); }).message,
+            "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT");
+  EXPECT_EQ(include_first.view().identity(), before_member_conflict.identity());
+  EXPECT_EQ(graph_error_from([&] { (void)include_first.partition("other"); }).message,
+            "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT");
+  EXPECT_EQ(include_first.view().identity(), before_member_conflict.identity());
+  EXPECT_EQ(graph_error_from([&] { include_first.auto_partition_remaining(); }).message,
+            "GRAPH_PARTITION_AUTOMATIC_REMAINDER_CONFLICT");
+  EXPECT_EQ(include_first.view().identity(), before_member_conflict.identity());
+
+  Graph automatic_first{"automatic-first"};
+  automatic_first.auto_partition_remaining();
+  auto automatic_partition = automatic_first.partition("anchor");
+  const GraphView before_automatic_conflict = automatic_first.view();
+  EXPECT_EQ(graph_error_from([&] { automatic_partition.include_all(); }).message,
+            "GRAPH_PARTITION_AUTOMATIC_REMAINDER_CONFLICT");
+  EXPECT_EQ(automatic_first.view().identity(), before_automatic_conflict.identity());
+
+  Graph multiple{"multiple"};
+  auto first_partition = multiple.partition("first");
+  (void)multiple.partition("second");
+  const GraphView before_multiple_conflict = multiple.view();
+  EXPECT_EQ(graph_error_from([&] { first_partition.include_all(); }).message,
+            "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT");
+  EXPECT_EQ(multiple.view().identity(), before_multiple_conflict.identity());
+
+  Graph parent{"parent"};
+  const GraphView before_non_root = parent.view();
+  EXPECT_EQ(graph_error_from([&] { (void)parent.embed<IncludeAllChildGraph>("child"); }).message,
+            "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT");
+  EXPECT_EQ(parent.view().identity(), before_non_root.identity());
+  EXPECT_EQ(graph_error_from([&] {
+              (void)parent.embed<AutomaticRemainderChildGraph>("automatic-child");
+            }).message,
+            "GRAPH_PARTITION_AUTOMATIC_REMAINDER_CONFLICT");
+  EXPECT_EQ(parent.view().identity(), before_non_root.identity());
+
+  Graph all_parent{"all-parent"};
+  all_parent.partition("application").include_all();
+  const GraphView before_child_manual = all_parent.view();
+  EXPECT_EQ(graph_error_from([&] {
+              (void)all_parent.embed<ManualPartitionChildGraph>("manual-child");
+            }).message,
+            "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT");
+  EXPECT_EQ(all_parent.view().identity(), before_child_manual.identity());
+}
+
 TEST(GraphComposition, PartitionAuthoringRejectsInvalidNamesAndHandlesTransactionally) {
   Graph graph{"root"};
   auto first = graph.op<PassOp>("first");
@@ -2032,10 +2410,10 @@ TEST(GraphComposition, CompoundMutationFaultsRollbackEveryLogicalCommit) {
     (void)graph.configure(source->output);
     const GraphView before = graph.view();
     detail::GraphCompilerAccess::fail_mutation_after(graph, 0);
-    EXPECT_THROW(graph.configure(source->output).produces_tensor(TensorPortLayout{.rank = 2}),
-                 std::bad_alloc);
+    const TensorOutputSpec output_contract{.representation = {.rank = 2U}};
+    EXPECT_THROW(graph.configure(source->output).produces_tensor(output_contract), std::bad_alloc);
     expect_unchanged(before, graph.view());
-    EXPECT_NO_THROW(graph.configure(source->output).produces_tensor(TensorPortLayout{.rank = 2}));
+    EXPECT_NO_THROW(graph.configure(source->output).produces_tensor(output_contract));
   }
 
   {
@@ -2046,10 +2424,14 @@ TEST(GraphComposition, CompoundMutationFaultsRollbackEveryLogicalCommit) {
     (void)graph.configure(source->output);
     const GraphView before = graph.view();
     detail::GraphCompilerAccess::fail_mutation_after(graph, 0);
-    EXPECT_THROW(graph.configure(target->input).expects_tensor(TensorPortLayout{.rank = 2}),
-                 std::bad_alloc);
+    // Match the producer maxima so compatibility validation reaches the injected allocation fault.
+    const TensorInputSpec input_spec{
+        .representation = {.memory_kind = MemoryKind::kCudaDevice},
+        .bounds = TensorBounds{.max_rank = 4U, .max_byte_span = 4096U},
+    };
+    EXPECT_THROW(graph.configure(target->input).expects_tensor(input_spec), std::bad_alloc);
     expect_unchanged(before, graph.view());
-    EXPECT_NO_THROW(graph.configure(target->input).expects_tensor(TensorPortLayout{.rank = 2}));
+    EXPECT_NO_THROW(graph.configure(target->input).expects_tensor(input_spec));
   }
 
   {

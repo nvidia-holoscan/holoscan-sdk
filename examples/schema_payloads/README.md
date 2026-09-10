@@ -39,9 +39,13 @@ flowchart LR
 - The schema's stable identity is a compile-time constant:
   `holoscan::schema_identity<schema::StringT>()` yields
   `holoscan.schema.String v1`.
-- Consumers link **`holoscan::schema`** (which brings in
-  `holoscan::core`); `holoscan::core` alone does not expose the generated
+- Consumers of `StringT` and `TimeT` link **`holoscan::schema`** (which brings
+  in `holoscan::core`); `holoscan::core` alone does not expose the generated
   schema headers.
+- This example also carries `schema::ImuT`, and the `Image` and `Imu` schemas
+  belong to **`holoscan::sensor_io`** rather than to Core. That is a separate
+  package component, `holoscan-sensor-io`, so an SDK install that omitted it will
+  fail to configure this example.
 
 ## Prerequisites
 
@@ -53,14 +57,16 @@ From this `cpp/` folder (standalone consumer build, using
 `CMakeLists.min.txt` as the project file):
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 
 If your SDK lives elsewhere, point `-Dholoscan_DIR=` at the directory
-containing `holoscan-config.cmake`. Note the target links
-`holoscan::schema` in addition to `holoscan::core` — the schema target
-exports the generated FlatBuffers headers and the schema runtime library.
+containing `holoscan-config.cmake`. Note the target links both
+`holoscan::schema` and `holoscan::sensor_io` in addition to
+`holoscan::core` — the schema target exports the generated FlatBuffers headers
+and the schema runtime library, while `holoscan::sensor_io` is what supplies
+`schema::ImuT`.
 Inside the SDK source tree the example builds as part of the normal
 examples build via `CMakeLists.txt`.
 
@@ -192,3 +198,4 @@ answered at the emit call.
 | `SampleMetadata{.trace_id, .frame_id, .flags}` | caller metadata that round-trips with the value |
 | `metadata.degraded()` | consumer-side check of the `kDegraded` flag |
 | `holoscan::schema` (CMake target) | link target exporting generated headers + schema runtime |
+| `holoscan::sensor_io` (CMake target) | link target owning the `Image` and `Imu` schemas |

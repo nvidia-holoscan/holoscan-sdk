@@ -32,7 +32,6 @@ if(NOT TARGET holoscan::core)
     find_package(holoscan REQUIRED CONFIG
         PATHS
             "${CMAKE_CURRENT_LIST_DIR}/.."
-            "/opt/nvidia/holoscan"
     )
 endif()
 
@@ -43,7 +42,7 @@ endif()
 set(HOLOSCAN_BENCHMARK_RUNNER "${CMAKE_CURRENT_SOURCE_DIR}/run_benchmark.py")
 
 add_custom_target(holoscan-benchmark-targets)
-if(HOLOSCAN_BUILD_PYTHON)
+if(HOLOSCAN_BUILD_PYTHON AND DEFINED holoscan_BINARY_DIR)
     add_custom_target(holoscan-python-benchmark-targets)
 endif()
 
@@ -55,31 +54,31 @@ if(CMAKE_CXX_CLANG_TIDY AND NOT "${CMAKE_CXX_CLANG_TIDY}" MATCHES
 endif()
 
 add_subdirectory(core_hello)
-# The EA1 clock registry is intentionally private. Build its measurement
-# harness only in the SDK source tree, where the non-installed implementation
-# header is available; installed benchmark packages must remain self-contained.
-if(TARGET core)
+# The baseline clock registry is intentionally private. Build its measurement harness only when the
+# benchmark project has the local SDK source tree; installed packages must remain self-contained.
+if(TARGET core AND DEFINED holoscan_SOURCE_DIR)
     add_subdirectory(time)
     add_subdirectory(temporal_contract)
     add_subdirectory(runtime)
     add_subdirectory(graph)
     add_subdirectory(endpoint_catalog)
 endif()
-if(HOLOSCAN_BUILD_PYTHON)
+if(HOLOSCAN_BUILD_PYTHON AND DEFINED holoscan_BINARY_DIR)
     add_subdirectory(tensor_python_as_tensor)
 endif()
 add_subdirectory(channel_pod)
 add_subdirectory(channel_schema)
 add_subdirectory(channel_tensor)
 add_subdirectory(channel_interprocess)
-if(TARGET core)
-    # The cumulative EA1 suite references the already-defined Runtime and
+if(TARGET core AND DEFINED holoscan_SOURCE_DIR)
+    # The cumulative baseline suite references the already-defined Runtime and
     # Channel benchmark targets instead of recompiling their implementation.
-    add_subdirectory(ea1_runtime)
+    add_subdirectory(runtime_aggregate)
 endif()
+add_subdirectory(holomq)
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/"
-    DESTINATION benchmark
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/holoscan/benchmark"
     COMPONENT holoscan-benchmarks
     FILES_MATCHING
         PATTERN "CMakeLists.txt"

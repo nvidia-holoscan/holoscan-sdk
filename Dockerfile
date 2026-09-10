@@ -10,8 +10,13 @@ ARG PYTORCH_VERSION=2.11.0
 ARG NCCL_VERSION=2.29  # match DLFW 26.03 development stack
 ARG LIBCUSPARSELT_VERSION=0.9      # match DLFW 26.03 development stack
 ARG TENSORRT_VERSION=10.16
-ARG NSYS_VERSION=2026.2.1  # at least 2025.3 required for current CUDA major support
+ARG NSYS_VERSION=2026.4.1
 ARG NVCOMP_VERSION=5.0.0.6    # Pin to <5.1 for stable CRC32 functionality on arm64 platforms.
+ARG CVCUDA_VERSION=0.17.0
+ARG CVCUDA_DEV_SHA256_AMD64=9e2fbdf00af4608280acc54bb5eeb11cc0851c0fe153e6a34c98102cc75ba47a
+ARG CVCUDA_DEV_SHA256_ARM64=7e6047ff56275e40de735ae69b1fb23bb4ab85d918dd7d2bba196c37dd92a0a4
+ARG CVCUDA_LIB_SHA256_AMD64=70a6033ee6b39d2797b1eb742d633b8970e51992a12c0318df386bb719524bac
+ARG CVCUDA_LIB_SHA256_ARM64=5afaeeff7da0487eaf8108b0020c0066ffbebf70bccf81653afc91f081273048
 ARG RUST_VERSION=1.85.0
 ARG RUSTUP_VERSION=1.29.0
 ARG RUSTUP_INIT_SHA256_AMD64=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
@@ -278,9 +283,48 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=${APT_CACHE_ID} \
     && cleanup_unwanted_libs $static_libs
 
 ############################################################
+# CV-CUDA dev
+############################################################
+FROM cuda-toolkit-dev AS cvcuda-dev
+
+ARG TARGETARCH
+ARG CVCUDA_VERSION
+ARG CVCUDA_DEV_SHA256_AMD64
+ARG CVCUDA_DEV_SHA256_ARM64
+ARG CVCUDA_LIB_SHA256_AMD64
+ARG CVCUDA_LIB_SHA256_ARM64
+RUN case "${TARGETARCH}" in \
+        amd64) \
+            cvcuda_arch="x86_64"; \
+            dev_sha256="${CVCUDA_DEV_SHA256_AMD64}"; \
+            lib_sha256="${CVCUDA_LIB_SHA256_AMD64}" \
+            ;; \
+        arm64) \
+            cvcuda_arch="aarch64"; \
+            dev_sha256="${CVCUDA_DEV_SHA256_ARM64}"; \
+            lib_sha256="${CVCUDA_LIB_SHA256_ARM64}" \
+            ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && cuda_major=$(echo "${CUDA_VERSION}" | cut -d. -f1) \
+    && release_url="https://github.com/CVCUDA/CV-CUDA/releases/download/v${CVCUDA_VERSION}" \
+    && curl -fsSL --retry 5 --retry-delay 3 \
+        "${release_url}/cvcuda-lib-${CVCUDA_VERSION}-cuda${cuda_major}-${cvcuda_arch}-linux.deb" \
+        -o /tmp/cvcuda-lib.deb \
+    && curl -fsSL --retry 5 --retry-delay 3 \
+        "${release_url}/cvcuda-dev-${CVCUDA_VERSION}-cuda${cuda_major}-${cvcuda_arch}-linux.deb" \
+        -o /tmp/cvcuda-dev.deb \
+    && echo "${lib_sha256}  /tmp/cvcuda-lib.deb" | sha256sum -c - \
+    && echo "${dev_sha256}  /tmp/cvcuda-dev.deb" | sha256sum -c - \
+    && apt-get install --no-install-recommends -y \
+        /tmp/cvcuda-lib.deb \
+        /tmp/cvcuda-dev.deb \
+    && rm -f /tmp/cvcuda-lib.deb /tmp/cvcuda-dev.deb
+
+############################################################
 # Cudnn dev
 ############################################################
-FROM cuda-toolkit-dev AS cudnn-dev
+FROM cvcuda-dev AS cudnn-dev
 
 # Install CUDNN (needed by libtorch)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=${APT_CACHE_ID} \
@@ -473,6 +517,47 @@ RUN DISTRO_CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME") \
         > /etc/apt/sources.list.d/llvm.list
 
 ############################################################
+# Vulkan validation layers (built from source)
+#
+# Ubuntu 24.04's vulkan-validationlayers package is frozen at 1.3.275
+# (Vulkan header 275), which predates VK_EXT_present_mode_fifo_latest_ready
+# and floods Holoviz runs with false-positive validation errors. No newer
+# prebuilt binary exists for arm64 (the LunarG SDK ships x86_64 only), so
+# build the layer from source at a pinned SDK tag. UPDATE_DEPS=ON makes the
+# build fetch its own matching Vulkan-Headers/SPIRV dependencies.
+############################################################
+FROM build-tools AS vulkan-validation-layers-builder
+ARG VULKAN_VALIDATION_LAYERS_TAG=vulkan-sdk-1.4.321.0
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=${APT_CACHE_ID} \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=${APT_LIB_ID} \
+    apt-get update \
+    && apt-get install --no-install-recommends -y \
+        pkg-config \
+        libx11-dev \
+        libxcb1-dev \
+        libxrandr-dev \
+        libwayland-dev
+RUN git clone --depth 1 --branch ${VULKAN_VALIDATION_LAYERS_TAG} \
+        https://github.com/KhronosGroup/Vulkan-ValidationLayers.git /tmp/vvl \
+    && cmake -S /tmp/vvl -B /tmp/vvl/build -G Ninja \
+        -D CMAKE_BUILD_TYPE=Release \
+        -D UPDATE_DEPS=ON \
+        -D CMAKE_INSTALL_LIBDIR=lib \
+        -D CMAKE_INSTALL_PREFIX=/opt/vulkan-validation-layers \
+    && cmake --build /tmp/vvl/build \
+    && cmake --install /tmp/vvl/build \
+    && rm -rf /tmp/vvl
+# The installed manifest references the library by bare filename, which the
+# loader resolves through the system linker search path (where an apt-installed
+# copy could shadow this build). Point it at the sibling lib directory instead
+# so the manifest and library travel as a self-contained pair.
+RUN sed -i \
+        's|"library_path": "libVkLayer_khronos_validation.so"|"library_path": "../../../lib/libVkLayer_khronos_validation.so"|' \
+        /opt/vulkan-validation-layers/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json \
+    && grep -q '"library_path": "\.\./\.\./\.\./lib/libVkLayer_khronos_validation.so"' \
+        /opt/vulkan-validation-layers/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json
+
+############################################################
 # Build image
 ############################################################
 FROM pytorch-dev AS build
@@ -489,8 +574,10 @@ COPY --from=apt-repo-config /etc/apt/trusted.gpg.d/ /etc/apt/trusted.gpg.d/
 #  abigail-tools - ABI diff utilities, including abidiff
 #  xvfb - testing on headless systems
 #  libx* - X packages
+#  libdrm-dev - Holoviz direct-display DRM ownership (VK_EXT_acquire_drm_display)
 #  libvulkan-dev, glslang-tools - for Vulkan apps (Holoviz)
-#  vulkan-validationlayers - for Vulkan validation layer (enabled for Holoviz in debug mode)
+#  (the Vulkan validation layer is built from source instead of the stale
+#   Ubuntu 24.04 vulkan-validationlayers package; see vulkan-validation-layers-builder)
 #  libwayland-dev, libxkbcommon-dev, pkg-config - GLFW compile dependency for Wayland support
 #  libdecor-0-plugin-1-cairo - GLFW runtime dependency for Wayland window decorations
 #  libegl1 - to run headless Vulkan apps
@@ -513,9 +600,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=${APT_CACHE_ID} \
         libxi-dev \
         libxinerama-dev \
         libxrandr-dev \
+        libdrm-dev \
         libvulkan-dev \
         glslang-tools \
-        vulkan-validationlayers \
         libwayland-dev \
         libxkbcommon-dev \
         pkg-config \
@@ -527,6 +614,15 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=${APT_CACHE_ID} \
         libtinyxml2-dev \
     && ln -sf /usr/bin/clang-tidy-${LLVM_VERSION} /usr/bin/clang-tidy \
     && ln -sf /usr/bin/clang-query-${LLVM_VERSION} /usr/bin/clang-query
+
+# Vulkan validation layer built from source (see vulkan-validation-layers-builder).
+# /usr/local/share/vulkan is ahead of /usr/share/vulkan in the loader's layer
+# search path, and the manifest's relative library_path resolves to the copied
+# library, so nothing can shadow this build.
+COPY --from=vulkan-validation-layers-builder \
+    /opt/vulkan-validation-layers/lib/libVkLayer_khronos_validation.so /usr/local/lib/
+COPY --from=vulkan-validation-layers-builder \
+    /opt/vulkan-validation-layers/share/vulkan/explicit_layer.d/ /usr/local/share/vulkan/explicit_layer.d/
 
 # Workaround: Remove cuda-compat-13-* which is known to not function properly.
 # cuda-compat-13-0 does not provide display forward compatibility and does not

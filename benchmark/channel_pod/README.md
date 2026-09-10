@@ -2,8 +2,8 @@
 
 This benchmark measures the first Holoscan Channel wrapper over HoloMQ typed
 pub/sub for small standard-layout, trivially-copyable payloads. It mirrors the
-standalone HoloMQ POD baseline in
-`public/modules/holomq/benchmarks/typed_pubsub_benchmark.cpp` so the first
+direct HoloMQ POD baseline in
+`public/benchmark/holomq/typed_pubsub_benchmark.cpp` so the first
 comparison isolates the overhead added by the Holoscan Channel API and erased
 inline-payload bridge. Both layers use the exact 64-byte `BenchmarkPOD64`
 comparison payload.

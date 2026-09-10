@@ -14,7 +14,7 @@
 #include <holoscan/core/port.hpp>
 #include <holoscan/core/sample.hpp>
 
-// This non-installed header is the only convenient test facade in EA1.  It is
+// This non-installed header is the only convenient test facade in baseline.  It is
 // deliberately layered over the same private late-binding seam used by the
 // runtime; no queue or execution verb is added to a public port or Operator.
 #include <core/operator_parameter_binding.hpp>

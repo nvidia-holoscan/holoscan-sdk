@@ -21,14 +21,18 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/parameter_snapshot.hpp>
+
 #include "../core/operator_spec_compiler_access.hpp"
 #include "../core/parameter_catalog_internal.hpp"
 #include "../core/parameter_override_set_internal.hpp"
+#include "../core/plan_record_contracts.hpp"
+#include "../core/port_configuration_internal.hpp"
 #include "../core/tensor_field_configuration_internal.hpp"
-#include "deployment_plan_lowering.hpp"
 #include "detail/checked_arithmetic.hpp"
 #include "lifecycle_plan_lowering.hpp"
 #include "profile_admission.hpp"
+#include "snapshot_lookup.hpp"
 
 namespace holoscan::detail {
 namespace {
@@ -46,14 +50,6 @@ void append_diagnostic(ParameterPlanLowering& result, std::string_view token,
     result.diagnostics.push_back(
         ParameterPlanDiagnostic{.token = std::string(token), .source = source});
   }
-}
-
-[[nodiscard]] std::optional<Profile> effective_profile(
-    std::span<const std::optional<Profile>> profiles, VertexId vertex) noexcept {
-  if (vertex.value == 0U || vertex.value > profiles.size()) {
-    return std::nullopt;
-  }
-  return profiles[static_cast<std::size_t>(vertex.value - 1U)];
 }
 
 [[nodiscard]] bool supported_scalar_type(ParamLogicalType type) noexcept {
@@ -86,222 +82,11 @@ void append_diagnostic(ParameterPlanLowering& result, std::string_view token,
          field.type_shape.element_or_rep_bit_width <= 64U;
 }
 
-[[nodiscard]] bool scalar_carrier_is_canonical(ParamScalarValue& value) noexcept {
-  switch (value.kind) {
-    case ParamScalarKind::kBool:
-      return value.bit_width == 1U && value.raw_bits <= 1U;
-    case ParamScalarKind::kSignedInteger:
-    case ParamScalarKind::kUnsignedInteger:
-      if (value.bit_width != 8U && value.bit_width != 16U && value.bit_width != 32U &&
-          value.bit_width != 64U) {
-        return false;
-      }
-      return value.bit_width == 64U || value.raw_bits < (std::uint64_t{1} << value.bit_width);
-    case ParamScalarKind::kFloatingPoint:
-      if (value.bit_width == 32U) {
-        if (value.raw_bits > std::numeric_limits<std::uint32_t>::max()) {
-          return false;
-        }
-        const auto bits = static_cast<std::uint32_t>(value.raw_bits);
-        if ((bits & 0x7F800000U) == 0x7F800000U) {
-          return false;
-        }
-        if (bits == 0x80000000U) {
-          value.raw_bits = 0U;
-        }
-        return true;
-      }
-      if (value.bit_width == 64U) {
-        if ((value.raw_bits & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL) {
-          return false;
-        }
-        if (value.raw_bits == 0x8000000000000000ULL) {
-          value.raw_bits = 0U;
-        }
-        return true;
-      }
-      return false;
-    case ParamScalarKind::kDurationNanoseconds:
-      return value.bit_width == 64U;
-    case ParamScalarKind::kNone:
-      return false;
-  }
-  return false;
-}
-
-void add_hash_bytes(StableHashBuilder& hash, ParamSchemaHash value) noexcept {
-  for (const std::byte byte : value.value) {
-    hash.add_byte(std::to_integer<std::uint8_t>(byte));
-  }
-}
-
-void add_hash_bytes(StableHashBuilder& hash, PlanDigest value) noexcept {
-  for (const std::byte byte : value.value) {
-    hash.add_byte(std::to_integer<std::uint8_t>(byte));
-  }
-}
-
-template <typename T, typename AddValue>
-void add_optional(StableHashBuilder& hash, const std::optional<T>& value,
-                  AddValue add_value) noexcept {
-  hash.add(value.has_value());
-  if (value) {
-    add_value(hash, *value);
-  }
-}
-
-void add_thread_placement(StableHashBuilder& hash, const ThreadPlacement& placement) noexcept {
-  add_optional(
-      hash, placement.affinity, [](StableHashBuilder& target, const CPUAffinity& affinity) {
-        target.add_canonical_size(affinity.cores.size());
-        for (const std::uint32_t core : affinity.cores) {
-          target.add(core);
-        }
-      });
-  hash.add(placement.scheduling.policy);
-  add_optional(hash, placement.scheduling.priority, [](StableHashBuilder& target, int priority) {
-    target.add(priority);
-  });
-  add_optional(hash,
-               placement.scheduling.deadline,
-               [](StableHashBuilder& target, const DeadlineScheduling& deadline) {
-                 target.add(deadline.runtime_ns);
-                 target.add(deadline.deadline_ns);
-                 target.add(deadline.period_ns);
-               });
-  hash.add(placement.wake_mode);
-  hash.add(placement.irq_isolation);
-  hash.add(placement.probe_failure_policy);
-}
-
-void add_profile_admission_input(StableHashBuilder& hash, const ProfileManifest& profile) noexcept {
-  hash.add(profile.disposition);
-  add_optional(hash, profile.requested_profile, [](StableHashBuilder& target, Profile value) {
-    target.add(value);
-  });
-  add_optional(hash, profile.effective_graph_profile, [](StableHashBuilder& target, Profile value) {
-    target.add(value);
-  });
-  hash.add_canonical_size(profile.effective_regions.size());
-  for (const auto& region : profile.effective_regions) {
-    hash.add(region.region_id.value);
-    add_optional(hash, region.requested_profile, [](StableHashBuilder& target, Profile value) {
-      target.add(value);
-    });
-    add_optional(hash, region.effective_profile, [](StableHashBuilder& target, Profile value) {
-      target.add(value);
-    });
-    hash.add(region.origin);
-  }
-  hash.add_canonical_size(profile.scope_resolutions.size());
-  for (const auto& scope : profile.scope_resolutions) {
-    hash.add(scope.object_id);
-    hash.add(scope.object_kind);
-    hash.add(scope.effective_profile);
-    hash.add_canonical_size(scope.contributing_regions.size());
-    for (const RegionId region : scope.contributing_regions) {
-      hash.add(region.value);
-    }
-  }
-  hash.add(profile.profile_policy_id.major);
-  hash.add(profile.profile_policy_id.minor);
-  add_hash_bytes(hash, profile.profile_policy_id.digest);
-  hash.add(profile.plan_schema_version);
-  hash.add(profile.runtime_abi_version);
-  hash.add(profile.target_triple);
-  hash.add_canonical_size(profile.required_capabilities.size());
-  for (const auto& capability : profile.required_capabilities) {
-    hash.add(capability.capability_id);
-    hash.add(capability.version);
-    hash.add(capability.evidence_id);
-  }
-  hash.add_canonical_size(profile.evidence_references.size());
-  for (const auto& evidence : profile.evidence_references) {
-    hash.add(evidence.id);
-    hash.add(evidence.kind);
-    hash.add(evidence.version);
-  }
-}
-
-void add_deployment_plan(StableHashBuilder& hash,
-                         const DeploymentPlanLowering& deployment) noexcept {
-  hash.add_canonical_size(deployment.placement_probes.size());
-  for (const auto& probe : deployment.placement_probes) {
-    hash.add(probe.partition.value);
-    hash.add(probe.probe_id);
-    hash.add(probe.status);
-    hash.add(probe.evidence_id);
-    hash.add(probe.reason.value);
-  }
-  hash.add_canonical_size(deployment.placements.size());
-  for (const auto& placement : deployment.placements) {
-    hash.add(placement.partition.value);
-    hash.add(placement.authored_name);
-    hash.add(placement.execution_lane);
-    add_thread_placement(hash, placement.requested);
-    add_optional(
-        hash, placement.accepted, [](StableHashBuilder& target, const ThreadPlacement& accepted) {
-          add_thread_placement(target, accepted);
-        });
-    hash.add(placement.disposition);
-    hash.add(placement.reason.value);
-  }
-  hash.add_canonical_size(deployment.lanes.size());
-  for (const auto& lane : deployment.lanes) {
-    hash.add(lane.execution_lane);
-    hash.add(lane.partition.value);
-    add_thread_placement(hash, lane.accepted_placement);
-  }
-  hash.add_canonical_size(deployment.lane_by_vertex.size());
-  for (const std::uint32_t lane : deployment.lane_by_vertex) {
-    hash.add(lane);
-  }
-  hash.add_canonical_size(deployment.error_tokens.size());
-  for (const auto& token : deployment.error_tokens) {
-    hash.add(token);
-  }
-  hash.add_canonical_size(deployment.warning_tokens.size());
-  for (const auto& token : deployment.warning_tokens) {
-    hash.add(token);
-  }
-}
-
-void add_scalar(StableHashBuilder& hash, ParamScalarValue value) noexcept {
-  hash.add(value.kind);
-  hash.add(value.bit_width);
-  hash.add(value.raw_bits);
-}
-
-[[nodiscard]] ParameterProtectedValueDigest field_value_digest(const ParamSchemaDescriptor& schema,
-                                                               const ParamFieldDescriptor& field,
-                                                               const void* aggregate) noexcept {
-  if (field.local_operations.read_member_as_scalar == nullptr) {
-    return {.disposition = ParameterValueDigestDisposition::kLocalTypedField};
-  }
-  ParamScalarValue scalar;
-  if (!field.local_operations.read_member_as_scalar(aggregate, scalar) ||
-      !scalar_carrier_is_canonical(scalar)) {
-    return {.disposition = ParameterValueDigestDisposition::kInvalidScalar};
-  }
-  StableHashBuilder hash;
-  hash.add("holoscan.parameter.field_value.v1");
-  hash.add(schema.stable_id);
-  hash.add(schema.version);
-  add_hash_bytes(hash, schema.structural_hash);
-  add_hash_bytes(hash, schema.contract_hash);
-  add_hash_bytes(hash, field.full_id);
-  add_scalar(hash, scalar);
-  return {
-      .disposition = ParameterValueDigestDisposition::kCanonicalScalarFields,
-      .digest = hash.finish(),
-  };
-}
-
 [[nodiscard]] bool read_scalar(const ParamFieldDescriptor& field, const void* aggregate,
                                ParamScalarValue& result) noexcept {
   return field.local_operations.read_member_as_scalar != nullptr &&
          field.local_operations.read_member_as_scalar(aggregate, result) &&
-         scalar_carrier_is_canonical(result);
+         canonicalize_parameter_scalar(result);
 }
 
 [[nodiscard]] ParamValueRouteDisposition classify_value_route(
@@ -452,24 +237,6 @@ void add_scalar(StableHashBuilder& hash, ParamScalarValue value) noexcept {
   return ParameterMaterializationStrategy::kRejected;
 }
 
-[[nodiscard]] std::string percent_encode(std::string_view value) {
-  constexpr std::string_view kHex = "0123456789ABCDEF";
-  std::string result;
-  for (const unsigned char byte : value) {
-    const bool safe = (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-                      (byte >= '0' && byte <= '9') || byte == '-' || byte == '_' || byte == '.' ||
-                      byte == '~';
-    if (safe) {
-      result.push_back(static_cast<char>(byte));
-    } else {
-      result.push_back('%');
-      result.push_back(kHex[(byte >> 4U) & 0x0FU]);
-      result.push_back(kHex[byte & 0x0FU]);
-    }
-  }
-  return result;
-}
-
 struct OperatorPathInfo {
   OperatorPath path;
   std::string rendered;
@@ -477,149 +244,31 @@ struct OperatorPathInfo {
 
 [[nodiscard]] std::optional<OperatorPathInfo> operator_path(const GraphSnapshotData& snapshot,
                                                             VertexId owner) {
-  if (owner.value == 0U || owner.value > snapshot.vertices.size()) {
+  const VertexRecord* vertex = find_vertex(snapshot, owner);
+  if (vertex == nullptr || vertex->kind != VertexKind::kOperator) {
     return std::nullopt;
   }
-  const VertexRecord& vertex = snapshot.vertices[owner.value - 1U];
-  if (vertex.id != owner || vertex.kind != VertexKind::kOperator || vertex.graph.value == 0U ||
-      vertex.graph.value > snapshot.graphs.size()) {
-    return std::nullopt;
-  }
-  const GraphRecord& graph = snapshot.graphs[vertex.graph.value - 1U];
-  if (graph.id != vertex.graph) {
+  const GraphRecord* graph = find_graph(snapshot, vertex->graph);
+  if (graph == nullptr) {
     return std::nullopt;
   }
   std::vector<std::string> segments;
-  if (graph.path.has_value()) {
-    const auto& graph_path = graph.path.value();  // NOLINT(bugprone-unchecked-optional-access)
+  if (graph->path.has_value()) {
+    const auto& graph_path = graph->path.value();  // NOLINT(bugprone-unchecked-optional-access)
     for (const auto& segment : graph_path.segments()) {
       segments.push_back(segment);
     }
   }
-  segments.push_back(vertex.name);
+  segments.push_back(vertex->name);
   auto path = OperatorPath::from_segments(segments);
   if (!path) {
     return std::nullopt;
   }
-  std::string rendered;
-  for (const auto& segment : segments) {
-    if (!rendered.empty()) {
-      rendered.push_back('/');
-    }
-    rendered += percent_encode(segment);
+  auto rendered = canonical_operator_path(snapshot, *vertex);
+  if (!rendered) {
+    return std::nullopt;
   }
-  return OperatorPathInfo{.path = std::move(path).value(), .rendered = std::move(rendered)};
-}
-
-[[nodiscard]] ParamSchemaHash parameter_instance_identity(const OperatorPath& path,
-                                                          ParamSchemaHash field_full_id) noexcept {
-  StableHashBuilder hash;
-  hash.add("holoscan.param.instance.v1");
-  hash.add_canonical_size(path.segments().size());
-  for (const auto& segment : path.segments()) {
-    hash.add(segment);
-  }
-  add_hash_bytes(hash, field_full_id);
-  return hash.finish();
-}
-
-[[nodiscard]] ParamInstanceId compact_instance_id(ParamSchemaHash identity) noexcept {
-  ParamInstanceId result{};
-  for (std::size_t index = 0U; index < sizeof(result); ++index) {
-    result = (result << 8U) |
-             static_cast<ParamInstanceId>(std::to_integer<std::uint8_t>(identity.value[index]));
-  }
-  return result;
-}
-
-void add_constraints(StableHashBuilder& hash, const ParamConstraints& value) noexcept {
-  hash.add(value.has_range);
-  hash.add(value.range_min);
-  hash.add(value.range_max);
-  hash.add(value.allowed_value_count);
-  for (std::size_t index = 0U; index < value.allowed_value_count; ++index) {
-    hash.add(value.allowed_values[index]);
-  }
-  hash.add_canonical_size(value.max_utf8_bytes);
-  hash.add_canonical_size(value.max_element_utf8_bytes);
-  hash.add_canonical_size(value.max_elements);
-  hash.add_canonical_size(value.max_encoded_bytes);
-}
-
-[[nodiscard]] ParamCatalogDigest parameter_catalog_digest(
-    std::span<const OperatorParamRecord> operators,
-    std::span<const ParamFieldCatalogRecord> fields) noexcept {
-  StableHashBuilder hash;
-  hash.add("holoscan.parameter_catalog.v1");
-  hash.add_canonical_size(operators.size());
-  for (const auto& op : operators) {
-    hash.add(op.operator_instance.id);
-    hash.add(op.operator_instance.plan_generation);
-    hash.add(op.operator_instance.run_generation);
-    hash.add_canonical_size(op.path.segments().size());
-    for (const auto& segment : op.path.segments()) {
-      hash.add(segment);
-    }
-    hash.add(op.effective_profile.has_value());
-    if (op.effective_profile) {
-      hash.add(*op.effective_profile);
-    }
-    hash.add(op.schema_availability);
-    hash.add(op.schema_disposition);
-    hash.add(op.materialization);
-    hash.add(op.schema_id);
-    hash.add(op.schema_version);
-    add_hash_bytes(hash, op.structural_hash);
-    add_hash_bytes(hash, op.contract_hash);
-    add_hash_bytes(hash, op.metadata_hash);
-    hash.add(op.schema_coverage);
-    hash.add(op.schema_proof);
-  }
-  hash.add_canonical_size(fields.size());
-  for (const auto& field : fields) {
-    hash.add(field.instance);
-    add_hash_bytes(hash, field.instance_identity_digest);
-    hash.add(field.address.operator_instance.id);
-    hash.add(field.address.operator_instance.plan_generation);
-    hash.add(field.address.operator_instance.run_generation);
-    hash.add(field.address.field);
-    add_hash_bytes(hash, field.full_id);
-    hash.add_canonical_size(field.path.segments().size());
-    for (const auto& segment : field.path.segments()) {
-      hash.add(segment);
-    }
-    hash.add(field.logical_type);
-    hash.add(field.type_shape.type);
-    hash.add(field.type_shape.bit_width);
-    hash.add(field.type_shape.element_or_rep_type);
-    hash.add(field.type_shape.element_or_rep_bit_width);
-    hash.add(field.type_shape.duration_period_numerator);
-    hash.add(field.type_shape.duration_period_denominator);
-    hash.add(field.type_shape.has_stable_shape);
-    hash.add(field.mutability);
-    hash.add(field.earliest_invalidated_stage);
-    hash.add(field.persistence);
-    hash.add(field.visibility);
-    hash.add(field.external_access);
-    hash.add(field.sensitivity);
-    hash.add(field.required_on_load);
-    hash.add(field.alias);
-    hash.add(field.validator_id);
-    add_constraints(hash, field.constraints);
-    hash.add(field.string_encoding);
-    hash.add(field.element_string_encoding);
-    hash.add(field.value_route);
-    hash.add(field.storage.owns_dynamic_storage);
-    hash.add(field.storage.fixed_object_extent);
-    hash.add(field.storage.has_portable_codec);
-    hash.add(field.storage.supports_bounded_materialization);
-    hash.add_canonical_size(field.storage.inline_bytes);
-    hash.add(field.materialization);
-    hash.add(field.projection);
-    hash.add(field.update_disposition);
-    hash.add(field.adapter_eligible);
-  }
-  return ParamCatalogDigest{.value = hash.finish().value};
+  return OperatorPathInfo{.path = std::move(path).value(), .rendered = std::move(*rendered)};
 }
 
 [[nodiscard]] ParameterGenerationZeroOrigin generation_zero_origin(
@@ -635,105 +284,47 @@ void add_constraints(StableHashBuilder& hash, const ParamConstraints& value) noe
   return ParameterGenerationZeroOrigin::kOverrideCaptured;
 }
 
-[[nodiscard]] bool schema_identity_equal(const std::optional<SchemaIdentityRecord>& lhs,
-                                         const std::optional<SchemaIdentityRecord>& rhs) {
-  if (lhs.has_value() != rhs.has_value()) {
-    return false;
-  }
-  return !lhs || (lhs->canonical_name == rhs->canonical_name && lhs->version == rhs->version &&
-                  lhs->schema_sha256 == rhs->schema_sha256 && lhs->id == rhs->id);
-}
-
-[[nodiscard]] bool payload_identity_equal(const PayloadIdentityRecord& lhs,
-                                          const PayloadIdentityRecord& rhs) {
-  if (lhs.kind != rhs.kind || lhs.payload_kind != rhs.payload_kind ||
-      lhs.scalar.has_value() != rhs.scalar.has_value() ||
-      lhs.schema.has_value() != rhs.schema.has_value() ||
-      lhs.pod.has_value() != rhs.pod.has_value()) {
-    return false;
-  }
-  if (lhs.scalar && lhs.scalar->kind != rhs.scalar->kind) {
-    return false;
-  }
-  if (!schema_identity_equal(lhs.schema, rhs.schema)) {
-    return false;
-  }
-  if (!lhs.pod) {
-    return true;
-  }
-  if (lhs.pod->canonical_name != rhs.pod->canonical_name || lhs.pod->version != rhs.pod->version ||
-      lhs.pod->object_size != rhs.pod->object_size ||
-      lhs.pod->object_alignment != rhs.pod->object_alignment ||
-      lhs.pod->fields.size() != rhs.pod->fields.size()) {
-    return false;
-  }
-  for (std::size_t index = 0U; index < lhs.pod->fields.size(); ++index) {
-    const auto& left = lhs.pod->fields[index];
-    const auto& right = rhs.pod->fields[index];
-    if (left.name != right.name || left.byte_offset != right.byte_offset ||
-        left.scalar_kind != right.scalar_kind || left.element_count != right.element_count) {
-      return false;
-    }
-  }
-  return true;
-}
-
 [[nodiscard]] bool payload_options_equal(const std::optional<PayloadOptionsRecord>& lhs,
                                          const std::optional<PayloadOptionsRecord>& rhs) {
   if (lhs.has_value() != rhs.has_value()) {
     return false;
   }
-  return !lhs || (schema_identity_equal(lhs->schema, rhs->schema) &&
+  return !lhs || (schema_identity_exactly_equal(lhs->schema, rhs->schema) &&
                   lhs->max_inline_bytes == rhs->max_inline_bytes &&
                   lhs->max_tensor_byte_span == rhs->max_tensor_byte_span &&
                   lhs->interface_tensor_emit_policy == rhs->interface_tensor_emit_policy);
 }
 
-[[nodiscard]] PortConfigurationRecord setup_configuration(
-    const OperatorSpecCompilerAccess::PortMetadata& metadata) {
-  PortConfigurationRecord result;
-  if (metadata.direction == PortDirection::kInput) {
-    result.queue_depth = metadata.queue_depth;
-    result.memory_conversion = metadata.memory_conversion;
-    result.payload_options = metadata.payload_options;
-  } else {
-    result.max_emits_per_compute = metadata.max_emits_per_compute;
-    result.late_joiner_history_depth = metadata.late_joiner_history_depth;
-    result.tensor_allocation = metadata.tensor_allocation;
-    result.payload_options = metadata.payload_options;
-  }
-  if (!metadata.diagnostic_alias.empty()) {
-    result.diagnostic_alias = std::string(metadata.diagnostic_alias);
-  }
-  result.tensor_layout = metadata.tensor_layout;
-  result.tensor_fields.reserve(metadata.tensor_fields.size());
-  for (const auto& field : metadata.tensor_fields) {
-    result.tensor_fields.push_back(field.configuration);
-  }
-  std::sort(result.tensor_fields.begin(),
-            result.tensor_fields.end(),
-            [](const auto& lhs, const auto& rhs) { return lhs.field_id < rhs.field_id; });
-  return result;
-}
-
 [[nodiscard]] bool port_setup_equal(const PortRecord& existing,
-                                    const OperatorSpecCompilerAccess::PortMetadata& candidate) {
-  const PortConfigurationRecord replayed = setup_configuration(candidate);
+                                    const OperatorSpecCompilerAccess::PortMetadata& candidate,
+                                    std::optional<GraphPortId> follows_input = std::nullopt) {
+  const PortConfigurationRecord replayed = setup_port_configuration(candidate, follows_input);
   return existing.owner_kind == PortOwnerKind::kOperator &&
          existing.direction == candidate.direction && existing.name == candidate.name &&
-         payload_identity_equal(existing.payload_identity, candidate.payload_identity) &&
+         payload_identity_exactly_equal(existing.payload_identity, candidate.payload_identity) &&
          existing.descriptor_tensor_field_count == candidate.descriptor_tensor_field_count &&
          existing.setup.queue_depth == replayed.queue_depth &&
          existing.setup.max_emits_per_compute == replayed.max_emits_per_compute &&
          existing.setup.late_joiner_history_depth == replayed.late_joiner_history_depth &&
+         existing.setup.rate_kind == replayed.rate_kind &&
+         existing.setup.declared_nominal_rate == replayed.declared_nominal_rate &&
+         existing.setup.declared_expected_rate == replayed.declared_expected_rate &&
+         existing.setup.follows_input == replayed.follows_input &&
+         existing.setup.follows_ratio == replayed.follows_ratio &&
+         existing.setup.lifecycle_binding_stage == replayed.lifecycle_binding_stage &&
+         existing.setup.declared_max_nominal_rate == replayed.declared_max_nominal_rate &&
          existing.setup.diagnostic_alias == replayed.diagnostic_alias &&
-         tensor_layout_equal(existing.setup.tensor_layout, replayed.tensor_layout) &&
+         tensor_port_layout_exactly_equal(existing.setup.tensor_layout, replayed.tensor_layout) &&
+         existing.setup.tensor_contract.has_value() == replayed.tensor_contract.has_value() &&
+         (!existing.setup.tensor_contract ||
+          tensor_contract_equal(*existing.setup.tensor_contract, *replayed.tensor_contract)) &&
          existing.setup.memory_conversion == replayed.memory_conversion &&
          existing.setup.tensor_allocation.has_value() == replayed.tensor_allocation.has_value() &&
          (!existing.setup.tensor_allocation ||
           (existing.setup.tensor_allocation->max_rank == replayed.tensor_allocation->max_rank &&
            existing.setup.tensor_allocation->max_byte_span ==
                replayed.tensor_allocation->max_byte_span)) &&
+         existing.setup.tensor_byte_span_expression == replayed.tensor_byte_span_expression &&
          payload_options_equal(existing.setup.payload_options, replayed.payload_options) &&
          tensor_field_configuration_equal(existing.setup.tensor_fields, replayed.tensor_fields);
 }
@@ -761,9 +352,28 @@ void add_constraints(StableHashBuilder& hash, const ParamConstraints& value) noe
     return std::tuple{lhs.direction, lhs.name} < std::tuple{rhs.direction, rhs.name};
   });
   for (std::size_t index = 0U; index < expected.size(); ++index) {
+    std::optional<GraphPortId> follows_input;
+    if (replayed[index].follows_input_declaration != nullptr) {
+      const auto replayed_input =
+          std::find_if(replayed.begin(), replayed.end(), [&](const auto& row) {
+            return row.declaration == replayed[index].follows_input_declaration &&
+                   row.direction == PortDirection::kInput;
+          });
+      if (replayed_input == replayed.end()) {
+        return false;
+      }
+      const auto expected_input =
+          std::find_if(expected.begin(), expected.end(), [&](const auto* row) {
+            return row->direction == PortDirection::kInput && row->name == replayed_input->name;
+          });
+      if (expected_input == expected.end()) {
+        return false;
+      }
+      follows_input = (*expected_input)->id;
+    }
     if ((index != 0U && replayed[index - 1U].direction == replayed[index].direction &&
          replayed[index - 1U].name == replayed[index].name) ||
-        !port_setup_equal(*expected[index], replayed[index])) {
+        !port_setup_equal(*expected[index], replayed[index], follows_input)) {
       return false;
     }
   }
@@ -872,10 +482,8 @@ void add_constraints(StableHashBuilder& hash, const ParamConstraints& value) noe
 
 [[nodiscard]] bool replayed_declarations_match(const GraphSnapshotData& snapshot, VertexId owner,
                                                const OperatorFactoryBase& factory) {
-  const auto vertex = std::find_if(snapshot.vertices.begin(),
-                                   snapshot.vertices.end(),
-                                   [&](const auto& item) { return item.id == owner; });
-  if (vertex == snapshot.vertices.end() || vertex->kind != VertexKind::kOperator) {
+  const VertexRecord* vertex = find_vertex(snapshot, owner);
+  if (vertex == nullptr || vertex->kind != VertexKind::kOperator) {
     return false;
   }
   auto created = factory.create();
@@ -1106,7 +714,7 @@ struct OverridePathIndex {
     return true;
   }
   const ParamOverrideSetState& state = ParamOverrideSetAccess::state(*parameter_overrides);
-  if (state.representation_version != 2U) {
+  if (state.representation_version != 3U) {
     append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
     return false;
   }
@@ -1115,9 +723,30 @@ struct OverridePathIndex {
     append_diagnostic(result, "PARAMETER_OVERRIDE_TARGET_MISMATCH");
     return false;
   }
-  if (state.admission_context_digest != admission_context_digest) {
-    append_diagnostic(result, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH");
+  const bool exact_context = state.context_binding == ParamOverrideContextBinding::kExact;
+  const bool compile_context = state.context_binding == ParamOverrideContextBinding::kCompile;
+  if ((!exact_context && !compile_context) ||
+      state.provenance.context_binding != state.context_binding) {
+    append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
     return false;
+  }
+  const ParamSchemaHash empty_context_digest{};
+  if (compile_context) {
+    if (state.admission_context_digest != empty_context_digest ||
+        state.provenance.admission_context_digest != empty_context_digest) {
+      append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
+      return false;
+    }
+  } else {
+    if (state.admission_context_digest == empty_context_digest ||
+        state.provenance.admission_context_digest == empty_context_digest) {
+      append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
+      return false;
+    }
+    if (state.admission_context_digest != admission_context_digest) {
+      append_diagnostic(result, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH");
+      return false;
+    }
   }
   if (state.semantic_digest !=
       ParamOverrideSetAccess::recompute_semantic_digest(*parameter_overrides)) {
@@ -1125,7 +754,7 @@ struct OverridePathIndex {
     return false;
   }
   if (state.provenance.target != snapshot.identity ||
-      state.provenance.admission_context_digest != admission_context_digest) {
+      (exact_context && state.provenance.admission_context_digest != admission_context_digest)) {
     append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH");
     return false;
   }
@@ -1135,6 +764,30 @@ struct OverridePathIndex {
       !state.provenance.target_scope_paths.empty() || !state.provenance.target_operators.empty() ||
       !state.provenance.fields.empty() ||
       state.provenance.target_scope_kind != ParamRebindTargetScopeKind::kWholeGraph;
+  const PlanDigest empty_plan_digest;
+  const ParamCatalogDigest empty_catalog_digest;
+  const bool has_snapshot_source =
+      state.provenance.source_archive_semantic_version != 0U ||
+      state.provenance.source_archive_digest != std::array<std::byte, 32>{} ||
+      state.provenance.source_plan_digest != empty_plan_digest ||
+      state.provenance.source_plan_generation != 0U ||
+      state.provenance.source_run_generation != 0U ||
+      state.provenance.source_catalog_digest != empty_catalog_digest ||
+      state.provenance.source_scope_kind != ParamSnapshotScopeKind::kRoot ||
+      !state.provenance.source_scope_path.empty();
+  const bool has_config_source = !state.provenance.config_fields.empty();
+  if (exact_context && has_config_source) {
+    append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
+    return false;
+  }
+  if (compile_context &&
+      (state.provenance.mode != ParamRebindMode::kSparseContributions || !has_config_source ||
+       has_snapshot_source || !state.provenance.migrations.empty() ||
+       !state.provenance.operator_aliases.empty() || !state.provenance.field_aliases.empty() ||
+       !state.provenance.fields.empty() || has_rebind_target_selection)) {
+    append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
+    return false;
+  }
   if (has_rebind_target_selection &&
       !valid_rebind_target_selection(state.provenance, paths, factories)) {
     append_diagnostic(result, "PARAMETER_OVERRIDE_TARGET_SELECTION_MISMATCH");
@@ -1235,6 +888,12 @@ struct OverridePathIndex {
         fields_valid = false;
         break;
       }
+      if (compile_context && !contribution.config_provenance_index) {
+        append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH", source);
+        valid = false;
+        fields_valid = false;
+        break;
+      }
       if (contribution.config_provenance_index) {
         const std::size_t source_index = *contribution.config_provenance_index;
         if (source_index >= state.provenance.config_fields.size() ||
@@ -1257,27 +916,29 @@ struct OverridePathIndex {
       continue;
     }
 
-    const void* const baseline = executable.factory->initial_parameter_value();
-    for (const ParamFieldDescriptor& field : schema->fields) {
-      ParamScalarValue before;
-      ParamScalarValue after;
-      const bool contributed =
-          std::find(contributed_fields.begin(), contributed_fields.end(), field.id) !=
-          contributed_fields.end();
-      if (read_scalar(field, baseline, before) &&
-          read_scalar(field, override_record.resolved_value.get(), after)) {
-        if (!contributed && before != after) {
+    if (!override_record.field_replacements_only) {
+      const void* const baseline = executable.factory->initial_parameter_value();
+      for (const ParamFieldDescriptor& field : schema->fields) {
+        ParamScalarValue before;
+        ParamScalarValue after;
+        const bool contributed =
+            std::find(contributed_fields.begin(), contributed_fields.end(), field.id) !=
+            contributed_fields.end();
+        if (read_scalar(field, baseline, before) &&
+            read_scalar(field, override_record.resolved_value.get(), after)) {
+          if (!contributed && before != after) {
+            append_diagnostic(result, "PARAMETER_OVERRIDE_UNDECLARED_CHANGE", source);
+            valid = false;
+            fields_valid = false;
+            break;
+          }
+        } else if (!contributed &&
+                   !field_values_equal(field, baseline, override_record.resolved_value.get())) {
           append_diagnostic(result, "PARAMETER_OVERRIDE_UNDECLARED_CHANGE", source);
           valid = false;
           fields_valid = false;
           break;
         }
-      } else if (!contributed &&
-                 !field_values_equal(field, baseline, override_record.resolved_value.get())) {
-        append_diagnostic(result, "PARAMETER_OVERRIDE_UNDECLARED_CHANGE", source);
-        valid = false;
-        fields_valid = false;
-        break;
       }
     }
     if (!fields_valid) {
@@ -1363,105 +1024,6 @@ void disable_admitted_fields(ParameterPlanLowering& result) {
 }
 
 }  // namespace
-
-ParamSchemaHash empty_parameter_migration_catalog_digest() noexcept {
-  StableHashBuilder hash;
-  hash.add("holoscan.param.migration_catalog.v1");
-  hash.add_canonical_size(0U);
-  return hash.finish();
-}
-
-ParamSchemaHash parameter_admission_context_digest(
-    const ProfileManifest& profile, const DeploymentPlanLowering& deployment,
-    ParamSchemaHash migration_catalog_digest) noexcept {
-  StableHashBuilder hash;
-  hash.add("holoscan.param.admission_context.v1");
-  hash.add("profile_admission_input");
-  add_profile_admission_input(hash, profile);
-  hash.add("deployment_plan");
-  add_deployment_plan(hash, deployment);
-  hash.add("migration_catalog");
-  add_hash_bytes(hash, migration_catalog_digest);
-  return hash.finish();
-}
-
-ParameterProjectionCollision classify_parameter_field_projection(
-    std::span<const ParameterFieldProjectionIdentity> existing, ParamFieldId field,
-    ParamSchemaHash full_field) noexcept {
-  const auto duplicate = std::find_if(existing.begin(), existing.end(), [&](const auto& item) {
-    return item.first == field || item.second == full_field;
-  });
-  return duplicate == existing.end() ? ParameterProjectionCollision::kNone
-                                     : ParameterProjectionCollision::kFieldId;
-}
-
-ParameterProjectionCollision classify_parameter_instance_projection(
-    std::span<const ParameterInstanceProjectionIdentity> existing, ParamInstanceId instance,
-    ParamSchemaHash full_instance) noexcept {
-  if (instance == 0U) {
-    return ParameterProjectionCollision::kInstanceId;
-  }
-  const auto duplicate = std::find_if(
-      existing.begin(), existing.end(), [&](const auto& item) { return item.first == instance; });
-  if (duplicate == existing.end()) {
-    return ParameterProjectionCollision::kNone;
-  }
-  return duplicate->second == full_instance ? ParameterProjectionCollision::kFieldId
-                                            : ParameterProjectionCollision::kInstanceId;
-}
-
-std::string_view parameter_projection_collision_token(
-    ParameterProjectionCollision collision) noexcept {
-  switch (collision) {
-    case ParameterProjectionCollision::kNone:
-      return {};
-    case ParameterProjectionCollision::kFieldId:
-      return "PARAMETER_FIELD_ID_COLLISION";
-    case ParameterProjectionCollision::kInstanceId:
-      return "PARAMETER_INSTANCE_ID_COLLISION";
-  }
-  return "PARAMETER_INSTANCE_ID_COLLISION";
-}
-
-ParameterProtectedValueDigest parameter_value_digest(const ParamTypeDescriptor& type,
-                                                     const ParamSchemaDescriptor* schema,
-                                                     const void* value, bool no_params) noexcept {
-  if (no_params) {
-    return {.disposition = ParameterValueDigestDisposition::kNoParams};
-  }
-  if (schema == nullptr) {
-    return {.disposition = ParameterValueDigestDisposition::kOpaqueSchema};
-  }
-  if (schema->coverage != ParamSchemaCoverage::kComplete) {
-    return {.disposition = ParameterValueDigestDisposition::kPartialSchema};
-  }
-  if (value == nullptr || schema->local_type != &type) {
-    return {.disposition = ParameterValueDigestDisposition::kInvalidScalar};
-  }
-  StableHashBuilder hash;
-  hash.add("holoscan.parameter.value.v1");
-  hash.add(schema->stable_id);
-  hash.add(schema->version);
-  add_hash_bytes(hash, schema->structural_hash);
-  add_hash_bytes(hash, schema->contract_hash);
-  hash.add_canonical_size(schema->fields.size());
-  for (const ParamFieldDescriptor& field : schema->fields) {
-    if (field.local_operations.read_member_as_scalar == nullptr) {
-      return {.disposition = ParameterValueDigestDisposition::kLocalTypedField};
-    }
-    ParamScalarValue scalar;
-    if (!field.local_operations.read_member_as_scalar(value, scalar) ||
-        !scalar_carrier_is_canonical(scalar)) {
-      return {.disposition = ParameterValueDigestDisposition::kInvalidScalar};
-    }
-    add_hash_bytes(hash, field.full_id);
-    add_scalar(hash, scalar);
-  }
-  return {
-      .disposition = ParameterValueDigestDisposition::kCanonicalScalarFields,
-      .digest = hash.finish(),
-  };
-}
 
 // Keep Parameter admission and all derived record families in one lowering transaction.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -1563,7 +1125,7 @@ ParameterPlanLowering lower_parameter_plan(
         .plan_generation = plan_generation,
         .run_generation = 0U,
     };
-    const auto profile = effective_profile(effective_vertex_profiles, executable.vertex);
+    const auto profile = effective_profile_for_vertex(effective_vertex_profiles, executable.vertex);
     const bool profile_supported = profile_allows_active_mutation(profile);
     if (runtime_requested && !profile_supported) {
       append_diagnostic(result, "PARAMETER_UPDATE_PROFILE_UNSUPPORTED", source);
@@ -1684,7 +1246,7 @@ ParameterPlanLowering lower_parameter_plan(
         }
         const ParamSchemaHash instance_identity =
             path ? parameter_instance_identity(path->path, descriptor.full_id) : ParamSchemaHash{};
-        const ParamInstanceId instance = compact_instance_id(instance_identity);
+        const ParamInstanceId instance = compact_parameter_instance_id(instance_identity);
         const ParameterProjectionCollision instance_collision =
             classify_parameter_instance_projection(
                 instance_identities, instance, instance_identity);
@@ -1765,7 +1327,7 @@ ParameterPlanLowering lower_parameter_plan(
             .field = descriptor.id,
             .full_id = descriptor.full_id,
             .origin = field_origin,
-            .value_digest = field_value_digest(
+            .value_digest = parameter_field_value_digest(
                 *schema, descriptor, executable.factory->initial_parameter_value()),
             .config_source = std::move(config_source),
         });
@@ -2058,8 +1620,7 @@ void finalize_parameter_lifecycle_capacity(
   std::vector<OperatorInstanceId> closure_members;
   std::vector<OperatorInstanceId> candidate_owners;
   for (const auto& field : result.lifecycle_mutable_fields) {
-    if (static_cast<std::uint8_t>(field.from_stage) >
-        static_cast<std::uint8_t>(LifecycleStage::kStart)) {
+    if (!is_lifecycle_forward_stage(field.from_stage)) {
       append_diagnostic(result, "PARAMETER_LIFECYCLE_CAPACITY_INSUFFICIENT");
       valid = false;
       continue;

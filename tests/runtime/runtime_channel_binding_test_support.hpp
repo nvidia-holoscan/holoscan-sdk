@@ -19,9 +19,11 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/port.hpp>
 
+#include "channel/protected_terminal_channel.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "core/operator_test_binding.hpp"
 #include "runtime/runtime_channel_binding.hpp"
+#include "runtime/runtime_channel_binding_test_access.hpp"
 
 namespace holoscan::detail::runtime_channel_binding_test {
 
@@ -68,10 +70,13 @@ using SinkOperator = EmptySink<std::int32_t>;
 class ScriptedInlinePublisher final : public channel_internal::InlinePayloadPublisher {
  public:
   explicit ScriptedInlinePublisher(std::vector<channel_internal::InlinePublicationResult> results,
-                                   std::vector<ErrorCode> refresh_results = {});
+                                   std::vector<ErrorCode> refresh_results = {},
+                                   std::vector<ErrorCode> close_results = {},
+                                   bool throw_on_close = false);
 
   [[nodiscard]] channel_internal::InlinePublicationResult emit_phase(
       std::span<const std::byte> payload, const SampleMetadata& metadata) override;
+  [[nodiscard]] expected<void, Error> close_stream() override;
   [[nodiscard]] expected<void, Error> update_connections() noexcept override;
   [[nodiscard]] bool has_subscribers() const noexcept override;
 
@@ -79,12 +84,60 @@ class ScriptedInlinePublisher final : public channel_internal::InlinePayloadPubl
   std::vector<std::int32_t> values;
   std::vector<std::vector<std::byte>> payloads;
   std::vector<SampleMetadata> metadata_records;
+  std::size_t close_count{};
 
  private:
   std::vector<channel_internal::InlinePublicationResult> results_;
   std::vector<ErrorCode> refresh_results_;
+  std::vector<ErrorCode> close_results_;
   std::size_t next_result_{};
   std::size_t next_refresh_result_{};
+  std::size_t next_close_result_{};
+  bool throw_on_close_{};
+};
+
+enum class InlineReceivePath : std::uint8_t {
+  kBorrowed,
+  kCopyFallback,
+};
+
+/// Script one scalar data record followed by a stable closed transport head.
+class ScriptedInlineSubscriber final : public channel_internal::InlinePayloadSubscriber,
+                                       public channel_internal::StagedDataWaitSetSubscriber {
+ public:
+  ScriptedInlineSubscriber(std::int32_t value, std::uint64_t sequence, InlineReceivePath path);
+
+  [[nodiscard]] expected<bool, Error> has_samples() const override;
+  // This double is scripted in memory and has no transport, so it has no event lane and
+  // no runtime to build a wait context from. Reporting that honestly makes
+  // wait_for_readiness fail with kNotSupported rather than pretend to wait.
+  [[nodiscard]] bool event_wake_enabled() const noexcept override;
+  [[nodiscard]] void* wait_context_runtime() noexcept override;
+  [[nodiscard]] bool has_publishers() const noexcept override;
+  [[nodiscard]] expected<channel_internal::InlinePayloadReceiveResult, Error> receive(
+      std::span<std::byte> payload) override;
+  [[nodiscard]] expected<channel_internal::InlinePayloadReceiveGuard, Error> receive_borrowed()
+      override;
+  [[nodiscard]] expected<channel_internal::InlinePayloadReceiveGuard, Error>
+  receive_borrowed_if_data_accepted(bool accept_data) override;
+  void release_payload_loan() noexcept override;
+  [[nodiscard]] expected<std::uint64_t, Error> attach_wait_set(void*) override;
+  [[nodiscard]] expected<void, Error> detach_wait_set() noexcept override;
+  [[nodiscard]] std::optional<channel_internal::StagedDataState> staged_data_state()
+      const noexcept override;
+  [[nodiscard]] std::optional<std::uint64_t> staged_terminal_sequence() const noexcept override;
+
+  std::size_t borrowed_receive_count{};
+  std::size_t copy_receive_count{};
+  std::size_t loan_release_count{};
+  mutable std::size_t staged_data_query_count{};
+
+ private:
+  std::array<std::byte, sizeof(std::int32_t)> payload_{};
+  SampleMetadata metadata_{};
+  InlineReceivePath path_{};
+  bool data_delivered_{};
+  bool loan_active_{};
 };
 
 [[nodiscard]] std::string unique_service();
@@ -113,10 +166,13 @@ struct SessionFixture {
   void use_direct_retained_delivery();
   void use_one_slot_direct_retained_delivery();
   void use_one_slot_blocking_transport();
+  void use_same_partition_eventless_transport();
+  void use_single_partition_runner();
   void use_cross_process_edge();
   void add_mixed_policy_fanout();
   void add_blocking_fanout();
   void use_one_slot_blocking_fanout();
+  void use_one_slot_drop_oldest_fanout();
   void add_compute_only_input_for_sink();
   void use_drop_oldest_queue_policy();
   void use_one_slot_drop_oldest_queue();

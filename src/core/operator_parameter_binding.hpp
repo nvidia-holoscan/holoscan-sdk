@@ -19,7 +19,7 @@ namespace holoscan::detail {
 ///
 /// This non-installed seam exists so the compiler/runtime factory and focused tests use the same
 /// whole-aggregate replacement rule. It grants no active-run mutation or field-patching authority.
-/// EA1-009 owns the pointer-free plan record and fresh-session factory binding.
+/// HSDK5-009 owns the pointer-free plan record and fresh-session factory binding.
 class OperatorParameterBinding {
  public:
   /// @brief Return aggregate operations from the Operator-defining module.
@@ -47,7 +47,7 @@ class OperatorParameterBinding {
       return {};
     } else if constexpr (std::is_nothrow_swappable_v<typename Op::Params>) {
       // Swap publishes the complete validated candidate with a demonstrable strong guarantee.
-      // EA1-009 owns additional admitted plan-selected clone/materialization strategies.
+      // HSDK5-009 owns additional admitted plan-selected clone/materialization strategies.
       op.bind_initial_params(params);
       return {};
     } else {

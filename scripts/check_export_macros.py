@@ -14,6 +14,7 @@ HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx"}
 TEXT_SUFFIXES = SOURCE_SUFFIXES | {".cmake", ".txt"}
 GENERATED_EXPORT_HEADERS = {
     "holomq_export.h",
+    "holoviz_export.h",
     "holoscan_config_export.h",
     "holoscan_config_io_export.h",
     "holoscan_core_export.h",
@@ -25,6 +26,8 @@ GENERATED_EXPORT_HEADERS = {
 EXPORT_MACROS = {
     "HOLOMQ_EXPORT",
     "HOLOMQ_NO_EXPORT",
+    "HOLOVIZ_EXPORT",
+    "HOLOVIZ_NO_EXPORT",
     "HOLOSCAN_CORE_EXPORT",
     "HOLOSCAN_CORE_NO_EXPORT",
     "HOLOSCAN_CONFIG_EXPORT",
@@ -42,6 +45,7 @@ EXPORT_MACROS = {
 }
 GENERATED_EXPORT_INCLUDES = {
     "holomq": "#include <holomq/holomq_export.h>",
+    "holoviz": "#include <holoviz/holoviz_export.h>",
     "holoscan": "#include <holoscan/holoscan_core_export.h>",
 }
 HOLOSCAN_COMPONENT_EXPORT_INCLUDES = {
@@ -57,7 +61,8 @@ HOLOSCAN_COMPONENT_EXPORT_INCLUDES = {
 HOLOSCAN_LOGGER_EXPORT_INCLUDE = "#include <holoscan/holoscan_logger_export.h>"
 HAND_ROLLED_EXPORT_RE = re.compile(
     r"^\s*#\s*define\s+"
-    r"(HOLOMQ_EXPORT|HOLOMQ_NO_EXPORT|HOLOSCAN_CORE_EXPORT|HOLOSCAN_CORE_NO_EXPORT"
+    r"(HOLOMQ_EXPORT|HOLOMQ_NO_EXPORT|HOLOVIZ_EXPORT|HOLOVIZ_NO_EXPORT"
+    r"|HOLOSCAN_CORE_EXPORT|HOLOSCAN_CORE_NO_EXPORT"
     r"|HOLOSCAN_CONFIG_EXPORT|HOLOSCAN_CONFIG_NO_EXPORT"
     r"|HOLOSCAN_CONFIG_IO_EXPORT|HOLOSCAN_CONFIG_IO_NO_EXPORT"
     r"|HOLOSCAN_PARAMS_EXPORT|HOLOSCAN_PARAMS_NO_EXPORT"
@@ -99,10 +104,25 @@ def has_path_sequence(path: Path, sequence: tuple[str, ...]) -> bool:
     return any(parts[index : index + len(sequence)] == sequence for index in range(len(parts)))
 
 
+def is_holoviz_module_path(path: Path) -> bool:
+    return has_path_sequence(path, ("public", "modules", "holoviz")) or has_path_sequence(
+        path, ("modules", "holoviz")
+    )
+
+
+def is_public_holoviz_header(path: Path) -> bool:
+    parts = path.parts
+    return "include" in parts and "holoviz" in parts and path.suffix in HEADER_SUFFIXES
+
+
 def is_holomq_module_path(path: Path) -> bool:
     return has_path_sequence(path, ("public", "modules", "holomq")) or has_path_sequence(
         path, ("modules", "holomq")
     )
+
+
+def is_holomq_test_source(path: Path) -> bool:
+    return has_path_sequence(path, ("tests", "holomq"))
 
 
 def is_public_holomq_header(path: Path) -> bool:
@@ -156,7 +176,11 @@ def check_file(path: Path) -> list[str]:
         errors.append(f"{path}: include <holomq/holomq_export.h>, not <holomq/export.hpp>")
 
     if DETAIL_INCLUDE_RE.search(content):
-        if is_holomq_module_path(path):
+        if (
+            is_holomq_module_path(path)
+            or is_public_holomq_header(path)
+            or is_holomq_test_source(path)
+        ):
             if is_example_source(path):
                 errors.append(f"{path}: HoloMQ examples must not include detail/ internals")
         elif (
@@ -186,6 +210,13 @@ def check_file(path: Path) -> list[str]:
         and GENERATED_EXPORT_INCLUDES["holomq"] not in content
     ):
         errors.append(f"{path}: HOLOMQ_EXPORT requires <holomq/holomq_export.h>")
+
+    if (
+        is_public_holoviz_header(path)
+        and "HOLOVIZ_EXPORT" in content
+        and GENERATED_EXPORT_INCLUDES["holoviz"] not in content
+    ):
+        errors.append(f"{path}: HOLOVIZ_EXPORT requires <holoviz/holoviz_export.h>")
 
     if (
         is_public_holoscan_header(path)

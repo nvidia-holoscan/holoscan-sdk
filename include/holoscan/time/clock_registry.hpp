@@ -228,7 +228,7 @@ struct ClockRateRatio {
 
 /// @brief Select deterministic integer materialization for an affine clock conversion.
 ///
-/// EA1 admits only nearest rounding with halfway values rounded to the even
+/// baseline admits only nearest rounding with halfway values rounded to the even
 /// integer. The closed enum is stored in immutable plan records so runtime and
 /// artifact consumers never infer rounding policy from the conversion formula.
 enum class ClockRoundingMode : std::uint8_t {
@@ -237,7 +237,7 @@ enum class ClockRoundingMode : std::uint8_t {
 
 /// @brief Select overflow behavior for an affine clock conversion.
 ///
-/// EA1 admits only checked failure. Conversion never wraps, saturates, or
+/// baseline admits only checked failure. Conversion never wraps, saturates, or
 /// silently substitutes another timestamp.
 enum class ClockOverflowPolicy : std::uint8_t {
   kError = 0,  ///< Return typed failure when the materialized coordinate is unrepresentable.

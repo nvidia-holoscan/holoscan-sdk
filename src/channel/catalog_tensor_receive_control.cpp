@@ -227,6 +227,13 @@ class CatalogTensorReceiveMemoryReference final : public HoloMQExportableTensorM
   }
 
   [[nodiscard]] expected<void, Error> synchronize_for_host() override {
+    if (!static_cast<bool>(*imported_)) {
+      return make_unexpected(
+          Error{ErrorCode::kInvalidArgument, "catalog Tensor import is inactive"});
+    }
+    if (!imported_->has_producer_readiness_fence()) {
+      return {};
+    }
     cudaStream_t readiness_stream = readiness_stream_.load(std::memory_order_acquire);
     if (readiness_stream == nullptr) {
       auto stream = host_wait_stream_.get_or_create();
@@ -282,7 +289,7 @@ CatalogTensorReceiveControl::~CatalogTensorReceiveControl() = default;
 
 expected<std::unique_ptr<CatalogTensorReceiveControl>, Error> CatalogTensorReceiveControl::create(
     std::shared_ptr<void> runtime_lifetime, holomq::Context& context,
-    const LogicalTensorRequirementsRecord& contract, const std::uint32_t borrow_capacity) {
+    const TensorBoundaryContractRecord& contract, const std::uint32_t borrow_capacity) {
   if (!runtime_lifetime || borrow_capacity == 0U || !contract.max_rank) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
@@ -300,7 +307,7 @@ expected<std::unique_ptr<CatalogTensorReceiveControl>, Error> CatalogTensorRecei
 }
 
 expected<void, Error> CatalogTensorReceiveControl::initialize(
-    const LogicalTensorRequirementsRecord& contract) {
+    const TensorBoundaryContractRecord& contract) {
   if (!contract.max_rank) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }

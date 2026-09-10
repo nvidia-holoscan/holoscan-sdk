@@ -67,7 +67,7 @@ parent `examples/` project. As a standalone consumer, copy `CMakeLists.min.txt` 
 `CMakeLists.txt` (or configure with `-C`), then:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

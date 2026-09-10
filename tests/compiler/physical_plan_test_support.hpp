@@ -25,17 +25,20 @@
 #include <holoscan/core/execution_plan.hpp>
 #include <holoscan/memory/memory_buffer.hpp>
 #include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
-#include "channel/channel_payload_limits.hpp"
+#include "channel/catalog_inline_payload_contract.hpp"
 #include "compile_test_graph.hpp"
 #include "compiler/compile_internal.hpp"
 #include "compiler/compile_platform.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "compiler/physical_plan_lowering.hpp"
-#include "compiler/plan_artifact_lowering.hpp"
+#include "compiler/plan_artifact_serialization.hpp"
+#include "compiler/plan_generation.hpp"
 #include "compiler/process_local_channel_plan_validation.hpp"
 #include "compiler/profile_admission.hpp"
 #include "compiler/profile_manifest_lowering.hpp"
+#include "compiler/rate_plan_lowering.hpp"
 #include "compiler/runtime_package_capabilities.hpp"
 #include "core/source_id_internal.hpp"
 #include "core/tensor_allocation_record_validation.hpp"
@@ -65,6 +68,18 @@ struct CompileConstructorOnlyPod {
   std::uint32_t value;
 };
 
+struct CompileMaximumCatalogInlinePod {
+  std::array<std::uint8_t, channel_internal::kMaximumCatalogDataFrameBytes -
+                               channel_internal::kCatalogDataAttributionBytes>
+      bytes{};
+};
+
+struct CompileOversizedCatalogInlinePod {
+  std::array<std::uint8_t, channel_internal::kMaximumCatalogDataFrameBytes -
+                               channel_internal::kCatalogDataAttributionBytes + 1U>
+      bytes{};
+};
+
 template <>
 struct ChannelTypeIdentity<CompileConstructorOnlyPod> {
   static constexpr std::string_view name = "nvidia.holoscan.test.CompileConstructorOnlyPod";
@@ -75,6 +90,32 @@ template <>
 struct ChannelPodLayout<CompileConstructorOnlyPod> {
   static constexpr auto fields = pod_fields(pod_field("value", &CompileConstructorOnlyPod::value,
                                                       offsetof(CompileConstructorOnlyPod, value)));
+};
+
+template <>
+struct ChannelTypeIdentity<CompileMaximumCatalogInlinePod> {
+  static constexpr std::string_view name = "nvidia.holoscan.test.CompileMaximumCatalogInlinePod";
+  static constexpr std::uint32_t version = 1U;
+};
+
+template <>
+struct ChannelPodLayout<CompileMaximumCatalogInlinePod> {
+  static constexpr auto fields =
+      pod_fields(pod_field("bytes", &CompileMaximumCatalogInlinePod::bytes,
+                           offsetof(CompileMaximumCatalogInlinePod, bytes)));
+};
+
+template <>
+struct ChannelTypeIdentity<CompileOversizedCatalogInlinePod> {
+  static constexpr std::string_view name = "nvidia.holoscan.test.CompileOversizedCatalogInlinePod";
+  static constexpr std::uint32_t version = 1U;
+};
+
+template <>
+struct ChannelPodLayout<CompileOversizedCatalogInlinePod> {
+  static constexpr auto fields =
+      pod_fields(pod_field("bytes", &CompileOversizedCatalogInlinePod::bytes,
+                           offsetof(CompileOversizedCatalogInlinePod, bytes)));
 };
 
 }  // namespace holoscan
@@ -110,6 +151,21 @@ namespace holoscan::detail::physical_plan_test {
     const GraphSnapshotData& snapshot);
 [[nodiscard]] std::vector<ChannelEndpointRecord> catalog_endpoints(
     const GraphSnapshotData& snapshot);
+
+struct LowerForTestOptions {
+  bool force_holomq_process_local_inline{};
+  bool force_holomq_process_local_event_wake{};
+  std::span<const ResolvedQueueSizing> resolved_queue_sizings{};
+  std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes{};
+};
+inline constexpr LowerForTestOptions kForceHoloMQProcessLocalInline{
+    .force_holomq_process_local_inline = true,
+};
+inline constexpr LowerForTestOptions kForceHoloMQProcessLocalInlineAndEventWake{
+    .force_holomq_process_local_inline = true,
+    .force_holomq_process_local_event_wake = true,
+};
+
 [[nodiscard]] PhysicalPlanLoweringResult lower_for_test(
     const GraphSnapshotData& snapshot, PlanGenerationId plan_generation,
     std::span<const std::optional<Profile>> profiles,
@@ -119,7 +175,11 @@ namespace holoscan::detail::physical_plan_test {
     const RuntimePackageCapabilityView* package_override = nullptr,
     std::span<const TensorDeviceBindingRecord> tensor_device_bindings = {},
     std::span<const ExecutionPartitionRecord> execution_partitions = {},
-    bool force_holomq_process_local_inline = false);
+    LowerForTestOptions options = {});
+[[nodiscard]] ExecutionPlanState published_physical_plan_state(
+    PhysicalPlanLoweringResult result, PlanGenerationId plan_generation,
+    std::span<const VertexProcessPlacementPlanRecord> placements = {},
+    const RatePlanLoweringResult* exact_rate_plan = nullptr);
 [[nodiscard]] bool has_error(const PhysicalPlanLoweringResult& result, std::string_view token);
 [[nodiscard]] const PortPlanRecord* find_port(const PhysicalPlanLoweringResult& result, PortId id);
 [[nodiscard]] const TensorAllocationPlanRecord* find_allocation(
@@ -143,12 +203,13 @@ class ManifestTensorOperator final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.output(tensor, "tensor")
         .max_emits_per_compute(2U)
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = MemoryKind::kHost,
-            .dtype = DLDataType{kDLFloat, 32U, 1U},
-            .rank = 2U,
-        })
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 2U, .max_byte_span = 4096U});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost,
+                               .dtype = DLDataType{kDLFloat, 32U, 1U},
+                               .rank = 2U},
+            .bounds = tensor_bounds(4096U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
     spec.output(scalar, "scalar").max_emits_per_compute(1U);
   }
 
@@ -176,12 +237,13 @@ class DeviceTensorOperator final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
     spec.output(tensor, "tensor")
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = MemoryKind::kCudaDevice,
-            .dtype = DLDataType{kDLFloat, 32U, 1U},
-            .rank = 1U,
-        })
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 4096U});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLFloat, 32U, 1U},
+                               .rank = 1U},
+            .bounds = tensor_bounds(4096U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
     spec.output(scalar, "scalar");
   }
 
@@ -199,12 +261,13 @@ class DeviceTensorRelayOperator final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.input(input, "input").queue_depth(1U);
     spec.output(output, "output")
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = MemoryKind::kCudaDevice,
-            .dtype = DLDataType{kDLFloat, 32U, 1U},
-            .rank = 1U,
-        })
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 4096U});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLFloat, 32U, 1U},
+                               .rank = 1U},
+            .bounds = tensor_bounds(4096U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
@@ -245,6 +308,16 @@ class ExternalSchemaSinkOperator final : public Operator<> {
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
 
   Input<schema::StringT> input;
+};
+
+template <typename T>
+class ExternalPodSinkOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.input(input, "input"); }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<T> input;
 };
 
 // Covers every generic-loan eligibility outcome across three output types:

@@ -129,6 +129,9 @@ navigation:
       - page: Schema Payloads
         path: ../schema_payloads.mdx
         slug: schema-payloads
+      - page: Sensor Payloads
+        path: ../sensor_payloads.mdx
+        slug: sensor-payloads
       - page: Custom FlatBuffer Schemas
         path: ../custom_flatbuffer_schemas.mdx
         slug: custom-flatbuffer-schemas
@@ -200,17 +203,22 @@ navigation:
         path: ../examples/external_clients.mdx
         slug: external-clients
 
+# holoscan-tokenless-api-navigation:begin
   - section: API reference
     availability: beta
     contents:
       - folder: ./generated/api-reference/cpp/holoscan
         title: C++ API
         collapsed: true
+# holoscan-tokenless-api-navigation:end
 
   - section: Advanced & Experimental
     slug: advanced
     collapsed: true
     contents:
+      - page: Holoscan Vision
+        path: ../holoscan_vision.mdx
+        slug: holoscan-vision
       - page: Plan Tooling & CI
         path: ../plan_tooling.mdx
         slug: plan-tooling
@@ -223,6 +231,9 @@ navigation:
       - page: Determinism & Replay
         path: ../determinism_replay.mdx
         slug: determinism-and-replay
+      - page: CUDA Green Contexts
+        path: ../green_contexts.mdx
+        slug: cuda-green-contexts
       - page: Advanced Temporal Patterns
         path: ../advanced_temporal_patterns.mdx
         slug: advanced-temporal-patterns

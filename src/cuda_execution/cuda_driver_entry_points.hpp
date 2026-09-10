@@ -15,7 +15,9 @@
 
 #include <fmt/format.h>
 
+#include <cstdint>
 #include <string>
+#include <utility>
 
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/expected.hpp>
@@ -32,6 +34,11 @@
 namespace holoscan::cuda_execution_detail {
 
 #if HOLOSCAN_CUDA_DRIVER_ENTRY_POINTS_AVAILABLE
+
+inline constexpr std::int32_t kCUDADriverABIVersion12030 = 12030;
+inline constexpr std::int32_t kCUDADriverABIVersion12040 = 12040;
+inline constexpr std::int32_t kCUDADriverABIVersion12050 = 12050;
+inline constexpr std::int32_t kCUDADriverABIVersion13010 = 13010;
 
 // Human-readable explanation of a driver entry-point query result, so a failed lookup can say
 // whether the symbol was missing or the installed driver is simply too old for it.
@@ -64,15 +71,12 @@ inline Error driver_entry_point_error(const char* name, cudaDriverEntryPointQuer
 // Resolve a driver entry point into a caller-owned function-pointer slot. The runtime sets the slot
 // to null on any non-success status, so a null slot is reported with the specific cause. Suits
 // callers that fill a table of differently-typed pointers (e.g. the green context pool).
-inline expected<void, Error> load_driver_entry_point(void** func, const char* name) {
-  int version = 0;
+template <typename Query>
+inline expected<void, Error> load_driver_entry_point_with_query(void** func, const char* name,
+                                                                std::int32_t abi_version,
+                                                                Query&& query) {
   cudaDriverEntryPointQueryResult status{};
-  const cudaError_t runtime_result = cudaRuntimeGetVersion(&version);
-  if (runtime_result != cudaSuccess) {
-    return make_unexpected(driver_entry_point_error(name, status, runtime_result));
-  }
-  const cudaError_t result =
-      cudaGetDriverEntryPointByVersion(name, func, version, cudaEnableDefault, &status);
+  const cudaError_t result = std::forward<Query>(query)(name, func, abi_version, &status);
   if (result != cudaSuccess) {
     return make_unexpected(driver_entry_point_error(name, status, result));
   }
@@ -85,11 +89,26 @@ inline expected<void, Error> load_driver_entry_point(void** func, const char* na
   return {};
 }
 
+inline expected<void, Error> load_driver_entry_point(void** func, const char* name,
+                                                     std::int32_t abi_version) {
+  return load_driver_entry_point_with_query(
+      func,
+      name,
+      abi_version,
+      [](const char* symbol,
+         void** output,
+         std::int32_t version,
+         cudaDriverEntryPointQueryResult* status) {
+        return cudaGetDriverEntryPointByVersion(symbol, output, version, cudaEnableDefault, status);
+      });
+}
+
 // Resolve a driver entry point and return it as a typed function pointer, or a specific error.
 template <typename Fn>
-expected<Fn, Error> resolve_driver_entry_point(const char* name) {
+expected<Fn, Error> resolve_driver_entry_point(const char* name, std::int32_t abi_version) {
   Fn loaded = nullptr;
-  if (auto result = load_driver_entry_point(reinterpret_cast<void**>(&loaded), name); !result) {
+  if (auto result = load_driver_entry_point(reinterpret_cast<void**>(&loaded), name, abi_version);
+      !result) {
     return forward_error(result);
   }
   return loaded;
@@ -103,13 +122,13 @@ using CtxPopCurrentFn = CUresult (*)(CUcontext*);
 // CUcontext (stream pool, event pool).
 inline const expected<CtxPushCurrentFn, Error>& ctx_push_current_fn() {
   static const expected<CtxPushCurrentFn, Error> fn =
-      resolve_driver_entry_point<CtxPushCurrentFn>("cuCtxPushCurrent");
+      resolve_driver_entry_point<CtxPushCurrentFn>("cuCtxPushCurrent", kCUDADriverABIVersion12030);
   return fn;
 }
 
 inline const expected<CtxPopCurrentFn, Error>& ctx_pop_current_fn() {
   static const expected<CtxPopCurrentFn, Error> fn =
-      resolve_driver_entry_point<CtxPopCurrentFn>("cuCtxPopCurrent");
+      resolve_driver_entry_point<CtxPopCurrentFn>("cuCtxPopCurrent", kCUDADriverABIVersion12030);
   return fn;
 }
 

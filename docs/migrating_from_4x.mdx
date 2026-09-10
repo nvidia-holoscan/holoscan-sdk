@@ -108,7 +108,7 @@ auto camera = make_operator<CameraOp>(
 </Tab>
 <Tab title="5.x — a declared contract">
 ```cpp
-// From the ea1_camera_imu_control example: the operator itself declares
+// From the camera_imu_control example: the operator itself declares
 // its timing, and compilation validates it against the whole graph.
 [[nodiscard]] holoscan::Contract contract() const override {
   holoscan::Contract result;
@@ -139,9 +139,13 @@ Rough correspondences for the common 4.x conditions:
   notifications), `OnDoorbell` (device-completion doorbell), `OnSpin`
   (polling edge).
 - `CountCondition` has **no trigger equivalent**: running an operator N times
-  and stopping is run control, not timing intent. Bound the run from the
-  session (see [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping))
-  or drive a test clock.
+  and stopping is run control, not timing intent. HSDK 5 currently has no
+  operator-local deactivate/readiness-removal API and does not treat deadlock
+  as successful completion. An operator may request immediate whole-run
+  success with `ExecutionContext::request_completion()`, but that is not EOS
+  and provides no downstream-drain guarantee. See
+  [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping),
+  or drive a test clock when the goal is bounded testing.
 
 The multi-rate case that took careful queue tuning in 4.x becomes one
 declaration. This is the fusion operator from the

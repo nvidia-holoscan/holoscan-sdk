@@ -57,7 +57,7 @@ From this `cpp/` folder, `CMakeLists.txt` is the standalone `cmake -S .`
 entry point and forwards that mode to `CMakeLists.min.txt`:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

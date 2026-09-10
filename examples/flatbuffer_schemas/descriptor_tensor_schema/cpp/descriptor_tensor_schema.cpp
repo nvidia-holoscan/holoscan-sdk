@@ -34,7 +34,7 @@ using namespace std::chrono_literals;
 constexpr std::array<std::int64_t, 1U> kShape{8};
 constexpr std::array<std::uint8_t, 8U> kBytes{1U, 3U, 5U, 7U, 9U, 11U, 13U, 15U};
 constexpr DLDataType kTensorDtype{kDLUInt, 8U, 1U};
-constexpr holoscan::TensorPortLayout kTensorLayout{
+constexpr holoscan::TensorRepresentation kTensorLayout{
     .memory_kind = holoscan::MemoryKind::kHost,
     .dtype = kTensorDtype,
     .rank = 1U,
@@ -70,10 +70,10 @@ class Source final : public holoscan::Operator<> {
   void setup(holoscan::OperatorSpec& spec) override {
     spec.output(output, "output")
         .max_emits_per_compute(1U)
-        .produces_tensor(kTensorLayout)
-        .tensor_allocation(holoscan::TensorAllocationBounds{
-            .max_rank = 1U,
-            .max_byte_span = kBytes.size(),
+        .produces_tensor(holoscan::TensorOutputSpec{
+            .representation = kTensorLayout,
+            .bounds = holoscan::tensor_bounds(kBytes.size()),
+            .storage = holoscan::TensorOutputStorage::kRuntimePool,
         });
   }
 
@@ -136,7 +136,9 @@ class Sink final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
     // Optional consumer compatibility constraint for the schema's Tensor field.
-    spec.input(input, "input").queue_depth(1U).expects_tensor(kTensorLayout);
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(holoscan::TensorInputSpec{.representation = kTensorLayout});
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {

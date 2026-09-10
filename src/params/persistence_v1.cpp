@@ -28,6 +28,7 @@
 #include <holoscan/config/io.hpp>
 
 #include "config/io_internal.hpp"
+#include "core/canonical_text_encoding.hpp"
 #include "core/parameter_snapshot_archive_access.hpp"
 
 namespace holoscan::params {
@@ -228,28 +229,7 @@ Node Node::object_value(std::vector<std::pair<std::string, Node>> value) {
 }
 
 void append_json_string(std::string& output, std::string_view value) {
-  constexpr std::string_view kHex = "0123456789abcdef";
-  output.push_back('"');
-  for (const unsigned char byte : value) {
-    switch (byte) {
-      case '"':
-        output += "\\\"";
-        break;
-      case '\\':
-        output += "\\\\";
-        break;
-      default:
-        if (byte < 0x20U) {
-          output += "\\u00";
-          output.push_back(kHex[byte >> 4U]);
-          output.push_back(kHex[byte & 0x0FU]);
-        } else {
-          output.push_back(static_cast<char>(byte));
-        }
-        break;
-    }
-  }
-  output.push_back('"');
+  holoscan::detail::append_json_string(output, value);
 }
 
 void append_scalar_escape(std::string& output, std::string_view kind, std::string_view value) {
@@ -369,21 +349,9 @@ void append_scalar_escape(std::string& output, std::string_view kind, std::strin
   return require_output_limit(output, max_bytes);
 }
 
-[[nodiscard]] std::string hex(std::span<const std::byte> bytes) {
-  constexpr std::string_view kDigits = "0123456789abcdef";
-  std::string result;
-  result.reserve(bytes.size() * 2U);
-  for (const std::byte value : bytes) {
-    const auto byte = std::to_integer<std::uint8_t>(value);
-    result.push_back(kDigits[byte >> 4U]);
-    result.push_back(kDigits[byte & 0x0FU]);
-  }
-  return result;
-}
-
 template <typename Digest>
 [[nodiscard]] std::string tagged_digest(Digest value) {
-  return "sha256:" + hex(value.value);
+  return holoscan::detail::lowercase_hex_text(value.value, holoscan::detail::HexPrefix::kSha256);
 }
 
 [[nodiscard]] std::optional<std::array<std::byte, kDigestBytes>> parse_tagged_digest(
@@ -1021,7 +989,7 @@ struct OrderedOperators {
 }
 
 [[nodiscard]] std::string tagged_digest(config::SemanticDigest value) {
-  return "sha256:" + hex(value.sha256);
+  return holoscan::detail::lowercase_hex_text(value.sha256, holoscan::detail::HexPrefix::kSha256);
 }
 
 [[nodiscard]] ParamArchiveResult<Node> complete_envelope(const ParamSnapshot& snapshot,

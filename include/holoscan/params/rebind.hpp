@@ -189,7 +189,7 @@ struct ParamSchemaIdentity {
 };
 
 /// @brief Carry one qualified directed schema migration request.
-/// @note EA1 rejects a nonempty chain unless the installed admission context can resolve every
+/// @note baseline rejects a nonempty chain unless the installed admission context can resolve every
 /// evidence ID to an immutable qualified migration implementation.
 struct ParamMigrationStep {
   ParamSchemaHash evidence_id{};             ///< Qualified immutable migration evidence ID.
@@ -279,7 +279,7 @@ struct ParamRebindOptions {
 /// @brief Own immutable profile and package policy used while capturing a target.
 ///
 /// The context is cheap to copy and owns its policy state. Concurrent const access
-/// is safe. EA1 exposes only standard(); future named admission contexts require
+/// is safe. The baseline exposes only standard(); future named admission contexts require
 /// separate qualified package evidence.
 class HOLOSCAN_PARAMS_EXPORT ParamAdmissionContext {
  public:
@@ -359,9 +359,9 @@ class HOLOSCAN_PARAMS_EXPORT ParamRebindTarget {
 /// @param target Immutable target captured from the destination Graph.
 /// @param options Coverage mode and borrowed directed conversion tables.
 /// @return Complete immutable override set or one typed all-or-nothing failure.
-/// @note This cold operation may allocate and performs no Graph mutation. EA1 executes exact
-/// direct and alias resolution. A nonempty migration chain fails closed until qualified package
-/// migration implementations are installed; no heuristic name conversion is performed.
+/// @note This cold operation may allocate and performs no Graph mutation. The baseline executes
+/// exact direct and alias resolution. A nonempty migration chain fails closed until qualified
+/// package migration implementations are installed; no heuristic name conversion is performed.
 [[nodiscard]] HOLOSCAN_PARAMS_EXPORT ParamRebindResult<ParamOverrideSet> to_overrides(
     const ParamSnapshot& snapshot, const ParamRebindTarget& target,
     ParamRebindOptions options = {});

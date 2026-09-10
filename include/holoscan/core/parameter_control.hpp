@@ -196,9 +196,9 @@ static_assert(sizeof(ParamEventCursor) == sizeof(void*));
 /// retirement its operations fail with a typed closed or stale result and never dereference freed
 /// runtime state. General operations are cold/control-path calls and are invalid from compute or
 /// dispatcher contexts.
-/// @warning EA1 provides this as a bounded Beta control substrate whose API may still evolve. It
-/// supports only admitted \c NextCompute publication and shared lifecycle transactions; it does not
-/// imply arbitrary effective times, graph-wide atomic updates, persistence, or a production
+/// @warning baseline provides this as a bounded Beta control substrate whose API may still evolve.
+/// It supports only admitted \c NextCompute publication and shared lifecycle transactions; it does
+/// not imply arbitrary effective times, graph-wide atomic updates, persistence, or a production
 /// management service.
 /// @note Calls through distinct wrappers that share this capability may be concurrent. Copying,
 /// moving, assigning, or destroying one wrapper requires external exclusion from operations using
@@ -331,7 +331,7 @@ class HOLOSCAN_CORE_EXPORT ParamControlHandle {
   [[nodiscard]] expected<ParamSnapshot, Error> capture(ParamCaptureOptions options = {}) const;
 
   /// @brief Open one independently positioned bounded event cursor.
-  /// @param options Reserved resume position; EA1 accepts only the default zero value.
+  /// @param options Reserved resume position; baseline accepts only the default zero value.
   /// @return Move-only cursor, or a typed permission/capacity/closed result.
   /// @retval ErrorCode::kInvalidArgument A nonzero resume position was requested or the call
   /// occurs from a Runtime callback context.

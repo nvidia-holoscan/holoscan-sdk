@@ -85,11 +85,11 @@ struct TimePoint {
   friend constexpr bool operator==(TimePoint lhs, TimePoint rhs) noexcept = default;
 };
 
-static_assert(sizeof(ClockId) == 8, "ClockId is part of the fixed EA1 record layout");
+static_assert(sizeof(ClockId) == 8, "ClockId is part of the fixed baseline record layout");
 static_assert(offsetof(ClockId, value) == 0);
 static_assert(std::is_standard_layout_v<ClockId>);
 static_assert(std::is_trivially_copyable_v<ClockId>);
-static_assert(sizeof(TimePoint) == 16, "TimePoint is part of the fixed EA1 record layout");
+static_assert(sizeof(TimePoint) == 16, "TimePoint is part of the fixed baseline record layout");
 static_assert(offsetof(TimePoint, timestamp_ns) == 0);
 static_assert(offsetof(TimePoint, clock_id) == 8);
 static_assert(std::is_standard_layout_v<TimePoint>);

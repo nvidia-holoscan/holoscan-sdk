@@ -52,7 +52,7 @@ flowchart LR
   never inferred from the operator name).
 - `params::decode_overrides(document, bindings)` — schema-validated,
   all-or-nothing conversion to a `ParamOverrideSet`, and its sparse-patch
-  contribution model (EA1's only `ParamBindingMode`): absent members preserve
+  contribution model (baseline's only `ParamBindingMode`): absent members preserve
   the authored `set_params()` baseline.
 - The duplicate-target rejection branch: one document object naming both
   `"threshold"` and its declared alias `"legacy_threshold"` rejects the whole
@@ -137,7 +137,7 @@ a document object to one operator.
 
 ### Sparse patch, not replacement
 
-EA1 supports exactly one binding mode: `ParamBindingMode::kPatch`. The decode
+baseline supports exactly one binding mode: `ParamBindingMode::kPatch`. The decode
 starts from the operator's authored baseline (`set_params()` in this program,
 or the struct's default member initializers if nothing was authored) and
 overlays only the fields the document explicitly names. That is why
@@ -223,7 +223,7 @@ config" provable.
 | `config::Path::parse("/detector")` | RFC 6901 JSON Pointer into the document |
 | `params::bind(handle, path)` | One operator target ↔ one document object |
 | `params::decode_overrides(doc, bindings)` | Schema-validated, all-or-nothing → `ParamOverrideSet` |
-| `ParamBindingMode::kPatch` | EA1's sparse-patch contribution model |
+| `ParamBindingMode::kPatch` | baseline's sparse-patch contribution model |
 | `PARAM_CONFIG_FIELD_DUPLICATE` | Stable token for the duplicate-target rejection |
 | `CompileOptions::parameter_overrides` | Where overrides enter `compile()` |
 | `session.capture_params()` / `snapshot.slice()` | Post-stop published-state capture |

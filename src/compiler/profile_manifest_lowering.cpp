@@ -17,7 +17,10 @@
 #include <utility>
 #include <vector>
 
+#include <fmt/format.h>
+
 #include "../core/source_id_internal.hpp"
+#include "execution_plan_contracts.hpp"
 
 namespace holoscan::detail {
 namespace {
@@ -197,7 +200,7 @@ void add_partition_and_lane_requirements(ExecutionPlanState& state) {
                state.scheduler_plan.max_concurrent_activations);
   add_capacity(manifest, "partitioning", "partitions", state.execution_partitions.size());
   for (const auto& lane : state.execution_lanes) {
-    const std::string object = "lane:" + std::to_string(lane.execution_lane);
+    const std::string object = fmt::format("lane:{}", lane.execution_lane);
     add_materialization(manifest,
                         object,
                         "holoscan.runtime.execution_lane/v1",
@@ -217,7 +220,7 @@ void add_partition_and_lane_requirements(ExecutionPlanState& state) {
     }
     if (probe.status == PlacementProbeStatus::kFallbackRecorded) {
       manifest.explicit_fallbacks.push_back(ProfileFallbackRecord{
-          .feature_id = "execution_partition:" + std::to_string(probe.partition.value),
+          .feature_id = fmt::format("execution_partition:{}", probe.partition.value),
           .fallback_id = "holoscan.placement.irq_isolation.unproven/v1",
           .reason_id = "holoscan.placement.probe_warn_fallback/v1",
           .evidence_id = probe.evidence_id,
@@ -233,7 +236,7 @@ void add_readiness_and_temporal_requirements(ExecutionPlanState& state) {
         manifest, "holoscan.runtime.readiness_sources", "holoscan.compile.readiness_plan/v1");
   }
   for (const auto& source : state.readiness) {
-    const std::string object = "source:" + std::to_string(source_id_value(source.source_id));
+    const std::string object = fmt::format("source:{}", source_id_value(source.source_id));
     add_capacity(manifest, object, "witness_capacity", source.accepted_capacity);
     add_capacity(
         manifest, object, "sender_reference_capacity", source.accepted_sender_reference_capacity);
@@ -256,7 +259,7 @@ void add_readiness_and_temporal_requirements(ExecutionPlanState& state) {
   }
   for (const auto& selection : state.input_selections) {
     add_capacity(manifest,
-                 "port:" + std::to_string(selection.input.value()),
+                 fmt::format("port:{}", selection.input.value()),
                  "max_selected_samples",
                  selection.max_selected_samples);
   }
@@ -293,7 +296,7 @@ void add_physical_requirements(ExecutionPlanState& state) {
     add_capability(manifest, "holoscan.runtime.payload_edges", "holoscan.compile.physical_plan/v1");
   }
   for (const auto& edge : state.payload_edges) {
-    const std::string object = "edge:" + std::to_string(edge.edge.value);
+    const std::string object = fmt::format("edge:{}", edge.edge.value);
     add_capacity(manifest, object, "queue_depth", edge.queue_depth);
     add_capacity(manifest, object, "max_inflight_samples", edge.max_inflight_samples);
     add_capacity(manifest, object, "cache_capacity", edge.cache_capacity);
@@ -363,7 +366,15 @@ void add_physical_requirements(ExecutionPlanState& state) {
                         "holoscan.compile.generic_output_loan_plan/v1");
   }
 
-  if (!state.tensor_allocations.empty() || !state.tensor_interface_pools.empty()) {
+  const bool has_lifecycle_tensor_provider =
+      std::ranges::any_of(state.provider_allocation_plans, [](const auto& provider) {
+        return provider.disposition == PlanDisposition::kAccepted &&
+               provider.geometry_mode == AllocationGeometryMode::kLifecycleCandidate &&
+               (provider.allocation_kind == ProviderAllocationKind::kTensorOutput ||
+                provider.allocation_kind == ProviderAllocationKind::kTensorFieldOutput);
+      });
+  if (!state.tensor_allocations.empty() || !state.tensor_interface_pools.empty() ||
+      has_lifecycle_tensor_provider) {
     add_capability(manifest,
                    "holoscan.runtime.tensor_pool_materialization",
                    "holoscan.compile.tensor_pool_plan/v1");
@@ -399,6 +410,19 @@ void add_physical_requirements(ExecutionPlanState& state) {
                         pool.materialize_before,
                         "holoscan.compile.tensor_pool_plan/v1");
   }
+  for (const auto& provider : state.provider_allocation_plans) {
+    if (provider.disposition != PlanDisposition::kAccepted ||
+        provider.geometry_mode != AllocationGeometryMode::kLifecycleCandidate ||
+        (provider.allocation_kind != ProviderAllocationKind::kTensorOutput &&
+         provider.allocation_kind != ProviderAllocationKind::kTensorFieldOutput)) {
+      continue;
+    }
+    add_materialization(manifest,
+                        provider.pool_id,
+                        "holoscan.runtime.tensor_output_pool/v1",
+                        provider.complete_before,
+                        "holoscan.compile.tensor_pool_plan/v1");
+  }
   for (const auto& pool : state.tensor_interface_pools) {
     add_tensor_capacities(pool.pool_id,
                           pool.slot_count,
@@ -415,25 +439,61 @@ void add_physical_requirements(ExecutionPlanState& state) {
                         LifecycleStage::kArm,
                         "holoscan.compile.tensor_pool_plan/v1");
   }
-  if (!state.tensor_device_resources.empty()) {
+  if (!state.cuda_compute_streams.empty()) {
     add_capability(manifest,
-                   "holoscan.runtime.tensor_device_stream_materialization",
-                   "holoscan.compile.tensor_device_resource_plan/v1");
+                   "holoscan.runtime.cuda_compute_stream_materialization",
+                   "holoscan.compile.cuda_compute_stream_plan/v1");
+  }
+  if (!state.cuda_green_context_pools.empty()) {
+    add_capability(manifest,
+                   "holoscan.runtime.cuda_green_context_materialization",
+                   "holoscan.compile.cuda_green_context_plan/v1");
+    const auto probe = std::find_if(
+        state.placement_probes.begin(), state.placement_probes.end(), [](const auto& row) {
+          return row.probe_id == "cuda.green_context.split" && !row.evidence_id.empty();
+        });
+    add_feature(manifest,
+                "cuda.green_context",
+                ProfileFeatureDisposition::kAdmitted,
+                "holoscan.profile.cuda_green_context.hot_path/v1",
+                probe == state.placement_probes.end() ? std::string{} : probe->evidence_id);
+  }
+  for (const auto& pool : state.cuda_green_context_pools) {
+    add_materialization(manifest,
+                        pool.pool_id,
+                        "holoscan.runtime.cuda_green_context_pool/v1",
+                        pool.materialize_before,
+                        "holoscan.compile.cuda_green_context_plan/v1");
+  }
+  for (const auto& resource : state.cuda_green_context_resources) {
+    add_materialization(manifest,
+                        resource.green_context_id,
+                        "holoscan.runtime.cuda_green_context/v1",
+                        LifecycleStage::kArm,
+                        "holoscan.compile.cuda_green_context_plan/v1");
   }
   for (const auto& resource : state.tensor_device_resources) {
-    add_capacity(manifest, resource.stream_id, "pools", resource.pool_count);
-    add_capacity(manifest, resource.stream_id, "slots", resource.slot_capacity);
-    add_capacity(manifest, resource.stream_id, "loan_credits", resource.loan_credit_capacity);
-    add_capacity(manifest, resource.stream_id, "control_records", resource.control_capacity);
-    add_capacity(manifest, resource.stream_id, "readiness_tokens", resource.readiness_capacity);
-    add_capacity(manifest, resource.stream_id, "release_records", resource.release_capacity);
-    add_capacity(manifest, resource.stream_id, "retirement_records", resource.retirement_capacity);
-    add_capacity(manifest, resource.stream_id, "quarantine_records", resource.quarantine_capacity);
+    add_capacity(manifest, resource.allocator_root_id, "pools", resource.pool_count);
+    add_capacity(manifest, resource.allocator_root_id, "slots", resource.slot_capacity);
+    add_capacity(
+        manifest, resource.allocator_root_id, "loan_credits", resource.loan_credit_capacity);
+    add_capacity(
+        manifest, resource.allocator_root_id, "control_records", resource.control_capacity);
+    add_capacity(
+        manifest, resource.allocator_root_id, "readiness_tokens", resource.readiness_capacity);
+    add_capacity(
+        manifest, resource.allocator_root_id, "release_records", resource.release_capacity);
+    add_capacity(
+        manifest, resource.allocator_root_id, "retirement_records", resource.retirement_capacity);
+    add_capacity(
+        manifest, resource.allocator_root_id, "quarantine_records", resource.quarantine_capacity);
+  }
+  for (const auto& stream : state.cuda_compute_streams) {
     add_materialization(manifest,
-                        resource.stream_id,
-                        "holoscan.runtime.tensor_device_stream/v1",
-                        resource.materialize_before,
-                        "holoscan.compile.tensor_device_resource_plan/v1");
+                        stream.stream_id,
+                        "holoscan.runtime.cuda_compute_stream/v1",
+                        stream.materialize_before,
+                        "holoscan.compile.cuda_compute_stream_plan/v1");
   }
   if (!state.tensor_inline_records.empty()) {
     const auto& provider = state.tensor_inline_records.front();
@@ -474,7 +534,7 @@ void add_physical_requirements(ExecutionPlanState& state) {
   std::map<std::string, std::uint32_t> runtime_generation_capacities;
   for (const auto& generation : state.imported_generation_capacities) {
     const std::string endpoint_scope =
-        "imported-generation-endpoint:" + std::to_string(generation.topic.value);
+        fmt::format("imported-generation-endpoint:{}", generation.topic.value);
     add_capacity(
         manifest, endpoint_scope, "endpoint_generations", generation.endpoint_max_generations);
     add_capacity(manifest,
@@ -507,10 +567,18 @@ void add_physical_requirements(ExecutionPlanState& state) {
     if (transfer.disposition != PlanDisposition::kAccepted || !transfer.realization) {
       continue;
     }
-    const std::string object = "tensor-topic:" + std::to_string(transfer.topic.value) + ":source:" +
-                               std::to_string(static_cast<std::uint32_t>(transfer.source_class)) +
-                               ":bytes:" + std::to_string(transfer.min_logical_bytes) + "-" +
-                               std::to_string(transfer.max_logical_bytes);
+    const std::string field_id =
+        transfer.field_id ? fmt::format("{}", *transfer.field_id) : std::string{"none"};
+    const std::string tensor_index =
+        transfer.tensor_index ? fmt::format("{}", *transfer.tensor_index) : std::string{"none"};
+    const std::string object =
+        fmt::format("tensor-topic:{}:field:{}:tensor:{}:source:{}:bytes:{}-{}",
+                    transfer.topic.value,
+                    field_id,
+                    tensor_index,
+                    static_cast<std::uint32_t>(transfer.source_class),
+                    transfer.min_logical_bytes,
+                    transfer.max_logical_bytes);
     add_capacity(manifest, object, "max_logical_bytes", transfer.max_logical_bytes);
     if (transfer.requires_inline_record) {
       add_materialization(manifest,
@@ -583,22 +651,6 @@ void add_endpoint_requirements(const CompileOptions& options, ExecutionPlanState
   }
 }
 
-[[nodiscard]] std::optional<std::uint8_t> profile_rank(Profile profile) noexcept {
-  switch (profile) {
-    case Profile::kResearch:
-      return 0U;
-    case Profile::kStandard:
-      return 1U;
-    case Profile::kRobotics:
-      return 2U;
-    case Profile::kRealTime:
-      return 3U;
-    case Profile::kRegulated:
-      return 4U;
-  }
-  return std::nullopt;
-}
-
 [[nodiscard]] const ProfileScopeResolutionRecord* find_scope(const ProfileManifest& manifest,
                                                              std::string_view kind,
                                                              std::string_view id) {
@@ -621,8 +673,8 @@ void add_endpoint_requirements(const CompileOptions& options, ExecutionPlanState
     if (scope == nullptr) {
       continue;
     }
-    const auto current = profile_rank(result.effective_profile);
-    const auto candidate = profile_rank(scope->effective_profile);
+    const auto current = profile_semantic_rank(result.effective_profile);
+    const auto candidate = profile_semantic_rank(scope->effective_profile);
     if (current && candidate && *candidate > *current) {
       result.effective_profile = scope->effective_profile;
     }
@@ -644,7 +696,7 @@ void add_endpoint_requirements(const CompileOptions& options, ExecutionPlanState
 void append_complete_profile_scopes(ExecutionPlanState& state) {
   ProfileManifest& manifest = state.profile_manifest;
   const auto port_scope = [&](PortId port) {
-    const std::string id = "port:" + std::to_string(port.value());
+    const std::string id = fmt::format("port:{}", port.value());
     return find_scope(manifest, "port", id);
   };
   for (const auto& edge : state.payload_edges) {
@@ -652,14 +704,14 @@ void append_complete_profile_scopes(ExecutionPlanState& state) {
     manifest.scope_resolutions.push_back(
         joined_scope(manifest,
                      "channel",
-                     "channel:edge:" + std::to_string(edge.edge.value),
+                     fmt::format("channel:edge:{}", edge.edge.value),
                      std::span<const ProfileScopeResolutionRecord* const>{scopes}));
   }
   // Keep stable scope identities while the destination vector grows. Pointers into
   // scope_resolutions cannot survive the reserve below or a preceding derived-scope append.
   std::map<std::string, std::vector<std::string>> channel_scope_ids;
   for (const auto& service : state.channel_services) {
-    const std::string boundary_id = "boundary:" + std::to_string(service.topic.value);
+    const std::string boundary_id = fmt::format("boundary:{}", service.topic.value);
     channel_scope_ids[service.service_id].push_back(boundary_id);
   }
   manifest.scope_resolutions.reserve(manifest.scope_resolutions.size() + channel_scope_ids.size());
@@ -670,28 +722,27 @@ void append_complete_profile_scopes(ExecutionPlanState& state) {
       scopes.push_back(find_scope(manifest, "boundary", scope_id));
     }
     manifest.scope_resolutions.push_back(
-        joined_scope(manifest, "channel", "channel:" + service_id, scopes));
+        joined_scope(manifest, "channel", fmt::format("channel:{}", service_id), scopes));
   }
   for (const auto& binding : state.interface_port_bindings) {
     const std::array scopes{port_scope(binding.public_port), port_scope(binding.internal_port)};
-    manifest.scope_resolutions.push_back(
-        joined_scope(manifest,
-                     "bridge",
-                     "bridge:" + std::to_string(binding.public_port.value()) + ':' +
-                         std::to_string(binding.internal_port.value()),
-                     std::span<const ProfileScopeResolutionRecord* const>{scopes}));
+    manifest.scope_resolutions.push_back(joined_scope(
+        manifest,
+        "bridge",
+        fmt::format("bridge:{}:{}", binding.public_port.value(), binding.internal_port.value()),
+        std::span<const ProfileScopeResolutionRecord* const>{scopes}));
   }
   for (const auto& conversion : state.clock_conversions) {
     manifest.scope_resolutions.push_back(
-        joined_scope(manifest, "converter", "converter:" + std::to_string(conversion.id), {}));
+        joined_scope(manifest, "converter", fmt::format("converter:{}", conversion.id), {}));
   }
   for (const auto& source : state.readiness) {
-    const std::string owner_id = "operator:" + std::to_string(source.owner.value);
+    const std::string owner_id = fmt::format("operator:{}", source.owner.value);
     const std::array scopes{find_scope(manifest, "operator", owner_id)};
     manifest.scope_resolutions.push_back(
         joined_scope(manifest,
                      "helper",
-                     "helper:source:" + std::to_string(source_id_value(source.source_id)),
+                     fmt::format("helper:source:{}", source_id_value(source.source_id)),
                      std::span<const ProfileScopeResolutionRecord* const>{scopes}));
   }
   for (const auto& feature : manifest.feature_dispositions) {
@@ -741,54 +792,77 @@ void append_complete_profile_scopes(ExecutionPlanState& state) {
   return Error{ErrorCode::kInvalidArgument, "PROFILE_MANIFEST_DUPLICATE_KEY"};
 }
 
-template <typename Records, typename Equal>
-[[nodiscard]] bool has_duplicate_key(const Records& records, Equal equal) {
-  for (std::size_t left = 0U; left < records.size(); ++left) {
-    for (std::size_t right = left + 1U; right < records.size(); ++right) {
-      if (equal(records[left], records[right])) {
-        return true;
-      }
-    }
-  }
-  return false;
+[[nodiscard]] auto scope_resolution_key(const ProfileScopeResolutionRecord& record) noexcept {
+  return std::tuple{std::string_view{record.object_kind}, std::string_view{record.object_id}};
+}
+
+[[nodiscard]] auto capability_requirement_key(
+    const ProfileCapabilityRequirementRecord& record) noexcept {
+  return std::tuple{std::string_view{record.capability_id}, record.version};
+}
+
+[[nodiscard]] std::string_view evidence_reference_key(
+    const ProfileEvidenceReferenceRecord& record) noexcept {
+  return record.id;
+}
+
+[[nodiscard]] std::string_view feature_disposition_key(
+    const ProfileFeatureDispositionRecord& record) noexcept {
+  return record.feature_id;
+}
+
+[[nodiscard]] auto derived_capacity_key(const ProfileDerivedCapacityRecord& record) noexcept {
+  return std::tuple{std::string_view{record.object_id}, std::string_view{record.capacity_id}};
+}
+
+[[nodiscard]] auto materialization_obligation_key(
+    const ProfileMaterializationObligationRecord& record) noexcept {
+  return std::tuple{std::string_view{record.object_id},
+                    std::string_view{record.strategy_id},
+                    record.complete_before_stage};
+}
+
+[[nodiscard]] auto explicit_fallback_key(const ProfileFallbackRecord& record) noexcept {
+  return std::tuple{std::string_view{record.feature_id}, std::string_view{record.fallback_id}};
+}
+
+[[nodiscard]] auto generated_endpoint_name_key(
+    const GeneratedEndpointNameAdmissionRecord& record) noexcept {
+  return std::tuple{
+      std::string_view{record.final_name}, std::string_view{record.algorithm}, record.version};
+}
+
+template <typename Records, typename Key>
+[[nodiscard]] bool has_duplicate_key(const Records& records, Key key) {
+  return std::adjacent_find(records.begin(), records.end(), [&](const auto& lhs, const auto& rhs) {
+           return key(lhs) == key(rhs);
+         }) != records.end();
+}
+
+template <typename Records, typename Key>
+void sort_by_key(Records& records, Key key) {
+  std::sort(records.begin(), records.end(), [&](const auto& lhs, const auto& rhs) {
+    return key(lhs) < key(rhs);
+  });
 }
 
 [[nodiscard]] expected<void, Error> canonicalize(ProfileManifest& manifest) {
-  if (has_duplicate_key(manifest.scope_resolutions,
-                        [](const auto& lhs, const auto& rhs) {
-                          return lhs.object_kind == rhs.object_kind &&
-                                 lhs.object_id == rhs.object_id;
-                        }) ||
-      has_duplicate_key(manifest.required_capabilities,
-                        [](const auto& lhs, const auto& rhs) {
-                          return lhs.capability_id == rhs.capability_id &&
-                                 lhs.version == rhs.version;
-                        }) ||
-      has_duplicate_key(manifest.evidence_references,
-                        [](const auto& lhs, const auto& rhs) { return lhs.id == rhs.id; }) ||
-      has_duplicate_key(
-          manifest.feature_dispositions,
-          [](const auto& lhs, const auto& rhs) { return lhs.feature_id == rhs.feature_id; }) ||
-      has_duplicate_key(manifest.derived_capacities,
-                        [](const auto& lhs, const auto& rhs) {
-                          return lhs.object_id == rhs.object_id &&
-                                 lhs.capacity_id == rhs.capacity_id;
-                        }) ||
-      has_duplicate_key(manifest.materialization_obligations,
-                        [](const auto& lhs, const auto& rhs) {
-                          return lhs.object_id == rhs.object_id &&
-                                 lhs.strategy_id == rhs.strategy_id &&
-                                 lhs.complete_before_stage == rhs.complete_before_stage;
-                        }) ||
-      has_duplicate_key(manifest.explicit_fallbacks,
-                        [](const auto& lhs, const auto& rhs) {
-                          return lhs.feature_id == rhs.feature_id &&
-                                 lhs.fallback_id == rhs.fallback_id;
-                        }) ||
-      has_duplicate_key(manifest.generated_endpoint_names, [](const auto& lhs, const auto& rhs) {
-        return lhs.final_name == rhs.final_name && lhs.algorithm == rhs.algorithm &&
-               lhs.version == rhs.version;
-      })) {
+  sort_by_key(manifest.required_capabilities, capability_requirement_key);
+  sort_by_key(manifest.scope_resolutions, scope_resolution_key);
+  sort_by_key(manifest.evidence_references, evidence_reference_key);
+  sort_by_key(manifest.feature_dispositions, feature_disposition_key);
+  sort_by_key(manifest.derived_capacities, derived_capacity_key);
+  sort_by_key(manifest.materialization_obligations, materialization_obligation_key);
+  sort_by_key(manifest.explicit_fallbacks, explicit_fallback_key);
+  sort_by_key(manifest.generated_endpoint_names, generated_endpoint_name_key);
+  if (has_duplicate_key(manifest.scope_resolutions, scope_resolution_key) ||
+      has_duplicate_key(manifest.required_capabilities, capability_requirement_key) ||
+      has_duplicate_key(manifest.evidence_references, evidence_reference_key) ||
+      has_duplicate_key(manifest.feature_dispositions, feature_disposition_key) ||
+      has_duplicate_key(manifest.derived_capacities, derived_capacity_key) ||
+      has_duplicate_key(manifest.materialization_obligations, materialization_obligation_key) ||
+      has_duplicate_key(manifest.explicit_fallbacks, explicit_fallback_key) ||
+      has_duplicate_key(manifest.generated_endpoint_names, generated_endpoint_name_key)) {
     return make_unexpected(duplicate_key_error());
   }
   if (std::any_of(manifest.materialization_obligations.begin(),
@@ -800,48 +874,6 @@ template <typename Records, typename Equal>
                   })) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument, "PROFILE_MATERIALIZATION_FAILED"});
   }
-  std::sort(manifest.required_capabilities.begin(),
-            manifest.required_capabilities.end(),
-            [](const auto& lhs, const auto& rhs) {
-              return std::pair{lhs.capability_id, lhs.version} <
-                     std::pair{rhs.capability_id, rhs.version};
-            });
-  std::sort(manifest.scope_resolutions.begin(),
-            manifest.scope_resolutions.end(),
-            [](const auto& lhs, const auto& rhs) {
-              return std::pair{lhs.object_kind, lhs.object_id} <
-                     std::pair{rhs.object_kind, rhs.object_id};
-            });
-  std::sort(manifest.evidence_references.begin(),
-            manifest.evidence_references.end(),
-            [](const auto& lhs, const auto& rhs) { return lhs.id < rhs.id; });
-  std::sort(manifest.feature_dispositions.begin(),
-            manifest.feature_dispositions.end(),
-            [](const auto& lhs, const auto& rhs) { return lhs.feature_id < rhs.feature_id; });
-  std::sort(manifest.derived_capacities.begin(),
-            manifest.derived_capacities.end(),
-            [](const auto& lhs, const auto& rhs) {
-              return std::pair{lhs.object_id, lhs.capacity_id} <
-                     std::pair{rhs.object_id, rhs.capacity_id};
-            });
-  std::sort(manifest.materialization_obligations.begin(),
-            manifest.materialization_obligations.end(),
-            [](const auto& lhs, const auto& rhs) {
-              return std::tuple{lhs.object_id, lhs.strategy_id, lhs.complete_before_stage} <
-                     std::tuple{rhs.object_id, rhs.strategy_id, rhs.complete_before_stage};
-            });
-  std::sort(manifest.explicit_fallbacks.begin(),
-            manifest.explicit_fallbacks.end(),
-            [](const auto& lhs, const auto& rhs) {
-              return std::pair{lhs.feature_id, lhs.fallback_id} <
-                     std::pair{rhs.feature_id, rhs.fallback_id};
-            });
-  std::sort(manifest.generated_endpoint_names.begin(),
-            manifest.generated_endpoint_names.end(),
-            [](const auto& lhs, const auto& rhs) {
-              return std::tuple{lhs.final_name, lhs.algorithm, lhs.version} <
-                     std::tuple{rhs.final_name, rhs.algorithm, rhs.version};
-            });
   return {};
 }
 

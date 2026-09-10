@@ -14,20 +14,16 @@
 
 #include "channel/endpoint_catalog_state.hpp"
 #include "compiler/execution_plan_state.hpp"
+#include "compiler/plan_lowering_diagnostic.hpp"
 #include "core/graph_snapshot.hpp"
 #include "process_plan_records.hpp"
+#include "rate_plan_lowering.hpp"
 #include "runtime_package_capabilities.hpp"
 
 namespace holoscan::detail {
 
-/// @brief Preserve one stable physical-plan diagnostic and its canonical source.
-struct PhysicalPlanDiagnostic {
-  std::string token;         ///< Stable diagnostic token registered by Core.
-  DiagnosticSource source;   ///< Canonical graph/vertex/port source identity.
-  std::string json_pointer;  ///< Canonical location of the rejected physical fact.
-  std::string required;      ///< Bounded accepted-side evidence.
-  std::string provided;      ///< Bounded rejected-side evidence.
-};
+/// @brief Physical-plan spelling of the common lowering diagnostic value.
+using PhysicalPlanDiagnostic = PlanLoweringDiagnostic;
 
 /// @brief Own canonical physical topology, capacity, and publication records.
 struct PhysicalPlanLoweringResult {
@@ -49,10 +45,13 @@ struct PhysicalPlanLoweringResult {
   std::vector<TensorFieldAllocationPlanRecord> tensor_field_allocations;
   std::vector<TensorInterfacePoolPlanRecord> tensor_interface_pools;
   std::vector<TensorDeviceResourcePlanRecord> tensor_device_resources;
+  std::vector<CudaComputeStreamPlanRecord> cuda_compute_streams;
   std::vector<TensorInlineRecordPlanRecord> tensor_inline_records;
   std::vector<ImportedGenerationCapacityPlanRecord> imported_generation_capacities;
   std::vector<TensorTransferPlanRecord> tensor_transfer_plans;
   std::vector<PoolCapacityContributorRecord> pool_capacity_contributors;
+  std::vector<PoolCapacityDependencyPlanRecord> pool_capacity_dependencies;
+  std::vector<ProviderAllocationPlanRecord> provider_allocation_plans;
   std::vector<PublicationOutcomePlanRecord> publication_outcomes;
   std::vector<PhysicalPlanDiagnostic> errors;
 };
@@ -83,6 +82,10 @@ struct PhysicalPlanLoweringResult {
     std::span<const LifecycleRestartTargetPlanRecord> lifecycle_targets = {},
     std::span<const ExecutionPartitionRecord> execution_partitions = {},
     std::span<const TensorDeviceBindingRecord> tensor_device_bindings = {},
-    bool force_holomq_process_local_inline = false);
+    bool force_holomq_process_local_inline = false,
+    bool force_holomq_process_local_event_wake = false,
+    std::span<const TensorByteSpanDerivationPlanRecord> tensor_byte_span_derivations = {},
+    std::span<const ResolvedQueueSizing> resolved_queue_sizings = {},
+    std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes = {});
 
 }  // namespace holoscan::detail

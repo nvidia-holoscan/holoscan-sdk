@@ -14,9 +14,10 @@ During **run**, the graph side binds automatically — you never write transport
 code inside the graph. Everything an external process needs to know lives in
 the catalog, and nothing else crosses the boundary.
 
-**Complete C++ examples:** [`examples/ea1_camera_imu_control/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ea1_camera_imu_control/cpp),
-[`examples/ea1_external_clients/sensor_daemon/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ea1_external_clients/sensor_daemon/cpp),
-and [`examples/ea1_external_clients/recorder/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ea1_external_clients/recorder/cpp)
+**Complete C++ examples:** [`examples/camera_imu_control/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/camera_imu_control/cpp),
+[`examples/external_clients/sensor_daemon/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/external_clients/sensor_daemon/cpp),
+[`examples/external_clients/recorder/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/external_clients/recorder/cpp),
+and [`examples/flatbuffer_schemas/descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
 
 <Note title="You will learn">
   - How to declare inbound and outbound boundaries with `import_topic<T>()` and
@@ -84,6 +85,59 @@ throws; `compile()` returns rejected plans; run fails closed.
   authority, and there is no host/port to tweak inside it.
 </Warning>
 
+### Ordinary inline payload capacity
+
+Scalar, POD, and ordinary generated-schema topics use the fixed-inline HoloMQ
+family. The complete catalog data frame is limited to 32,768 bytes, including
+24 bytes of catalog attribution. An ordinary generated schema also carries a
+40-byte schema envelope. The maximum application capacities are therefore:
+
+| Payload | Maximum application capacity |
+| --- | ---: |
+| Scalar or POD | 32,744 bytes |
+| Serialized FlatBuffer | 32,704 bytes |
+
+For a generated schema, the serialized bound comes from
+`generated_schema_max_serialized_size_v<T>`; it is a capacity, not the size of
+every message. Catalog construction and graph compilation reject a bound whose
+complete framed size exceeds 32,768 bytes. The transport rounds an admitted
+frame to its fixed 8-byte through 32-KiB bucket, while each message still
+records its actual serialized size.
+
+Descriptor-backed Tensor schemas use a separate envelope path. Their Tensor
+data remains handle-backed and does not count toward this ordinary inline
+limit.
+
+### Descriptor-backed schema topics
+
+An application-owned FlatBuffer schema may carry one or more direct Tensor
+fields together with ordinary metadata. Such a boundary needs a complete
+field-qualified `DescriptorTensorTopicContract<T>` in addition to its common
+`TopicOptions`:
+
+```cpp
+holoscan::DescriptorTensorTopicContract<tensor_topic::ExternalFrameT> tensors;
+tensors
+    .field(Fields::pixels, pixels_boundary_contract)
+    .field(Fields::calibration, calibration_boundary_contract);
+
+auto frames = g.import_topic<tensor_topic::ExternalFrameT>(
+    "holomq://frames", options, std::move(tensors));
+```
+
+Each field contract fixes its representation, finite shape/byte bounds, and
+external transfer policy. The schema envelope carries ordinary fields and
+Tensor descriptors; the Tensor data remains in separately retained or imported
+backing. HoloMQ therefore does not serialize Tensor bytes into the FlatBuffer
+or make transport cost depend on Tensor size. A bounded staging copy occurs
+only when an authored `kCopyIfNeeded` policy permits it and the supplied
+backing cannot be exported directly.
+
+The
+[`descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
+example shows a two-Tensor schema entering and leaving a Graph, including the
+standalone catalog client for both directions.
+
 ## Naming the endpoint with `TopicOptions`
 
 `TopicOptions` is the complete cold contract for one boundary. Its most
@@ -105,6 +159,10 @@ declared cold at compose time:
 - `capture_time` — a `RequireCaptureTime{clock}` requirement that inbound
   samples carry capture timestamps in a declared clock domain (see
   [Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks)).
+- `clock_health` — an optional ordered status-report contract. A monitored
+  import can require a fresh healthy report before admitting data; standalone
+  scalar, raw-Tensor, and descriptor-schema publishers use the same
+  `report_clock_health()` operation.
 - `attach` — a `TopicAttachPolicy` selecting whether an absent external peer is
   acceptable. The default is optional: composition and graph start never wait
   for an external process.
@@ -118,6 +176,14 @@ declared cold at compose time:
 
 There is deliberately no backend option bag, raw handle, or device ordinal in
 `TopicOptions`: the boundary contract stays backend-neutral and cold.
+
+<Warning>
+  For descriptor-backed schema fields, `kRequireExportable` enforces the
+  declared Tensor storage kind and layout, but it does not constrain the exact
+  CUDA device ordinal. The exported buffer handle carries the actual device
+  identity needed for import. Use graph placement and a planned staging path
+  when an exact device assignment is required.
+</Warning>
 
 ## The graph side binds automatically
 
@@ -259,7 +325,7 @@ side:
 
 For a complete working boundary — an external IMU producer feeding a graph
 import and a graph export feeding an external control consumer — see the
-`ea1_camera_imu_control` example in
+`camera_imu_control` example in
 [Camera + IMU + control](/holoscan/sdk-user-guide/examples/camera-imu-control).
 ## Recap
 
@@ -268,6 +334,8 @@ import and a graph export feeding an external control consumer — see the
   like all authoring.
 - `TopicOptions::endpoint_name` gives each boundary its deployment-stable
   public name; the rest of `TopicOptions` declares the cold boundary contract.
+- Ordinary scalar, POD, and serialized-schema frames are bounded to 32,768
+  bytes including catalog attribution and any schema envelope.
 - Inside the graph, a boundary is just a port: wire `imported.output()` /
   `exported.input()` with `add_flow()`, and the runtime binds it automatically
   at run.

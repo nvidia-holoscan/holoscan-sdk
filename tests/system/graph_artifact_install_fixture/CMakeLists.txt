@@ -31,7 +31,7 @@ target_compile_definitions(artifact_install_fixture
     PRIVATE HOLOSCAN_ARTIFACT_FIXTURE_MODE="${HOLOSCAN_ARTIFACT_FIXTURE_MODE}"
 )
 
-set(artifact_install_destination share/graph-artifact-install-fixture)
+set(artifact_install_destination "${CMAKE_INSTALL_DATADIR}/holoscan/graph-artifact-install-fixture")
 if(HOLOSCAN_ARTIFACT_FIXTURE_MODE STREQUAL "valid_absolute_destination")
     set(artifact_install_destination "${HOLOSCAN_ABSOLUTE_INSTALL_DESTINATION}")
 endif()

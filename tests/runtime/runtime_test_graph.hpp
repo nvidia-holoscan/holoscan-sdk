@@ -53,6 +53,11 @@ enum class RuntimeProbeMode : std::uint8_t {
   kComplete,
   kFail,
   kWaitForStop,
+  kPollForStop,
+  kIgnoreStopUntilReleased,
+  kWaitForExternalRelease,
+  kWaitForStopThenFail,
+  kRequestCompletionThenWaitForStop,
   kThrowSetup,
   kThrowStart,
   kThrowCompute,
@@ -64,6 +69,8 @@ enum class RuntimeProbeMode : std::uint8_t {
   kDestroyFromCompute,
   kWaitFromLifecycle,
   kDestroyFromLifecycle,
+  kRequestStop,
+  kRequestStopTwice,
 };
 
 /// @brief Share bounded process-local observations among runtime conformance operators.
@@ -85,6 +92,9 @@ struct RuntimeProbeState {
   [[nodiscard]] static bool wait_until_compute_enters();
 
   [[nodiscard]] static bool wait_until_active(std::uint32_t expected);
+
+  static void bind_external_ready_fd(int fd) noexcept;
+  static void bind_external_stop_gate_fd(int fd) noexcept;
 
   static std::mutex mutex;
   static std::condition_variable cv;
@@ -108,10 +118,23 @@ struct RuntimeProbeState {
   static std::atomic<std::uint32_t> clocks_constructed;
   static std::atomic<RunSession*> callback_session;
   static std::atomic_bool callback_session_action_returned;
+  static std::atomic<std::int64_t> stop_observed_time_ns;
+  static std::atomic<std::int64_t> callback_return_time_ns;
+  static std::atomic<int> external_ready_fd;
+  static std::atomic<int> external_stop_gate_fd;
 };
 
 /// @brief Retain a fixed prefix of periodic Runtime activation evidence without hot allocation.
 struct RuntimeClockProbeState {
+  enum class TerminationRequestMode : std::uint8_t {
+    kNone,
+    kCompletion,
+    kStop,
+    kCompletionThenStop,
+    kStopThenCompletion,
+    kCompletionThenFailure,
+  };
+
   static constexpr std::size_t kRecordedActivations = 8U;
   static constexpr std::int64_t kPeriodNs = 5;
 
@@ -122,6 +145,7 @@ struct RuntimeClockProbeState {
   static std::mutex mutex;
   static std::condition_variable cv;
   static std::atomic<std::size_t> compute_count;
+  static std::atomic<TerminationRequestMode> termination_request_mode;
   static std::array<Tag, kRecordedActivations> tags;
   static std::array<TagTime, kRecordedActivations> tag_times;
   static std::array<TimePoint, kRecordedActivations> activation_times;
@@ -735,6 +759,7 @@ class RuntimeActivationCutSinkOperator final : public Operator<> {
 enum class RuntimeWindowChannelScript : std::uint8_t {
   kSuccessorClose,
   kTimeoutClose,
+  kEndOfStreamDrain,
 };
 
 /// @brief Retain one end-to-end window activation without borrowing callback-scoped views.
@@ -743,14 +768,21 @@ struct RuntimeWindowChannelProbeState {
 
   [[nodiscard]] static bool wait_for_compute();
 
+  [[nodiscard]] static bool wait_for_compute_count(std::size_t expected);
+
   static void record(InputSelection selection, const Sample<std::uint32_t>& anchor_sample,
-                     TimePoint activation_time, std::size_t selected_size,
-                     std::int64_t first_capture_ns, std::int64_t last_capture_ns);
+                     TimePoint activation_time, Tag tag, TagTime tag_time,
+                     std::size_t selected_size, std::int64_t first_capture_ns,
+                     std::int64_t last_capture_ns);
 
   static std::mutex mutex;
   static std::condition_variable cv;
   static std::atomic<RuntimeWindowChannelScript> script;
   static std::atomic<std::size_t> compute_count;
+  static std::atomic<std::size_t> safe_default_end_of_stream_count;
+  static std::atomic<std::size_t> downstream_count;
+  static std::array<Tag, 2U> terminal_tags;
+  static std::array<TagTime, 2U> terminal_tag_times;
   static std::atomic<InputState> selection_state;
   static std::atomic<SelectionReason> selection_reason;
   static std::atomic<std::int64_t> anchor_capture_ns;
@@ -760,7 +792,7 @@ struct RuntimeWindowChannelProbeState {
   static std::atomic<std::int64_t> batch_last_capture_ns;
 };
 
-/// @brief Publish one primed window and optionally the strict closing successor.
+/// @brief Publish three anchors that bound two pending windows before terminal EOS.
 class RuntimeWindowChannelSourceOperator final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override;
@@ -769,6 +801,23 @@ class RuntimeWindowChannelSourceOperator final : public Operator<> {
 
   [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override;
 
+  Output<std::uint32_t> anchor;
+  Output<std::uint32_t> windowed;
+
+ private:
+  std::uint32_t next_terminal_anchor_{10U};
+};
+
+/// @brief Forward every anchor before publishing one logical producer's downstream EOS.
+class RuntimeWindowChannelRelayOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override;
+
+  [[nodiscard]] Contract contract() const override;
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override;
+
+  Input<std::uint32_t> input;
   Output<std::uint32_t> anchor;
   Output<std::uint32_t> windowed;
 };
@@ -784,6 +833,19 @@ class RuntimeWindowChannelSinkOperator final : public Operator<> {
 
   Input<std::uint32_t> anchor;
   Input<std::uint32_t> windowed;
+  Output<std::uint32_t> output;
+};
+
+/// @brief Drain every window result and its downstream EOS before natural completion.
+class RuntimeWindowChannelDrainOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override;
+
+  [[nodiscard]] Contract contract() const override;
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override;
+
+  Input<std::uint32_t> input;
 };
 
 enum class RuntimeInputTriggerReplayKind : std::uint8_t {
@@ -989,6 +1051,115 @@ class RuntimeInputPredicateChannelSinkOperator final : public Operator<> {
   RuntimeInputPredicateMissing missing_{RuntimeInputPredicateMissing::kFresh};
 };
 
+enum class RuntimeComputeCallAction : std::uint8_t {
+  kNone,
+  kFailOnSecond,
+  kFailPublicationOnFirst,
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  kThrowOnFirst,
+#endif
+  kRequestStopAfterFirst,
+  kRequestCompletionAfterFirst,
+  kRestartAfterFirst,
+  kRestartAfterComputeCalls,
+  kRestartRollbackAfterFirst,
+};
+
+/// @brief Retain compute-call progress, restart, and final-data evidence for completion tests.
+struct RuntimeComputeCallChannelProbeState {
+  static void reset(bool hold_first_compute = false) noexcept;
+  [[nodiscard]] static std::size_t enter_source_compute();
+  [[nodiscard]] static bool wait_until_source_compute();
+  static void release_source_compute();
+  static void record_sink(std::uint32_t value) noexcept;
+
+  static std::mutex mutex;
+  static std::condition_variable cv;
+  static std::atomic<std::size_t> source_count;
+  static std::atomic<std::size_t> transform_count;
+  static std::atomic<std::size_t> sink_compute_count;
+  static std::atomic<std::size_t> sink_count;
+  static std::atomic<std::uint32_t> first_value;
+  static std::atomic<std::uint32_t> second_value;
+  static std::atomic_bool restart_accepted;
+  static std::atomic<ErrorCode> restart_error;
+  static std::atomic<std::uint64_t> successful_compute_calls_before_restart;
+  static std::atomic<std::size_t> restart_forward_start_count;
+  static std::atomic<std::size_t> restore_old_start_count;
+  static bool hold_source;
+  static bool source_entered;
+  static bool release_source;
+};
+
+/// @brief Emit values from a zero-input source with Operator-local compute-call completion.
+class RuntimeComputeCallSourceOperator final : public Operator<> {
+ public:
+  RuntimeComputeCallSourceOperator(
+      std::uint64_t limit, RuntimeComputeCallAction action,
+      std::uint64_t restart_after_successful_compute_calls = 1U) noexcept;
+
+  void setup(OperatorSpec& spec) override;
+
+  [[nodiscard]] Contract contract() const override;
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override;
+
+  LifecycleStatus start_stage(LifecycleContext& context) noexcept;
+
+  Output<std::uint32_t> output;
+
+ private:
+  std::uint64_t limit_{};
+  RuntimeComputeCallAction action_{RuntimeComputeCallAction::kNone};
+  std::uint64_t restart_after_successful_compute_calls_{1U};
+};
+
+/// @brief Keep a valid finite notification source open without publishing a readiness event.
+class RuntimeDormantComputeCallSourceOperator final : public Operator<> {
+ public:
+  explicit RuntimeDormantComputeCallSourceOperator(std::uint64_t limit) noexcept;
+
+  void setup(OperatorSpec& spec) override;
+
+  [[nodiscard]] Contract contract() const override;
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override;
+
+  LifecycleStatus arm(LifecycleContext& context) noexcept;
+
+  Output<std::uint32_t> output;
+
+ private:
+  std::uint64_t limit_{};
+  NotificationSource notification_;
+  NotificationSender sender_;
+};
+
+/// @brief Forward one finite input without owning an Operator completion rule.
+class RuntimeComputeCallTransformOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override;
+
+  [[nodiscard]] Contract contract() const override;
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override;
+
+  Input<std::uint32_t> input;
+  Output<std::uint32_t> output;
+};
+
+/// @brief Drain one finite source through EOS without carrying a completion rule of its own.
+class RuntimeComputeCallSinkOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override;
+
+  [[nodiscard]] Contract contract() const override;
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override;
+
+  Input<std::uint32_t> input;
+};
+
 template <typename ClockT, typename... Args>
 [[nodiscard]] ExecutionPlan make_runtime_test_plan_with_clock(bool reverse_authoring,
                                                               Args&&... args) {
@@ -1054,10 +1225,21 @@ template <typename ClockT, typename... Args>
     RuntimeInputPredicatePattern pattern, PredicateFiring firing, bool configured = false,
     RuntimeInputPredicateMissing missing = RuntimeInputPredicateMissing::kFresh);
 
+[[nodiscard]] ExecutionPlan make_runtime_compute_call_channel_plan(
+    std::uint64_t limit = 1U, RuntimeComputeCallAction action = RuntimeComputeCallAction::kNone,
+    std::uint64_t restart_after_successful_compute_calls = 1U);
+
+[[nodiscard]] ExecutionPlan make_runtime_compute_call_chain_plan(std::uint64_t limit = 2U);
+
+[[nodiscard]] ExecutionPlan make_runtime_dormant_compute_call_plan(std::uint64_t limit = 2U);
+
 [[nodiscard]] ExecutionPlan make_runtime_input_trigger_replay_plan(
     RuntimeInputTriggerReplayKind kind);
 
-[[nodiscard]] ExecutionPlan make_runtime_aligned_channel_plan();
+[[nodiscard]] ExecutionPlan make_runtime_aligned_channel_plan(bool complete_manual_cover = false);
+
+/// @brief Compile one exact named source anchor and one automatic Channel consumer.
+[[nodiscard]] ExecutionPlan make_runtime_hybrid_aligned_channel_plan();
 
 [[nodiscard]] ExecutionPlan make_runtime_mixed_channel_unconnected_port_plan();
 

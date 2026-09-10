@@ -155,7 +155,7 @@ class AnyInputProbe final : public holoscan::Operator<> {
 int main() {
   AnyInputObservation::reset();
 
-  holoscan::Graph graph{"ea1-contract-on-any-input"};
+  holoscan::Graph graph{"holoscan-contract-on-any-input"};
   const auto left_clock = graph.op<PeriodicSource>("left_clock", 15ms, 1U);
   const auto right_clock = graph.op<PeriodicSource>("right_clock", 40ms, 100U);
   const auto probe = graph.op<AnyInputProbe>("probe");

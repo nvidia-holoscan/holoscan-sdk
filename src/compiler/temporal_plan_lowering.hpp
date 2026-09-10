@@ -15,22 +15,18 @@
 #include <holoscan/core/graph.hpp>
 
 #include "core/graph_snapshot.hpp"
+#include "plan_lowering_diagnostic.hpp"
 #include "runtime/executable_factory_inventory.hpp"
 #include "runtime_package_capabilities.hpp"
 
 namespace holoscan::detail {
 
-/// @brief Pair one temporal admission token with its canonical plan location.
-struct TemporalPlanDiagnostic {
-  std::string token;
-  DiagnosticSource source{};
-  std::string json_pointer;
-  std::string required;
-  std::string provided;
-};
+/// @brief Temporal-plan spelling of the common lowering diagnostic value.
+using TemporalPlanDiagnostic = PlanLoweringDiagnostic;
 
 /// @brief Hold the complete pointer-free temporal projection for one plan.
 struct TemporalPlanLoweringResult {
+  std::vector<OperatorCompletionPlanRecord> operator_completion_rules;
   std::vector<TemporalTriggerPlanRecord> triggers;
   std::vector<AlignedTriggerPlanRecord> aligned_triggers;
   std::vector<ClockTriggerPlanRecord> clock_triggers;

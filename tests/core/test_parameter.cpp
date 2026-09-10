@@ -1069,7 +1069,7 @@ TEST(ParameterSchema, AggregateValidationIsTypedAndLeavesTheInputUnchanged) {
   EXPECT_EQ(nested_result.field_name, "count");
 
   // Encoded-byte limits are portable codec metadata. Aggregate validation cannot infer encoded
-  // bytes from a container's element count; EA1-018's qualified codec enforces this bound.
+  // bytes from a container's element count; HSDK5-018's qualified codec enforces this bound.
   EXPECT_TRUE(validate_params(EncodedBoundParams{}).ok());
 }
 

@@ -10,7 +10,7 @@
 > **User guide:** [Advanced Temporal Patterns](https://docs.nvidia.com/holoscan/sdk-user-guide/advanced/advanced-temporal-patterns) —
 > this example is the
 > cited program for predicate-driven activation with `OnPredicate`. The
-> trigger itself ships in EA1; only its guide surface carries the preview
+> trigger itself ships in baseline; only its guide surface carries the preview
 > label.
 
 Two clock-driven sources feed two predicate consumers. The first evaluates
@@ -74,7 +74,7 @@ cmake --build build
 If CMake cannot find the SDK, point it at your install:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S . -DCMAKE_PREFIX_PATH=<install-prefix>
 ```
 
 ## Run
@@ -108,6 +108,14 @@ consumer activates only when the sampled level crosses from low to high;
 its additional true evaluations and rejected low-level evaluations prove both
 edge firing and that its 10 ms clock — not input arrival — drives the decision
 cadence.
+
+The stop request may race with one final gate evaluation. Predicate truth is
+recorded before callback admission, so that evaluation can be `true` while the
+session-wide stop boundary retires its candidate without entering `compute()`.
+The stable final invariant is therefore
+`activations <= true_evaluations <= activations + 1`: all but at most the one
+true evaluation whose callback candidate loses the race with the stop boundary
+are matched by activations, and no callback is admitted after that boundary.
 
 ## Code walkthrough
 

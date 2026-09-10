@@ -210,7 +210,7 @@ Three further points of discipline:
 
 - **Forward, don't re-stamp.** An operator that transforms a sample should
   propagate the incoming `capture_time()` onto its output, as the fusion stage
-  of the `ea1_camera_imu_control` example does. Re-stamping at each hop
+  of the `camera_imu_control` example does. Re-stamping at each hop
   destroys end-to-end age measurement.
 - **Omission is honest absence.** `EmitOptions::capture_time` is a
   `std::optional<TimePoint>`. If you genuinely have no acquisition time, leave
@@ -225,7 +225,7 @@ Three further points of discipline:
   requires genuine capture time by default.
 
 For a source operator without a hardware timestamp, the activation time is the
-closest honest stand-in, as in the `ea1_camera_imu_control` example's camera
+closest honest stand-in, as in the `camera_imu_control` example's camera
 stage:
 
 ```cpp

@@ -7,6 +7,8 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -23,6 +25,8 @@
 
 #include <gtest/gtest.h>
 
+#include <holoscan/core/managed_shutdown_signals.hpp>
+
 #include "common/allocation_counter.hpp"
 #include "compiler/compile_internal.hpp"
 #include "compiler/execution_plan_state.hpp"
@@ -31,18 +35,210 @@
 #include "runtime/graph_exec.hpp"
 #include "runtime/parameter_update_coordinator.hpp"
 #include "runtime/runtime_callback_context.hpp"
+#include "runtime/runtime_partition_test_plan_access.hpp"
 #include "runtime/runtime_phase_counters.hpp"
 #include "runtime/runtime_test_access.hpp"
+#include "runtime/runtime_work_inventory.hpp"
 #include "runtime/runtime_worker.hpp"
 #include "runtime/source_wait.hpp"
+#include "runtime_channel_binding_test_support.hpp"
 #include "runtime_test_graph.hpp"
 #include "support/direct_port_binding.hpp"
 
 namespace holoscan {
 
+struct RuntimeCompletionFencePayload {
+  std::uint32_t value{};
+};
+
+template <>
+struct ChannelTypeIdentity<RuntimeCompletionFencePayload> {
+  static constexpr std::string_view name = "nvidia.holoscan.test.RuntimeCompletionFencePayload";
+  static constexpr std::uint32_t version = 1U;
+};
+
+template <>
+struct ChannelPodLayout<RuntimeCompletionFencePayload> {
+  static constexpr auto fields =
+      pod_fields(pod_field("value", &RuntimeCompletionFencePayload::value,
+                           offsetof(RuntimeCompletionFencePayload, value)));
+};
+
 namespace {
 
 using namespace std::chrono_literals;
+
+class ThrowingTerminalClosePublisher final : public channel_internal::InlinePayloadPublisher {
+ public:
+  explicit ThrowingTerminalClosePublisher(
+      std::shared_ptr<std::atomic<std::size_t>> close_count) noexcept
+      : close_count_(std::move(close_count)) {}
+
+  [[nodiscard]] channel_internal::InlinePublicationResult emit_phase(
+      std::span<const std::byte>, const SampleMetadata&) override {
+    return channel_internal::InlinePublicationResult{
+        .phase = channel_internal::InlinePublicationPhase::kAccepted,
+        .recipient_count = 1U,
+        .error = Error{ErrorCode::kSuccess},
+    };
+  }
+
+  [[nodiscard]] expected<void, Error> close_stream() override {
+    close_count_->fetch_add(1U, std::memory_order_relaxed);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    throw std::runtime_error{"injected terminal close failure"};
+#else
+    return make_unexpected(Error{ErrorCode::kNotSupported});
+#endif
+  }
+
+  [[nodiscard]] expected<void, Error> update_connections() noexcept override { return {}; }
+  [[nodiscard]] bool has_subscribers() const noexcept override { return true; }
+
+ private:
+  std::shared_ptr<std::atomic<std::size_t>> close_count_;
+};
+
+class ThrowingTerminalCloseChannelBindControl final
+    : public detail::RuntimeChannelSessionBindTestControl {
+ public:
+  explicit ThrowingTerminalCloseChannelBindControl(const PortId output) noexcept
+      : output_(output), close_count_(std::make_shared<std::atomic<std::size_t>>()) {}
+
+  [[nodiscard]] expected<void, Error> bind(
+      detail::RuntimeChannelSession& session) noexcept override {
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    try {
+      auto first = std::make_unique<ThrowingTerminalClosePublisher>(close_count_);
+      std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+      publishers.push_back(std::move(first));
+      return detail::RuntimeChannelSessionTestAccess::replace_output_publishers(
+          session, output_, std::move(publishers));
+    } catch (...) {
+      return make_unexpected(Error{ErrorCode::kResourceExhausted});
+    }
+#else
+    static_cast<void>(session);
+    return make_unexpected(Error{ErrorCode::kNotSupported});
+#endif
+  }
+
+  [[nodiscard]] std::size_t first_close_count() const noexcept {
+    return close_count_->load(std::memory_order_relaxed);
+  }
+
+ private:
+  PortId output_{};
+  std::shared_ptr<std::atomic<std::size_t>> close_count_;
+};
+
+// REQ: RUNTIME-046
+static_assert(static_cast<std::uint8_t>(RunTermination::kRunning) == 0U);
+static_assert(static_cast<std::uint8_t>(RunTermination::kCompleted) == 1U);
+static_assert(static_cast<std::uint8_t>(RunTermination::kRequestedCompleted) == 2U);
+static_assert(static_cast<std::uint8_t>(RunTermination::kStopped) == 3U);
+static_assert(static_cast<std::uint8_t>(RunTermination::kFailed) == 4U);
+
+// REQ: RUNTIME-047
+// REQ: RUNTIME-049
+static_assert(static_cast<std::uint8_t>(RunSignalPolicy::kManaged) == 0U);
+static_assert(static_cast<std::uint8_t>(RunSignalPolicy::kCallerManaged) == 1U);
+static_assert(std::move_constructible<ManagedShutdownSignals>);
+static_assert(std::is_nothrow_move_constructible_v<ManagedShutdownSignals>);
+static_assert(std::is_nothrow_destructible_v<ManagedShutdownSignals>);
+static_assert(!std::copyable<ManagedShutdownSignals>);
+static_assert(!std::is_move_assignable_v<ManagedShutdownSignals>);
+
+TEST(RunSessionApi, ExposesManagedAndCallerManagedExecutionOverloads) {
+  const auto blocking = static_cast<int (*)(const ExecutionPlan&, RunSignalPolicy)>(&run);
+  const auto asynchronous =
+      static_cast<RunSession (*)(const ExecutionPlan&, ManagedShutdownSignals&)>(&run_async);
+  EXPECT_NE(blocking, nullptr);
+  EXPECT_NE(asynchronous, nullptr);
+}
+
+// REQ: RUNTIME-050
+class RuntimeCompletionFenceSource final : public Operator<> {
+ public:
+  explicit RuntimeCompletionFenceSource(bool with_deadline = false) noexcept
+      : with_deadline_(with_deadline) {}
+
+  void setup(OperatorSpec& spec) override {
+    spec.spin_source(spin_, "activation").capacity(1U);
+    spec.output(output, "output").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnSpin{.event = spin_});
+    if (with_deadline_) {
+      result.deadline(1h).on_violation(OnViolation::kEmitWitness);
+    }
+    result.complete_after(ComputeCalls{.limit = 1U});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    compute_count.fetch_add(1U, std::memory_order_relaxed);
+    return output.emit(RuntimeCompletionFencePayload{.value = 41U});
+  }
+
+  static inline std::atomic<std::size_t> compute_count{};
+  Output<RuntimeCompletionFencePayload> output;
+
+ private:
+  SpinSource spin_;
+  bool with_deadline_{};
+};
+
+class RuntimeCompletionFenceSink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.input(input, "input").queue_depth(1U); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample.error()));
+    }
+    observed_value.store(sample->data.value, std::memory_order_relaxed);
+    compute_count.fetch_add(1U, std::memory_order_relaxed);
+    return {};
+  }
+
+  static inline std::atomic<std::size_t> compute_count{};
+  static inline std::atomic<std::uint32_t> observed_value{};
+  Input<RuntimeCompletionFencePayload> input;
+};
+
+[[nodiscard]] ExecutionPlan make_runtime_completion_fence_plan(bool with_deadline = false) {
+  Graph graph{"runtime-completion-final-entry-fence"};
+  const auto source = graph.op<RuntimeCompletionFenceSource>("source", with_deadline);
+  const auto sink = graph.op<RuntimeCompletionFenceSink>("sink");
+  graph.add_flow(source->output,
+                 sink->input,
+                 ConnectionOptions{
+                     .queue_policy = QueuePolicy::kBlocking,
+                     .queue_depth = 1U,
+                 });
+  graph.partition("runtime-completion-final-entry-fence").add(source).add(sink);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-completion-fence-clock"));
+  CompileOptions options;
+  options.deployment.bind_thread_placement("runtime-completion-final-entry-fence",
+                                           ThreadPlacement{.wake_mode = WakeMode::kBusyPoll});
+  return compile(graph, std::move(options));
+}
+
+void reset_runtime_completion_fence_probe() noexcept {
+  RuntimeCompletionFenceSource::compute_count.store(0U, std::memory_order_relaxed);
+  RuntimeCompletionFenceSink::compute_count.store(0U, std::memory_order_relaxed);
+  RuntimeCompletionFenceSink::observed_value.store(0U, std::memory_order_relaxed);
+}
 
 class OptionalLifecycleReplayProbe final : public Operator<> {
  public:
@@ -65,6 +261,406 @@ class OptionalLifecycleReplayProbe final : public Operator<> {
   LifecycleStatus stop_stage(LifecycleContext&) noexcept { return LifecycleStatus::kOk; }
 
   static inline std::atomic_bool omit_callbacks{};
+};
+
+struct RuntimeRateProbeState {
+  static void reset() noexcept {
+    bind_error = ErrorCode::kSuccess;
+    same_stage_error = ErrorCode::kSuccess;
+    allocate_error = ErrorCode::kSuccess;
+    compute_error = ErrorCode::kSuccess;
+    same_stage = {};
+    allocate = {};
+    compute = {};
+  }
+
+  static inline ErrorCode bind_error{ErrorCode::kSuccess};
+  static inline ErrorCode same_stage_error{ErrorCode::kSuccess};
+  static inline ErrorCode allocate_error{ErrorCode::kSuccess};
+  static inline ErrorCode compute_error{ErrorCode::kSuccess};
+  static inline PortRateView same_stage;
+  static inline PortRateView allocate;
+  static inline PortRateView compute;
+};
+
+class RuntimeFixedRateQueryProbe final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.spin_source(spin_, "activation").capacity(1U);
+    spec.output(output, "output").nominal_rate(Rate::hz(60U));
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnSpin{.event = spin_}).complete_after(ComputeCalls{.limit = 1U});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto view = context.rate(output);
+    if (!view) {
+      RuntimeRateProbeState::compute_error = view.error().code;
+      return make_unexpected(std::move(view.error()));
+    }
+    RuntimeRateProbeState::compute = *view;
+    return output.emit(RuntimeCompletionFencePayload{.value = 17U});
+  }
+
+  Output<RuntimeCompletionFencePayload> output;
+
+ private:
+  SpinSource spin_;
+};
+
+class RuntimeFixedRateQuerySink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.input(input, "input"); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample.error()));
+    }
+    return {};
+  }
+
+  Input<RuntimeCompletionFencePayload> input;
+};
+
+class RuntimeLifecycleRateQueryProbe final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.spin_source(spin_, "activation").capacity(1U);
+    spec.output(output, "output")
+        .lifecycle_nominal_rate(LifecycleStage::kDiscover)
+        .max_nominal_rate(Rate::hz(120U));
+    spec.lifecycle()
+        .stage(LifecycleStage::kDiscover, &RuntimeLifecycleRateQueryProbe::discover)
+        .stage(LifecycleStage::kAllocate, &RuntimeLifecycleRateQueryProbe::allocate);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnSpin{.event = spin_}).complete_after(ComputeCalls{.limit = 1U});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto view = context.rate(output);
+    if (!view) {
+      RuntimeRateProbeState::compute_error = view.error().code;
+      return make_unexpected(std::move(view.error()));
+    }
+    RuntimeRateProbeState::compute = *view;
+    return {};
+  }
+
+  LifecycleStatus discover(LifecycleContext& context) noexcept {
+    auto bound = context.bind_nominal_rate(output, Rate::hz(60U));
+    if (!bound) {
+      RuntimeRateProbeState::bind_error = bound.error().code;
+      return LifecycleStatus::kFatalFailure;
+    }
+    auto view = context.rate(output);
+    if (!view) {
+      RuntimeRateProbeState::same_stage_error = view.error().code;
+      return LifecycleStatus::kFatalFailure;
+    }
+    RuntimeRateProbeState::same_stage = *view;
+    return LifecycleStatus::kOk;
+  }
+
+  LifecycleStatus allocate(LifecycleContext& context) noexcept {
+    auto view = context.rate(output);
+    if (!view) {
+      RuntimeRateProbeState::allocate_error = view.error().code;
+      return LifecycleStatus::kFatalFailure;
+    }
+    RuntimeRateProbeState::allocate = *view;
+    return LifecycleStatus::kOk;
+  }
+
+  Output<std::uint32_t> output;
+
+ private:
+  SpinSource spin_;
+};
+
+struct RuntimeLifecycleRateQueueProbeState {
+  static void reset() noexcept {
+    bind_error.store(0U, std::memory_order_release);
+    allocate_error.store(0U, std::memory_order_release);
+    compute_error.store(0U, std::memory_order_release);
+    allocate_saw_resolved.store(false, std::memory_order_release);
+    sink_received.store(false, std::memory_order_release);
+    observed_value.store(0U, std::memory_order_release);
+  }
+
+  static void fail(std::atomic<std::uint32_t>& target, ErrorCode code) noexcept {
+    target.store(static_cast<std::uint32_t>(code), std::memory_order_release);
+  }
+
+  static inline std::atomic<std::uint32_t> bind_error{};
+  static inline std::atomic<std::uint32_t> allocate_error{};
+  static inline std::atomic<std::uint32_t> compute_error{};
+  static inline std::atomic_bool allocate_saw_resolved{};
+  static inline std::atomic_bool sink_received{};
+  static inline std::atomic<std::uint32_t> observed_value{};
+};
+
+class RuntimeLifecycleRateQueueSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output").lifecycle_nominal_rate(LifecycleStage::kDiscover);
+    spec.lifecycle()
+        .stage(LifecycleStage::kDiscover, &RuntimeLifecycleRateQueueSource::discover)
+        .stage(LifecycleStage::kAllocate, &RuntimeLifecycleRateQueueSource::allocate);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms}).complete_after(ComputeCalls{.limit = 1U});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto view = context.rate(output);
+    if (!view) {
+      RuntimeLifecycleRateQueueProbeState::fail(RuntimeLifecycleRateQueueProbeState::compute_error,
+                                                view.error().code);
+      return make_unexpected(std::move(view.error()));
+    }
+    auto emitted = output.emit(kValue);
+    if (!emitted) {
+      RuntimeLifecycleRateQueueProbeState::fail(RuntimeLifecycleRateQueueProbeState::compute_error,
+                                                emitted.error().code);
+    }
+    return emitted;
+  }
+
+  LifecycleStatus discover(LifecycleContext& context) noexcept {
+    auto bound = context.bind_nominal_rate(output, Rate::hz(60U));
+    if (!bound) {
+      RuntimeLifecycleRateQueueProbeState::fail(RuntimeLifecycleRateQueueProbeState::bind_error,
+                                                bound.error().code);
+      return LifecycleStatus::kFatalFailure;
+    }
+    return LifecycleStatus::kOk;
+  }
+
+  LifecycleStatus allocate(LifecycleContext& context) noexcept {
+    auto view = context.rate(output);
+    if (!view) {
+      RuntimeLifecycleRateQueueProbeState::fail(RuntimeLifecycleRateQueueProbeState::allocate_error,
+                                                view.error().code);
+      return LifecycleStatus::kFatalFailure;
+    }
+    RuntimeLifecycleRateQueueProbeState::allocate_saw_resolved.store(
+        view->state == PortRateViewState::kResolved && view->resolved_nominal_rate == Rate::hz(60U),
+        std::memory_order_release);
+    return LifecycleStatus::kOk;
+  }
+
+  Output<std::uint32_t> output;
+  static constexpr std::uint32_t kValue = 0x4155544FU;
+};
+
+class RuntimeLifecycleRateQueueSink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.input(input, "input"); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      RuntimeLifecycleRateQueueProbeState::fail(RuntimeLifecycleRateQueueProbeState::compute_error,
+                                                sample.error().code);
+      return make_unexpected(std::move(sample.error()));
+    }
+    RuntimeLifecycleRateQueueProbeState::observed_value.store(sample->data,
+                                                              std::memory_order_release);
+    RuntimeLifecycleRateQueueProbeState::sink_received.store(true, std::memory_order_release);
+    return {};
+  }
+
+  Input<std::uint32_t> input;
+};
+
+struct RuntimeLifecycleDrainAllScratchProbeState {
+  static void reset() noexcept {
+    error.store(0U, std::memory_order_release);
+    driver_value.store(0U, std::memory_order_release);
+    batch_size.store(0U, std::memory_order_release);
+  }
+
+  static void fail(ErrorCode code) noexcept {
+    error.store(static_cast<std::uint32_t>(code), std::memory_order_release);
+  }
+
+  static inline std::atomic<std::uint32_t> error{};
+  static inline std::atomic<std::uint32_t> driver_value{};
+  static inline std::atomic<std::size_t> batch_size{};
+};
+
+// Build the secondary backlog over twelve 1 ms callbacks, then publish the OnEach driver from a
+// separate callback. The extra callback makes the full retained prefix independent of cross-channel
+// ingress scan order.
+class RuntimeLifecycleDrainAllScratchSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(secondary, "secondary").lifecycle_nominal_rate(LifecycleStage::kDiscover);
+    spec.output(driver, "driver").nominal_rate(Rate::hz(100U));
+    spec.lifecycle().stage(LifecycleStage::kDiscover,
+                           &RuntimeLifecycleDrainAllScratchSource::discover);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms}).complete_after(ComputeCalls{.limit = kBacklogSize + 1U});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    ++next_value_;
+    if (next_value_ > kBacklogSize) {
+      auto driver_emitted = driver.emit(kDriverValue);
+      if (!driver_emitted) {
+        RuntimeLifecycleDrainAllScratchProbeState::fail(driver_emitted.error().code);
+      }
+      return driver_emitted;
+    }
+    auto secondary_emitted = secondary.emit(next_value_);
+    if (!secondary_emitted) {
+      RuntimeLifecycleDrainAllScratchProbeState::fail(secondary_emitted.error().code);
+    }
+    return secondary_emitted;
+  }
+
+  LifecycleStatus discover(LifecycleContext& context) noexcept {
+    auto bound = context.bind_nominal_rate(secondary, Rate::hz(1000U));
+    if (!bound) {
+      RuntimeLifecycleDrainAllScratchProbeState::fail(bound.error().code);
+      return LifecycleStatus::kFatalFailure;
+    }
+    return LifecycleStatus::kOk;
+  }
+
+  static constexpr std::uint32_t kBacklogSize = 12U;
+  static constexpr std::uint32_t kDriverValue = 0xD41U;
+  Output<std::uint32_t> secondary;
+  Output<std::uint32_t> driver;
+
+ private:
+  std::uint32_t next_value_{};
+};
+
+class RuntimeLifecycleDrainAllScratchSink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(secondary, "secondary");
+    spec.input(driver, "driver");
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{driver}).input(secondary, DrainAll{});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto driver_sample = driver.receive();
+    if (!driver_sample) {
+      RuntimeLifecycleDrainAllScratchProbeState::fail(driver_sample.error().code);
+      return make_unexpected(std::move(driver_sample.error()));
+    }
+    auto batch = secondary.selected_batch();
+    if (!batch) {
+      RuntimeLifecycleDrainAllScratchProbeState::fail(batch.error().code);
+      return make_unexpected(std::move(batch.error()));
+    }
+    RuntimeLifecycleDrainAllScratchProbeState::driver_value.store(driver_sample->data,
+                                                                  std::memory_order_release);
+    RuntimeLifecycleDrainAllScratchProbeState::batch_size.store(batch->size(),
+                                                                std::memory_order_release);
+    return {};
+  }
+
+  Input<std::uint32_t> secondary;
+  Input<std::uint32_t> driver;
+};
+
+template <typename OperatorT>
+[[nodiscard]] ExecutionPlan make_runtime_rate_probe_plan(std::string_view name) {
+  Graph graph{std::string(name)};
+  const auto probe = graph.op<OperatorT>("probe");
+  graph.partition(std::string{name}).add(probe);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>(std::string(name) + "-clock"));
+  CompileOptions options;
+  options.deployment.bind_thread_placement(std::string{name},
+                                           ThreadPlacement{.wake_mode = WakeMode::kBusyPoll});
+  return test::enable_direct_runtime(compile(graph, std::move(options)));
+}
+
+[[nodiscard]] ExecutionPlan make_runtime_fixed_rate_query_plan(std::string_view name) {
+  Graph graph{std::string(name)};
+  const auto source = graph.op<RuntimeFixedRateQueryProbe>("source");
+  const auto sink = graph.op<RuntimeFixedRateQuerySink>("sink");
+  graph.add_flow(source->output, sink->input, ConnectionOptions{.queue_depth = 1U});
+  graph.partition(std::string{name}).add(source).add(sink);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>(std::string(name) + "-clock"));
+  CompileOptions options;
+  options.deployment.bind_thread_placement(std::string{name},
+                                           ThreadPlacement{.wake_mode = WakeMode::kBusyPoll});
+  return test::enable_direct_runtime(compile(graph, std::move(options)));
+}
+
+// Starts the connected index fixture from a clock and exposes its first output. Used by
+// GraphExecIndexTest.ResolvesDenseVertexIndexWithAbsentNonOperatorSlots.
+class GraphExecIndexProbeOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<std::uint32_t> output;
+};
+
+// Extends the index fixture with one input-triggered callback and output. Used by
+// GraphExecIndexTest.ResolvesDenseVertexIndexWithAbsentNonOperatorSlots.
+class GraphExecIndexRelayOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input");
+    spec.output(output, "output");
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnAnyInput{}).input(input, DrainAll{});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<std::uint32_t> input;
+  Output<std::uint32_t> output;
 };
 
 // Captures one round-trip observation: the data value and SampleMetadata seen
@@ -420,26 +1016,46 @@ class RecordingDiagnosticSink final : public detail::RuntimeStructuralDiagnostic
   explicit RecordingDiagnosticSink(bool fail = false) : fail_(fail) {}
 
   void publish(std::span<const Diagnostic> diagnostics) override {
-    if (fail_) {
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
-      throw std::runtime_error{"injected diagnostic sink failure"};
-#else
+    if (discard_for_injected_failure()) {
       return;
-#endif
     }
     const std::lock_guard lock(mutex_);
     sequences_.emplace_back(diagnostics.begin(), diagnostics.end());
   }
 
   void publish_runtime_details(std::span<const detail::RuntimeDiagnosticDetail> details) override {
+    if (discard_for_injected_failure()) {
+      return;
+    }
     const std::lock_guard lock(mutex_);
     detail_sequences_.emplace_back(details.begin(), details.end());
   }
 
+  void publish_lifecycle_receipts(
+      std::span<const detail::RuntimeLifecycleReceiptDiagnostic> receipts) override {
+    if (discard_for_injected_failure()) {
+      return;
+    }
+    const std::lock_guard lock(mutex_);
+    lifecycle_receipt_sequences_.emplace_back(receipts.begin(), receipts.end());
+  }
+
   void publish_lane_startup_evidence(
       std::span<const detail::ExecutionLaneStartupEvidence> evidence) override {
+    if (discard_for_injected_failure()) {
+      return;
+    }
     const std::lock_guard lock(mutex_);
     lane_sequences_.emplace_back(evidence.begin(), evidence.end());
+  }
+
+  void publish_operator_completion_progress(
+      std::span<const OperatorCompletionProgressRecord> progress) override {
+    if (discard_for_injected_failure()) {
+      return;
+    }
+    const std::lock_guard lock(mutex_);
+    completion_progress_sequences_.emplace_back(progress.begin(), progress.end());
   }
 
   [[nodiscard]] std::vector<std::vector<Diagnostic>> snapshot() const {
@@ -458,12 +1074,37 @@ class RecordingDiagnosticSink final : public detail::RuntimeStructuralDiagnostic
     return lane_sequences_;
   }
 
+  [[nodiscard]] std::vector<std::vector<detail::RuntimeLifecycleReceiptDiagnostic>>
+  snapshot_lifecycle_receipts() const {
+    const std::lock_guard lock(mutex_);
+    return lifecycle_receipt_sequences_;
+  }
+
+  [[nodiscard]] std::vector<std::vector<OperatorCompletionProgressRecord>>
+  snapshot_operator_completion_progress() const {
+    const std::lock_guard lock(mutex_);
+    return completion_progress_sequences_;
+  }
+
  private:
+  [[nodiscard]] bool discard_for_injected_failure() const {
+    if (!fail_) {
+      return false;
+    }
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    throw std::runtime_error{"injected diagnostic sink failure"};
+#else
+    return true;
+#endif
+  }
+
   bool fail_{};
   mutable std::mutex mutex_;
   std::vector<std::vector<Diagnostic>> sequences_;
   std::vector<std::vector<detail::RuntimeDiagnosticDetail>> detail_sequences_;
+  std::vector<std::vector<detail::RuntimeLifecycleReceiptDiagnostic>> lifecycle_receipt_sequences_;
   std::vector<std::vector<detail::ExecutionLaneStartupEvidence>> lane_sequences_;
+  std::vector<std::vector<OperatorCompletionProgressRecord>> completion_progress_sequences_;
 };
 
 struct TerminalSummarySnapshot {
@@ -549,6 +1190,83 @@ class RecordingTerminalSummarySink final : public detail::RuntimeTerminalSummary
   return detail::compile_with_process_placement(graph, std::move(options), std::move(placement));
 }
 
+[[nodiscard]] ExecutionPlan make_process_group_completion_progress_test_plan() {
+  Graph graph{"runtime-process-group-completion-progress"};
+  const auto first_source = graph.op<test::RuntimeComputeCallSourceOperator>(
+      "a-source", 1U, test::RuntimeComputeCallAction::kNone);
+  const auto first_sink = graph.op<test::RuntimeComputeCallSinkOperator>("a-sink");
+  const auto second_source = graph.op<test::RuntimeComputeCallSourceOperator>(
+      "z-source", 2U, test::RuntimeComputeCallAction::kNone);
+  const auto second_sink = graph.op<test::RuntimeComputeCallSinkOperator>("z-sink");
+  graph.partition("runtime-completion-first-source").add(first_source);
+  graph.partition("runtime-completion-first-sink").add(first_sink);
+  graph.partition("runtime-completion-second-source").add(second_source);
+  graph.partition("runtime-completion-second-sink").add(second_sink);
+  graph.add_flow(first_source->output, first_sink->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(second_source->output, second_sink->input, ConnectionOptions{.queue_depth = 1U});
+  const ClockKey default_clock =
+      graph.add_clock<RealtimeClock>("runtime-process-group-completion-progress-clock");
+  graph.set_default_clock(default_clock);
+
+  constexpr std::array first_selector{
+      detail::GraphObjectSelector{.graph_path = "a-source"},
+      detail::GraphObjectSelector{.graph_path = "a-sink"},
+  };
+  constexpr std::array second_selector{
+      detail::GraphObjectSelector{.graph_path = "z-source"},
+      detail::GraphObjectSelector{.graph_path = "z-sink"},
+  };
+  detail::ProcessPlacementBinding placement;
+  placement
+      .bind_process_role("first",
+                         detail::ProcessPlacement{
+                             .members = first_selector,
+                             .launch_group = "first-process",
+                         })
+      .bind_process_role("second",
+                         detail::ProcessPlacement{
+                             .members = second_selector,
+                             .launch_group = "second-process",
+                         });
+  return detail::compile_with_process_placement(graph, CompileOptions{}, std::move(placement));
+}
+
+[[nodiscard]] ExecutionPlan make_unequal_compute_call_sources_test_plan() {
+  Graph graph{"runtime-unequal-compute-call-sources"};
+  const auto first_source = graph.op<test::RuntimeComputeCallSourceOperator>(
+      "a-source", 1U, test::RuntimeComputeCallAction::kNone);
+  const auto first_sink = graph.op<test::RuntimeComputeCallSinkOperator>("a-sink");
+  const auto second_source = graph.op<test::RuntimeComputeCallSourceOperator>(
+      "z-source", 3U, test::RuntimeComputeCallAction::kNone);
+  const auto second_sink = graph.op<test::RuntimeComputeCallSinkOperator>("z-sink");
+  graph.partition("runtime-unequal-first-source").add(first_source);
+  graph.partition("runtime-unequal-first-sink").add(first_sink);
+  graph.partition("runtime-unequal-second-source").add(second_source);
+  graph.partition("runtime-unequal-second-sink").add(second_sink);
+  graph.add_flow(first_source->output, first_sink->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(second_source->output, second_sink->input, ConnectionOptions{.queue_depth = 1U});
+  const ClockKey default_clock =
+      graph.add_clock<RealtimeClock>("runtime-unequal-compute-call-clock");
+  graph.set_default_clock(default_clock);
+  return compile(graph);
+}
+
+[[nodiscard]] ExecutionPlan make_finite_and_unbounded_source_test_plan() {
+  Graph graph{"runtime-finite-and-unbounded-sources"};
+  const auto finite = graph.op<test::RuntimeComputeCallSourceOperator>(
+      "finite", 1U, test::RuntimeComputeCallAction::kNone);
+  const auto sink = graph.op<test::RuntimeComputeCallSinkOperator>("finite-sink");
+  const auto unbounded = graph.op<test::RuntimeClockProbeOperator>("unbounded");
+  graph.partition("runtime-finite-source").add(finite);
+  graph.partition("runtime-finite-sink").add(sink);
+  graph.partition("runtime-unbounded-source").add(unbounded);
+  graph.add_flow(finite->output, sink->input, ConnectionOptions{.queue_depth = 1U});
+  const ClockKey default_clock =
+      graph.add_clock<RealtimeClock>("runtime-finite-and-unbounded-clock");
+  graph.set_default_clock(default_clock);
+  return compile(graph);
+}
+
 #if GTEST_HAS_DEATH_TEST
 // Triggers a self-join death scenario: publish() spins until the bound session
 // pointer is set, then calls session->wait() from the runtime's own thread,
@@ -571,11 +1289,183 @@ class SelfJoinDiagnosticSink final : public detail::RuntimeStructuralDiagnosticS
 };
 #endif
 
+struct OrdinaryPollStatusProbe {
+  std::atomic<std::size_t> poll_calls{};
+  std::atomic<std::size_t> incomplete_status_calls{};
+};
+
+// One ordinary physical poll target with a single already-admitted witness. The status hook is
+// instrumented because it exists only for a freshness recovery after a contended Channel poll;
+// consulting it here adds a virtual call to every unrelated physical poll.
+class OrdinaryPollStatusBinding final : public detail::PortBinding {
+ public:
+  OrdinaryPollStatusBinding(const detail::RuntimePortBindingRequest& request,
+                            TimePoint start_coordinate,
+                            std::shared_ptr<OrdinaryPollStatusProbe> probe)
+      : request_(request), probe_(std::move(probe)) {
+    event_ = detail::RuntimeEvent{
+        .kind = request.kind,
+        .source = request.source,
+        .port = request.port,
+        .source_decision_time = start_coordinate,
+        .reference_time = start_coordinate,
+        .source_generation = request.source_generation,
+        .source_sequence = request.initial_source_sequence + 1U,
+    };
+  }
+
+  [[nodiscard]] expected<void, Error> poll(TimePoint observed_at) noexcept override {
+    if (!observed_at.valid() || observed_at.clock_id != request_.reference_clock) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    probe_->poll_calls.fetch_add(1U, std::memory_order_relaxed);
+    return {};
+  }
+
+  [[nodiscard]] std::optional<detail::PortBindingPollTarget> poll_target() const noexcept override {
+    return detail::PortBindingPollTarget{
+        .execution_lane = request_.execution_lane,
+        .reference_clock = request_.reference_clock,
+    };
+  }
+
+  [[nodiscard]] bool last_poll_incomplete() const noexcept override {
+    probe_->incomplete_status_calls.fetch_add(1U, std::memory_order_relaxed);
+    return false;
+  }
+
+  [[nodiscard]] SourceId source() const noexcept override { return request_.source; }
+
+  [[nodiscard]] expected<std::size_t, Error> drain(
+      std::span<detail::RuntimeEvent> destination) noexcept override {
+    if (!pending_ || destination.empty()) {
+      return 0U;
+    }
+    destination.front() = event_;
+    pending_ = false;
+    return 1U;
+  }
+
+  [[nodiscard]] std::size_t capacity() const noexcept override { return request_.capacity; }
+  [[nodiscard]] bool closed() const noexcept override { return true; }
+
+ private:
+  detail::RuntimePortBindingRequest request_;
+  std::shared_ptr<OrdinaryPollStatusProbe> probe_;
+  detail::RuntimeEvent event_;
+  bool pending_{true};
+};
+
+class OrdinaryPollStatusFactory final : public detail::RuntimePortBindingFactory {
+ public:
+  explicit OrdinaryPollStatusFactory(std::shared_ptr<OrdinaryPollStatusProbe> probe)
+      : probe_(std::move(probe)) {}
+
+  [[nodiscard]] expected<std::unique_ptr<detail::PortBinding>, Error> bind(
+      const detail::RuntimePortBindingRequest& request,
+      TimePoint start_coordinate) noexcept override {
+    if (!request.source || request.capacity == 0U || !request.reference_clock.valid() ||
+        request.initial_source_sequence == std::numeric_limits<std::uint64_t>::max() ||
+        !start_coordinate.valid() || start_coordinate.clock_id != request.reference_clock) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    return std::unique_ptr<detail::PortBinding>{
+        std::make_unique<OrdinaryPollStatusBinding>(request, start_coordinate, probe_)};
+  }
+
+ private:
+  std::shared_ptr<OrdinaryPollStatusProbe> probe_;
+};
+
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+// A cold allocation failure cannot retain session-local progress storage, so the shared startup
+// terminal explicitly reports the empty sequence even when the selected plan has a completion rule.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, CompletionPlanPreStorageAllocationFailurePublishesEmptyProgress) {
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
+  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(1U);
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, diagnostic_sink);
+
+  const RunSession session = [&] {
+    const test::ScopedAllocationFailure fail_next_allocation{0U};
+    return run_async(plan);
+  }();
+
+  EXPECT_FALSE(session.is_running());
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  ASSERT_EQ(session.diagnostics().size(), 1U);
+  EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_STARTUP_FAILED");
+  EXPECT_TRUE(session.operator_completion_progress().empty());
+  const auto published = diagnostic_sink->snapshot_operator_completion_progress();
+  ASSERT_EQ(published.size(), 1U);
+  EXPECT_TRUE(published.front().empty());
+}
+
+// A failure after progress materialization must retain the selected plan's terminal zero record.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, CompletionPlanPostProgressStartupFailurePublishesZeroProgress) {
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
+  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(1U);
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  const ExecutionPlan with_diagnostics =
+      detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, diagnostic_sink);
+  const ExecutionPlan plan = detail::RuntimeTestPlanAccess::
+      fail_after_operator_completion_progress_materialization_for_test(with_diagnostics);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_FALSE(session.is_running());
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  ASSERT_EQ(session.diagnostics().size(), 1U);
+  EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_STARTUP_FAILED");
+  ASSERT_EQ(session.operator_completion_progress().size(), 1U);
+  const auto& rule = plan.operator_completion_rules().front();
+  const auto& progress = session.operator_completion_progress().front();
+  EXPECT_EQ(progress.owner.id, rule.owner.id);
+  EXPECT_EQ(progress.owner.plan_generation, rule.owner.plan_generation);
+  EXPECT_TRUE(progress.owner.run_bound());
+  EXPECT_EQ(progress.kind, OperatorCompletionRuleKind::kComputeCalls);
+  EXPECT_EQ(progress.configured_limit, 1U);
+  EXPECT_EQ(progress.successful_compute_calls, 0U);
+  EXPECT_FALSE(progress.limit_reached);
+  const auto published = diagnostic_sink->snapshot_operator_completion_progress();
+  ASSERT_EQ(published.size(), 1U);
+  const std::vector<OperatorCompletionProgressRecord> public_progress{
+      session.operator_completion_progress().begin(), session.operator_completion_progress().end()};
+  EXPECT_EQ(published.front(), public_progress);
+}
+#endif
+
 // REQ: RUNTIME-001
 TEST(RunSessionTest, RejectsEmptyPlanBeforeCreatingSession) {
   const ExecutionPlan plan;
   EXPECT_THROW((void)run_async(plan), CompileError);
   EXPECT_THROW((void)run(plan), CompileError);
+}
+
+// Freshness recovery state belongs only to a round that evicted a retained temporal claim. An
+// ordinary physical predicate poll must not pay an extra virtual call to inspect that state.
+// REQ: RUNTIME-017
+TEST(RunSessionTest, OrdinaryPollDoesNotQueryFreshnessRecoveryStatus) {
+  test::RuntimeProbeState::reset();
+  const auto probe = std::make_shared<OrdinaryPollStatusProbe>();
+  const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_port_binding_factory(
+      test::make_runtime_test_plan(), std::make_shared<OrdinaryPollStatusFactory>(probe));
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  ASSERT_EQ(session.termination(), RunTermination::kCompleted);
+  ASSERT_TRUE(session.diagnostics().empty());
+  EXPECT_GT(probe->poll_calls.load(std::memory_order_relaxed), 0U);
+  EXPECT_EQ(probe->incomplete_status_calls.load(std::memory_order_relaxed), 0U);
 }
 
 // REQ: RUNTIME-007
@@ -610,7 +1500,8 @@ TEST(RunSessionTest, AcceptedPlanAllocationFailureReturnsTerminalSessionInsteadO
   const ExecutionPlan plan =
       detail::RuntimeTestPlanAccess::with_terminal_summary_sink(with_diagnostics, summary_sink);
 
-  const RunSession session = [&] {
+  // Key setup: fail the first startup allocation after an otherwise accepted plan is supplied.
+  RunSession session = [&] {
     const test::ScopedAllocationFailure fail_next_allocation{0U};
     return run_async(plan);
   }();
@@ -626,10 +1517,15 @@ TEST(RunSessionTest, AcceptedPlanAllocationFailureReturnsTerminalSessionInsteadO
   EXPECT_EQ(summaries.front().first_token, "RUNTIME_STARTUP_FAILED");
   EXPECT_EQ(summaries.front().structured_publication_count, 1U);
 
+  // Key assertion: the shared startup-failure state rejects parameter capture without a plan.
+  auto captured = session.capture_params();
+  ASSERT_FALSE(captured);
+  EXPECT_EQ(captured.error().code, ErrorCode::kClosed);
+
   int blocking_result{};
   {
     const test::ScopedAllocationFailure fail_next_allocation{0U};
-    blocking_result = run(plan);
+    blocking_result = run(plan, RunSignalPolicy::kCallerManaged);
   }
   EXPECT_NE(blocking_result, 0);
   ASSERT_EQ(diagnostic_sink->snapshot().size(), 2U);
@@ -668,7 +1564,7 @@ TEST(RunSessionTest, BlockingAndAsyncRunsPublishTheExactSameTerminalDiagnostics)
   EXPECT_TRUE(async_diagnostics.front().id);
 
   test::RuntimeProbeState::reset();
-  EXPECT_NE(run(plan), 0);
+  EXPECT_NE(run(plan, RunSignalPolicy::kCallerManaged), 0);
   const auto published = sink->snapshot();
   ASSERT_EQ(published.size(), 2U);
   expect_diagnostic_sequences_equal(async_diagnostics, published[0]);
@@ -734,6 +1630,24 @@ TEST(RunSessionTest, UnselectedMultiProcessPlanFailsBeforeRuntimeMaterialization
   EXPECT_EQ(summaries.front().structured_publication_count, 1U);
 }
 
+// REQ: RUNTIME-047
+// REQ: RUNTIME-049
+TEST(RunSessionTest, ManagedAsyncAdmissionAbortRetiresBindingBeforeClose) {
+  const ExecutionPlan plan = make_unselected_process_group_test_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  for (std::size_t iteration = 0U; iteration < 20U; ++iteration) {
+    auto created = ManagedShutdownSignals::create();
+    ASSERT_TRUE(created) << static_cast<unsigned>(created.error().code);
+    auto signals = std::move(created).value();
+
+    RunSession session = run_async(plan, signals);
+    session.wait();
+    EXPECT_EQ(session.termination(), RunTermination::kFailed);
+    ASSERT_TRUE(signals.close()) << "iteration " << iteration;
+  }
+}
+
 // REQ: RUNTIME-036
 TEST(RunSessionTest, InvalidExplicitProcessGroupUsesGenericStartupBoundary) {
   test::RuntimeProbeState::reset();
@@ -767,6 +1681,113 @@ TEST(RunSessionTest, InvalidExplicitProcessGroupUsesGenericStartupBoundary) {
   EXPECT_EQ(summaries.front().structured_publication_count, 1U);
 }
 
+// A process-group RunSession owns progress only for Operators reconstructed in that worker. A
+// remote rule is absent, not a local zero, and the private terminal sink must publish the same
+// canonical local subsequence as the public session accessor.
+// REQ: RUNTIME-005
+// REQ: RUNTIME-041
+// REQ: RUNTIME-050
+TEST(RunSessionTest, ProcessGroupWorkersPublishOnlyTheirLocalCompletionProgress) {
+  const ExecutionPlan baseline = make_process_group_completion_progress_test_plan();
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  ASSERT_EQ(baseline.operator_completion_rules().size(), 2U);
+  const auto accepted = detail::ExecutionPlanAccess::retain(baseline);
+  ASSERT_NE(accepted, nullptr);
+
+  std::array<ProcessGroupId, 2U> groups;
+  for (std::size_t index = 0U; index < baseline.operator_completion_rules().size(); ++index) {
+    const auto& rule = baseline.operator_completion_rules()[index];
+    const auto factory =
+        std::find_if(accepted->executable_factories.operators.begin(),
+                     accepted->executable_factories.operators.end(),
+                     [&](const auto& record) { return record.operator_id == rule.owner.id; });
+    ASSERT_NE(factory, accepted->executable_factories.operators.end());
+    groups[index] = detail::process_group_for(*accepted, factory->vertex);
+    ASSERT_TRUE(groups[index]);
+  }
+  ASSERT_NE(groups[0], groups[1]);
+
+  for (std::size_t selected_index = 0U; selected_index < groups.size(); ++selected_index) {
+    SCOPED_TRACE(selected_index);
+    const std::size_t remote_index = 1U - selected_index;
+    const auto& local_rule = baseline.operator_completion_rules()[selected_index];
+    const auto& remote_rule = baseline.operator_completion_rules()[remote_index];
+    const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
+    const ExecutionPlan plan =
+        detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, diagnostic_sink);
+
+    test::RuntimeComputeCallChannelProbeState::reset(true);
+    RunSession session = detail::run_async_worker(plan, groups[selected_index]);
+    const bool compute_entered =
+        test::RuntimeComputeCallChannelProbeState::wait_until_source_compute();
+    EXPECT_TRUE(compute_entered);
+    EXPECT_TRUE(session.operator_completion_progress().empty());
+    const auto local_ref = session.operator_ref(local_rule.owner);
+    EXPECT_TRUE(local_ref);
+    const auto remote_ref = session.operator_ref(remote_rule.owner);
+    EXPECT_FALSE(remote_ref);
+    if (!remote_ref) {
+      EXPECT_EQ(remote_ref.error().code, ErrorCode::kStaleOperatorRef);
+    }
+    test::RuntimeComputeCallChannelProbeState::release_source_compute();
+    session.wait();
+
+    ASSERT_EQ(session.termination(), RunTermination::kCompleted);
+    EXPECT_TRUE(session.diagnostics().empty());
+    ASSERT_EQ(session.operator_completion_progress().size(), 1U);
+    const auto& progress = session.operator_completion_progress().front();
+    EXPECT_EQ(progress.owner.id, local_rule.owner.id);
+    EXPECT_EQ(progress.owner.plan_generation, local_rule.owner.plan_generation);
+    if (local_ref) {
+      EXPECT_EQ(progress.owner, *local_ref);
+    }
+    EXPECT_EQ(progress.kind, local_rule.kind);
+    EXPECT_EQ(progress.configured_limit, local_rule.limit);
+    EXPECT_EQ(progress.successful_compute_calls, local_rule.limit);
+    EXPECT_TRUE(progress.limit_reached);
+    EXPECT_EQ(
+        test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+        local_rule.limit);
+    EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+              local_rule.limit);
+
+    const auto published = diagnostic_sink->snapshot_operator_completion_progress();
+    ASSERT_EQ(published.size(), 1U);
+    const std::vector<OperatorCompletionProgressRecord> public_progress{
+        session.operator_completion_progress().begin(),
+        session.operator_completion_progress().end()};
+    EXPECT_EQ(published.front(), public_progress);
+  }
+}
+
+// A failed multi-process launch without a selected group reconstructs no Operator and therefore
+// owns no completion-progress cell, while still invoking the terminal sink exactly once.
+// REQ: RUNTIME-036
+// REQ: RUNTIME-050
+TEST(RunSessionTest, UnselectedMultiProcessPlanPublishesEmptyCompletionProgress) {
+  const ExecutionPlan baseline = make_process_group_completion_progress_test_plan();
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  ASSERT_EQ(baseline.operator_completion_rules().size(), 2U);
+  const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, diagnostic_sink);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  test::RuntimeComputeCallChannelProbeState::reset();
+  RunSession session = run_async(plan);
+  session.wait();
+
+  ASSERT_EQ(session.termination(), RunTermination::kFailed);
+  ASSERT_EQ(session.diagnostics().size(), 1U);
+  EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_PROCESS_GROUP_SELECTION_REQUIRED");
+  EXPECT_TRUE(session.operator_completion_progress().empty());
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            0U);
+  const auto published = diagnostic_sink->snapshot_operator_completion_progress();
+  ASSERT_EQ(published.size(), 1U);
+  EXPECT_TRUE(published.front().empty());
+}
+
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 // REQ: RUNTIME-004
 TEST(RunSessionTest, StructuralDiagnosticSinkFailureCannotChangeRunOutcome) {
@@ -783,8 +1804,27 @@ TEST(RunSessionTest, StructuralDiagnosticSinkFailureCannotChangeRunOutcome) {
   ASSERT_EQ(session.diagnostics().size(), 1U);
   EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_READINESS_BINDING_UNAVAILABLE");
   test::RuntimeProbeState::reset();
-  EXPECT_NE(run(plan), 0);
+  EXPECT_NE(run(plan, RunSignalPolicy::kCallerManaged), 0);
   EXPECT_TRUE(sink->snapshot().empty());
+}
+
+// The test sink's failure injection must cover every callback so a future Runtime publication
+// surface cannot silently bypass the containment path exercised above.
+// REQ: RUNTIME-004
+TEST(RunSessionTest, StructuralDiagnosticSinkFailureInjectionCoversEveryCallback) {
+  RecordingDiagnosticSink sink{true};
+  EXPECT_THROW(sink.publish(std::span<const Diagnostic>{}), std::runtime_error);
+  EXPECT_THROW(sink.publish_runtime_details(std::span<const detail::RuntimeDiagnosticDetail>{}),
+               std::runtime_error);
+  EXPECT_THROW(
+      sink.publish_lifecycle_receipts(std::span<const detail::RuntimeLifecycleReceiptDiagnostic>{}),
+      std::runtime_error);
+  EXPECT_THROW(
+      sink.publish_lane_startup_evidence(std::span<const detail::ExecutionLaneStartupEvidence>{}),
+      std::runtime_error);
+  EXPECT_THROW(sink.publish_operator_completion_progress(
+                   std::span<const OperatorCompletionProgressRecord>{}),
+               std::runtime_error);
 }
 #endif
 
@@ -863,6 +1903,961 @@ TEST(RunSessionTest, CompletedRecurringActivationsAttemptNoTerminalFailureSummar
   EXPECT_TRUE(session.diagnostics().empty());
   EXPECT_TRUE(summary_sink->snapshot().empty());
   EXPECT_EQ(std::ranges::count(test::RuntimeProbeState::snapshot(), 12), kActivationCount);
+}
+
+void expect_terminal_compute_call_progress(const RunSession& session, const ExecutionPlan& plan,
+                                           std::uint64_t configured_limit,
+                                           std::uint64_t successful_compute_calls,
+                                           bool limit_reached) {
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+  ASSERT_EQ(session.operator_completion_progress().size(), 1U);
+  const auto& rule = plan.operator_completion_rules().front();
+  const auto& progress = session.operator_completion_progress().front();
+  EXPECT_TRUE(rule.owner.plan_bound());
+  EXPECT_TRUE(progress.owner.run_bound());
+  EXPECT_EQ(progress.owner.id, rule.owner.id);
+  EXPECT_EQ(progress.owner.plan_generation, rule.owner.plan_generation);
+  EXPECT_EQ(progress.kind, OperatorCompletionRuleKind::kComputeCalls);
+  EXPECT_EQ(progress.configured_limit, configured_limit);
+  EXPECT_EQ(progress.successful_compute_calls, successful_compute_calls);
+  EXPECT_EQ(progress.limit_reached, limit_reached);
+}
+
+void expect_operator_completion_progress_sequences_equal(
+    std::span<const OperatorCompletionProgressRecord> expected,
+    std::span<const OperatorCompletionProgressRecord> actual) {
+  ASSERT_EQ(actual.size(), expected.size());
+  for (std::size_t index = 0U; index < expected.size(); ++index) {
+    SCOPED_TRACE(index);
+    EXPECT_EQ(actual[index].owner, expected[index].owner);
+    EXPECT_EQ(actual[index].kind, expected[index].kind);
+    EXPECT_EQ(actual[index].configured_limit, expected[index].configured_limit);
+    EXPECT_EQ(actual[index].successful_compute_calls, expected[index].successful_compute_calls);
+    EXPECT_EQ(actual[index].limit_reached, expected[index].limit_reached);
+  }
+}
+
+// Three physical Spin witnesses are available, but the source owns a one-call completion rule.
+// The test control retains the finite receiver after the limit-reaching retirement so the next
+// two stale selections reach the ordinary lane-side final-entry fence without entering compute.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, OrdinaryDispatchRejectsQueuedWorkBeyondTheFinalComputeEntry) {
+  reset_runtime_completion_fence_probe();
+  const ExecutionPlan compiled = make_runtime_completion_fence_plan();
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  const auto compiled_state = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_NE(compiled_state, nullptr);
+  ASSERT_EQ(compiled_state->closed_island_activations.size(), 1U);
+  const ExecutionPlan finite = detail::RuntimeTestPlanAccess::enable_direct_count(compiled, 3U);
+  const ExecutionPlan ordinary =
+      detail::RuntimeTestPlanAccess::disable_direct_continuation_elision_for_test(finite);
+  const auto final_entry_control =
+      std::make_shared<detail::RuntimeOperatorCompletionFinalEntryTestControl>();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_operator_completion_final_entry_test_control(
+          ordinary, final_entry_control);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(RuntimeCompletionFenceSource::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(RuntimeCompletionFenceSink::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(RuntimeCompletionFenceSink::observed_value.load(std::memory_order_relaxed), 41U);
+  // Only the ruled source's three witnesses reach the final-entry control. Its unruled sibling
+  // shares the partition wrapper but falls through after the owner lookup without being counted.
+  EXPECT_EQ(final_entry_control->checked_count(), 3U);
+  EXPECT_EQ(final_entry_control->rejected_count(), 2U);
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// A stale retained witness reaches the same lane entry as ordinary admitted work, but the
+// Operator-local completion fence precedes deadline sampling. Only the limit-reaching call may
+// start deadline evaluation; the two post-limit selections are retired without that side effect.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, FinalEntryFenceRejectsStaleWorkBeforeDeadlineEvaluation) {
+  reset_runtime_completion_fence_probe();
+  const ExecutionPlan compiled = make_runtime_completion_fence_plan(true);
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  ASSERT_EQ(compiled.deadlines().size(), 1U);
+  const auto compiled_state = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_NE(compiled_state, nullptr);
+  ASSERT_TRUE(compiled_state->closed_island_activations.empty());
+  const ExecutionPlan finite = detail::RuntimeTestPlanAccess::enable_direct_count(compiled, 3U);
+  const ExecutionPlan ordinary =
+      detail::RuntimeTestPlanAccess::disable_direct_continuation_elision_for_test(finite);
+  const auto final_entry_control =
+      std::make_shared<detail::RuntimeOperatorCompletionFinalEntryTestControl>();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_operator_completion_final_entry_test_control(
+          ordinary, final_entry_control);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(RuntimeCompletionFenceSource::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(RuntimeCompletionFenceSink::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(final_entry_control->rejected_count(), 2U);
+  EXPECT_EQ(final_entry_control->deadline_evaluation_count(), 1U);
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// Disabling the two-callback composite retains the direct-continuation receipt path. Hold the
+// receipt after the source gate has closed; releasing it may drain the final successor, but the
+// final-entry fence must reject both retained source witnesses without entering compute.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, DirectContinuationDrainsTheFinalSuccessorWithoutReenteringTheSource) {
+  reset_runtime_completion_fence_probe();
+  const ExecutionPlan compiled = make_runtime_completion_fence_plan();
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  const auto compiled_state = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_NE(compiled_state, nullptr);
+  ASSERT_EQ(compiled_state->closed_island_activations.size(), 1U);
+  const ExecutionPlan finite = detail::RuntimeTestPlanAccess::enable_direct_count(compiled, 3U);
+  const ExecutionPlan ordinary =
+      detail::RuntimeTestPlanAccess::disable_closed_island_composite_for_test(finite);
+  const auto final_entry_control =
+      std::make_shared<detail::RuntimeOperatorCompletionFinalEntryTestControl>();
+  const ExecutionPlan with_final_entry =
+      detail::RuntimeTestPlanAccess::with_operator_completion_final_entry_test_control(
+          ordinary, final_entry_control);
+  const auto control = std::make_shared<detail::RuntimeDirectContinuationTestControl>();
+  const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_direct_continuation_test_control(
+      with_final_entry, control);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool receipt_staged = control->wait_until_receipt_staged();
+  if (!receipt_staged) {
+    session.request_stop();
+    control->release();
+    session.wait();
+  }
+  ASSERT_TRUE(receipt_staged);
+  EXPECT_TRUE(session.is_running());
+  EXPECT_EQ(RuntimeCompletionFenceSource::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(RuntimeCompletionFenceSink::compute_count.load(std::memory_order_acquire), 0U);
+  control->release();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(RuntimeCompletionFenceSource::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(RuntimeCompletionFenceSink::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(RuntimeCompletionFenceSink::observed_value.load(std::memory_order_relaxed), 41U);
+  EXPECT_EQ(final_entry_control->checked_count(), 3U);
+  EXPECT_EQ(final_entry_control->rejected_count(), 2U);
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// The fused closed-island path uses the same final-entry fence. Pause between the source and
+// successor transactions after the source's retirement closes its completion gate, then verify
+// that the successor alone drains the accepted final publication while two stale source
+// selections are rejected at final entry.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, ClosedIslandDrainsTheFinalSuccessorWithoutReenteringTheSource) {
+  reset_runtime_completion_fence_probe();
+  const ExecutionPlan compiled = make_runtime_completion_fence_plan();
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  const auto compiled_state = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_NE(compiled_state, nullptr);
+  ASSERT_EQ(compiled_state->closed_island_activations.size(), 1U);
+  const ExecutionPlan finite = detail::RuntimeTestPlanAccess::enable_direct_count(compiled, 3U);
+  const auto final_entry_control =
+      std::make_shared<detail::RuntimeOperatorCompletionFinalEntryTestControl>();
+  const ExecutionPlan with_final_entry =
+      detail::RuntimeTestPlanAccess::with_operator_completion_final_entry_test_control(
+          finite, final_entry_control);
+  const auto control = std::make_shared<detail::RuntimeClosedIslandTestControl>();
+  control->set_pause_before_successor(true);
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_closed_island_test_control(with_final_entry, control);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool source_retired = control->wait_until_before_successor();
+  if (!source_retired) {
+    session.request_stop();
+    control->release();
+    session.wait();
+  }
+  ASSERT_TRUE(source_retired);
+  EXPECT_TRUE(session.is_running());
+  EXPECT_EQ(RuntimeCompletionFenceSource::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(RuntimeCompletionFenceSink::compute_count.load(std::memory_order_acquire), 0U);
+  control->release();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(RuntimeCompletionFenceSource::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(RuntimeCompletionFenceSink::compute_count.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(RuntimeCompletionFenceSink::observed_value.load(std::memory_order_relaxed), 41U);
+  EXPECT_EQ(final_entry_control->checked_count(), 3U);
+  EXPECT_EQ(final_entry_control->rejected_count(), 2U);
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// REQ: RUNTIME-050
+TEST(RunSessionTest, ComputeCallCompletionStopsTheSourceAtItsLimitWithoutAnExtraCallback) {
+  constexpr std::uint64_t kLimit = 2U;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(kLimit);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            kLimit);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            2U * kLimit);
+  expect_terminal_compute_call_progress(session, plan, kLimit, kLimit, true);
+}
+
+// REQ: RUNTIME-050
+TEST(RunSessionTest, OperatorCompletionProgressRemainsEmptyUntilTerminalOutcomeFreeze) {
+  test::RuntimeComputeCallChannelProbeState::reset(true);
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  EXPECT_TRUE(test::RuntimeComputeCallChannelProbeState::wait_until_source_compute());
+  EXPECT_TRUE(session.operator_completion_progress().empty());
+  test::RuntimeComputeCallChannelProbeState::release_source_compute();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// REQ: RUNTIME-050
+TEST(RunSessionTest, FreshRunSessionStartsComputeCallProgressAtZero) {
+  constexpr std::uint64_t kLimit = 2U;
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(kLimit);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  RunGenerationId first_run_generation{};
+
+  for (std::size_t run = 0U; run < 2U; ++run) {
+    test::RuntimeComputeCallChannelProbeState::reset();
+    RunSession session = run_async(plan);
+    session.wait();
+
+    EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+    EXPECT_EQ(
+        test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+        kLimit);
+    expect_terminal_compute_call_progress(session, plan, kLimit, kLimit, true);
+    ASSERT_EQ(session.operator_completion_progress().size(), 1U);
+    const RunGenerationId run_generation =
+        session.operator_completion_progress().front().owner.run_generation;
+    if (run == 0U) {
+      first_run_generation = run_generation;
+    } else {
+      EXPECT_NE(run_generation, first_run_generation);
+    }
+  }
+}
+
+// Completion records are immutable replay identity. Removing or changing the compiled rule fails
+// before lifecycle callbacks or compute entry rather than silently changing the session budget.
+// REQ: CONTRACT-020
+// REQ: RUNTIME-050
+TEST(RunSessionTest, CompletionRuleReplayRejectsMissingOrChangedRecordBeforeCompute) {
+  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(2U);
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  ASSERT_EQ(baseline.operator_completion_rules().size(), 1U);
+  const OperatorRef owner = baseline.operator_completion_rules().front().owner;
+  const std::array cases{
+      std::pair{"missing",
+                detail::RuntimeTestPlanAccess::without_operator_completion_rules(baseline)},
+      std::pair{"changed",
+                detail::RuntimeTestPlanAccess::with_operator_completion_rule(baseline, owner, 3U)},
+  };
+
+  for (const auto& [name, plan] : cases) {
+    SCOPED_TRACE(name);
+    test::RuntimeComputeCallChannelProbeState::reset();
+    ASSERT_TRUE(plan.ok()) << plan.json();
+
+    RunSession session = run_async(plan);
+    session.wait();
+
+    EXPECT_EQ(session.termination(), RunTermination::kFailed);
+    ASSERT_FALSE(session.diagnostics().empty());
+    EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_OPERATOR_REPLAY_FINGERPRINT_MISMATCH");
+    EXPECT_EQ(
+        test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+        0U);
+  }
+}
+
+// REQ: RUNTIME-050
+TEST(RunSessionTest, AcceptedRestartPreservesLogicalOperatorComputeCallProgress) {
+  constexpr std::uint64_t kLimit = 2U;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(
+      kLimit, test::RuntimeComputeCallAction::kRestartAfterFirst);
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, diagnostic_sink);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_TRUE(
+      test::RuntimeComputeCallChannelProbeState::restart_accepted.load(std::memory_order_acquire));
+  EXPECT_EQ(
+      test::RuntimeComputeCallChannelProbeState::restart_error.load(std::memory_order_relaxed),
+      ErrorCode::kSuccess);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            kLimit);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            2U);
+  EXPECT_EQ(
+      test::RuntimeComputeCallChannelProbeState::sink_compute_count.load(std::memory_order_acquire),
+      2U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::first_value.load(std::memory_order_relaxed),
+            78U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::second_value.load(std::memory_order_relaxed),
+            78U);
+  // Task 036 discards queued old-generation ingress when a restart publishes. Task 039 preserves
+  // the logical compute-call count and protects the final limit-reaching call's publications; it
+  // does not carry the first call's queued value across the generation boundary.
+  const auto lifecycle_receipts = diagnostic_sink->snapshot_lifecycle_receipts();
+  ASSERT_EQ(lifecycle_receipts.size(), 1U);
+  ASSERT_EQ(lifecycle_receipts.front().size(), 1U);
+  const auto& receipt = lifecycle_receipts.front().front();
+  EXPECT_EQ(receipt.origin, detail::RuntimeLifecycleRequestOrigin::kComputeSelf);
+  EXPECT_EQ(receipt.state, LifecycleTransactionState::kPublished);
+  EXPECT_EQ(receipt.recovery, detail::RuntimeLifecycleRecoveryDisposition::kPublished);
+  EXPECT_EQ(receipt.previous_epoch, 1U);
+  EXPECT_EQ(receipt.candidate_epoch, 2U);
+  EXPECT_EQ(receipt.effective_epoch, 2U);
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+  EXPECT_EQ(receipt.receipt.target.id, plan.operator_completion_rules().front().owner.id);
+  EXPECT_EQ(receipt.receipt.target.plan_generation,
+            plan.operator_completion_rules().front().owner.plan_generation);
+  expect_terminal_compute_call_progress(session, plan, kLimit, kLimit, true);
+}
+
+// An accepted self-restart preserves the logical Operator's cumulative progress while Task 036
+// retires only the restart-boundary call's queued old-generation publications.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, AcceptedRestartPreservesThreeHundredComputeCallsAcrossTwoGenerations) {
+  constexpr std::uint64_t kSuccessfulComputeCallsBeforeRestart = 120U;
+  constexpr std::uint64_t kSuccessfulComputeCallsAfterRestart = 180U;
+  constexpr std::uint64_t kLimit =
+      kSuccessfulComputeCallsBeforeRestart + kSuccessfulComputeCallsAfterRestart;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(
+      kLimit,
+      test::RuntimeComputeCallAction::kRestartAfterComputeCalls,
+      kSuccessfulComputeCallsBeforeRestart);
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, diagnostic_sink);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_TRUE(
+      test::RuntimeComputeCallChannelProbeState::restart_accepted.load(std::memory_order_acquire));
+  EXPECT_EQ(
+      test::RuntimeComputeCallChannelProbeState::restart_error.load(std::memory_order_relaxed),
+      ErrorCode::kSuccess);
+  const std::uint64_t successful_compute_calls =
+      test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire);
+  const std::uint64_t successful_compute_calls_before_restart =
+      test::RuntimeComputeCallChannelProbeState::successful_compute_calls_before_restart.load(
+          std::memory_order_acquire);
+  EXPECT_EQ(successful_compute_calls_before_restart, kSuccessfulComputeCallsBeforeRestart);
+  EXPECT_EQ(successful_compute_calls - successful_compute_calls_before_restart,
+            kSuccessfulComputeCallsAfterRestart);
+  EXPECT_EQ(successful_compute_calls, kLimit);
+  // Task 036 discards only restart-boundary publications that are still queued when the restart
+  // publishes. Either fanout arm may already have been consumed, so zero, one, or both boundary
+  // samples may survive; every other sample, including both final-call samples, must drain.
+  const std::size_t sink_count =
+      test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire);
+  EXPECT_GE(sink_count, 2U * (kLimit - 1U));
+  EXPECT_LE(sink_count, 2U * kLimit);
+  const auto lifecycle_receipts = diagnostic_sink->snapshot_lifecycle_receipts();
+  ASSERT_EQ(lifecycle_receipts.size(), 1U);
+  ASSERT_EQ(lifecycle_receipts.front().size(), 1U);
+  const auto& receipt = lifecycle_receipts.front().front();
+  EXPECT_EQ(receipt.origin, detail::RuntimeLifecycleRequestOrigin::kComputeSelf);
+  EXPECT_EQ(receipt.state, LifecycleTransactionState::kPublished);
+  EXPECT_EQ(receipt.recovery, detail::RuntimeLifecycleRecoveryDisposition::kPublished);
+  EXPECT_EQ(receipt.previous_epoch, 1U);
+  EXPECT_EQ(receipt.candidate_epoch, 2U);
+  EXPECT_EQ(receipt.effective_epoch, 2U);
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+  EXPECT_EQ(receipt.receipt.target.id, plan.operator_completion_rules().front().owner.id);
+  EXPECT_EQ(receipt.receipt.target.plan_generation,
+            plan.operator_completion_rules().front().owner.plan_generation);
+  expect_terminal_compute_call_progress(session, plan, kLimit, kLimit, true);
+}
+
+// A failed forward restart that restores the old generation does not create a fresh completion
+// budget. The first accepted publication survives Task 036 rollback, then the second successful
+// call reaches the same logical Operator's original limit.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, RolledBackRestartPreservesLogicalOperatorComputeCallProgress) {
+  constexpr std::uint64_t kLimit = 2U;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(
+      kLimit, test::RuntimeComputeCallAction::kRestartRollbackAfterFirst);
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, diagnostic_sink);
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_TRUE(
+      test::RuntimeComputeCallChannelProbeState::restart_accepted.load(std::memory_order_acquire));
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::restart_forward_start_count.load(
+                std::memory_order_acquire),
+            1U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::restore_old_start_count.load(
+                std::memory_order_acquire),
+            1U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            kLimit);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            2U * kLimit);
+  const auto lifecycle_receipts = diagnostic_sink->snapshot_lifecycle_receipts();
+  ASSERT_EQ(lifecycle_receipts.size(), 1U);
+  ASSERT_EQ(lifecycle_receipts.front().size(), 1U);
+  const auto& receipt = lifecycle_receipts.front().front();
+  EXPECT_EQ(receipt.state, LifecycleTransactionState::kRolledBack);
+  EXPECT_EQ(receipt.recovery, detail::RuntimeLifecycleRecoveryDisposition::kRestoredOldEpoch);
+  EXPECT_EQ(receipt.previous_epoch, 1U);
+  EXPECT_EQ(receipt.candidate_epoch, 2U);
+  EXPECT_EQ(receipt.effective_epoch, 1U);
+  expect_terminal_compute_call_progress(session, plan, kLimit, kLimit, true);
+}
+
+// REQ: RUNTIME-050
+TEST(RunSessionTest, ComputeCallCompletionDrainsFinalOutputAndEosBeforeNaturalCompletion) {
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            1U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            2U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::first_value.load(std::memory_order_relaxed),
+            77U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::second_value.load(std::memory_order_relaxed),
+            77U);
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// An ordinary inputful transform must propagate natural closure only after forwarding the source's
+// final accepted data. EOS is control, not an extra compute-call witness at either downstream hop.
+// REQ: RUNTIME-050
+// REQ: CHAN-136
+TEST(RunSessionTest, ComputeCallCompletionPropagatesEosThroughOrdinaryThreeHopChain) {
+  constexpr std::uint64_t kLimit = 2U;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = test::make_runtime_compute_call_chain_plan(kLimit);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            kLimit);
+  EXPECT_EQ(
+      test::RuntimeComputeCallChannelProbeState::transform_count.load(std::memory_order_acquire),
+      kLimit);
+  EXPECT_EQ(
+      test::RuntimeComputeCallChannelProbeState::sink_compute_count.load(std::memory_order_acquire),
+      kLimit);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            kLimit);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::first_value.load(std::memory_order_relaxed),
+            77U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::second_value.load(std::memory_order_relaxed),
+            78U);
+  expect_terminal_compute_call_progress(session, plan, kLimit, kLimit, true);
+}
+
+// Each finite producer closes only its own gate. Natural completion waits for both unequal limits
+// and their independent downstream EOS paths to drain.
+// REQ: RUNTIME-050
+// REQ: CHAN-136
+TEST(RunSessionTest, UnequalFiniteSourcesCompleteOnlyAfterEveryOperatorLocalLimitDrains) {
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = make_unequal_compute_call_sources_test_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.operator_completion_rules().size(), 2U);
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            4U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            4U);
+  ASSERT_EQ(session.operator_completion_progress().size(), 2U);
+  EXPECT_EQ(session.operator_completion_progress()[0].configured_limit, 1U);
+  EXPECT_EQ(session.operator_completion_progress()[0].successful_compute_calls, 1U);
+  EXPECT_TRUE(session.operator_completion_progress()[0].limit_reached);
+  EXPECT_EQ(session.operator_completion_progress()[1].configured_limit, 3U);
+  EXPECT_EQ(session.operator_completion_progress()[1].successful_compute_calls, 3U);
+  EXPECT_TRUE(session.operator_completion_progress()[1].limit_reached);
+}
+
+// A finite producer reaching its limit does not make an unrelated ordinary source finite. The
+// session remains live until an explicit Task 036 stop wins terminal arbitration.
+// REQ: RUNTIME-050
+// REQ: CHAN-136
+TEST(RunSessionTest, FiniteProducerDrainDoesNotCompleteAnUnboundedSource) {
+  test::RuntimeComputeCallChannelProbeState::reset();
+  test::RuntimeClockProbeState::reset();
+  const ExecutionPlan plan = make_finite_and_unbounded_source_test_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+
+  RunSession session = run_async(plan);
+  const auto finite_deadline = std::chrono::steady_clock::now() + 5s;
+  while (test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire) ==
+             0U &&
+         std::chrono::steady_clock::now() < finite_deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            1U);
+  EXPECT_TRUE(test::RuntimeClockProbeState::wait_until_compute_count(1U));
+  EXPECT_TRUE(session.is_running());
+  session.request_stop();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// REQ: RUNTIME-050
+TEST(RunSessionTest, ZeroComputeCallLimitClosesOutputsWithoutCallingTheSource) {
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(0U);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            0U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            0U);
+  expect_terminal_compute_call_progress(session, plan, 0U, 0U, true);
+}
+
+// A terminal close that throws at the backend boundary must fail the RunSession without escaping
+// the noexcept close path. The successful compute-call budget stays recorded, while terminal
+// closure stops at the throwing arm.
+// REQ: RUNTIME-050
+// REQ: CHAN-136
+TEST(RunSessionTest, ThrowingTerminalCloseFailsTheRunSessionAfterCompletionProgressCommits) {
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(1U);
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  const auto accepted = detail::ExecutionPlanAccess::retain(baseline);
+  ASSERT_TRUE(accepted);
+  ASSERT_FALSE(accepted->process_local_channel_publishers.empty());
+  const PortId output = accepted->process_local_channel_publishers.front().source;
+  EXPECT_TRUE(
+      std::ranges::all_of(accepted->process_local_channel_publishers,
+                          [output](const auto& publisher) { return publisher.source == output; }));
+  const auto control = std::make_shared<ThrowingTerminalCloseChannelBindControl>(output);
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_channel_session_bind_test_control(baseline, control);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_TRUE(test::has_runtime_diagnostic(session, "RUNTIME_READINESS_BINDING_UNAVAILABLE"));
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            1U);
+  // The test hook intentionally replaces the real transport publishers with scripted endpoints,
+  // so this seam verifies completion and failure containment rather than downstream delivery.
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            0U);
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+  EXPECT_EQ(control->first_close_count(), 1U);
+#else
+  GTEST_SKIP() << "exception containment requires language exception support";
+#endif
+}
+
+// REQ: RUNTIME-050
+TEST(RunSessionTest, FailedComputeCallRetainsOnlyPreviouslySuccessfulProgressAndPublication) {
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(
+      3U, test::RuntimeComputeCallAction::kFailOnSecond);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            2U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            2U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::first_value.load(std::memory_order_relaxed),
+            77U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::second_value.load(std::memory_order_relaxed),
+            77U);
+  expect_terminal_compute_call_progress(session, plan, 3U, 1U, false);
+}
+
+// An accepted first fanout does not consume completion authority when a later publication in the
+// same callback fails and makes the callback return an Error.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, FailedPublicationConsumesNoComputeCallCompletionUnit) {
+  constexpr std::uint64_t kLimit = 2U;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(
+      kLimit, test::RuntimeComputeCallAction::kFailPublicationOnFirst);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            1U);
+  expect_terminal_compute_call_progress(session, plan, kLimit, 0U, false);
+}
+
+// The callback returns success and its first publication is accepted, but Channel activation
+// retirement fails before the activation cut and completion-cell commit. This is neither a user
+// callback failure nor a publication failure, and therefore consumes no completion unit.
+// REQ: RUNTIME-050
+// REQ: CHAN-136
+TEST(RunSessionTest, FailedPostCallbackChannelRetirementConsumesNoCompletionUnit) {
+  constexpr std::uint64_t kLimit = 2U;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(kLimit);
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::fail_next_channel_activation_retirement_for_test(baseline);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            1U);
+  ASSERT_FALSE(session.diagnostics().empty());
+  EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_LIFECYCLE_CALLBACK_FAILED");
+  EXPECT_TRUE(std::ranges::none_of(session.diagnostics(), [](const Diagnostic& diagnostic) {
+    return diagnostic.token == "RUNTIME_OPERATOR_CALLBACK_FAILED";
+  }));
+  expect_terminal_compute_call_progress(session, plan, kLimit, 0U, false);
+}
+
+// The structural sink receives one terminal completion-progress sequence for every terminal
+// outcome, including successful outcomes whose ordinary Diagnostic sequence is empty. Each
+// sequence must be nonempty and byte-for-field identical to the public frozen accessor.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, TerminalSinkPublishesOneNonemptyCompletionProgressSequenceForEveryOutcome) {
+  struct TestCase {
+    std::string_view name;
+    std::uint64_t limit{};
+    test::RuntimeComputeCallAction action{test::RuntimeComputeCallAction::kNone};
+    RunTermination expected_termination{RunTermination::kCompleted};
+    std::uint64_t expected_progress{};
+    bool expected_limit_reached{};
+  };
+  constexpr std::array test_cases{
+      TestCase{
+          .name = "natural",
+          .limit = 1U,
+          .action = test::RuntimeComputeCallAction::kNone,
+          .expected_termination = RunTermination::kCompleted,
+          .expected_progress = 1U,
+          .expected_limit_reached = true,
+      },
+      TestCase{
+          .name = "stop",
+          .limit = 3U,
+          .action = test::RuntimeComputeCallAction::kRequestStopAfterFirst,
+          .expected_termination = RunTermination::kStopped,
+          .expected_progress = 1U,
+          .expected_limit_reached = false,
+      },
+      TestCase{
+          .name = "requested-completion",
+          .limit = 3U,
+          .action = test::RuntimeComputeCallAction::kRequestCompletionAfterFirst,
+          .expected_termination = RunTermination::kRequestedCompleted,
+          .expected_progress = 1U,
+          .expected_limit_reached = false,
+      },
+      TestCase{
+          .name = "failure",
+          .limit = 3U,
+          .action = test::RuntimeComputeCallAction::kFailOnSecond,
+          .expected_termination = RunTermination::kFailed,
+          .expected_progress = 1U,
+          .expected_limit_reached = false,
+      },
+  };
+
+  for (const TestCase& test_case : test_cases) {
+    SCOPED_TRACE(test_case.name);
+    test::RuntimeComputeCallChannelProbeState::reset();
+    const ExecutionPlan baseline =
+        test::make_runtime_compute_call_channel_plan(test_case.limit, test_case.action);
+    ASSERT_TRUE(baseline.ok()) << baseline.json();
+    const auto sink = std::make_shared<RecordingDiagnosticSink>();
+    const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, sink);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+
+    RunSession session = run_async(plan);
+    session.wait();
+
+    EXPECT_EQ(session.termination(), test_case.expected_termination);
+    expect_terminal_compute_call_progress(session,
+                                          plan,
+                                          test_case.limit,
+                                          test_case.expected_progress,
+                                          test_case.expected_limit_reached);
+    const auto published = sink->snapshot_operator_completion_progress();
+    ASSERT_EQ(published.size(), 1U);
+    ASSERT_FALSE(published.front().empty());
+    expect_operator_completion_progress_sequences_equal(session.operator_completion_progress(),
+                                                        published.front());
+  }
+}
+
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+// A thrown callback after an accepted publication is still a failed compute call and consumes no
+// completion authority.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, ThrownComputeCallConsumesNoCompletionUnit) {
+  constexpr std::uint64_t kLimit = 2U;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(
+      kLimit, test::RuntimeComputeCallAction::kThrowOnFirst);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            1U);
+  expect_terminal_compute_call_progress(session, plan, kLimit, 0U, false);
+}
+#endif
+
+// REQ: RUNTIME-050
+TEST(RunSessionTest, StopPublishesPartialComputeCallProgressWithoutClaimingTheLimit) {
+  test::RuntimeComputeCallChannelProbeState::reset(true);
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(
+      3U, test::RuntimeComputeCallAction::kRequestStopAfterFirst);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  EXPECT_TRUE(test::RuntimeComputeCallChannelProbeState::wait_until_source_compute());
+  EXPECT_TRUE(session.operator_completion_progress().empty());
+  test::RuntimeComputeCallChannelProbeState::release_source_compute();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
+  expect_terminal_compute_call_progress(session, plan, 3U, 1U, false);
+}
+
+// UINT64_MAX is an exact limit rather than an absent/unbounded sentinel. A stopped session reports
+// that unchanged configured value and its bounded partial progress.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, MaximumComputeCallLimitIsAnOrdinaryExactValue) {
+  constexpr std::uint64_t kLimit = std::numeric_limits<std::uint64_t>::max();
+  test::RuntimeComputeCallChannelProbeState::reset(true);
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(
+      kLimit, test::RuntimeComputeCallAction::kRequestStopAfterFirst);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  EXPECT_TRUE(test::RuntimeComputeCallChannelProbeState::wait_until_source_compute());
+  test::RuntimeComputeCallChannelProbeState::release_source_compute();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
+  expect_terminal_compute_call_progress(session, plan, kLimit, 1U, false);
+}
+
+// Seed the executable progress immediately below its exact maximum, then require one and only one
+// successful compute call to reach natural completion without increment wrap.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, MaximumComputeCallBoundaryClosesWithoutWrapOrAnExtraCallback) {
+  constexpr std::uint64_t kLimit = std::numeric_limits<std::uint64_t>::max();
+  constexpr std::uint64_t kSeed = kLimit - 1U;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan source = test::make_runtime_compute_call_channel_plan(kLimit);
+  ASSERT_TRUE(source.ok()) << source.json();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_operator_compute_call_progress_seed_for_test(source,
+                                                                                       kSeed);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            1U);
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::sink_count.load(std::memory_order_acquire),
+            2U);
+  expect_terminal_compute_call_progress(session, plan, kLimit, kLimit, true);
+}
+
+// A valid readiness source that publishes no event performs no callback entry and consumes no
+// completion unit. Explicit stop remains distinct from natural Operator completion.
+// REQ: RUNTIME-050
+TEST(RunSessionTest, UnfiredNotificationConsumesNoComputeCallCompletionUnit) {
+  constexpr std::uint64_t kLimit = 2U;
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = test::make_runtime_dormant_compute_call_plan(kLimit);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.operator_completion_rules().size(), 1U);
+
+  RunSession session = run_async(plan);
+  std::this_thread::sleep_for(25ms);
+  EXPECT_TRUE(session.is_running());
+  EXPECT_TRUE(session.operator_completion_progress().empty());
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            0U);
+  session.request_stop();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
+  expect_terminal_compute_call_progress(session, plan, kLimit, 0U, false);
+}
+
+// Task 036 stop precedence wins even when the same successful return reaches the natural limit.
+// REQ: RUNTIME-046
+// REQ: RUNTIME-050
+TEST(RunSessionTest, StopWinsTheFinalSuccessfulComputeCallRace) {
+  test::RuntimeComputeCallChannelProbeState::reset(true);
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(
+      1U, test::RuntimeComputeCallAction::kRequestStopAfterFirst);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  EXPECT_TRUE(test::RuntimeComputeCallChannelProbeState::wait_until_source_compute());
+  test::RuntimeComputeCallChannelProbeState::release_source_compute();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// Requested completion similarly outranks natural completion without weakening the final
+// successful-call accounting boundary.
+// REQ: RUNTIME-046
+// REQ: RUNTIME-050
+TEST(RunSessionTest, RequestedCompletionWinsTheFinalSuccessfulComputeCallRace) {
+  test::RuntimeComputeCallChannelProbeState::reset(true);
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(
+      1U, test::RuntimeComputeCallAction::kRequestCompletionAfterFirst);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  EXPECT_TRUE(test::RuntimeComputeCallChannelProbeState::wait_until_source_compute());
+  test::RuntimeComputeCallChannelProbeState::release_source_compute();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kRequestedCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// A self-restart queued by the limit-reaching call cannot publish a new producer generation after
+// the Operator-local completion gate closes. The lifecycle fence fails closed and Runtime failure
+// outranks the otherwise-natural completion.
+// REQ: RUNTIME-046
+// REQ: RUNTIME-050
+TEST(RunSessionTest, RestartQueuedAtTheLimitCannotReopenTerminalCompletion) {
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(
+      1U, test::RuntimeComputeCallAction::kRestartAfterFirst);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_TRUE(
+      test::RuntimeComputeCallChannelProbeState::restart_accepted.load(std::memory_order_acquire));
+  EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::source_count.load(std::memory_order_acquire),
+            1U);
+  expect_terminal_compute_call_progress(session, plan, 1U, 1U, true);
+}
+
+// REQ: RUNTIME-050
+TEST(RunSessionTest, RequestedCompletionPublishesPartialProgressWithoutClaimingNaturalDrain) {
+  test::RuntimeComputeCallChannelProbeState::reset(true);
+  const ExecutionPlan plan = test::make_runtime_compute_call_channel_plan(
+      3U, test::RuntimeComputeCallAction::kRequestCompletionAfterFirst);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  EXPECT_TRUE(test::RuntimeComputeCallChannelProbeState::wait_until_source_compute());
+  EXPECT_TRUE(session.operator_completion_progress().empty());
+  test::RuntimeComputeCallChannelProbeState::release_source_compute();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kRequestedCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  expect_terminal_compute_call_progress(session, plan, 3U, 1U, false);
 }
 
 // REQ: RUNTIME-035
@@ -1003,7 +2998,10 @@ TEST(RunSessionDeathTest, DestructorFromLifecycleCallbackTerminatesUnderExternal
 // REQ: RUNTIME-001
 // REQ: RUNTIME-011
 TEST(RunSessionTest, RunsCompilerAcceptedEmptyGraphAsNoOp) {
+  // Graph topology:
+  //   (empty)
   Graph graph{"empty-runtime-plan"};
+  // Key setup: compile an empty graph with a diagnostic sink attached to its accepted plan.
   const ExecutionPlan compiled = compile(graph);
   const auto sink = std::make_shared<RecordingDiagnosticSink>();
   const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_diagnostic_sink(compiled, sink);
@@ -1019,20 +3017,106 @@ TEST(RunSessionTest, RunsCompilerAcceptedEmptyGraphAsNoOp) {
 
   const auto accepted = detail::ExecutionPlanAccess::retain(plan);
   ASSERT_NE(accepted, nullptr);
+  EXPECT_FALSE(detail::has_structural_runtime_topology(*accepted));
+  EXPECT_FALSE(detail::has_plan_callback_owners(*accepted));
   auto reconstructed = detail::GraphExec::reconstruct(accepted, RunGenerationId{17U});
   ASSERT_TRUE(reconstructed) << reconstructed.error().message;
+  EXPECT_FALSE((*reconstructed)->has_process_local_callback_owners());
   EXPECT_TRUE((*reconstructed)->parameter_updates().catalog().operators().empty());
   EXPECT_EQ((*reconstructed)->parameter_updates().max_event_cursors(), 0U);
 
   RunSession session = run_async(plan);
   session.wait();
 
+  // Key assertion: empty topology authenticates and completes without inventing callback owners.
   EXPECT_EQ(session.termination(), RunTermination::kCompleted);
   EXPECT_TRUE(session.diagnostics().empty());
   const auto lane_evidence = sink->snapshot_lane_evidence();
   ASSERT_EQ(lane_evidence.size(), 1U);
   EXPECT_TRUE(lane_evidence.front().empty());
-  EXPECT_EQ(run(plan), 0);
+  EXPECT_EQ(run(plan, RunSignalPolicy::kCallerManaged), 0);
+}
+
+TEST(GraphExecIndexTest, ResolvesDenseVertexIndexWithAbsentNonOperatorSlots) {
+  constexpr std::size_t kOperatorCount = 32U;
+  // Graph:
+  //   operator-000 -> operator-001 -> ... -> operator-031 -> exported topic
+  Graph graph{"graph-exec-dense-index"};
+  const auto first = graph.op<GraphExecIndexProbeOperator>("operator-000");
+  auto exported = graph.export_topic<std::uint32_t>("holomq://graph-exec-index-topic");
+  auto previous = graph.op<GraphExecIndexRelayOperator>("operator-001");
+  graph.add_flow(first->output, previous->input);
+  for (std::size_t index = 2U; index < kOperatorCount; ++index) {
+    const auto next = graph.op<GraphExecIndexRelayOperator>("operator-" + std::to_string(index));
+    graph.add_flow(previous->output, next->input);
+    previous = next;
+  }
+  graph.add_flow(previous->output, exported.input());
+  graph.set_default_clock(graph.add_clock<test::RuntimeProbeClock>("graph-exec-index-clock"));
+  const ExecutionPlan plan = compile(graph);
+  std::string diagnostic_tokens;
+  for (const Diagnostic& diagnostic : plan.diagnostics()) {
+    diagnostic_tokens += diagnostic.token + "\n";
+  }
+  ASSERT_TRUE(plan.ok()) << diagnostic_tokens;
+  const auto accepted = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(accepted, nullptr);
+
+  // Key setup: one non-Operator exported-topic vertex creates an absent slot within the otherwise
+  // contiguous accepted VertexId range.
+  ASSERT_EQ(accepted->graph.vertices().size(), kOperatorCount + 1U);
+  EXPECT_TRUE(detail::has_structural_runtime_topology(*accepted));
+  EXPECT_TRUE(detail::has_plan_callback_owners(*accepted));
+  const auto non_operator = std::ranges::find_if(
+      accepted->graph.vertices(),
+      [](const VertexRecord& vertex) { return vertex.kind != VertexKind::kOperator; });
+  ASSERT_NE(non_operator, accepted->graph.vertices().end());
+  auto reconstructed = detail::GraphExec::reconstruct(accepted, RunGenerationId{17U});
+  ASSERT_TRUE(reconstructed) << reconstructed.error().message;
+  detail::GraphExec& exec = **reconstructed;
+  EXPECT_TRUE(exec.has_process_local_callback_owners());
+  ASSERT_EQ(exec.operators().size(), kOperatorCount);
+
+  // Key assertion: first/last identities resolve in O(1), the non-Operator and invalid slots remain
+  // absent, and both const and mutable accessors identify the exact reconstructed object.
+  const VertexId first_vertex = exec.operators().front().vertex;
+  const VertexId last_vertex = exec.operators().back().vertex;
+  EXPECT_EQ(exec.receiver_index(first_vertex), 0U);
+  EXPECT_EQ(exec.receiver_index(last_vertex), kOperatorCount - 1U);
+  EXPECT_EQ(exec.receiver_index(exec.operators().front().operator_id), 0U);
+  EXPECT_EQ(exec.receiver_index(exec.operators().back().operator_id), kOperatorCount - 1U);
+  EXPECT_FALSE(exec.receiver_index(non_operator->id));
+  EXPECT_FALSE(exec.receiver_index(VertexId{}));
+  EXPECT_FALSE(exec.receiver_index(VertexId{accepted->graph.vertices().size() + 1U}));
+  EXPECT_FALSE(exec.receiver_index(OperatorInstanceId{}));
+  EXPECT_FALSE(exec.receiver_index(static_cast<OperatorInstanceId>(kOperatorCount + 1U)));
+  EXPECT_EQ(exec.operator_by_vertex(first_vertex), &exec.operators().front());
+  EXPECT_EQ(exec.operator_by_id(exec.operators().back().operator_id), &exec.operators().back());
+  const detail::GraphExec& const_exec = exec;
+  EXPECT_EQ(const_exec.operator_by_vertex(last_vertex), &const_exec.operators().back());
+  EXPECT_EQ(const_exec.operator_by_id(const_exec.operators().front().operator_id),
+            &const_exec.operators().front());
+}
+
+TEST(GraphExecIndexTest, RejectsDuplicateReconstructedVertexIdentityBeforePublication) {
+  const ExecutionPlan baseline = test::make_runtime_multi_lane_test_plan();
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  const auto accepted = detail::ExecutionPlanAccess::retain(baseline);
+  ASSERT_NE(accepted, nullptr);
+  ASSERT_GE(accepted->executable_factories.operators.size(), 2U);
+  auto malformed = std::make_shared<detail::ExecutionPlanState>(*accepted);
+
+  // Key setup: two executable factories claim the exact same accepted graph vertex.
+  malformed->executable_factories.operators[1].vertex =
+      malformed->executable_factories.operators.front().vertex;
+  const auto reconstructed =
+      detail::GraphExec::reconstruct(std::move(malformed), RunGenerationId{17U});
+
+  // Key assertion: the shared accepted-cover authority now rejects the factory-derived partition
+  // lookup mismatch before a GraphExec with an overwritten index can escape.
+  ASSERT_FALSE(reconstructed);
+  EXPECT_EQ(reconstructed.error().code, ErrorCode::kNotSupported);
+  EXPECT_EQ(reconstructed.error().message, "RUNTIME_PLACEMENT_BINDING_UNAVAILABLE");
 }
 
 // REQ: PARAM-017
@@ -1046,11 +3130,36 @@ TEST(RunSessionTest, RejectsNoncontiguousParameterOwnerInventoriesBeforeReconstr
   for (const auto& [baseline, mutation] : cases) {
     ASSERT_TRUE(baseline.ok()) << baseline.json();
     const ExecutionPlan malformed =
-        detail::RuntimeTestPlanAccess::interleave_parameter_inventory(baseline, mutation);
+        detail::RuntimeTestPlanAccess::mutate_parameter_inventory(baseline, mutation);
     ASSERT_TRUE(malformed.ok()) << malformed.json();
     const auto accepted = detail::ExecutionPlanAccess::retain(malformed);
     ASSERT_NE(accepted, nullptr);
     const auto reconstructed = detail::GraphExec::reconstruct(accepted, RunGenerationId{17U});
+    ASSERT_FALSE(reconstructed);
+    EXPECT_EQ(reconstructed.error().code, ErrorCode::kFailure);
+    EXPECT_EQ(reconstructed.error().message, "RUNTIME_PARAMETER_INVENTORY_MISMATCH");
+  }
+}
+
+// REQ: PARAM-017
+TEST(RunSessionTest, RejectsZeroParameterOwnersBeforeReconstruction) {
+  using Mutation = detail::RuntimeTestPlanAccess::ParameterInventoryMutation;
+  const std::array cases{
+      std::pair{test::make_runtime_two_param_test_plan(), Mutation::kZeroFieldOwner},
+      std::pair{test::make_runtime_two_deadline_param_test_plan(), Mutation::kZeroDerivedTermOwner},
+  };
+  for (const auto& [baseline, mutation] : cases) {
+    ASSERT_TRUE(baseline.ok()) << baseline.json();
+    // Key setup: corrupt one otherwise valid owner reference with the reserved zero identity.
+    const ExecutionPlan malformed =
+        detail::RuntimeTestPlanAccess::mutate_parameter_inventory(baseline, mutation);
+    ASSERT_TRUE(malformed.ok()) << malformed.json();
+    const auto accepted = detail::ExecutionPlanAccess::retain(malformed);
+    ASSERT_NE(accepted, nullptr);
+
+    const auto reconstructed = detail::GraphExec::reconstruct(accepted, RunGenerationId{17U});
+
+    // Key assertion: startup rejects zero before using it to index owner-group state.
     ASSERT_FALSE(reconstructed);
     EXPECT_EQ(reconstructed.error().code, ErrorCode::kFailure);
     EXPECT_EQ(reconstructed.error().message, "RUNTIME_PARAMETER_INVENTORY_MISMATCH");
@@ -1117,7 +3226,7 @@ TEST(RunSessionTest, EmptyGraphRejectsTamperedInertClockInventoryWithoutConstruc
 
 // REQ: RUNTIME-011
 TEST(RunSessionTest, RejectsMalformedZeroWorkSchedulerAndPartitionFacts) {
-  using ZeroWorkMutation = detail::RuntimeTestPlanAccess::ZeroWorkMutation;
+  using ZeroWorkMutation = detail::RuntimePartitionTestPlanAccess::ZeroWorkMutation;
   constexpr std::array mutations{
       ZeroWorkMutation::kWorkerCount,
       ZeroWorkMutation::kExecutionLaneCount,
@@ -1136,7 +3245,8 @@ TEST(RunSessionTest, RejectsMalformedZeroWorkSchedulerAndPartitionFacts) {
 
   for (const ZeroWorkMutation mutation : mutations) {
     SCOPED_TRACE(static_cast<unsigned>(mutation));
-    const ExecutionPlan plan = detail::RuntimeTestPlanAccess::mutate_zero_work(baseline, mutation);
+    const ExecutionPlan plan =
+        detail::RuntimePartitionTestPlanAccess::mutate_zero_work(baseline, mutation);
     RunSession session = run_async(plan);
     session.wait();
 
@@ -1147,7 +3257,7 @@ TEST(RunSessionTest, RejectsMalformedZeroWorkSchedulerAndPartitionFacts) {
 
 // REQ: RUNTIME-010
 TEST(RunSessionTest, RejectsMalformedZeroWorkRuntimeOwnedInventoriesBeforeReconstruction) {
-  using ZeroWorkMutation = detail::RuntimeTestPlanAccess::ZeroWorkMutation;
+  using ZeroWorkMutation = detail::RuntimePartitionTestPlanAccess::ZeroWorkMutation;
   struct Case {
     ZeroWorkMutation mutation;
     std::string_view token;
@@ -1163,7 +3273,7 @@ TEST(RunSessionTest, RejectsMalformedZeroWorkRuntimeOwnedInventoriesBeforeRecons
   for (const auto& test_case : cases) {
     SCOPED_TRACE(test_case.token);
     const ExecutionPlan plan =
-        detail::RuntimeTestPlanAccess::mutate_zero_work(baseline, test_case.mutation);
+        detail::RuntimePartitionTestPlanAccess::mutate_zero_work(baseline, test_case.mutation);
     RunSession session = run_async(plan);
     session.wait();
 
@@ -1281,7 +3391,7 @@ TEST(RunSessionTest, BlockingRunCompletesThroughExplicitBackendWithBoundClockCon
   const ExecutionPlan plan = test::enable_direct_runtime(test::make_runtime_test_plan());
   test::RuntimeProbeState::reset();
 
-  EXPECT_EQ(run(plan), 0);
+  EXPECT_EQ(run(plan, RunSignalPolicy::kCallerManaged), 0);
   EXPECT_EQ(test::RuntimeProbeState::snapshot(), (std::vector<std::int32_t>{11, 12, 13}));
   EXPECT_EQ(test::RuntimeProbeState::constructed.load(std::memory_order_relaxed), 1U);
   EXPECT_TRUE(
@@ -1302,6 +3412,9 @@ TEST(RunSessionTest, PrivatePhaseCountersTrackOneCompleteActivationPerDirectWitn
   constexpr std::uint32_t kActivationCount = 3U;
   constexpr std::array expected_points{
       detail::RuntimePhaseTracePoint::kCandidateFrozen,
+      detail::RuntimePhaseTracePoint::kCandidateSelected,
+      detail::RuntimePhaseTracePoint::kInputSelectionPrepared,
+      detail::RuntimePhaseTracePoint::kActivationPrepared,
       detail::RuntimePhaseTracePoint::kComputeDispatchStarted,
       detail::RuntimePhaseTracePoint::kComputeCallbackEntered,
       detail::RuntimePhaseTracePoint::kComputeCallbackReturned,
@@ -1361,6 +3474,17 @@ TEST(RunSessionTest, PrivatePhaseCountersTrackOneCompleteActivationPerDirectWitn
       }
     }
   }
+
+  const auto usage = counters->thread_usage_snapshot();
+  const auto& controller_usage = usage[detail::RuntimePhaseCounters::thread_usage_index(
+      detail::RuntimeThreadUsageRole::kController)];
+  const auto& lane_usage = usage[detail::RuntimePhaseCounters::thread_usage_index(
+      detail::RuntimeThreadUsageRole::kExecutionLane)];
+  EXPECT_EQ(controller_usage.supported, detail::runtime_thread_usage_detail::kSupported);
+  EXPECT_EQ(controller_usage.samples, detail::runtime_thread_usage_detail::kSupported ? 1U : 0U);
+  // The singleton partition is controller-owned, so opt-in accounting must not fabricate a
+  // separate execution-lane worker sample for its inline callbacks.
+  EXPECT_EQ(lane_usage.samples, 0U);
 }
 
 // A source-tree-only seed places the run-owned allocator at its final valid sequence. The first
@@ -1716,6 +3840,136 @@ TEST(RunSessionTest, BindsTypedParameterGenerationZeroBeforeFirstCallback) {
   EXPECT_EQ(observations[0].before_address, observations[0].after_address);
 }
 
+// REQ: LIFECYCLE-012
+TEST(RunSessionTest, ComputeReadsThePublishedFixedRateGenerationInConstantTime) {
+  const ExecutionPlan compiled = make_runtime_fixed_rate_query_plan("runtime-fixed-rate-query");
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  const auto compiled_state = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_NE(compiled_state, nullptr);
+  ASSERT_EQ(compiled_state->closed_island_activations.size(), 1U);
+
+  for (const bool closed_island : {true, false}) {
+    SCOPED_TRACE(closed_island ? "closed-island" : "ordinary-dispatch");
+    RuntimeRateProbeState::reset();
+    const ExecutionPlan plan =
+        closed_island
+            ? compiled
+            : detail::RuntimeTestPlanAccess::disable_closed_island_composite_for_test(compiled);
+
+    RunSession session = run_async(plan);
+    session.wait();
+
+    EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+    EXPECT_TRUE(session.diagnostics().empty());
+    EXPECT_EQ(RuntimeRateProbeState::compute_error, ErrorCode::kSuccess);
+    EXPECT_EQ(RuntimeRateProbeState::compute.resolved_nominal_rate, Rate::hz(60U));
+    EXPECT_EQ(RuntimeRateProbeState::compute.sizing_rate, Rate::hz(60U));
+    EXPECT_EQ(RuntimeRateProbeState::compute.origin, ResolvedRateOrigin::kOutputNominal);
+    EXPECT_EQ(RuntimeRateProbeState::compute.state, PortRateViewState::kResolved);
+    EXPECT_NE(RuntimeRateProbeState::compute.run_generation, 0U);
+    EXPECT_NE(RuntimeRateProbeState::compute.rate_generation, 0U);
+  }
+}
+
+// REQ: LIFECYCLE-012
+TEST(RunSessionTest, DiscoverBindingResolvesAtTheGlobalBarrierBeforeAllocateAndCompute) {
+  RuntimeRateProbeState::reset();
+  const ExecutionPlan plan =
+      make_runtime_rate_probe_plan<RuntimeLifecycleRateQueryProbe>("runtime-lifecycle-rate-query");
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(RuntimeRateProbeState::bind_error, ErrorCode::kSuccess);
+  EXPECT_EQ(RuntimeRateProbeState::same_stage_error, ErrorCode::kSuccess);
+  EXPECT_EQ(RuntimeRateProbeState::allocate_error, ErrorCode::kSuccess);
+  EXPECT_EQ(RuntimeRateProbeState::compute_error, ErrorCode::kSuccess);
+  EXPECT_EQ(RuntimeRateProbeState::same_stage.state, PortRateViewState::kPendingBarrier);
+  EXPECT_FALSE(RuntimeRateProbeState::same_stage.resolved_nominal_rate.has_value());
+  EXPECT_EQ(RuntimeRateProbeState::allocate.resolved_nominal_rate, Rate::hz(60U));
+  EXPECT_EQ(RuntimeRateProbeState::allocate.max_nominal_rate, Rate::hz(120U));
+  EXPECT_EQ(RuntimeRateProbeState::allocate.origin, ResolvedRateOrigin::kLifecycleBinding);
+  EXPECT_EQ(RuntimeRateProbeState::allocate.state, PortRateViewState::kResolved);
+  EXPECT_EQ(RuntimeRateProbeState::compute, RuntimeRateProbeState::allocate);
+}
+
+// REQ: LIFECYCLE-012
+// REQ: CHAN-141
+TEST(RunSessionTest, DiscoverRateMaterializesGenericQueueBeforeUserAllocate) {
+  RuntimeLifecycleRateQueueProbeState::reset();
+  Graph graph{"runtime-lifecycle-rate-generic-queue"};
+  auto source = graph.op<RuntimeLifecycleRateQueueSource>("source");
+  auto sink = graph.op<RuntimeLifecycleRateQueueSink>("sink");
+  graph.add_flow(source->output, sink->input);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-rate-generic-clock"));
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.queue_sizing_recipes().size(), 1U);
+  EXPECT_EQ(plan.queue_sizing_recipes().front().geometry_mode,
+            AllocationGeometryMode::kLifecycleCandidate);
+  ASSERT_EQ(plan.generic_output_loans().size(), 1U);
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  EXPECT_EQ(RuntimeLifecycleRateQueueProbeState::bind_error.load(std::memory_order_acquire), 0U);
+  EXPECT_EQ(RuntimeLifecycleRateQueueProbeState::allocate_error.load(std::memory_order_acquire),
+            0U);
+  EXPECT_EQ(RuntimeLifecycleRateQueueProbeState::compute_error.load(std::memory_order_acquire), 0U);
+  EXPECT_TRUE(
+      RuntimeLifecycleRateQueueProbeState::allocate_saw_resolved.load(std::memory_order_acquire));
+  EXPECT_TRUE(RuntimeLifecycleRateQueueProbeState::sink_received.load(std::memory_order_acquire));
+  EXPECT_EQ(RuntimeLifecycleRateQueueProbeState::observed_value.load(std::memory_order_acquire),
+            RuntimeLifecycleRateQueueSource::kValue);
+}
+
+// REQ: LIFECYCLE-012
+// REQ: RUNTIME-007
+// An OnEach driver without an authored selector is pinned separately from a lifecycle-expanded
+// DrainAll batch. The batch exceeds the cold placeholder, exercising both backing-ceiling scratch
+// reservation and stable trigger-pin storage through the complete RunSession/Channel path.
+TEST(RunSessionTest, LifecycleDrainAllExpansionPreservesSeparateOnEachTriggerPin) {
+  RuntimeLifecycleDrainAllScratchProbeState::reset();
+  Graph graph{"runtime-lifecycle-drain-all-selection-scratch"};
+  auto source = graph.op<RuntimeLifecycleDrainAllScratchSource>("source");
+  auto sink = graph.op<RuntimeLifecycleDrainAllScratchSink>("sink");
+  graph.add_flow(source->secondary, sink->secondary);
+  graph.add_flow(source->driver, sink->driver);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-rate-drain-all-scratch-clock"));
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto secondary_port = std::ranges::find_if(plan.ports(), [](const auto& port) {
+    return port.local_name == "secondary" && port.direction == PortDirection::kInput;
+  });
+  ASSERT_NE(secondary_port, plan.ports().end());
+  const auto selection = std::ranges::find(
+      plan.input_selections(), secondary_port->id, &InputSelectionPlanRecord::input);
+  ASSERT_NE(selection, plan.input_selections().end());
+  EXPECT_EQ(selection->selector, InputSelectorKind::kDrainAll);
+  EXPECT_EQ(selection->max_selected_samples_origin,
+            SelectedSampleBoundOrigin::kResolvedRetainedCapacity);
+  ASSERT_LT(selection->max_selected_samples, RuntimeLifecycleDrainAllScratchSource::kBacklogSize)
+      << plan.json();
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  EXPECT_EQ(RuntimeLifecycleDrainAllScratchProbeState::error.load(std::memory_order_acquire), 0U);
+  EXPECT_EQ(RuntimeLifecycleDrainAllScratchProbeState::driver_value.load(std::memory_order_acquire),
+            RuntimeLifecycleDrainAllScratchSource::kDriverValue);
+  EXPECT_EQ(RuntimeLifecycleDrainAllScratchProbeState::batch_size.load(std::memory_order_acquire),
+            RuntimeLifecycleDrainAllScratchSource::kBacklogSize);
+}
+
 // REQ: RUNTIME-002
 // REQ: RUNTIME-007
 TEST(RunSessionTest, FreezesActivationTimeAfterEveryStartCallbackCompletes) {
@@ -1783,6 +4037,111 @@ TEST(RunSessionTest, OnClockRepeatsDeterministicallyUntilCooperativeStop) {
     EXPECT_EQ(activation_times[0][index].clock_id, activation_times[0].front().clock_id);
   }
   EXPECT_TRUE(activation_times[0].front().valid());
+}
+
+// REQ: RUNTIME-046
+TEST(RunSessionTest, OperatorTerminationRequestsUseTheirStrongestSuccessfulReason) {
+  const ExecutionPlan plan = test::make_runtime_clock_test_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  const auto run = [&](test::RuntimeClockProbeState::TerminationRequestMode mode,
+                       RunTermination expected,
+                       bool callback_completed_normally) {
+    test::RuntimeClockProbeState::reset();
+    test::RuntimeClockProbeState::termination_request_mode.store(mode, std::memory_order_release);
+    RunSession session = run_async(plan);
+    session.wait();
+    EXPECT_EQ(session.termination(), expected);
+    if (callback_completed_normally) {
+      EXPECT_GE(test::RuntimeClockProbeState::compute_count.load(std::memory_order_acquire), 1U);
+    }
+  };
+
+  run(test::RuntimeClockProbeState::TerminationRequestMode::kCompletion,
+      RunTermination::kRequestedCompleted,
+      true);
+  run(test::RuntimeClockProbeState::TerminationRequestMode::kStop, RunTermination::kStopped, true);
+  run(test::RuntimeClockProbeState::TerminationRequestMode::kCompletionThenStop,
+      RunTermination::kStopped,
+      true);
+  run(test::RuntimeClockProbeState::TerminationRequestMode::kStopThenCompletion,
+      RunTermination::kStopped,
+      true);
+  run(test::RuntimeClockProbeState::TerminationRequestMode::kCompletionThenFailure,
+      RunTermination::kFailed,
+      false);
+}
+
+// REQ: RUNTIME-046
+TEST(RunSessionTest, OperatorStopRequestBeatsNaturalCompletionAndIsIdempotent) {
+  const ExecutionPlan plan = test::enable_direct_runtime(test::make_runtime_test_plan());
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  for (const test::RuntimeProbeMode mode :
+       {test::RuntimeProbeMode::kRequestStop, test::RuntimeProbeMode::kRequestStopTwice}) {
+    test::RuntimeProbeState::reset(mode);
+    RunSession session = run_async(plan);
+    session.wait();
+    EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  }
+}
+
+// REQ: RUNTIME-046
+TEST(RunSessionTest, BlockingRunReturnsZeroForRequestedCompletion) {
+  const ExecutionPlan plan = test::make_runtime_clock_test_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  test::RuntimeClockProbeState::reset();
+  test::RuntimeClockProbeState::termination_request_mode.store(
+      test::RuntimeClockProbeState::TerminationRequestMode::kCompletion, std::memory_order_release);
+
+  EXPECT_EQ(run(plan, RunSignalPolicy::kCallerManaged), 0);
+}
+
+// REQ: OPERATOR-038
+// REQ: RUNTIME-046
+TEST(RunSessionTest, OperatorCompletionRequestDoesNotWaitForParameterControlMutex) {
+  test::RuntimeProbeState::reset();
+  test::RuntimeClockProbeState::reset();
+  auto control = std::make_shared<detail::RuntimeTerminationAdmissionTestControl>(
+      detail::RuntimeTerminationAdmissionTestControl::Point::kParameterMutexHeld, 1U);
+  const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_termination_admission_test_control(
+      test::make_runtime_clock_test_plan(), control);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool first_callback_returned = test::RuntimeClockProbeState::wait_until_compute_count(1U);
+  if (!first_callback_returned) {
+    session.request_stop();
+    session.wait();
+  }
+  ASSERT_TRUE(first_callback_returned);
+  const std::size_t completed_before_request =
+      test::RuntimeClockProbeState::compute_count.load(std::memory_order_acquire);
+  std::thread capture{[&] { static_cast<void>(session.capture_params()); }};
+  const bool parameter_mutex_held = control->wait_until_arrived();
+  test::RuntimeClockProbeState::termination_request_mode.store(
+      test::RuntimeClockProbeState::TerminationRequestMode::kCompletion, std::memory_order_release);
+
+  // The callback must publish completion and return while capture still owns parameter_mutex_.
+  // Releasing the test barrier first would hide a synchronous lock acquisition in the request.
+  std::unique_lock probe_lock(test::RuntimeClockProbeState::mutex);
+  const bool callback_returned =
+      test::RuntimeClockProbeState::cv.wait_for(probe_lock, 5s, [completed_before_request] {
+        return test::RuntimeClockProbeState::termination_request_mode.load(
+                   std::memory_order_acquire) ==
+                   test::RuntimeClockProbeState::TerminationRequestMode::kNone &&
+               test::RuntimeClockProbeState::compute_count.load(std::memory_order_acquire) >
+                   completed_before_request;
+      });
+  probe_lock.unlock();
+  control->release();
+  capture.join();
+  session.wait();
+
+  ASSERT_TRUE(parameter_mutex_held);
+  EXPECT_TRUE(callback_returned);
+  EXPECT_EQ(session.termination(), RunTermination::kRequestedCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
 }
 
 // The ordinary run path, without an injected binding factory, must expose the exact bounded
@@ -2289,7 +4648,7 @@ TEST(RunSessionTest, ComputeFailureIsTerminalAndNotRetried) {
   EXPECT_EQ(session.termination(), RunTermination::kFailed);
   EXPECT_TRUE(test::has_runtime_diagnostic(session, "RUNTIME_OPERATOR_CALLBACK_FAILED"));
   EXPECT_EQ(test::RuntimeProbeState::snapshot(), (std::vector<std::int32_t>{11, 12, 13}));
-  EXPECT_NE(run(plan), 0);
+  EXPECT_NE(run(plan, RunSignalPolicy::kCallerManaged), 0);
 }
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)

@@ -1,6 +1,7 @@
 # Holoscan utility scripts
 
-This folder includes the following scripts:
+This folder contains developer utilities and source-tree validation helpers.
+Documentation is provided for the following scripts:
 
 - [`check_copyright.py`](#check_copyrightpy)
 - [`ctest_time_comparison.py`](#ctest_time_comparisonpy)
@@ -9,8 +10,11 @@ This folder includes the following scripts:
 - [`graph_surgeon.py`](#graph_surgeonpy)
 - [`list_ld_dependencies.sh`](#list_ld_dependenciessh)
 - [`test_pattern_validation.py`](#test_pattern_validationpy)
+- [`test_run_script.py`](#test_run_scriptpy)
 
-> Note: these will be included in the SDK installation at `/opt/nvidia/holoscan/bin`
+> Note: only the utilities selected in [`CMakeLists.txt`](CMakeLists.txt) are
+> included in the SDK installation at `/opt/nvidia/holoscan/bin`. Repository
+> validation helpers remain in the source tree.
 
 ____
 
@@ -170,3 +174,27 @@ Validates required and prohibited regular expression patterns against a log file
 ### Usage
 
 See `python3 ./scripts/test_pattern_validation.py --help`
+
+____
+
+## test_run_script.py
+
+Validates the Git-derived image tags used by `run` from a Git checkout and the
+`VERSION` fallback used by source archives. The test is a source-tree
+regression helper used by pre-commit; it is distributed with the public source
+but is not installed with the SDK.
+
+It also exercises the `build_image`, `build`, `test`, and `launch` command
+paths with `--dryrun --standalone`, using deterministic host-command stubs so
+the checks do not require Docker or an existing SDK build.
+
+Run it from the root of a Git checkout of the public source tree (the `public/`
+directory in the internal repository):
+
+```sh
+python3 scripts/test_run_script.py
+```
+
+The test creates temporary standalone and nested source-archive layouts. It
+does not require a CMake configuration, build directory, or third-party Python
+packages.

@@ -287,7 +287,10 @@ HOLOSCAN_SCHEMA_EXPORT ::flatbuffers::Offset<Tensor> Tensor::Pack(
                         device_value.device_id};
 
   ::flatbuffers::Offset<::flatbuffers::Vector<std::uint8_t>> data_offset = 0;
-  if (should_materialize_tensor(*value) && value->data() != nullptr && value->nbytes() > 0) {
+  // Materialize only contiguous views: nbytes() is the logical byte count, and a padded/strided
+  // source would under-copy relative to the storage span UnPackTo requires.
+  if (should_materialize_tensor(*value) && value->data() != nullptr && value->nbytes() > 0 &&
+      value->is_contiguous()) {
     const auto total_bytes = static_cast<std::size_t>(value->nbytes());
     std::uint8_t* destination = nullptr;
     data_offset = builder.CreateUninitializedVector<std::uint8_t>(total_bytes, &destination);
@@ -347,31 +350,75 @@ HOLOSCAN_SCHEMA_EXPORT void Tensor::UnPackTo(holoscan::Tensor* value,
     throw_schema_error("cannot unpack FlatBuffer Tensor whose strides size does not match ndim");
   }
 
+  const ::DLDataType dl_dtype{.code = static_cast<std::uint8_t>(dtype()->code()),
+                              .bits = dtype()->bits(),
+                              .lanes = dtype()->lanes()};
+  const ::DLDevice dl_device{.device_type = static_cast<::DLDeviceType>(device()->device_type()),
+                             .device_id = device()->device_id()};
+  if (!holoscan::detail::valid_tensor_dtype(dl_dtype)) {
+    throw_schema_error("cannot unpack FlatBuffer Tensor with invalid dtype");
+  }
+  switch (dl_device.device_type) {
+    case kDLCPU:
+    case kDLCUDA:
+    case kDLCUDAHost:
+    case kDLCUDAManaged:
+      break;
+    default:
+      throw_schema_error("cannot unpack FlatBuffer Tensor with unsupported device type");
+  }
+  if (dl_device.device_id < 0) {
+    throw_schema_error("cannot unpack FlatBuffer Tensor with negative device id");
+  }
+
+  // Mirror tensor_view_metadata / image_tensor_metadata: reject malformed shape/stride products
+  // before allocating or exposing a DLPack view whose nbytes()/strides disagree with the payload.
+  std::vector<std::int64_t> shape_values(shape()->begin(), shape()->end());
+  std::vector<std::int64_t> stride_values;
+  const bool has_explicit_strides = strides() != nullptr;
+  std::optional<std::span<const std::int64_t>> layout_strides;
+  if (has_explicit_strides) {
+    stride_values.assign(strides()->begin(), strides()->end());
+    layout_strides = std::span<const std::int64_t>{stride_values.data(), stride_values.size()};
+  }
+  const auto layout = holoscan::detail::validate_tensor_layout(
+      std::span<const std::int64_t>{shape_values.data(), shape_values.size()},
+      dl_dtype,
+      layout_strides,
+      holoscan::detail::TensorStrideUnit::kElements);
+  if (!layout) {
+    throw_schema_error("cannot unpack FlatBuffer Tensor with invalid layout metadata");
+  }
+
+  const auto* packed_data = data();
+  if (packed_data != nullptr && packed_data->size() > 0U &&
+      static_cast<std::uint64_t>(packed_data->size()) < layout->byte_span) {
+    throw_schema_error(
+        "cannot unpack FlatBuffer Tensor whose data size is smaller than the layout span");
+  }
+
   auto context = std::make_shared<holoscan::DLManagedTensorContext>();
-  context->dl_shape.assign(shape()->begin(), shape()->end());
+  context->dl_shape = std::move(shape_values);
   context->tensor.dl_tensor.shape = context->dl_shape.data();
-  context->tensor.dl_tensor.dtype = ::DLDataType{.code = static_cast<std::uint8_t>(dtype()->code()),
-                                                 .bits = dtype()->bits(),
-                                                 .lanes = dtype()->lanes()};
-  context->tensor.dl_tensor.device =
-      ::DLDevice{.device_type = static_cast<::DLDeviceType>(device()->device_type()),
-                 .device_id = device()->device_id()};
+  context->tensor.dl_tensor.dtype = dl_dtype;
+  context->tensor.dl_tensor.device = dl_device;
   context->tensor.dl_tensor.ndim = static_cast<std::int32_t>(rank);
   context->tensor.dl_tensor.byte_offset = 0;
   context->tensor.flags = 0;
 
-  if (strides() != nullptr) {
-    context->dl_strides.assign(strides()->begin(), strides()->end());
+  if (has_explicit_strides) {
+    context->dl_strides = std::move(stride_values);
     context->tensor.dl_tensor.strides = context->dl_strides.data();
   } else {
     context->tensor.dl_tensor.strides = nullptr;
   }
 
-  if (data() != nullptr && data()->size() > 0) {
-    const auto byte_count = data()->size();
+  if (packed_data != nullptr && packed_data->size() > 0U) {
+    const auto byte_count = packed_data->size();
     switch (context->tensor.dl_tensor.device.device_type) {
       case kDLCPU: {
-        auto owner = std::make_shared<std::vector<std::uint8_t>>(data()->begin(), data()->end());
+        auto owner =
+            std::make_shared<std::vector<std::uint8_t>>(packed_data->begin(), packed_data->end());
         context->tensor.dl_tensor.data = owner->data();
         context->memory_reference = std::make_shared<SharedOwnerMemoryReference>(std::move(owner));
         break;
@@ -380,7 +427,7 @@ HOLOSCAN_SCHEMA_EXPORT void Tensor::UnPackTo(holoscan::Tensor* value,
         void* host_ptr = nullptr;
         throw_if_cuda_failed(cudaMallocHost(&host_ptr, byte_count),
                              "failed to allocate CUDA host memory for FlatBuffer Tensor unpack");
-        std::memcpy(host_ptr, data()->data(), byte_count);
+        std::memcpy(host_ptr, packed_data->data(), byte_count);
         context->tensor.dl_tensor.data = host_ptr;
         context->memory_reference =
             std::make_shared<SharedOwnerMemoryReference>(make_cuda_host_owner(host_ptr));
@@ -390,7 +437,7 @@ HOLOSCAN_SCHEMA_EXPORT void Tensor::UnPackTo(holoscan::Tensor* value,
         void* managed_ptr = nullptr;
         throw_if_cuda_failed(cudaMallocManaged(&managed_ptr, byte_count),
                              "failed to allocate managed memory for FlatBuffer Tensor unpack");
-        std::memcpy(managed_ptr, data()->data(), byte_count);
+        std::memcpy(managed_ptr, packed_data->data(), byte_count);
         context->tensor.dl_tensor.data = managed_ptr;
         context->memory_reference =
             std::make_shared<SharedOwnerMemoryReference>(make_cuda_owner(managed_ptr));
@@ -401,7 +448,7 @@ HOLOSCAN_SCHEMA_EXPORT void Tensor::UnPackTo(holoscan::Tensor* value,
         throw_if_cuda_failed(cudaMalloc(&device_ptr, byte_count),
                              "failed to allocate CUDA memory for FlatBuffer Tensor unpack");
         throw_if_cuda_failed(
-            cudaMemcpy(device_ptr, data()->data(), byte_count, cudaMemcpyHostToDevice),
+            cudaMemcpy(device_ptr, packed_data->data(), byte_count, cudaMemcpyHostToDevice),
             "failed to copy FlatBuffer Tensor bytes to CUDA memory");
         context->tensor.dl_tensor.data = device_ptr;
         context->memory_reference =

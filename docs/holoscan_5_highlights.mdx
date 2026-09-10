@@ -39,7 +39,7 @@ machine, with no sensors attached.
 
 One example tells most of the story. Below, the same camera source is
 sketched in the 4.x style and as an illustrative condensation using current
-5.x APIs. The complete shipping `ea1_camera_imu_control` implementation also
+5.x APIs. The complete shipping `camera_imu_control` implementation also
 declares Tensor layout and allocation bounds and uses the asynchronous
 reference harness.
 
@@ -98,6 +98,12 @@ reference harness.
   </Tab>
 </Tabs>
 
+On Linux, that plain blocking call manages SIGINT/SIGTERM and requires either
+an adoptable early domain or exactly one live process task at both admission
+census reads. Embedding hosts with existing threads or signal ownership should
+use the explicit domain or caller-managed policy described in
+[Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
 Every difference visible in that pair is one of the six highlights below.
 For a guided walk through the migration itself, see
 [Migrating from 4.x](/holoscan/sdk-user-guide/introduction/migrating-from-4x).
@@ -148,11 +154,13 @@ and [Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values
 
 There is no heap allocation on the hot path. Tensors are not allocated per
 frame: `allocate_tensor()` **borrows** a slot from a pool that was sized and
-preallocated when the plan was built. Queue geometry is explicit — you
-declare depths where you wire the graph
-(`spec.input(camera, "camera").queue_depth(4U)` on the port,
-`ConnectionOptions{.queue_depth = 4U}` on the flow) — so buffer sizing is a
-reviewable design decision instead of a tuning accident.
+preallocated before execution. Queue geometry is explicit when pinned with
+`queue_depth`; otherwise compilation can derive it from exact nominal-rate and
+temporal-contract evidence. An explicit depth remains exact and is never
+silently inflated by the nominal recommendation. Both paths leave a reviewable
+plan record, so buffer sizing remains a design decision instead of a tuning
+accident. See
+[Rate-aware queue and pool sizing](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#size-queue-entries-from-nominal-rates).
 
 When a bound is reached, the failure is explicit and typed:
 `ErrorCode::kResourceExhausted` is the signature exhaustion failure, and

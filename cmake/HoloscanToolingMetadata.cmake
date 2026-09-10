@@ -11,7 +11,7 @@ function(holoscan_install_tooling_metadata template_name output_name component_n
       @ONLY
   )
   install(FILES "${_holoscan_tooling_metadata_dir}/${output_name}"
-      DESTINATION "share/holoscan/tooling/v1"
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/holoscan/tooling/v1"
       COMPONENT "${component_name}"
   )
   unset(_holoscan_tooling_metadata_dir)

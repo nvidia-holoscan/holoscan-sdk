@@ -31,8 +31,9 @@
 #include <holoscan/memory/unbounded_allocator.hpp>
 #include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
 #include <holoscan/schema/flatbuffer_schema_package.hpp>
-#include <holoscan/schema/image_metadata.hpp>
 #include <holoscan/schema/inline_flatbuffer_payload.hpp>
+#include <holoscan/sensor_io/image_metadata.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "../../src/channel/channel_inline_payload_test_access.hpp"
 #include "../../src/channel/holomq_tensor.hpp"
@@ -140,7 +141,7 @@ struct HoloMQSchemaBufferFixture {
   const auto stamp = holoscan::schema::CreateTime(builder, 123456789, 123456799);
   const auto frame = builder.CreateString("imu_link");
   const auto header = holoscan::schema::CreateHeader(builder, stamp, frame);
-  const holoscan::schema::Quaternionf orientation{1.0F, 0.0F, 0.0F, 0.0F};
+  const holoscan::schema::Quaternionf orientation{0.0F, 0.0F, 0.0F, 1.0F};
   const holoscan::schema::Vector3f angular_velocity{0.1F, 0.2F, 0.3F};
   const holoscan::schema::Vector3f linear_acceleration{9.8F, 0.0F, -0.1F};
   builder.Finish(holoscan::schema::CreateImu(
@@ -312,8 +313,9 @@ void run_channel_schema_concurrent_publisher_send(benchmark::State& state) {
           break;
         }
         received_any = true;
-        if (received->byte_size != frame->canonical_size ||
-            received->payload_kind != holoscan::PayloadKind::kSerializedBytes ||
+        if (received->payload_size != frame->canonical_size ||
+            received->metadata.byte_size != frame->canonical_size ||
+            received->metadata.payload_kind != holoscan::PayloadKind::kSerializedBytes ||
             !holoscan::channel_internal::decode_schema_envelope(
                 receive_scratch, identity, TimeProcessLocalFrame::kCanonicalCapacity)) {
           subscriber_failed.store(true, std::memory_order_release);
@@ -428,8 +430,7 @@ void run_channel_schema_concurrent_publisher_send(benchmark::State& state) {
       .height = 3,
       .width = 2,
       .encoding = holoscan::schema::ImageEncoding_MONO32F,
-      .time_ns = 987654321,
-      .acqtime_ns = 987654399,
+      .capture_timestamp_ns = 987654321,
       .frame_id = "camera_frame"};
   auto metadata = holoscan::schema::build_image_metadata(tensor, metadata_options);
   if (!metadata) {
@@ -450,8 +451,7 @@ void run_channel_schema_concurrent_publisher_send(benchmark::State& state) {
   const holoscan::schema::ImageMetadataOptions metadata_options{.height = height,
                                                                 .width = width,
                                                                 .encoding = encoding,
-                                                                .time_ns = 987654321,
-                                                                .acqtime_ns = 987654399,
+                                                                .capture_timestamp_ns = 987654321,
                                                                 .frame_id = frame_id};
   auto metadata = holoscan::schema::build_image_metadata(tensor, metadata_options);
   if (!metadata) {
@@ -512,8 +512,7 @@ template <typename Publisher>
       .height = 3,
       .width = 2,
       .encoding = holoscan::schema::ImageEncoding_MONO32F,
-      .time_ns = 987654321,
-      .acqtime_ns = 987654399,
+      .capture_timestamp_ns = 987654321,
       .frame_id = "camera_frame"};
   auto metadata = holoscan::schema::build_image_metadata(tensor, metadata_options);
   if (!metadata) {

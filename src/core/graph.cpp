@@ -32,8 +32,12 @@
 #include <utility>
 #include <vector>
 
+#include "domain/tensor_layout_validation.hpp"
 #include "graph_state.hpp"
 #include "operator_spec_compiler_access.hpp"
+#include "plan_record_contracts.hpp"
+#include "port_configuration_internal.hpp"
+#include "tensor_contract_resolution_internal.hpp"
 #include "tensor_field_configuration_internal.hpp"
 
 namespace holoscan {
@@ -404,6 +408,17 @@ std::atomic<std::uint64_t> g_next_graph_instance{1U};
   return Error{code, std::move(message)};
 }
 
+[[nodiscard]] Error descriptor_topic_field_graph_error(
+    ErrorCode code, std::string_view token, const AuthoredDescriptorTensorTopicField& field) {
+  std::string message(token);
+  message.append(" (field_id=");
+  message.append(std::to_string(field.field_id));
+  message.append(", tensor_index=");
+  message.append(std::to_string(field.tensor_index));
+  message.push_back(')');
+  return Error{code, std::move(message)};
+}
+
 [[nodiscard]] std::string bounded_exception_context(std::string_view context) {
   constexpr std::size_t kMaximumContextBytes = 160U;
   const std::size_t count = std::min(context.size(), kMaximumContextBytes);
@@ -538,6 +553,12 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(ReadinessSourceKind,
                                HOLOSCAN_GRAPH_ENUM_CASE(ReadinessSourceKind::kNotification)
                                    HOLOSCAN_GRAPH_ENUM_CASE(ReadinessSourceKind::kDoorbell)
                                        HOLOSCAN_GRAPH_ENUM_CASE(ReadinessSourceKind::kSpin))
+HOLOSCAN_GRAPH_CLOSED_ENUM(
+    PortRateKind, HOLOSCAN_GRAPH_ENUM_CASE(PortRateKind::kUnspecified)
+                      HOLOSCAN_GRAPH_ENUM_CASE(PortRateKind::kFixedNominal)
+                          HOLOSCAN_GRAPH_ENUM_CASE(PortRateKind::kExpectedInput)
+                              HOLOSCAN_GRAPH_ENUM_CASE(PortRateKind::kFollowsInput)
+                                  HOLOSCAN_GRAPH_ENUM_CASE(PortRateKind::kLifecycleNominal))
 // NOLINTEND(bugprone-branch-clone)
 
 #undef HOLOSCAN_GRAPH_ENUM_CASE
@@ -673,29 +694,6 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(ReadinessSourceKind,
   return {};
 }
 
-[[nodiscard]] bool schema_identity_equal(const SchemaIdentityRecord& lhs,
-                                         const SchemaIdentityRecord& rhs) noexcept {
-  return lhs.canonical_name == rhs.canonical_name && lhs.version == rhs.version &&
-         lhs.schema_sha256 == rhs.schema_sha256 && lhs.id == rhs.id;
-}
-
-[[nodiscard]] bool valid_dtype(DLDataType dtype) noexcept {
-  if (dtype.bits == 0U || dtype.lanes == 0U)
-    return false;
-  switch (dtype.code) {
-    case kDLInt:
-    case kDLUInt:
-    case kDLFloat:
-    case kDLOpaqueHandle:
-    case kDLBfloat:
-    case kDLComplex:
-    case kDLBool:
-      return true;
-    default:
-      return false;
-  }
-}
-
 [[nodiscard]] expected<void, Error> validate_pod(const PodIdentityRecord& pod) {
   auto name = validate_name(pod.canonical_name, "GRAPH_POD_NAME_INVALID");
   if (!name)
@@ -770,13 +768,13 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(ReadinessSourceKind,
 }
 
 [[nodiscard]] bool tensor_bearing(const PayloadIdentityRecord& identity,
-                                  const std::optional<TensorPortLayout>& layout) noexcept {
+                                  const std::optional<TensorRepresentation>& layout) noexcept {
   return identity.kind == PayloadIdentityKind::kTensor || layout.has_value();
 }
 
 [[nodiscard]] expected<void, Error> validate_payload_options(
     const PayloadOptionsRecord& options, const PayloadIdentityRecord& identity,
-    const std::optional<TensorPortLayout>& layout) {
+    const std::optional<TensorRepresentation>& layout) {
   const bool inline_policy = options.interface_tensor_emit_policy ==
                              InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
   if (!closed_enum(options.interface_tensor_emit_policy) ||
@@ -790,7 +788,7 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(ReadinessSourceKind,
     if (!valid)
       return valid;
     if (identity.kind == PayloadIdentityKind::kSchema) {
-      if (!identity.schema || !schema_identity_equal(*options.schema, *identity.schema)) {
+      if (!identity.schema || !schema_identity_exactly_equal(*options.schema, *identity.schema)) {
         return make_unexpected(
             graph_error(ErrorCode::kIncompatible, "GRAPH_PAYLOAD_SCHEMA_MISMATCH"));
       }
@@ -801,7 +799,7 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(ReadinessSourceKind,
   }
   if (identity.kind == PayloadIdentityKind::kSchema &&
       (!options.schema || !identity.schema ||
-       !schema_identity_equal(*options.schema, *identity.schema))) {
+       !schema_identity_exactly_equal(*options.schema, *identity.schema))) {
     return make_unexpected(graph_error(ErrorCode::kIncompatible, "GRAPH_PAYLOAD_SCHEMA_MISMATCH"));
   }
   const bool nondefault_tensor_policy =
@@ -818,42 +816,6 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(ReadinessSourceKind,
   return {};
 }
 
-[[nodiscard]] bool payload_identity_equal(const PayloadIdentityRecord& lhs,
-                                          const PayloadIdentityRecord& rhs) {
-  if (lhs.kind != rhs.kind || lhs.payload_kind != rhs.payload_kind)
-    return false;
-  if (lhs.scalar.has_value() != rhs.scalar.has_value() ||
-      lhs.schema.has_value() != rhs.schema.has_value() ||
-      lhs.pod.has_value() != rhs.pod.has_value()) {
-    return false;
-  }
-  if (lhs.scalar && lhs.scalar->kind != rhs.scalar->kind)
-    return false;
-  if (lhs.schema && (lhs.schema->canonical_name != rhs.schema->canonical_name ||
-                     lhs.schema->version != rhs.schema->version ||
-                     lhs.schema->schema_sha256 != rhs.schema->schema_sha256 ||
-                     lhs.schema->id != rhs.schema->id)) {
-    return false;
-  }
-  if (lhs.pod) {
-    if (lhs.pod->canonical_name != rhs.pod->canonical_name ||
-        lhs.pod->version != rhs.pod->version || lhs.pod->object_size != rhs.pod->object_size ||
-        lhs.pod->object_alignment != rhs.pod->object_alignment ||
-        lhs.pod->fields.size() != rhs.pod->fields.size()) {
-      return false;
-    }
-    for (std::size_t index = 0; index < lhs.pod->fields.size(); ++index) {
-      const auto& left = lhs.pod->fields[index];
-      const auto& right = rhs.pod->fields[index];
-      if (left.name != right.name || left.byte_offset != right.byte_offset ||
-          left.scalar_kind != right.scalar_kind || left.element_count != right.element_count) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
 [[nodiscard]] expected<void, Error> validate_pod_catalog(const GraphState& state,
                                                          const PayloadIdentityRecord& identity) {
   if (!identity.pod)
@@ -864,7 +826,7 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(ReadinessSourceKind,
       continue;
     const auto& prior = existing.pod.value();
     if (prior.canonical_name == candidate.canonical_name && prior.version == candidate.version) {
-      if (!payload_identity_equal(existing, identity)) {
+      if (!payload_identity_exactly_equal(existing, identity)) {
         return make_unexpected(
             graph_error(ErrorCode::kIncompatible, "GRAPH_POD_IDENTITY_CONFLICT"));
       }
@@ -967,7 +929,7 @@ void record_pod_identity(GraphState& state, const PayloadIdentityRecord& identit
   }
   PortStorage* port = find_port(state, found->second);
   if (port == nullptr || port->record.direction != direction ||
-      !payload_identity_equal(port->record.payload_identity, payload_identity)) {
+      !payload_identity_exactly_equal(port->record.payload_identity, payload_identity)) {
     return make_unexpected(graph_error(ErrorCode::kIncompatible, "GRAPH_PORT_TYPE_MISMATCH"));
   }
   return found->second;
@@ -1146,6 +1108,7 @@ void GraphState::clear_failed_draft() noexcept {
   readiness_sources_.clear();
   regions_.clear();
   partitions_.clear();
+  automatic_partition_remaining_ = false;
   clocks_.clear();
   clock_imports_.clear();
   clock_bindings_.clear();
@@ -1167,55 +1130,8 @@ void GraphState::clear_failed_draft() noexcept {
 
 namespace {
 
-[[nodiscard]] PortConfigurationRecord setup_configuration(
-    const OperatorSpecCompilerAccess::PortMetadata& metadata) {
-  PortConfigurationRecord result;
-  if (metadata.direction == PortDirection::kInput) {
-    result.queue_depth = metadata.queue_depth;
-    result.memory_conversion = metadata.memory_conversion;
-    result.payload_options = metadata.payload_options;
-  } else {
-    result.max_emits_per_compute = metadata.max_emits_per_compute;
-    result.late_joiner_history_depth = metadata.late_joiner_history_depth;
-    result.tensor_allocation = metadata.tensor_allocation;
-    result.payload_options = metadata.payload_options;
-  }
-  if (!metadata.diagnostic_alias.empty()) {
-    result.diagnostic_alias = std::string(metadata.diagnostic_alias);
-  }
-  result.tensor_layout = metadata.tensor_layout;
-  if (metadata.descriptor_tensor_field_count == 1U && metadata.tensor_fields.size() == 1U) {
-    const auto& field = metadata.tensor_fields.front().configuration;
-    result.tensor_layout = field.tensor_layout;
-    if (field.payload_options) {
-      result.payload_options = PayloadOptionsRecord{
-          .max_inline_bytes = field.payload_options->max_inline_bytes
-                                  ? std::optional{static_cast<std::uint32_t>(
-                                        *field.payload_options->max_inline_bytes)}
-                                  : std::nullopt,
-          .max_tensor_byte_span = field.payload_options->max_tensor_byte_span,
-          .interface_tensor_emit_policy = field.payload_options->interface_tensor_emit_policy,
-      };
-    }
-    if (metadata.direction == PortDirection::kInput) {
-      result.memory_conversion = field.memory_conversion;
-    } else {
-      result.tensor_allocation = field.tensor_allocation;
-    }
-    return result;
-  }
-  result.tensor_fields.reserve(metadata.tensor_fields.size());
-  for (const auto& field : metadata.tensor_fields) {
-    result.tensor_fields.push_back(field.configuration);
-  }
-  std::sort(result.tensor_fields.begin(),
-            result.tensor_fields.end(),
-            [](const auto& lhs, const auto& rhs) { return lhs.field_id < rhs.field_id; });
-  return result;
-}
-
 [[nodiscard]] bool valid_tensor_field_payload_options(
-    const TensorFieldPayloadOptions& options) noexcept {
+    const TensorFieldTransferRecord& options) noexcept {
   const bool inline_policy = options.interface_tensor_emit_policy ==
                              InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
   return closed_enum(options.interface_tensor_emit_policy) &&
@@ -1260,7 +1176,7 @@ namespace {
         ErrorCode::kInvalidArgument, "GRAPH_TENSOR_FIELD_ENUM_INVALID", field));
   }
   if (field.tensor_layout && field.tensor_layout->dtype &&
-      !valid_dtype(*field.tensor_layout->dtype)) {
+      !valid_tensor_dtype(*field.tensor_layout->dtype)) {
     return make_unexpected(tensor_field_graph_error(
         ErrorCode::kInvalidArgument, "GRAPH_TENSOR_FIELD_DTYPE_INVALID", field));
   }
@@ -1273,6 +1189,13 @@ namespace {
     }
     return make_unexpected(tensor_field_graph_error(
         ErrorCode::kInvalidArgument, "GRAPH_TENSOR_FIELD_ALLOCATION_INVALID", field));
+  }
+  if (field.tensor_byte_span_expression &&
+      (metadata.direction != PortDirection::kOutput || !field.tensor_contract ||
+       field.tensor_contract->storage != TensorOutputStorage::kRuntimePool ||
+       field.tensor_contract->max_byte_span || field.tensor_allocation)) {
+    return make_unexpected(tensor_field_graph_error(
+        ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID", field));
   }
   return {};
 }
@@ -1288,13 +1211,13 @@ namespace {
   }
   if (metadata.descriptor_tensor_field_count > 1U &&
       (metadata.tensor_layout || metadata.memory_conversion || metadata.tensor_allocation ||
-       metadata.payload_options)) {
+       metadata.payload_options || metadata.tensor_byte_span_expression)) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_FIELD_SCOPE_REQUIRED"));
   }
   if (metadata.descriptor_tensor_field_count == 1U && !metadata.tensor_fields.empty() &&
       (metadata.tensor_layout || metadata.memory_conversion || metadata.tensor_allocation ||
-       metadata.payload_options)) {
+       metadata.payload_options || metadata.tensor_byte_span_expression)) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_FIELD_SCOPE_CONFLICT"));
   }
@@ -1312,11 +1235,104 @@ namespace {
   return {};
 }
 
+[[nodiscard]] bool valid_normalized_rate(const Rate& rate) noexcept {
+  return rate.numerator_hz != 0U && rate.denominator_hz != 0U &&
+         std::gcd(rate.numerator_hz, rate.denominator_hz) == 1U;
+}
+
+[[nodiscard]] bool valid_normalized_rate_ratio(const RateRatio& ratio) noexcept {
+  return ratio.numerator != 0U && ratio.denominator != 0U &&
+         std::gcd(ratio.numerator, ratio.denominator) == 1U;
+}
+
+[[nodiscard]] bool valid_rate_binding_stage(LifecycleStage stage) noexcept {
+  return stage == LifecycleStage::kConfigure || stage == LifecycleStage::kDiscover ||
+         stage == LifecycleStage::kWarmUp || stage == LifecycleStage::kArm;
+}
+
+[[nodiscard]] expected<void, Error> validate_rate_metadata(
+    const OperatorSpecCompilerAccess::PortMetadata& metadata) {
+  if (metadata.rate_error.code != ErrorCode::kSuccess) {
+    return make_unexpected(metadata.rate_error);
+  }
+  if (!closed_enum(metadata.rate_kind) ||
+      (metadata.nominal_rate && !valid_normalized_rate(*metadata.nominal_rate)) ||
+      (metadata.expected_rate && !valid_normalized_rate(*metadata.expected_rate)) ||
+      (metadata.follows_ratio && !valid_normalized_rate_ratio(*metadata.follows_ratio)) ||
+      (metadata.max_nominal_rate && !valid_normalized_rate(*metadata.max_nominal_rate)) ||
+      (metadata.lifecycle_binding_stage &&
+       !valid_rate_binding_stage(*metadata.lifecycle_binding_stage))) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "PORT_RATE_INVALID"));
+  }
+
+  const bool input = metadata.direction == PortDirection::kInput;
+  const bool no_output_fields =
+      !metadata.nominal_rate && metadata.follows_input_declaration == nullptr &&
+      !metadata.follows_ratio && !metadata.lifecycle_binding_stage && !metadata.max_nominal_rate;
+  switch (metadata.rate_kind) {
+    case PortRateKind::kUnspecified:
+      if (metadata.expected_rate || !no_output_fields) {
+        break;
+      }
+      return {};
+    case PortRateKind::kExpectedInput:
+      if (input && metadata.expected_rate && no_output_fields) {
+        return {};
+      }
+      break;
+    case PortRateKind::kFixedNominal:
+      if (!input && metadata.nominal_rate && !metadata.expected_rate &&
+          metadata.follows_input_declaration == nullptr && !metadata.follows_ratio &&
+          !metadata.lifecycle_binding_stage && !metadata.max_nominal_rate) {
+        return {};
+      }
+      break;
+    case PortRateKind::kFollowsInput:
+      if (!input && !metadata.nominal_rate && !metadata.expected_rate &&
+          metadata.follows_input_declaration != nullptr && metadata.follows_ratio &&
+          !metadata.lifecycle_binding_stage && !metadata.max_nominal_rate) {
+        return {};
+      }
+      break;
+    case PortRateKind::kLifecycleNominal:
+      if (!input && !metadata.nominal_rate && !metadata.expected_rate &&
+          metadata.follows_input_declaration == nullptr && !metadata.follows_ratio &&
+          metadata.lifecycle_binding_stage &&
+          valid_rate_binding_stage(*metadata.lifecycle_binding_stage)) {
+        return {};
+      }
+      break;
+  }
+  return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "PORT_RATE_CONFLICT"));
+}
+
+[[nodiscard]] expected<std::optional<std::size_t>, Error> validate_follows_reference(
+    const OperatorSpec& spec, const OperatorSpecCompilerAccess::PortMetadata& metadata) {
+  if (metadata.rate_kind != PortRateKind::kFollowsInput) {
+    return std::optional<std::size_t>{};
+  }
+  for (std::size_t index = 0U; index < OperatorSpecCompilerAccess::port_count(spec); ++index) {
+    const auto candidate = OperatorSpecCompilerAccess::port(spec, index);
+    if (candidate.declaration == metadata.follows_input_declaration &&
+        candidate.direction == PortDirection::kInput) {
+      return std::optional<std::size_t>{index};
+    }
+  }
+  return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "PORT_RATE_REFERENCE_INVALID"));
+}
+
 // Port metadata validation is kept as one ordered fail-closed funnel so each declaration is
 // rejected before any Graph-owned state is committed.
 [[nodiscard]] expected<void, Error>
 validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
     const OperatorSpecCompilerAccess::PortMetadata& metadata) {
+  auto rate = validate_rate_metadata(metadata);
+  if (!rate) {
+    return rate;
+  }
+  if (metadata.tensor_contract_error.code != ErrorCode::kSuccess) {
+    return make_unexpected(metadata.tensor_contract_error);
+  }
   auto tensor_fields = validate_tensor_field_metadata(metadata);
   if (!tensor_fields)
     return tensor_fields;
@@ -1349,7 +1365,7 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_PORT_ENUM_INVALID"));
   }
   if (metadata.tensor_layout && metadata.tensor_layout->dtype &&
-      !valid_dtype(*metadata.tensor_layout->dtype)) {
+      !valid_tensor_dtype(*metadata.tensor_layout->dtype)) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_DTYPE_INVALID"));
   }
   if (!metadata.diagnostic_alias.empty()) {
@@ -1361,6 +1377,15 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
                                      metadata.tensor_allocation->max_byte_span == 0U)) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_ALLOCATION_INVALID"));
+  }
+  if (metadata.tensor_byte_span_expression &&
+      (metadata.direction != PortDirection::kOutput || !metadata.tensor ||
+       metadata.payload_identity.kind != PayloadIdentityKind::kTensor ||
+       !metadata.tensor_contract ||
+       metadata.tensor_contract->storage != TensorOutputStorage::kRuntimePool ||
+       metadata.tensor_contract->max_byte_span || metadata.tensor_allocation)) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID"));
   }
   if (metadata.payload_options) {
     auto options = validate_payload_options(
@@ -1375,8 +1400,7 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
                                 const std::optional<SchemaIdentityRecord>& rhs) {
   if (lhs.has_value() != rhs.has_value())
     return false;
-  return !lhs || (lhs->canonical_name == rhs->canonical_name && lhs->version == rhs->version &&
-                  lhs->schema_sha256 == rhs->schema_sha256 && lhs->id == rhs->id);
+  return !lhs || schema_identity_exactly_equal(*lhs, *rhs);
 }
 
 [[nodiscard]] bool payload_options_equal(const std::optional<PayloadOptionsRecord>& lhs,
@@ -1390,13 +1414,15 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
 }
 
 [[nodiscard]] bool port_setup_equal(const PortStorage& existing,
-                                    const OperatorSpecCompilerAccess::PortMetadata& candidate) {
-  const auto candidate_setup = setup_configuration(candidate);
+                                    const OperatorSpecCompilerAccess::PortMetadata& candidate,
+                                    std::optional<GraphPortId> candidate_follows_input) {
+  const auto candidate_setup = setup_port_configuration(candidate, candidate_follows_input);
   const auto& setup = existing.record.setup;
   return existing.record.direction == candidate.direction &&
          existing.record.name == candidate.name &&
          existing.local_type_token == candidate.local_type_token &&
-         payload_identity_equal(existing.record.payload_identity, candidate.payload_identity) &&
+         payload_identity_exactly_equal(existing.record.payload_identity,
+                                        candidate.payload_identity) &&
          existing.record.serialized_payload_capacity_bytes ==
              candidate.serialized_payload_capacity_bytes &&
          existing.record.generic_loan_supported ==
@@ -1414,14 +1440,25 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
          setup.queue_depth == candidate_setup.queue_depth &&
          setup.max_emits_per_compute == candidate_setup.max_emits_per_compute &&
          setup.late_joiner_history_depth == candidate_setup.late_joiner_history_depth &&
+         setup.rate_kind == candidate_setup.rate_kind &&
+         setup.declared_nominal_rate == candidate_setup.declared_nominal_rate &&
+         setup.declared_expected_rate == candidate_setup.declared_expected_rate &&
+         setup.follows_input == candidate_setup.follows_input &&
+         setup.follows_ratio == candidate_setup.follows_ratio &&
+         setup.lifecycle_binding_stage == candidate_setup.lifecycle_binding_stage &&
+         setup.declared_max_nominal_rate == candidate_setup.declared_max_nominal_rate &&
          setup.diagnostic_alias == candidate_setup.diagnostic_alias &&
-         tensor_layout_equal(setup.tensor_layout, candidate_setup.tensor_layout) &&
+         tensor_port_layout_exactly_equal(setup.tensor_layout, candidate_setup.tensor_layout) &&
+         setup.tensor_contract.has_value() == candidate_setup.tensor_contract.has_value() &&
+         (!setup.tensor_contract ||
+          tensor_contract_equal(*setup.tensor_contract, *candidate_setup.tensor_contract)) &&
          setup.memory_conversion == candidate_setup.memory_conversion &&
          setup.tensor_allocation.has_value() == candidate_setup.tensor_allocation.has_value() &&
          (!setup.tensor_allocation ||
           (setup.tensor_allocation->max_rank == candidate_setup.tensor_allocation->max_rank &&
            setup.tensor_allocation->max_byte_span ==
                candidate_setup.tensor_allocation->max_byte_span)) &&
+         setup.tensor_byte_span_expression == candidate_setup.tensor_byte_span_expression &&
          payload_options_equal(setup.payload_options, candidate_setup.payload_options) &&
          tensor_field_configuration_equal(setup.tensor_fields, candidate_setup.tensor_fields);
 }
@@ -1568,10 +1605,18 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
   auto setup = run_setup(*prototype, spec);
   if (!setup)
     return make_unexpected(std::move(setup.error()));
+  std::vector<std::optional<std::size_t>> follows_port_indices;
+  follows_port_indices.reserve(OperatorSpecCompilerAccess::port_count(spec));
   for (std::size_t index = 0; index < OperatorSpecCompilerAccess::port_count(spec); ++index) {
-    auto valid = validate_port_metadata(OperatorSpecCompilerAccess::port(spec, index));
+    const auto metadata = OperatorSpecCompilerAccess::port(spec, index);
+    auto valid = validate_port_metadata(metadata);
     if (!valid)
       return make_unexpected(std::move(valid.error()));
+    auto follows = validate_follows_reference(spec, metadata);
+    if (!follows) {
+      return make_unexpected(std::move(follows.error()));
+    }
+    follows_port_indices.push_back(*follows);
   }
   for (std::size_t index = 0; index < OperatorSpecCompilerAccess::source_count(spec); ++index) {
     const auto source = OperatorSpecCompilerAccess::source(spec, index);
@@ -1613,7 +1658,7 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
         const auto prior_identity = OperatorSpecCompilerAccess::port(spec, prior).payload_identity;
         if (prior_identity.pod && prior_identity.pod->canonical_name == candidate.canonical_name &&
             prior_identity.pod->version == candidate.version &&
-            !payload_identity_equal(prior_identity, identity)) {
+            !payload_identity_exactly_equal(prior_identity, identity)) {
           return make_unexpected(
               graph_error(ErrorCode::kIncompatible, "GRAPH_POD_IDENTITY_CONFLICT"));
         }
@@ -1655,6 +1700,11 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
       .vertex = vertex,
   };
   storage.ports.reserve(OperatorSpecCompilerAccess::port_count(spec));
+  std::vector<GraphPortId> port_ids;
+  port_ids.reserve(OperatorSpecCompilerAccess::port_count(spec));
+  for (std::size_t index = 0U; index < OperatorSpecCompilerAccess::port_count(spec); ++index) {
+    port_ids.push_back(state->next_port_id());
+  }
 
   state->vertices_.push_back(VertexRecord{
       .id = vertex,
@@ -1667,7 +1717,11 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
   GraphMutationRollback::checkpoint(*state);
   for (std::size_t index = 0; index < OperatorSpecCompilerAccess::port_count(spec); ++index) {
     const auto metadata = OperatorSpecCompilerAccess::port(spec, index);
-    const GraphPortId port_id = state->next_port_id();
+    const GraphPortId port_id = port_ids[index];
+    const std::optional<GraphPortId> follows_input =
+        follows_port_indices[index]
+            ? std::optional<GraphPortId>{port_ids[*follows_port_indices[index]]}
+            : std::nullopt;
     PortStorage port{
         .record =
             PortRecord{
@@ -1689,7 +1743,7 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
                               metadata.runtime_type_ops->generic_loan_slot_size_bytes)
                         : 0U,
                 .descriptor_tensor_field_count = metadata.descriptor_tensor_field_count,
-                .setup = setup_configuration(metadata),
+                .setup = setup_port_configuration(metadata, follows_input),
             },
         .declaration = metadata.declaration,
         .local_type_token = metadata.local_type_token,
@@ -1822,6 +1876,19 @@ OperatorRef graph_operator_ref(const std::shared_ptr<GraphState>& state,
   return state->operators_[index].plan_ref;
 }
 
+expected<GraphOperatorLocator, Error> graph_operator_locator(
+    const std::shared_ptr<GraphState>& state, std::size_t index) noexcept {
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->operators_.size()) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  return GraphOperatorLocator{
+      .graph = state->instance_id_,
+      .generation = state->generation_,
+      .root_operator_index = index,
+  };
+}
+
 // Parameter replacement validates a complete candidate and its port/source invariants before
 // atomically transferring ownership into the existing logical Operator identity.
 expected<void, Error>
@@ -1883,10 +1950,28 @@ graph_set_operator_params(  // NOLINT(readability-function-cognitive-complexity)
   }
   std::vector<const void*> declarations;
   declarations.reserve(op.ports.size());
+  std::unordered_map<const void*, GraphPortId> replay_port_ids;
+  replay_port_ids.reserve(op.ports.size());
+  for (std::size_t port_index = 0; port_index < op.ports.size(); ++port_index) {
+    const auto metadata = OperatorSpecCompilerAccess::port(spec, port_index);
+    if (!replay_port_ids.emplace(metadata.declaration, op.ports[port_index]).second) {
+      return make_unexpected(
+          graph_error(ErrorCode::kInvalidArgument, "GRAPH_PORT_DECLARATION_DUPLICATE"));
+    }
+  }
   for (std::size_t port_index = 0; port_index < op.ports.size(); ++port_index) {
     const auto metadata = OperatorSpecCompilerAccess::port(spec, port_index);
     PortStorage* existing = find_port(*state, op.ports[port_index]);
-    if (existing == nullptr || !port_setup_equal(*existing, metadata)) {
+    std::optional<GraphPortId> follows_input;
+    if (metadata.follows_input_declaration != nullptr) {
+      const auto found = replay_port_ids.find(metadata.follows_input_declaration);
+      if (found == replay_port_ids.end()) {
+        return make_unexpected(
+            graph_error(ErrorCode::kIncompatible, "GRAPH_PARAMETER_PORT_SHAPE_CHANGED"));
+      }
+      follows_input = found->second;
+    }
+    if (existing == nullptr || !port_setup_equal(*existing, metadata, follows_input)) {
       return make_unexpected(
           graph_error(ErrorCode::kIncompatible, "GRAPH_PARAMETER_PORT_SHAPE_CHANGED"));
     }
@@ -2084,14 +2169,24 @@ void append_adjacency(GraphState& state, VertexId source, VertexId target) {
   return std::nullopt;
 }
 
-[[nodiscard]] std::optional<TensorPortLayout> effective_tensor_layout(const PortStorage& port) {
+[[nodiscard]] std::optional<TensorContractRecord> effective_tensor_contract(
+    const PortStorage& port) {
+  return resolve_output_tensor_contract(port.record.setup.tensor_contract,
+                                        port.record.graph_override.tensor_contract);
+}
+
+[[nodiscard]] std::optional<TensorRepresentation> effective_tensor_layout(const PortStorage& port) {
+  const auto contract = effective_tensor_contract(port);
+  if (contract) {
+    return tensor_representation(*contract);
+  }
   return port.record.graph_override.tensor_layout ? port.record.graph_override.tensor_layout
                                                   : port.record.setup.tensor_layout;
 }
 
 [[nodiscard]] bool tensor_layouts_compatible(
-    const std::optional<TensorPortLayout>& source,
-    const std::optional<TensorPortLayout>& target) noexcept {
+    const std::optional<TensorRepresentation>& source,
+    const std::optional<TensorRepresentation>& target) noexcept {
   if (!source || !target) {
     return true;
   }
@@ -2101,10 +2196,40 @@ void append_adjacency(GraphState& state, VertexId source, VertexId target) {
   if (source->rank && target->rank && source->rank != target->rank) {
     return false;
   }
+  if (source->strides && target->strides && source->strides != target->strides) {
+    return false;
+  }
   return !source->dtype || !target->dtype ||
          (source->dtype->code == target->dtype->code &&
           source->dtype->bits == target->dtype->bits &&
           source->dtype->lanes == target->dtype->lanes);
+}
+
+[[nodiscard]] bool tensor_contract_bounds_compatible(const TensorContractRecord* source,
+                                                     const TensorContractRecord* target) noexcept {
+  if (source == nullptr || target == nullptr) {
+    return true;
+  }
+  if ((source->max_rank && target->max_rank && *source->max_rank > *target->max_rank) ||
+      (source->max_byte_span && target->max_byte_span &&
+       *source->max_byte_span > *target->max_byte_span)) {
+    return false;
+  }
+  const std::size_t comparable_axes = std::min(source->axes.size(), target->axes.size());
+  for (std::size_t axis = 0U; axis < comparable_axes; ++axis) {
+    if (source->axes[axis].max_extent > target->axes[axis].max_extent ||
+        (source->axes[axis].max_abs_stride_bytes != 0U &&
+         target->axes[axis].max_abs_stride_bytes != 0U &&
+         source->axes[axis].max_abs_stride_bytes > target->axes[axis].max_abs_stride_bytes)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename T>
+[[nodiscard]] const T* optional_value_pointer(const std::optional<T>& value) noexcept {
+  return value.has_value() ? &value.value() : nullptr;
 }
 
 [[nodiscard]] bool declares_tensor_semantics(const PortStorage& port) noexcept {
@@ -2123,7 +2248,10 @@ void append_adjacency(GraphState& state, VertexId source, VertexId target) {
                  candidate.tensor_index == target_field.tensor_index;
         });
     if (source_field != source_fields.end() &&
-        !tensor_layouts_compatible(source_field->tensor_layout, target_field.tensor_layout)) {
+        (!tensor_layouts_compatible(source_field->tensor_layout, target_field.tensor_layout) ||
+         !tensor_contract_bounds_compatible(
+             optional_value_pointer(source_field->tensor_contract),
+             optional_value_pointer(target_field.tensor_contract)))) {
       return false;
     }
   }
@@ -2133,8 +2261,12 @@ void append_adjacency(GraphState& state, VertexId source, VertexId target) {
 [[nodiscard]] expected<PayloadOptionsRecord, Error> effective_tensor_payload(
     const GraphState& state, const PortStorage& source, const PortStorage& target,
     std::optional<PayloadOptionsRecord> source_override = std::nullopt) {
+  const auto source_contract = effective_tensor_contract(source);
+  const auto target_contract = effective_tensor_contract(target);
   if (!tensor_layouts_compatible(effective_tensor_layout(source),
-                                 effective_tensor_layout(target))) {
+                                 effective_tensor_layout(target)) ||
+      !tensor_contract_bounds_compatible(source_contract ? &*source_contract : nullptr,
+                                         target_contract ? &*target_contract : nullptr)) {
     return make_unexpected(
         graph_error(ErrorCode::kIncompatible, "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT"));
   }
@@ -2208,7 +2340,7 @@ template <typename PortBaseT>
     PortStorage* existing = find_port(state, found->second);
     if (existing == nullptr || existing->record.owner_kind != PortOwnerKind::kGraphInterface ||
         existing->record.direction != direction ||
-        !payload_identity_equal(existing->record.payload_identity, payload_identity) ||
+        !payload_identity_exactly_equal(existing->record.payload_identity, payload_identity) ||
         existing->record.serialized_payload_capacity_bytes != serialized_payload_capacity_bytes) {
       return make_unexpected(
           graph_error(ErrorCode::kIncompatible, "GRAPH_INTERFACE_PORT_CONFLICT"));
@@ -2329,7 +2461,7 @@ expected<FlowRegistration, Error> graph_add_flow(const std::shared_ptr<GraphStat
   auto target_id = find_port_by_declaration(*state, target, PortDirection::kInput, target_identity);
   if (!target_id)
     return make_unexpected(std::move(target_id.error()));
-  if (!payload_identity_equal(source_identity, target_identity)) {
+  if (!payload_identity_exactly_equal(source_identity, target_identity)) {
     return make_unexpected(graph_error(ErrorCode::kIncompatible, "GRAPH_PORT_TYPE_MISMATCH"));
   }
   if (std::any_of(state->edges_.begin(), state->edges_.end(), [&](const EdgeRecord& edge) {
@@ -2515,7 +2647,7 @@ const void* graph_port_declaration(const std::shared_ptr<GraphState>& state, Gra
   const std::lock_guard lock(state->mutex_);
   const PortStorage* found = find_port(*state, port);
   if (found == nullptr || found->record.direction != direction ||
-      !payload_identity_equal(found->record.payload_identity, payload_identity)) {
+      !payload_identity_exactly_equal(found->record.payload_identity, payload_identity)) {
     return nullptr;
   }
   return found->declaration;
@@ -2579,11 +2711,12 @@ expected<void, Error> graph_configure_input_queue(const std::shared_ptr<GraphSta
   });
 }
 
-expected<void, Error> graph_configure_input_tensor(const std::shared_ptr<GraphState>& state,
-                                                   GraphPortId id, TensorPortLayout layout) {
-  if ((layout.memory_kind && !closed_enum(*layout.memory_kind)) ||
-      (layout.dtype && !valid_dtype(*layout.dtype))) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_LAYOUT_INVALID"));
+expected<void, Error> graph_configure_input_tensor_spec(const std::shared_ptr<GraphState>& state,
+                                                        GraphPortId id,
+                                                        const TensorInputSpec& spec) {
+  auto normalized = normalize_tensor_input_spec(spec);
+  if (!normalized) {
+    return make_unexpected(std::move(normalized.error()));
   }
   auto prepared = state->prepare_mutation();
   if (!prepared)
@@ -2598,48 +2731,22 @@ expected<void, Error> graph_configure_input_tensor(const std::shared_ptr<GraphSt
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_NON_TENSOR_LAYOUT_MUTATION"));
   }
   PortStorage candidate = *port;
-  candidate.record.graph_override.tensor_layout = layout;
-  const auto options = candidate.record.graph_override.payload_options
-                           ? candidate.record.graph_override.payload_options
-                           : candidate.record.setup.payload_options;
-  if (options) {
-    auto valid = validate_payload_options(
-        *options, candidate.record.payload_identity, effective_tensor_layout(candidate));
-    if (!valid)
-      return valid;
-  }
+  candidate.record.graph_override.tensor_layout = tensor_representation(*normalized);
+  candidate.record.graph_override.tensor_contract = *normalized;
+  candidate.record.graph_override.memory_conversion = normalized->memory_conversion;
   auto edge_updates = recompute_incident_tensor_payloads(*state, id, candidate);
-  if (!edge_updates)
+  if (!edge_updates) {
     return make_unexpected(std::move(edge_updates.error()));
-  using TensorLayoutOverride = decltype(port->record.graph_override.tensor_layout);
-  using EffectivePayload = decltype(state->edges_[0].effective_tensor_payload);
-  static_assert(std::is_nothrow_copy_assignable_v<TensorLayoutOverride>);
-  static_assert(std::is_nothrow_move_assignable_v<EffectivePayload>);
+  }
   GraphMutationRollback::checkpoint(*state);
-  port->record.graph_override.tensor_layout = layout;
-  for (auto& [index, effective] : edge_updates.value())
+  port->record.graph_override.tensor_layout = candidate.record.graph_override.tensor_layout;
+  port->record.graph_override.tensor_contract = std::move(*normalized);
+  port->record.graph_override.memory_conversion = candidate.record.graph_override.memory_conversion;
+  for (auto& [index, effective] : edge_updates.value()) {
     state->edges_[index].effective_tensor_payload = std::move(effective);
+  }
   state->mark_mutation();
   return {};
-}
-
-expected<void, Error> graph_configure_input_memory(const std::shared_ptr<GraphState>& state,
-                                                   GraphPortId id, MemoryConversionPolicy policy) {
-  if (!closed_enum(policy)) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_MEMORY_POLICY_INVALID"));
-  }
-  return configure_port(state, id, [policy](PortStorage& port) -> expected<void, Error> {
-    if (port.record.direction != PortDirection::kInput) {
-      return make_unexpected(
-          graph_error(ErrorCode::kInvalidArgument, "GRAPH_INPUT_CONFIG_INVALID"));
-    }
-    if (!declares_tensor_semantics(port)) {
-      return make_unexpected(
-          graph_error(ErrorCode::kInvalidArgument, "GRAPH_NON_TENSOR_MEMORY_CONVERSION"));
-    }
-    port.record.graph_override.memory_conversion = policy;
-    return {};
-  });
 }
 
 expected<void, Error> graph_configure_port_alias(const std::shared_ptr<GraphState>& state,
@@ -2677,12 +2784,53 @@ expected<void, Error> graph_configure_output_history(const std::shared_ptr<Graph
   });
 }
 
-expected<void, Error> graph_configure_output_tensor(const std::shared_ptr<GraphState>& state,
-                                                    GraphPortId id, TensorPortLayout layout) {
-  if ((layout.memory_kind && !closed_enum(*layout.memory_kind)) ||
-      (layout.dtype && !valid_dtype(*layout.dtype))) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_LAYOUT_INVALID"));
+[[nodiscard]] expected<TensorContractRecord, Error> select_output_tensor_spec(
+    const PortStorage& port, const TensorOutputSpec& spec,
+    expected<TensorContractRecord, Error> normalized,
+    expected<TensorContractRecord, Error> derived_refinement) {
+  const bool field_scoped_derivation =
+      std::any_of(port.record.setup.tensor_fields.begin(),
+                  port.record.setup.tensor_fields.end(),
+                  [](const auto& field) { return field.tensor_byte_span_expression.has_value(); });
+  if (field_scoped_derivation) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_FIELD_SCOPE_REQUIRED"));
   }
+  const bool derived_output = port.record.setup.tensor_byte_span_expression.has_value();
+  if (derived_output && spec.storage == TensorOutputStorage::kPassThrough) {
+    if (!derived_refinement) {
+      return make_unexpected(std::move(derived_refinement.error()));
+    }
+    normalized = std::move(derived_refinement);
+  } else if (!normalized) {
+    return make_unexpected(std::move(normalized.error()));
+  }
+  if (!derived_output) {
+    return std::move(normalized.value());
+  }
+
+  const auto& setup_contract = port.record.setup.tensor_contract;
+  const auto effective = resolve_output_tensor_contract(
+      setup_contract, std::optional<TensorContractRecord>{normalized.value()});
+  const bool compatible_refinement =
+      normalized->storage == TensorOutputStorage::kPassThrough && !spec.bounds && setup_contract &&
+      effective &&
+      tensor_layouts_compatible(std::optional{setup_contract->representation},
+                                std::optional{effective->representation}) &&
+      (!effective->max_rank || !setup_contract->max_rank ||
+       *effective->max_rank <= *setup_contract->max_rank);
+  if (!compatible_refinement) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument,
+                                       "GRAPH_TENSOR_DERIVED_ALLOCATION_OVERRIDE_INVALID"));
+  }
+  return std::move(normalized.value());
+}
+
+expected<void, Error> graph_configure_output_tensor_spec(const std::shared_ptr<GraphState>& state,
+                                                         GraphPortId id,
+                                                         const TensorOutputSpec& spec) {
+  auto normalized = normalize_tensor_output_spec(spec);
+  auto derived_refinement = normalize_tensor_output_spec_refinement_with_derived_byte_span(spec);
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
@@ -2695,28 +2843,65 @@ expected<void, Error> graph_configure_output_tensor(const std::shared_ptr<GraphS
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_NON_TENSOR_LAYOUT_MUTATION"));
   }
+  auto selected =
+      select_output_tensor_spec(*port, spec, std::move(normalized), std::move(derived_refinement));
+  if (!selected) {
+    return make_unexpected(std::move(selected.error()));
+  }
+  TensorContractRecord normalized_contract = std::move(selected.value());
+  if (!port->record.graph_override.tensor_contract && port->record.graph_override.payload_options &&
+      payload_options_carry_tensor_transfer(*port->record.graph_override.payload_options)) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT"));
+  }
   PortStorage candidate = *port;
-  candidate.record.graph_override.tensor_layout = layout;
-  const auto options = candidate.record.graph_override.payload_options
-                           ? candidate.record.graph_override.payload_options
-                           : candidate.record.setup.payload_options;
-  if (options) {
-    auto valid = validate_payload_options(
-        *options, candidate.record.payload_identity, effective_tensor_layout(candidate));
-    if (!valid)
-      return valid;
+  candidate.record.graph_override.tensor_layout = tensor_representation(normalized_contract);
+  candidate.record.graph_override.tensor_contract = normalized_contract;
+  if (normalized_contract.transfer) {
+    const auto& transfer = normalized_tensor_transfer(normalized_contract);
+    PayloadOptionsRecord options{
+        .max_inline_bytes =
+            transfer.max_inline_bytes
+                ? std::optional{static_cast<std::uint32_t>(*transfer.max_inline_bytes)}
+                : std::nullopt,
+        .max_tensor_byte_span = transfer.max_staging_byte_span,
+        .interface_tensor_emit_policy = transfer.foreign_emit_policy,
+    };
+    if (candidate.record.payload_identity.schema) {
+      options.schema = candidate.record.payload_identity.schema;
+    }
+    candidate.record.graph_override.payload_options = std::move(options);
+  } else {
+    candidate.record.graph_override.payload_options.reset();
+  }
+  if (normalized_contract.storage == TensorOutputStorage::kRuntimePool) {
+    const TensorPoolBounds bounds = normalized_tensor_pool_bounds(normalized_contract);
+    const bool supports_singular_tensor_allocation =
+        candidate.record.payload_identity.kind == PayloadIdentityKind::kTensor ||
+        (candidate.record.payload_identity.payload_kind == PayloadKind::kDescriptorBacked &&
+         candidate.record.descriptor_tensor_field_count == 1U);
+    if (!supports_singular_tensor_allocation || !candidate.setup_tensor_allocation ||
+        bounds.max_rank > candidate.setup_tensor_allocation->max_rank ||
+        bounds.max_byte_span > candidate.setup_tensor_allocation->max_byte_span) {
+      return make_unexpected(
+          graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_ALLOCATION_NOT_TIGHTENING"));
+    }
+    candidate.record.graph_override.tensor_allocation = bounds;
+  } else {
+    candidate.record.graph_override.tensor_allocation.reset();
   }
   auto edge_updates = recompute_incident_tensor_payloads(*state, id, candidate);
-  if (!edge_updates)
+  if (!edge_updates) {
     return make_unexpected(std::move(edge_updates.error()));
-  using TensorLayoutOverride = decltype(port->record.graph_override.tensor_layout);
-  using EffectivePayload = decltype(state->edges_[0].effective_tensor_payload);
-  static_assert(std::is_nothrow_copy_assignable_v<TensorLayoutOverride>);
-  static_assert(std::is_nothrow_move_assignable_v<EffectivePayload>);
+  }
   GraphMutationRollback::checkpoint(*state);
-  port->record.graph_override.tensor_layout = layout;
-  for (auto& [index, effective] : edge_updates.value())
+  port->record.graph_override.tensor_layout = candidate.record.graph_override.tensor_layout;
+  port->record.graph_override.tensor_contract = std::move(normalized_contract);
+  port->record.graph_override.payload_options = candidate.record.graph_override.payload_options;
+  port->record.graph_override.tensor_allocation = candidate.record.graph_override.tensor_allocation;
+  for (auto& [index, effective] : edge_updates.value()) {
     state->edges_[index].effective_tensor_payload = std::move(effective);
+  }
   state->mark_mutation();
   return {};
 }
@@ -2733,9 +2918,21 @@ expected<void, Error> graph_configure_output_payload(const std::shared_ptr<Graph
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_OUTPUT_CONFIG_INVALID"));
   }
   const auto layout = effective_tensor_layout(*port);
+  if ((port->record.graph_override.tensor_contract ||
+       port->record.setup.tensor_byte_span_expression) &&
+      payload_options_carry_tensor_transfer(copied)) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT"));
+  }
   auto valid = validate_payload_options(copied, port->record.payload_identity, layout);
   if (!valid)
     return valid;
+  if (port->record.graph_override.tensor_contract && port->record.graph_override.payload_options) {
+    copied.max_inline_bytes = port->record.graph_override.payload_options->max_inline_bytes;
+    copied.max_tensor_byte_span = port->record.graph_override.payload_options->max_tensor_byte_span;
+    copied.interface_tensor_emit_policy =
+        port->record.graph_override.payload_options->interface_tensor_emit_policy;
+  }
   std::vector<std::pair<std::size_t, PayloadOptionsRecord>> normalized;
   if (declares_tensor_semantics(*port)) {
     for (std::size_t index = 0; index < state->edges_.size(); ++index) {
@@ -2759,23 +2956,6 @@ expected<void, Error> graph_configure_output_payload(const std::shared_ptr<Graph
     state->edges_[index].effective_tensor_payload = std::move(effective);
   state->mark_mutation();
   return {};
-}
-
-expected<void, Error> graph_configure_tensor_allocation(const std::shared_ptr<GraphState>& state,
-                                                        GraphPortId id,
-                                                        TensorAllocationBounds bounds) {
-  return configure_port(state, id, [bounds](PortStorage& port) -> expected<void, Error> {
-    if (port.record.direction != PortDirection::kOutput ||
-        port.record.payload_identity.kind != PayloadIdentityKind::kTensor ||
-        bounds.max_rank == 0U || bounds.max_byte_span == 0U || !port.setup_tensor_allocation ||
-        bounds.max_rank > port.setup_tensor_allocation->max_rank ||
-        bounds.max_byte_span > port.setup_tensor_allocation->max_byte_span) {
-      return make_unexpected(
-          graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_ALLOCATION_NOT_TIGHTENING"));
-    }
-    port.record.graph_override.tensor_allocation = bounds;
-    return {};
-  });
 }
 
 expected<void, Error> graph_configure_flow_policy(const std::shared_ptr<GraphState>& state,
@@ -2872,8 +3052,30 @@ namespace {
   return {};
 }
 
-[[nodiscard]] expected<std::optional<LogicalTensorRequirementsRecord>, Error>
-copy_tensor_requirements(const TopicOptions& options, const PayloadIdentityRecord& identity) {
+[[nodiscard]] TensorBoundaryContractRecord copy_tensor_boundary_contract_record(
+    const TensorContractRecord& tensor) {
+  const auto& transfer = tensor.transfer.value_or(TensorTransferPolicy{});
+  return TensorBoundaryContractRecord{
+      .memory_kind = tensor.representation.memory_kind,
+      .dtype = tensor.representation.dtype,
+      .rank = tensor.representation.rank,
+      .max_rank = tensor.max_rank,
+      .max_byte_span = tensor.max_byte_span,
+      .axes = tensor.axes,
+      .strides = *tensor.representation.strides,
+      .foreign_emit_policy = transfer.foreign_emit_policy,
+      .max_inline_bytes =
+          transfer.max_inline_bytes
+              ? std::optional{static_cast<std::uint32_t>(*transfer.max_inline_bytes)}
+              : std::nullopt,
+      .max_staging_byte_span = transfer.max_staging_byte_span,
+      .memory_conversion = tensor.memory_conversion,
+      .origins = tensor.origins,
+  };
+}
+
+[[nodiscard]] expected<std::optional<TensorBoundaryContractRecord>, Error> copy_tensor_requirements(
+    const TopicOptions& options, const PayloadIdentityRecord& identity) {
   if (identity.kind != PayloadIdentityKind::kTensor) {
     if (options.tensor) {
       return make_unexpected(
@@ -2883,49 +3085,142 @@ copy_tensor_requirements(const TopicOptions& options, const PayloadIdentityRecor
   }
   if (!options.tensor)
     return std::nullopt;
-  const auto& tensor = *options.tensor;
-  if (!closed_enum(tensor.strides) || !closed_enum(tensor.foreign_emit_policy) ||
-      (tensor.memory_kind && !closed_enum(*tensor.memory_kind))) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_ENUM_INVALID"));
+  TensorBoundaryContract boundary = *options.tensor;
+  if (!boundary.memory_conversion) {
+    boundary.memory_conversion = options.memory_conversion;
+  } else if (options.memory_conversion && boundary.memory_conversion != options.memory_conversion) {
+    return make_unexpected(
+        graph_error(ErrorCode::kIncompatible, "GRAPH_TENSOR_MEMORY_POLICY_CONFLICT"));
   }
-  if (tensor.dtype && !valid_dtype(*tensor.dtype)) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_DTYPE_INVALID"));
+  auto normalized = normalize_tensor_boundary_contract(boundary);
+  if (!normalized) {
+    return make_unexpected(std::move(normalized.error()));
   }
-  LogicalTensorRequirementsRecord result{
-      .memory_kind = tensor.memory_kind,
-      .dtype = tensor.dtype,
-      .rank = tensor.rank,
-      .strides = tensor.strides,
-      .foreign_emit_policy = tensor.foreign_emit_policy,
-      .max_inline_bytes = tensor.max_inline_bytes,
-  };
-  if (tensor.logical_bounds) {
-    const auto& bounds = *tensor.logical_bounds;
-    if (bounds.max_rank == 0U || bounds.max_byte_span == 0U ||
-        bounds.axes.size() > bounds.max_rank || (tensor.rank && *tensor.rank > bounds.max_rank)) {
+  return std::optional<TensorBoundaryContractRecord>{
+      copy_tensor_boundary_contract_record(*normalized)};
+}
+
+[[nodiscard]] expected<std::vector<DescriptorTensorTopicFieldRecord>, Error>
+copy_descriptor_tensor_requirements(const TopicOptions& options,
+                                    const PayloadIdentityRecord& identity,
+                                    std::vector<AuthoredDescriptorTensorTopicField> authored_fields,
+                                    const std::uint16_t descriptor_tensor_field_count) {
+  const bool descriptor_schema = identity.kind == PayloadIdentityKind::kSchema &&
+                                 identity.payload_kind == PayloadKind::kDescriptorBacked;
+  if (!descriptor_schema) {
+    if (descriptor_tensor_field_count != 0U || !authored_fields.empty()) {
       return make_unexpected(
-          graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_LOGICAL_BOUNDS_INVALID"));
+          graph_error(ErrorCode::kInvalidArgument, "GRAPH_DESCRIPTOR_TENSOR_TOPIC_SCHEMA_INVALID"));
     }
-    result.max_rank = bounds.max_rank;
-    result.max_byte_span = bounds.max_byte_span;
-    result.axes.assign(bounds.axes.begin(), bounds.axes.end());
+    return std::vector<DescriptorTensorTopicFieldRecord>{};
   }
-  if (tensor.strides == TensorStridePolicy::kBoundedStrided &&
-      (!result.max_rank || result.axes.size() != *result.max_rank ||
-       std::any_of(result.axes.begin(), result.axes.end(), [](const TensorAxisBounds& axis) {
-         return axis.max_abs_stride_bytes == 0U;
-       }))) {
-    return make_unexpected(
-        graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_STRIDE_BOUNDS_INCOMPLETE"));
+  if (options.tensor || options.memory_conversion) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument,
+                                       "GRAPH_DESCRIPTOR_TENSOR_TOPIC_FIELD_SCOPE_REQUIRED"));
   }
-  const bool inline_policy =
-      tensor.foreign_emit_policy == InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
-  if ((inline_policy && (!tensor.max_inline_bytes || *tensor.max_inline_bytes == 0U)) ||
-      (!inline_policy && tensor.max_inline_bytes)) {
-    return make_unexpected(
-        graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_INLINE_POLICY_INVALID"));
+  if (descriptor_tensor_field_count == 0U ||
+      authored_fields.size() != descriptor_tensor_field_count) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument,
+                                       "GRAPH_DESCRIPTOR_TENSOR_TOPIC_INVENTORY_INCOMPLETE"));
   }
-  return std::optional<LogicalTensorRequirementsRecord>{std::move(result)};
+
+  std::vector<DescriptorTensorTopicFieldRecord> result;
+  result.reserve(authored_fields.size());
+  std::vector<std::uint16_t> field_ids;
+  std::vector<std::uint16_t> tensor_indices;
+  field_ids.reserve(authored_fields.size());
+  tensor_indices.reserve(authored_fields.size());
+  for (const auto& authored : authored_fields) {
+    if (!authored.selector_valid || authored.tensor_index >= descriptor_tensor_field_count) {
+      return make_unexpected(descriptor_topic_field_graph_error(
+          ErrorCode::kInvalidArgument, "GRAPH_DESCRIPTOR_TENSOR_TOPIC_SELECTOR_INVALID", authored));
+    }
+    if (std::find(field_ids.begin(), field_ids.end(), authored.field_id) != field_ids.end() ||
+        std::find(tensor_indices.begin(), tensor_indices.end(), authored.tensor_index) !=
+            tensor_indices.end()) {
+      return make_unexpected(descriptor_topic_field_graph_error(
+          ErrorCode::kDuplicateName, "GRAPH_DESCRIPTOR_TENSOR_TOPIC_FIELD_DUPLICATE", authored));
+    }
+    if (!authored.contract) {
+      return make_unexpected(descriptor_topic_field_graph_error(
+          ErrorCode::kInvalidArgument, "GRAPH_DESCRIPTOR_TENSOR_TOPIC_CONTRACT_MISSING", authored));
+    }
+    auto normalized = normalize_tensor_boundary_contract(*authored.contract);
+    if (!normalized) {
+      Error error = std::move(normalized.error());
+      const std::string_view token = error.message.empty()
+                                         ? "GRAPH_DESCRIPTOR_TENSOR_TOPIC_CONTRACT_INVALID"
+                                         : std::string_view{error.message};
+      error = descriptor_topic_field_graph_error(error.code, token, authored);
+      return make_unexpected(std::move(error));
+    }
+    field_ids.push_back(authored.field_id);
+    tensor_indices.push_back(authored.tensor_index);
+    result.push_back(DescriptorTensorTopicFieldRecord{
+        .field_id = authored.field_id,
+        .tensor_index = authored.tensor_index,
+        .tensor = copy_tensor_boundary_contract_record(*normalized),
+    });
+  }
+  std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+    return left.field_id < right.field_id;
+  });
+  for (std::size_t index = 0; index < result.size(); ++index) {
+    if (result[index].tensor_index != index) {
+      return make_unexpected(
+          graph_error(ErrorCode::kInvalidArgument, "GRAPH_DESCRIPTOR_TENSOR_TOPIC_ORDER_INVALID"));
+    }
+  }
+  return result;
+}
+
+[[nodiscard]] PortConfigurationRecord descriptor_topic_port_configuration(
+    const std::span<const DescriptorTensorTopicFieldRecord> fields, const PortDirection direction) {
+  PortConfigurationRecord result;
+  result.tensor_fields.reserve(fields.size());
+  for (const auto& field : fields) {
+    const auto& tensor = field.tensor;
+    result.tensor_fields.push_back(TensorFieldConfigurationRecord{
+        .field_id = field.field_id,
+        .tensor_index = field.tensor_index,
+        .tensor_layout =
+            TensorRepresentation{
+                .memory_kind = tensor.memory_kind,
+                .dtype = tensor.dtype,
+                .rank = tensor.rank,
+                .strides = tensor.strides,
+            },
+        .memory_conversion = tensor.memory_conversion,
+        .tensor_allocation =
+            TensorPoolBounds{
+                .max_rank = tensor.max_rank.value_or(tensor.rank.value_or(0U)),
+                .max_byte_span = static_cast<std::size_t>(tensor.max_byte_span.value_or(0U)),
+            },
+        .payload_options =
+            TensorFieldTransferRecord{
+                .max_inline_bytes = tensor.max_inline_bytes,
+                .max_tensor_byte_span =
+                    tensor.max_staging_byte_span.value_or(tensor.max_byte_span.value_or(0U)),
+                .interface_tensor_emit_policy = tensor.foreign_emit_policy,
+            },
+    });
+  }
+  if (result.tensor_fields.size() == 1U) {
+    const auto& field = result.tensor_fields.front();
+    result.tensor_layout = field.tensor_layout;
+    result.payload_options = PayloadOptionsRecord{
+        .max_inline_bytes = field.payload_options->max_inline_bytes,
+        .max_tensor_byte_span = field.payload_options->max_tensor_byte_span,
+        .interface_tensor_emit_policy = field.payload_options->interface_tensor_emit_policy,
+    };
+    if (direction == PortDirection::kInput) {
+      result.memory_conversion = field.memory_conversion;
+    } else {
+      result.tensor_allocation = field.tensor_allocation;
+    }
+    result.tensor_fields.clear();
+  }
+  return result;
 }
 
 [[nodiscard]] expected<void, Error> validate_endpoint_bounds(const EndpointBounds& bounds,
@@ -2980,7 +3275,9 @@ register_external_topic(  // NOLINT(readability-function-cognitive-complexity)
     std::unique_ptr<PortBaseT> port, PayloadIdentityRecord payload_identity,
     std::optional<SchemaPackagePlanRecord>
         schema_package,  // NOLINT(performance-unnecessary-value-param)
-    std::uint64_t serialized_payload_capacity_bytes, bool imported) {
+    std::uint64_t serialized_payload_capacity_bytes,
+    std::vector<AuthoredDescriptorTensorTopicField> authored_tensor_fields,
+    std::uint16_t descriptor_tensor_field_count, bool imported) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return make_unexpected(std::move(prepared.error()));
@@ -3046,6 +3343,13 @@ register_external_topic(  // NOLINT(readability-function-cognitive-complexity)
   auto tensor = copy_tensor_requirements(options, payload_identity);
   if (!tensor)
     return make_unexpected(std::move(tensor.error()));
+  auto tensor_fields = copy_descriptor_tensor_requirements(
+      options, payload_identity, std::move(authored_tensor_fields), descriptor_tensor_field_count);
+  if (!tensor_fields)
+    return make_unexpected(std::move(tensor_fields.error()));
+  if (options.tensor && !options.memory_conversion && options.tensor->memory_conversion) {
+    options.memory_conversion = options.tensor->memory_conversion;
+  }
   std::optional<SchemaIdentityRecord> topic_schema;
   auto valid_schema = validate_topic_schema(options, payload_identity, topic_schema);
   if (!valid_schema)
@@ -3091,9 +3395,12 @@ register_external_topic(  // NOLINT(readability-function-cognitive-complexity)
       .clock_health_authored = options.clock_health.has_value(),
       .attach = options.attach,
       .tensor = std::move(tensor.value()),
+      .tensor_fields = std::move(tensor_fields.value()),
       .bounds = options.bounds,
   };
   storage.record = std::move(record);
+  auto boundary_tensor_configuration =
+      descriptor_topic_port_configuration(storage.record.tensor_fields, direction);
   if constexpr (std::same_as<PortBaseT, OutputBase>) {
     storage.output = std::move(port);
   } else {
@@ -3124,6 +3431,8 @@ register_external_topic(  // NOLINT(readability-function-cognitive-complexity)
               .name = "external",
               .payload_identity = storage.record.payload_identity,
               .serialized_payload_capacity_bytes = serialized_payload_capacity_bytes,
+              .descriptor_tensor_field_count = descriptor_tensor_field_count,
+              .setup = std::move(boundary_tensor_configuration),
           },
       .declaration = owned_port,
       .schema_package = std::move(schema_package),
@@ -3153,7 +3462,9 @@ expected<GraphPortId, Error> graph_register_import(
     const std::shared_ptr<GraphState>& state, std::string_view uri, TopicOptions options,
     std::unique_ptr<OutputBase> port, PayloadIdentityRecord payload_identity,
     std::optional<SchemaPackagePlanRecord> schema_package,
-    std::uint64_t serialized_payload_capacity_bytes) {
+    std::uint64_t serialized_payload_capacity_bytes,
+    std::vector<AuthoredDescriptorTensorTopicField> tensor_fields,
+    std::uint16_t descriptor_tensor_field_count) {
   return register_external_topic(state,
                                  uri,
                                  std::move(options),
@@ -3161,6 +3472,8 @@ expected<GraphPortId, Error> graph_register_import(
                                  std::move(payload_identity),
                                  std::move(schema_package),
                                  serialized_payload_capacity_bytes,
+                                 std::move(tensor_fields),
+                                 descriptor_tensor_field_count,
                                  true);
 }
 
@@ -3168,7 +3481,9 @@ expected<GraphPortId, Error> graph_register_export(
     const std::shared_ptr<GraphState>& state, std::string_view uri, TopicOptions options,
     std::unique_ptr<InputBase> port, PayloadIdentityRecord payload_identity,
     std::optional<SchemaPackagePlanRecord> schema_package,
-    std::uint64_t serialized_payload_capacity_bytes) {
+    std::uint64_t serialized_payload_capacity_bytes,
+    std::vector<AuthoredDescriptorTensorTopicField> tensor_fields,
+    std::uint16_t descriptor_tensor_field_count) {
   return register_external_topic(state,
                                  uri,
                                  std::move(options),
@@ -3176,6 +3491,8 @@ expected<GraphPortId, Error> graph_register_export(
                                  std::move(payload_identity),
                                  std::move(schema_package),
                                  serialized_payload_capacity_bytes,
+                                 std::move(tensor_fields),
+                                 descriptor_tensor_field_count,
                                  false);
 }
 
@@ -3356,6 +3673,14 @@ expected<PartitionId, Error> graph_add_partition(const std::shared_ptr<GraphStat
   if (!valid)
     return make_unexpected(std::move(valid.error()));
   const std::lock_guard lock(state->mutex_);
+  if (std::any_of(state->partitions_.begin(),
+                  state->partitions_.end(),
+                  [&](const PartitionRecord& partition) {
+                    return partition.graph == state->graph_record_.id && partition.include_all;
+                  })) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT"));
+  }
   if (state->partition_names_.contains(std::string(name))) {
     return make_unexpected(
         graph_error(ErrorCode::kDuplicateName, "GRAPH_PARTITION_NAME_DUPLICATE"));
@@ -3374,37 +3699,119 @@ expected<PartitionId, Error> graph_add_partition(const std::shared_ptr<GraphStat
 
 expected<void, Error> graph_partition_add_operator(const std::shared_ptr<GraphState>& state,
                                                    PartitionId id, std::size_t operator_index) {
+  return graph_partition_add_operators(state, id, std::span{&operator_index, 1U});
+}
+
+expected<void, Error> graph_partition_add_operators(const std::shared_ptr<GraphState>& state,
+                                                    PartitionId id,
+                                                    std::span<const std::size_t> operator_indexes) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
   const std::lock_guard lock(state->mutex_);
   if (!id || id.value > state->partitions_.size() ||
       state->partitions_[static_cast<std::size_t>(id.value - 1U)].id != id ||
-      operator_index >= state->operators_.size()) {
+      operator_indexes.empty()) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"));
   }
 
-  const VertexId vertex = state->operators_[operator_index].vertex;
+  auto& partition = state->partitions_[static_cast<std::size_t>(id.value - 1U)];
+  if (partition.include_all) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT"));
+  }
+
+  std::vector<VertexId> added;
+  added.reserve(operator_indexes.size());
+  for (const std::size_t operator_index : operator_indexes) {
+    if (operator_index >= state->operators_.size()) {
+      return make_unexpected(
+          graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"));
+    }
+    added.push_back(state->operators_[operator_index].vertex);
+  }
+  std::sort(
+      added.begin(), added.end(), [](VertexId lhs, VertexId rhs) { return lhs.value < rhs.value; });
+  if (std::adjacent_find(added.begin(), added.end()) != added.end()) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_MEMBER_DUPLICATE"));
+  }
   const bool assigned = std::any_of(
-      state->partitions_.begin(), state->partitions_.end(), [&](const PartitionRecord& partition) {
-        return partition.graph == state->graph_record_.id &&
-               std::find(partition.members.begin(), partition.members.end(), vertex) !=
-                   partition.members.end();
+      state->partitions_.begin(), state->partitions_.end(), [&](const PartitionRecord& candidate) {
+        if (candidate.graph != state->graph_record_.id)
+          return false;
+        return std::any_of(added.begin(), added.end(), [&](VertexId vertex) {
+          return std::binary_search(
+              candidate.members.begin(),
+              candidate.members.end(),
+              vertex,
+              [](VertexId lhs, VertexId rhs) { return lhs.value < rhs.value; });
+        });
       });
   if (assigned) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_MEMBER_DUPLICATE"));
   }
 
-  auto& partition = state->partitions_[static_cast<std::size_t>(id.value - 1U)];
   auto members = partition.members;
-  members.push_back(vertex);
+  members.reserve(members.size() + added.size());
+  members.insert(members.end(), added.begin(), added.end());
   std::sort(members.begin(), members.end(), [](VertexId lhs, VertexId rhs) {
     return lhs.value < rhs.value;
   });
   GraphMutationRollback::checkpoint(*state);
   partition.members = std::move(members);
+  state->mark_mutation();
+  return {};
+}
+
+expected<void, Error> graph_partition_include_all(const std::shared_ptr<GraphState>& state,
+                                                  PartitionId id) {
+  auto prepared = state->prepare_mutation();
+  if (!prepared)
+    return prepared;
+  const std::lock_guard lock(state->mutex_);
+  if (!id || id.value > state->partitions_.size() ||
+      state->partitions_[static_cast<std::size_t>(id.value - 1U)].id != id) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"));
+  }
+
+  auto& partition = state->partitions_[static_cast<std::size_t>(id.value - 1U)];
+  if (partition.include_all)
+    return {};
+  if (state->automatic_partition_remaining_) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_AUTOMATIC_REMAINDER_CONFLICT"));
+  }
+  if (partition.graph != state->graph_record_.id || !partition.members.empty() ||
+      state->partitions_.size() != 1U) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT"));
+  }
+
+  partition.include_all = true;
+  state->mark_mutation();
+  return {};
+}
+
+expected<void, Error> graph_auto_partition_remaining(const std::shared_ptr<GraphState>& state) {
+  auto prepared = state->prepare_mutation();
+  if (!prepared)
+    return prepared;
+  const std::lock_guard lock(state->mutex_);
+  if (std::any_of(state->partitions_.begin(),
+                  state->partitions_.end(),
+                  [&](const PartitionRecord& partition) {
+                    return partition.graph == state->graph_record_.id && partition.include_all;
+                  })) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_AUTOMATIC_REMAINDER_CONFLICT"));
+  }
+  if (state->automatic_partition_remaining_)
+    return {};
+  state->automatic_partition_remaining_ = true;
   state->mark_mutation();
   return {};
 }
@@ -3846,7 +4253,7 @@ void hash_payload_identity(HashBuilder& hash, const PayloadIdentityRecord& ident
   }
 }
 
-void hash_tensor_layout(HashBuilder& hash, const std::optional<TensorPortLayout>& layout) {
+void hash_tensor_layout(HashBuilder& hash, const std::optional<TensorRepresentation>& layout) {
   hash.add(layout.has_value());
   if (!layout)
     return;
@@ -3858,6 +4265,70 @@ void hash_tensor_layout(HashBuilder& hash, const std::optional<TensorPortLayout>
     hash.add(layout->dtype->lanes);
   }
   hash_optional(hash, layout->rank);
+  hash_optional(hash, layout->strides);
+}
+
+void hash_tensor_contract(HashBuilder& hash, const std::optional<TensorContractRecord>& contract) {
+  hash.add(contract.has_value());
+  if (!contract) {
+    return;
+  }
+  hash.add(contract->role);
+  hash_optional(hash, contract->representation.memory_kind);
+  hash.add(contract->representation.dtype.has_value());
+  if (contract->representation.dtype) {
+    hash.add(contract->representation.dtype->code);
+    hash.add(contract->representation.dtype->bits);
+    hash.add(contract->representation.dtype->lanes);
+  }
+  hash_optional(hash, contract->representation.rank);
+  hash_optional(hash, contract->representation.strides);
+  hash_optional(hash, contract->max_rank);
+  hash_optional(hash, contract->max_byte_span);
+  hash.add(static_cast<std::uint64_t>(contract->axes.size()));
+  for (const auto& axis : contract->axes) {
+    hash.add(axis.max_extent);
+    hash.add(axis.max_abs_stride_bytes);
+  }
+  hash.add(contract->transfer.has_value());
+  if (contract->transfer) {
+    hash.add(contract->transfer->foreign_emit_policy);
+    hash_optional(hash, contract->transfer->max_inline_bytes);
+    hash_optional(hash, contract->transfer->max_staging_byte_span);
+  }
+  hash_optional(hash, contract->memory_conversion);
+  hash.add(contract->storage);
+}
+
+void hash_tensor_boundary_contract(HashBuilder& hash,
+                                   const TensorBoundaryContractRecord& contract) {
+  hash_optional(hash, contract.memory_kind);
+  hash.add(contract.dtype.has_value());
+  if (contract.dtype) {
+    hash.add(contract.dtype->code);
+    hash.add(contract.dtype->bits);
+    hash.add(contract.dtype->lanes);
+  }
+  hash_optional(hash, contract.rank);
+  hash_optional(hash, contract.max_rank);
+  hash_optional(hash, contract.max_byte_span);
+  hash.add(static_cast<std::uint64_t>(contract.axes.size()));
+  for (const auto& axis : contract.axes) {
+    hash.add(axis.max_extent);
+    hash.add(axis.max_abs_stride_bytes);
+  }
+  hash.add(contract.strides);
+  hash.add(contract.foreign_emit_policy);
+  hash_optional(hash, contract.max_inline_bytes);
+  hash_optional(hash, contract.max_staging_byte_span);
+  hash_optional(hash, contract.memory_conversion);
+  hash.add(contract.origins.memory_kind);
+  hash.add(contract.origins.dtype);
+  hash.add(contract.origins.rank);
+  hash.add(contract.origins.strides);
+  hash.add(contract.origins.max_rank);
+  hash.add(contract.origins.max_byte_span);
+  hash.add(contract.origins.max_staging_byte_span);
 }
 
 void hash_payload_options(HashBuilder& hash, const std::optional<PayloadOptionsRecord>& options) {
@@ -3881,6 +4352,7 @@ void hash_tensor_fields(HashBuilder& hash,
     hash.add(field.field_id);
     hash.add(field.tensor_index);
     hash_tensor_layout(hash, field.tensor_layout);
+    hash_tensor_contract(hash, field.tensor_contract);
     hash_optional(hash, field.memory_conversion);
     hash.add(field.tensor_allocation.has_value());
     if (field.tensor_allocation) {
@@ -3893,6 +4365,25 @@ void hash_tensor_fields(HashBuilder& hash,
       hash_optional(hash, field.payload_options->max_tensor_byte_span);
       hash.add(field.payload_options->interface_tensor_emit_policy);
     }
+    if (field.tensor_byte_span_expression) {
+      hash.add(std::string_view{"tensor-field-byte-span-expression-v1"});
+      hash.add(static_cast<std::uint64_t>(field.tensor_byte_span_expression->nodes.size()));
+      for (const auto& node : field.tensor_byte_span_expression->nodes) {
+        hash.add(node.operation);
+        hash.add(node.left);
+        hash.add(node.right);
+        hash.add(node.value);
+        hash.add(node.depth);
+        hash.add(node.parameter_field);
+        for (const std::byte byte : node.parameter_full_id.value) {
+          hash.add_byte(std::to_integer<std::uint8_t>(byte));
+        }
+        hash.add(node.parameter_path);
+        hash.add(node.parameter_schema_id);
+        hash.add(node.parameter_schema_version);
+        hash.add(node.input_name);
+      }
+    }
   }
 }
 
@@ -3900,15 +4391,64 @@ void hash_port_configuration(HashBuilder& hash, const PortConfigurationRecord& c
   hash_optional(hash, config.queue_depth);
   hash_optional(hash, config.max_emits_per_compute);
   hash_optional(hash, config.late_joiner_history_depth);
+  hash.add(config.rate_kind);
+  hash.add(config.declared_nominal_rate.has_value());
+  if (config.declared_nominal_rate) {
+    hash.add(config.declared_nominal_rate->numerator_hz);
+    hash.add(config.declared_nominal_rate->denominator_hz);
+  }
+  hash.add(config.declared_expected_rate.has_value());
+  if (config.declared_expected_rate) {
+    hash.add(config.declared_expected_rate->numerator_hz);
+    hash.add(config.declared_expected_rate->denominator_hz);
+  }
+  hash.add(config.follows_input.has_value());
+  if (config.follows_input) {
+    hash.add(config.follows_input->value);
+  }
+  hash.add(config.follows_ratio.has_value());
+  if (config.follows_ratio) {
+    hash.add(config.follows_ratio->numerator);
+    hash.add(config.follows_ratio->denominator);
+  }
+  hash.add(config.lifecycle_binding_stage.has_value());
+  if (config.lifecycle_binding_stage) {
+    hash.add(*config.lifecycle_binding_stage);
+  }
+  hash.add(config.declared_max_nominal_rate.has_value());
+  if (config.declared_max_nominal_rate) {
+    hash.add(config.declared_max_nominal_rate->numerator_hz);
+    hash.add(config.declared_max_nominal_rate->denominator_hz);
+  }
   hash.add(config.diagnostic_alias.has_value());
   if (config.diagnostic_alias)
     hash.add(*config.diagnostic_alias);
   hash_tensor_layout(hash, config.tensor_layout);
+  hash_tensor_contract(hash, config.tensor_contract);
   hash_optional(hash, config.memory_conversion);
   hash.add(config.tensor_allocation.has_value());
   if (config.tensor_allocation) {
     hash.add(config.tensor_allocation->max_rank);
     hash.add(static_cast<std::uint64_t>(config.tensor_allocation->max_byte_span));
+  }
+  if (config.tensor_byte_span_expression) {
+    hash.add(std::string_view{"tensor-byte-span-expression-v1"});
+    hash.add(static_cast<std::uint64_t>(config.tensor_byte_span_expression->nodes.size()));
+    for (const auto& node : config.tensor_byte_span_expression->nodes) {
+      hash.add(node.operation);
+      hash.add(node.left);
+      hash.add(node.right);
+      hash.add(node.value);
+      hash.add(node.depth);
+      hash.add(node.parameter_field);
+      for (const std::byte byte : node.parameter_full_id.value) {
+        hash.add_byte(std::to_integer<std::uint8_t>(byte));
+      }
+      hash.add(node.parameter_path);
+      hash.add(node.parameter_schema_id);
+      hash.add(node.parameter_schema_version);
+      hash.add(node.input_name);
+    }
   }
   hash_payload_options(hash, config.payload_options);
   hash_tensor_fields(hash, config.tensor_fields);
@@ -4045,6 +4585,15 @@ GraphAuthoringHash compute_graph_hash(  // NOLINT(readability-function-cognitive
       hash.add(topic.tensor->foreign_emit_policy);
       hash_optional(hash, topic.tensor->max_inline_bytes);
     }
+    if (!topic.tensor_fields.empty()) {
+      hash.add(std::string_view{"descriptor-topic-tensor-fields-v1"});
+      hash.add(static_cast<std::uint64_t>(topic.tensor_fields.size()));
+      for (const auto& field : topic.tensor_fields) {
+        hash.add(field.field_id);
+        hash.add(field.tensor_index);
+        hash_tensor_boundary_contract(hash, field.tensor);
+      }
+    }
     hash.add(topic.bounds.publisher.has_value());
     if (topic.bounds.publisher)
       hash_optional(hash, topic.bounds.publisher->max_loaned_samples);
@@ -4095,7 +4644,9 @@ GraphAuthoringHash compute_graph_hash(  // NOLINT(readability-function-cognitive
     hash.add(static_cast<std::uint64_t>(partition.members.size()));
     for (const VertexId member : partition.members)
       hash.add(member.value);
+    hash.add(partition.include_all);
   }
+  hash.add(snapshot.automatic_partition_remaining);
   hash.add(static_cast<std::uint64_t>(snapshot.clocks.size()));
   for (const auto& clock : snapshot.clocks) {
     hash.add(clock.graph.value);
@@ -4278,6 +4829,16 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
       child_snapshot->graphs.empty()) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_EMBED_CHILD_INVALID"));
   }
+  if (std::any_of(child_snapshot->partitions.begin(),
+                  child_snapshot->partitions.end(),
+                  [](const PartitionRecord& partition) { return partition.include_all; })) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT"));
+  }
+  if (child_snapshot->automatic_partition_remaining) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_AUTOMATIC_REMAINDER_CONFLICT"));
+  }
 
   // Child composition and deep snapshot creation completed before this call,
   // so publication reuses that immutable snapshot without repeating its copy,
@@ -4286,6 +4847,15 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
   // essential: rollback may destroy the child Graph, whose destructor locks
   // that mutex to detach its state.
   const std::lock_guard lock(parent->mutex_);
+  if (!child_snapshot->partitions.empty() &&
+      std::any_of(parent->partitions_.begin(),
+                  parent->partitions_.end(),
+                  [&](const PartitionRecord& partition) {
+                    return partition.graph == parent->graph_record_.id && partition.include_all;
+                  })) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT"));
+  }
   if (parent->embedded_instance_names_.contains(std::string(instance_name))) {
     return make_unexpected(
         graph_error(ErrorCode::kDuplicateName, "GRAPH_EMBED_INSTANCE_DUPLICATE"));
@@ -4366,6 +4936,16 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
     }
     record_pod_identity(*parent, parent->ports_.back().record.payload_identity);
     GraphMutationRollback::checkpoint(*parent);
+  }
+  const std::size_t copied_port_begin = parent->ports_.size() - child_state->ports_.size();
+  for (std::size_t index = copied_port_begin; index < parent->ports_.size(); ++index) {
+    auto& copied = parent->ports_[index].record;
+    if (copied.setup.follows_input) {
+      copied.setup.follows_input = port_ids.at(copied.setup.follows_input->value);
+    }
+    if (copied.graph_override.follows_input) {
+      copied.graph_override.follows_input = port_ids.at(copied.graph_override.follows_input->value);
+    }
   }
 
   for (std::size_t index = 0; index < child_state->operators_.size(); ++index) {
@@ -4611,6 +5191,7 @@ std::shared_ptr<const GraphSnapshotData> graph_snapshot(const std::shared_ptr<Gr
   snapshot->readiness_sources = state->readiness_sources_;
   snapshot->regions = state->regions_;
   snapshot->partitions = state->partitions_;
+  snapshot->automatic_partition_remaining = state->automatic_partition_remaining_;
   snapshot->clocks.reserve(state->clocks_.size());
   snapshot->clock_capabilities.reserve(state->clocks_.size());
   for (const auto& clock : state->clocks_) {
@@ -4685,8 +5266,8 @@ TensorOutputPortConfigurator& TensorOutputPortConfigurator::late_joiner_history_
 }
 
 TensorOutputPortConfigurator& TensorOutputPortConfigurator::produces_tensor(
-    TensorPortLayout layout) {
-  apply(detail::graph_configure_output_tensor(state(), port_, layout));
+    const TensorOutputSpec& spec) {
+  apply(detail::graph_configure_output_tensor_spec(state(), port_, spec));
   return *this;
 }
 
@@ -4699,12 +5280,6 @@ TensorOutputPortConfigurator& TensorOutputPortConfigurator::payload_options(
 TensorOutputPortConfigurator& TensorOutputPortConfigurator::diagnostic_alias(
     std::string_view alias) {
   apply(detail::graph_configure_port_alias(state(), port_, alias));
-  return *this;
-}
-
-TensorOutputPortConfigurator& TensorOutputPortConfigurator::tensor_allocation(
-    TensorAllocationBounds bounds) {
-  apply(detail::graph_configure_tensor_allocation(state(), port_, bounds));
   return *this;
 }
 
@@ -4805,6 +5380,10 @@ std::span<const PartitionRecord> GraphView::partitions() const noexcept {
                    : std::span<const PartitionRecord>{};
 }
 
+bool GraphView::automatic_partition_remaining() const noexcept {
+  return snapshot_ && snapshot_->automatic_partition_remaining;
+}
+
 std::span<const ClockDeclarationRecord> GraphView::clocks() const noexcept {
   return snapshot_ ? std::span<const ClockDeclarationRecord>{snapshot_->clocks}
                    : std::span<const ClockDeclarationRecord>{};
@@ -4860,6 +5439,23 @@ PartitionHandle Graph::partition(std::string_view name) {
   if (!result)
     detail::throw_graph_error(std::move(result.error()));
   return PartitionHandle{state_, result.value()};
+}
+
+PartitionHandle& PartitionHandle::include_all() {
+  auto state = state_.lock();
+  if (!state) {
+    detail::throw_graph_error(Error{ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"});
+  }
+  auto result = detail::graph_partition_include_all(state, id_);
+  if (!result)
+    detail::throw_graph_error(std::move(result.error()));
+  return *this;
+}
+
+void Graph::auto_partition_remaining() {
+  auto result = detail::graph_auto_partition_remaining(state_);
+  if (!result)
+    detail::throw_graph_error(std::move(result.error()));
 }
 
 GraphLifecycleBuilder Graph::lifecycle() {

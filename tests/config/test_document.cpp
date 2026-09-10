@@ -77,7 +77,7 @@ TEST(ConfigDocument, EditsAreImmutableTransactionalAndRejectOverlap) {
   auto after = ConfigValue::string("after");
   ASSERT_TRUE(after);
   const Edit replace = Edit::replace(*name_path, *after);
-  auto updated = source.patched(std::span<const Edit>{&replace, 1});
+  auto updated = source.patched(replace);
   ASSERT_TRUE(updated);
   // Key assertion: source is unchanged after the patch; updated carries the new value.
   EXPECT_EQ(source.at("/name")->as_string().value(), "before");
@@ -139,6 +139,54 @@ TEST(ConfigDocument, BoundedErrorUsesStableTokensAndDeterministicTruncation) {
   EXPECT_EQ(error.operation_stage(), ConfigOperationStage::kNone);
   const ConfigError copy = error;
   EXPECT_EQ(copy.message(), error.message());
+}
+
+TEST(ConfigDocument, FormatsErrorsForHumanReadableLogs) {
+  const std::array sensitive_excerpt{std::byte{'s'},
+                                     std::byte{'e'},
+                                     std::byte{'c'},
+                                     std::byte{'r'},
+                                     std::byte{'e'},
+                                     std::byte{'t'}};
+  const ConfigError cause =
+      ConfigError::make(ConfigErrorCode::kTypeMismatch, "expected integer", "/camera/fps");
+  const ConfigError error = ConfigError::nest(ConfigError::make(ConfigErrorCode::kParseError,
+                                                                "could not\nparse",
+                                                                "/camera/\x1b[2Jconfig",
+                                                                "robot\r.yaml",
+                                                                sensitive_excerpt),
+                                              cause);
+
+  const std::string formatted = format_error(error);
+
+  EXPECT_EQ(formatted,
+            "CONFIG_PARSE_ERROR: could not parse [source: robot .yaml] "
+            "[path: /camera/ [2Jconfig]; caused by: CONFIG_TYPE_MISMATCH: "
+            "expected integer [path: /camera/fps]");
+}
+
+TEST(ConfigDocument, FormatsTokenWhenNoOptionalContextExists) {
+  const ConfigError error = ConfigError::make(ConfigErrorCode::kPathNotFound);
+
+  const std::string formatted = format_error(error);
+
+  EXPECT_EQ(formatted, "CONFIG_PATH_NOT_FOUND");
+}
+
+TEST(ConfigDocument, MarksTruncatedContext) {
+  const std::string message(ConfigError::kMaxMessageBytes + 1U, 'm');
+  const std::string path(ConfigError::kMaxPathBytes + 1U, 'p');
+  const std::string source(ConfigError::kMaxSourceBytes + 1U, 's');
+  const ConfigError error = ConfigError::make(ConfigErrorCode::kParseError, message, path, source);
+
+  const std::string formatted = format_error(error);
+
+  EXPECT_NE(formatted.find(std::string(ConfigError::kMaxMessageBytes, 'm') + "..."),
+            std::string::npos);
+  EXPECT_NE(formatted.find(std::string(ConfigError::kMaxPathBytes, 'p') + "..."),
+            std::string::npos);
+  EXPECT_NE(formatted.find(std::string(ConfigError::kMaxSourceBytes, 's') + "..."),
+            std::string::npos);
 }
 
 TEST(ConfigDocument, ErrorDomainOwnsExactTokensStagesAndBoundedCauseChain) {

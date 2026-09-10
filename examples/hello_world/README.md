@@ -10,7 +10,7 @@ Smallest possible installation smoke test: verifies that an installed Holoscan S
 From the `cpp/` folder:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

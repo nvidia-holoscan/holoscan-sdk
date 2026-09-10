@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Subprocess helper for ea1_runtime_environment_smoke.
+// Subprocess helper for runtime_aggregate_environment_smoke.
 // The parent launches this binary with HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM
 // set to an intentionally invalid value ("definitely-not-an-algorithm").
 // This probe verifies that the runtime ignores the current environment variable
-// when executing a pre-compiled plan: it briefly overrides the variable to a
-// valid selector only during compilation, then restores the conflict before
-// calling run().  A correct implementation must use only the partition records
+// when executing a pre-compiled plan: it clears the retired variable during
+// compilation, then restores the conflict before calling run(). A correct implementation must
+// use only the partition records
 // baked into the immutable ExecutionPlan, not re-read the environment at runtime.
 
 #include <cstdint>
@@ -68,7 +68,7 @@ constexpr const char* kPartitionEnvironmentName = "HOLOSCAN_EXPERIMENTAL_PARTITI
 
 // RAII guard that sets HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM to a given
 // value on construction and restores the previous value (or clears it) on
-// destruction.  Used to confine the valid selector to compilation only.
+// destruction. Used to compile only while the retired selector is absent.
 class ScopedPartitionEnvironment {
  public:
   explicit ScopedPartitionEnvironment(std::optional<std::string_view> value)

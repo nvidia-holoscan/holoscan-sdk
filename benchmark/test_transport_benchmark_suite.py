@@ -14,6 +14,7 @@ import pytest
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BENCHMARK_DIR))
+sys.path.insert(0, str(BENCHMARK_DIR / "runtime"))
 
 
 def load_module(name: str, filename: str) -> ModuleType:
@@ -29,6 +30,11 @@ def load_module(name: str, filename: str) -> ModuleType:
 runner = load_module("transport_suite_runner", "run_transport_benchmark_suite.py")
 summarizer = load_module("transport_suite_summarizer", "summarize_transport_benchmark_suite.py")
 docs_summarizer = load_module("runtime_docs_summarizer", "summarize_runtime_benchmarks.py")
+graph_runner = load_module("docs_preflight_graph_runner", "runtime/run_runtime_graph_benchmark.py")
+graph_interprocess_runner = load_module(
+    "docs_preflight_graph_interprocess_runner",
+    "runtime/run_runtime_graph_interprocess_benchmark.py",
+)
 
 
 def suite_args(tmp_path: Path) -> SimpleNamespace:
@@ -56,6 +62,25 @@ def docs_contract() -> tuple[dict[str, object], list[dict[str, object]]]:
         {"native_runs": [{"manifest_case_id": case_id}]} for case_id in case_ids
     ]
     return manifest, rows
+
+
+def test_graph_intraprocess_image_command_includes_tensor_options(tmp_path: Path) -> None:
+    # Key setup: build one intraprocess Image command through the shared Graph command helper.
+    args = suite_args(tmp_path)
+    command = runner.graph_intraprocess_command(
+        args,
+        args.build_dir / "benchmark/runtime/runtime_graph_benchmark",
+        args.output_dir / "graph/intraprocess/image",
+        "latency",
+        "image",
+        storage="device",
+        bulk_work_profile="descriptor_only",
+    )
+
+    # Key assertion: Image uses the descriptor-backed Tensor transport options unchanged.
+    assert command[command.index("--tensor-storage") + 1] == "device"
+    assert command[command.index("--tensor-bytes") + 1] == str(args.tensor_bytes)
+    assert command[command.index("--bulk-work-profile") + 1] == "descriptor_only"
 
 
 def test_current_suite_plan_covers_every_maintained_transport_group(tmp_path: Path) -> None:
@@ -189,7 +214,7 @@ def test_docs_core_runtime_plan_contains_only_documented_production_rows(
     by_id = {case.case_id: case for case in cases}
 
     # Key assertion: the exact inventory uses the documented counts and both fanout placements.
-    assert len(cases) == 40
+    assert len(cases) == 42
     assert set(by_id) == docs_summarizer.expected_case_ids()
     assert {case.layer for case in cases} == {"graph"}
     assert {case.domain for case in cases} == {"intraprocess", "interprocess"}
@@ -199,8 +224,10 @@ def test_docs_core_runtime_plan_contains_only_documented_production_rows(
     assert fanout[fanout.index("--operator-lanes") + 1] == "shared"
     assert "--sink-cpus" not in fanout
     assert fanout[fanout.index("--controller-cpu") + 1] == "1"
-    assert fanout[fanout.index("--channel-pump-cpu") + 1] == "2"
-    assert fanout[fanout.index("--notification-driver-cpu") + 1] == "3"
+    assert "--channel-pump-cpu" not in fanout
+    assert fanout[fanout.index("--notification-driver-cpu") + 1] == "2"
+    assert "--force-holomq-event-wake" not in fanout
+    assert by_id["graph_intraprocess_docs_pod_1to4_throughput"].required_cpus == 3
     separate_fanout = by_id["graph_intraprocess_docs_pod_1to4_per_sink_throughput"].command
     assert separate_fanout[separate_fanout.index("--operator-lanes") + 1] == "per_sink"
     assert separate_fanout[separate_fanout.index("--sink-cpus") + 1] == "1,2,3,4"
@@ -224,6 +251,8 @@ def test_docs_core_runtime_plan_contains_only_documented_production_rows(
         "graph_intraprocess_docs_tensor_pinned_host_1to1_throughput",
         "graph_intraprocess_docs_tensor_device_1to1_latency",
         "graph_intraprocess_docs_tensor_device_1to1_throughput",
+        "graph_intraprocess_docs_image_pageable_host_1to1_latency",
+        "graph_intraprocess_docs_image_pageable_host_1to1_throughput",
         "graph_intraprocess_docs_multi_tensor_pageable_host_1to1_latency",
         "graph_intraprocess_docs_multi_tensor_pageable_host_1to1_throughput",
     ):
@@ -239,11 +268,90 @@ def test_docs_core_runtime_plan_contains_only_documented_production_rows(
         "graph_interprocess_docs_multi_tensor_loan_pageable_host_1to1_throughput"
     ].command
     assert multi_tensor_throughput[multi_tensor_throughput.index("--samples") + 1] == "20000"
+    pageable_image = by_id["graph_interprocess_docs_image_pageable_host_1to1_latency"].command
+    assert pageable_image[pageable_image.index("--payload") + 1] == "image"
+    assert pageable_image[pageable_image.index("--tensor-storage") + 1] == "pageable_host"
+    assert pageable_image[pageable_image.index("--bulk-work-profile") + 1] == "descriptor_only"
     interprocess_latency = by_id["graph_interprocess_docs_pod_1to2_latency"].command
     assert interprocess_latency[interprocess_latency.index("--samples") + 1] == "1000"
     assert interprocess_latency[interprocess_latency.index("--warmup") + 1] == "1000"
     intraprocess_latency = by_id["graph_intraprocess_docs_pod_1to4_latency"].command
     assert intraprocess_latency[intraprocess_latency.index("--samples") + 1] == "10000"
+
+
+@pytest.mark.parametrize(("cpu_count", "planned_count"), [(8, 42), (4, 17)])
+def test_docs_core_runtime_plan_passes_child_runner_preflight(
+    tmp_path: Path, cpu_count: int, planned_count: int
+) -> None:
+    # Key setup: generate full and compact docs commands and parse them with their child runners.
+    args = suite_args(tmp_path)
+    args.preset = runner.DOCS_CORE_RUNTIME_PRESET
+    args.repetitions = 7
+    args.cpus = list(range(cpu_count))
+    cases = runner.build_cases(args)
+    planned = [case for case in cases if case.status == "planned"]
+    validators = {
+        runner.GRAPH_RUNNER.resolve(): (graph_runner.parse_args, graph_runner.validate_args),
+        runner.GRAPH_INTERPROCESS_RUNNER.resolve(): (
+            graph_interprocess_runner.parse_args,
+            graph_interprocess_runner.validate_args,
+        ),
+    }
+
+    # Key assertion: parser and semantic validation accept every runnable child command.
+    assert len(cases) == 42
+    assert len(planned) == planned_count
+    for case in planned:
+        child = Path(case.command[1]).resolve()
+        assert child in validators, case.case_id
+        parse_child_args, validate_child_args = validators[child]
+        try:
+            child_args = parse_child_args(case.command[2:])
+            validate_child_args(child_args)
+        except (SystemExit, ValueError) as error:
+            pytest.fail(f"child-command preflight failed for {case.case_id}: {error}")
+
+
+@pytest.mark.parametrize(("cpu_count", "planned_count"), [(4, 17), (6, 36)])
+def test_docs_core_runtime_plan_omits_only_unsupported_cpu_topologies(
+    tmp_path: Path, cpu_count: int, planned_count: int
+) -> None:
+    # Key setup: plan the docs suite with a reduced set of distinct physical cores.
+    args = suite_args(tmp_path)
+    args.preset = runner.DOCS_CORE_RUNTIME_PRESET
+    args.repetitions = 7
+    args.cpus = list(range(cpu_count))
+    cases = runner.build_cases(args)
+    by_id = {case.case_id: case for case in cases}
+    planned = [case for case in cases if case.status == "planned"]
+    skipped = [case for case in cases if case.status == "skipped"]
+
+    # Key assertion: all 42 identities remain auditable while only fitting rows get commands.
+    assert len(cases) == 42
+    assert len(planned) == planned_count
+    assert len(skipped) == 42 - planned_count
+    assert all(case.command for case in planned)
+    assert all(
+        not case.command
+        and case.returncode == 77
+        and case.required_cpus is not None
+        and case.required_cpus > cpu_count
+        and case.skip_reason
+        for case in skipped
+    )
+    if cpu_count == 4:
+        direct = by_id["graph_intraprocess_docs_pod_1to1_throughput"].command
+        assert direct[direct.index("--controller-cpu") + 1] == "2"
+        assert direct[direct.index("--notification-driver-cpu") + 1] == "3"
+        assert by_id["graph_intraprocess_docs_pod_1to4_throughput"].status == "planned"
+        assert by_id["graph_intraprocess_docs_chain_10_operators_throughput"].status == "skipped"
+        assert all(case.status == "skipped" for case in cases if case.domain == "interprocess")
+    else:
+        assert by_id["graph_intraprocess_docs_pod_1to2_per_sink_throughput"].status == "planned"
+        assert by_id["graph_intraprocess_docs_pod_1to4_per_sink_latency"].status == "skipped"
+        assert by_id["graph_interprocess_docs_pod_1to1_throughput"].status == "planned"
+        assert by_id["graph_interprocess_docs_pod_1to2_latency"].status == "skipped"
+        assert by_id["graph_interprocess_docs_chain_3_operators_throughput"].status == "skipped"
 
 
 def test_runtime_docs_summarizer_renders_requested_tables_and_percentiles() -> None:
@@ -265,6 +373,13 @@ def test_runtime_docs_summarizer_renders_requested_tables_and_percentiles() -> N
     rows["graph_intraprocess_docs_pod_1to2_throughput"][
         "primary_metric_coefficient_of_variation"
     ] = 0.228
+    for fanout in (2, 4):
+        for workload in ("latency", "throughput"):
+            shared = rows[f"graph_intraprocess_docs_pod_1to{fanout}_{workload}"]
+            shared["event_wake"] = False
+            shared["runtime_support_threads"] = (
+                "controller" if workload == "latency" else "controller,notification_driver"
+            )
 
     latency, throughput = docs_summarizer.render_tables(rows)
 
@@ -275,8 +390,9 @@ def test_runtime_docs_summarizer_renders_requested_tables_and_percentiles() -> N
     assert "| p50 | p99 | p99.9 |" in single_process_latency
     assert "| p50 | p99 | Notes |" in interprocess_latency
     assert "p99.9" not in interprocess_latency
+    assert "`schema::ImageT` | Pageable host" in interprocess_latency
     assert "Single-process 1:4" in latency
-    assert "Shared operator partition; HoloMQ fanout; event wake; channel pump" in latency
+    assert "Shared operator partition; HoloMQ fanout; eventless; pump-free" in latency
     assert "One source partition and one partition per subscriber; HoloMQ fanout" in latency
     assert "Single-process 10-operator chain" in latency
     assert "runtime_benchmark::MultiTensorMessageT" in latency
@@ -285,6 +401,29 @@ def test_runtime_docs_summarizer_renders_requested_tables_and_percentiles() -> N
     assert "Interprocess Graph throughput" in throughput
     assert "49,380" in throughput
     assert "run-to-run CV 22.8% exceeds the 10% publication gate" in throughput
+
+
+def test_runtime_docs_summarizer_accepts_audited_reduced_core_omissions() -> None:
+    # Key setup: omit one eight-core row from a six-core run with explicit manifest evidence.
+    manifest, rows = docs_contract()
+    manifest["cpus"] = list(range(6))
+    omitted_id = "graph_intraprocess_docs_pod_1to4_per_sink_throughput"
+    cases = manifest["cases"]
+    assert isinstance(cases, list)
+    omitted_case = next(case for case in cases if case["case_id"] == omitted_id)
+    omitted_case.update(
+        status="skipped",
+        returncode=77,
+        command=[],
+        required_cpus=8,
+        skip_reason="topology requires 8 distinct physical CPUs; only 6 selected",
+    )
+    rows = [row for row in rows if row["native_runs"][0]["manifest_case_id"] != omitted_id]
+
+    # Key assertion: the skipped identity remains in the contract but needs no normalized row.
+    by_id = docs_summarizer.require_complete_docs_run(manifest, rows)
+    assert len(by_id) == 41
+    assert omitted_id not in by_id
 
 
 @pytest.mark.parametrize("duplicate_source", ["manifest", "rows"])
@@ -384,7 +523,7 @@ def test_runtime_docs_update_renders_provenance_from_suite_artifacts(tmp_path: P
     assert "old provenance" not in updated
     assert "1970-01-01" in updated
     assert "`docs-core-runtime`; 7 repetitions" in updated
-    assert "40/40 rows passed" in updated
+    assert "42/42 rows passed" in updated
     assert "Test GPU (driver 1.2.3)" in updated
     assert "new latency" in updated
     assert "new throughput" in updated
@@ -467,10 +606,23 @@ def test_cpu_validation_rejects_sibling_threads(tmp_path: Path) -> None:
         topology.mkdir(parents=True)
         (topology / "physical_package_id").write_text("0\n", encoding="utf-8")
         (topology / "core_id").write_text("2\n", encoding="utf-8")
+        (topology / "thread_siblings_list").write_text("2,18\n", encoding="utf-8")
 
     # Key assertion: a manually supplied sibling pair fails before any benchmark starts.
     with pytest.raises(ValueError, match="sibling threads"):
         runner.validate_distinct_physical_cpus([2, 18], sysfs)
+
+
+def test_cpu_validation_accepts_singleton_siblings_with_ambiguous_core_ids(tmp_path: Path) -> None:
+    sysfs = tmp_path / "sysfs"
+    for cpu in range(8):
+        topology = sysfs / f"cpu{cpu}/topology"
+        topology.mkdir(parents=True)
+        (topology / "physical_package_id").write_text("0\n", encoding="utf-8")
+        (topology / "core_id").write_text("0\n", encoding="utf-8")
+        (topology / "thread_siblings_list").write_text(f"{cpu}\n", encoding="utf-8")
+
+    runner.validate_distinct_physical_cpus(list(range(8)), sysfs)
 
 
 def test_dry_run_writes_replayable_manifest_without_binaries(tmp_path: Path) -> None:
@@ -504,6 +656,98 @@ def test_dry_run_writes_replayable_manifest_without_binaries(tmp_path: Path) -> 
     commands = (output_dir / "commands.sh").read_text(encoding="utf-8")
     assert "run_runtime_graph_interprocess_benchmark.py" in commands
     assert "--consumer-cpus" not in commands
+
+
+def test_manifest_records_actionable_failure_and_skip_summary(tmp_path: Path) -> None:
+    # Key setup: model one case in every suite status before writing the manifest.
+    args = suite_args(tmp_path)
+    args.created_unix_seconds = 123.0
+    output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True)
+    cases = [
+        runner.BenchmarkCase(
+            case_id="planned-case",
+            layer="graph",
+            domain="intraprocess",
+            workload="latency",
+            result_kind="runtime_graph",
+            output=output_dir / "planned/summary.json",
+            command=["planned"],
+        ),
+        runner.BenchmarkCase(
+            case_id="passed-case",
+            layer="graph",
+            domain="intraprocess",
+            workload="latency",
+            result_kind="runtime_graph",
+            output=output_dir / "passed/summary.json",
+            command=["passed"],
+            status="passed",
+            returncode=0,
+        ),
+        runner.BenchmarkCase(
+            case_id="failed-case",
+            layer="graph",
+            domain="interprocess",
+            workload="latency",
+            result_kind="runtime_graph_interprocess",
+            output=output_dir / "failed/summary.json",
+            command=["failed"],
+            status="failed",
+            returncode=13,
+        ),
+        runner.BenchmarkCase(
+            case_id="skipped-case",
+            layer="graph",
+            domain="interprocess",
+            workload="saturated",
+            result_kind="runtime_graph_interprocess",
+            output=output_dir / "skipped/summary.json",
+            command=[],
+            status="skipped",
+            returncode=77,
+            required_cpus=8,
+            skip_reason="topology requires 8 distinct physical CPUs; only 6 selected",
+        ),
+    ]
+
+    runner.write_manifest(args, cases, output_dir, None)
+
+    # Key assertion: automation can identify terminal failures and their exact replay artifacts.
+    manifest = json.loads((output_dir / "suite_manifest.json").read_text(encoding="utf-8"))
+    result = manifest["result_summary"]
+    assert result["outcome"] == "failed"
+    assert result["summarizer_returncode"] is None
+    assert result["status_counts"] == {
+        "planned": 1,
+        "passed": 1,
+        "failed": 1,
+        "skipped": 1,
+    }
+    assert result["failed_cases"] == [
+        {
+            "case_id": "failed-case",
+            "returncode": 13,
+            "stdout_log": "logs/failed-case.stdout.log",
+            "stderr_log": "logs/failed-case.stderr.log",
+        }
+    ]
+    assert result["skipped_cases"] == [
+        {
+            "case_id": "skipped-case",
+            "returncode": 77,
+            "required_cpus": 8,
+            "reason": "topology requires 8 distinct physical CPUs; only 6 selected",
+        }
+    ]
+    assert runner.failure_message(cases[2], output_dir).endswith(
+        f"failed-case: exit code 13; stderr: {output_dir}/logs/failed-case.stderr.log"
+    )
+    terminal_cases = [case for case in cases if case.status != "planned"]
+    assert runner.suite_result_summary(terminal_cases, 0)["outcome"] == "failed"
+    terminal_cases = [case for case in terminal_cases if case.status != "failed"]
+    assert runner.suite_result_summary(terminal_cases, 0)["outcome"] == "passed"
+    assert runner.suite_result_summary(terminal_cases, 2)["outcome"] == "failed"
 
 
 def test_resume_preserves_completed_cases_and_updates_pending_commands(tmp_path: Path) -> None:
@@ -744,6 +988,65 @@ def test_graph_interprocess_summary_preserves_image_transport_identity(
     assert row["synchronization"] == "cuda_stream_ordered"
 
 
+def test_graph_intraprocess_summarizer_requires_requested_operator_lanes(
+    tmp_path: Path,
+) -> None:
+    result_path = tmp_path / "graph-summary.json"
+    result = {
+        "benchmark": "runtime_graph_tensor_1to1",
+        "workload": "latency",
+        "source_trigger": "clock",
+        "scenario": "tensor",
+        "process_local_inline_delivery": "direct_retained",
+        "clock": {
+            "source": "std::chrono::steady_clock",
+            "steady": True,
+            "scope": "single_process",
+        },
+        "tensor": {"storage": "device"},
+        "geometry": {
+            "fanout": 1,
+            "application_payload_bytes": 16,
+            "inline_transport_bytes": 0,
+            "external_buffer_bytes": 16,
+            "payload_write_profile": "full_payload_per_sample",
+            "bulk_work_profile": "full_write",
+            "samples": 1,
+            "warmup": 0,
+            "allocation_probe_samples": 0,
+            "publisher_period_us": 200,
+        },
+        "wake": {"event_wake": False, "busy_poll": False, "receive_polling": False},
+        "runtime_support_threads": "controller",
+        "placement": {"requested_operator_lanes": "shared"},
+        "metrics": {
+            "publication_to_receive_p50_ns_across_runs": {"median": 4_000.0},
+            "publication_to_receive_p99_ns_across_runs": {"median": 8_000.0},
+            "final_validation_ns_across_runs": {"median": 1_500.0},
+        },
+        "runs": [
+            {
+                "publication_to_receive_p50_ns": 4_000.0,
+                "counts": {"publications": 1, "backpressured_emits": 0},
+            }
+        ],
+        "validation": {"mode": "final", "timing": "after_timed_operations"},
+        "timestamp_instrumentation": {"pair_overhead_p50_ns_across_runs": {"median": 21.0}},
+    }
+    write_json(result_path, result)
+
+    row = summarizer.graph_intraprocess_row(result_path, "graph_intraprocess_tensor_device_latency")
+    assert row["execution_model"] == "shared_lane"
+
+    for placement in ({}, {"operator_lanes": "shared"}, {"requested_operator_lanes": 1}):
+        result["placement"] = placement
+        write_json(result_path, result)
+        with pytest.raises(RuntimeError, match="requested_operator_lanes"):
+            summarizer.graph_intraprocess_row(
+                result_path, "graph_intraprocess_tensor_device_latency"
+            )
+
+
 def test_summarizer_normalizes_all_existing_result_schemas(tmp_path: Path) -> None:
     # Key setup: create one minimal valid artifact for each existing benchmark result producer.
     suite_dir = tmp_path / "suite"
@@ -973,7 +1276,7 @@ def test_summarizer_normalizes_all_existing_result_schemas(tmp_path: Path) -> No
                 "receive_polling": False,
             },
             "runtime_support_threads": "controller",
-            "placement": {"operator_lanes": "shared"},
+            "placement": {"requested_operator_lanes": "shared"},
             "metrics": {
                 "latency_p50_ns_across_runs": {"median": 5_000.0},
                 "latency_p99_ns_across_runs": {"median": 9_000.0},
@@ -1031,7 +1334,7 @@ def test_summarizer_normalizes_all_existing_result_schemas(tmp_path: Path) -> No
                 "receive_polling": False,
             },
             "runtime_support_threads": "controller",
-            "placement": {"operator_lanes": "per_sink"},
+            "placement": {"requested_operator_lanes": "per_sink"},
             "metrics": {
                 "latency_p50_ns_across_runs": {"median": 6_000.0},
                 "latency_p99_ns_across_runs": {"median": 10_000.0},

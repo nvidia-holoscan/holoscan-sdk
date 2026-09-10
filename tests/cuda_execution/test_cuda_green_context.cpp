@@ -3,17 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <cuda_runtime.h>
-#include <gtest/gtest.h>
-
+#include <array>
+#include <numeric>
 #include <string>
+#include <string_view>
 #include <utility>
 
-#include "../common/cuda_test_utils.hpp"
+#include <cuda_runtime.h>
+#include <gtest/gtest.h>
 
 #include <holoscan/cuda_execution/cuda_green_context.hpp>
 #include <holoscan/cuda_execution/cuda_green_context_pool.hpp>
 #include <holoscan/cuda_execution/cuda_stream_pool.hpp>
+
+#include "../common/cuda_test_utils.hpp"
+
+#include "cuda_execution/cuda_driver_entry_points.hpp"
 
 #if HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE
 
@@ -22,6 +27,53 @@ using ::holoscan::test::invalid_cuda_device_id;
 using ::holoscan::test::skip_without_cuda_device;
 
 namespace {
+
+class CaptureResources final {
+ public:
+  explicit CaptureResources(cudaStream_t capture_stream) : capture_stream_(capture_stream) {}
+  CaptureResources(const CaptureResources&) = delete;
+  CaptureResources& operator=(const CaptureResources&) = delete;
+  ~CaptureResources() { static_cast<void>(cleanup()); }
+
+  [[nodiscard]] cudaError_t cleanup() noexcept {
+    cudaError_t first = cudaSuccess;
+    const auto record = [&first](cudaError_t result) {
+      if (first == cudaSuccess && result != cudaSuccess) {
+        first = result;
+      }
+    };
+    if (capture_active) {
+      cudaGraph_t abandoned{};
+      record(cudaStreamEndCapture(capture_stream_, &abandoned));
+      capture_active = false;
+      if (abandoned != nullptr) {
+        record(cudaGraphDestroy(abandoned));
+      }
+    }
+    if (executable != nullptr) {
+      record(cudaGraphExecDestroy(std::exchange(executable, nullptr)));
+    }
+    if (graph != nullptr) {
+      record(cudaGraphDestroy(std::exchange(graph, nullptr)));
+    }
+    if (joined != nullptr) {
+      record(cudaEventDestroy(std::exchange(joined, nullptr)));
+    }
+    if (readiness != nullptr) {
+      record(cudaEventDestroy(std::exchange(readiness, nullptr)));
+    }
+    return first;
+  }
+
+  cudaEvent_t readiness{};
+  cudaEvent_t joined{};
+  cudaGraph_t graph{};
+  cudaGraphExec_t executable{};
+  bool capture_active{};
+
+ private:
+  cudaStream_t capture_stream_{};
+};
 
 // Green-context partitioning depends on GPU architecture (Volta+) and driver support, and requires
 // the device SM count to be divisible by min_sm_count. When the platform cannot satisfy the
@@ -40,6 +92,7 @@ namespace {
 
 // Verifies accessors fail cleanly before the pool is initialized rather than returning garbage
 // handles.
+// REQ: MEM-GREENCTX-001
 TEST(CudaGreenContextPool, AccessorsFailBeforeInitialize) {
   const CudaGreenContextPool pool;
 
@@ -50,7 +103,9 @@ TEST(CudaGreenContextPool, AccessorsFailBeforeInitialize) {
   EXPECT_EQ(pool.num_partitions(), 0u);
 }
 
-// Verifies an invalid device id is surfaced as a RuntimeError instead of throwing.
+// Verifies an invalid device id is surfaced as an Error value instead of throwing.
+// REQ: MEM-GREENCTX-002
+// REQ: MEM-GREENCTX-010
 TEST(CudaGreenContextPool, InitializeReportsInvalidDevice) {
   skip_without_cuda_device();
 
@@ -67,6 +122,7 @@ TEST(CudaGreenContextPool, InitializeReportsInvalidDevice) {
 //
 // Partition layout (num_partitions == 0 defaults to 1):
 //   [0: all device SMs] <- sole partition; default_context_index == 0
+// REQ: MEM-GREENCTX-003
 TEST(CudaGreenContextPool, DefaultConfigSinglePartitionSpansDevice) {
   skip_without_cuda_device();
 
@@ -98,17 +154,18 @@ TEST(CudaGreenContextPool, DefaultConfigSinglePartitionSpansDevice) {
   EXPECT_FALSE(pool.green_context(1));
 }
 
-// Verifies an explicit multi-partition split matches the requested SM counts and that a remaining
-// partition is appended to cover the rest of the device (mirrors the GXF unit test).
+// Verifies an explicit multi-partition split matches the requested SM counts and that a legal
+// remaining structured partition is appended when driver granularity permits it.
 //
-// Partition layout (sms_per_partition = {4, 2, 4}, total_sms >= 10):
-//   [0: 4 SMs] [1: 2 SMs] [2: 4 SMs] [3: remaining SMs (default, when total_sms > 10)]
-//   total_sms == 10: no remainder; 3 partitions; default_context_index == 2
+// Partition layout (sms_per_partition = {4, 2, 4}, structured capacity >= 10):
+//   [0: 4 SMs] [1: 2 SMs] [2: 4 SMs] [3: qualified residual SMs (default, if any)]
+// REQ: MEM-GREENCTX-004
+// REQ: MEM-GREENCTX-012
 TEST(CudaGreenContextPool, MultiPartitionSplitMatchesRequest) {
   skip_without_cuda_device();
 
-  // Key setup: request 3 partitions with explicit SM counts; the pool may append a remainder
-  // partition when total_sms > sum(sms_per_partition).
+  // Key setup: request 3 partitions with explicit SM counts; the pool may append a structured
+  // residual partition when the leftover satisfies the driver-reported quantum.
   CudaGreenContextPool::Config config;
   config.num_partitions = 3;
   config.sms_per_partition = {4, 2, 4};
@@ -123,19 +180,28 @@ TEST(CudaGreenContextPool, MultiPartitionSplitMatchesRequest) {
 
   auto total_sms = pool.device_total_sms();
   ASSERT_TRUE(total_sms) << runtime_error_message(total_sms.error());
+  auto minimum = pool.min_sm_partition_size();
+  ASSERT_TRUE(minimum) << runtime_error_message(minimum.error());
+  auto alignment = pool.sm_coscheduled_alignment();
+  ASSERT_TRUE(alignment) << runtime_error_message(alignment.error());
+  auto max_contexts = pool.max_structured_context_count();
+  ASSERT_TRUE(max_contexts) << runtime_error_message(max_contexts.error());
   const uint32_t requested = 4 + 2 + 4;
+  const std::uint64_t structured_capacity =
+      static_cast<std::uint64_t>(*max_contexts) * std::lcm(*minimum, *alignment);
+  ASSERT_LE(structured_capacity, *total_sms);
 
   auto default_index = pool.default_context_index();
   ASSERT_TRUE(default_index) << runtime_error_message(default_index.error());
-  // Key assertion: if total_sms > requested, a 4th remainder partition is appended as default;
-  // otherwise exactly 3 partitions exist and the last is the default.
-  if (total_sms.value() > requested) {
-    // A remaining partition was appended; it is the default and holds the leftover SMs.
+  // Key assertion: if qualified structured capacity remains beyond the exact requests, a fourth
+  // partition is appended as default; driver-unavailable tail SMs are never included.
+  if (structured_capacity > requested) {
+    // A structured residual was appended; it is the default and holds the eligible leftover SMs.
     ASSERT_EQ(pool.num_partitions(), 4u);
     EXPECT_EQ(default_index.value(), 3u);
     auto remaining = pool.partition_sms(default_index.value());
     ASSERT_TRUE(remaining) << runtime_error_message(remaining.error());
-    EXPECT_EQ(remaining.value(), total_sms.value() - requested);
+    EXPECT_EQ(remaining.value(), structured_capacity - requested);
   } else {
     ASSERT_EQ(pool.num_partitions(), 3u);
     EXPECT_EQ(default_index.value(), 2u);
@@ -147,6 +213,7 @@ TEST(CudaGreenContextPool, MultiPartitionSplitMatchesRequest) {
 }
 
 // Verifies initialize_pool() is idempotent.
+// REQ: MEM-GREENCTX-005
 TEST(CudaGreenContextPool, InitializeIsIdempotent) {
   skip_without_cuda_device();
 
@@ -164,6 +231,7 @@ TEST(CudaGreenContextPool, InitializeIsIdempotent) {
 // Partition pool (3 partitions: 4,2,4 SMs), default_context=0:
 //   [0: 4 SMs (default)] [1: 2 SMs (target)] [2: 4 SMs]
 //   CudaGreenContext::create(pool, 1) -> index()==1, handle matches pool.green_context(1)
+// REQ: MEM-GREENCTX-006
 TEST(CudaGreenContext, BindsToExplicitIndex) {
   skip_without_cuda_device();
 
@@ -191,6 +259,7 @@ TEST(CudaGreenContext, BindsToExplicitIndex) {
 }
 
 // Verifies a CudaGreenContext created without an explicit index resolves to the pool default.
+// REQ: MEM-GREENCTX-007
 TEST(CudaGreenContext, DefaultsToPoolDefaultContext) {
   skip_without_cuda_device();
 
@@ -210,6 +279,7 @@ TEST(CudaGreenContext, DefaultsToPoolDefaultContext) {
 }
 
 // Verifies a default-constructed handle reports its unbound state instead of dereferencing null.
+// REQ: MEM-GREENCTX-008
 TEST(CudaGreenContext, DefaultHandleIsUnbound) {
   const CudaGreenContext green_context;
   EXPECT_FALSE(static_cast<bool>(green_context));
@@ -242,13 +312,13 @@ TEST(CudaGreenContext, StreamPoolCreatesStreamsInGreenContext) {
   ASSERT_TRUE(stream_pool.initialize_pool());
 
   // Resolve cuStreamGetGreenCtx so we can confirm the stream's green context, when available.
+  // The version argument selects the driver-function ABI, so keep it aligned with this
+  // function-pointer signature introduced in CUDA 12.4.
   CUresult (*stream_get_green_ctx)(CUstream, CUgreenCtx*) = nullptr;
-  int version = 0;
-  cudaRuntimeGetVersion(&version);
   cudaDriverEntryPointQueryResult driver_status{};
   cudaGetDriverEntryPointByVersion("cuStreamGetGreenCtx",
                                    reinterpret_cast<void**>(&stream_get_green_ctx),
-                                   version,
+                                   cuda_execution_detail::kCUDADriverABIVersion12040,
                                    cudaEnableDefault,
                                    &driver_status);
 
@@ -265,13 +335,111 @@ TEST(CudaGreenContext, StreamPoolCreatesStreamsInGreenContext) {
   }
 }
 
+// Ordinary stream-scoped event waits remain legal CUDA Graph capture operations across the
+// stream/context relationships used by Runtime Tensor readiness. This intentionally exercises no
+// context-scoped cuGreenCtxRecordEvent/cuGreenCtxWaitEvent operation.
+// REQ: TENSOR-STORAGE-014
+TEST(CudaGreenContext, StreamEventWaitsRemainCaptureCompatibleAcrossRuntimeBoundaries) {
+  skip_without_cuda_device();
+
+  // Key setup: capture producer-to-consumer event joins across same, dedicated, residual, and
+  // transfer-service Green Context stream relationships.
+  CudaGreenContextPool::Config config;
+  config.num_partitions = 2U;
+  config.sms_per_partition = {4, 4};
+  CudaGreenContextPool pool(config);
+  INITIALIZE_OR_SKIP(pool);
+  if (pool.num_partitions() < 3U) {
+    GTEST_SKIP() << "device does not expose a residual Green Context partition";
+  }
+  auto residual_index = pool.default_context_index();
+  ASSERT_TRUE(residual_index) << runtime_error_message(residual_index.error());
+  if (*residual_index == 0U || *residual_index == 1U) {
+    GTEST_SKIP() << "split did not append an independent residual Green Context";
+  }
+  auto dedicated_a = pool.green_context(0U);
+  auto dedicated_b = pool.green_context(1U);
+  auto residual = pool.green_context(*residual_index);
+  ASSERT_TRUE(dedicated_a) << runtime_error_message(dedicated_a.error());
+  ASSERT_TRUE(dedicated_b) << runtime_error_message(dedicated_b.error());
+  ASSERT_TRUE(residual) << runtime_error_message(residual.error());
+
+  CudaStreamPool::Config dedicated_a_config;
+  dedicated_a_config.reserved_size = 2U;
+  dedicated_a_config.max_size = 2U;
+  dedicated_a_config.green_context = *dedicated_a;
+  CudaStreamPool dedicated_a_streams(dedicated_a_config);
+  ASSERT_TRUE(dedicated_a_streams.initialize_pool());
+  CudaStreamPool::Config dedicated_b_config;
+  dedicated_b_config.reserved_size = 1U;
+  dedicated_b_config.max_size = 1U;
+  dedicated_b_config.green_context = *dedicated_b;
+  CudaStreamPool dedicated_b_streams(dedicated_b_config);
+  ASSERT_TRUE(dedicated_b_streams.initialize_pool());
+  CudaStreamPool::Config residual_config;
+  residual_config.reserved_size = 2U;
+  residual_config.max_size = 2U;
+  residual_config.green_context = *residual;
+  CudaStreamPool residual_streams(residual_config);
+  ASSERT_TRUE(residual_streams.initialize_pool());
+
+  auto dedicated_a_producer = dedicated_a_streams.acquire();
+  auto dedicated_a_consumer = dedicated_a_streams.acquire();
+  auto dedicated_b_consumer = dedicated_b_streams.acquire();
+  auto residual_consumer = residual_streams.acquire();
+  auto residual_service = residual_streams.acquire();
+  ASSERT_TRUE(dedicated_a_producer);
+  ASSERT_TRUE(dedicated_a_consumer);
+  ASSERT_TRUE(dedicated_b_consumer);
+  ASSERT_TRUE(residual_consumer);
+  ASSERT_TRUE(residual_service);
+
+  const std::array<std::pair<std::string_view, cudaStream_t>, 4U> consumers{{
+      {"same-partition", dedicated_a_consumer->native_handle()},
+      {"dedicated-to-dedicated", dedicated_b_consumer->native_handle()},
+      {"dedicated-to-residual", residual_consumer->native_handle()},
+      {"transfer-service", residual_service->native_handle()},
+  }};
+  for (const auto& [boundary, consumer] : consumers) {
+    CaptureResources resources(dedicated_a_producer->native_handle());
+    ASSERT_EQ(cudaEventCreateWithFlags(&resources.readiness, cudaEventDisableTiming), cudaSuccess)
+        << boundary;
+    ASSERT_EQ(cudaEventCreateWithFlags(&resources.joined, cudaEventDisableTiming), cudaSuccess)
+        << boundary;
+    ASSERT_EQ(cudaStreamBeginCapture(dedicated_a_producer->native_handle(),
+                                     cudaStreamCaptureModeThreadLocal),
+              cudaSuccess)
+        << boundary;
+    resources.capture_active = true;
+    ASSERT_EQ(cudaEventRecord(resources.readiness, dedicated_a_producer->native_handle()),
+              cudaSuccess)
+        << boundary;
+    ASSERT_EQ(cudaStreamWaitEvent(consumer, resources.readiness), cudaSuccess) << boundary;
+    ASSERT_EQ(cudaEventRecord(resources.joined, consumer), cudaSuccess) << boundary;
+    ASSERT_EQ(cudaStreamWaitEvent(dedicated_a_producer->native_handle(), resources.joined),
+              cudaSuccess)
+        << boundary;
+    ASSERT_EQ(cudaStreamEndCapture(dedicated_a_producer->native_handle(), &resources.graph),
+              cudaSuccess)
+        << boundary;
+    resources.capture_active = false;
+    ASSERT_NE(resources.graph, nullptr) << boundary;
+    ASSERT_EQ(cudaGraphInstantiate(&resources.executable, resources.graph, 0U), cudaSuccess)
+        << boundary;
+    ASSERT_EQ(cudaGraphLaunch(resources.executable, consumer), cudaSuccess) << boundary;
+    ASSERT_EQ(cudaStreamSynchronize(consumer), cudaSuccess) << boundary;
+    // Key assertion: every boundary instantiates, launches, and synchronizes as a CUDA Graph.
+    EXPECT_EQ(resources.cleanup(), cudaSuccess) << boundary;
+  }
+}
+
 }  // namespace holoscan
 
 #else  // HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE
 
 // Keep a visible record when the toolkit is too old for the green-context driver APIs.
 TEST(CudaGreenContext, RequiresCuda12_4) {
-  GTEST_SKIP() << "CUDA green context APIs require CUDA 12.4 or newer";
+  GTEST_SKIP() << "CUDA Green Context execution requires CUDA 12.5 or newer";
 }
 
 #endif  // HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE

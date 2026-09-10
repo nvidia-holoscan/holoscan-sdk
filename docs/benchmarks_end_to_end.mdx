@@ -20,7 +20,7 @@ graph, jitter under sustained load, and throughput across process boundaries.
 
 ## Camera + IMU control pipeline
 
-Based on the `ea1_camera_imu_control` example
+Based on the `camera_imu_control` example
 ([walkthrough](/holoscan/sdk-user-guide/examples/camera-imu-control)): a 60 Hz
 camera and a high-rate IMU fused into a control output. The headline metric is
 **sensor-to-actuation latency** — the time from a sensor sample entering the
@@ -35,7 +35,7 @@ that path under steady state.
 
 ## Multi-rate fusion scenario
 
-Based on the `ea1_slow_fast_fusion` example
+Based on the `slow_fast_fusion` example
 ([walkthrough](/holoscan/sdk-user-guide/examples/slow-fast-fusion)): a slow
 producer and a fast producer feeding one fusion operator, exercising the
 temporal-contract machinery (trigger, input selection, missing-data policy)
@@ -49,7 +49,7 @@ under mismatched rates.
 
 ## Cross-process pipeline
 
-Based on the `ea1_external_clients` example
+Based on the `external_clients` example
 ([walkthrough](/holoscan/sdk-user-guide/examples/external-clients)): a graph
 exchanging payloads with standalone processes over
 [interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels),

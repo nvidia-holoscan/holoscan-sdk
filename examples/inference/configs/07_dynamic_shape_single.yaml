@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# 07 - One model whose input dimensions may change between ticks (dynamic_input_dims).
+model_path_map:
+  model_a: ../models/identity_model_dynamic.onnx
+input_map:
+  model_a: [tensor_in]
+output_map:
+  model_a: [tensor_out]
+parallel_inference: false
+dynamic_input_dims: true

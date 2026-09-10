@@ -24,44 +24,71 @@
 #endif
 
 int main() {
+  constexpr int kSuccess = 0;
+  constexpr int kEncodeFailure = 1;
+  constexpr int kDocumentFailure = 2;
+  constexpr int kRoundTripFailure = 3;
+  constexpr int kApiValidationFailure = 4;
 #if defined(HOLOSCAN_TEST_USE_PARAMS)
   // REQ: PARAM-024
   // REQ: PARAM-035
   const holoscan::params::ParamRebindOptions options{};
+  const auto config_error = holoscan::config::ConfigError::make(
+      holoscan::config::ConfigErrorCode::kParseError, "invalid configuration");
+  const auto tooling_error =
+      holoscan::params::from_config_error(config_error, "PARAM_TOOL_CONFIG_INVALID");
+  const std::string formatted_error = holoscan::params::format_error(tooling_error);
   auto path = holoscan::OperatorPath::parse("camera");
   if (!path) {
-    return 4;
+    return kApiValidationFailure;
   }
   const auto scope = holoscan::params::ParamRebindTargetScope::operator_(*path);
   return options.mode == holoscan::ParamRebindMode::kSparseContributions &&
                  scope.kind() == holoscan::ParamRebindTargetScopeKind::kOperator &&
                  scope.paths().size() == 1U &&
-                 std::ranges::equal(scope.paths().front(), path->segments())
-             ? 0
-             : 4;
+                 std::ranges::equal(scope.paths().front(), path->segments()) &&
+                 formatted_error.starts_with("PARAM_TOOL_CONFIG_INVALID")
+             ? kSuccess
+             : kApiValidationFailure;
 #elif defined(HOLOSCAN_TEST_USE_PARAMS_IO)
   const holoscan::params::ParamSaveOptions options{};
-  return options.safe_projection == holoscan::params::ParamSafeProjection::kPersistedPublicOnly ? 0
-                                                                                                : 4;
+  return options.safe_projection == holoscan::params::ParamSafeProjection::kPersistedPublicOnly
+             ? kSuccess
+             : kApiValidationFailure;
 #elif defined(HOLOSCAN_TEST_USE_TUNER)
   const holoscan::experimental::params::WebTunerOptions options{};
-  return options.max_clients == 1U && options.max_connections == 4U ? 0 : 4;
+  return options.max_clients == 1U && options.max_connections == 4U ? kSuccess
+                                                                    : kApiValidationFailure;
 #else
+  const std::string formatted_error = holoscan::config::format_error(
+      holoscan::config::ConfigError::make(holoscan::config::ConfigErrorCode::kParseError));
+  if (!formatted_error.starts_with("CONFIG_PARSE_ERROR")) {
+    return kApiValidationFailure;
+  }
   const std::map<std::string, std::int32_t> source{{"camera", 7}};
   auto encoded = holoscan::config::encode_config(source);
   if (!encoded) {
-    return 1;
+    return kEncodeFailure;
   }
   auto document = holoscan::config::Document::from_value(*encoded);
   if (!document) {
-    return 2;
+    return kDocumentFailure;
+  }
+  auto enabled_path = holoscan::config::Path::parse("/enabled");
+  if (!enabled_path) {
+    return kApiValidationFailure;
+  }
+  auto updated = document->patched(
+      holoscan::config::Edit::add(*enabled_path, holoscan::config::ConfigValue::null()));
+  if (!updated) {
+    return kApiValidationFailure;
   }
 #if defined(HOLOSCAN_TEST_USE_CONFIG_IO)
   auto text = holoscan::config_io::serialize(*document, holoscan::config_io::Format::kJson);
-  return text && text->find("camera") != std::string::npos ? 0 : 3;
+  return text && text->find("camera") != std::string::npos ? kSuccess : kRoundTripFailure;
 #else
   auto decoded = document->get<std::map<std::string, std::int32_t> >("");
-  return decoded && *decoded == source ? 0 : 3;
+  return decoded && *decoded == source ? kSuccess : kRoundTripFailure;
 #endif
 #endif
 }

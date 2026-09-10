@@ -112,6 +112,12 @@ void publication_checkpoint(void* state,
   return callbacks.asserted.load(std::memory_order_acquire);
 }
 
+[[nodiscard]] expected<bool, Error> poll_clock_binding_failure(void*) noexcept {
+  return make_unexpected(
+      Error{ErrorCode::kProtocolError,
+            "RUNTIME_CLOCK_BINDING_UNAVAILABLE: injected readiness clock failure"});
+}
+
 // Wake callback: increments the wake count each time the binding signals the executor.
 void wake(void* state) noexcept {
   static_cast<CallbackState*>(state)->wakes.fetch_add(1U, std::memory_order_relaxed);
@@ -162,8 +168,9 @@ struct BoundSource {
 //          RunSessionReturnsCreditOnCallbackFailureAndCooperativeStop.
 class PollingPhysicalFactory final : public detail::RuntimePortBindingFactory {
  public:
-  PollingPhysicalFactory(CallbackState& callbacks, std::uint32_t execution_lane)
-      : callbacks_(&callbacks), execution_lane_(execution_lane) {}
+  PollingPhysicalFactory(CallbackState& callbacks, std::uint32_t execution_lane,
+                         expected<bool, Error> (*poll)(void*) noexcept = &poll_asserted)
+      : callbacks_(&callbacks), execution_lane_(execution_lane), poll_(poll) {}
 
   [[nodiscard]] expected<std::unique_ptr<detail::PortBinding>, Error> bind(
       const detail::RuntimePortBindingRequest& request,
@@ -174,7 +181,7 @@ class PollingPhysicalFactory final : public detail::RuntimePortBindingFactory {
         .wake_mode = WakeMode::kBusyPoll,
         .execution_lane = execution_lane_,
         .poll_state = callbacks_,
-        .poll_asserted = &poll_asserted,
+        .poll_asserted = poll_,
     };
     auto created = detail::PhysicalReadinessBindingFactory::create(
         std::span<const detail::PhysicalReadinessBindingDescriptor>{&source, 1U});
@@ -200,6 +207,7 @@ class PollingPhysicalFactory final : public detail::RuntimePortBindingFactory {
  private:
   CallbackState* callbacks_{};
   std::uint32_t execution_lane_{};
+  expected<bool, Error> (*poll_)(void*) noexcept {};
   std::shared_ptr<detail::PhysicalReadinessBindingFactory> physical_;
   detail::PhysicalReadinessControl control_;
 };
@@ -708,6 +716,34 @@ TEST(PhysicalReadinessBinding, RunSessionRejectsUnacceptedPollingLaneBeforeActiv
   EXPECT_EQ(session.diagnostics().front().source.vertex, owner->id);
   EXPECT_FALSE(test::RuntimeProbeState::compute_entered.load(std::memory_order_acquire));
   EXPECT_EQ(callbacks.polls.load(std::memory_order_acquire), 0U);
+  EXPECT_EQ(factory->outstanding(), 0U);
+}
+
+// REQ: RUNTIME-007
+// REQ: RUNTIME-035
+TEST(PhysicalReadinessBinding, PollClockFailurePreservesRegisteredClockDiagnostic) {
+  test::RuntimeProbeState::reset();
+  CallbackState callbacks;
+  const ExecutionPlan baseline = test::make_runtime_test_plan();
+  ASSERT_FALSE(baseline.execution_partitions().empty());
+  // Key setup: inject a polling readiness binding whose clock lookup fails with the registered
+  // clock-specific diagnostic before the operator can enter compute.
+  auto factory = std::make_shared<PollingPhysicalFactory>(
+      callbacks,
+      baseline.execution_partitions().front().execution_lane,
+      &poll_clock_binding_failure);
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_port_binding_factory(baseline, factory);
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  // Key assertion: Runtime publishes the precise clock-binding diagnostic, performs no compute,
+  // and releases the failed physical binding.
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  ASSERT_FALSE(session.diagnostics().empty());
+  EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_CLOCK_BINDING_UNAVAILABLE");
+  EXPECT_FALSE(test::RuntimeProbeState::compute_entered.load(std::memory_order_acquire));
   EXPECT_EQ(factory->outstanding(), 0U);
 }
 

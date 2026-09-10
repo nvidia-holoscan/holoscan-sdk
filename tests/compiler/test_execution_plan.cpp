@@ -9,23 +9,32 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
+#include <numeric>
+#include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <holoscan/time/manual_clock.hpp>
 
+#include "../common/allocation_counter.hpp"
+#include "../support/host_unique_test_name.hpp"
 #include "compile_test_graph.hpp"
 #include "compiler/artifact_emitter_test_access.hpp"
 #include "compiler/execution_plan_state.hpp"
+#include "compiler/plan_artifact_serialization.hpp"
 #include "core/parameter_override_set_internal.hpp"
 
 // GTest fatal assertions establish optional preconditions that clang-tidy does not model.
@@ -69,11 +78,59 @@ class ExecutionClockImportGraph final : public Graph {
   ClockKey clock_import_;
 };
 
-// Minimal embedded Graph used to prove that EA1 manual partitions remain a
+// Minimal embedded Graph used to prove that baseline manual partitions remain a
 // flat-root-only authoring surface.
 class ManualPartitionEmbeddedGraph final : public Graph {
  protected:
   void compose() override { (void)op<test::CompileTestOperator>("nested"); }
+};
+
+// Minimal composed Graph whose public output resolves to one nested logical Operator. The parent
+// fans that output out so schedule-edge validation must cross the Graph-interface binding before
+// comparing the every-and-only crossing set.
+class PartitionTopologyEmbeddedSourceGraph final : public Graph {
+ public:
+  Output<std::uint32_t> output{"output"};
+
+ protected:
+  void compose() override {
+    const auto source = op<test::CompileTestOperator>("source");
+    export_output(output, source->output);
+  }
+};
+
+// Reusable Graph whose decoded Operator name is supplied by the parent. Partition-inspection
+// regressions compose instance and Operator segments that would collide under raw slash joining.
+class PartitionInspectionNamedOperatorGraph final : public Graph {
+ public:
+  explicit PartitionInspectionNamedOperatorGraph(std::string operator_name)
+      : operator_name_(std::move(operator_name)) {}
+
+ protected:
+  void compose() override { (void)op<test::CompileTestOperator>(operator_name_); }
+
+ private:
+  std::string operator_name_;
+};
+
+// A root Graph can retain a handle produced by its lazy compose() callback. Public partition
+// inspection must bind that handle to the generation frozen after successful composition.
+class PartitionInspectionComposedHandleGraph final : public Graph {
+ public:
+  using Graph::Graph;
+
+  [[nodiscard]] const std::optional<OperatorHandle<test::CompileTestOperator>>& source() const {
+    return source_;
+  }
+
+ protected:
+  void compose() override {
+    test::add_compile_test_default_clock(*this);
+    source_ = op<test::CompileTestOperator>("source");
+  }
+
+ private:
+  std::optional<OperatorHandle<test::CompileTestOperator>> source_;
 };
 
 enum class InputTriggerMode : std::uint8_t {
@@ -112,6 +169,182 @@ class InputTriggeredCompileOperator final : public Operator<> {
   InputTriggerMode mode_;
 };
 
+// Two-input join used by public automatic-partition topology tests. Distinct input ports let the
+// tests distinguish a structural fan-in from parallel edges between the same ordered Operator
+// pair without depending on Runtime execution.
+class PartitionTopologyJoinOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(first, "first").queue_depth(2U);
+    spec.input(second, "second").queue_depth(2U);
+    spec.output(output, "output").max_emits_per_compute(1U);
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<std::uint32_t> first;
+  Input<std::uint32_t> second;
+  Output<std::uint32_t> output;
+};
+
+[[nodiscard]] const ExecutionPartitionRecord* partition_for_path(const ExecutionPlan& plan,
+                                                                 std::string_view path) {
+  const auto found = std::find_if(plan.execution_partitions().begin(),
+                                  plan.execution_partitions().end(),
+                                  [&](const auto& partition) {
+                                    return std::find(partition.operator_paths.begin(),
+                                                     partition.operator_paths.end(),
+                                                     path) != partition.operator_paths.end();
+                                  });
+  return found == plan.execution_partitions().end() ? nullptr : &*found;
+}
+
+[[nodiscard]] const PartitionDecisionRecord* partition_decision_for_path(const ExecutionPlan& plan,
+                                                                         std::string_view path) {
+  const auto vertex = std::find_if(
+      plan.graph().vertices().begin(), plan.graph().vertices().end(), [&](const auto& record) {
+        return record.kind == VertexKind::kOperator && record.name == path;
+      });
+  if (vertex == plan.graph().vertices().end()) {
+    return nullptr;
+  }
+  const auto decision =
+      std::find_if(plan.partition_decisions().begin(),
+                   plan.partition_decisions().end(),
+                   [&](const auto& record) { return record.vertex == vertex->id; });
+  return decision == plan.partition_decisions().end() ? nullptr : &*decision;
+}
+
+[[nodiscard]] bool has_partition_reason(const PartitionDecisionRecord& decision,
+                                        PartitionDecisionReason reason) {
+  return std::find(decision.reasons.begin(), decision.reasons.end(), reason) !=
+         decision.reasons.end();
+}
+
+// Check the bounded structural contract through only public ExecutionPlan evidence. Parallel
+// edges are collapsed for degree/connectivity classification but remain distinct schedule edges.
+void expect_linear_automatic_partitions_and_crossing_edges(const ExecutionPlan& plan) {
+  const auto owner_of_port = [&](GraphPortId port) {
+    const auto found = std::find_if(plan.graph().ports().begin(),
+                                    plan.graph().ports().end(),
+                                    [&](const auto& record) { return record.id == port; });
+    return found == plan.graph().ports().end() ? VertexId{} : found->owner;
+  };
+  const auto partition_of_vertex = [&](VertexId vertex) {
+    const auto found = std::find_if(plan.execution_partitions().begin(),
+                                    plan.execution_partitions().end(),
+                                    [&](const auto& partition) {
+                                      return std::find(partition.members.begin(),
+                                                       partition.members.end(),
+                                                       vertex) != partition.members.end();
+                                    });
+    return found == plan.execution_partitions().end() ? ExecutionPartitionId{} : found->id;
+  };
+
+  for (const auto& partition : plan.execution_partitions()) {
+    if (partition.authored_name.has_value()) {
+      continue;
+    }
+    // Imported/exported endpoints may retain their own automatic endpoint-only boundary.
+    if (partition.operator_paths.empty()) {
+      continue;
+    }
+    std::vector<VertexId> operators;
+    for (const VertexId member : partition.members) {
+      const auto vertex = std::find_if(plan.graph().vertices().begin(),
+                                       plan.graph().vertices().end(),
+                                       [&](const auto& record) { return record.id == member; });
+      if (vertex != plan.graph().vertices().end() && vertex->kind == VertexKind::kOperator) {
+        operators.push_back(member);
+      }
+    }
+    ASSERT_EQ(operators.size(), partition.operator_paths.size());
+
+    std::vector<std::pair<VertexId, VertexId>> simple_edges;
+    for (const auto& edge : plan.graph().edges()) {
+      const VertexId source = owner_of_port(edge.source);
+      const VertexId target = owner_of_port(edge.target);
+      if (partition_of_vertex(source) == partition.id &&
+          partition_of_vertex(target) == partition.id) {
+        simple_edges.emplace_back(source, target);
+      }
+    }
+    std::sort(simple_edges.begin(), simple_edges.end(), [](const auto& lhs, const auto& rhs) {
+      return lhs.first.value != rhs.first.value ? lhs.first.value < rhs.first.value
+                                                : lhs.second.value < rhs.second.value;
+    });
+    simple_edges.erase(std::unique(simple_edges.begin(), simple_edges.end()), simple_edges.end());
+    EXPECT_EQ(simple_edges.size() + 1U, operators.size());
+    for (const VertexId member : operators) {
+      EXPECT_LE(std::count_if(simple_edges.begin(),
+                              simple_edges.end(),
+                              [&](const auto& edge) { return edge.second == member; }),
+                1);
+      EXPECT_LE(std::count_if(simple_edges.begin(),
+                              simple_edges.end(),
+                              [&](const auto& edge) { return edge.first == member; }),
+                1);
+    }
+  }
+
+  std::vector<ScheduleEdgeRecord> expected_schedule_edges;
+  for (const auto& edge : plan.graph().edges()) {
+    const ExecutionPartitionId source = partition_of_vertex(owner_of_port(edge.source));
+    const ExecutionPartitionId destination = partition_of_vertex(owner_of_port(edge.target));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(destination);
+    const auto matching = std::count_if(
+        plan.schedule_edges().begin(), plan.schedule_edges().end(), [&](const auto& schedule_edge) {
+          return schedule_edge.edge == edge.id && schedule_edge.source == source &&
+                 schedule_edge.destination == destination;
+        });
+    EXPECT_EQ(matching, source == destination ? 0 : 1);
+    if (source != destination) {
+      expected_schedule_edges.push_back(ScheduleEdgeRecord{edge.id, source, destination});
+    }
+  }
+  ASSERT_EQ(plan.schedule_edges().size(), expected_schedule_edges.size());
+  for (std::size_t index = 0U; index < expected_schedule_edges.size(); ++index) {
+    EXPECT_EQ(plan.schedule_edges()[index].edge, expected_schedule_edges[index].edge);
+    EXPECT_EQ(plan.schedule_edges()[index].source, expected_schedule_edges[index].source);
+    EXPECT_EQ(plan.schedule_edges()[index].destination, expected_schedule_edges[index].destination);
+  }
+}
+
+[[nodiscard]] ExecutionPlan compile_automatic_diamond(bool reverse_declarations,
+                                                      bool reverse_edges) {
+  Graph graph{"automatic-diamond"};
+  test::add_compile_test_default_clock(graph);
+  const auto add_edges =
+      [&](const auto& source, const auto& left, const auto& right, const auto& join) {
+        if (reverse_edges) {
+          graph.add_flow(right->output, join->second);
+          graph.add_flow(left->output, join->first);
+          graph.add_flow(source->output, right->input);
+          graph.add_flow(source->output, left->input);
+        } else {
+          graph.add_flow(source->output, left->input);
+          graph.add_flow(source->output, right->input);
+          graph.add_flow(left->output, join->first);
+          graph.add_flow(right->output, join->second);
+        }
+      };
+  if (reverse_declarations) {
+    const auto join = graph.op<PartitionTopologyJoinOperator>("join");
+    const auto right = graph.op<test::CompileTestOperator>("right");
+    const auto left = graph.op<test::CompileTestOperator>("left");
+    const auto source = graph.op<test::CompileTestOperator>("source");
+    add_edges(source, left, right, join);
+  } else {
+    const auto source = graph.op<test::CompileTestOperator>("source");
+    const auto left = graph.op<test::CompileTestOperator>("left");
+    const auto right = graph.op<test::CompileTestOperator>("right");
+    const auto join = graph.op<PartitionTopologyJoinOperator>("join");
+    add_edges(source, left, right, join);
+  }
+  return compile(graph);
+}
+
 // Returns lifecycle transaction options with ample capacity for all resource dimensions.
 // Tests reduce one field below the computed minimum to trigger capacity rejection.
 [[nodiscard]] LifecycleTransactionOptions ample_parameter_lifecycle_capacity() {
@@ -134,16 +367,10 @@ class InputTriggeredCompileOperator final : public Operator<> {
 class ScopedArtifactRoot {
  public:
   ScopedArtifactRoot() {
-    static std::atomic<std::uint64_t> next{1U};
-    const auto* test = ::testing::UnitTest::GetInstance()->current_test_info();
-    const std::string test_identity =
-        test != nullptr ? std::string(test->test_suite_name()) + "-" + test->name() : "unknown";
-    const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
     for (std::size_t attempt = 0U; attempt < 128U; ++attempt) {
       std::filesystem::path candidate_guard =
           std::filesystem::temp_directory_path() /
-          ("holoscan-ea1-artifacts-" + test_identity + "-" + std::to_string(tick) + "-" +
-           std::to_string(next.fetch_add(1U, std::memory_order_relaxed)));
+          test::make_host_unique_test_name("holoscan-holoscan-artifacts");
       std::filesystem::path candidate_root = candidate_guard / "root";
       std::error_code error;
       if (std::filesystem::create_directory(candidate_guard, error)) {
@@ -221,6 +448,18 @@ static_assert(!HasCompileMember<Graph>);
 static_assert(!HasRunMember<Graph>);
 static_assert(!std::is_same_v<ExecutionGraphView, GraphView>);
 
+template <typename T>
+concept HasArrowOperator = requires(const T& value) { value.operator->(); };
+
+static_assert(!std::default_initializable<ExecutionPartitionView>);
+static_assert(!std::default_initializable<ExecutionPartitionsView>);
+static_assert(std::forward_iterator<ExecutionPartitionsView::const_iterator>);
+static_assert(std::is_same_v<ExecutionPartitionsView::const_iterator::iterator_category,
+                             std::input_iterator_tag>);
+static_assert(std::ranges::forward_range<ExecutionPartitionsView>);
+static_assert(!std::ranges::borrowed_range<ExecutionPartitionsView>);
+static_assert(!HasArrowOperator<ExecutionPartitionsView::const_iterator>);
+
 //   source --> sink  (via test::add_linear_graph; all plan inspection surfaces populated)
 // REQ: COMPILE-001
 TEST(CompileEntryPoint, GraphOnlyCompileReturnsTotalInspectablePlan) {
@@ -238,11 +477,482 @@ TEST(CompileEntryPoint, GraphOnlyCompileReturnsTotalInspectablePlan) {
   EXPECT_FALSE(plan.execution_partitions().empty());
 }
 
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView, ExposesModeCountsPathsRangeAndEveryLookupKey) {
+  Graph graph{"partition-inspection"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto target = graph.op<test::CompileTestOperator>("target");
+  graph.add_flow(source->output, target->input);
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto partitions = plan.partitions();
+  EXPECT_EQ(partitions.mode(), PartitioningMode::kAutomatic);
+  EXPECT_EQ(partitions.authored_count(), 0U);
+  EXPECT_EQ(partitions.automatic_count(), 1U);
+  ASSERT_EQ(partitions.size(), 1U);
+  EXPECT_FALSE(partitions.empty());
+
+  const ExecutionPartitionView iterated = *partitions.begin();
+  EXPECT_EQ(iterated.origin(), ExecutionPartitionOrigin::kAutomatic);
+  EXPECT_FALSE(iterated.authored_name().has_value());
+  EXPECT_TRUE(std::ranges::equal(iterated.members(), plan.execution_partitions().front().members));
+  ASSERT_EQ(iterated.operator_paths().size(), 2U);
+  EXPECT_EQ(iterated.operator_paths()[0], "source");
+  EXPECT_EQ(iterated.operator_paths()[1], "target");
+  EXPECT_EQ(iterated.execution_lane(), plan.execution_partitions().front().execution_lane);
+
+  const auto by_id = partitions.lookup(iterated.id());
+  ASSERT_TRUE(by_id);
+  EXPECT_EQ(by_id->id(), iterated.id());
+  const auto by_path = partitions.lookup_for_path("target");
+  ASSERT_TRUE(by_path);
+  EXPECT_EQ(by_path->id(), iterated.id());
+  EXPECT_EQ(partitions.of(source).id(), iterated.id());
+
+  const auto operator_record = std::ranges::find(
+      plan.operator_parameters(), "target", &OperatorParameterPlanRecord::operator_path);
+  ASSERT_NE(operator_record, plan.operator_parameters().end());
+  EXPECT_EQ(partitions.of(operator_record->owner).id(), iterated.id());
+
+  EXPECT_EQ(partitions.lookup(ExecutionPartitionId{}).error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(partitions.lookup(ExecutionPartitionId{42U}).error().code, ErrorCode::kNotFound);
+  EXPECT_EQ(partitions.lookup_named("").error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(partitions.lookup_named("automatic#1").error().code, ErrorCode::kNotFound);
+  EXPECT_EQ(partitions.lookup_for_path("").error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(partitions.lookup_for_path("missing").error().code, ErrorCode::kNotFound);
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView, ResolvesAuthoredNamesAndEmbeddedCanonicalPaths) {
+  Graph graph{"partition-inspection-authored"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto target = graph.op<test::CompileTestOperator>("target");
+  graph.add_flow(source->output, target->input);
+  graph.partition("application").include_all();
+
+  const ExecutionPlan manual = compile(graph);
+  ASSERT_TRUE(manual.ok()) << manual.json();
+  const auto partitions = manual.partitions();
+  EXPECT_EQ(partitions.mode(), PartitioningMode::kManual);
+  EXPECT_EQ(partitions.authored_count(), 1U);
+  EXPECT_EQ(partitions.automatic_count(), 0U);
+  const auto named = partitions.lookup_named("application");
+  ASSERT_TRUE(named);
+  EXPECT_EQ(named->origin(), ExecutionPartitionOrigin::kAuthored);
+  ASSERT_TRUE(named->authored_name());
+  EXPECT_EQ(*named->authored_name(), "application");
+
+  Graph embedded{"partition-inspection-embedded"};
+  test::add_compile_test_default_clock(embedded);
+  (void)embedded.embed<ManualPartitionEmbeddedGraph>("pipeline");
+  const ExecutionPlan embedded_plan = compile(embedded);
+  ASSERT_TRUE(embedded_plan.ok()) << embedded_plan.json();
+  const auto nested = embedded_plan.partitions().lookup_for_path("pipeline/nested");
+  ASSERT_TRUE(nested);
+  EXPECT_EQ(nested->operator_paths().front(), "pipeline/nested");
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView, EncodesDecodedPathSegmentsLosslesslyAndRoundTripsLookups) {
+  Graph graph{"partition-inspection-encoded-paths"};
+  test::add_compile_test_default_clock(graph);
+  (void)graph.op<test::CompileTestOperator>("camera/left%\xC3\xA9");
+  (void)graph.embed<PartitionInspectionNamedOperatorGraph>("a", "b/c");
+  (void)graph.embed<PartitionInspectionNamedOperatorGraph>("a/b", "c");
+  (void)graph.embed<PartitionInspectionNamedOperatorGraph>("\xE8\x9E\x8D\xE5\x90\x88/%",
+                                                           "op/\xE8\x9E\x8D\xE5\x90\x88%");
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto partitions = plan.partitions();
+  constexpr std::string_view kRoot{"camera%2Fleft%25%C3%A9"};
+  constexpr std::string_view kFirst{"a/b%2Fc"};
+  constexpr std::string_view kSecond{"a%2Fb/c"};
+  constexpr std::string_view kUtf8{"%E8%9E%8D%E5%90%88%2F%25/op%2F%E8%9E%8D%E5%90%88%25"};
+  const auto root = partitions.lookup_for_path(kRoot);
+  const auto first = partitions.lookup_for_path(kFirst);
+  const auto second = partitions.lookup_for_path(kSecond);
+  const auto utf8 = partitions.lookup_for_path(kUtf8);
+  ASSERT_TRUE(root);
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(second);
+  ASSERT_TRUE(utf8);
+  EXPECT_NE(first->id(), second->id());
+  EXPECT_EQ(first->operator_paths().front(), kFirst);
+  EXPECT_EQ(second->operator_paths().front(), kSecond);
+  EXPECT_EQ(utf8->operator_paths().front(), kUtf8);
+  EXPECT_EQ(partitions.lookup_for_path("a/b/c").error().code, ErrorCode::kNotFound);
+
+  const auto retained = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(retained);
+  auto accepted = std::make_shared<detail::ExecutionPlanState>(*retained);
+  const auto finalized = detail::finalize_plan_artifact(*accepted);
+  ASSERT_TRUE(finalized) << finalized.error().message;
+  EXPECT_NE(accepted->json.find(std::string{kFirst}), std::string::npos);
+
+  auto malformed = std::make_shared<detail::ExecutionPlanState>(*retained);
+  const auto encoded = std::ranges::find(
+      malformed->execution_partitions, kFirst, [](const auto& partition) -> std::string_view {
+        return partition.operator_paths.empty() ? std::string_view{} : partition.operator_paths[0];
+      });
+  ASSERT_NE(encoded, malformed->execution_partitions.end());
+  encoded->operator_paths.front() = "a/b/c";
+  const auto rejected = detail::finalize_plan_artifact(*malformed);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().message, "PARTITION_INSPECTION_PLAN_INVALID");
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView, ResolvesRootHandleCapturedDuringLazyComposition) {
+  PartitionInspectionComposedHandleGraph graph{"partition-inspection-composed-handle"};
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_TRUE(graph.source().has_value());
+  const auto partition = plan.partitions().of(*graph.source());
+  ASSERT_EQ(partition.operator_paths().size(), 1U);
+  EXPECT_EQ(partition.operator_paths().front(), "source");
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView, RetainsIteratorsElementsAndAccessorSpansAcrossAssignment) {
+  Graph graph{"partition-inspection-lifetime"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto target = graph.op<test::CompileTestOperator>("target");
+  graph.add_flow(source->output, target->input);
+
+  ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto partitions = plan.partitions();
+  auto retained_iterator = partitions.begin();
+  const auto retained_end = partitions.end();
+  const ExecutionPartitionView retained_element = *retained_iterator;
+  const auto retained_members = retained_element.members();
+  const auto retained_paths = retained_element.operator_paths();
+
+  plan = ExecutionPlan{};
+  ASSERT_EQ(retained_members.size(), 2U);
+  ASSERT_EQ(retained_paths.size(), 2U);
+  EXPECT_EQ(retained_paths.front(), "source");
+  EXPECT_EQ(partitions.size(), 1U);
+  EXPECT_EQ((*retained_iterator).id(), retained_element.id());
+  ++retained_iterator;
+  EXPECT_EQ(retained_iterator, retained_end);
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView, DistinguishesInvalidForeignStaleAndUnknownOperatorIdentity) {
+  Graph graph{"partition-inspection-errors"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto partitions = plan.partitions();
+
+  Graph foreign_graph{"partition-inspection-foreign"};
+  test::add_compile_test_default_clock(foreign_graph);
+  const auto foreign = foreign_graph.op<test::CompileTestOperator>("foreign");
+  try {
+    (void)partitions.of(foreign);
+    FAIL() << "foreign Graph handle unexpectedly resolved";
+  } catch (const RuntimeError& error) {
+    EXPECT_EQ(error.code(), ErrorCode::kIncompatible);
+  }
+
+  const auto operator_record = plan.operator_parameters().front();
+  OperatorRef unknown = operator_record.owner;
+  unknown.id = 42U;
+  try {
+    (void)partitions.of(unknown);
+    FAIL() << "unknown OperatorRef unexpectedly resolved";
+  } catch (const RuntimeError& error) {
+    EXPECT_EQ(error.code(), ErrorCode::kNotFound);
+  }
+
+  OperatorRef stale = operator_record.owner;
+  ++stale.plan_generation;
+  try {
+    (void)partitions.of(stale);
+    FAIL() << "stale OperatorRef unexpectedly resolved";
+  } catch (const RuntimeError& error) {
+    EXPECT_EQ(error.code(), ErrorCode::kStaleOperatorRef);
+  }
+
+  try {
+    (void)ExecutionPlan{}.partitions();
+    FAIL() << "empty plan unexpectedly published a partition view";
+  } catch (const RuntimeError& error) {
+    EXPECT_EQ(error.code(), ErrorCode::kInvalidArgument);
+  }
+
+  OperatorRef invalid = operator_record.owner;
+  invalid.run_generation = 1U;
+  try {
+    (void)partitions.of(invalid);
+    FAIL() << "run-bound OperatorRef unexpectedly resolved";
+  } catch (const RuntimeError& error) {
+    EXPECT_EQ(error.code(), ErrorCode::kInvalidArgument);
+  }
+
+  (void)graph.op<test::CompileTestOperator>("later");
+  try {
+    (void)partitions.of(source);
+    FAIL() << "stale root Graph handle unexpectedly resolved";
+  } catch (const RuntimeError& error) {
+    EXPECT_EQ(error.code(), ErrorCode::kStaleOperatorRef);
+  }
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView, CopyIterationAndLookupsAllocateNoMemory) {
+  Graph graph{"partition-inspection-allocation"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  graph.partition("application").include_all();
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  const auto warm = plan.partitions();
+  ASSERT_TRUE(warm.lookup_named("application"));
+  ASSERT_TRUE(warm.lookup_for_path("source"));
+  std::size_t allocation_count{};
+  bool observed{};
+  {
+    const test::ScopedAllocationCounter allocations;
+    const auto partitions = plan.partitions();
+    // Exercise copying the non-owning view without allocating.
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
+    const auto copy = partitions;
+    auto iterator = copy.begin();
+    const auto element = *iterator;
+    const auto by_id = copy.lookup(element.id());
+    const auto by_name = copy.lookup_named("application");
+    const auto by_path = copy.lookup_for_path("source");
+    const auto by_ref = copy.of(plan.operator_parameters().front().owner);
+    const auto by_handle = copy.of(source);
+    const auto missing = copy.lookup_for_path("missing");
+    observed = by_id && by_name && by_path && by_ref.id() == element.id() &&
+               by_handle.id() == element.id() && !missing && copy.end() != iterator;
+    allocation_count = allocations.count();
+  }
+  EXPECT_TRUE(observed);
+  EXPECT_EQ(allocation_count, 0U);
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView, AcceptedZeroWorkReturnsValidEmptyView) {
+  Graph graph{"partition-inspection-zero-work"};
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  EXPECT_EQ(plan.partitioning_plan().mode, PartitioningMode::kAutomatic);
+  EXPECT_EQ(plan.partitioning_plan().authored_partition_count, 0U);
+  EXPECT_EQ(plan.partitioning_plan().automatic_partition_count, 0U);
+  EXPECT_TRUE(plan.execution_partitions().empty());
+  EXPECT_TRUE(plan.partition_decisions().empty());
+  EXPECT_TRUE(plan.schedule_edges().empty());
+  const auto partitions = plan.partitions();
+  EXPECT_EQ(partitions.mode(), PartitioningMode::kAutomatic);
+  EXPECT_EQ(partitions.authored_count(), 0U);
+  EXPECT_EQ(partitions.automatic_count(), 0U);
+  EXPECT_EQ(partitions.size(), 0U);
+  EXPECT_TRUE(partitions.empty());
+  EXPECT_EQ(partitions.begin(), partitions.end());
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView, ArtifactValidationRejectsMalformedModeCountsPathsAndDecisions) {
+  Graph graph{"partition-inspection-artifact-validation"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto sink = graph.op<test::CompileTestOperator>("sink");
+  graph.add_flow(source->output, sink->input);
+  graph.partition("anchor").add(source, sink);
+  graph.auto_partition_remaining();
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.partitioning_plan().mode, PartitioningMode::kConstrainedAutomatic);
+  ASSERT_EQ(plan.partitioning_plan().automatic_partition_count, 0U);
+  const auto accepted = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(accepted);
+
+  const auto expect_rejected = [&](auto mutate) {
+    auto malformed = std::make_shared<detail::ExecutionPlanState>(*accepted);
+    malformed->digest = {};
+    malformed->json.clear();
+    mutate(*malformed);
+    const auto finalized = detail::finalize_plan_artifact(*malformed);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "PARTITION_INSPECTION_PLAN_INVALID");
+    EXPECT_EQ(malformed->digest, PlanDigest{});
+    EXPECT_TRUE(malformed->json.empty());
+  };
+  expect_rejected([](auto& state) {
+    // The out-of-range value exercises fail-closed artifact validation.
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    state.partitioning_plan.mode = static_cast<PartitioningMode>(255U);
+  });
+  expect_rejected([](auto& state) { ++state.partitioning_plan.authored_partition_count; });
+  expect_rejected(
+      [](auto& state) { state.execution_partitions.front().operator_paths.front() = "missing"; });
+  expect_rejected([](auto& state) {
+    // The out-of-range value exercises fail-closed artifact validation.
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    state.partition_decisions.front().decision = static_cast<PartitionDecisionKind>(255U);
+  });
+  expect_rejected([](auto& state) {
+    std::reverse(state.execution_partitions.front().members.begin(),
+                 state.execution_partitions.front().members.end());
+  });
+  expect_rejected([](auto& state) {
+    std::reverse(state.execution_partitions.front().operator_paths.begin(),
+                 state.execution_partitions.front().operator_paths.end());
+  });
+  expect_rejected(
+      [](auto& state) { std::swap(state.partition_decisions[0], state.partition_decisions[1]); });
+  expect_rejected([](auto& state) { state.partitioning_plan.mode = PartitioningMode::kManual; });
+  expect_rejected([](auto& state) {
+    state.execution_partition_index_by_operator_path.front().table_index = 0U;
+  });
+}
+
+// Imported and exported topics remain explicit automatic endpoint-only boundaries. Their concrete
+// Graph edges are the exact crossing-edge evidence exposed through the accepted public view.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, ExternalEndpointsRetainEndpointOnlyAutomaticPartitions) {
+  const auto expect_endpoint_boundary = [](const ExecutionPlan& plan,
+                                           VertexKind endpoint_kind,
+                                           std::string_view operator_path,
+                                           bool endpoint_is_source) {
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.execution_partitions().size(), 2U);
+    const auto partitions = plan.partitions();
+    EXPECT_EQ(partitions.mode(), PartitioningMode::kAutomatic);
+    EXPECT_EQ(partitions.authored_count(), 0U);
+    EXPECT_EQ(partitions.automatic_count(), 2U);
+
+    const auto endpoint_record = std::ranges::find_if(
+        plan.execution_partitions(),
+        [](const auto& partition) { return partition.operator_paths.empty(); });
+    ASSERT_NE(endpoint_record, plan.execution_partitions().end());
+    ASSERT_EQ(endpoint_record->members.size(), 1U);
+    const auto endpoint_vertex = std::ranges::find(
+        plan.graph().vertices(), endpoint_record->members.front(), &VertexRecord::id);
+    ASSERT_NE(endpoint_vertex, plan.graph().vertices().end());
+    EXPECT_EQ(endpoint_vertex->kind, endpoint_kind);
+
+    const auto endpoint = partitions.lookup(endpoint_record->id);
+    ASSERT_TRUE(endpoint);
+    EXPECT_EQ(endpoint->origin(), ExecutionPartitionOrigin::kAutomatic);
+    EXPECT_FALSE(endpoint->authored_name().has_value());
+    EXPECT_TRUE(endpoint->operator_paths().empty());
+    EXPECT_TRUE(std::ranges::equal(endpoint->members(), endpoint_record->members));
+
+    const auto operator_partition = partitions.lookup_for_path(operator_path);
+    ASSERT_TRUE(operator_partition);
+    EXPECT_EQ(operator_partition->origin(), ExecutionPartitionOrigin::kAutomatic);
+    EXPECT_FALSE(operator_partition->authored_name().has_value());
+    ASSERT_EQ(operator_partition->operator_paths().size(), 1U);
+    EXPECT_EQ(operator_partition->operator_paths().front(), operator_path);
+    ASSERT_EQ(operator_partition->members().size(), 1U);
+    const auto operator_vertex =
+        std::ranges::find_if(plan.graph().vertices(), [&](const auto& vertex) {
+          return vertex.kind == VertexKind::kOperator && vertex.name == operator_path;
+        });
+    ASSERT_NE(operator_vertex, plan.graph().vertices().end());
+    EXPECT_EQ(operator_partition->members().front(), operator_vertex->id);
+
+    ASSERT_EQ(plan.schedule_edges().size(), 1U);
+    ASSERT_EQ(plan.graph().edges().size(), 1U);
+    EXPECT_EQ(plan.schedule_edges().front().edge, plan.graph().edges().front().id);
+    EXPECT_EQ(plan.schedule_edges().front().source,
+              endpoint_is_source ? endpoint->id() : operator_partition->id());
+    EXPECT_EQ(plan.schedule_edges().front().destination,
+              endpoint_is_source ? operator_partition->id() : endpoint->id());
+  };
+
+  {
+    Graph graph{"automatic-import-endpoint"};
+    test::add_compile_test_default_clock(graph);
+    auto imported = graph.import_topic<std::uint32_t>("holomq://automatic/import");
+    const auto sink = graph.op<test::CompileTestOperator>("sink");
+    graph.add_flow(imported.output(), sink->input);
+    expect_endpoint_boundary(compile(graph), VertexKind::kImportedTopic, "sink", true);
+  }
+  {
+    Graph graph{"automatic-export-endpoint"};
+    test::add_compile_test_default_clock(graph);
+    const auto source = graph.op<test::CompileTestOperator>("source");
+    auto exported = graph.export_topic<std::uint32_t>("holomq://automatic/export");
+    graph.add_flow(source->output, exported.input());
+    expect_endpoint_boundary(compile(graph), VertexKind::kExportedTopic, "source", false);
+  }
+}
+
+// Same-stage lifecycle ordering is retained independently of data-path partition topology.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, LifecycleOrderDoesNotInventAutomaticPartitionBoundary) {
+  Graph graph{"automatic-lifecycle-order"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto sink = graph.op<test::CompileTestOperator>("sink");
+  graph.add_flow(source->output, sink->input);
+  graph.lifecycle().before(sink, source, LifecycleStage::kStart);
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 1U);
+  EXPECT_EQ(plan.execution_partitions().front().operator_paths,
+            (std::vector<std::string>{"sink", "source"}));
+  EXPECT_TRUE(plan.schedule_edges().empty());
+  ASSERT_EQ(plan.lifecycle_dependencies().size(), 1U);
+  const auto source_record = std::ranges::find(
+      plan.operator_parameters(), "source", &OperatorParameterPlanRecord::operator_path);
+  const auto sink_record = std::ranges::find(
+      plan.operator_parameters(), "sink", &OperatorParameterPlanRecord::operator_path);
+  ASSERT_NE(source_record, plan.operator_parameters().end());
+  ASSERT_NE(sink_record, plan.operator_parameters().end());
+  const auto& dependency = plan.lifecycle_dependencies().front();
+  EXPECT_EQ(dependency.before, sink_record->owner);
+  EXPECT_EQ(dependency.after, source_record->owner);
+  EXPECT_EQ(dependency.stage, LifecycleStage::kStart);
+  EXPECT_EQ(dependency.kind, LifecycleEdgeKind::kBefore);
+  EXPECT_TRUE(dependency.dependency_key.empty());
+  ASSERT_EQ(plan.partition_decisions().size(), 2U);
+  const auto* source_decision = partition_decision_for_path(plan, "source");
+  const auto* sink_decision = partition_decision_for_path(plan, "sink");
+  ASSERT_NE(source_decision, nullptr);
+  ASSERT_NE(sink_decision, nullptr);
+  EXPECT_EQ(source_decision->decision, PartitionDecisionKind::kStart);
+  EXPECT_EQ(source_decision->reasons,
+            std::vector<PartitionDecisionReason>{PartitionDecisionReason::kSourceRoot});
+  EXPECT_EQ(sink_decision->decision, PartitionDecisionKind::kJoin);
+  EXPECT_EQ(sink_decision->reasons,
+            std::vector<PartitionDecisionReason>{PartitionDecisionReason::kLinearChainJoin});
+  EXPECT_TRUE(std::none_of(plan.partition_decisions().begin(),
+                           plan.partition_decisions().end(),
+                           [](const auto& decision) {
+                             return std::find(decision.reasons.begin(),
+                                              decision.reasons.end(),
+                                              PartitionDecisionReason::kLifecycleIsolation) !=
+                                    decision.reasons.end();
+                           }));
+}
+
 //   source --> left
 //          \-> right
-// One compiler-proven root remains one implicit serial execution partition.
-// REQ: COMPILE-058
-TEST(CompilePartitionAuthoring, OneRootForkUsesOneImplicitPartition) {
+// Production source-chain planning isolates a fan-out vertex and both successor chains.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, OneRootForkUsesAutomaticSourceChainCover) {
   Graph graph{"implicit-one-root-fork"};
   test::add_compile_test_default_clock(graph);
   const auto source = graph.op<test::CompileTestOperator>("source");
@@ -253,43 +963,178 @@ TEST(CompilePartitionAuthoring, OneRootForkUsesOneImplicitPartition) {
 
   const ExecutionPlan plan = compile(graph);
   ASSERT_TRUE(plan.ok()) << plan.json();
-  ASSERT_EQ(plan.execution_partitions().size(), 1U);
-  EXPECT_FALSE(plan.execution_partitions().front().authored_name.has_value());
-  EXPECT_EQ(plan.execution_partitions().front().members.size(), 3U);
+  ASSERT_EQ(plan.execution_partitions().size(), 3U);
+  EXPECT_TRUE(std::all_of(plan.execution_partitions().begin(),
+                          plan.execution_partitions().end(),
+                          [](const auto& partition) {
+                            return !partition.authored_name.has_value() &&
+                                   partition.members.size() == 1U;
+                          }));
   EXPECT_EQ(plan.partitioning_plan().selection_source, PlanSelectionSource::kCoreDefault);
   ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
-  EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, "holoscan.partition.serial_baseline");
-  EXPECT_EQ(plan.scheduler_plan().execution_lane_count, 1U);
-  EXPECT_EQ(plan.scheduler_plan().max_concurrent_activations, 1U);
-  EXPECT_FALSE(plan.scheduler_plan().activation_overlap);
-  EXPECT_EQ(plan.scheduler_plan().worker_count, 1U);
+  EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, "holoscan.partition.source_chain");
+  EXPECT_EQ(plan.scheduler_plan().execution_lane_count, 3U);
+  EXPECT_EQ(plan.scheduler_plan().max_concurrent_activations, 3U);
+  EXPECT_TRUE(plan.scheduler_plan().activation_overlap);
+  EXPECT_EQ(plan.scheduler_plan().worker_count, 3U);
   EXPECT_EQ(plan.scheduler_plan().intra_path_parallelism, 1U);
 
   const auto* const state = detail::ExecutionPlanAccess::state(plan);
   ASSERT_NE(state, nullptr);
-  ASSERT_EQ(state->partition_runners.size(), 1U);
-  const auto& runner = state->partition_runners.front();
-  EXPECT_EQ(runner.ordinal, 0U);
-  EXPECT_EQ(runner.partition, plan.execution_partitions().front().id);
-  EXPECT_EQ(runner.execution_lane, plan.execution_partitions().front().execution_lane);
-  ASSERT_EQ(runner.operators.size(), 3U);
-  EXPECT_EQ(runner.operators[0].vertex, VertexId{3U});
-  EXPECT_EQ(runner.operators[1].vertex, VertexId{1U});
-  EXPECT_EQ(runner.operators[2].vertex, VertexId{2U});
-  EXPECT_TRUE(runner.operators[0].topology_root);
-  EXPECT_FALSE(runner.operators[1].topology_root);
-  EXPECT_FALSE(runner.operators[2].topology_root);
-  EXPECT_EQ(runner.internal_edges.size(), 2U);
-  EXPECT_TRUE(runner.incoming_boundary_edges.empty());
-  EXPECT_TRUE(runner.outgoing_boundary_edges.empty());
+  ASSERT_EQ(state->partition_runners.size(), 3U);
+  EXPECT_TRUE(std::all_of(
+      state->partition_runners.begin(), state->partition_runners.end(), [](const auto& runner) {
+        return runner.operators.size() == 1U && runner.operators.front().topology_root &&
+               runner.internal_edges.empty();
+      }));
+  ASSERT_EQ(plan.schedule_edges().size(), 2U);
+  const auto* const source_partition = partition_for_path(plan, "source");
+  const auto* const left_partition = partition_for_path(plan, "left");
+  const auto* const right_partition = partition_for_path(plan, "right");
+  ASSERT_NE(source_partition, nullptr);
+  ASSERT_NE(left_partition, nullptr);
+  ASSERT_NE(right_partition, nullptr);
+  EXPECT_EQ(source_partition->operator_paths, std::vector<std::string>{"source"});
+  EXPECT_EQ(left_partition->operator_paths, std::vector<std::string>{"left"});
+  EXPECT_EQ(right_partition->operator_paths, std::vector<std::string>{"right"});
+  const auto* const left_decision = partition_decision_for_path(plan, "left");
+  const auto* const right_decision = partition_decision_for_path(plan, "right");
+  ASSERT_NE(left_decision, nullptr);
+  ASSERT_NE(right_decision, nullptr);
+  EXPECT_EQ(left_decision->decision, PartitionDecisionKind::kFanOutLegSplit);
+  EXPECT_EQ(right_decision->decision, PartitionDecisionKind::kFanOutLegSplit);
+  EXPECT_TRUE(has_partition_reason(*left_decision, PartitionDecisionReason::kFanOutLeg));
+  EXPECT_TRUE(has_partition_reason(*right_decision, PartitionDecisionReason::kFanOutLeg));
+  expect_linear_automatic_partitions_and_crossing_edges(plan);
+}
+
+//   left-source  --> join <-- right-source
+// Production source-chain planning gives both roots and the fan-in join distinct partitions.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, TwoRootsJoiningUseThreeAutomaticLinearPartitions) {
+  Graph graph{"automatic-two-root-join"};
+  test::add_compile_test_default_clock(graph);
+  const auto left = graph.op<test::CompileTestOperator>("left-source");
+  const auto right = graph.op<test::CompileTestOperator>("right-source");
+  const auto join = graph.op<PartitionTopologyJoinOperator>("join");
+  graph.add_flow(left->output, join->first);
+  graph.add_flow(right->output, join->second);
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 3U);
+  ASSERT_EQ(plan.schedule_edges().size(), 2U);
+  const auto* const join_partition = partition_for_path(plan, "join");
+  ASSERT_NE(join_partition, nullptr);
+  EXPECT_EQ(join_partition->operator_paths, std::vector<std::string>{"join"});
+  const auto* const join_decision = partition_decision_for_path(plan, "join");
+  ASSERT_NE(join_decision, nullptr);
+  EXPECT_EQ(join_decision->decision, PartitionDecisionKind::kFanInSplit);
+  EXPECT_TRUE(has_partition_reason(*join_decision, PartitionDecisionReason::kFanIn));
+  expect_linear_automatic_partitions_and_crossing_edges(plan);
+}
+
+//   source --> left  --> join
+//          \-> right --/
+// The public plan and digest are canonical across declaration and edge insertion permutations.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, DiamondUsesFourDeterministicAutomaticLinearPartitions) {
+  const ExecutionPlan forward = compile_automatic_diamond(false, false);
+  const ExecutionPlan reverse_declarations = compile_automatic_diamond(true, false);
+  const ExecutionPlan reverse_edges = compile_automatic_diamond(false, true);
+  const ExecutionPlan reverse_both = compile_automatic_diamond(true, true);
+
+  for (const ExecutionPlan* const plan :
+       {&forward, &reverse_declarations, &reverse_edges, &reverse_both}) {
+    ASSERT_TRUE(plan->ok()) << plan->json();
+    ASSERT_EQ(plan->execution_partitions().size(), 4U);
+    ASSERT_EQ(plan->schedule_edges().size(), 4U);
+    const auto* const join_decision = partition_decision_for_path(*plan, "join");
+    ASSERT_NE(join_decision, nullptr);
+    EXPECT_EQ(join_decision->decision, PartitionDecisionKind::kFanInSplit);
+    EXPECT_TRUE(has_partition_reason(*join_decision, PartitionDecisionReason::kFanIn));
+    expect_linear_automatic_partitions_and_crossing_edges(*plan);
+  }
+  EXPECT_EQ(forward.json(), reverse_declarations.json());
+  EXPECT_EQ(forward.digest(), reverse_declarations.digest());
+  EXPECT_EQ(forward.json(), reverse_edges.json());
+  EXPECT_EQ(forward.digest(), reverse_edges.digest());
+  EXPECT_EQ(forward.json(), reverse_both.json());
+  EXPECT_EQ(forward.digest(), reverse_both.digest());
+}
+
+// Two concrete port edges between one ordered Operator pair remain one structural successor.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, ParallelEdgesDoNotCreateStructuralBranch) {
+  Graph graph{"automatic-parallel-edges"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto join = graph.op<PartitionTopologyJoinOperator>("join");
+  graph.add_flow(source->output, join->first);
+  graph.add_flow(source->output, join->second);
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 1U);
+  EXPECT_EQ(plan.execution_partitions().front().operator_paths,
+            (std::vector<std::string>{"join", "source"}));
+  EXPECT_TRUE(plan.schedule_edges().empty());
+  const auto* const join_decision = partition_decision_for_path(plan, "join");
+  ASSERT_NE(join_decision, nullptr);
+  EXPECT_EQ(join_decision->decision, PartitionDecisionKind::kJoin);
+  EXPECT_TRUE(has_partition_reason(*join_decision, PartitionDecisionReason::kLinearChainJoin));
+  EXPECT_FALSE(has_partition_reason(*join_decision, PartitionDecisionReason::kFanIn));
+  expect_linear_automatic_partitions_and_crossing_edges(plan);
+}
+
+// The exact left anchor is adjacent to both structural branch points in this diamond. It must not
+// grow, while the automatic source, right leg, and fan-in join remain distinct linear chains.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, ExactAnchorBesideFanOutAndFanInKeepsLinearRemainder) {
+  Graph graph{"automatic-diamond-anchor"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto left = graph.op<test::CompileTestOperator>("left");
+  const auto right = graph.op<test::CompileTestOperator>("right");
+  const auto join = graph.op<PartitionTopologyJoinOperator>("join");
+  graph.add_flow(source->output, left->input);
+  graph.add_flow(source->output, right->input);
+  graph.add_flow(left->output, join->first);
+  graph.add_flow(right->output, join->second);
+  graph.partition("left-anchor").add(left);
+  graph.auto_partition_remaining();
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 4U);
+  EXPECT_EQ(plan.partitioning_plan().mode, PartitioningMode::kConstrainedAutomatic);
+  EXPECT_EQ(plan.partitioning_plan().authored_partition_count, 1U);
+  EXPECT_EQ(plan.partitioning_plan().automatic_partition_count, 3U);
+  const auto* const anchor = partition_for_path(plan, "left");
+  ASSERT_NE(anchor, nullptr);
+  EXPECT_EQ(anchor->authored_name, std::optional<std::string>{"left-anchor"});
+  EXPECT_EQ(anchor->operator_paths, std::vector<std::string>{"left"});
+  const auto* const right_decision = partition_decision_for_path(plan, "right");
+  const auto* const join_decision = partition_decision_for_path(plan, "join");
+  ASSERT_NE(right_decision, nullptr);
+  ASSERT_NE(join_decision, nullptr);
+  EXPECT_EQ(right_decision->decision, PartitionDecisionKind::kFanOutLegSplit);
+  EXPECT_TRUE(has_partition_reason(*right_decision, PartitionDecisionReason::kFanOutLeg));
+  EXPECT_EQ(join_decision->decision, PartitionDecisionKind::kFanInSplit);
+  EXPECT_TRUE(has_partition_reason(*join_decision, PartitionDecisionReason::kFanIn));
+  ASSERT_EQ(plan.schedule_edges().size(), 4U);
+  expect_linear_automatic_partitions_and_crossing_edges(plan);
 }
 
 //   source --> each
 //          \-> any-input
-// Explicit ordinary input triggers remain successors of one root rather than
-// manufacturing additional independent temporal roots.
-// REQ: COMPILE-058
-TEST(CompilePartitionAuthoring, OrdinaryInputTriggersRemainInOneImplicitPartition) {
+// Ordinary input triggers remain successors rather than manufacturing independent temporal roots,
+// while structural fan-out still produces three automatic source-chain partitions.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, OrdinaryInputTriggersRetainOneIndependentReadinessRoot) {
   Graph graph{"implicit-ordinary-input-triggers"};
   test::add_compile_test_default_clock(graph);
   const auto source = graph.op<test::CompileTestOperator>("source");
@@ -301,32 +1146,59 @@ TEST(CompilePartitionAuthoring, OrdinaryInputTriggersRemainInOneImplicitPartitio
 
   const ExecutionPlan plan = compile(graph);
   ASSERT_TRUE(plan.ok()) << plan.json();
-  ASSERT_EQ(plan.execution_partitions().size(), 1U);
-  EXPECT_EQ(plan.execution_partitions().front().members.size(), 3U);
+  ASSERT_EQ(plan.execution_partitions().size(), 3U);
 
   const auto* const state = detail::ExecutionPlanAccess::state(plan);
   ASSERT_NE(state, nullptr);
-  ASSERT_EQ(state->partition_runners.size(), 1U);
-  const auto& operators = state->partition_runners.front().operators;
-  ASSERT_EQ(operators.size(), 3U);
-  EXPECT_EQ(std::count_if(operators.begin(),
-                          operators.end(),
-                          [](const auto& member) { return member.topology_root; }),
+  const auto topology_roots = std::accumulate(
+      state->partition_runners.begin(),
+      state->partition_runners.end(),
+      std::size_t{0U},
+      [](std::size_t count, const auto& runner) {
+        return count + static_cast<std::size_t>(
+                           std::count_if(runner.operators.begin(),
+                                         runner.operators.end(),
+                                         [](const auto& member) { return member.topology_root; }));
+      });
+  EXPECT_EQ(topology_roots, 3U);
+  EXPECT_EQ(std::count_if(plan.partition_decisions().begin(),
+                          plan.partition_decisions().end(),
+                          [](const auto& decision) {
+                            return std::find(decision.reasons.begin(),
+                                             decision.reasons.end(),
+                                             PartitionDecisionReason::kSourceRoot) !=
+                                   decision.reasons.end();
+                          }),
             1);
+  EXPECT_TRUE(std::none_of(plan.partition_decisions().begin(),
+                           plan.partition_decisions().end(),
+                           [](const auto& decision) {
+                             return std::find(decision.reasons.begin(),
+                                              decision.reasons.end(),
+                                              PartitionDecisionReason::kReadinessIsolation) !=
+                                        decision.reasons.end() ||
+                                    std::find(decision.reasons.begin(),
+                                              decision.reasons.end(),
+                                              PartitionDecisionReason::kIndependentReadinessRoot) !=
+                                        decision.reasons.end();
+                           }));
 }
 
 //   camera-source      imu-source
-// Two independent roots require an explicit manual cover.
-TEST(CompilePartitionAuthoring, UnpartitionedMultiRootRequiresManualAuthoring) {
+// Two independent roots are automatically covered by two production source chains.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, UnpartitionedMultiRootUsesAutomaticSourceChains) {
   Graph graph{"implicit-multi-root-rejected"};
   test::add_compile_test_default_clock(graph);
   (void)graph.op<test::CompileTestOperator>("camera-source");
   (void)graph.op<test::CompileTestOperator>("imu-source");
 
   const ExecutionPlan plan = compile(graph);
-  EXPECT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_MANUAL_AUTHORING_REQUIRED"));
-  EXPECT_FALSE(plan.partitioning_plan().accepted_algorithm.has_value());
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 2U);
+  ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
+  EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, "holoscan.partition.source_chain");
+  EXPECT_EQ(plan.partitioning_plan().selection_source, PlanSelectionSource::kCoreDefault);
 }
 
 //   camera-source      imu-source
@@ -354,7 +1226,9 @@ TEST(CompilePartitionAuthoring, ExactManualCoverLowersNamedPartitions) {
   EXPECT_EQ(plan.execution_partitions()[0].members.size(), 2U);
   EXPECT_EQ(plan.execution_partitions()[1].members.size(), 2U);
   EXPECT_EQ(plan.partitioning_plan().selection_source, PlanSelectionSource::kCoreDefault);
+  ASSERT_TRUE(plan.partitioning_plan().requested_algorithm.has_value());
   ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
+  EXPECT_EQ(plan.partitioning_plan().requested_algorithm->id, "holoscan.partition.serial_baseline");
   EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, "holoscan.partition.serial_baseline");
 }
 
@@ -389,6 +1263,119 @@ TEST(CompilePartitionAuthoring, RejectsEmptyPartialAndMultiRootPartitionCovers) 
     EXPECT_FALSE(plan.ok());
     EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_COVER_INVALID"));
   }
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView,
+     ArtifactValidationRejectsMissingExtraAndWrongCrossingScheduleEdges) {
+  const ExecutionPlan plan = compile_automatic_diamond(false, false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_GE(plan.schedule_edges().size(), 2U);
+  const auto accepted = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(accepted);
+
+  const auto expect_rejected = [&](auto mutate) {
+    auto malformed = std::make_shared<detail::ExecutionPlanState>(*accepted);
+    mutate(*malformed);
+    const auto finalized = detail::finalize_plan_artifact(*malformed);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "PARTITION_INSPECTION_PLAN_INVALID");
+  };
+  expect_rejected([](auto& state) { state.schedule_edges.pop_back(); });
+  expect_rejected([](auto& state) { state.schedule_edges.push_back(state.schedule_edges.back()); });
+  expect_rejected([](auto& state) {
+    state.schedule_edges.front().destination = state.schedule_edges.front().source;
+  });
+  expect_rejected([](auto& state) { std::swap(state.schedule_edges[0], state.schedule_edges[1]); });
+}
+
+// REQ: COMPILE-068
+TEST(ExecutionPlanPartitionsView,
+     EmbeddedInterfaceCrossingScheduleEdgesAreExactAndArtifactValidated) {
+  Graph graph{"embedded-interface-partition-crossing"};
+  test::add_compile_test_default_clock(graph);
+  const auto child = graph.embed<PartitionTopologyEmbeddedSourceGraph>("child");
+  const auto left = graph.op<test::CompileTestOperator>("left");
+  const auto right = graph.op<test::CompileTestOperator>("right");
+  graph.add_flow(child->output, left->input);
+  graph.add_flow(child->output, right->input);
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.graph().interface_bindings().size(), 1U);
+  ASSERT_EQ(plan.graph().edges().size(), 2U);
+  ASSERT_EQ(plan.schedule_edges().size(), 2U);
+
+  const auto& binding = plan.graph().interface_bindings().front();
+  const auto public_port =
+      std::find_if(plan.graph().ports().begin(), plan.graph().ports().end(), [&](const auto& port) {
+        return port.id == binding.public_port;
+      });
+  const auto internal_port =
+      std::find_if(plan.graph().ports().begin(), plan.graph().ports().end(), [&](const auto& port) {
+        return port.id == binding.internal_port;
+      });
+  ASSERT_NE(public_port, plan.graph().ports().end());
+  ASSERT_NE(internal_port, plan.graph().ports().end());
+  EXPECT_EQ(public_port->owner_kind, PortOwnerKind::kGraphInterface);
+  EXPECT_EQ(internal_port->owner_kind, PortOwnerKind::kOperator);
+
+  const auto* source_partition = partition_for_path(plan, "child/source");
+  const auto* left_partition = partition_for_path(plan, "left");
+  const auto* right_partition = partition_for_path(plan, "right");
+  ASSERT_NE(source_partition, nullptr);
+  ASSERT_NE(left_partition, nullptr);
+  ASSERT_NE(right_partition, nullptr);
+  EXPECT_EQ(plan.graph().edges()[0].source, binding.public_port);
+  EXPECT_EQ(plan.graph().edges()[1].source, binding.public_port);
+  EXPECT_EQ(plan.schedule_edges()[0].edge, plan.graph().edges()[0].id);
+  EXPECT_EQ(plan.schedule_edges()[0].source, source_partition->id);
+  EXPECT_EQ(plan.schedule_edges()[0].destination, left_partition->id);
+  EXPECT_EQ(plan.schedule_edges()[1].edge, plan.graph().edges()[1].id);
+  EXPECT_EQ(plan.schedule_edges()[1].source, source_partition->id);
+  EXPECT_EQ(plan.schedule_edges()[1].destination, right_partition->id);
+
+  const auto accepted = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(accepted);
+  const auto expect_rejected = [&](auto mutate) {
+    auto malformed = std::make_shared<detail::ExecutionPlanState>(*accepted);
+    malformed->digest = {};
+    malformed->json.clear();
+    mutate(*malformed);
+    const auto finalized = detail::finalize_plan_artifact(*malformed);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "PARTITION_INSPECTION_PLAN_INVALID");
+    EXPECT_EQ(malformed->digest, PlanDigest{});
+    EXPECT_TRUE(malformed->json.empty());
+  };
+  expect_rejected([](auto& state) {
+    state.schedule_edges.front().source = state.schedule_edges.front().destination;
+  });
+  expect_rejected([](auto& state) {
+    const auto graph_interface =
+        std::ranges::find(state.graph.vertices(), VertexKind::kGraphInterface, &VertexRecord::kind);
+    ASSERT_NE(graph_interface, state.graph.vertices().end());
+    const auto source_partition =
+        std::ranges::find_if(state.execution_partitions, [](const auto& partition) {
+          return std::ranges::find(partition.operator_paths, "child/source") !=
+                 partition.operator_paths.end();
+        });
+    ASSERT_NE(source_partition, state.execution_partitions.end());
+    source_partition->members.insert(
+        std::ranges::lower_bound(
+            source_partition->members, graph_interface->id.value, {}, &VertexId::value),
+        graph_interface->id);
+    state.partition_decisions.push_back(PartitionDecisionRecord{
+        .vertex = graph_interface->id,
+        .partition = source_partition->id,
+        .decision = PartitionDecisionKind::kJoin,
+    });
+    std::ranges::sort(state.partition_decisions, [](const auto& left, const auto& right) {
+      return left.vertex.value < right.vertex.value;
+    });
+  });
 }
 
 // REQ: COMPILE-058
@@ -454,6 +1441,7 @@ TEST(CompilePartitionAuthoring, AttachesOnlyUnambiguousSyntheticBoundaryVertices
 
 //   [operator]  (invalid Profile 0xFF; plan returned but ok()==false)
 // REQ: COMPILE-001
+// REQ: COMPILE-068
 TEST(CompileEntryPoint, RejectedCompileStillReturnsInspectableNonRunnablePlan) {
   Graph graph{"compile-rejected"};
   (void)graph.op<test::CompileTestOperator>("operator");
@@ -475,8 +1463,14 @@ TEST(CompileEntryPoint, RejectedCompileStillReturnsInspectableNonRunnablePlan) {
     ADD_FAILURE() << "expected the rejected plan to retain its requested algorithm";
     return;
   }
-  EXPECT_EQ(requested_algorithm->id, "holoscan.partition.serial_baseline");
+  EXPECT_EQ(requested_algorithm->id, "holoscan.partition.source_chain");
   EXPECT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
+  try {
+    (void)plan.partitions();
+    FAIL() << "rejected plan unexpectedly published a partition view";
+  } catch (const RuntimeError& error) {
+    EXPECT_EQ(error.code(), ErrorCode::kInvalidArgument);
+  }
   EXPECT_NE(plan.clock_catalog().plan_generation, 0U);
   ASSERT_EQ(plan.lifecycle_restart_targets().size(), 1U);
   EXPECT_FALSE(plan.lifecycle_restart_targets().front().effective_profile.has_value());

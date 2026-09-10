@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -19,6 +20,14 @@ namespace holoscan::detail::partitioning {
 
 using VertexIndex = std::uint32_t;
 using EdgeIndex = std::uint32_t;
+
+/// Identify one exact compiler-normalized developer-authored partition anchor.
+struct AuthoredPartitionConstraintId {
+  std::uint32_t value{};
+  [[nodiscard]] explicit constexpr operator bool() const noexcept { return value != 0U; }
+  friend constexpr bool operator==(AuthoredPartitionConstraintId,
+                                   AuthoredPartitionConstraintId) noexcept = default;
+};
 
 /// Identify one candidate partition within an untrusted planner proposal.
 struct CandidatePartitionId {
@@ -41,6 +50,7 @@ enum class PartitionBoundary : std::uint32_t {
   kDeviceTransfer = 1U << 2U,
   kRegionBackend = 1U << 3U,
   kExplicitThreadPlacement = 1U << 4U,
+  /// Reserved private capacity; production lowering never sets a lifecycle boundary.
   kLifecycle = 1U << 5U,
   kReadiness = 1U << 6U,
 };
@@ -66,6 +76,7 @@ enum class PartitionPlannerCapability : std::uint32_t {
   kBoundaryMasks = 1U << 1U,
   kCollapseLegality = 1U << 2U,
   kIndependentReadinessRoots = 1U << 3U,
+  kAuthoredExactConstraints = 1U << 4U,
 };
 
 /// Carry a finite capability set for planner registration and invocation checks.
@@ -85,34 +96,35 @@ struct PartitionPlannerCapabilities {
                                    PartitionPlannerCapabilities) noexcept = default;
 };
 
-inline constexpr std::uint32_t kPartitionPlannerInterfaceVersion = 1U;
+inline constexpr std::uint32_t kPartitionPlannerInterfaceVersion = 2U;
 inline constexpr std::string_view kSerialBaselineAlgorithmId = "holoscan.partition.serial_baseline";
 inline constexpr std::string_view kSourceChainAlgorithmId = "holoscan.partition.source_chain";
 inline constexpr std::uint32_t kPartitionAlgorithmVersion = 1U;
 
-/// Return the one exact EA1 developer-preview environment variable name.
+/// Return the retired selector name retained for private rejection evidence.
 [[nodiscard]] constexpr std::string_view partition_environment_variable() noexcept {
   return "HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM";
 }
 
-/// Return every normalized fact implemented by the EA1 compiler.
+/// Return every normalized fact supported by the current private planner interface.
 [[nodiscard]] constexpr PartitionPlannerCapabilities all_partition_planner_capabilities() noexcept {
   PartitionPlannerCapabilities capabilities;
   capabilities.add(PartitionPlannerCapability::kExecutionDomains);
   capabilities.add(PartitionPlannerCapability::kBoundaryMasks);
   capabilities.add(PartitionPlannerCapability::kCollapseLegality);
   capabilities.add(PartitionPlannerCapability::kIndependentReadinessRoots);
+  capabilities.add(PartitionPlannerCapability::kAuthoredExactConstraints);
   return capabilities;
 }
 
 inline constexpr auto kAllPartitionPlannerCapabilities = all_partition_planner_capabilities();
 
-/// Return the owning public evidence key for the EA1 production baseline.
+/// Return the owning evidence key for the historical private serial baseline.
 [[nodiscard]] inline AlgorithmKey serial_baseline_algorithm() {
   return AlgorithmKey{std::string(kSerialBaselineAlgorithmId), kPartitionAlgorithmVersion};
 }
 
-/// Return the owning public evidence key for the EA1 experimental source-chain planner.
+/// Return the owning evidence key for the production source-chain planner.
 [[nodiscard]] inline AlgorithmKey source_chain_algorithm() {
   return AlgorithmKey{std::string(kSourceChainAlgorithmId), kPartitionAlgorithmVersion};
 }
@@ -133,6 +145,8 @@ struct PartitionVertexView {
   std::span<const EdgeIndex> outgoing_edges;
   bool starts_execution_chain{};
   ExecutionDomainKey execution_domain;
+  /// Canonical exact CUDA-device obligations; empty is unconstrained and multiple values conflict.
+  std::span<const std::int32_t> device_obligations;
   PartitionBoundaryMask boundary_before;
   std::span<const RegionId> source_regions;
 };
@@ -147,10 +161,17 @@ struct PartitionEdgeView {
   bool same_stream_fifo_legal{};
 };
 
+/// Describe one nonempty, exact, disjoint authored anchor in canonical order.
+struct AuthoredPartitionConstraintView {
+  AuthoredPartitionConstraintId id;
+  std::span<const VertexIndex> members;
+};
+
 /// Supply a bounded, pointer-free, immutable partition-planning problem.
 struct PartitionProblem {
   std::span<const PartitionVertexView> vertices;
   std::span<const PartitionEdgeView> edges;
+  std::span<const AuthoredPartitionConstraintView> authored_constraints;
   std::uint32_t max_partitions{};
   PartitionPlannerCapabilities available_capabilities;
 };
@@ -180,6 +201,7 @@ struct PartitionProposal {
 struct CanonicalPartition {
   std::uint32_t canonical_id{};
   std::vector<VertexId> members;
+  std::optional<AuthoredPartitionConstraintId> authored_constraint;
 };
 
 /// Carry one canonicalized decision for later translation into public plan evidence.

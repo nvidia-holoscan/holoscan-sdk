@@ -48,7 +48,8 @@ enum class ManualChannelRole : std::uint8_t {
 struct ManualChannelBindingOptions {
   /// Identify the transport service without conferring catalog authority.
   std::string_view service_name;
-  /// Select the manual endpoint role. EA1 supports only \ref ManualChannelRole::kPublisher.
+  /// Select the manual endpoint role. The baseline supports only \ref
+  /// ManualChannelRole::kPublisher.
   ManualChannelRole role;
 };
 
@@ -102,10 +103,10 @@ struct ManualTensorPublisherOptions {
 ///
 /// This facade owns the consumed \ref ManualChannelBinding and retains its runtime and service
 /// identity. It has no catalog capture-clock authority, allocation-loan API, interprocess
-/// descriptor-pool plan, or generic manual POD/schema implication. This provisional EA1 migration
-/// admits exactly one same-runtime subscriber; creating another subscriber for the service fails
-/// with \ref ErrorCode::kResourceExhausted. The class is not thread-safe; callers must serialize
-/// operations on one facade.
+/// descriptor-pool plan, or generic manual POD/schema implication. This provisional baseline
+/// migration admits exactly one same-runtime subscriber; creating another subscriber for the
+/// service fails with \ref ErrorCode::kResourceExhausted. The class is not thread-safe; callers
+/// must serialize operations on one facade.
 class ManualTensorPublisher {
  public:
   /// @brief Move the publisher and retained binding from another object.
@@ -152,7 +153,7 @@ class ManualTensorPublisher {
 
   /// @brief Refresh backend connection state.
   /// @return Empty success, or an error when the endpoint is closed or refresh fails.
-  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> update_connections();
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> update_connections() noexcept;
 
   /// @brief Return whether at least one subscriber is currently connected.
   /// @return True when connected; false when closed or disconnected.
@@ -164,7 +165,9 @@ class ManualTensorPublisher {
   explicit ManualTensorPublisher(std::unique_ptr<Impl> impl) noexcept;
 
   [[nodiscard]] std::uint64_t producer_generation() const noexcept;
-  [[nodiscard]] expected<std::uint32_t, Error> emit_end_of_stream(SampleMetadata metadata) noexcept;
+  HOLOSCAN_CORE_EXPORT void set_health_report_sequence(std::uint64_t sequence) noexcept;
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<std::uint32_t, Error> emit_end_of_stream(
+      SampleMetadata metadata) noexcept;
 
   std::unique_ptr<Impl> impl_;
 

@@ -603,6 +603,59 @@ struct DescriptorFlatBufferPayload {
   }
 
   /**
+   * @brief Extract one indexed Tensor view from already-verified multi-Tensor metadata.
+   * @param payload Descriptor-backed payload whose metadata was verified and remains unmodified.
+   * @param index Canonical Tensor-field index.
+   * @return Tensor view metadata on success, or Error when the root, index, or field is invalid.
+   * @warning The caller must first validate the same immutable payload bytes.
+   */
+  [[nodiscard]] static expected<TensorViewMetadata, Error> tensor_view_metadata_at_from_verified(
+      const DescriptorFlatBufferPayload& payload, const std::size_t index) {
+    return tensor_view_metadata_at_from_verified(payload.bytes(), index);
+  }
+
+  /**
+   * @brief Extract one indexed Tensor view from already-verified metadata bytes.
+   * @param metadata_bytes Serialized metadata previously verified and kept immutable.
+   * @param index Canonical Tensor-field index.
+   * @return Tensor view metadata on success, or Error when the root, index, or field is invalid.
+   * @warning The caller must first verify the same immutable metadata bytes.
+   */
+  [[nodiscard]] static expected<TensorViewMetadata, Error> tensor_view_metadata_at_from_verified(
+      const std::span<const std::byte> metadata_bytes, const std::size_t index) {
+    const Root* root = root_from_metadata(metadata_bytes);
+    if (root == nullptr) {
+      return make_unexpected(Error{ErrorCode::kCodecError, "descriptor Tensor root is missing"});
+    }
+    if constexpr (requires {
+                    {
+                      DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(*root,
+                                                                                          index)
+                    } -> std::same_as<expected<TensorViewMetadata, Error>>;
+                  }) {
+      return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(*root, index);
+    } else if constexpr (MaxTensors == 1U) {
+      if (index != 0U) {
+        return make_unexpected(
+            Error{ErrorCode::kInvalidArgument, "descriptor Tensor index is invalid"});
+      }
+      if constexpr (requires {
+                      {
+                        DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(*root)
+                      } -> std::same_as<expected<TensorViewMetadata, Error>>;
+                    }) {
+        return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(*root);
+      } else {
+        return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(metadata_bytes);
+      }
+    } else {
+      return make_unexpected(
+          Error{ErrorCode::kNotImplemented,
+                "multi-Tensor schema does not expose indexed Tensor view metadata"});
+    }
+  }
+
+  /**
    * @brief Validate that a descriptor has the local-buffer shape supported today.
    *
    * @note This is a structural pre-check shared by generic descriptor-backed payloads. The
@@ -748,7 +801,23 @@ using DescriptorFlatBufferPayloadFor =
     DescriptorFlatBufferPayload<Root, flatbuffer_default_descriptor_metadata_capacity_v<Root>,
                                 detail::descriptor_flatbuffer_tensor_count<Root>()>;
 
-static_assert(std::is_standard_layout_v<DescriptorFlatBufferPayload<Image, 2048>>);
-static_assert(std::is_trivially_copyable_v<DescriptorFlatBufferPayload<Image, 2048>>);
+namespace detail {
+
+/// @brief Stand in for any metadata root when asserting the payload's own layout.
+///
+/// These two properties belong to the template and not to any schema: the payload stores
+/// descriptors and inline metadata bytes, never a Root value, so Root may be incomplete. Asserting
+/// against a tag declared here keeps the check from depending on which domain schema Core happens
+/// to declare -- the original spelling used Image, which stopped compiling the moment that schema
+/// moved to holoscan::sensor_io, for reasons that had nothing to do with layout.
+struct DescriptorPayloadLayoutProbe;
+
+using DescriptorPayloadLayoutProbePayload =
+    DescriptorFlatBufferPayload<DescriptorPayloadLayoutProbe, 2048>;
+
+}  // namespace detail
+
+static_assert(std::is_standard_layout_v<detail::DescriptorPayloadLayoutProbePayload>);
+static_assert(std::is_trivially_copyable_v<detail::DescriptorPayloadLayoutProbePayload>);
 
 }  // namespace holoscan::schema

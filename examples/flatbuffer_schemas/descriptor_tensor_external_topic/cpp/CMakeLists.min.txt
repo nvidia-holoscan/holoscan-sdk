@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_descriptor_tensor_external_topic LANGUAGES CXX)
+
+include(CTest)
+
+if(DEFINED HOLOSCAN_TEST_INSTALL_PREFIX AND NOT HOLOSCAN_TEST_INSTALL_PREFIX STREQUAL "")
+    list(PREPEND CMAKE_PREFIX_PATH "${HOLOSCAN_TEST_INSTALL_PREFIX}")
+    find_package(holoscan REQUIRED CONFIG
+        PATHS "${HOLOSCAN_TEST_INSTALL_PREFIX}"
+        NO_DEFAULT_PATH
+    )
+else()
+    find_package(holoscan REQUIRED CONFIG
+        PATHS
+            "/opt/nvidia/holoscan"
+            "/workspace/holoscan-sdk/install"
+            "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+    )
+endif()
+
+set(DESCRIPTOR_TOPIC_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+holoscan_add_flatbuffer_schema(
+    TARGET descriptor_tensor_external_topic_generated
+    SCHEMAS external_frame.fbs
+    INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_DIR "${DESCRIPTOR_TOPIC_GENERATED_DIR}"
+    BFBS_EMBED
+    DESCRIPTOR_TENSOR
+    TRAITS_HEADER external_frame_traits.hpp
+    TRAITS_ROOT_TYPE tensor_topic::ExternalFrame
+    TRAITS_NATIVE_TYPE tensor_topic::ExternalFrameT
+    TRAITS_BINARY_SCHEMA_TYPE tensor_topic::ExternalFrameBinarySchema
+    TRAITS_PACKAGE_NAMESPACE tensor_topic::package
+    TRAITS_CANONICAL_NAME tensor_topic.ExternalFrame
+    TRAITS_SCHEMA_VERSION 1
+    TRAITS_MAX_SERIALIZED_SIZE 1024
+    TRAITS_DESCRIPTOR_METADATA_CAPACITY 512
+)
+
+set(DESCRIPTOR_TOPIC_TARGETS
+    descriptor_tensor_external_topic_graph
+    descriptor_tensor_external_topic_client
+)
+foreach(target IN LISTS DESCRIPTOR_TOPIC_TARGETS)
+    add_executable(${target} "${target}.cpp")
+    add_dependencies(${target} descriptor_tensor_external_topic_generated)
+    target_compile_features(${target} PRIVATE cxx_std_20)
+    target_include_directories(${target}
+        PRIVATE "${DESCRIPTOR_TOPIC_GENERATED_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${target} PRIVATE holoscan::core holoscan::schema)
+    set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
+endforeach()
+
+if(BUILD_TESTING)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME EXAMPLE_CPP_DESCRIPTOR_TENSOR_EXTERNAL_TOPIC_TEST
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/run_example.py"
+                    --graph $<TARGET_FILE:descriptor_tensor_external_topic_graph>
+                    --client $<TARGET_FILE:descriptor_tensor_external_topic_client>
+        )
+        set_tests_properties(EXAMPLE_CPP_DESCRIPTOR_TENSOR_EXTERNAL_TOPIC_TEST
+            PROPERTIES
+                PASS_REGULAR_EXPRESSION
+                    "descriptor Tensor external-topic round trip complete"
+                LABELS "examples;schema;tensor;multi-tensor;external-topic;interprocess"
+                TIMEOUT 60
+        )
+    endif()
+endif()

@@ -16,6 +16,7 @@
 
 #include <holoscan/params/persistence.hpp>
 
+#include "../support/host_unique_test_name.hpp"
 #include "core/parameter_snapshot_archive_access.hpp"
 
 namespace holoscan::params {
@@ -27,7 +28,7 @@ class TemporaryArchive {
  public:
   TemporaryArchive() {
     path_ = std::filesystem::temp_directory_path() /
-            ("holoscan-param-archive-" + std::to_string(next_++) + ".json");
+            (test::make_host_unique_test_name("holoscan-param-archive") + ".json");
   }
   ~TemporaryArchive() {
     std::error_code ignored;
@@ -37,7 +38,6 @@ class TemporaryArchive {
   [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
 
  private:
-  inline static std::uint64_t next_{};
   std::filesystem::path path_;
 };
 

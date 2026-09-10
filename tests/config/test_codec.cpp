@@ -15,6 +15,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -39,43 +40,157 @@ struct UnfinishedSettings {
   std::int32_t count{0};
 };
 
+struct EmptySettings {};
+
+struct DuplicateRequiredSettings {
+  std::int32_t first{0};
+  std::int32_t second{0};
+};
+
+struct DuplicateDefaultedSettings {
+  std::int32_t first{0};
+  std::int32_t second{0};
+};
+
+struct MoveOnlyValue {
+  MoveOnlyValue() = default;
+  explicit MoveOnlyValue(std::int32_t initial_value) : value{initial_value} {}
+  MoveOnlyValue(const MoveOnlyValue&) = delete;
+  MoveOnlyValue& operator=(const MoveOnlyValue&) = delete;
+  explicit MoveOnlyValue(MoveOnlyValue&& other) noexcept : value{other.value} {}
+  MoveOnlyValue& operator=(MoveOnlyValue&&) = default;
+
+  std::int32_t value{0};
+};
+
+struct MoveOnlySettings {
+  MoveOnlySettings() = default;
+  explicit MoveOnlySettings(MoveOnlyValue initial_value) : value{std::move(initial_value)} {}
+  MoveOnlySettings(const MoveOnlySettings&) = delete;
+  explicit MoveOnlySettings(MoveOnlySettings&& other) noexcept : value{std::move(other.value)} {}
+
+  MoveOnlyValue value;
+};
+
+struct NullMemberSettings {
+  std::int32_t value{0};
+};
+
+struct AssignmentOnlyValue {
+  AssignmentOnlyValue() = default;
+  AssignmentOnlyValue(const AssignmentOnlyValue&) = delete;
+  AssignmentOnlyValue(AssignmentOnlyValue&&) = delete;
+  AssignmentOnlyValue& operator=(const AssignmentOnlyValue&) = delete;
+  AssignmentOnlyValue& operator=(AssignmentOnlyValue&&) noexcept { return *this; }
+};
+
+struct NonMovableMemberSettings {
+  AssignmentOnlyValue value;
+};
+
+struct NonMovableOwnerSettings {
+  NonMovableOwnerSettings() = default;
+  NonMovableOwnerSettings(const NonMovableOwnerSettings&) = delete;
+  NonMovableOwnerSettings(NonMovableOwnerSettings&&) = delete;
+
+  std::int32_t value{0};
+};
+
 }  // namespace holoscan::config::test
 
-// Full object codec for Settings: encodes count and name as a two-entry object; decode reads
-// them as required fields and calls ObjectDecoder::finish() to release the decode context.
 template <>
-struct holoscan::config::ConfigCodec<holoscan::config::test::Settings> {
-  static ConfigResult<test::Settings> decode(ConfigView view, const DecodeOptions& options,
-                                             DecodeContext& context) {
-    ObjectDecoder object{std::move(view), options, context};
-    auto count = object.required<std::int32_t>("count");
-    if (!count) {
-      return tl::make_unexpected(count.error());
+struct holoscan::config::ConfigCodec<holoscan::config::test::Settings>
+    : holoscan::config::ObjectCodec<holoscan::config::test::Settings> {
+  static constexpr auto fields = std::tuple{
+      object_field("count", &test::Settings::count),
+      defaulted_object_field("name", &test::Settings::name),
+  };
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::EmptySettings>
+    : holoscan::config::ObjectCodec<holoscan::config::test::EmptySettings> {
+  static constexpr auto fields = std::tuple{};
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::DuplicateRequiredSettings>
+    : holoscan::config::ObjectCodec<holoscan::config::test::DuplicateRequiredSettings> {
+  static constexpr auto fields = std::tuple{
+      object_field("value", &test::DuplicateRequiredSettings::first),
+      object_field("value", &test::DuplicateRequiredSettings::second),
+  };
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::DuplicateDefaultedSettings>
+    : holoscan::config::ObjectCodec<holoscan::config::test::DuplicateDefaultedSettings> {
+  static constexpr auto fields = std::tuple{
+      object_field("value", &test::DuplicateDefaultedSettings::first),
+      defaulted_object_field("value", &test::DuplicateDefaultedSettings::second),
+  };
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::MoveOnlyValue> {
+  static ConfigResult<test::MoveOnlyValue> decode(ConfigView view, const DecodeOptions& options,
+                                                  DecodeContext& context) {
+    auto decoded = ConfigCodec<std::int32_t>::decode(std::move(view), options, context);
+    if (!decoded) {
+      return tl::make_unexpected(decoded.error());
     }
-    auto name = object.required<std::string>("name");
-    if (!name) {
-      return tl::make_unexpected(name.error());
-    }
-    auto finished = object.finish();
-    if (!finished) {
-      return tl::make_unexpected(finished.error());
-    }
-    return test::Settings{.count = *count, .name = std::move(*name)};
+    return ConfigResult<test::MoveOnlyValue>{test::MoveOnlyValue{*decoded}};
   }
 
-  static ConfigResult<ConfigValue> encode(const test::Settings& value, const EncodeOptions& options,
-                                          EncodeContext& context) {
-    auto count = ConfigCodec<std::int32_t>::encode(value.count, options, context);
-    auto name = ConfigCodec<std::string>::encode(value.name, options, context);
-    if (!count) {
-      return tl::make_unexpected(count.error());
-    }
-    if (!name) {
-      return tl::make_unexpected(name.error());
-    }
-    std::array entries{ConfigObjectEntry{"count", *count}, ConfigObjectEntry{"name", *name}};
-    return ConfigValue::object(entries);
+  static ConfigResult<ConfigValue> encode(const test::MoveOnlyValue& value,
+                                          const EncodeOptions& options, EncodeContext& context) {
+    return ConfigCodec<std::int32_t>::encode(value.value, options, context);
   }
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::MoveOnlySettings>
+    : holoscan::config::ObjectCodec<holoscan::config::test::MoveOnlySettings> {
+  static constexpr auto fields = std::tuple{
+      object_field("value", &test::MoveOnlySettings::value),
+  };
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::NullMemberSettings>
+    : holoscan::config::ObjectCodec<holoscan::config::test::NullMemberSettings> {
+  static constexpr auto fields = std::tuple{
+      object_field("value", static_cast<std::int32_t test::NullMemberSettings::*>(nullptr))};
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::AssignmentOnlyValue> {
+  static ConfigResult<test::AssignmentOnlyValue> decode(
+      ConfigView,  // NOLINT(performance-unnecessary-value-param)
+      const DecodeOptions&, DecodeContext&) {
+    return ConfigResult<test::AssignmentOnlyValue>{tl::in_place};
+  }
+
+  static ConfigResult<ConfigValue> encode(const test::AssignmentOnlyValue&, const EncodeOptions&,
+                                          EncodeContext&) {
+    return ConfigValue::null();
+  }
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::NonMovableMemberSettings>
+    : holoscan::config::ObjectCodec<holoscan::config::test::NonMovableMemberSettings> {
+  static constexpr auto fields = std::tuple{
+      object_field("value", &test::NonMovableMemberSettings::value),
+  };
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::NonMovableOwnerSettings>
+    : holoscan::config::ObjectCodec<holoscan::config::test::NonMovableOwnerSettings> {
+  static constexpr auto fields = std::tuple{
+      object_field("value", &test::NonMovableOwnerSettings::value),
+  };
 };
 
 // Broken codec for UnfinishedSettings: deliberately omits ObjectDecoder::finish() so the
@@ -108,7 +223,20 @@ struct holoscan::config::ConfigCodec<holoscan::config::test::UnfinishedSettings>
 namespace holoscan::config::test {
 namespace {
 
+// REQ: CONFIG-006
 static_assert(ConfigCodable<Settings>);
+static_assert(ConfigCodable<EmptySettings>);
+static_assert(ConfigCodable<MoveOnlyValue>);
+static_assert(ConfigCodable<MoveOnlySettings>);
+static_assert(!std::copy_constructible<MoveOnlySettings>);
+static_assert(!std::is_convertible_v<MoveOnlyValue&&, MoveOnlyValue>);
+static_assert(!std::is_convertible_v<MoveOnlySettings&&, MoveOnlySettings>);
+static_assert(ConfigCodable<AssignmentOnlyValue>);
+static_assert(!ConfigCodable<DuplicateRequiredSettings>);
+static_assert(!ConfigCodable<DuplicateDefaultedSettings>);
+static_assert(!ConfigCodable<NullMemberSettings>);
+static_assert(!ConfigCodable<NonMovableMemberSettings>);
+static_assert(!ConfigCodable<NonMovableOwnerSettings>);
 static_assert(ConfigCodable<std::vector<std::int32_t>>);
 static_assert(ConfigCodable<std::optional<std::string>>);
 static_assert(!ConfigCodable<std::filesystem::path>);
@@ -127,6 +255,44 @@ TEST(ConfigCodec, ExplicitWholeObjectCodecRoundTripsWithoutSchema) {
   ASSERT_TRUE(document_result);
   const Document document = std::move(*document_result);
   EXPECT_EQ(document.get<Settings>("").value(), source);
+
+  auto count = ConfigValue::signed_integer(3);
+  ASSERT_TRUE(count);
+  const std::array entries{ConfigObjectEntry{"count", *count}};
+  auto defaults = ConfigValue::object(entries);
+  ASSERT_TRUE(defaults);
+  EXPECT_EQ(decode_config<Settings>(defaults->view()).value(), (Settings{.count = 3, .name = ""}));
+
+  const std::array<ConfigObjectEntry, 0> no_entries{};
+  auto missing_required = ConfigValue::object(no_entries);
+  ASSERT_TRUE(missing_required);
+  auto failure = decode_config<Settings>(missing_required->view());
+  ASSERT_FALSE(failure);
+  EXPECT_EQ(failure.error().path(), "/count");
+
+  auto encoded_defaults = encode_config(Settings{.count = 3});
+  ASSERT_TRUE(encoded_defaults);
+  EXPECT_EQ(encoded_defaults->view().size(), 2U);
+  EXPECT_EQ(encoded_defaults->view().key(1).value(), "name");
+
+  auto encoded_empty = encode_config(EmptySettings{});
+  ASSERT_TRUE(encoded_empty);
+  EXPECT_EQ(encoded_empty->kind(), ConfigValueKind::kObject);
+  EXPECT_EQ(encoded_empty->view().size(), 0U);
+  EXPECT_TRUE(decode_config<EmptySettings>(encoded_empty->view()));
+
+  const MoveOnlySettings move_only_source{MoveOnlyValue{11}};
+  auto encoded_move_only = encode_config(move_only_source);
+  ASSERT_TRUE(encoded_move_only);
+  auto decoded_move_only = decode_config<MoveOnlySettings>(encoded_move_only->view());
+  ASSERT_TRUE(decoded_move_only);
+  EXPECT_EQ(decoded_move_only->value.value, 11);
+
+  auto scalar = ConfigValue::signed_integer(3);
+  ASSERT_TRUE(scalar);
+  auto empty_object_failure = decode_config<EmptySettings>(scalar->view());
+  ASSERT_FALSE(empty_object_failure);
+  EXPECT_EQ(empty_object_failure.error().code(), ConfigErrorCode::kTypeMismatch);
 }
 
 TEST(ConfigCodec, StrictNumericPolicyRejectsNarrowingAndCheckedLossyIsExplicit) {

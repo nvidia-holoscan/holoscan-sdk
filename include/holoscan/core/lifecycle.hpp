@@ -16,12 +16,16 @@
 #include <holoscan/core/expected.hpp>
 #include <holoscan/core/operator_ref.hpp>
 #include <holoscan/core/parameter.hpp>
+#include <holoscan/core/rate.hpp>
 #include <holoscan/core/readiness_source.hpp>
+#include <holoscan/core/sample.hpp>
 #include <holoscan/time/clock_registry.hpp>
 
 namespace holoscan {
 
 class OperatorPath;
+template <PublishedPayload T>
+class Output;
 
 namespace detail {
 struct LifecycleContextState;
@@ -47,6 +51,13 @@ enum class LifecycleStage : std::uint8_t {
   kStop = 6,       ///< Close activation acceptance and quiesce steady-state work.
   kRelease = 7,    ///< Release resources owned by the active lifecycle epoch.
 };
+
+/// @brief Return whether a value names one lifecycle stage in the closed vocabulary.
+/// @param stage Candidate lifecycle stage.
+/// @return \c true only for \c kConfigure through \c kRelease.
+[[nodiscard]] constexpr bool is_valid_lifecycle_stage(LifecycleStage stage) noexcept {
+  return static_cast<std::uint8_t>(stage) <= static_cast<std::uint8_t>(LifecycleStage::kRelease);
+}
 
 /// @brief Report the bounded disposition of one lifecycle callback.
 enum class LifecycleStatus : std::uint8_t {
@@ -142,8 +153,8 @@ using LifecycleTransactionId = std::uint64_t;
 
 /// @brief Identify one callback declaration slot within an Operator lifecycle contract.
 ///
-/// EA1 uses the unique stage slot as semantic identity. It is pointer-free and portable, but it is
-/// not a compiler-specific member-pointer encoding or a standalone binary fingerprint.
+/// baseline uses the unique stage slot as semantic identity. It is pointer-free and portable, but
+/// it is not a compiler-specific member-pointer encoding or a standalone binary fingerprint.
 using LifecycleMethodId = std::uint8_t;
 
 /// @brief Identify one published lifecycle epoch for an Operator.
@@ -245,9 +256,75 @@ class HOLOSCAN_CORE_EXPORT LifecycleContext {
   [[nodiscard]] expected<OperatorRef, Error> restart_target(
       const OperatorPath& path) const noexcept;
 
+  /// @brief Bind this output's lifecycle-selected nominal rate for the current candidate.
+  /// @tparam T Exact published payload type.
+  /// @param output Output owned by the callback's Operator and declared lifecycle-selectable.
+  /// @param value Exact positive rational nominal average selected for this candidate.
+  /// @return Success, including an identical normalized repeat, or a typed ownership, stage,
+  /// deadline, conflict, maximum, or capacity error.
+  /// @retval ErrorCode::kRateBindingInvalid The supplied rate is zero or has a zero denominator.
+  /// @retval ErrorCode::kRateBindingAboveMaximum The supplied rate exceeds the declared maximum.
+  /// @retval ErrorCode::kRateBindingConflict This candidate already has a different binding.
+  /// @retval ErrorCode::kLifecycleInvalidCallingContext The context is inert or the call is not
+  /// made during a startup/restart forward binding phase. This case does not reject a candidate.
+  /// @retval ErrorCode::kPermissionDenied The declaration, owner, direction, or binding stage is
+  /// unauthorized. During a forward binding phase this rejects the candidate.
+  /// @warning Any declaration or value validation failure during a forward binding phase
+  /// permanently rejects the private candidate. A later forward-phase call in that candidate
+  /// returns the original failure; retrying with a fallback value cannot repair it. Return a
+  /// lifecycle failure status instead.
+  template <PublishedPayload T>
+  [[nodiscard]] expected<void, Error> bind_nominal_rate(Output<T>& output, Rate value) noexcept {
+    return bind_nominal_rate_port(static_cast<const void*>(&output), value);
+  }
+
+  /// @brief Return the phase-visible rate view for one owned input.
+  /// @tparam T Exact published payload type.
+  /// @param input Exact \c Input member subobject registered by this callback's Operator during
+  /// \c setup(). A copied declaration, foreign Operator declaration, or output declaration does
+  /// not carry query authority.
+  /// @return Candidate rate view during startup/restart forward or forward rollback; otherwise the
+  /// current published view, or a typed error without state change.
+  /// @retval ErrorCode::kLifecycleInvalidCallingContext The context has no active lifecycle rate
+  /// resolver.
+  /// @retval ErrorCode::kInvalidArgument The declaration is not the exact registered member
+  /// subobject, the port is not owned by this Operator, or its direction is not input.
+  /// @retval ErrorCode::kNotReady The phase-selected candidate/current generation is unavailable.
+  /// @note Call only during the active lifecycle callback and do not retain the context after
+  /// callback return. The returned \c PortRateView is a value and may be retained. The query is
+  /// O(1) and allocation-free.
+  template <PublishedPayload T>
+  [[nodiscard]] expected<PortRateView, Error> rate(const Input<T>& input) const noexcept {
+    return rate_port(static_cast<const void*>(&input), false);
+  }
+
+  /// @brief Return the phase-visible rate view for one owned output.
+  /// @tparam T Exact published payload type.
+  /// @param output Exact \c Output member subobject registered by this callback's Operator during
+  /// \c setup(). A copied declaration, foreign Operator declaration, or input declaration does
+  /// not carry query authority.
+  /// @return Candidate rate view during startup/restart forward or forward rollback; otherwise the
+  /// current published view, or a typed error without state change.
+  /// @retval ErrorCode::kLifecycleInvalidCallingContext The context has no active lifecycle rate
+  /// resolver.
+  /// @retval ErrorCode::kInvalidArgument The declaration is not the exact registered member
+  /// subobject, the port is not owned by this Operator, or its direction is not output.
+  /// @retval ErrorCode::kNotReady The phase-selected candidate/current generation is unavailable.
+  /// @note Call only during the active lifecycle callback and do not retain the context after
+  /// callback return. The returned \c PortRateView is a value and may be retained. The query is
+  /// O(1) and allocation-free.
+  template <PublishedPayload T>
+  [[nodiscard]] expected<PortRateView, Error> rate(const Output<T>& output) const noexcept {
+    return rate_port(static_cast<const void*>(&output), true);
+  }
+
  private:
   explicit LifecycleContext(detail::LifecycleContextState* state) noexcept : state_(state) {}
   [[nodiscard]] const void* parameter_address(const void* exact_type) const noexcept;
+  [[nodiscard]] expected<void, Error> bind_nominal_rate_port(const void* output,
+                                                             Rate value) noexcept;
+  [[nodiscard]] expected<PortRateView, Error> rate_port(const void* declaration,
+                                                        bool output) const noexcept;
 
   detail::LifecycleContextState* state_{};
 

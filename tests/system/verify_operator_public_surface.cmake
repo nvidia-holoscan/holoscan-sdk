@@ -51,7 +51,7 @@ foreach(header IN LISTS operator_public_headers)
         string(REGEX MATCH "(^|[^A-Za-z0-9_])${identifier}([^A-Za-z0-9_]|$)" match "${contents}")
         if(match)
             message(FATAL_ERROR
-                "EA1 public Operator boundary exposes forbidden identifier '${identifier}' in ${header}"
+                "baseline public Operator boundary exposes forbidden identifier '${identifier}' in ${header}"
             )
         endif()
     endforeach()
@@ -67,7 +67,7 @@ foreach(header IN LISTS operator_public_headers)
         )
         if(complete_access_definition)
             message(FATAL_ERROR
-                "EA1 public Operator boundary defines private access helper '${access_type}' in ${header}"
+                "baseline public Operator boundary defines private access helper '${access_type}' in ${header}"
             )
         endif()
     endforeach()
@@ -78,7 +78,7 @@ foreach(header IN LISTS operator_public_headers)
         string(REGEX MATCH "[.]${verb}[ \t\r\n]*\\(" match "${contents}")
         if(match)
             message(FATAL_ERROR
-                "EA1 public Operator boundary exposes forbidden member verb '${verb}' in ${header}"
+                "baseline public Operator boundary exposes forbidden member verb '${verb}' in ${header}"
             )
         endif()
     endforeach()

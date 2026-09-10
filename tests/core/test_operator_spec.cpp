@@ -19,9 +19,12 @@
 #include <holoscan/core/port.hpp>
 #include <holoscan/core/readiness_source.hpp>
 
+#include <core/operator_spec_compiler_access.hpp>
 #include <core/operator_spec_test_access.hpp>
 #include <core/operator_test_binding.hpp>
 
+// GTest fatal assertions establish optional preconditions that clang-tidy does not model.
+// NOLINTBEGIN(bugprone-unchecked-optional-access)
 namespace holoscan {
 
 struct OperatorSpecSchemaPayload {
@@ -60,9 +63,8 @@ template <typename Spec, typename Port>
 concept HasOutputArrayBinding = requires(Spec& spec, Port& port) { spec.output_array(port); };
 
 template <typename Builder>
-concept HasTensorAllocation = requires(Builder& builder, TensorAllocationBounds bounds) {
-  { builder.tensor_allocation(bounds) } -> std::same_as<Builder&>;
-};
+concept HasStandaloneTensorAllocation =
+    requires(Builder& builder, TensorPoolBounds bounds) { builder.tensor_allocation(bounds); };
 
 using ScalarInput = Input<std::uint32_t>;
 using ScalarOutput = Output<std::uint32_t>;
@@ -99,13 +101,14 @@ static_assert(!CanAssignOutputBuilderToPort<OperatorSpec, ScalarOutput>);
 static_assert(!HasInputArrayBinding<OperatorSpec, ScalarInput>);
 static_assert(!HasOutputArrayBinding<OperatorSpec, ScalarOutput>);
 
-static_assert(!HasTensorAllocation<OutputSpecBuilder>);
-static_assert(HasTensorAllocation<TensorOutputSpecBuilder>);
+static_assert(!HasStandaloneTensorAllocation<OutputSpecBuilder>);
+static_assert(!HasStandaloneTensorAllocation<TensorOutputSpecBuilder>);
 static_assert(std::same_as<decltype(std::declval<TensorOutputSpecBuilder&>()
                                         .max_emits_per_compute(2)
-                                        .tensor_allocation(TensorAllocationBounds{
-                                            .max_rank = 4,
-                                            .max_byte_span = 4096,
+                                        .produces_tensor(TensorOutputSpec{
+                                            .representation = {.rank = 4U},
+                                            .bounds = tensor_bounds(4096U),
+                                            .storage = TensorOutputStorage::kRuntimePool,
                                         })
                                         .late_joiner_history_depth(0)),
                            TensorOutputSpecBuilder&>);
@@ -296,12 +299,361 @@ TEST(OperatorSpec, SetupNamesBecomeTheStableNamesOfInitiallyUnnamedPortDeclarati
 
 // REQ: OPERATOR-004
 TEST(OperatorSpec, TensorBoundsAreFiniteValues) {
-  constexpr TensorAllocationBounds bounds{
+  constexpr TensorPoolBounds bounds{
       .max_rank = 8,
       .max_byte_span = 16U * 1024U * 1024U,
   };
   EXPECT_EQ(bounds.max_rank, 8);
   EXPECT_EQ(bounds.max_byte_span, 16U * 1024U * 1024U);
+}
+
+// REQ: COMPILE-067
+TEST(OperatorSpec, TensorOutputRetainsUnresolvedDerivedByteSpanWithoutEagerAllocation) {
+  OperatorSpec spec;
+  Output<Tensor> output;
+
+  // Key setup: declare finite rank metadata while leaving slot bytes to a closed expression.
+  spec.output(output, "output")
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kHost, .rank = 2U},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          tensor_byte_span(1000U).aligned_to(256U));
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  // Key assertion: setup owns the expression, but physical allocation remains unresolved.
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kSuccess);
+  ASSERT_TRUE(metadata.tensor_contract);
+  EXPECT_FALSE(metadata.tensor_contract->max_byte_span);
+  EXPECT_FALSE(metadata.tensor_allocation);
+  ASSERT_TRUE(metadata.tensor_byte_span_expression);
+  ASSERT_EQ(metadata.tensor_byte_span_expression->nodes.size(), 2U);
+  EXPECT_EQ(metadata.tensor_byte_span_expression->nodes.back().operation,
+            TensorByteSpanOperation::kAlignUp);
+}
+
+// REQ: COMPILE-067
+TEST(OperatorSpec, TensorOutputRejectsConflictingOrMalformedDerivedByteSpanSources) {
+  const auto derived_spec = [] {
+    return TensorOutputSpec{
+        .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+        .storage = TensorOutputStorage::kRuntimePool,
+    };
+  };
+
+  OperatorSpec literal;
+  Output<Tensor> literal_output;
+  auto literal_spec = derived_spec();
+  literal_spec.bounds = tensor_bounds(4096U);
+  // Key setup: mix an authored literal capacity with a derived capacity source.
+  literal.output(literal_output, "output").produces_tensor(literal_spec, tensor_byte_span(4096U));
+  EXPECT_EQ(detail::OperatorSpecCompilerAccess::port(literal, 0U).tensor_contract_error.message,
+            "GRAPH_TENSOR_BYTE_SPAN_SOURCE_CONFLICT");
+
+  OperatorSpec pass_through;
+  Output<Tensor> pass_through_output;
+  auto pass_through_spec = derived_spec();
+  pass_through_spec.storage = TensorOutputStorage::kPassThrough;
+  pass_through.output(pass_through_output, "output")
+      .produces_tensor(pass_through_spec, tensor_byte_span(4096U));
+  EXPECT_EQ(
+      detail::OperatorSpecCompilerAccess::port(pass_through, 0U).tensor_contract_error.message,
+      "GRAPH_TENSOR_BYTE_SPAN_SOURCE_CONFLICT");
+
+  const auto zero = tensor_byte_span(0U);
+  const TensorByteSpanExpression empty;
+  const auto bad_alignment = tensor_byte_span(1U).aligned_to(3U);
+  OperatorSpec malformed;
+  Output<Tensor> malformed_output;
+  malformed.output(malformed_output, "output").produces_tensor(derived_spec(), bad_alignment);
+  // Key assertion: malformed expressions fail during setup metadata normalization.
+  EXPECT_EQ(empty.invalid_reason(), TensorByteSpanExpressionInvalidReason::kEmpty);
+  EXPECT_EQ(zero.invalid_reason(), TensorByteSpanExpressionInvalidReason::kNonPositiveConstant);
+  EXPECT_EQ(bad_alignment.invalid_reason(),
+            TensorByteSpanExpressionInvalidReason::kAlignmentInvalid);
+  EXPECT_EQ(detail::OperatorSpecCompilerAccess::port(malformed, 0U).tensor_contract_error.message,
+            "GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID");
+}
+
+// REQ: COMPILE-067
+TEST(OperatorSpec, TensorOutputRejectsASecondByteSpanSource) {
+  OperatorSpec spec;
+  Output<Tensor> output;
+  const TensorOutputSpec derived{
+      .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+      .storage = TensorOutputStorage::kRuntimePool,
+  };
+
+  // Key setup: select the derived source before attempting a literal declaration.
+  spec.output(output, "output")
+      .produces_tensor(derived, tensor_byte_span(4096U))
+      .produces_tensor(TensorOutputSpec{
+          .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+          .bounds = tensor_bounds(4096U),
+          .storage = TensorOutputStorage::kRuntimePool,
+      });
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  // Key assertion: the first expression remains intact and the duplicate is rejected.
+  EXPECT_EQ(metadata.tensor_contract_error.message, "GRAPH_TENSOR_BYTE_SPAN_SOURCE_CONFLICT");
+  EXPECT_TRUE(metadata.tensor_byte_span_expression);
+  EXPECT_FALSE(metadata.tensor_allocation);
+}
+
+// REQ: COMPILE-067
+TEST(OperatorSpec, TensorOutputRejectsExpressionBeyondTheDepthLimit) {
+  OperatorSpec spec;
+  Output<Tensor> output;
+  auto expression = tensor_byte_span(1U);
+  // Key setup: one more unary node than the frozen maximum depth is authored.
+  for (std::size_t depth = 0U; depth < kMaximumTensorByteSpanExpressionDepth; ++depth) {
+    expression = expression.aligned_to(2U);
+  }
+  spec.output(output, "output")
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          expression);
+
+  // Key assertion: the bounded expression fails during cold metadata normalization.
+  EXPECT_EQ(expression.invalid_reason(),
+            TensorByteSpanExpressionInvalidReason::kDepthLimitExceeded);
+  EXPECT_EQ(detail::OperatorSpecCompilerAccess::port(spec, 0U).tensor_contract_error.message,
+            "GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID");
+}
+
+// REQ: COMPILE-067
+TEST(OperatorSpec, TensorOutputRejectsExpressionBeyondTheNodeLimit) {
+  auto expression = tensor_byte_span(1U);
+  constexpr std::size_t kMaximumCompositionAttempts = 8U;
+  // Key setup: balanced composition grows past the node bound before reaching the depth bound.
+  for (std::size_t attempt = 0U;
+       attempt < kMaximumCompositionAttempts &&
+       expression.invalid_reason() == TensorByteSpanExpressionInvalidReason::kNone;
+       ++attempt) {
+    expression = expression.maximum_with(expression);
+  }
+
+  // Key assertion: finite artifact work is enforced by the distinct node-limit reason.
+  EXPECT_EQ(expression.invalid_reason(), TensorByteSpanExpressionInvalidReason::kNodeLimitExceeded);
+}
+
+// REQ: COMPILE-067
+TEST(OperatorSpec, TensorOutputRejectsExpressionBeyondTheDependencyLimit) {
+  OperatorSpec spec;
+  Input<Tensor> input0;
+  Input<Tensor> input1;
+  Input<Tensor> input2;
+  Input<Tensor> input3;
+  Input<Tensor> input4;
+  Input<Tensor> input5;
+  Input<Tensor> input6;
+  Input<Tensor> input7;
+  Input<Tensor> input8;
+  Output<Tensor> output;
+  spec.input(input0, "input0");
+  spec.input(input1, "input1");
+  spec.input(input2, "input2");
+  spec.input(input3, "input3");
+  spec.input(input4, "input4");
+  spec.input(input5, "input5");
+  spec.input(input6, "input6");
+  spec.input(input7, "input7");
+  spec.input(input8, "input8");
+
+  // Key setup: combine nine distinct input authorities within the node and depth limits.
+  auto expression = input_max_byte_span(input0)
+                        .maximum_with(input_max_byte_span(input1))
+                        .maximum_with(input_max_byte_span(input2))
+                        .maximum_with(input_max_byte_span(input3))
+                        .maximum_with(input_max_byte_span(input4))
+                        .maximum_with(input_max_byte_span(input5))
+                        .maximum_with(input_max_byte_span(input6))
+                        .maximum_with(input_max_byte_span(input7))
+                        .maximum_with(input_max_byte_span(input8));
+  spec.output(output, "output")
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          std::move(expression));
+
+  // Key assertion: normalized dependency identity is capped independently of expression size.
+  EXPECT_EQ(detail::OperatorSpecCompilerAccess::port(spec, 9U).tensor_contract_error.message,
+            "GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID");
+}
+
+// REQ: COMPILE-067
+TEST(OperatorSpec, NormalizedTensorByteSpanExpressionEqualityCoversEveryNodeField) {
+  const auto metadata_for = [](std::uint64_t capacity) {
+    OperatorSpec spec;
+    Output<Tensor> output;
+    spec.output(output, "output")
+        .produces_tensor(
+            TensorOutputSpec{
+                .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+                .storage = TensorOutputStorage::kRuntimePool,
+            },
+            tensor_byte_span(capacity).aligned_to(256U));
+    return detail::OperatorSpecCompilerAccess::port(spec, 0U).tensor_byte_span_expression;
+  };
+
+  // Key setup: normalize two equivalent expressions and one differing only in a node operand.
+  const auto first = metadata_for(1000U);
+  const auto equivalent = metadata_for(1000U);
+  const auto distinct = metadata_for(1001U);
+
+  // Key assertion: record equality is structural and observes the complete node payload.
+  EXPECT_EQ(first, equivalent);
+  EXPECT_NE(first, distinct);
+}
+
+// REQ: OPERATOR-039
+// REQ: OPERATOR-045
+TEST(OperatorSpec, CommonOutputRejectsASecondTensorTransferSource) {
+  OperatorSpec spec;
+  Output<OperatorSpecSchemaPayload> output;
+  PayloadOptions options;
+  options.schema = schema_identity<OperatorSpecSchemaPayload>();
+  options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  options.max_tensor_byte_span = 1024U;
+
+  spec.output(output, "output")
+      .produces_tensor(TensorOutputSpec{
+          .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+          .bounds = tensor_bounds(2048U),
+          .transfer =
+              TensorTransferPolicy{
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              },
+      })
+      .payload_options(options);
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(metadata.tensor_contract_error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+  ASSERT_TRUE(metadata.tensor_contract);
+  ASSERT_TRUE(metadata.tensor_contract->transfer);
+  EXPECT_EQ(metadata.tensor_contract->transfer->max_staging_byte_span, 2048U);
+}
+
+// REQ: OPERATOR-039
+// REQ: OPERATOR-045
+TEST(OperatorSpec, CommonOutputRejectsTransferAuthoredBeforeTensorContract) {
+  OperatorSpec spec;
+  Output<OperatorSpecSchemaPayload> output;
+  PayloadOptions options;
+  options.schema = schema_identity<OperatorSpecSchemaPayload>();
+  options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  options.max_tensor_byte_span = 1024U;
+
+  spec.output(output, "output")
+      .payload_options(options)
+      .produces_tensor(TensorOutputSpec{
+          .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+          .bounds = tensor_bounds(2048U),
+          .transfer =
+              TensorTransferPolicy{
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              },
+      });
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(metadata.tensor_contract_error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+  EXPECT_FALSE(metadata.tensor_contract);
+  ASSERT_TRUE(metadata.payload_options);
+  EXPECT_EQ(metadata.payload_options->max_tensor_byte_span, 1024U);
+}
+
+// REQ: OPERATOR-039
+// REQ: OPERATOR-045
+TEST(OperatorSpec, SpecializedTensorOutputRejectsASecondTensorTransferSource) {
+  OperatorSpec spec;
+  Output<Tensor> output;
+  PayloadOptions options;
+  options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  options.max_tensor_byte_span = 1024U;
+
+  spec.output(output, "output")
+      .produces_tensor(TensorOutputSpec{
+          .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+          .bounds = tensor_bounds(2048U),
+          .transfer =
+              TensorTransferPolicy{
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              },
+      })
+      .payload_options(options);
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(metadata.tensor_contract_error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+  ASSERT_TRUE(metadata.tensor_contract);
+  ASSERT_TRUE(metadata.tensor_contract->transfer);
+  EXPECT_EQ(metadata.tensor_contract->transfer->max_staging_byte_span, 2048U);
+}
+
+// REQ: OPERATOR-039
+// REQ: OPERATOR-045
+TEST(OperatorSpec, SpecializedTensorOutputRejectsTransferAuthoredBeforeTensorContract) {
+  OperatorSpec spec;
+  Output<Tensor> output;
+  PayloadOptions options;
+  options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  options.max_tensor_byte_span = 1024U;
+
+  spec.output(output, "output")
+      .payload_options(options)
+      .produces_tensor(TensorOutputSpec{
+          .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+          .bounds = tensor_bounds(2048U),
+          .transfer =
+              TensorTransferPolicy{
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              },
+      });
+
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(metadata.tensor_contract_error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+  EXPECT_FALSE(metadata.tensor_contract);
+  ASSERT_TRUE(metadata.payload_options);
+  EXPECT_EQ(metadata.payload_options->max_tensor_byte_span, 1024U);
+}
+
+// REQ: OPERATOR-039
+// REQ: OPERATOR-045
+// REQ: COMPILE-067
+TEST(OperatorSpec, DerivedTensorOutputRejectsTransferAuthoredBeforeTensorContract) {
+  OperatorSpec spec;
+  Output<Tensor> output;
+  PayloadOptions options;
+  options.interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  options.max_tensor_byte_span = 1024U;
+
+  // Key setup: select payload transfer authority before a derived-capacity declaration.
+  spec.output(output, "output")
+      .payload_options(options)
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          tensor_byte_span(2048U));
+
+  // Key assertion: the derived overload preserves the first source and rejects the conflict.
+  const auto metadata = detail::OperatorSpecCompilerAccess::port(spec, 0U);
+  EXPECT_EQ(metadata.tensor_contract_error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(metadata.tensor_contract_error.message, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT");
+  EXPECT_FALSE(metadata.tensor_contract);
+  EXPECT_FALSE(metadata.tensor_byte_span_expression);
+  ASSERT_TRUE(metadata.payload_options);
+  EXPECT_EQ(metadata.payload_options->max_tensor_byte_span, 1024U);
 }
 
 // REQ: OPERATOR-004
@@ -439,3 +791,4 @@ TEST(OperatorSpec, InterleavedReadinessKindsRetainTheirExactBuilderFamilies) {
 
 }  // namespace
 }  // namespace holoscan
+// NOLINTEND(bugprone-unchecked-optional-access)

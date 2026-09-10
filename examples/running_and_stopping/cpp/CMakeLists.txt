@@ -13,8 +13,6 @@ target_link_libraries(running_and_stopping PRIVATE holoscan::core Threads::Threa
 holoscan_configure_example_install(running_and_stopping)
 
 if(BUILD_TESTING)
-    # REQ: SYSTEM-014
-    # REQ: RUNTIME-035
     add_test(NAME EXAMPLE_CPP_RUNNING_AND_STOPPING_TEST COMMAND running_and_stopping)
     set_tests_properties(EXAMPLE_CPP_RUNNING_AND_STOPPING_TEST
         PROPERTIES
@@ -25,6 +23,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS running_and_stopping
-    RUNTIME DESTINATION examples/running_and_stopping/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/running_and_stopping/cpp"
     COMPONENT holoscan-examples
 )

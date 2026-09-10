@@ -10,7 +10,7 @@ Installation smoke test (not a tutorial) for `holoscan::logger`: it sets the log
 From the `cpp/` folder:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

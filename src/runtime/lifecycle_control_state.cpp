@@ -936,9 +936,8 @@ Error LifecycleControlState::map_error(const LifecycleTransactionKernelError& er
   return Error{ErrorCode::kFailure};
 }
 
-expected<LifecycleRestartReceiptView, Error> LifecycleControlState::inspect(
+expected<LifecycleRestartReceiptView, Error> LifecycleControlState::project_receipt_locked(
     LifecycleRestartReceipt receipt) const noexcept {
-  const std::lock_guard lock(mutex_);
   if (!enabled_ || kernel_ == nullptr) {
     return make_unexpected(Error{ErrorCode::kLifecycleTransactionsDisabled});
   }
@@ -947,9 +946,16 @@ expected<LifecycleRestartReceiptView, Error> LifecycleControlState::inspect(
     return make_unexpected(Error{ErrorCode::kCrossSessionOperatorRef});
   }
   auto view = kernel_->inspect(receipt);
-  return view ? expected<LifecycleRestartReceiptView, Error>{public_receipt_view(view.value())}
-              : expected<LifecycleRestartReceiptView, Error>{
-                    make_unexpected(map_error(view.error()))};
+  if (!view) {
+    return make_unexpected(map_error(view.error()));
+  }
+  return public_receipt_view(view.value());
+}
+
+expected<LifecycleRestartReceiptView, Error> LifecycleControlState::inspect(
+    LifecycleRestartReceipt receipt) const noexcept {
+  const std::lock_guard lock(mutex_);
+  return project_receipt_locked(receipt);
 }
 
 expected<LifecycleRestartReceiptView, Error> LifecycleControlState::await(
@@ -958,24 +964,18 @@ expected<LifecycleRestartReceiptView, Error> LifecycleControlState::await(
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
   std::unique_lock lock(mutex_);
-  if (!enabled_ || kernel_ == nullptr) {
-    return make_unexpected(Error{ErrorCode::kLifecycleTransactionsDisabled});
-  }
-  if (receipt.target.plan_generation != plan_generation_ ||
-      receipt.target.run_generation != run_generation_) {
-    return make_unexpected(Error{ErrorCode::kCrossSessionOperatorRef});
+  auto initial = project_receipt_locked(receipt);
+  if (!initial || terminal_state(initial->state)) {
+    return initial;
   }
   const auto terminal = [&] {
     auto view = kernel_->inspect(receipt);
     return !view || terminal_state(view->state);
   };
-  if (!terminal() && !changed_.wait_for(lock, timeout, terminal)) {
+  if (!changed_.wait_for(lock, timeout, terminal)) {
     return make_unexpected(Error{ErrorCode::kTimeout});
   }
-  auto view = kernel_->inspect(receipt);
-  return view ? expected<LifecycleRestartReceiptView, Error>{public_receipt_view(view.value())}
-              : expected<LifecycleRestartReceiptView, Error>{
-                    make_unexpected(map_error(view.error()))};
+  return project_receipt_locked(receipt);
 }
 
 bool LifecycleControlState::open_ingress() noexcept {

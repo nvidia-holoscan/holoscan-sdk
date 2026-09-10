@@ -63,7 +63,7 @@ class SourceId {
   std::uint32_t value_{};
 };
 
-static_assert(sizeof(SourceId) == 4, "SourceId is part of the fixed EA1 record layout");
+static_assert(sizeof(SourceId) == 4, "SourceId is part of the fixed baseline record layout");
 static_assert(std::is_standard_layout_v<SourceId>);
 static_assert(std::is_trivially_copyable_v<SourceId>);
 

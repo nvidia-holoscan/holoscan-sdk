@@ -48,6 +48,25 @@ enum class BatchSelectionMode : std::uint8_t {
   kNonDestructiveSnapshot,  ///< Overlapping activations may share retained entries.
 };
 
+/// @brief Identify one compile-admitted Operator completion rule.
+enum class OperatorCompletionRuleKind : std::uint8_t {
+  kComputeCalls = 0,  ///< Complete after the configured number of successful compute calls.
+};
+
+/// @brief Record one immutable Operator-owned completion rule.
+///
+/// The record contains only plan-local identity and value semantics. It owns no
+/// Operator address, Runtime progress, lifecycle generation, or scheduler state.
+struct OperatorCompletionPlanRecord {
+  OperatorRef owner{};  ///< Plan-bound logical Operator that owns the rule.
+  OperatorCompletionRuleKind kind{
+      OperatorCompletionRuleKind::kComputeCalls};  ///< Closed completion-rule discriminator.
+  std::uint64_t limit{};  ///< Complete unsigned compute-call limit; no value is a sentinel.
+
+  friend constexpr bool operator==(const OperatorCompletionPlanRecord&,
+                                   const OperatorCompletionPlanRecord&) noexcept = default;
+};
+
 /// @brief Record one fully resolved input selector.
 ///
 /// Every identity is plan-local and must be interpreted with the enclosing
@@ -77,7 +96,7 @@ struct InputSelectionPlanRecord {
 /// @brief Record one normalized trigger and its static presence guarantee.
 ///
 /// Specialized window and predicate details live in their dedicated record
-/// families. This common record is nevertheless total for every admitted EA1
+/// families. This common record is nevertheless total for every admitted baseline
 /// trigger and provides the scheduler with one closed, pointer-free trigger
 /// inventory.
 struct TemporalTriggerPlanRecord {
@@ -149,7 +168,7 @@ struct AlignedTriggerPlanRecord {
   std::vector<AlignedClosureProofKind> closure_proofs;  ///< Finite accepted proof vocabulary.
   bool silence_is_not_closure{true};         ///< Silence alone cannot complete missing policy.
   bool missing_requires_finite_proof{true};  ///< Missing aggregation follows proof closure.
-  bool public_watermark_protocol{false};     ///< EA1 exposes no public watermark/reorder API.
+  bool public_watermark_protocol{false};     ///< baseline exposes no public watermark/reorder API.
 };
 
 /// @brief Identify how one fixed clock phase is established.
@@ -172,7 +191,7 @@ struct ClockTriggerPlanRecord {
   std::optional<TimePoint> explicit_phase;  ///< Absolute phase exactly when explicitly authored.
   std::uint64_t
       phase_conversion_id{};  ///< Direct conversion to \ref clock, or zero for same-clock.
-  ClockTickPolicy tick_policy{ClockTickPolicy::kCoalesceLateTicks};  ///< Closed EA1 policy.
+  ClockTickPolicy tick_policy{ClockTickPolicy::kCoalesceLateTicks};  ///< Closed baseline policy.
   std::uint64_t initial_tick_index{};                  ///< First schedule index, always zero.
   std::optional<std::uint64_t> initial_handled_index;  ///< Empty before the first frozen tick.
   std::uint32_t coalesced_range_capacity{1U};     ///< One fixed first/last/count evidence record.
@@ -250,7 +269,7 @@ struct ReadableTriggerPlanRecord {
   bool stale_generation_rejected{true};          ///< Old callbacks cannot create candidates.
   bool rearm_only_if_still_readable{true};       ///< Retirement rechecks the same enabled source.
   bool error_creates_candidate{false};           ///< Fatal source errors own no Tag/candidate.
-  bool automatic_retry{false};                   ///< EA1 never retries or rebinds automatically.
+  bool automatic_retry{false};  ///< baseline never retries or rebinds automatically.
   ReadableSourceErrorDisposition fatal_error{ReadableSourceErrorDisposition::kFailRun};
   std::string readiness_witness_identity{"holoscan.readiness.readable-witness.v1"};
   std::string source_error_identity{"holoscan.readiness.readable-source-error.v1"};
@@ -473,7 +492,7 @@ struct PredicateTriggerPlanRecord {
   std::optional<std::string> config_schema;       ///< Absent for configless predicates.
   std::optional<std::string> config_digest;       ///< Absent for configless predicates.
   std::optional<std::string> config_type_digest;  ///< Canonical config type identity when present.
-  TemporalPredicateResetPolicy reset_policy{TemporalPredicateResetPolicy::kEa1ResetEventsV1};
+  TemporalPredicateResetPolicy reset_policy{TemporalPredicateResetPolicy::kResetEventsV1};
   std::vector<std::string> reset_reasons;  ///< Exact reset causes; pause/resume is absent.
   PredicateReplayCapability replay{PredicateReplayCapability::kDecisionReplay};
   std::string replay_evidence;                 ///< Required only for cross-build recomputation.

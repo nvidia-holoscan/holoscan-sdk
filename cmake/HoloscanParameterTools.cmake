@@ -6,7 +6,7 @@ option(HOLOSCAN_BUILD_PARAMS
 option(HOLOSCAN_BUILD_PARAMS_IO
        "Build the optional Holoscan Parameter snapshot persistence library" ON)
 option(HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER
-       "Build the experimental loopback Parameter tuner (default ON per EA1-019 X09)" ON)
+       "Build the experimental loopback Parameter tuner (default ON per HSDK5-019 X09)" ON)
 
 # Because the tuner defaults ON, a params opt-out must disable the tuner explicitly as well.
 if(HOLOSCAN_BUILD_PARAMS AND (NOT HOLOSCAN_BUILD_CONFIG OR NOT TARGET core OR NOT TARGET config))
@@ -240,20 +240,20 @@ if(HOLOSCAN_BUILD_PARAMS)
 
     install(FILES
         ${CMAKE_CURRENT_BINARY_DIR}/include/holoscan/holoscan_params_export.h
-        DESTINATION include/holoscan
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
         COMPONENT holoscan-params
     )
     if(HOLOSCAN_BUILD_PARAMS_IO)
         install(FILES
             ${CMAKE_CURRENT_BINARY_DIR}/include/holoscan/holoscan_params_io_export.h
-            DESTINATION include/holoscan
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
             COMPONENT holoscan-params-io
         )
     endif()
     if(HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER)
         install(FILES
             ${CMAKE_CURRENT_BINARY_DIR}/include/holoscan/holoscan_experimental_params_web_tuner_export.h
-            DESTINATION include/holoscan
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan
             COMPONENT holoscan-experimental-params-web-tuner
         )
     endif()
@@ -261,19 +261,19 @@ if(HOLOSCAN_BUILD_PARAMS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/params/config.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/params/error.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/params/rebind.hpp
-        DESTINATION include/holoscan/params
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan/params
         COMPONENT holoscan-params
     )
     if(HOLOSCAN_BUILD_PARAMS_IO)
         install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/params/persistence.hpp
-            DESTINATION include/holoscan/params
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan/params
             COMPONENT holoscan-params-io
         )
     endif()
     if(HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER)
         install(FILES
             ${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/experimental/params/web_tuner.hpp
-            DESTINATION include/holoscan/experimental/params
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan/experimental/params
             COMPONENT holoscan-experimental-params-web-tuner
         )
     endif()

@@ -63,6 +63,7 @@ template <typename Enum>
 }
 
 // REQ: CONTRACT-015
+// REQ: CONTRACT-020
 TEST(TemporalContractRecords, SerializationMatchesVersionedCanonicalGolden) {
   // Key setup: minimal contract with zero edges; two independent calls must produce byte-identical
   //            output, confirming that serialization is deterministic.
@@ -90,6 +91,9 @@ TEST(TemporalContractRecords, SerializationMatchesVersionedCanonicalGolden) {
       "\"predicate\":null,\"deadline_ns\":null,\"violation\":null,\"provenance\":{"
       "\"source\":\"operator.contract\",\"declaration_order\":0}},\"edges\":[]}";
   EXPECT_EQ(*first, kExpected);
+  // Operator completion is a separate physical-plan record family. A candidate count key must
+  // not silently extend or version-skew the temporal-record v1 artifact.
+  EXPECT_EQ(first->find("\"count\""), std::string::npos);
 }
 
 // REQ: CONTRACT-002
@@ -360,7 +364,7 @@ TEST(TemporalContractRecords, PredicateRecordContainsMetadataButNoCallableOrType
   const auto serialized = serialize_temporal_records(contract, edges);
   ASSERT_TRUE(serialized.has_value()) << serialized.error().message;
   EXPECT_NE(serialized->find("\"local_graph_exec_reevaluation\""), std::string::npos);
-  EXPECT_NE(serialized->find("\"ea1_reset_events_v1\""), std::string::npos);
+  EXPECT_NE(serialized->find("\"reset_events_v1\""), std::string::npos);
   EXPECT_EQ(serialized->find("payload_type_key"), std::string::npos);
   EXPECT_EQ(serialized->find("0x"), std::string::npos);
 }

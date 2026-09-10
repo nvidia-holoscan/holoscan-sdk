@@ -142,7 +142,7 @@ TEST(CompileCompleteness, EmbeddedPlanRefsOutliveParentAndChildAuthoringObjects)
 // Shared by M1HeroIsByteDeterministicAndRejectedPlansRemainInspectable and
 // M1HeroTraversesEveryCompileOwnedPipelineFamily.
 [[nodiscard]] ExecutionPlan compile_hero_graph() {
-  Graph graph{"ea1-m1-hero"};
+  Graph graph{"holoscan-m1-hero"};
   const ClockKey capture_clock = graph.add_clock<ManualClock>("capture", std::int64_t{0});
   const ClockKey plan_clock = graph.add_clock<ManualClock>("plan", std::int64_t{0});
   graph.set_default_clock(plan_clock);
@@ -158,9 +158,9 @@ TEST(CompileCompleteness, EmbeddedPlanRefsOutliveParentAndChildAuthoringObjects)
   TopicOptions exported_options;
   exported_options.endpoint_name = "hero_output";
   const auto imported =
-      graph.import_topic<std::uint32_t>("holomq://ea1-m1-hero/input", imported_options);
+      graph.import_topic<std::uint32_t>("holomq://holoscan-m1-hero/input", imported_options);
   const auto exported =
-      graph.export_topic<std::uint32_t>("holomq://ea1-m1-hero/output", exported_options);
+      graph.export_topic<std::uint32_t>("holomq://holoscan-m1-hero/output", exported_options);
   const auto first = graph.op<HeroCompileOperator>("first");
   const auto second = graph.op<HeroCompileOperator>("second");
   graph.add_flow(imported.output(), first->input, ConnectionOptions{.queue_depth = 4U});
@@ -187,7 +187,7 @@ TEST(CompileCompleteness, M1HeroIsByteDeterministicAndRejectedPlansRemainInspect
   EXPECT_FALSE(first.lifecycle_checkpoints().empty());
   EXPECT_FALSE(first.profile_manifest().scope_resolutions.empty());
 
-  Graph rejected_graph{"ea1-m1-hero-rejected"};
+  Graph rejected_graph{"holoscan-m1-hero-rejected"};
   test::add_linear_graph(rejected_graph);
   CompileOptions invalid;
   invalid.profile = static_cast<Profile>(255U);

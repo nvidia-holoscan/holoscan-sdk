@@ -15,6 +15,8 @@
 #include <utility>
 #include <vector>
 
+#include "partition_canonicalization.hpp"
+
 namespace holoscan::detail::partitioning {
 namespace {
 
@@ -22,43 +24,12 @@ namespace {
   return make_unexpected(Error{code, std::string(token)});
 }
 
-void append_boundary_reasons(PartitionBoundaryMask mask,
-                             std::vector<PartitionDecisionReason>& reasons) {
-  if (mask.contains(PartitionBoundary::kProcess)) {
-    reasons.push_back(PartitionDecisionReason::kProcessBoundary);
-  }
-  if (mask.contains(PartitionBoundary::kExternalEndpoint)) {
-    reasons.push_back(PartitionDecisionReason::kExternalEndpointBoundary);
-  }
-  if (mask.contains(PartitionBoundary::kDeviceTransfer)) {
-    reasons.push_back(PartitionDecisionReason::kDeviceTransferIncompatibility);
-  }
-  if (mask.contains(PartitionBoundary::kRegionBackend)) {
-    reasons.push_back(PartitionDecisionReason::kRegionBackendAdmission);
-  }
-  if (mask.contains(PartitionBoundary::kExplicitThreadPlacement)) {
-    reasons.push_back(PartitionDecisionReason::kExplicitThreadPlacement);
-  }
-  if (mask.contains(PartitionBoundary::kLifecycle)) {
-    reasons.push_back(PartitionDecisionReason::kLifecycleIsolation);
-  }
-  if (mask.contains(PartitionBoundary::kReadiness)) {
-    reasons.push_back(PartitionDecisionReason::kReadinessIsolation);
-  }
-}
-
-template <typename T, typename Compare>
-void sort_and_unique(std::vector<T>& values, Compare compare) {
-  std::sort(values.begin(), values.end(), compare);
-  values.erase(std::unique(values.begin(), values.end()), values.end());
-}
-
 }  // namespace
 
 PartitionPlannerDescriptor SourceChainPartitionPlanner::descriptor() const noexcept {
   return PartitionPlannerDescriptor{source_chain_algorithm(),
                                     kPartitionPlannerInterfaceVersion,
-                                    AlgorithmMaturity::kExperimental,
+                                    AlgorithmMaturity::kProduction,
                                     kAllPartitionPlannerCapabilities};
 }
 
@@ -73,6 +44,22 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
   }
 
   const std::size_t vertex_count = problem.vertices.size();
+  std::vector<std::optional<CandidatePartitionId>> authored_partition_by_vertex(vertex_count);
+  for (std::size_t constraint_index = 0U; constraint_index < problem.authored_constraints.size();
+       ++constraint_index) {
+    const auto& constraint = problem.authored_constraints[constraint_index];
+    if (!constraint.id || constraint.members.empty() ||
+        constraint_index >= std::numeric_limits<std::uint32_t>::max()) {
+      return planner_error(ErrorCode::kInvalidArgument, "PARTITION_PROPOSAL_CONTRACT_INVALID");
+    }
+    const CandidatePartitionId candidate{static_cast<std::uint32_t>(constraint_index + 1U)};
+    for (const VertexIndex member : constraint.members) {
+      if (member >= vertex_count || authored_partition_by_vertex[member].has_value()) {
+        return planner_error(ErrorCode::kInvalidArgument, "PARTITION_PROPOSAL_CONTRACT_INVALID");
+      }
+      authored_partition_by_vertex[member] = candidate;
+    }
+  }
   std::vector<std::vector<VertexIndex>> predecessors(vertex_count);
   std::vector<std::vector<VertexIndex>> successors(vertex_count);
   std::vector<std::vector<EdgeIndex>> incoming_edges(vertex_count);
@@ -127,7 +114,13 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
   }
 
   std::vector<CandidatePartitionId> partition_by_vertex(vertex_count);
-  std::vector<ExecutionDomainKey> partition_domains;
+  std::vector<ExecutionDomainKey> partition_domains(problem.authored_constraints.size());
+  for (std::size_t constraint_index = 0U; constraint_index < problem.authored_constraints.size();
+       ++constraint_index) {
+    const auto& constraint = problem.authored_constraints[constraint_index];
+    partition_domains[constraint_index] =
+        problem.vertices[constraint.members.front()].execution_domain;
+  }
   partition_domains.reserve(vertex_count);
   PartitionProposal proposal;
   proposal.algorithm = source_chain_algorithm();
@@ -136,6 +129,18 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
 
   for (const VertexIndex vertex_index : topological_order) {
     const auto& vertex = problem.vertices[vertex_index];
+    if (authored_partition_by_vertex[vertex_index].has_value()) {
+      const CandidatePartitionId selected_partition = *authored_partition_by_vertex[vertex_index];
+      partition_by_vertex[vertex_index] = selected_partition;
+      proposal.assignments.push_back(VertexPartitionAssignment{vertex_index, selected_partition});
+      proposal.decisions.push_back(PartitionDecisionProposal{
+          vertex_index,
+          selected_partition,
+          PartitionDecisionKind::kAuthored,
+          {PartitionDecisionReason::kAuthoredPartitionBoundary},
+      });
+      continue;
+    }
     std::vector<CandidatePartitionId> predecessor_partitions;
     predecessor_partitions.reserve(predecessors[vertex_index].size());
     for (const VertexIndex predecessor : predecessors[vertex_index]) {
@@ -172,6 +177,13 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
         successors[predecessors[vertex_index].front()].size() > 1U) {
       reasons.push_back(PartitionDecisionReason::kFanOutLeg);
     }
+    if (std::any_of(predecessor_partitions.begin(),
+                    predecessor_partitions.end(),
+                    [&](CandidatePartitionId candidate) {
+                      return candidate.value <= problem.authored_constraints.size();
+                    })) {
+      reasons.push_back(PartitionDecisionReason::kAuthoredPartitionBoundary);
+    }
 
     CandidatePartitionId selected_partition;
     PartitionDecisionKind decision = PartitionDecisionKind::kStart;
@@ -183,17 +195,22 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
       selected_partition =
           CandidatePartitionId{static_cast<std::uint32_t>(partition_domains.size() + 1U)};
       partition_domains.push_back(vertex.execution_domain);
-      if (!mandatory.empty()) {
+      const auto has_reason = [&](PartitionDecisionReason reason) {
+        return std::find(reasons.begin(), reasons.end(), reason) != reasons.end();
+      };
+      const bool fan_in = has_reason(PartitionDecisionReason::kFanIn);
+      const bool fan_out = has_reason(PartitionDecisionReason::kFanOutLeg);
+      const bool follows_authored = has_reason(PartitionDecisionReason::kAuthoredPartitionBoundary);
+      if (!mandatory.empty() || (follows_authored && !fan_in && !fan_out)) {
         decision = PartitionDecisionKind::kBoundarySplit;
-      } else if (std::find(reasons.begin(), reasons.end(), PartitionDecisionReason::kFanIn) !=
-                 reasons.end()) {
+      } else if (fan_in) {
         decision = PartitionDecisionKind::kFanInSplit;
-      } else if (std::find(reasons.begin(), reasons.end(), PartitionDecisionReason::kFanOutLeg) !=
-                 reasons.end()) {
+      } else if (fan_out) {
         decision = PartitionDecisionKind::kFanOutLegSplit;
       }
     } else {
-      bool can_join = predecessor_partitions.size() == 1U;
+      bool can_join = predecessor_partitions.size() == 1U &&
+                      predecessor_partitions.front().value > problem.authored_constraints.size();
       if (can_join) {
         selected_partition = predecessor_partitions.front();
         can_join = selected_partition.value <= partition_domains.size() &&

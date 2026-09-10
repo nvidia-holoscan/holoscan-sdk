@@ -153,14 +153,21 @@ TEST(RuntimePackageCapabilityTest, DecodesExactGeneratedCanonicalBytes) {
 }
 
 // REQ: TENSOR-CORE-013
-TEST(RuntimePackageCapabilityTest, GeneratedPackageOffersTensorDeviceStreamMaterialization) {
+// REQ: RUNTIME-045
+TEST(RuntimePackageCapabilityTest, GeneratedPackageOffersCudaComputeStreamMaterialization) {
+  // Key setup: validate the generated Runtime package capability manifest and query both CUDA
+  // materialization offers by their public capability identities.
   const auto& manifest = detail::runtime_package_capability_manifest();
   const auto view = detail::validate_runtime_package_capability_manifest(manifest);
   ASSERT_TRUE(view) << view.error().message;
 
-  const auto* offer = view->find_offer("holoscan.runtime.tensor_device_stream_materialization", 1U);
+  const auto* offer = view->find_offer("holoscan.runtime.cuda_compute_stream_materialization", 1U);
+  // Key assertion: compute-stream and Green Context offers carry their matching compiler evidence.
   ASSERT_NE(offer, nullptr);
-  EXPECT_EQ(offer->evidence_id, "holoscan.compile.tensor_device_resource_plan/v1");
+  EXPECT_EQ(offer->evidence_id, "holoscan.compile.cuda_compute_stream_plan/v1");
+  offer = view->find_offer("holoscan.runtime.cuda_green_context_materialization", 1U);
+  ASSERT_NE(offer, nullptr);
+  EXPECT_EQ(offer->evidence_id, "holoscan.compile.cuda_green_context_plan/v1");
 }
 
 // REQ: RUNTIME-010
@@ -404,6 +411,30 @@ TEST(RuntimePackageCapabilityTest, RejectsHeaderFactsBeforeCapabilityLookup) {
                          package,
                          detail::RuntimePackageCapabilityMatchResult::kTargetIncompatible,
                          "PROFILE_TARGET_INCOMPATIBLE");
+}
+
+// A private artifact carries one exact schema identifier. Any other identifier is rejected before
+// capability lookup; there is no reader, migration path, or compatibility mode for it.
+// REQ: COMPILE-069
+// REQ: RUNTIME-010
+TEST(RuntimePackageCapabilityTest, RejectsIncorrectPlanSchemaIdentifierBeforeAdmission) {
+  auto manifest = detail::runtime_package_capability_manifest();
+  ASSERT_TRUE(detail::seal_runtime_package_capability_manifest(manifest));
+  const detail::ResolvedRuntimePackageCapability package{
+      .manifest = manifest,
+      .canonical_bytes = detail::runtime_package_capability_canonical_json_v1(manifest, true),
+      .provider_kind = detail::RuntimePackageCapabilityProviderKind::kEmbedded,
+  };
+  ProfileManifest required = matching_requirements(manifest);
+  required.plan_schema_version += ".incorrect";
+  const auto& offer = manifest.offers.front();
+  required.required_capabilities = {
+      {.capability_id = offer.id, .version = offer.version, .evidence_id = offer.evidence_id}};
+
+  expect_header_mismatch(required,
+                         package,
+                         detail::RuntimePackageCapabilityMatchResult::kPlanSchemaUnsupported,
+                         "PROFILE_PLAN_SCHEMA_UNSUPPORTED");
 }
 
 // REQ: RUNTIME-010

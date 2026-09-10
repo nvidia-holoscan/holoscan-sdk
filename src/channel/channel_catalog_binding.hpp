@@ -5,6 +5,9 @@
 
 #pragma once
 
+#include "catalog_inline_payload_contract.hpp"
+#include "catalog_received_operation.hpp"
+
 #include <algorithm>
 #include <bit>
 #include <cstddef>
@@ -30,33 +33,14 @@ class CatalogScalarCodec {
   /// @param kind Exact admitted scalar identity.
   /// @return Width in bytes, or zero for the unsupported local-enum identity.
   [[nodiscard]] static constexpr std::size_t wire_size(const ScalarIdentityKind kind) noexcept {
-    switch (kind) {
-      case ScalarIdentityKind::kBoolean:
-      case ScalarIdentityKind::kUInt8:
-      case ScalarIdentityKind::kInt8:
-        return 1U;
-      case ScalarIdentityKind::kUInt16:
-      case ScalarIdentityKind::kInt16:
-        return 2U;
-      case ScalarIdentityKind::kUInt32:
-      case ScalarIdentityKind::kInt32:
-      case ScalarIdentityKind::kFloat32:
-        return 4U;
-      case ScalarIdentityKind::kUInt64:
-      case ScalarIdentityKind::kInt64:
-      case ScalarIdentityKind::kFloat64:
-        return 8U;
-      case ScalarIdentityKind::kLocalEnum:
-        return 0U;
-    }
-    return 0U;
+    return catalog_scalar_wire_size(kind);
   }
 
   /// @brief Return the native object width accepted for one scalar identity.
   /// @param kind Exact admitted scalar identity.
   /// @return Native width in bytes, or zero for the unsupported local-enum identity.
   [[nodiscard]] static constexpr std::size_t native_size(const ScalarIdentityKind kind) noexcept {
-    return kind == ScalarIdentityKind::kBoolean ? sizeof(bool) : wire_size(kind);
+    return catalog_scalar_native_size(kind);
   }
 
   /// @brief Encode one native scalar into the canonical catalog representation.
@@ -163,50 +147,6 @@ class CatalogScalarCodec {
       std::reverse_copy(source.begin(), source.end(), destination.begin());
     }
   }
-};
-
-/// @brief Snapshot private receiver-applied clock-health evidence for conformance tests and
-/// future Runtime integration.
-struct CatalogClockHealthState {
-  bool has_report{};  ///< True after at least one ordered report was receiver-applied.
-  ClockHealthAssessment assessment{ClockHealthAssessment::kHealthy};  ///< Last assessment.
-  ClockHealthReason reason{ClockHealthReason::kNone};                 ///< Last primary reason.
-  std::uint64_t producer_epoch{};  ///< Wire producer-incarnation token of the reporting producer.
-  std::uint64_t publisher_operation_sequence{};  ///< Operation sequence of the last report.
-  std::uint64_t report_sequence{};               ///< Contiguous accepted-report sequence.
-};
-
-/// @brief Classify one receiver-side operation in a catalog publisher's total order.
-enum class CatalogReceivedOperationKind : std::uint8_t {
-  kNone = 0,         ///< No next admissible operation is currently observable.
-  kClockHealth = 1,  ///< One private clock-health control operation was applied.
-  kData = 2,         ///< One application data operation was decoded.
-  kDataPending = 3,  ///< Current admissible data remains staged until the caller can retain it.
-  kEndOfStream = 4,  ///< Explicit ordered endpoint close; carries no application payload.
-  kPeerIncarnationChanged = 5,  ///< Staged traffic belongs to another producer incarnation; no
-                                ///< payload was delivered and no receiver state was mutated.
-};
-
-/// @brief Attribute a subscriber's pending private traffic to producer incarnations.
-///
-/// The snapshot stages at most the bounded per-lane heads (one data, one health) and classifies
-/// them against the latched incarnation token without delivering payload bytes or advancing the
-/// combined operation sequence.
-struct CatalogImportQuiescence {
-  bool pending_current{};  ///< A staged head belongs to the latched (or first, unlatched)
-                           ///< incarnation and remains deliverable.
-  bool pending_foreign{};  ///< A staged head carries a different (or superseded) incarnation
-                           ///< token and is fenced until an explicit rebind.
-  std::uint64_t latched_producer_generation{};  ///< Zero until one operation was accepted.
-};
-
-/// @brief Preserve one private ordered receive result for Runtime integration.
-struct CatalogReceivedOperation {
-  CatalogReceivedOperationKind kind{CatalogReceivedOperationKind::kNone};
-  SampleMetadata metadata{};  ///< Valid for \ref kData and sequence-only \ref kEndOfStream.
-  CatalogClockHealthState clock_health{};  ///< Valid only for \ref kClockHealth.
-  /// Borrowed serialized schema payload, valid only until this subscriber's next receive.
-  std::span<const std::byte> schema_payload{};
 };
 
 /// @brief Publish already-canonical custom-POD bytes through one catalog endpoint.

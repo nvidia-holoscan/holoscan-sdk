@@ -55,4 +55,15 @@ compile_with_runtime_evidence_and_process_placement(Graph& graph, CompileOptions
 [[nodiscard]] HOLOSCAN_CORE_EXPORT ExecutionPlan
 compile_with_process_local_holomq(Graph& graph, CompileOptions options);
 
+/// @brief Compile while conservatively retaining process-local HoloMQ event attachment.
+/// @param graph Editable Graph whose composed generation is snapshotted.
+/// @param options Owned public compile inputs.
+/// @return Accepted or rejected immutable plan with structural diagnostics.
+/// @throws RuntimeError under the same process-resource conditions as
+/// `holoscan::compile()`.
+/// @note This source-private entry point exists only for exact conformance and
+/// performance comparisons. It is not installed as public SDK API.
+[[nodiscard]] HOLOSCAN_CORE_EXPORT ExecutionPlan
+compile_with_process_local_holomq_event_wake(Graph& graph, CompileOptions options);
+
 }  // namespace holoscan::detail

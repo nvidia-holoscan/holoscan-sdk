@@ -10,7 +10,8 @@ endif()
 
 add_executable(schema_payloads schema_payloads.cpp)
 target_compile_features(schema_payloads PRIVATE cxx_std_20)
-target_link_libraries(schema_payloads PRIVATE holoscan::core holoscan::schema Threads::Threads)
+target_link_libraries(schema_payloads
+    PRIVATE holoscan::core holoscan::schema holoscan::sensor_io Threads::Threads)
 holoscan_configure_example_install(schema_payloads)
 
 if(BUILD_TESTING)
@@ -25,6 +26,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS schema_payloads
-    RUNTIME DESTINATION examples/schema_payloads/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/schema_payloads/cpp"
     COMPONENT holoscan-examples
 )

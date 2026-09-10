@@ -5,6 +5,8 @@
 
 #include <holoscan/channel/endpoint_catalog.hpp>
 
+#include "catalog_diagnostic_detail.hpp"
+#include "catalog_inline_payload_contract.hpp"
 #include "channel_common.hpp"
 #include "pod_codec.hpp"
 #include "process_identity.hpp"
@@ -46,11 +48,14 @@
 
 #include <holoscan/core/parameter_schema.hpp>
 
+#include "core/canonical_text_encoding.hpp"
+#include "core/domain/tensor_layout_validation.hpp"
 #include "endpoint_catalog_state.hpp"
 
 namespace holoscan {
 namespace {
 
+using detail::append_json_string;
 using detail::CatalogClockConversionRecord;
 using detail::CatalogClockRecord;
 using detail::ChannelEndpointRecord;
@@ -58,11 +63,11 @@ using detail::GeneratedEndpointNameRecord;
 using GeneratedNameInfoView = std::optional<GeneratedEndpointNameInfo>;
 
 constexpr std::string_view kCatalogFormat{"holoscan.channel-endpoints"};
-constexpr std::uint64_t kCatalogVersion = 1U;
+constexpr std::uint64_t kCatalogVersion = 2U;
 constexpr std::string_view kGeneratedAlgorithm{"holoscan.auto_endpoint_name"};
 constexpr std::uint64_t kGeneratedAlgorithmVersion = 1U;
 
-// These version-one limits bound cold parser memory and work before any
+// These format limits bound cold parser memory and work before any
 // catalog content can become normalized plan evidence. They are format safety
 // limits, not HoloMQ or Runtime capacity semantics.
 constexpr std::size_t kMaximumCatalogSourceBytes = 16U * 1024U * 1024U;
@@ -92,21 +97,39 @@ constexpr std::size_t kMaximumTensorAxes = 32U;
   return Error{.code = ErrorCode::kResourceExhausted, .message = std::move(message)};
 }
 
+[[nodiscard]] Error catalog_inline_capacity_error(
+    const std::size_t endpoint_index, const std::string_view endpoint_name,
+    const channel_internal::CatalogInlinePayloadContract& contract) {
+  std::string message{"ENDPOINT_CATALOG_INLINE_CAPACITY_EXCEEDED|path=/endpoints/"};
+  message += std::to_string(endpoint_index);
+  message += "/payload|endpoint=";
+  channel_internal::append_escaped_detail_value(message, endpoint_name);
+  message += "|application_capacity=";
+  message += std::to_string(contract.native_payload_capacity_bytes);
+  message += "|framing_overhead=";
+  message += std::to_string(contract.framing_overhead_bytes);
+  message += "|required_frame=";
+  message += std::to_string(contract.required_frame_bytes);
+  message += "|maximum_frame=";
+  message += std::to_string(channel_internal::kMaximumCatalogDataFrameBytes);
+  return Error{.code = ErrorCode::kResourceExhausted, .message = std::move(message)};
+}
+
 [[nodiscard]] Error raw_clock_health_error(
     std::size_t endpoint_index, std::string_view endpoint_name, std::string_view capability,
     std::string_view requirement, std::string_view max_report_age, std::string_view direction) {
   std::string message{"ENDPOINT_CLOCK_HEALTH_CONTRACT_INVALID|path=/endpoints/"};
   message += std::to_string(endpoint_index);
   message += "/clock_health|endpoint=";
-  message += endpoint_name;
+  channel_internal::append_escaped_detail_value(message, endpoint_name);
   message +=
       "|required=unavailable+not_required(age=absent,any_role)|status_reports+fresh_"
       "healthy_report(age=positive,external_publisher)|provided=capability=";
-  message += capability;
+  channel_internal::append_escaped_detail_value(message, capability);
   message += ";requirement=";
-  message += requirement;
+  channel_internal::append_escaped_detail_value(message, requirement);
   message += ";max_report_age_ns=";
-  message += max_report_age;
+  channel_internal::append_escaped_detail_value(message, max_report_age);
   message += ";role=";
   message += direction == "import" ? "external_publisher" : "external_subscriber";
   return Error{.code = ErrorCode::kInvalidArgument, .message = std::move(message)};
@@ -591,48 +614,6 @@ template <typename Byte, std::size_t N>
   return true;
 }
 
-void append_json_string(std::string& output, std::string_view value) {
-  constexpr std::array<char, 16> kHex{
-      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-  output.push_back('"');
-  for (const char character : value) {
-    const auto byte = static_cast<std::uint8_t>(character);
-    switch (character) {
-      case '"':
-        output += "\\\"";
-        break;
-      case '\\':
-        output += "\\\\";
-        break;
-      case '\b':
-        output += "\\b";
-        break;
-      case '\f':
-        output += "\\f";
-        break;
-      case '\n':
-        output += "\\n";
-        break;
-      case '\r':
-        output += "\\r";
-        break;
-      case '\t':
-        output += "\\t";
-        break;
-      default:
-        if (byte < 0x20U) {
-          output += "\\u00";
-          output.push_back(kHex[byte >> 4U]);
-          output.push_back(kHex[byte & 0x0FU]);
-        } else {
-          output.push_back(character);
-        }
-        break;
-    }
-  }
-  output.push_back('"');
-}
-
 [[nodiscard]] bool unicode_whitespace(std::uint32_t code_point) noexcept {
   return (code_point >= 0x0009U && code_point <= 0x000DU) || code_point == 0x0020U ||
          code_point == 0x0085U || code_point == 0x00A0U || code_point == 0x1680U ||
@@ -710,7 +691,6 @@ void append_json_string(std::string& output, std::string_view value) {
 
 [[nodiscard]] std::string_view pod_scalar_token(PodScalarKind kind) noexcept;
 [[nodiscard]] std::array<std::byte, 32> hash_bytes(std::string_view bytes) noexcept;
-[[nodiscard]] std::string sha256_text(const std::array<std::byte, 32>& bytes);
 
 template <typename Byte>
 void append_hex_bytes(std::string& output, std::span<const Byte> bytes, bool sha256_prefix) {
@@ -779,6 +759,23 @@ void append_hex_bytes(std::string& output, std::span<const Byte> bytes, bool sha
   return {};
 }
 
+[[nodiscard]] std::optional<MemoryConversionPolicy> parse_memory_conversion_token(
+    std::string_view token) noexcept {
+  if (token == "default") {
+    return MemoryConversionPolicy::kDefault;
+  }
+  if (token == "disable") {
+    return MemoryConversionPolicy::kDisable;
+  }
+  if (token == "allow_if_safe") {
+    return MemoryConversionPolicy::kAllowIfSafe;
+  }
+  if (token == "require") {
+    return MemoryConversionPolicy::kRequire;
+  }
+  return std::nullopt;
+}
+
 [[nodiscard]] std::string_view memory_kind_token(MemoryKind kind) noexcept {
   switch (kind) {
     case MemoryKind::kUnknown:
@@ -805,24 +802,6 @@ void append_hex_bytes(std::string& output, std::span<const Byte> bytes, bool sha
       return true;
   }
   return false;
-}
-
-[[nodiscard]] bool valid_dtype(DLDataType dtype) noexcept {
-  if (dtype.bits == 0U || dtype.lanes == 0U) {
-    return false;
-  }
-  switch (dtype.code) {
-    case kDLInt:
-    case kDLUInt:
-    case kDLFloat:
-    case kDLOpaqueHandle:
-    case kDLBfloat:
-    case kDLComplex:
-    case kDLBool:
-      return true;
-    default:
-      return false;
-  }
 }
 
 template <typename T>
@@ -875,10 +854,75 @@ void append_schema_identity(std::string& output, const SchemaIdentityRecord& sch
   output.push_back('}');
 }
 
+void append_tensor_contract(std::string& output, const TensorBoundaryContractRecord& tensor,
+                            const bool include_memory_conversion) {
+  output += "{\"role\":\"external_boundary\",\"representation\":{\"memory_kind\":";
+  if (tensor.memory_kind) {
+    append_json_string(output, memory_kind_token(*tensor.memory_kind));
+  } else {
+    output += "null";
+  }
+  output += ",\"dtype\":";
+  if (tensor.dtype) {
+    output += "{\"code\":" + std::to_string(tensor.dtype->code);
+    output += ",\"bits\":" + std::to_string(tensor.dtype->bits);
+    output += ",\"lanes\":" + std::to_string(tensor.dtype->lanes) + "}";
+  } else {
+    output += "null";
+  }
+  output += ",\"rank\":";
+  append_optional_unsigned(output, tensor.rank);
+  output += ",\"strides\":";
+  append_json_string(output,
+                     tensor.strides == TensorStridePolicy::kBoundedStrided ? "bounded_strided"
+                                                                           : "contiguous_only");
+  output += "},\"bounds\":{\"max_rank\":";
+  append_optional_unsigned(output, tensor.max_rank);
+  output += ",\"max_byte_span\":";
+  append_optional_unsigned(output, tensor.max_byte_span);
+  output += ",\"axes\":[";
+  for (std::size_t index = 0U; index < tensor.axes.size(); ++index) {
+    if (index != 0U) {
+      output.push_back(',');
+    }
+    output += "{\"max_extent\":" + std::to_string(tensor.axes[index].max_extent);
+    output +=
+        ",\"max_abs_stride_bytes\":" + std::to_string(tensor.axes[index].max_abs_stride_bytes) +
+        "}";
+  }
+  output += "]},\"transfer\":{\"foreign_emit_policy\":";
+  switch (tensor.foreign_emit_policy) {
+    case InterfaceTensorEmitPolicy::kRequireExportable:
+      append_json_string(output, "require_exportable");
+      break;
+    case InterfaceTensorEmitPolicy::kCopyIfNeeded:
+      append_json_string(output, "copy_if_needed");
+      break;
+    case InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded:
+      append_json_string(output, "inline_small_host_then_copy_if_needed");
+      break;
+  }
+  output += ",\"max_inline_bytes\":";
+  append_optional_unsigned(output, tensor.max_inline_bytes);
+  output += ",\"max_staging_byte_span\":";
+  append_optional_unsigned(output, tensor.max_staging_byte_span);
+  output.push_back('}');
+  if (include_memory_conversion) {
+    output += ",\"memory_conversion\":";
+    if (tensor.memory_conversion) {
+      append_json_string(output, memory_conversion_token(tensor.memory_conversion));
+    } else {
+      output += "null";
+    }
+  }
+  output.push_back('}');
+}
+
 // Keep the closed payload-family serialization switch adjacent for auditability.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void append_payload(std::string& output, const PayloadIdentityRecord& payload_identity,
-                    const std::optional<LogicalTensorRequirementsRecord>& tensor,
+                    const std::optional<TensorBoundaryContractRecord>& tensor,
+                    std::span<const DescriptorTensorTopicFieldRecord> tensor_fields,
                     const std::optional<SchemaIdentityRecord>& schema_identity,
                     const std::optional<detail::PodCatalogIdentityRecord>& pod_identity,
                     const std::uint64_t serialized_payload_capacity_bytes) {
@@ -898,56 +942,7 @@ void append_payload(std::string& output, const PayloadIdentityRecord& payload_id
       if (!tensor) {
         output += "null";
       } else {
-        output += "{\"memory_kind\":";
-        if (tensor->memory_kind) {
-          append_json_string(output, memory_kind_token(*tensor->memory_kind));
-        } else {
-          output += "null";
-        }
-        output += ",\"dtype\":";
-        if (tensor->dtype) {
-          output += "{\"code\":" + std::to_string(tensor->dtype->code);
-          output += ",\"bits\":" + std::to_string(tensor->dtype->bits);
-          output += ",\"lanes\":" + std::to_string(tensor->dtype->lanes) + "}";
-        } else {
-          output += "null";
-        }
-        output += ",\"rank\":";
-        append_optional_unsigned(output, tensor->rank);
-        output += ",\"max_rank\":";
-        append_optional_unsigned(output, tensor->max_rank);
-        output += ",\"max_byte_span\":";
-        append_optional_unsigned(output, tensor->max_byte_span);
-        output += ",\"axes\":[";
-        for (std::size_t index = 0U; index < tensor->axes.size(); ++index) {
-          if (index != 0U) {
-            output.push_back(',');
-          }
-          output += "{\"max_extent\":" + std::to_string(tensor->axes[index].max_extent);
-          output += ",\"max_abs_stride_bytes\":" +
-                    std::to_string(tensor->axes[index].max_abs_stride_bytes) + "}";
-        }
-        output += "]";
-        output += ",\"stride_policy\":";
-        append_json_string(output,
-                           tensor->strides == TensorStridePolicy::kBoundedStrided
-                               ? "bounded_strided"
-                               : "contiguous_only");
-        output += ",\"foreign_emit_policy\":";
-        switch (tensor->foreign_emit_policy) {
-          case InterfaceTensorEmitPolicy::kRequireExportable:
-            append_json_string(output, "require_exportable");
-            break;
-          case InterfaceTensorEmitPolicy::kCopyIfNeeded:
-            append_json_string(output, "copy_if_needed");
-            break;
-          case InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded:
-            append_json_string(output, "inline_small_host_then_copy_if_needed");
-            break;
-        }
-        output += ",\"max_inline_bytes\":";
-        append_optional_unsigned(output, tensor->max_inline_bytes);
-        output.push_back('}');
+        append_tensor_contract(output, *tensor, true);
       }
       break;
     case PayloadIdentityKind::kSchema:
@@ -958,6 +953,20 @@ void append_payload(std::string& output, const PayloadIdentityRecord& payload_id
         append_schema_identity(output, *schema_identity);
       } else {
         output += "null";
+      }
+      if (!tensor_fields.empty()) {
+        output += ",\"descriptor_tensor_fields\":[";
+        for (std::size_t index = 0U; index < tensor_fields.size(); ++index) {
+          if (index != 0U) {
+            output.push_back(',');
+          }
+          output += "{\"field_id\":" + std::to_string(tensor_fields[index].field_id);
+          output += ",\"tensor_index\":" + std::to_string(tensor_fields[index].tensor_index);
+          output += ",\"contract\":";
+          append_tensor_contract(output, tensor_fields[index].tensor, true);
+          output.push_back('}');
+        }
+        output.push_back(']');
       }
       break;
     case PayloadIdentityKind::kPod:
@@ -977,6 +986,7 @@ void append_payload(std::string& output, const ChannelEndpointRecord& endpoint) 
   append_payload(output,
                  endpoint.payload_identity,
                  endpoint.tensor,
+                 endpoint.tensor_fields,
                  endpoint.schema_identity,
                  endpoint.pod_identity,
                  endpoint.serialized_payload_capacity_bytes);
@@ -986,6 +996,7 @@ void append_payload(std::string& output, const detail::ResolvedServiceStaticRequ
   append_payload(output,
                  service.payload_identity,
                  service.tensor,
+                 service.tensor_fields,
                  service.schema_identity,
                  service.pod_identity,
                  service.serialized_payload_capacity_bytes);
@@ -1007,7 +1018,8 @@ void append_payload(std::string& output, const detail::ResolvedServiceStaticRequ
   service_contract += std::to_string(service.publisher_history_depth);
   service_contract += service.event_wake ? "|event" : "|no_event";
   const auto binding_digest = hash_bytes(service_contract);
-  const std::string binding_sha = sha256_text(binding_digest);
+  const std::string binding_sha =
+      detail::lowercase_hex_text(binding_digest, detail::HexPrefix::kSha256);
   return "hsc5_local_v1_" + binding_sha.substr(7U, 16U);
 }
 
@@ -1142,7 +1154,7 @@ void append_conversion(std::string& output, const CatalogClockConversionRecord& 
     std::string_view scope, std::span<const CatalogClockRecord> clocks,
     std::span<const CatalogClockConversionRecord> conversions,
     std::span<const ChannelEndpointRecord> endpoints) {
-  std::string output{"{\"format\":\"holoscan.channel-endpoints\",\"version\":1,\"scope\":"};
+  std::string output{"{\"format\":\"holoscan.channel-endpoints\",\"version\":2,\"scope\":"};
   append_json_string(output, scope);
   output += ",\"clocks\":[";
   for (std::size_t index = 0U; index < clocks.size(); ++index) {
@@ -1180,7 +1192,7 @@ void append_conversion(std::string& output, const CatalogClockConversionRecord& 
                                        std::span<const CatalogClockRecord> clocks,
                                        std::span<const CatalogClockConversionRecord> conversions,
                                        std::span<const ChannelEndpointRecord> endpoints) {
-  std::string output{"{\"format\":\"holoscan.channel-endpoints\",\"version\":1,\"scope\":"};
+  std::string output{"{\"format\":\"holoscan.channel-endpoints\",\"version\":2,\"scope\":"};
   append_json_string(output, scope);
   output += ",\"digest\":";
   append_json_string(output, digest);
@@ -1271,6 +1283,40 @@ void append_conversion(std::string& output, const CatalogClockConversionRecord& 
   return channel_internal::derive_pod_contract_evidence(identity).has_value();
 }
 
+[[nodiscard]] bool valid_catalog_tensor_contract(
+    const TensorBoundaryContractRecord& tensor) noexcept {
+  const bool bounds_valid =
+      tensor.memory_kind && valid_memory_kind(*tensor.memory_kind) &&
+      (!tensor.dtype || detail::valid_tensor_dtype(*tensor.dtype)) && tensor.max_rank &&
+      *tensor.max_rank > 0U && tensor.max_byte_span && *tensor.max_byte_span > 0U &&
+      (!tensor.rank || *tensor.rank <= *tensor.max_rank) && tensor.axes.size() <= *tensor.max_rank;
+  const bool stride_valid =
+      tensor.strides == TensorStridePolicy::kContiguousOnly ||
+      (tensor.strides == TensorStridePolicy::kBoundedStrided && tensor.max_rank &&
+       tensor.axes.size() == *tensor.max_rank &&
+       std::all_of(tensor.axes.begin(), tensor.axes.end(), [](const auto& axis) {
+         return axis.max_abs_stride_bytes > 0U;
+       }));
+  const bool inline_policy =
+      tensor.foreign_emit_policy == InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
+  const bool emit_policy_valid =
+      tensor.foreign_emit_policy == InterfaceTensorEmitPolicy::kRequireExportable ||
+      tensor.foreign_emit_policy == InterfaceTensorEmitPolicy::kCopyIfNeeded || inline_policy;
+  const bool inline_bound_valid = inline_policy
+                                      ? tensor.max_inline_bytes && *tensor.max_inline_bytes > 0U
+                                      : !tensor.max_inline_bytes;
+  const bool copy_capable =
+      tensor.foreign_emit_policy != InterfaceTensorEmitPolicy::kRequireExportable;
+  const bool staging_bound_valid =
+      copy_capable ? tensor.max_staging_byte_span && *tensor.max_staging_byte_span > 0U
+                   : !tensor.max_staging_byte_span;
+  const bool conversion_valid =
+      !tensor.memory_conversion ||
+      closed_enum(*tensor.memory_conversion, MemoryConversionPolicy::kRequire);
+  return bounds_valid && stride_valid && emit_policy_valid && inline_bound_valid &&
+         staging_bound_valid && conversion_valid;
+}
+
 void finalize_payload_identity(ChannelEndpointRecord& endpoint) {
   if (endpoint.payload_identity.kind != PayloadIdentityKind::kPod ||
       !endpoint.payload_identity.pod) {
@@ -1298,6 +1344,7 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
       .pod_identity = endpoint.pod_identity,
       .schema_identity = endpoint.schema_identity,
       .tensor = endpoint.tensor,
+      .tensor_fields = endpoint.tensor_fields,
       .queue_policy = endpoint.queue_policy,
       .max_subscriber_depth = endpoint.service_max_subscriber_depth,
       .max_subscriber_borrowed = endpoint.service_max_subscriber_borrowed,
@@ -1322,19 +1369,6 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
                     endpoint.bounds.subscriber->max_borrowed_samples.value_or(1U),
             }}
           : std::nullopt;
-}
-
-[[nodiscard]] std::string sha256_text(const std::array<std::byte, 32>& bytes) {
-  constexpr std::array<char, 16> kHex{
-      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-  std::string result{"sha256:"};
-  result.reserve(71U);
-  for (const std::byte value : bytes) {
-    const auto byte = std::to_integer<std::uint8_t>(value);
-    result.push_back(kHex[byte >> 4U]);
-    result.push_back(kHex[byte & 0x0FU]);
-  }
-  return result;
 }
 
 [[nodiscard]] bool canonical_sha256(std::string_view value) noexcept {
@@ -1457,6 +1491,24 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
           kMaximumTensorAxes,
           endpoint.tensor->axes.size()));
     }
+    if (endpoint.tensor_fields.size() > kMaximumTensorSchemaLoanFields) {
+      return make_unexpected(catalog_resource_limit_error(
+          "/endpoints/" + std::to_string(index) + "/payload/descriptor_tensor_fields",
+          "normalized_descriptor_tensor_fields",
+          kMaximumTensorSchemaLoanFields,
+          endpoint.tensor_fields.size()));
+    }
+    for (std::size_t field_index = 0U; field_index < endpoint.tensor_fields.size(); ++field_index) {
+      if (endpoint.tensor_fields[field_index].tensor.axes.size() <= kMaximumTensorAxes) {
+        continue;
+      }
+      return make_unexpected(catalog_resource_limit_error(
+          "/endpoints/" + std::to_string(index) + "/payload/descriptor_tensor_fields/" +
+              std::to_string(field_index) + "/contract/bounds/axes",
+          "normalized_tensor_axes",
+          kMaximumTensorAxes,
+          endpoint.tensor_fields[field_index].tensor.axes.size()));
+    }
     if (!endpoint_name_valid(endpoint.name)) {
       return make_unexpected(catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_NAME_INVALID"));
     }
@@ -1558,43 +1610,20 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
     if (endpoint.payload_identity.kind == PayloadIdentityKind::kScalar) {
       if (endpoint.tensor || !endpoint.payload_identity.scalar ||
           endpoint.payload_identity.schema || endpoint.payload_identity.pod ||
+          !endpoint.tensor_fields.empty() ||
           endpoint.payload_identity.scalar->kind == ScalarIdentityKind::kLocalEnum) {
         return make_unexpected(
             catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
       }
     } else if (endpoint.payload_identity.kind == PayloadIdentityKind::kTensor) {
       if (endpoint.payload_identity.scalar || endpoint.payload_identity.schema ||
-          endpoint.payload_identity.pod) {
+          endpoint.payload_identity.pod || !endpoint.tensor_fields.empty()) {
         return make_unexpected(
             catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
       }
-      if (endpoint.tensor) {
-        const auto& tensor = *endpoint.tensor;
-        const bool bounds_valid = tensor.memory_kind && valid_memory_kind(*tensor.memory_kind) &&
-                                  (!tensor.dtype || valid_dtype(*tensor.dtype)) &&
-                                  tensor.max_rank && *tensor.max_rank > 0U &&
-                                  tensor.max_byte_span && *tensor.max_byte_span > 0U &&
-                                  (!tensor.rank || *tensor.rank <= *tensor.max_rank) &&
-                                  tensor.axes.size() <= *tensor.max_rank;
-        const bool stride_valid =
-            tensor.strides == TensorStridePolicy::kContiguousOnly ||
-            (tensor.strides == TensorStridePolicy::kBoundedStrided && tensor.max_rank &&
-             tensor.axes.size() == *tensor.max_rank &&
-             std::all_of(tensor.axes.begin(), tensor.axes.end(), [](const auto& axis) {
-               return axis.max_abs_stride_bytes > 0U;
-             }));
-        const bool inline_policy = tensor.foreign_emit_policy ==
-                                   InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
-        const bool emit_policy_valid =
-            tensor.foreign_emit_policy == InterfaceTensorEmitPolicy::kRequireExportable ||
-            tensor.foreign_emit_policy == InterfaceTensorEmitPolicy::kCopyIfNeeded || inline_policy;
-        const bool inline_bound_valid =
-            inline_policy ? tensor.max_inline_bytes && *tensor.max_inline_bytes > 0U
-                          : !tensor.max_inline_bytes;
-        if (!bounds_valid || !stride_valid || !emit_policy_valid || !inline_bound_valid) {
-          return make_unexpected(
-              catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_TENSOR_POLICY_INVALID"));
-        }
+      if (endpoint.tensor && !valid_catalog_tensor_contract(*endpoint.tensor)) {
+        return make_unexpected(
+            catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_TENSOR_POLICY_INVALID"));
       }
     } else if (endpoint.payload_identity.kind == PayloadIdentityKind::kSchema) {
       if (endpoint.tensor || endpoint.payload_identity.scalar ||
@@ -1612,9 +1641,25 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
         return make_unexpected(
             catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
       }
+      const bool descriptor_schema =
+          endpoint.payload_identity.payload_kind == PayloadKind::kDescriptorBacked;
+      if (descriptor_schema != !endpoint.tensor_fields.empty()) {
+        return make_unexpected(
+            catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_TENSOR_POLICY_INVALID"));
+      }
+      for (std::size_t field_index = 0U; field_index < endpoint.tensor_fields.size();
+           ++field_index) {
+        const auto& field = endpoint.tensor_fields[field_index];
+        if (field.tensor_index != field_index || !valid_catalog_tensor_contract(field.tensor) ||
+            (field_index != 0U &&
+             endpoint.tensor_fields[field_index - 1U].field_id >= field.field_id)) {
+          return make_unexpected(
+              catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_TENSOR_POLICY_INVALID"));
+        }
+      }
     } else if (endpoint.payload_identity.kind == PayloadIdentityKind::kPod) {
       if (endpoint.tensor || endpoint.payload_identity.scalar || endpoint.payload_identity.schema ||
-          !endpoint.payload_identity.pod ||
+          !endpoint.payload_identity.pod || !endpoint.tensor_fields.empty() ||
           !complete_pod_identity_valid(*endpoint.payload_identity.pod)) {
         return make_unexpected(
             catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
@@ -1624,6 +1669,20 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
         endpoint.serialized_payload_capacity_bytes != 0U) {
       return make_unexpected(
           catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+    }
+    const auto inline_contract = channel_internal::catalog_inline_payload_contract(
+        endpoint.payload_identity, endpoint.serialized_payload_capacity_bytes);
+    const bool ordinary_inline_payload =
+        endpoint.payload_identity.kind == PayloadIdentityKind::kScalar ||
+        endpoint.payload_identity.kind == PayloadIdentityKind::kPod ||
+        (endpoint.payload_identity.kind == PayloadIdentityKind::kSchema &&
+         endpoint.payload_identity.payload_kind == PayloadKind::kSerializedBytes);
+    if (ordinary_inline_payload && !inline_contract) {
+      return make_unexpected(
+          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+    }
+    if (inline_contract && !inline_contract->frame_fits_inline_transport) {
+      return make_unexpected(catalog_inline_capacity_error(index, endpoint.name, *inline_contract));
     }
     finalize_payload_identity(endpoint);
     if (endpoint.pod_identity) {
@@ -1705,7 +1764,7 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
   const std::string semantic = catalog_semantic_json(
       state->scope, state->clocks, state->clock_conversions, state->endpoints);
   state->digest_bytes = hash_bytes(semantic);
-  state->digest = sha256_text(state->digest_bytes);
+  state->digest = detail::lowercase_hex_text(state->digest_bytes, detail::HexPrefix::kSha256);
   if (expected_digest &&
       (!canonical_sha256(*expected_digest) || *expected_digest != state->digest)) {
     return make_unexpected(
@@ -1714,7 +1773,8 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
   state->json = catalog_json(
       state->scope, state->digest, state->clocks, state->clock_conversions, state->endpoints);
   if (raw_source) {
-    state->raw_source_sha256 = sha256_text(hash_bytes(*raw_source));
+    state->raw_source_sha256 =
+        detail::lowercase_hex_text(hash_bytes(*raw_source), detail::HexPrefix::kSha256);
     state->raw_source_size_bytes = static_cast<std::uint64_t>(raw_source->size());
   }
   return detail::ChannelEndpointCatalogAccess::make(std::move(state));
@@ -1941,15 +2001,210 @@ struct ParsedPodIdentity {
 
 struct ParsedPayload {
   PayloadIdentityRecord identity;
-  std::optional<LogicalTensorRequirementsRecord> tensor;
+  std::optional<TensorBoundaryContractRecord> tensor;
+  std::vector<DescriptorTensorTopicFieldRecord> tensor_fields;
   std::uint64_t serialized_payload_capacity_bytes{};
 };
+
+[[nodiscard]] expected<TensorBoundaryContractRecord, Error> parse_tensor_contract(
+    const JsonValue& tensor, const bool require_memory_conversion) {
+  constexpr std::array<std::string_view, 5> kTensorFieldsWithConversion{
+      "role", "representation", "bounds", "transfer", "memory_conversion"};
+  constexpr std::array<std::string_view, 4> kTensorFieldsWithoutConversion{
+      "role", "representation", "bounds", "transfer"};
+  constexpr std::array<std::string_view, 4> kRepresentationFields{
+      "memory_kind", "dtype", "rank", "strides"};
+  constexpr std::array<std::string_view, 3> kBoundsFields{"max_rank", "max_byte_span", "axes"};
+  constexpr std::array<std::string_view, 3> kTransferFields{
+      "foreign_emit_policy", "max_inline_bytes", "max_staging_byte_span"};
+  const JsonValue* role = json_field(tensor, "role");
+  const JsonValue* representation = json_field(tensor, "representation");
+  const JsonValue* bounds = json_field(tensor, "bounds");
+  const JsonValue* transfer = json_field(tensor, "transfer");
+  const JsonValue* conversion = json_field(tensor, "memory_conversion");
+  const bool tensor_shape_valid =
+      require_memory_conversion ? allowed_fields(tensor, kTensorFieldsWithConversion) &&
+                                      tensor.object.size() == kTensorFieldsWithConversion.size()
+                                : allowed_fields(tensor, kTensorFieldsWithoutConversion) &&
+                                      tensor.object.size() == kTensorFieldsWithoutConversion.size();
+  if (!tensor_shape_valid || role == nullptr || role->kind != JsonValue::Kind::kString ||
+      role->string != "external_boundary" || representation == nullptr ||
+      representation->kind != JsonValue::Kind::kObject ||
+      !allowed_fields(*representation, kRepresentationFields) ||
+      representation->object.size() != kRepresentationFields.size() || bounds == nullptr ||
+      bounds->kind != JsonValue::Kind::kObject || !allowed_fields(*bounds, kBoundsFields) ||
+      bounds->object.size() != kBoundsFields.size() || transfer == nullptr ||
+      transfer->kind != JsonValue::Kind::kObject || !allowed_fields(*transfer, kTransferFields) ||
+      transfer->object.size() != kTransferFields.size()) {
+    return make_unexpected(
+        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+  }
+  const JsonValue* memory_kind = json_field(*representation, "memory_kind");
+  const JsonValue* dtype = json_field(*representation, "dtype");
+  const JsonValue* rank = json_field(*representation, "rank");
+  const JsonValue* stride = json_field(*representation, "strides");
+  const JsonValue* max_rank = json_field(*bounds, "max_rank");
+  const JsonValue* max_span = json_field(*bounds, "max_byte_span");
+  const JsonValue* axes = json_field(*bounds, "axes");
+  const JsonValue* emit = json_field(*transfer, "foreign_emit_policy");
+  const JsonValue* inline_bytes = json_field(*transfer, "max_inline_bytes");
+  const JsonValue* staging_bytes = json_field(*transfer, "max_staging_byte_span");
+  if (memory_kind == nullptr || dtype == nullptr || rank == nullptr || stride == nullptr ||
+      stride->kind != JsonValue::Kind::kString || max_rank == nullptr || max_span == nullptr ||
+      axes == nullptr || axes->kind != JsonValue::Kind::kArray || emit == nullptr ||
+      emit->kind != JsonValue::Kind::kString || inline_bytes == nullptr ||
+      staging_bytes == nullptr || (require_memory_conversion && conversion == nullptr)) {
+    return make_unexpected(
+        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+  }
+  if (axes->array.size() > kMaximumTensorAxes) {
+    return make_unexpected(catalog_resource_limit_error("/services/*/payload/tensor/axes",
+                                                        "normalized_tensor_axes",
+                                                        kMaximumTensorAxes,
+                                                        axes->array.size()));
+  }
+  TensorBoundaryContractRecord result;
+  if (memory_kind->kind == JsonValue::Kind::kString) {
+    result.memory_kind = parse_memory_kind(memory_kind->string);
+    if (!result.memory_kind) {
+      return make_unexpected(
+          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+    }
+  } else if (memory_kind->kind != JsonValue::Kind::kNull) {
+    return make_unexpected(
+        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+  }
+  if (dtype->kind == JsonValue::Kind::kObject) {
+    constexpr std::array<std::string_view, 3> kDtypeFields{"code", "bits", "lanes"};
+    const JsonValue* code = json_field(*dtype, "code");
+    const JsonValue* bits = json_field(*dtype, "bits");
+    const JsonValue* lanes = json_field(*dtype, "lanes");
+    std::uint64_t parsed_code{};
+    std::uint64_t parsed_bits{};
+    std::uint64_t parsed_lanes{};
+    if (!allowed_fields(*dtype, kDtypeFields) || dtype->object.size() != kDtypeFields.size() ||
+        code == nullptr || !json_unsigned(*code, parsed_code) ||
+        parsed_code > std::numeric_limits<std::uint8_t>::max() || bits == nullptr ||
+        !json_unsigned(*bits, parsed_bits) ||
+        parsed_bits > std::numeric_limits<std::uint8_t>::max() || lanes == nullptr ||
+        !json_unsigned(*lanes, parsed_lanes) ||
+        parsed_lanes > std::numeric_limits<std::uint16_t>::max()) {
+      return make_unexpected(
+          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+    }
+    const DLDataType parsed_dtype{.code = static_cast<std::uint8_t>(parsed_code),
+                                  .bits = static_cast<std::uint8_t>(parsed_bits),
+                                  .lanes = static_cast<std::uint16_t>(parsed_lanes)};
+    if (!detail::valid_tensor_dtype(parsed_dtype)) {
+      return make_unexpected(
+          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+    }
+    result.dtype = parsed_dtype;
+  } else if (dtype->kind != JsonValue::Kind::kNull) {
+    return make_unexpected(
+        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+  }
+  const auto parse_optional_unsigned =
+      [](const JsonValue& field, std::uint64_t maximum, std::optional<std::uint64_t>& parsed) {
+        if (field.kind == JsonValue::Kind::kNull) {
+          parsed.reset();
+          return true;
+        }
+        std::uint64_t value{};
+        if (!json_unsigned(field, value) || value > maximum) {
+          return false;
+        }
+        parsed = value;
+        return true;
+      };
+  std::optional<std::uint64_t> parsed_rank;
+  std::optional<std::uint64_t> parsed_max_rank;
+  std::optional<std::uint64_t> parsed_span;
+  std::optional<std::uint64_t> parsed_inline;
+  std::optional<std::uint64_t> parsed_staging;
+  if (!parse_optional_unsigned(*rank, std::numeric_limits<std::uint32_t>::max(), parsed_rank) ||
+      !parse_optional_unsigned(
+          *max_rank, std::numeric_limits<std::uint32_t>::max(), parsed_max_rank) ||
+      !parse_optional_unsigned(*max_span, std::numeric_limits<std::uint64_t>::max(), parsed_span) ||
+      !parse_optional_unsigned(
+          *inline_bytes, std::numeric_limits<std::uint32_t>::max(), parsed_inline) ||
+      !parse_optional_unsigned(
+          *staging_bytes, std::numeric_limits<std::uint64_t>::max(), parsed_staging)) {
+    return make_unexpected(
+        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+  }
+  if (parsed_rank) {
+    result.rank = static_cast<std::uint32_t>(*parsed_rank);
+  }
+  if (parsed_max_rank) {
+    result.max_rank = static_cast<std::uint32_t>(*parsed_max_rank);
+  }
+  result.max_byte_span = parsed_span;
+  if (parsed_inline) {
+    result.max_inline_bytes = static_cast<std::uint32_t>(*parsed_inline);
+  }
+  result.max_staging_byte_span = parsed_staging;
+  result.axes.reserve(axes->array.size());
+  for (const JsonValue& axis : axes->array) {
+    constexpr std::array<std::string_view, 2> kAxisFields{"max_extent", "max_abs_stride_bytes"};
+    const JsonValue* extent = json_field(axis, "max_extent");
+    const JsonValue* stride_bytes = json_field(axis, "max_abs_stride_bytes");
+    std::uint64_t parsed_extent{};
+    std::uint64_t parsed_stride{};
+    if (!allowed_fields(axis, kAxisFields) || axis.object.size() != kAxisFields.size() ||
+        extent == nullptr || !json_unsigned(*extent, parsed_extent) || stride_bytes == nullptr ||
+        !json_unsigned(*stride_bytes, parsed_stride)) {
+      return make_unexpected(
+          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+    }
+    result.axes.push_back(
+        TensorAxisBounds{.max_extent = parsed_extent, .max_abs_stride_bytes = parsed_stride});
+  }
+  if (stride->string == "contiguous_only") {
+    result.strides = TensorStridePolicy::kContiguousOnly;
+  } else if (stride->string == "bounded_strided") {
+    result.strides = TensorStridePolicy::kBoundedStrided;
+  } else {
+    return make_unexpected(
+        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+  }
+  if (emit->string == "require_exportable") {
+    result.foreign_emit_policy = InterfaceTensorEmitPolicy::kRequireExportable;
+  } else if (emit->string == "copy_if_needed") {
+    result.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
+  } else if (emit->string == "inline_small_host_then_copy_if_needed") {
+    result.foreign_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
+  } else {
+    return make_unexpected(
+        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+  }
+  if (require_memory_conversion) {
+    if (conversion->kind == JsonValue::Kind::kNull) {
+      result.memory_conversion.reset();
+    } else if (conversion->kind != JsonValue::Kind::kString) {
+      return make_unexpected(
+          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+    } else {
+      result.memory_conversion = parse_memory_conversion_token(conversion->string);
+      if (!result.memory_conversion) {
+        return make_unexpected(
+            catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+      }
+    }
+  }
+  return result;
+}
 
 // Keep the closed payload grammar in one parser so bounds and allowed fields stay synchronized.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<ParsedPayload, Error> parse_payload(const JsonValue& value) {
-  constexpr std::array<std::string_view, 6> kFields{
-      "family", "scalar", "tensor", "schema_identity", "pod_identity", "max_serialized_size"};
+  constexpr std::array<std::string_view, 7> kFields{"family",
+                                                    "scalar",
+                                                    "tensor",
+                                                    "schema_identity",
+                                                    "pod_identity",
+                                                    "max_serialized_size",
+                                                    "descriptor_tensor_fields"};
   if (!allowed_fields(value, kFields)) {
     return make_unexpected(
         catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
@@ -1977,15 +2232,6 @@ struct ParsedPayload {
     result.identity.scalar = ScalarIdentityRecord{.kind = *kind};
   } else if (family->string == "tensor") {
     const JsonValue* tensor = json_field(value, "tensor");
-    constexpr std::array<std::string_view, 9> kTensorFields{"memory_kind",
-                                                            "dtype",
-                                                            "rank",
-                                                            "max_rank",
-                                                            "max_byte_span",
-                                                            "axes",
-                                                            "stride_policy",
-                                                            "foreign_emit_policy",
-                                                            "max_inline_bytes"};
     if (value.object.size() != 2U || tensor == nullptr) {
       return make_unexpected(
           catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
@@ -1995,157 +2241,22 @@ struct ParsedPayload {
     if (tensor->kind == JsonValue::Kind::kNull) {
       return result;
     }
-    if (!allowed_fields(*tensor, kTensorFields) || tensor->object.size() != kTensorFields.size()) {
-      return make_unexpected(
-          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+    auto parsed_tensor = parse_tensor_contract(*tensor, true);
+    if (!parsed_tensor) {
+      return make_unexpected(std::move(parsed_tensor).error());
     }
-    const JsonValue* memory_kind = json_field(*tensor, "memory_kind");
-    const JsonValue* dtype = json_field(*tensor, "dtype");
-    const JsonValue* rank = json_field(*tensor, "rank");
-    const JsonValue* max_rank = json_field(*tensor, "max_rank");
-    const JsonValue* max_span = json_field(*tensor, "max_byte_span");
-    const JsonValue* axes = json_field(*tensor, "axes");
-    const JsonValue* stride = json_field(*tensor, "stride_policy");
-    const JsonValue* emit = json_field(*tensor, "foreign_emit_policy");
-    const JsonValue* inline_bytes = json_field(*tensor, "max_inline_bytes");
-    if (memory_kind == nullptr || dtype == nullptr || rank == nullptr || max_rank == nullptr ||
-        max_span == nullptr || axes == nullptr || axes->kind != JsonValue::Kind::kArray ||
-        stride == nullptr || stride->kind != JsonValue::Kind::kString || emit == nullptr ||
-        emit->kind != JsonValue::Kind::kString || inline_bytes == nullptr) {
-      return make_unexpected(
-          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-    }
-    if (axes->array.size() > kMaximumTensorAxes) {
-      return make_unexpected(catalog_resource_limit_error("/services/*/payload/tensor/axes",
-                                                          "normalized_tensor_axes",
-                                                          kMaximumTensorAxes,
-                                                          axes->array.size()));
-    }
-    LogicalTensorRequirementsRecord tensor_record;
-    if (memory_kind->kind == JsonValue::Kind::kString) {
-      tensor_record.memory_kind = parse_memory_kind(memory_kind->string);
-      if (!tensor_record.memory_kind) {
-        return make_unexpected(
-            catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-      }
-    } else if (memory_kind->kind != JsonValue::Kind::kNull) {
-      return make_unexpected(
-          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-    }
-    if (dtype->kind == JsonValue::Kind::kObject) {
-      constexpr std::array<std::string_view, 3> kDtypeFields{"code", "bits", "lanes"};
-      const JsonValue* code = json_field(*dtype, "code");
-      const JsonValue* bits = json_field(*dtype, "bits");
-      const JsonValue* lanes = json_field(*dtype, "lanes");
-      std::uint64_t parsed_code{};
-      std::uint64_t parsed_bits{};
-      std::uint64_t parsed_lanes{};
-      if (!allowed_fields(*dtype, kDtypeFields) || dtype->object.size() != kDtypeFields.size() ||
-          code == nullptr || !json_unsigned(*code, parsed_code) ||
-          parsed_code > std::numeric_limits<std::uint8_t>::max() || bits == nullptr ||
-          !json_unsigned(*bits, parsed_bits) ||
-          parsed_bits > std::numeric_limits<std::uint8_t>::max() || lanes == nullptr ||
-          !json_unsigned(*lanes, parsed_lanes) ||
-          parsed_lanes > std::numeric_limits<std::uint16_t>::max()) {
-        return make_unexpected(
-            catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-      }
-      const DLDataType parsed_dtype{
-          .code = static_cast<std::uint8_t>(parsed_code),
-          .bits = static_cast<std::uint8_t>(parsed_bits),
-          .lanes = static_cast<std::uint16_t>(parsed_lanes),
-      };
-      if (!valid_dtype(parsed_dtype)) {
-        return make_unexpected(
-            catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-      }
-      tensor_record.dtype = parsed_dtype;
-    } else if (dtype->kind != JsonValue::Kind::kNull) {
-      return make_unexpected(
-          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-    }
-    const auto parse_optional_unsigned =
-        [](const JsonValue& field, std::uint64_t maximum, std::optional<std::uint64_t>& result) {
-          if (field.kind == JsonValue::Kind::kNull) {
-            result.reset();
-            return true;
-          }
-          std::uint64_t parsed{};
-          if (!json_unsigned(field, parsed) || parsed > maximum) {
-            return false;
-          }
-          result = parsed;
-          return true;
-        };
-    std::optional<std::uint64_t> parsed_rank;
-    std::optional<std::uint64_t> parsed_max_rank;
-    std::optional<std::uint64_t> parsed_span;
-    std::optional<std::uint64_t> parsed_inline;
-    if (!parse_optional_unsigned(*rank, std::numeric_limits<std::uint32_t>::max(), parsed_rank) ||
-        !parse_optional_unsigned(
-            *max_rank, std::numeric_limits<std::uint32_t>::max(), parsed_max_rank) ||
-        !parse_optional_unsigned(
-            *max_span, std::numeric_limits<std::uint64_t>::max(), parsed_span) ||
-        !parse_optional_unsigned(
-            *inline_bytes, std::numeric_limits<std::uint32_t>::max(), parsed_inline)) {
-      return make_unexpected(
-          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-    }
-    if (parsed_rank) {
-      tensor_record.rank = static_cast<std::uint32_t>(*parsed_rank);
-    }
-    if (parsed_max_rank) {
-      tensor_record.max_rank = static_cast<std::uint32_t>(*parsed_max_rank);
-    }
-    tensor_record.max_byte_span = parsed_span;
-    if (parsed_inline) {
-      tensor_record.max_inline_bytes = static_cast<std::uint32_t>(*parsed_inline);
-    }
-    tensor_record.axes.reserve(axes->array.size());
-    for (const JsonValue& axis : axes->array) {
-      constexpr std::array<std::string_view, 2> kAxisFields{"max_extent", "max_abs_stride_bytes"};
-      const JsonValue* extent = json_field(axis, "max_extent");
-      const JsonValue* stride_bytes = json_field(axis, "max_abs_stride_bytes");
-      std::uint64_t parsed_extent{};
-      std::uint64_t parsed_stride{};
-      if (!allowed_fields(axis, kAxisFields) || axis.object.size() != kAxisFields.size() ||
-          extent == nullptr || !json_unsigned(*extent, parsed_extent) || stride_bytes == nullptr ||
-          !json_unsigned(*stride_bytes, parsed_stride)) {
-        return make_unexpected(
-            catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-      }
-      tensor_record.axes.push_back(TensorAxisBounds{
-          .max_extent = parsed_extent,
-          .max_abs_stride_bytes = parsed_stride,
-      });
-    }
-    if (stride->string == "contiguous_only") {
-      tensor_record.strides = TensorStridePolicy::kContiguousOnly;
-    } else if (stride->string == "bounded_strided") {
-      tensor_record.strides = TensorStridePolicy::kBoundedStrided;
-    } else {
-      return make_unexpected(
-          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-    }
-    if (emit->string == "require_exportable") {
-      tensor_record.foreign_emit_policy = InterfaceTensorEmitPolicy::kRequireExportable;
-    } else if (emit->string == "copy_if_needed") {
-      tensor_record.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded;
-    } else if (emit->string == "inline_small_host_then_copy_if_needed") {
-      tensor_record.foreign_emit_policy =
-          InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded;
-    } else {
-      return make_unexpected(
-          catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
-    }
-    result.tensor = std::move(tensor_record);
+    result.tensor = std::move(parsed_tensor).value();
   } else if (family->string == "schema") {
     const JsonValue* schema = json_field(value, "schema_identity");
     const JsonValue* maximum = json_field(value, "max_serialized_size");
+    const JsonValue* descriptor_fields = json_field(value, "descriptor_tensor_fields");
     std::uint64_t parsed_maximum{};
-    if (value.object.size() != 3U || schema == nullptr || maximum == nullptr ||
-        !json_unsigned(*maximum, parsed_maximum) || parsed_maximum == 0U ||
-        parsed_maximum > std::numeric_limits<std::uint32_t>::max()) {
+    const bool descriptor_schema = descriptor_fields != nullptr;
+    if (value.object.size() != (descriptor_schema ? 4U : 3U) || schema == nullptr ||
+        maximum == nullptr || !json_unsigned(*maximum, parsed_maximum) || parsed_maximum == 0U ||
+        parsed_maximum > std::numeric_limits<std::uint32_t>::max() ||
+        (descriptor_schema && (descriptor_fields->kind != JsonValue::Kind::kArray ||
+                               descriptor_fields->array.empty()))) {
       return make_unexpected(
           catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
     }
@@ -2154,9 +2265,40 @@ struct ParsedPayload {
       return make_unexpected(std::move(parsed_schema).error());
     }
     result.identity.kind = PayloadIdentityKind::kSchema;
-    result.identity.payload_kind = PayloadKind::kSerializedBytes;
+    result.identity.payload_kind =
+        descriptor_schema ? PayloadKind::kDescriptorBacked : PayloadKind::kSerializedBytes;
     result.identity.schema = std::move(parsed_schema).value();
     result.serialized_payload_capacity_bytes = parsed_maximum;
+    if (descriptor_schema) {
+      result.tensor_fields.reserve(descriptor_fields->array.size());
+      for (const JsonValue& field : descriptor_fields->array) {
+        constexpr std::array<std::string_view, 3> kFieldFields{
+            "field_id", "tensor_index", "contract"};
+        const JsonValue* field_id = json_field(field, "field_id");
+        const JsonValue* tensor_index = json_field(field, "tensor_index");
+        const JsonValue* contract = json_field(field, "contract");
+        std::uint64_t parsed_field_id{};
+        std::uint64_t parsed_tensor_index{};
+        if (!allowed_fields(field, kFieldFields) || field.object.size() != kFieldFields.size() ||
+            field_id == nullptr || !json_unsigned(*field_id, parsed_field_id) ||
+            parsed_field_id > std::numeric_limits<std::uint16_t>::max() ||
+            tensor_index == nullptr || !json_unsigned(*tensor_index, parsed_tensor_index) ||
+            parsed_tensor_index > std::numeric_limits<std::uint16_t>::max() ||
+            contract == nullptr || contract->kind != JsonValue::Kind::kObject) {
+          return make_unexpected(
+              catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
+        }
+        auto parsed_contract = parse_tensor_contract(*contract, true);
+        if (!parsed_contract) {
+          return make_unexpected(std::move(parsed_contract).error());
+        }
+        result.tensor_fields.push_back(DescriptorTensorTopicFieldRecord{
+            .field_id = static_cast<std::uint16_t>(parsed_field_id),
+            .tensor_index = static_cast<std::uint16_t>(parsed_tensor_index),
+            .tensor = std::move(parsed_contract).value(),
+        });
+      }
+    }
   } else if (family->string == "pod") {
     const JsonValue* pod = json_field(value, "pod_identity");
     if (value.object.size() != 2U || pod == nullptr) {
@@ -2427,16 +2569,8 @@ struct ParsedService {
     return make_unexpected(catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_SERVICE_INVALID"));
   }
 
-  std::optional<MemoryConversionPolicy> parsed_conversion;
-  if (memory_conversion->string == "default") {
-    parsed_conversion = MemoryConversionPolicy::kDefault;
-  } else if (memory_conversion->string == "disable") {
-    parsed_conversion = MemoryConversionPolicy::kDisable;
-  } else if (memory_conversion->string == "allow_if_safe") {
-    parsed_conversion = MemoryConversionPolicy::kAllowIfSafe;
-  } else if (memory_conversion->string == "require") {
-    parsed_conversion = MemoryConversionPolicy::kRequire;
-  } else {
+  const auto parsed_conversion = parse_memory_conversion_token(memory_conversion->string);
+  if (!parsed_conversion) {
     return make_unexpected(
         catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_MEMORY_CONVERSION_INVALID"));
   }
@@ -2605,6 +2739,7 @@ struct ParsedService {
       .clock_health = health,
       .attach = attach_policy,
       .tensor = service_record->payload.tensor,
+      .tensor_fields = service_record->payload.tensor_fields,
       .bounds = bounds,
   };
   if (result.payload_identity.schema) {
@@ -2898,7 +3033,7 @@ expected<ChannelEndpointCatalog, Error> ChannelEndpointCatalog::load_json(
     return make_unexpected(catalog_error(ErrorCode::kNotFound, "ENDPOINT_CATALOG_LOAD_FAILED"));
   }
   // Read at most limit+1 so a hostile or accidentally huge file cannot force
-  // unbounded allocation before the schema-v1 ingress check runs.
+  // unbounded allocation before the schema-v2 ingress check runs.
   std::string source(kMaximumCatalogSourceBytes + 1U, '\0');
   stream.read(source.data(), static_cast<std::streamsize>(source.size()));
   const std::size_t bytes_read = static_cast<std::size_t>(stream.gcount());
@@ -3739,42 +3874,46 @@ std::optional<std::chrono::nanoseconds> ClockHealthContractView::max_report_age(
   return options_ == nullptr ? std::nullopt : options_->max_report_age;
 }
 
-std::optional<MemoryKind> LogicalTensorRequirementsView::memory_kind() const noexcept {
+std::optional<MemoryKind> TensorBoundaryContractView::memory_kind() const noexcept {
   return record_ == nullptr ? std::nullopt : record_->memory_kind;
 }
 
-std::optional<DLDataType> LogicalTensorRequirementsView::dtype() const noexcept {
+std::optional<DLDataType> TensorBoundaryContractView::dtype() const noexcept {
   return record_ == nullptr ? std::nullopt : record_->dtype;
 }
 
-std::optional<std::uint32_t> LogicalTensorRequirementsView::rank() const noexcept {
+std::optional<std::uint32_t> TensorBoundaryContractView::rank() const noexcept {
   return record_ == nullptr ? std::nullopt : record_->rank;
 }
 
-std::optional<std::uint32_t> LogicalTensorRequirementsView::max_rank() const noexcept {
+std::optional<std::uint32_t> TensorBoundaryContractView::max_rank() const noexcept {
   return record_ == nullptr ? std::nullopt : record_->max_rank;
 }
 
-std::optional<std::uint64_t> LogicalTensorRequirementsView::max_byte_span() const noexcept {
+std::optional<std::uint64_t> TensorBoundaryContractView::max_byte_span() const noexcept {
   return record_ == nullptr ? std::nullopt : record_->max_byte_span;
 }
 
-std::span<const TensorAxisBounds> LogicalTensorRequirementsView::axes() const noexcept {
+std::span<const TensorAxisBounds> TensorBoundaryContractView::axes() const noexcept {
   return record_ == nullptr ? std::span<const TensorAxisBounds>{}
                             : std::span<const TensorAxisBounds>{record_->axes};
 }
 
-TensorStridePolicy LogicalTensorRequirementsView::stride_policy() const noexcept {
+TensorStridePolicy TensorBoundaryContractView::stride_policy() const noexcept {
   return record_ == nullptr ? TensorStridePolicy::kContiguousOnly : record_->strides;
 }
 
-InterfaceTensorEmitPolicy LogicalTensorRequirementsView::foreign_emit_policy() const noexcept {
+InterfaceTensorEmitPolicy TensorBoundaryContractView::foreign_emit_policy() const noexcept {
   return record_ == nullptr ? InterfaceTensorEmitPolicy::kRequireExportable
                             : record_->foreign_emit_policy;
 }
 
-std::optional<std::uint32_t> LogicalTensorRequirementsView::max_inline_bytes() const noexcept {
+std::optional<std::uint32_t> TensorBoundaryContractView::max_inline_bytes() const noexcept {
   return record_ == nullptr ? std::nullopt : record_->max_inline_bytes;
+}
+
+std::optional<std::uint64_t> TensorBoundaryContractView::max_staging_byte_span() const noexcept {
+  return record_ == nullptr ? std::nullopt : record_->max_staging_byte_span;
 }
 
 std::string detail::ChannelEndpointCatalogAccess::backend_service_binding(
@@ -3922,7 +4061,7 @@ EndpointBounds ChannelEndpointCatalog::EndpointView::bounds() const noexcept {
   return result;
 }
 
-std::optional<LogicalTensorRequirementsView>
+std::optional<TensorBoundaryContractView>
 ChannelEndpointCatalog::EndpointView::tensor_requirements() const noexcept {
   if (!*this) {
     return std::nullopt;

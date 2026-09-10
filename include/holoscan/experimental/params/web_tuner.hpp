@@ -63,7 +63,7 @@ struct WebTunerOptions {
   WebTunerAddressFamily address_family{WebTunerAddressFamily::kIpv4};
   /// Maximum authenticated logical clients.
   ///
-  /// EA1 mints one per-run credential representing exactly one logical client,
+  /// baseline mints one per-run credential representing exactly one logical client,
   /// so the only supported value is one. That client may use up to
   /// \ref max_connections simultaneous HTTP or WebSocket connections.
   std::uint32_t max_clients{1};

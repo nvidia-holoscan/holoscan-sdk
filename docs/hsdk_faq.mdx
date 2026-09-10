@@ -145,6 +145,21 @@ first-class request. See
 [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping)
 and [Restart control](/holoscan/sdk-user-guide/advanced/restart-control).
 
+### How does an operator finish the whole run successfully?
+
+Inside `compute()`, call `context.request_completion()`. The session reports
+`RunTermination::kRequestedCompleted`, distinct from natural finite
+`kCompleted`, and blocking `run()` returns zero. The request is immediate: it
+closes new callback admission for the whole session, but does not guarantee
+EOS, source closure, downstream drain, or queued delivery. Never retain
+`ExecutionContext`; it is valid only for the callback.
+
+There is no `kRequestedStopped` because `kStopped` already denotes the explicit
+stop category; HSDK 5 has no separate natural-stop success state. It also has
+no operator-local deactivate/readiness-removal API or deadlock-as-success rule.
+Count-bounded EOS and drain semantics are separate from this request. See
+[Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
 ### Why does `compile()` return a rejected plan instead of throwing?
 
 A rejected graph is an expected outcome, not an exceptional one — so
@@ -193,7 +208,9 @@ that page rather than assuming a 4.x-era matrix carries over.
 
 ### Where are the domain operators — inference, visualization, video I/O?
 
-Not in this release. 5.x deliberately ships the core runtime first — the
+Not in this release, apart from the [Holoscan Vision](/holoscan/sdk-user-guide/advanced/holoscan-vision)
+module, which ships eight C++ operators backed by CV-CUDA.
+5.x deliberately ships the core runtime first — the
 graph/compile/run machinery, temporal contracts, payloads, tensors, and
 channels — and operator modules (inference, visualization, sensor I/O, and
 friends) arrive in later releases on top of it. In the meantime you author

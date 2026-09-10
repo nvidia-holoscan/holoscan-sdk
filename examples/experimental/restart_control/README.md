@@ -8,13 +8,13 @@
 > restoration, and `lifecycle_mutable` parameter-origin restarts. Compatible
 > requests accepted while a transaction is queued may share it — including
 > requests for different operators; each request keeps its own receipt. Not
-> yet in EA1: restart requests from inside a lifecycle callback, a graph-wide
+> yet in baseline: restart requests from inside a lifecycle callback, a graph-wide
 > atomic restart, quiescing of interprocess neighbors, automatic retry of
 > failed stages, and clock- or tag-timed restarts. Enabling
 > `CompileOptions::lifecycle_transactions` on a plan containing a `real_time`
 > or `regulated` region fails compilation; no restart request is admitted into
 > a run. The
-> `examples/experimental/` directory is an EA1 example-catalog location, not
+> `examples/experimental/` directory is an experimental example-catalog location, not
 > the API's stability stage.
 >
 > **User guide:** [Restart Control](https://docs.nvidia.com/holoscan/sdk-user-guide/advanced/restart-control) —
@@ -82,7 +82,7 @@ From this `cpp/` folder, `CMakeLists.txt` is the standalone `cmake -S .`
 entry point and forwards that mode to `CMakeLists.min.txt`:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

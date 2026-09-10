@@ -7,7 +7,7 @@
 >
 > **Beta** (from the user-guide page): the tensor stream/pool model, declared
 > memory-kind awareness, and bounded staging ship today, and the API may still
-> evolve in upcoming releases. Exact EA1 limits: every tensor obligation of
+> evolve in upcoming releases. Exact baseline limits: every tensor obligation of
 > one operator must resolve to a single device, the runtime never inserts
 > cross-device copies, managed memory (`MemoryKind::kCudaManaged`) does not
 > cross process boundaries, and unpooled pass-through emits skip memory-kind
@@ -32,9 +32,9 @@ flowchart LR
 
 ## What you will learn
 
-- Declaring a CUDA device pool:
-  `.produces_tensor(TensorPortLayout{.memory_kind = MemoryKind::kCudaDevice,
-  .dtype, .rank})` + `.tensor_allocation(TensorAllocationBounds{...})`, and
+- Declaring a CUDA device pool with one `TensorOutputSpec` containing a
+  CUDA-device `TensorRepresentation`, finite `tensor_bounds(...)`, and
+  `TensorOutputStorage::kRuntimePool`, and
   binding it to a device at compile time with
   `CompileOptions::deployment.bind_tensor_output_device(
   TensorOutputDevicePlacement{.operator_path, .output_port, .device})` — the
@@ -80,7 +80,7 @@ cmake --build build
 If the SDK is installed somewhere non-default, point CMake at it:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S . -DCMAKE_PREFIX_PATH=<install-prefix>
 ```
 
 (`CMakeLists.min.txt` is the standalone-consumer variant of the build; the
@@ -127,7 +127,7 @@ tensors_in_depth: skipped: no CUDA device
 A CUDA-backed pool needs a device identity before the plan can materialize
 backing memory and its CUDA event inventory, and the compiler refuses to
 guess: without `bind_tensor_output_device` the compile rejects (the guide's
-EA1 limitations include "the compiler never silently infers device
+Current limitations include "the compiler never silently infers device
 zero"). Binding is deployment placement, not allocation authorship — the
 operator's `setup()` stays device-agnostic, and the same graph can be pointed
 at another GPU by changing one `CompileOptions` line in `main()`.
@@ -218,7 +218,7 @@ author never manages ordering by hand.
 
 | API | Role |
 |---|---|
-| `TensorPortLayout{.memory_kind = MemoryKind::kCudaDevice, ...}` | Declare device-memory tensor facts on a port |
+| `TensorRepresentation{.memory_kind = MemoryKind::kCudaDevice, ...}` | Declare device-memory tensor facts on a port |
 | `bind_tensor_output_device(TensorOutputDevicePlacement{...})` | Explicit compile-time CUDA device binding for a pooled output |
 | `loan->write(context.cuda_stream())` | Open a stream-ordered device write phase (runtime stream only) |
 | `std::move(*writer).commit()` | Record the readiness event — never syncs, never publishes |

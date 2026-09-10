@@ -8,6 +8,7 @@
 #include <holoscan/holoscan_core_export.h>
 #include <holoscan/channel/clock_health.hpp>
 #include <holoscan/channel/endpoint_concepts.hpp>
+#include <holoscan/channel/endpoint_interfaces.hpp>
 #include <holoscan/channel/tensor_loan.hpp>
 #include <holoscan/channel/types.hpp>
 #include <holoscan/core/domain/tensor.hpp>
@@ -16,10 +17,12 @@
 #include <holoscan/memory/tensor_storage.hpp>
 #include <holoscan/time/time_point.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -43,8 +46,10 @@ class WaitSetSubscriber;
 /// logical Tensor contract, capture-clock authority, and optional clock-health lane. The facade
 /// never exposes allocator injection, a bare-Tensor emit, publisher-created
 /// `Sample<Tensor>`, HoloMQ/BufferHandle state, or a process-local physical resource handle.
-/// Calls on one live facade are externally serialized; filling distinct acquired loans may overlap
-/// only within bounds later admitted by the attached endpoint.
+/// The caller must serialize every publication call on one live facade, including `emit*`,
+/// `close()`, and `report_clock_health()`. Transport release callbacks are synchronized internally.
+/// Filling distinct acquired loans may overlap only within bounds later admitted by the attached
+/// endpoint.
 template <>
 class ChannelPublisher<Tensor> {
  public:
@@ -154,7 +159,7 @@ class ChannelPublisher<Tensor> {
 
   /// @brief Refresh the backend connection snapshot used by \ref has_subscribers.
   /// @return Empty success, or a checked closed/backend refresh error.
-  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> update_connections();
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> update_connections() noexcept;
 
   /// @brief Return the most recently refreshed subscriber-presence snapshot.
   /// @return True when a subscriber was observed; false when moved from, closed, or disconnected.
@@ -203,6 +208,71 @@ class ChannelSubscriber<Tensor> {
   /// exposed through this API.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<Sample<Tensor>, Error> receive_sample();
 
+  /// @brief Block until a Tensor sample is available, then receive and consume it.
+  ///
+  /// A receive is attempted before any wait is built, so an already queued sample costs no wait
+  /// context and no kernel wait. \ref ErrorCode::kNotReady never escapes: readiness is a hint, so
+  /// an attempt that loses its race against a dropped-oldest replacement waits again against the
+  /// same absolute \p deadline. Queued data always drains before end of stream is observed, so a
+  /// producer that emits N Tensors and then closes yields N samples and then
+  /// \ref ErrorCode::kClosed.
+  ///
+  /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+  /// @return The sample on success, or the first checked error.
+  /// @retval ErrorCode::kTimeout \p deadline elapsed. Retryable; endpoint state is unchanged.
+  /// @retval ErrorCode::kClosed The producer published end of stream, or this facade was moved
+  /// from. The end-of-stream state is latched, so every later call reports it.
+  /// @retval ErrorCode::kStaleEndpoint The producer incarnation changed; rebuild the subscriber.
+  /// @retval ErrorCode::kNotSupported This endpoint was created with
+  /// \c ChannelOptions::enable_event_wake disabled, so it has no kernel event lane. Reported only
+  /// when a wait is actually required, and before any wait context is built. This operation
+  /// deliberately does not fall back to polling.
+  /// @retval ErrorCode::kInvalidArgument This subscriber's readiness is already owned by another
+  /// wait set, such as the Runtime readiness pump, or another wait on this subscriber is already
+  /// in flight.
+  /// @note \ref ErrorCode::kProtocolError, \ref ErrorCode::kCodecError,
+  /// \ref ErrorCode::kReceiveError, and \ref ErrorCode::kResourceExhausted pass through unchanged.
+  /// @note There is no duration overload by design. An absolute deadline cannot silently restart
+  /// its budget on a spurious wake.
+  /// @note Readiness is a hint, so a subscriber that keeps reporting it while every receive loses
+  /// its race retries at full speed until \p deadline. The absolute deadline is the only bound on
+  /// that loop; there is no backoff. It is not reachable by an idle endpoint -- something has to be
+  /// producing readiness that no receive can consume, such as a competing consumer on the same
+  /// endpoint -- but a caller that shares a subscriber should size the deadline accordingly.
+  /// @warning One subscriber supports one waiting thread and calls are not internally serialized.
+  /// A second concurrent waiter is rejected with \ref ErrorCode::kInvalidArgument rather than
+  /// sharing the first one's wait context. The facade must outlive an in-flight wait and must not
+  /// be moved while one is in flight.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<Sample<Tensor>, Error> wait_and_receive_sample(
+      std::chrono::steady_clock::time_point deadline);
+
+  /// @brief Block until a Tensor sample is available or a stop is requested, then consume it.
+  /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+  /// @param token Cancellation observer for this call; a default-constructed token never cancels.
+  /// @return The sample on success, or the first checked error.
+  /// @retval ErrorCode::kInterrupted \p token requested a stop. Caller-local and non-terminal.
+  /// @note Every other retval of the single-argument overload applies unchanged.
+  /// @note Cancellation is scoped to one call. A stop that fires ends this wait and leaves the
+  /// subscriber usable; the next wait arms a fresh cancellation trigger.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<Sample<Tensor>, Error> wait_and_receive_sample(
+      std::chrono::steady_clock::time_point deadline, const std::stop_token& token);
+
+  /// @brief Block until this endpoint may have a sample, without consuming one.
+  /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+  /// @param token Cancellation observer for this call; a default-constructed token never cancels.
+  /// @return Empty success when a sample may be available, or a checked wait error.
+  /// @retval ErrorCode::kTimeout \p deadline elapsed with no readiness.
+  /// @retval ErrorCode::kInterrupted \p token requested a stop.
+  /// @retval ErrorCode::kClosed End of stream was already consumed, or this facade was moved from.
+  /// @retval ErrorCode::kNotSupported This endpoint was created with
+  /// \c ChannelOptions::enable_event_wake disabled and has no queued sample.
+  /// @retval ErrorCode::kInvalidArgument This subscriber's readiness is already owned by another
+  /// wait set, or another wait on this subscriber is already in flight.
+  /// @note Success is a hint, exactly like \ref has_samples. A following \ref receive_sample may
+  /// still report \ref ErrorCode::kNotReady.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> wait_for_sample(
+      std::chrono::steady_clock::time_point deadline, const std::stop_token& token = {});
+
   /// @brief Refresh the backend connection snapshot used by has_publishers().
   /// @return Empty success, or a checked closed/backend refresh error.
   /// @note This cold-path operation does not consume a sample or report receive readiness.
@@ -226,7 +296,6 @@ class ChannelSubscriber<Tensor> {
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<Sample<Tensor>, Error>
   receive_sample_if_data_accepted(bool accept_data);
   [[nodiscard]] HOLOSCAN_CORE_EXPORT std::uint64_t accepted_end_of_stream_sequence() const noexcept;
-
   std::unique_ptr<Impl> impl_;
 };
 

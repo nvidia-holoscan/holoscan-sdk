@@ -15,12 +15,12 @@ namespace holoscan::detail::scheduling {
 
 inline constexpr std::uint32_t kDeterministicSerialReadyPolicyVersion = 1U;
 
-/// Return the stable algorithm identifier for the EA1 READY policy.
+/// Return the stable algorithm identifier for the baseline READY policy.
 [[nodiscard]] constexpr std::string_view deterministic_serial_ready_policy_id() noexcept {
   return "holoscan.ready.deterministic_serial";
 }
 
-/// Return the owning public evidence key for the EA1 READY policy.
+/// Return the owning public evidence key for the baseline READY policy.
 [[nodiscard]] AlgorithmKey deterministic_serial_ready_policy_algorithm();
 
 /// Select one activation at a time using the compiler-frozen deterministic total order.

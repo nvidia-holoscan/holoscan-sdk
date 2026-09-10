@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Minimal package config for the header-only magic_enum library, installed by the Holoscan SDK.
-# magic_enum is a PUBLIC compile dependency of holoscan::core (errors.hpp includes
-# <magic_enum/magic_enum.hpp>). Its upstream CMake config is not installed because the CPM package is
-# EXCLUDE_FROM_ALL, so this defines the INTERFACE target for installed consumers' find_package(holoscan)
-# -> find_dependency(magic_enum). The headers live in the SDK include dir (three levels up from
+# magic_enum backs a private compiled holoscan::core implementation and remains in the installed
+# dependency closure for static consumers. Its upstream CMake config is not installed because the
+# CPM package is EXCLUDE_FROM_ALL, so this defines the INTERFACE target used by
+# find_dependency(magic_enum). The headers live in the SDK include dir (three levels up from
 # lib*/cmake/magic_enum, which resolves to the install prefix regardless of lib vs lib64).
 if(NOT TARGET magic_enum::magic_enum)
   add_library(magic_enum::magic_enum INTERFACE IMPORTED)

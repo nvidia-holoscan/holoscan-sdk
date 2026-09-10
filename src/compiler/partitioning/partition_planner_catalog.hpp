@@ -34,8 +34,8 @@ class PartitionPlannerCatalog {
       std::span<const PartitionPlannerRegistration> registrations,
       PartitionPlannerCapabilities available_capabilities = kAllPartitionPlannerCapabilities);
 
-  /// Create the exact EA1 built-in baseline and source-chain catalog.
-  [[nodiscard]] static expected<PartitionPlannerCatalog, Error> create_ea1_builtins();
+  /// Create the exact baseline built-in baseline and source-chain catalog.
+  [[nodiscard]] static expected<PartitionPlannerCatalog, Error> create_default_builtins();
 
   /// Construct a fresh planner for an exact algorithm key.
   [[nodiscard]] expected<std::unique_ptr<PartitionPlanner>, Error> make(

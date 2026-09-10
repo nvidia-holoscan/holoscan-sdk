@@ -60,13 +60,15 @@ public members:
 - `sample.metadata` — a plain-value `SampleMetadata` record of
   transport-neutral facts about the sample.
 
-`SampleMetadata` carries the sample's provenance. Its time-bearing fields are
-canonically *absent* (zero clock identity) unless a producer supplied them:
+`SampleMetadata` carries the sample's provenance. Author-supplied time-bearing
+fields are canonically *absent* (zero clock identity) unless a producer supplied
+them; publication time is the exception, because the runtime stamps it rather
+than the author:
 
 | Field / accessor | Meaning |
 |---|---|
 | `metadata.capture_time()` → `TimePoint` | Genuine acquisition instant (e.g. when the camera captured the frame), in its source clock domain; absent when the producer supplied none. |
-| `metadata.publish_time()` → `TimePoint` | When the sample was published, stamped by the runtime. |
+| `metadata.publish_time()` → `TimePoint` | The instant the runtime submitted the sample, in the Graph default clock domain. The runtime stamps it, so you cannot supply it; it reads absent on a sample imported across an external channel boundary. See [time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks). |
 | `metadata.frame_id` | Application frame/sample identity, or zero when unset. |
 | `metadata.sequence` | Producer/publication sequence number. |
 | `metadata.trace_id` | Trace-correlation identity for tooling, or zero when absent. |
@@ -104,7 +106,7 @@ everywhere else in the runtime.
 When the temporal contract selects a *window* of samples — the IMU input in
 the camera + IMU fusion pipeline is the canonical case — read them as a batch.
 `selected_batch()` returns a `SelectedBatchView<T>`: borrowed, immutable, and
-valid only for the duration of this activation. From the `ea1_camera_imu_control`
+valid only for the duration of this activation. From the `camera_imu_control`
 example's fusion operator:
 
 ```cpp
@@ -151,8 +153,8 @@ HOLOSCAN_TRY(out_.emit(std::move(sample)));                               // for
 - `.trace` — an explicit trace context.
 - `.flags` — validity/degradation flags.
 
-The runtime stamps the framework-owned fields itself: sequence, publish time,
-payload kind, and byte size. Forwarding a received `Sample<T>` with
+The runtime stamps the framework-owned fields itself: sequence, payload kind,
+byte size, and publication time. Forwarding a received `Sample<T>` with
 `emit(std::move(sample))` preserves its author metadata (capture time,
 `frame_id`, trace, flags) downstream — which is why that overload deliberately
 takes no `EmitOptions`: the sample already carries them.
@@ -190,38 +192,44 @@ before compilation — the compiler validates it against the rest of the graph.
 
 **`InputSpecBuilder`** (from `spec.input(...)`):
 
-- `.queue_depth(n)` — the input history depth the runtime keeps for this port
-  (default 1). The fusion example keeps `queue_depth(4)` on its 60 Hz camera
-  port and `queue_depth(32)` on the high-rate IMU port so a bracketed window
-  always has samples to select from.
-- `.expects_tensor(layout)` — for `Input<Tensor>`, declares the
-  `TensorPortLayout` (memory kind, dtype, rank) this operator expects, letting
+- `.queue_depth(n)` — an explicit, exact logical input-history depth. The
+  compiler preserves `n`; it does not replace it with a rate-derived
+  recommendation or a provider's physical ring size. When depth is omitted and
+  exact nominal-rate plus consumption-contract evidence closes the sizing
+  problem, the compiler derives the logical depth automatically. Only an
+  otherwise unresolved legacy queue uses the depth-one fallback. The
+  rate-aware ports example shows both an automatically derived depth and an
+  explicit override.
+- `.expects_tensor(spec)` — declares a `TensorInputSpec` containing the
+  representation, bounds, and optional conversion this operator expects, letting
   the compiler reject mismatched producers instead of you discovering them at
   run time.
-- `.memory_conversion(policy)`, `.payload_options(...)`,
-  `.diagnostic_alias(...)` — conversion policy, payload tuning, and a stable
+- `.payload_options(...)`, `.diagnostic_alias(...)` — payload tuning and a stable
   alias for diagnostics.
 
 **`OutputSpecBuilder`** (from `spec.output(...)`):
 
 - `.max_emits_per_compute(n)` — the burst bound described above.
-- `.produces_tensor(layout)` — the output-side layout declaration, the mirror
+- `.produces_tensor(spec)` — the output-side spec, the mirror
   of `expects_tensor`.
 - `.diagnostic_alias(...)` — as on inputs.
 
 **`TensorOutputSpecBuilder`** — `spec.output(...)` on an `Output<Tensor>`
-returns this specialized builder, and its `.tensor_allocation(bounds)` is the
-**only** grant of direct Tensor allocation authority:
+returns this specialized builder. Runtime-pool storage intent inside the output
+spec is the **only** grant of direct Tensor allocation authority:
 
 ```cpp
 spec.output(frame, "frame")
-    .produces_tensor(kHostByteFrame)
-    .tensor_allocation(holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 64U});
+    .produces_tensor(holoscan::TensorOutputSpec{
+        .representation = kHostByteFrame,
+        .bounds = holoscan::tensor_bounds(64U),
+        .storage = holoscan::TensorOutputStorage::kRuntimePool,
+    });
 ```
 
 <Warning>
-  **No grant, no allocation.** Without `tensor_allocation(bounds)` in
-  `setup()`, `allocate_tensor()` returns `kNotReady` at run time. The bounds
+  **No grant, no allocation.** Without `TensorOutputStorage::kRuntimePool` in
+  `setup()`, `allocate_tensor()` returns `kNotReady` at run time. The contract bounds
   (together with `max_emits_per_compute`) size the preallocated tensor pool at
   compile time — this explicit grant is why the steady-state data path never
   heap-allocates per sample.
@@ -277,11 +285,25 @@ wait — `compute()` cannot reach outside its activation.
 
   How stops propagate through a running application is covered in
   [running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+- **Whole-run termination requests** — `ctx.request_completion()` requests
+  immediate whole-run success (`kRequestedCompleted`), while
+  `ctx.request_stop()` requests `kStopped`. Both close session-wide callback
+  admission: claims ordered before that boundary may proceed and retire, but no
+  claim ordered afterward enters. Stop overrides completion, and callback or
+  cleanup failure overrides both. Requested completion is not EOS and does not
+  guarantee source closure, downstream drain, or queued delivery.
 - **Restart** — `ctx.request_restart(options)` (plus an authorized-target
   overload) returns `expected<LifecycleRestartReceipt, Error>`. Acceptance
   only *queues* the request; the lifecycle machinery executes it. The full
   restart model lives in
   [restart control](/holoscan/sdk-user-guide/advanced/restart-control).
+
+<Warning>
+  **Never retain `ExecutionContext`.** The facade and all of its services are
+  valid only for the active callback. Using a saved pointer or reference after
+  `compute()` returns is invalid; post-callback calls are not promised to be
+  harmless no-ops.
+</Warning>
 
 ## What can cross a port: `PublishedPayload`
 
@@ -311,12 +333,13 @@ are in [payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-t
 - Every `emit()` is `[[nodiscard]] expected`; `EmitOptions` attaches
   author-owned metadata, and forwarding a `Sample<T>` preserves it.
 - `setup()` builders declare everything the compiler needs: `queue_depth`,
-  tensor layout expectations, the `tensor_allocation` grant,
+  direction-specific Tensor specs and runtime-pool intent,
   `max_emits_per_compute` (which sizes the output pool), and readiness
   sources for `contract()` to trigger on.
-- `ExecutionContext` is the whole runtime surface inside `compute()`: params,
-  clock, tag, CUDA stream, cancellation, and restart requests — all O(1) and
-  non-blocking.
+- `ExecutionContext` is the callback-lifetime runtime surface inside
+  `compute()`: params, clock, tag, CUDA stream, cancellation, whole-run
+  termination requests, and restart requests. Its queries are O(1); termination
+  requests are bounded, non-blocking, and allocation-free.
 - Only `PublishedPayload` types cross ports: arithmetic/enums, exact `Tensor`,
   and schema-identified copyable values.
 

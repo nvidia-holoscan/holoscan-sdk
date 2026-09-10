@@ -32,7 +32,7 @@ namespace schema {
 struct ImageT;
 }  // namespace schema
 
-/// @brief Identify the only schema-bearing wrapper/envelope ABI emitted by EA1.
+/// @brief Identify the only schema-bearing wrapper/envelope ABI emitted by baseline.
 inline constexpr std::uint32_t kSchemaEnvelopeABIVersion = 2U;
 /// @brief Identify the descriptor-array envelope ABI emitted by descriptor-backed Tensor schemas.
 inline constexpr std::uint32_t kDescriptorTensorSchemaEnvelopeABIVersion = 3U;
@@ -621,6 +621,23 @@ template <typename T>
     }
   }
   return std::nullopt;
+}
+
+/// @brief Check one typed field selector against a descriptor Tensor schema inventory.
+/// @tparam T Owning generated descriptor-backed schema type.
+/// @param field_id FlatBuffers field id carried by the typed selector.
+/// @param tensor_index Dense Tensor index carried by the typed selector.
+/// @return True for an exact published inventory match, or for field zero of a legacy singular
+/// specialization that predates published field inventories.
+template <typename T>
+  requires HasDescriptorTensorSchemaNativeTraits<T>
+[[nodiscard]] constexpr bool descriptor_tensor_schema_field_selector_matches(
+    const std::uint16_t field_id, const std::size_t tensor_index) noexcept {
+  const auto expected = descriptor_tensor_schema_field_id_at<T>(tensor_index);
+  if (expected) {
+    return *expected == field_id;
+  }
+  return descriptor_tensor_schema_tensor_count_v<T> == 1U && tensor_index == 0U && field_id == 0U;
 }
 
 }  // namespace detail

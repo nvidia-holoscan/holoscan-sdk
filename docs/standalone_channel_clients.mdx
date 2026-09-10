@@ -17,11 +17,10 @@ catalog, and producer restart — see
   **Developer preview.** The standalone client API is a developer preview:
   cross-process Tensor transport supports host-pageable, pinned-host, and
   CUDA-device memory (bounded staging where placement requires it) and is
-  always read-only on import; non-Tensor producer restart capacity is bounded
-  to one replacement, while catalog Tensor imports do not support rebind; and
-  there is no author-facing launcher for distributed workers. The API surface
-  may evolve in upcoming releases — verify against the current headers before
-  depending on details.
+  always read-only on import; restart-capable imports admit at most one
+  replacement producer incarnation; and there is no author-facing launcher
+  for distributed workers. The API surface may evolve in upcoming releases —
+  verify against the current headers before depending on details.
 </Warning>
 
 <Warning>
@@ -39,6 +38,7 @@ catalog, and producer restart — see
   - How `create_publisher<T>` / `create_subscriber<T>` bind to named endpoints
   - The emit and receive verbs, and why identity traits must match exactly
   - The retry discipline for asynchronous cross-process attach
+  - How to wait for samples on an event lane instead of polling for them
   - When a standalone client is the right tool — and when it never is
 </Note>
 
@@ -118,6 +118,26 @@ However you obtain it, both processes must agree on the **same** catalog: a
 wrong or stale catalog fails at attach time, not at compile time. When the
 boundary changes, regenerate and re-share it.
 
+<Note title="Ordinary inline capacity">
+  Scalar and POD application payloads may occupy at most 32,744 bytes. An
+  ordinary generated schema may declare at most 32,704 serialized bytes. The
+  remaining bytes in the 32,768-byte fixed-inline frame carry catalog
+  attribution and, for schemas, the schema envelope. The builder rejects an
+  oversized complete frame with `kResourceExhausted`.
+
+  The catalog selects the transport bucket. A schema publisher's local maximum
+  may be smaller than the catalog capacity; a schema subscriber must admit at
+  least the catalog capacity. Payload identity still has to match exactly.
+  Descriptor-backed Tensor schemas and raw Tensor buffers use their separate
+  bounded paths.
+
+  Typed endpoint facades own fixed-capacity scratch sized from their payload
+  type. At the ordinary inline limits, a schema publisher or subscriber and a
+  maximum-size POD subscriber can therefore contain roughly 32 KiB of scratch.
+  Keep large endpoint facades long-lived and avoid placing arrays of them or
+  recursive endpoint creation on a constrained stack.
+</Note>
+
 ## Creating publishers and subscribers
 
 With a runtime and a catalog in hand, attach typed endpoints by name:
@@ -130,10 +150,40 @@ auto subscriber = runtime->create_subscriber<std::uint32_t>(*catalog, "results")
 if (!subscriber) { /* lookup, role, or identity error */ }
 ```
 
-The type parameter `T` may be a portable scalar, a custom POD struct, a
-generated schema type, or `Tensor`. The catalog is inspected only during the
-call; the returned endpoint retains its own private runtime attachment, so
-you may discard the catalog afterwards. An optional third argument,
+The type parameter `T` may be a portable scalar, a custom POD struct, an
+ordinary generated schema type, or `Tensor`. A descriptor-backed schema uses
+the Tensor-aware endpoint factories and its generated descriptor payload type:
+
+```cpp
+using Payload = holoscan::schema::DescriptorFlatBufferPayloadFor<app::Frame>;
+
+auto publisher =
+    runtime->create_tensor_schema_publisher<Payload>(*catalog, "frames-in");
+auto subscriber =
+    runtime->create_tensor_schema_subscriber<Payload>(*catalog, "frames-out");
+
+auto emitted = publisher->emit_captured(metadata_bytes, tensors, capture_ns,
+                                        {.frame_id = frame_id});
+auto received = subscriber->receive_tensors();
+if (received) {
+  consume(received->metadata, received->tensors, received->sample_metadata);
+}
+```
+
+`metadata_bytes` is the verified FlatBuffer envelope and `tensors` is the
+complete generated field-order inventory. `receive_tensors()` returns the
+decoded root, resolved read-only Tensor handles, and the transport-neutral
+`SampleMetadata`. As with scalar and raw-Tensor catalog endpoints,
+`emit_captured()` labels a coordinate in the endpoint's bound capture clock;
+`emit()` accepts `EmitOptions`, and `emit_sample()` accepts explicit metadata.
+See the complete
+[`descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
+example for metadata construction, attachment polling, and a multi-field
+round trip.
+
+The catalog is inspected only during an endpoint creation call; the returned
+endpoint retains its own private runtime attachment, so you may discard the
+catalog afterwards. An optional third argument,
 `ChannelAttachOptions`, lets a caller shorten (never lengthen) the catalog's
 attachment timeout.
 
@@ -165,9 +215,10 @@ auto emitted = publisher->emit_sample(
 auto emitted2 = publisher->emit_captured(43U, capture_ns);
 ```
 
-Both return the exact recipient count on success. Subscribers poll with
-`receive_sample()`, which returns the next `Sample<T>` or `kNotReady` when
-nothing is queued:
+Both return the exact recipient count on success. Subscribers receive with
+`receive_sample()`, which returns the next `Sample<T>` immediately, or
+`kNotReady` when nothing is queued. To block until a sample arrives instead,
+see [Waiting for samples](#waiting-for-samples):
 
 ```cpp
 auto sample = subscriber->receive_sample();
@@ -182,11 +233,46 @@ When a producer finishes, publish an explicit end-of-stream with
 `publisher->close()`. Process exit, disconnect, or silence never imply EOS —
 the importing graph (and its restart fencing) relies on the explicit signal.
 
+## Reporting capture-clock health
+
+An import can require fresh health evidence for its capture clock by declaring
+`ClockHealthOptions` in `TopicOptions`. When the catalog advertises that
+capability, every standalone publisher family—including raw `Tensor` and
+descriptor-backed Tensor schemas—exposes the same ordered reporting call:
+
+```cpp
+auto reported = publisher->report_clock_health(
+    holoscan::ClockHealthReport::healthy());
+if (!reported) { /* inspect reported.error().code */ }
+
+// If synchronization is later lost, publish that transition before more data.
+auto unhealthy = publisher->report_clock_health(
+    holoscan::ClockHealthReport::unhealthy(
+        holoscan::ClockHealthReason::kSynchronizationLockLost));
+```
+
+Health, data, and explicit EOS share one publisher-authored order. Therefore a
+health transition submitted before a sample is applied by the importing
+Runtime before that sample becomes eligible. If the import requires a fresh
+healthy report, publish `healthy()` after attachment and refresh it within the
+catalog's `max_report_age`; degraded, unhealthy, or stale evidence gates data
+according to the compiled temporal policy. Calling `report_clock_health()` on
+an endpoint whose catalog does not advertise status reports returns a checked
+contract error rather than silently accepting unused evidence.
+
+All publication calls on one publisher instance must be serialized by the
+caller. In particular, a client that refreshes clock health from a timer thread
+must externally synchronize those calls with data emission and `close()`, or
+route all three operations through one publication thread. Transport release
+callbacks are synchronized internally.
+
 ## Attach and retry discipline
 
 Cross-process attach is **asynchronous**: creating a publisher or subscriber
-does not mean the peer is connected yet. There is no "wait until connected"
-helper — the retry loop *is* the connection protocol:
+does not mean the peer is connected yet. Nothing waits for *connection* itself
+— the retry loop *is* the connection protocol on the publish side, and on the
+subscribe side a wait absorbs the same race by treating a not-yet-connected
+endpoint as simply having nothing queued yet:
 
 - A subscriber's `receive_sample()` returns `kNotReady` until the peer
   connects; polling it is how the subscriber establishes its transport
@@ -225,11 +311,164 @@ for (;;) {
   and leave the retry loop on other errors for code-specific handling.
 </Warning>
 
-The `ea1_external_clients` example ships both sides of this discipline: a
+The `external_clients` example ships both sides of this discipline: a
 `sensor_daemon` publisher with deadline-bounded emit and EOS loops, and a
-`recorder` subscriber with a `kNotReady` poll loop. Start from those rather
-than writing the loops from scratch — see
+`recorder` subscriber that blocks on the endpoint's event lane. Start from
+those rather than writing the loops from scratch — see
 [External clients](/holoscan/sdk-user-guide/examples/external-clients).
+
+## Waiting for samples
+
+A retry loop is the right shape on the publish side, where there is nothing to
+block on. On the subscribe side it is a cost with no upside: a short sleep
+burns CPU on an idle client, a long one adds latency, and no interval is good.
+A subscriber can instead block on the endpoint's transport event lane until a
+sample is available:
+
+```cpp
+auto sample = subscriber->wait_and_receive_sample(
+    std::chrono::steady_clock::now() + std::chrono::seconds(10));
+if (sample) { consume(sample->data, sample->metadata); }
+```
+
+The call tries a receive first and only blocks if nothing is queued, so an
+already-pending sample costs no wait at all. `kNotReady` never escapes it: a
+subscriber that is still connecting, or one that loses a race for a sample it
+was woken for, simply keeps waiting until the deadline.
+
+**The deadline is absolute, not a duration.** There is no duration overload by
+design. A per-attempt duration would silently restart its budget on every
+spurious wake and turn a bounded wait unbounded, so callers pass
+`std::chrono::steady_clock::now()` plus a bound.
+
+That deadline is also the *only* bound on the call's retry loop. Readiness is a
+hint, so a subscriber that keeps reporting it while every receive loses its race
+retries at full speed until the deadline, with no backoff. An idle endpoint
+cannot reach that state — something has to be producing readiness no receive can
+consume, such as a competing consumer on the same subscriber — but size the
+deadline with it in mind if you share a subscriber.
+
+**Cancellation is a `std::stop_token`.** A long-running client that must also
+stop on demand passes one and calls `request_stop()` from elsewhere; the wait
+returns `kInterrupted` rather than running to its deadline. Cancellation is
+scoped to the one call — the subscriber stays usable afterwards.
+
+```cpp
+std::stop_source source;  // request_stop() from a supervisor thread
+auto sample = subscriber->wait_and_receive_sample(
+    std::chrono::steady_clock::now() + std::chrono::seconds(10),
+    source.get_token());
+```
+
+<Warning>
+  **Do not call `request_stop()` from a signal handler.** It runs registered
+  callbacks inline and takes the stop state's lock, so it is not
+  async-signal-safe. Set a `volatile std::sig_atomic_t` flag in the handler and
+  call `request_stop()` from an ordinary thread that observes it.
+</Warning>
+
+The outcomes are distinguishable, which is the point of waiting rather than
+polling:
+
+| Code | Meaning |
+| --- | --- |
+| `kTimeout` | The deadline passed. Retryable; endpoint state is unchanged. |
+| `kInterrupted` | The stop token requested a stop. Caller-local, not terminal. |
+| `kClosed` | The producer published end of stream, or the client was moved from. No later sample arrives. Only catalog-attached and runtime-envelope publishers can publish end of stream — see below. |
+| `kStaleEndpoint` | The producer was replaced by a new incarnation. Rebuild the subscriber. Catalog-attached subscribers only — see below. |
+| `kNotSupported` | The endpoint was created without event wake, *and* a wait was actually required. An endpoint that already holds a sample is answered from the fast path instead. |
+| `kInvalidArgument` | The subscriber's readiness is already owned by another wait set, or another wait on the same subscriber is already in flight. |
+
+`ChannelSubscriber<Tensor>` and the tensor-schema subscriber offer the same two
+methods under the same names. Their outcomes are the same too, with one
+exception worth stating plainly: **end of stream needs a catalog-attached or
+runtime-envelope publisher.** `close()` on a name-based tensor-schema publisher
+reports `kNotSupported`, so a name-based stream never produces `kClosed` — an
+exhausted producer is indistinguishable from an idle one and the wait reports
+`kTimeout`.
+
+To wait without consuming, use `wait_for_sample`, which reports that a sample
+may be available and leaves it queued.
+
+<Warning>
+  **Readiness is a hint, not a guarantee.** A wake followed by `kNotReady` is
+  legal: a lossy replacement, a private control operation, or a competing
+  consumer can change the queue in between. `wait_and_receive_sample` absorbs
+  that and waits again, but a `wait_for_sample` caller must handle a following
+  `receive_sample` still returning `kNotReady`.
+</Warning>
+
+<Warning>
+  **One waiting thread per subscriber.** Calls on one client are not internally
+  serialized, and a subscriber must outlive any wait in flight — do not move it
+  or attach it to another wait set while one is running. A second concurrent
+  waiter is rejected with `kInvalidArgument` in every build, rather than being
+  allowed to share the first waiter's state; the wait already in flight is
+  unaffected.
+</Warning>
+
+<Note>
+  **Only data wakes a wait.** There is no wake on peer connect or disconnect:
+  the transport emits no such notification, so `has_publishers()` remains an
+  advisory snapshot rather than readiness and is not attached to the wait set.
+  A producer that simply disappears is indistinguishable from an idle one, so
+  the wait reports `kTimeout`, never `kStaleEndpoint`.
+
+  Clock-health traffic never *ends* a wait, but whether it wakes one depends on
+  the lane it arrives on. On a monitored inline endpoint health shares the data
+  lane's sequence, so it does wake the blocked thread; the wait then applies it,
+  absorbs the `kNotReady` that follows, and blocks again against the same
+  deadline. On the catalog tensor-schema endpoint health has its own lane, which
+  is not attached to the wait set, so it does not wake anything and is only
+  noticed on the recovery poll described below. Either way the call keeps
+  waiting and the caller sees nothing.
+</Note>
+
+<Note>
+  **Event-driven with a bounded recovery poll.** A publication wakes a blocked
+  wait, but transport notification is best effort, so the wait also re-checks
+  readiness about once a second rather than relying on the wake alone. An idle
+  waiting subscriber therefore costs roughly one wakeup per second — far below
+  any workable sleep interval, but not zero, so a fully idle process will not
+  reach its deepest sleep states. Readiness that arrives on a lane which is not
+  attached to the wait set, currently the clock-health lane, is discovered on
+  that fallback rather than by a wake, so it can be seen with up to that much
+  latency. Treat the interval as an implementation bound, not a contract.
+</Note>
+
+<Note>
+  **A restarted producer is not a silent gap — on the endpoints that can see it.**
+  A replacement producer mints a new incarnation, and the next receive reports
+  `kStaleEndpoint` rather than quietly resuming — rebuild the subscriber against
+  the same endpoint name.
+
+  The discriminator is **how the endpoint was attached, not its payload type**.
+  A producer generation reaches the subscriber through the catalog, so every
+  catalog-attached subscriber can report `kStaleEndpoint` and no name-based one
+  can:
+
+  | Endpoint | Reports `kStaleEndpoint`? |
+  | --- | --- |
+  | Catalog-attached `ChannelSubscriber<T>` | Yes |
+  | Catalog-attached `ChannelSubscriber<Tensor>` | Yes |
+  | Catalog-attached tensor-schema subscriber | Yes |
+  | Name-based `ChannelSubscriber<T>` | No |
+  | Name-based `ChannelSubscriber<Tensor>` | No |
+  | Name-based tensor-schema subscriber | No |
+
+  On a name-based endpoint a replaced producer is indistinguishable from an idle
+  one, and the wait reports `kTimeout`.
+</Note>
+
+<Warning>
+  **Event wake is a creation-time property.** A subscriber built with
+  `ChannelOptions::enable_event_wake` left at its default `false` has no kernel
+  event lane, and a wait on it reports `kNotSupported` rather than silently
+  falling back to polling. Catalog-attached endpoints always admit event wake,
+  so a client that attaches through a catalog — as every example here does —
+  needs no option. Signatures may change between early-access releases.
+</Warning>
+
 ## Publishing Tensors from outside a graph
 
 A standalone client can also publish `Tensor` payloads. Instead of emitting a
@@ -252,6 +491,8 @@ CUDA-device memory, with bounded staging where the declared placement
 requires it; creating catalog Tensor endpoints requires an available CUDA
 device even for host-pageable backing; and the receiving process materializes
 a **read-only** Tensor — a consumer that must mutate has to copy.
+The raw-Tensor wire descriptor is SDK-private during early access, so its
+standalone and graph processes must use matching Holoscan SDK builds.
 
 ## Recap
 
@@ -259,16 +500,26 @@ a **read-only** Tensor — a consumer that must mutate has to copy.
   outlive every publisher, subscriber, and received Tensor created from it.
 - The endpoint catalog is the contract: `load_json` what a Graph saved, or
   author one with `ChannelEndpointCatalog::builder(...)` + `build()`.
+- Ordinary scalar, POD, and serialized-schema frames share the 32,768-byte
+  fixed-inline ceiling, including catalog attribution and schema framing.
 - `create_publisher<T>` / `create_subscriber<T>` attach by endpoint name;
   identity traits (POD name/version/layout, schema identity) must match the
   graph side exactly — identity is pinned, never negotiated.
-- `emit_sample` / `emit_captured` publish; `receive_sample` polls. Retry
-  `kNotReady` / `kBackpressured` with a deadline; never retry
-  `kPublicationPartial` or `kPublicationIndeterminate`. Signal EOS explicitly
-  with `close()`.
+- `emit_sample` / `emit_captured` publish; `receive_sample` takes what is
+  already queued and `wait_and_receive_sample` blocks on the event lane until
+  an absolute deadline. Retry `kNotReady` / `kBackpressured` with a deadline;
+  never retry `kPublicationPartial` or `kPublicationIndeterminate`. Signal EOS
+  explicitly with `close()`.
+- When the catalog requires monitored capture-clock health, publish ordered
+  `ClockHealthReport` transitions; a preceding report is applied before the
+  following data operation for scalar, raw-Tensor, and descriptor-schema
+  publishers alike.
 - `loan_tensor` borrows endpoint-owned storage for external Tensor
   publication; cross-process Tensors may be host-pageable, pinned-host, or
   CUDA-device backed, and are always read-only on import.
+- Descriptor-backed schemas use `create_tensor_schema_publisher` /
+  `create_tensor_schema_subscriber`; their FlatBuffer envelope carries
+  metadata and descriptors while Tensor data remains handle-backed.
 - Use standalone clients for daemons, recorders, and bridges — never inside
   a graph, where `add_flow()` and `import_topic`/`export_topic` are the only
   vocabulary.

@@ -6,11 +6,18 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "artifact_test_support.hpp"
+#include "core/diagnostic_registry.hpp"
 #include "physical_plan_test_support.hpp"
 
 // GTest fatal assertions establish optional preconditions that clang-tidy does not model.
@@ -19,6 +26,383 @@ namespace holoscan::detail {
 namespace {
 
 using namespace physical_plan_test;
+
+class DescriptorTensorArtifactSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .tensor_field(TensorFieldSelector<schema::ImageT>{4U, 0U})
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U,
+                               .strides = TensorStridePolicy::kContiguousOnly},
+            .bounds = tensor_bounds(128U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  expected<void, Error> compute([[maybe_unused]] ExecutionContext&) override { return {}; }
+
+  Output<schema::ImageT> output;
+};
+
+TEST(CompilePhysicalPlanArtifact, NormalizesEmptyLargeAndMalformedJsonWithoutOutOfBoundsAccess) {
+  EXPECT_TRUE(artifact_test::normalized_artifact_json({}).empty());
+
+  // Key setup: reserve enough output storage to force the same heap-backed path as real plan
+  // artifacts before the normalizer sees its first non-whitespace byte.
+  const std::string payload(48'027U, 'x');
+  const std::string compact = "{\"payload\":\"" + payload + "\"}";
+  const std::string expected = "{\n  \"payload\": \"" + payload + "\"\n}\n";
+
+  // Key assertion: empty input is explicit and a large first-token object is formatted exactly.
+  EXPECT_EQ(artifact_test::normalized_artifact_json(compact), expected);
+
+  // Key setup: start malformed input with an unmatched closing delimiter before an indentation
+  // point that would expose an unsigned depth wrap.
+  constexpr std::string_view kUnmatchedClose{"},"};
+  // Key assertion: malformed test input remains bounded instead of requesting SIZE_MAX padding.
+  EXPECT_EQ(artifact_test::normalized_artifact_json(kUnmatchedClose), "},\n\n");
+}
+
+template <typename Enum>
+[[nodiscard]] Enum unknown_enum() noexcept {
+  using Underlying = std::underlying_type_t<Enum>;
+  // Deliberately construct a defensive-deserialization case that typed authoring cannot express.
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+  return static_cast<Enum>(std::numeric_limits<Underlying>::max());
+}
+
+[[nodiscard]] OperatorCompletionPlanRecord completion_rule(const OperatorInstanceId owner,
+                                                           const PlanGenerationId plan_generation,
+                                                           const std::uint64_t limit) {
+  return OperatorCompletionPlanRecord{
+      .owner = {.id = owner, .plan_generation = plan_generation, .run_generation = 0U},
+      .kind = OperatorCompletionRuleKind::kComputeCalls,
+      .limit = limit,
+  };
+}
+
+[[nodiscard]] TemporalTriggerPlanRecord completion_trigger(
+    const OperatorInstanceId owner, const PlanGenerationId plan_generation,
+    const TemporalRecordTriggerKind kind = TemporalRecordTriggerKind::kNotified) {
+  return TemporalTriggerPlanRecord{
+      .owner = {.id = owner, .plan_generation = plan_generation, .run_generation = 0U},
+      .kind = kind,
+      .origin = TemporalRecordOrigin::kAuthored,
+      .readiness_source = make_source_id(owner),
+      .trigger_clock = kind == TemporalRecordTriggerKind::kClock ? ClockId{1U} : ClockId{},
+      .reference_clock = ClockId{1U},
+      .period_ns = kind == TemporalRecordTriggerKind::kClock ? 1000 : 0,
+      .bounded_state_capacity = 1U,
+      .witness_identity = "holoscan.temporal.witness.v1/completion-fixture",
+      .replay_identity = "holoscan.temporal.replay.v1/decision",
+  };
+}
+
+[[nodiscard]] ReadinessPlanRecord completion_readiness(
+    const OperatorInstanceId owner, const PlanGenerationId plan_generation,
+    const ReadinessSourceKind kind = ReadinessSourceKind::kNotification) {
+  return ReadinessPlanRecord{
+      .source_id = make_source_id(owner),
+      .plan_generation = plan_generation,
+      .owner = VertexId{owner},
+      .owner_path = "fixture/completion-" + std::to_string(owner),
+      .kind = kind,
+      .name = "completion-source",
+      .resolved_clock = ClockId{1U},
+      .requested_capacity = 2U,
+      .requested_sender_reference_capacity = 1U,
+      .accepted_capacity = 2U,
+      .accepted_sender_reference_capacity = 1U,
+      .referenced = true,
+      .materialized = true,
+      .initial_source_generation = 1U,
+  };
+}
+
+void add_valid_completion_rules(ExecutionPlanState& state, const std::uint64_t first_limit,
+                                const std::uint64_t second_limit) {
+  state.operator_completion_rules = {
+      completion_rule(1U, state.plan_generation, first_limit),
+      completion_rule(2U, state.plan_generation, second_limit),
+  };
+  state.temporal_triggers = {
+      completion_trigger(1U, state.plan_generation),
+      completion_trigger(2U, state.plan_generation),
+  };
+  state.readiness = {
+      completion_readiness(1U, state.plan_generation),
+      completion_readiness(2U, state.plan_generation),
+  };
+}
+
+void add_valid_rate_records(ExecutionPlanState& state) {
+  state.port_rates.clear();
+  state.port_rates.reserve(state.ports.size());
+  for (const auto& port : state.ports) {
+    const bool is_fixed_source = port.id == PortId(1U);
+    state.port_rates.push_back(PortRatePlanRecord{
+        .port = port.id,
+        .kind = is_fixed_source ? PortRateKind::kFixedNominal : PortRateKind::kUnspecified,
+        .declared_nominal_rate = is_fixed_source ? std::make_optional(Rate::hz(60U)) : std::nullopt,
+        .disposition = PlanDisposition::kAccepted,
+    });
+  }
+  state.accumulation_horizons.clear();
+  if (!state.payload_edges.empty()) {
+    const auto target =
+        std::ranges::find(state.ports, state.payload_edges.front().target, &PortPlanRecord::id);
+    ASSERT_NE(target, state.ports.end());
+    const auto trigger_owner = static_cast<OperatorInstanceId>(target->owner.value);
+    state.temporal_triggers = {TemporalTriggerPlanRecord{
+        .owner = {.id = trigger_owner,
+                  .plan_generation = state.plan_generation,
+                  .run_generation = 0U},
+        .kind = TemporalRecordTriggerKind::kClock,
+        .origin = TemporalRecordOrigin::kAuthored,
+        .trigger_clock = ClockId{1U},
+        .reference_clock = ClockId{1U},
+        .period_ns = 1'000'000'000,
+        .bounded_state_capacity = 1U,
+        .witness_identity = "holoscan.temporal.witness.v1/rate-fixture",
+        .replay_identity = "holoscan.temporal.replay.v1/decision",
+    }};
+    state.accumulation_horizons.push_back(AccumulationHorizonPlanRecord{
+        .id = HorizonRecordId{1U},
+        .edge = state.payload_edges.front().edge,
+        .horizon = ExactDuration{.numerator_ns = 1'000'000'000U, .denominator = 1U},
+        .origin = AccumulationHorizonOrigin::kClockPeriod,
+        .source_record = static_cast<std::uint32_t>(trigger_owner)});
+  }
+  state.hard_floor_contributors.clear();
+  state.queue_sizing_recipes.clear();
+  for (std::size_t index = 0U; index < state.payload_edges.size(); ++index) {
+    const auto& edge = state.payload_edges[index];
+    const std::uint32_t id = static_cast<std::uint32_t>(index + 1U);
+    state.hard_floor_contributors.push_back(
+        HardFloorContributorPlanRecord{.id = HardFloorContributorId{id},
+                                       .edge = edge.edge,
+                                       .origin = HardFloorOrigin::kMinimumQueue,
+                                       .required_slots = 1U,
+                                       .scenario = HardFloorScenarioId{id},
+                                       .alternative_group = HardFloorAlternativeGroupId{id}});
+    state.queue_sizing_recipes.push_back(QueueSizingRecipePlanRecord{
+        .id = QueueSizingRecipeId{id},
+        .edge = edge.edge,
+        .origin = index == 0U ? QueueDepthOrigin::kRateAndContractDerived
+                              : QueueDepthOrigin::kAddFlowOption,
+        .explicit_depth =
+            index == 0U ? std::nullopt : std::optional<std::uint32_t>{edge.queue_depth},
+        .headroom_ratio = RateRatio{2U, 1U},
+        .reuse_policy = ProviderReusePolicy::kCompatibleExactOrLarger,
+        .disposition = PlanDisposition::kAccepted});
+  }
+}
+
+void use_valid_window_rate_horizon(ExecutionPlanState& state) {
+  ASSERT_EQ(state.temporal_triggers.size(), 1U);
+  ASSERT_EQ(state.accumulation_horizons.size(), 1U);
+  ASSERT_FALSE(state.payload_edges.empty());
+  auto& trigger = state.temporal_triggers.front();
+  trigger.kind = TemporalRecordTriggerKind::kWindow;
+  trigger.trigger_input = state.payload_edges.front().target;
+  trigger.period_ns = 0;
+  auto& horizon = state.accumulation_horizons.front();
+  ASSERT_TRUE(horizon.horizon.has_value());
+  horizon.origin = AccumulationHorizonOrigin::kTemporalWindowBound;
+  state.window_triggers = {WindowTriggerPlanRecord{
+      .owner = trigger.owner,
+      .anchor = trigger.trigger_input,
+      .wait_clock = trigger.trigger_clock,
+      .capability_evidence_id = "holoscan.clock.realtime.v1",
+      .max_wait_ns = static_cast<std::int64_t>(horizon.horizon->numerator_ns),
+      .max_pending_windows = 1U,
+      .presence_guaranteed_inputs = {trigger.trigger_input},
+      .primed_witness_identity = "holoscan.temporal.window-primed.v1",
+      .open_witness_identity = "holoscan.temporal.window-open.v1",
+      .close_witness_identity = "holoscan.temporal.window-close.v1",
+      .timeout_witness_identity = "holoscan.temporal.window-timeout.v1",
+      .pending_limit_witness_identity = "holoscan.temporal.window-pending-limit.v1",
+      .end_of_stream_witness_identity = "holoscan.temporal.window-end-of-stream.v1",
+      .timestamp_regression_witness_identity = "holoscan.temporal.window-timestamp-regression.v1",
+      .cancelled_witness_identity = "holoscan.temporal.window-cancelled.v1",
+      .producer_epoch_identity_schema = "holoscan.producer-epoch.v1",
+  }};
+}
+
+void use_valid_predicate_clock_rate_horizon(ExecutionPlanState& state) {
+  ASSERT_EQ(state.temporal_triggers.size(), 1U);
+  ASSERT_EQ(state.accumulation_horizons.size(), 1U);
+  auto& trigger = state.temporal_triggers.front();
+  trigger.kind = TemporalRecordTriggerKind::kPredicate;
+  auto& horizon = state.accumulation_horizons.front();
+  horizon.origin = AccumulationHorizonOrigin::kClockPeriod;
+  state.predicate_triggers = {PredicateTriggerPlanRecord{
+      .id = "predicate/rate-fixture",
+      .owner = trigger.owner,
+      .graph_generation = state.plan_generation,
+      .identity = "rate-fixture",
+      .source = PredicateEvaluationSourceKind::kClock,
+      .clock = trigger.trigger_clock,
+      .period_ns = trigger.period_ns,
+  }};
+}
+
+static_assert(std::is_standard_layout_v<OperatorCompletionPlanRecord>);
+static_assert(std::is_trivially_copyable_v<OperatorCompletionPlanRecord>);
+
+// The pointer-free value record participates in plan equality by all three semantic fields.
+// REQ: CONTRACT-020
+TEST(CompilePhysicalPlanArtifact, OperatorCompletionRecordEqualityIncludesOwnerKindAndLimit) {
+  const OperatorCompletionPlanRecord baseline = completion_rule(3U, PlanGenerationId{7U}, 11U);
+  EXPECT_EQ(baseline, completion_rule(3U, PlanGenerationId{7U}, 11U));
+
+  auto changed_owner = baseline;
+  changed_owner.owner.id = OperatorInstanceId{4U};
+  EXPECT_NE(baseline, changed_owner);
+
+  auto changed_kind = baseline;
+  changed_kind.kind = unknown_enum<OperatorCompletionRuleKind>();
+  EXPECT_NE(baseline, changed_kind);
+
+  auto changed_limit = baseline;
+  changed_limit.limit = 12U;
+  EXPECT_NE(baseline, changed_limit);
+}
+
+// Completion policy is a separate pointer-free physical-plan record family. It participates in
+// canonical JSON and plan identity without extending the temporal-record v1 schema.
+// REQ: CONTRACT-020
+TEST(CompilePhysicalPlanArtifact, SerializesOperatorCompletionRulesCanonically) {
+  auto rule_free = physical_artifact_state();
+  const auto rule_free_finalized = finalize_plan_artifact(rule_free);
+  ASSERT_TRUE(rule_free_finalized) << rule_free_finalized.error().message;
+  EXPECT_EQ(rule_free.json.find("\"operator_completion_rules\""), std::string::npos)
+      << rule_free.json;
+
+  // Clock sources are synthesized by temporal lowering and therefore deliberately own no
+  // ReadinessPlanRecord. The graph/factory-free fixture still resolves the logical owner through
+  // its retained physical-port projection.
+  auto clock = physical_artifact_state();
+  clock.operator_completion_rules = {completion_rule(1U, clock.plan_generation, 3U)};
+  clock.temporal_triggers = {
+      completion_trigger(1U, clock.plan_generation, TemporalRecordTriggerKind::kClock)};
+  const auto clock_finalized = finalize_plan_artifact(clock);
+  ASSERT_TRUE(clock_finalized) << clock_finalized.error().message;
+  EXPECT_TRUE(clock.readiness.empty());
+
+  auto maximum = physical_artifact_state();
+  add_valid_completion_rules(maximum, std::numeric_limits<std::uint64_t>::max(), 0U);
+  auto changed = maximum;
+  changed.operator_completion_rules.front().limit--;
+
+  const auto maximum_finalized = finalize_plan_artifact(maximum);
+  const auto changed_finalized = finalize_plan_artifact(changed);
+  ASSERT_TRUE(maximum_finalized) << maximum_finalized.error().message;
+  ASSERT_TRUE(changed_finalized) << changed_finalized.error().message;
+
+  constexpr std::string_view kCanonicalGolden =
+      "\"operator_completion_rules\":[{\"kind\":0,\"limit\":18446744073709551615,"
+      "\"owner\":{\"id\":1,\"plan_generation\":71,\"run_generation\":0}},{\"kind\":0,"
+      "\"limit\":0,\"owner\":{\"id\":2,\"plan_generation\":71,\"run_generation\":0}}]";
+  EXPECT_NE(maximum.json.find(kCanonicalGolden), std::string::npos) << maximum.json;
+  EXPECT_EQ(maximum.json.find("\"limit\":-1"), std::string::npos) << maximum.json;
+  EXPECT_NE(maximum.digest, changed.digest);
+  EXPECT_NE(maximum.json, changed.json);
+}
+
+// Malformed completion records are rejected before serialization: the owner must be a current
+// plan-bound logical zero-input producer with output, kind must be recognized, records must be
+// unique and canonical, and each rule must have exactly one matching authored source trigger.
+// REQ: CONTRACT-020
+TEST(CompilePhysicalPlanArtifact, RejectsMalformedOperatorCompletionRulesBeforeSerialization) {
+  const auto expect_rejection = [](auto mutate) {
+    auto candidate = physical_artifact_state();
+    add_valid_completion_rules(candidate, 3U, 5U);
+    mutate(candidate);
+
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "OPERATOR_COMPLETION_PLAN_INVALID");
+    EXPECT_TRUE(candidate.json.empty());
+  };
+
+  expect_rejection([](auto& state) {
+    state.operator_completion_rules.front().kind = unknown_enum<OperatorCompletionRuleKind>();
+  });
+  expect_rejection(
+      [](auto& state) { state.operator_completion_rules.front().owner = OperatorRef{}; });
+  expect_rejection(
+      [](auto& state) { state.operator_completion_rules.front().owner.run_generation = 1U; });
+  expect_rejection(
+      [](auto& state) { --state.operator_completion_rules.front().owner.plan_generation; });
+  expect_rejection([](auto& state) { state.operator_completion_rules.front().owner.id = 999U; });
+  expect_rejection([](auto& state) {
+    state.operator_completion_rules = {state.operator_completion_rules.front(),
+                                       state.operator_completion_rules.front()};
+  });
+  expect_rejection([](auto& state) {
+    std::swap(state.operator_completion_rules[0], state.operator_completion_rules[1]);
+  });
+  expect_rejection([](auto& state) { state.temporal_triggers.pop_back(); });
+  expect_rejection(
+      [](auto& state) { state.temporal_triggers.push_back(state.temporal_triggers.front()); });
+  expect_rejection([](auto& state) {
+    state.temporal_triggers.front().kind = TemporalRecordTriggerKind::kAnyInput;
+  });
+  expect_rejection([](auto& state) {
+    state.temporal_triggers.front().origin = TemporalRecordOrigin::kCoreSynthesized;
+  });
+  expect_rejection(
+      [](auto& state) { state.temporal_triggers.front().readiness_source = SourceId{}; });
+  expect_rejection([](auto& state) { --state.temporal_triggers.front().owner.plan_generation; });
+  expect_rejection([](auto& state) {
+    auto input = state.ports[2];
+    input.id = PortId{8U};
+    input.owner = VertexId{1U};
+    state.ports.push_back(std::move(input));
+    state.port_rates.push_back(PortRatePlanRecord{
+        .port = PortId{8U},
+        .kind = PortRateKind::kUnspecified,
+        .disposition = PlanDisposition::kAccepted,
+    });
+  });
+  expect_rejection([](auto& state) {
+    state.operator_completion_rules = {completion_rule(3U, state.plan_generation, 3U)};
+    state.temporal_triggers = {completion_trigger(3U, state.plan_generation)};
+  });
+}
+
+// Physical completion triggers must resolve exactly one plan-current readiness record. Source
+// identity alone is insufficient: the record must belong to the resolved Operator vertex, match
+// the trigger family, and be both referenced and materialized.
+// REQ: CONTRACT-020
+TEST(CompilePhysicalPlanArtifact, RejectsMalformedCompletionReadinessSourceBeforeSerialization) {
+  const auto expect_rejection = [](auto mutate) {
+    auto candidate = physical_artifact_state();
+    add_valid_completion_rules(candidate, 3U, 5U);
+    mutate(candidate);
+
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "OPERATOR_COMPLETION_PLAN_INVALID");
+    EXPECT_TRUE(candidate.json.empty());
+  };
+
+  expect_rejection([](auto& state) { state.readiness.pop_back(); });
+  expect_rejection([](auto& state) { state.readiness.push_back(state.readiness.front()); });
+  expect_rejection([](auto& state) { state.readiness.front().source_id = make_source_id(999U); });
+  expect_rejection([](auto& state) { state.readiness.front().owner = VertexId{2U}; });
+  expect_rejection(
+      [](auto& state) { state.readiness.front().kind = ReadinessSourceKind::kReadable; });
+  expect_rejection([](auto& state) { --state.readiness.front().plan_generation; });
+  expect_rejection([](auto& state) { state.readiness.front().referenced = false; });
+  expect_rejection([](auto& state) { state.readiness.front().materialized = false; });
+}
 
 // The Graph snapshot must deep-copy exact construction evidence rather than infer it from a POD
 // layout or generated schema identity. Constructor-only POD publication remains admitted through
@@ -114,6 +498,7 @@ TEST(CompilePhysicalPlanArtifact, PublishesCanonicalSchemaPackageProvenance) {
 // REQ: COMPILE-009
 // REQ: COMPILE-040
 // REQ: COMPILE-048
+// REQ: COMPILE-064
 TEST(CompilePhysicalPlanArtifact, SerializesEveryPublicPhysicalFamilyAndSemanticFieldCanonically) {
   auto first = physical_artifact_state();
   auto second = physical_artifact_state();
@@ -157,6 +542,7 @@ TEST(CompilePhysicalPlanArtifact, SerializesEveryPublicPhysicalFamilyAndSemantic
     EXPECT_EQ(left.max_subscriber_borrowed_samples, right.max_subscriber_borrowed_samples);
     EXPECT_EQ(left.publisher_history_depth, right.publisher_history_depth);
     EXPECT_EQ(left.event_wake, right.event_wake);
+    EXPECT_EQ(left.event_wake_reason, right.event_wake_reason);
   }
   for (std::size_t index = 0U; index < first.process_local_channel_publishers.size(); ++index) {
     const auto& left = first.process_local_channel_publishers[index];
@@ -187,6 +573,8 @@ TEST(CompilePhysicalPlanArtifact, SerializesEveryPublicPhysicalFamilyAndSemantic
   ASSERT_FALSE(first.imported_generation_capacities.empty());
   ASSERT_FALSE(first.tensor_transfer_plans.empty());
   ASSERT_FALSE(first.pool_capacity_contributors.empty());
+  ASSERT_FALSE(first.pool_capacity_dependencies.empty());
+  ASSERT_FALSE(first.provider_allocation_plans.empty());
   ASSERT_FALSE(first.publication_outcomes.empty());
   ASSERT_FALSE(first.aligned_triggers.empty());
   ASSERT_FALSE(first.clock_triggers.empty());
@@ -208,6 +596,10 @@ TEST(CompilePhysicalPlanArtifact, SerializesEveryPublicPhysicalFamilyAndSemantic
   ASSERT_TRUE(second_finalized) << second_finalized.error().message;
   EXPECT_EQ(first.digest, second.digest);
   EXPECT_EQ(first.json, second.json);
+  EXPECT_NE(first.json.find("\"role\":\"external_boundary\",\"representation\":"),
+            std::string::npos);
+  EXPECT_NE(first.json.find("\"memory_conversion\":1"), std::string::npos);
+  EXPECT_NE(first.json.find("\"origins\":{\"memory_kind\":\"absent\""), std::string::npos);
 
   constexpr std::array required_tokens{
       "\"ports\"",
@@ -225,6 +617,8 @@ TEST(CompilePhysicalPlanArtifact, SerializesEveryPublicPhysicalFamilyAndSemantic
       "\"imported_generation_capacities\"",
       "\"tensor_transfer_plans\"",
       "\"pool_capacity_contributors\"",
+      "\"pool_capacity_dependencies\"",
+      "\"provider_allocation_plans\"",
       "\"publication_outcomes\"",
       "\"aligned_triggers\"",
       "\"clock_triggers\"",
@@ -270,10 +664,12 @@ TEST(CompilePhysicalPlanArtifact, SerializesEveryPublicPhysicalFamilyAndSemantic
       "\"publisher_loan_capacity\"",
       "\"stream_id\"",
       "\"fused_linear_edges\"",
+      "\"cuda_compute_streams\"",
+      "\"cuda_green_context_assignments\"",
+      "\"cuda_green_context_pools\"",
+      "\"cuda_green_context_requests\"",
+      "\"cuda_green_context_resources\"",
       "\"pool_count\"",
-      "\"per_partition_stream\"",
-      "\"per_partition_event\"",
-      "\"per_partition_green_context\"",
       "\"gpu_resident_backend_selected\"",
       "\"fixed_record_bucket_id\"",
       "\"fixed_record_bucket_bytes\"",
@@ -323,6 +719,61 @@ TEST(CompilePhysicalPlanArtifact, SerializesEveryPublicPhysicalFamilyAndSemantic
   }
 }
 
+// REQ: COMPILE-009
+// REQ: COMPILE-040
+TEST(CompilePhysicalPlanArtifact, PreservesDescriptorTensorServiceFieldProvenance) {
+  constexpr TensorFieldSelector<schema::ImageT> kImageData{4U, 0U};
+  DescriptorTensorTopicContract<schema::ImageT> tensors;
+  tensors.field(kImageData,
+                TensorBoundaryContract{
+                    .representation = {.memory_kind = MemoryKind::kHost,
+                                       .dtype = DLDataType{kDLUInt, 8U, 1U},
+                                       .rank = 1U,
+                                       .strides = TensorStridePolicy::kContiguousOnly},
+                    .bounds = tensor_bounds(128U),
+                    .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                                         InterfaceTensorEmitPolicy::kCopyIfNeeded},
+                });
+
+  // Key setup: compile a descriptor-backed external topic whose service record carries authored
+  // field origins into the complete diagnostic artifact.
+  Graph graph{"descriptor-service-field-provenance"};
+  test::add_compile_test_default_clock(graph);
+  auto exported = graph.export_topic<schema::ImageT>(
+      "holomq://descriptor-service-field-provenance", TopicOptions{}, std::move(tensors));
+  const auto source = graph.op<DescriptorTensorArtifactSource>("source");
+  graph.add_flow(source->output, exported.input());
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_FALSE(plan.channel_services().empty());
+  ASSERT_FALSE(plan.channel_services().front().tensor_fields.empty());
+
+  // Key assertion: complete-artifact channel service fields retain their contract origins.
+  const auto services_begin = plan.json().find("\"channel_services\":");
+  const auto services_end = plan.json().find(",\"channel_subscribers\":", services_begin);
+  ASSERT_NE(services_begin, std::string::npos);
+  ASSERT_NE(services_end, std::string::npos);
+  const std::string_view services_json =
+      plan.json().substr(services_begin, services_end - services_begin);
+  EXPECT_NE(services_json.find("\"origins\":{\"memory_kind\":"), std::string::npos)
+      << services_json;
+
+  const auto retained = ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(retained);
+  auto provenance_variant = std::make_shared<ExecutionPlanState>(*retained);
+  provenance_variant->channel_services.front().tensor_fields.front().tensor.origins.memory_kind =
+      TensorContractValueOrigin::kDefaultedBoundary;
+  const auto finalized = finalize_plan_artifact(*provenance_variant);
+  ASSERT_TRUE(finalized) << finalized.error().message;
+
+  // Key assertion: changing only diagnostic field provenance changes complete JSON but cannot
+  // perturb the semantic execution-plan identity.
+  EXPECT_EQ(provenance_variant->digest, plan.digest());
+  EXPECT_NE(provenance_variant->json, plan.json());
+  EXPECT_NE(provenance_variant->json.find("\"memory_kind\":\"defaulted_boundary\""),
+            std::string::npos);
+}
+
 // Package provenance may honestly differ between processes that use the same pinned schema
 // identity. The public diagnostic artifact must show that difference while the semantic plan
 // digest remains stable.
@@ -351,14 +802,389 @@ TEST(CompilePhysicalPlanArtifact, SchemaPackageEvidenceDoesNotEnterSemanticDiges
             std::string::npos);
 }
 
+// Task041's immutable declaration, canonical horizon/trigger projection, hard-floor, and recipe
+// records are all semantic plan authorities. Each valid authority change must perturb the
+// private-v4 artifact identity.
+// REQ: COMPILE-069
+TEST(CompilePhysicalPlanArtifact, RateRecipeFamiliesPerturbSemanticIdentity) {
+  auto baseline = physical_artifact_state();
+  add_valid_rate_records(baseline);
+  const auto baseline_finalized = finalize_plan_artifact(baseline);
+  ASSERT_TRUE(baseline_finalized) << baseline_finalized.error().message;
+
+  const auto expect_change = [&](auto mutate) {
+    auto candidate = physical_artifact_state();
+    add_valid_rate_records(candidate);
+    mutate(candidate);
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_TRUE(finalized) << finalized.error().message;
+    EXPECT_NE(candidate.digest, baseline.digest);
+    EXPECT_NE(candidate.json, baseline.json);
+  };
+
+  expect_change(
+      [](auto& state) { state.port_rates.front().declared_nominal_rate = Rate::hz(61U); });
+  expect_change([](auto& state) {
+    ASSERT_TRUE(state.accumulation_horizons.front().horizon.has_value());
+    state.accumulation_horizons.front().horizon->numerator_ns = 999'999'999U;
+    state.temporal_triggers.front().period_ns = 999'999'999;
+  });
+  expect_change([](auto& state) { ++state.hard_floor_contributors.front().required_slots; });
+  expect_change(
+      [](auto& state) { state.queue_sizing_recipes.front().headroom_ratio = RateRatio{3U, 2U}; });
+
+  EXPECT_NE(baseline.json.find("\"declared_expected_rate\":null"), std::string::npos);
+  EXPECT_NE(baseline.json.find("\"follows_input\":null"), std::string::npos);
+  EXPECT_NE(baseline.json.find("\"inverse_rate_port\":null"), std::string::npos);
+  EXPECT_NE(baseline.json.find("\"explicit_depth\":null"), std::string::npos);
+  EXPECT_NE(baseline.json.find("\"latest_binding_stage\":null"), std::string::npos);
+}
+
+// Private-v4 rate records fail closed before malformed values can enter the digest preimage.
+// REQ: COMPILE-069
+TEST(CompilePhysicalPlanArtifact, RejectsMalformedRateRecipeRecordsBeforeSerialization) {
+  const auto expect_rejection = [](auto mutate) {
+    auto candidate = physical_artifact_state();
+    add_valid_rate_records(candidate);
+    mutate(candidate);
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "RATE_PLAN_RECORDS_INVALID");
+    EXPECT_TRUE(candidate.json.empty());
+  };
+
+  expect_rejection([](auto& state) { state.port_rates.front().port = PortId{}; });
+  expect_rejection([](auto& state) { state.port_rates.pop_back(); });
+  expect_rejection([](auto& state) { state.port_rates.front().declared_nominal_rate.reset(); });
+  expect_rejection([](auto& state) {
+    state.port_rates[2U] = PortRatePlanRecord{
+        .port = state.ports[2U].id,
+        .kind = PortRateKind::kFixedNominal,
+        .declared_nominal_rate = Rate::hz(60U),
+        .disposition = PlanDisposition::kAccepted,
+    };
+  });
+  expect_rejection([](auto& state) {
+    ASSERT_TRUE(state.accumulation_horizons.front().horizon.has_value());
+    state.accumulation_horizons.front().horizon->denominator = 0U;
+  });
+  expect_rejection([](auto& state) {
+    state.accumulation_horizons.front().inverse_rate_port = state.payload_edges.front().target;
+  });
+  expect_rejection([](auto& state) {
+    state.accumulation_horizons.front().horizon.reset();
+    state.accumulation_horizons.front().inverse_rate_port.reset();
+  });
+  expect_rejection([](auto& state) { state.accumulation_horizons.front().source_record = 0U; });
+  expect_rejection([](auto& state) { ++state.accumulation_horizons.front().source_record; });
+  expect_rejection([](auto& state) {
+    state.accumulation_horizons.front().origin = AccumulationHorizonOrigin::kTemporalWindowBound;
+  });
+  expect_rejection([](auto& state) {
+    state.accumulation_horizons.front().origin = AccumulationHorizonOrigin::kExternalCadence;
+  });
+  expect_rejection([](auto& state) {
+    state.temporal_triggers.front().kind = TemporalRecordTriggerKind::kEach;
+    state.temporal_triggers.front().trigger_input = state.payload_edges.front().target;
+  });
+  expect_rejection([](auto& state) { ++state.temporal_triggers.front().period_ns; });
+  expect_rejection([](auto& state) {
+    state.accumulation_horizons.front().origin = AccumulationHorizonOrigin::kDriverInterarrival;
+  });
+  expect_rejection([](auto& state) { state.hard_floor_contributors.front().required_slots = 0U; });
+  expect_rejection(
+      [](auto& state) { state.queue_sizing_recipes.front().headroom_ratio = RateRatio{1U, 2U}; });
+  expect_rejection([](auto& state) { state.queue_sizing_recipes.pop_back(); });
+  expect_rejection([](auto& state) { state.hard_floor_contributors.pop_back(); });
+
+  auto retained_drain_all = physical_artifact_state();
+  add_valid_rate_records(retained_drain_all);
+  ASSERT_FALSE(retained_drain_all.payload_edges.empty());
+  const auto& edge = retained_drain_all.payload_edges.front();
+  retained_drain_all.input_selections.push_back(InputSelectionPlanRecord{
+      .input = edge.target,
+      .selector = InputSelectorKind::kDrainAll,
+      .cardinality = InputSelectionCardinality::kSampleBatch,
+      .max_selected_samples = edge.queue_depth,
+      .max_selected_samples_origin = SelectedSampleBoundOrigin::kResolvedRetainedCapacity,
+      .batch_selection_mode = BatchSelectionMode::kConsumeSelected,
+      .cache_capacity = edge.queue_depth,
+  });
+  const auto retained_drain_all_finalized = finalize_plan_artifact(retained_drain_all);
+  ASSERT_TRUE(retained_drain_all_finalized) << retained_drain_all_finalized.error().message;
+
+  retained_drain_all.hard_floor_contributors.push_back(HardFloorContributorPlanRecord{
+      .id = HardFloorContributorId{static_cast<std::uint32_t>(
+          retained_drain_all.hard_floor_contributors.size() + 1U)},
+      .edge = edge.edge,
+      .origin = HardFloorOrigin::kSelectorRetention,
+      .required_slots = edge.queue_depth,
+      .scenario = HardFloorScenarioId{17U},
+      .alternative_group = HardFloorAlternativeGroupId{17U},
+  });
+  retained_drain_all.json.clear();
+  const auto circular_floor_finalized = finalize_plan_artifact(retained_drain_all);
+  ASSERT_FALSE(circular_floor_finalized);
+  EXPECT_EQ(circular_floor_finalized.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(circular_floor_finalized.error().message, "RATE_PLAN_RECORDS_INVALID");
+  EXPECT_TRUE(retained_drain_all.json.empty());
+}
+
+// A private-v4 horizon is accepted only when it is an exact projection of the destination
+// operator's canonical clock, predicate clock, window, or OnEach trigger.
+// REQ: COMPILE-069
+TEST(CompilePhysicalPlanArtifact, AcceptsCanonicalRateHorizonTriggerProvenance) {
+  auto clock = physical_artifact_state();
+  add_valid_rate_records(clock);
+  const auto clock_finalized = finalize_plan_artifact(clock);
+  ASSERT_TRUE(clock_finalized) << clock_finalized.error().message;
+
+  auto window = physical_artifact_state();
+  add_valid_rate_records(window);
+  use_valid_window_rate_horizon(window);
+  const auto window_finalized = finalize_plan_artifact(window);
+  ASSERT_TRUE(window_finalized) << window_finalized.error().message;
+
+  auto predicate_clock = physical_artifact_state();
+  add_valid_rate_records(predicate_clock);
+  use_valid_predicate_clock_rate_horizon(predicate_clock);
+  const auto predicate_clock_finalized = finalize_plan_artifact(predicate_clock);
+  ASSERT_TRUE(predicate_clock_finalized) << predicate_clock_finalized.error().message;
+
+  auto inverse = physical_artifact_state();
+  add_valid_rate_records(inverse);
+  auto& inverse_record = inverse.accumulation_horizons.front();
+  inverse_record.horizon.reset();
+  inverse_record.inverse_rate_port = inverse.payload_edges.front().target;
+  inverse_record.origin = AccumulationHorizonOrigin::kProducerInterarrival;
+  auto& inverse_trigger = inverse.temporal_triggers.front();
+  inverse_trigger.kind = TemporalRecordTriggerKind::kEach;
+  inverse_trigger.trigger_clock = ClockId{};
+  inverse_trigger.period_ns = 0;
+  inverse_trigger.trigger_input = inverse_record.inverse_rate_port.value();
+  const auto inverse_finalized = finalize_plan_artifact(inverse);
+  ASSERT_TRUE(inverse_finalized) << inverse_finalized.error().message;
+}
+
+// A periodic duration is not attributable without the exact clock identity that owns it.
+// REQ: COMPILE-069
+TEST(CompilePhysicalPlanArtifact, RejectsClockHorizonWithoutTriggerClock) {
+  auto candidate = physical_artifact_state();
+  add_valid_rate_records(candidate);
+  candidate.temporal_triggers.front().trigger_clock = ClockId{};
+
+  const auto finalized = finalize_plan_artifact(candidate);
+  ASSERT_FALSE(finalized);
+  EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(finalized.error().message, "RATE_PLAN_RECORDS_INVALID");
+  EXPECT_TRUE(candidate.json.empty());
+}
+
+// A window horizon joins the exact WindowTriggerPlanRecord that owns max_wait_ns. A generic
+// kWindow trigger alone cannot authorize a duration because its period_ns is intentionally zero.
+// REQ: COMPILE-069
+TEST(CompilePhysicalPlanArtifact, RejectsMismatchedWindowHorizonTriggerProvenance) {
+  const auto expect_rejection = [](auto mutate) {
+    auto candidate = physical_artifact_state();
+    add_valid_rate_records(candidate);
+    use_valid_window_rate_horizon(candidate);
+    mutate(candidate);
+
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "RATE_PLAN_RECORDS_INVALID");
+    EXPECT_TRUE(candidate.json.empty());
+  };
+
+  expect_rejection([](auto& state) { state.window_triggers.clear(); });
+  expect_rejection([](auto& state) {
+    const auto duplicate = state.window_triggers.front();
+    state.window_triggers.push_back(duplicate);
+  });
+  expect_rejection([](auto& state) { ++state.window_triggers.front().owner.id; });
+  expect_rejection([](auto& state) { ++state.window_triggers.front().owner.plan_generation; });
+  expect_rejection([](auto& state) { state.window_triggers.front().anchor = PortId{1U}; });
+  expect_rejection([](auto& state) {
+    state.temporal_triggers.front().trigger_input = PortId{};
+    state.window_triggers.front().anchor = PortId{};
+  });
+  expect_rejection([](auto& state) { ++state.window_triggers.front().max_wait_ns; });
+  expect_rejection([](auto& state) { state.window_triggers.front().wait_clock = ClockId{2U}; });
+}
+
+// Predicate-clock cadence is finite only when the exact canonical predicate source record agrees
+// with the generic temporal trigger. Input-driven predicates remain unclassified.
+// REQ: COMPILE-069
+TEST(CompilePhysicalPlanArtifact, RejectsMismatchedPredicateClockHorizonProvenance) {
+  const auto expect_rejection = [](auto mutate) {
+    auto candidate = physical_artifact_state();
+    add_valid_rate_records(candidate);
+    use_valid_predicate_clock_rate_horizon(candidate);
+    mutate(candidate);
+
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "RATE_PLAN_RECORDS_INVALID");
+    EXPECT_TRUE(candidate.json.empty());
+  };
+
+  expect_rejection([](auto& state) { state.predicate_triggers.clear(); });
+  expect_rejection([](auto& state) {
+    const auto duplicate = state.predicate_triggers.front();
+    state.predicate_triggers.push_back(duplicate);
+  });
+  expect_rejection([](auto& state) {
+    state.predicate_triggers.front().source = PredicateEvaluationSourceKind::kInputUpdate;
+  });
+  expect_rejection([](auto& state) { ++state.predicate_triggers.front().owner.id; });
+  expect_rejection([](auto& state) { ++state.predicate_triggers.front().period_ns; });
+  expect_rejection([](auto& state) { state.predicate_triggers.front().clock = ClockId{2U}; });
+}
+
+// Inverse horizons fail closed when any source, input, or origin fact diverges from the canonical
+// OnEach trigger that owns the destination edge.
+// REQ: COMPILE-069
+TEST(CompilePhysicalPlanArtifact, RejectsMismatchedInverseHorizonTriggerProvenance) {
+  const auto expect_rejection = [](auto mutate) {
+    auto candidate = physical_artifact_state();
+    add_valid_rate_records(candidate);
+    auto& record = candidate.accumulation_horizons.front();
+    record.horizon.reset();
+    record.inverse_rate_port = candidate.payload_edges.front().target;
+    record.origin = AccumulationHorizonOrigin::kProducerInterarrival;
+    auto& trigger = candidate.temporal_triggers.front();
+    trigger.kind = TemporalRecordTriggerKind::kEach;
+    trigger.trigger_clock = ClockId{};
+    trigger.period_ns = 0;
+    trigger.trigger_input = record.inverse_rate_port.value();
+    mutate(candidate);
+
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "RATE_PLAN_RECORDS_INVALID");
+    EXPECT_TRUE(candidate.json.empty());
+  };
+
+  expect_rejection([](auto& state) { ++state.accumulation_horizons.front().source_record; });
+  expect_rejection([](auto& state) { state.temporal_triggers.front().trigger_input = PortId{7U}; });
+  expect_rejection(
+      [](auto& state) { state.accumulation_horizons.front().inverse_rate_port = PortId{7U}; });
+  expect_rejection([](auto& state) {
+    state.accumulation_horizons.front().origin = AccumulationHorizonOrigin::kDriverInterarrival;
+  });
+}
+
+// Task041 pool dependencies and provider recipes are semantic artifact identity, while malformed
+// source joins and provider ranges fail before entering the private-v4 digest preimage.
+// REQ: COMPILE-069
+TEST(CompilePhysicalPlanArtifact, PoolCapacityFamiliesAreCanonicalAndFailClosed) {
+  auto baseline = physical_artifact_state();
+  ASSERT_FALSE(baseline.pool_capacity_dependencies.empty());
+  ASSERT_FALSE(baseline.provider_allocation_plans.empty());
+  const auto baseline_finalized = finalize_plan_artifact(baseline);
+  ASSERT_TRUE(baseline_finalized) << baseline_finalized.error().message;
+
+  auto changed = physical_artifact_state();
+  changed.pool_capacity_dependencies.front().scenario = PoolCapacityScenarioId{2U};
+  const auto changed_finalized = finalize_plan_artifact(changed);
+  ASSERT_TRUE(changed_finalized) << changed_finalized.error().message;
+  EXPECT_NE(changed.digest, baseline.digest);
+  EXPECT_NE(changed.json, baseline.json);
+
+  auto changed_provider = physical_artifact_state();
+  const std::string old_pool_id = changed_provider.provider_allocation_plans.front().pool_id;
+  const std::string changed_pool_id = old_pool_id + ".semantic-change";
+  changed_provider.provider_allocation_plans.front().pool_id = changed_pool_id;
+  for (auto& dependency : changed_provider.pool_capacity_dependencies) {
+    if (dependency.pool_id == old_pool_id) {
+      dependency.pool_id = changed_pool_id;
+    }
+  }
+  for (auto& contributor : changed_provider.pool_capacity_contributors) {
+    if (contributor.pool_id == old_pool_id) {
+      contributor.pool_id = changed_pool_id;
+    }
+  }
+  for (auto& allocation : changed_provider.tensor_allocations) {
+    if (allocation.pool_id == old_pool_id) {
+      allocation.pool_id = changed_pool_id;
+    }
+  }
+  for (auto& allocation : changed_provider.tensor_field_allocations) {
+    if (allocation.pool_id == old_pool_id) {
+      allocation.pool_id = changed_pool_id;
+    }
+  }
+  const auto changed_provider_finalized = finalize_plan_artifact(changed_provider);
+  ASSERT_TRUE(changed_provider_finalized) << changed_provider_finalized.error().message;
+  EXPECT_NE(changed_provider.digest, baseline.digest);
+  EXPECT_NE(changed_provider.json, baseline.json);
+  EXPECT_NE(baseline.json.find("\"first_sizing_dependency\":"), std::string::npos);
+  EXPECT_NE(baseline.json.find("\"mapping_multiplicity\":"), std::string::npos);
+  EXPECT_NE(baseline.json.find("\"predecessor_contributor_id\":"), std::string::npos);
+  EXPECT_NE(baseline.json.find("\"geometry_mode\":"), std::string::npos);
+
+  const auto expect_rejection = [](auto mutate) {
+    auto candidate = physical_artifact_state();
+    mutate(candidate);
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "POOL_CAPACITY_PLAN_INVALID");
+    EXPECT_TRUE(candidate.json.empty());
+  };
+  expect_rejection([](auto& state) { state.pool_capacity_dependencies.front().id = {}; });
+  expect_rejection([](auto& state) { state.pool_capacity_dependencies.clear(); });
+  expect_rejection([](auto& state) { state.provider_allocation_plans.clear(); });
+  expect_rejection(
+      [](auto& state) { state.pool_capacity_dependencies.front().mapping_multiplicity = 0U; });
+  expect_rejection([](auto& state) {
+    state.pool_capacity_dependencies.front().predecessor_contributor_id = "missing";
+  });
+  expect_rejection(
+      [](auto& state) { state.provider_allocation_plans.front().sizing_dependency_count = 0U; });
+  expect_rejection([](auto& state) { state.provider_allocation_plans.front().output.reset(); });
+}
+
+TEST(CompilePhysicalPlanArtifact, PredicateCallableProvenanceDoesNotEnterSemanticDigest) {
+  auto first = physical_artifact_state();
+  const PredicateCallablePlanRecord callable{
+      .predicate_id = "predicate",
+      .binding_provenance = "first-binding",
+      .capture_provenance = "first-capture",
+  };
+  first.predicate_callables.push_back(callable);
+  auto second = first;
+  second.predicate_callables.front().binding_provenance = "second-binding";
+  second.predicate_callables.front().capture_provenance = "second-capture";
+
+  // Key setup: finalize two otherwise identical plans whose callable provenance differs.
+  ASSERT_TRUE(finalize_plan_artifact(first));
+  ASSERT_TRUE(finalize_plan_artifact(second));
+
+  // Key assertion: complete JSON retains provenance while the semantic digest excludes it.
+  EXPECT_EQ(first.digest, second.digest);
+  EXPECT_NE(first.json, second.json);
+  EXPECT_NE(first.json.find("\"binding_provenance\":\"first-binding\""), std::string::npos);
+  EXPECT_NE(first.json.find("\"capture_provenance\":\"first-capture\""), std::string::npos);
+  EXPECT_NE(second.json.find("\"binding_provenance\":\"second-binding\""), std::string::npos);
+  EXPECT_NE(second.json.find("\"capture_provenance\":\"second-capture\""), std::string::npos);
+}
+
 // REQ: COMPILE-002
 // REQ: COMPILE-009
 // REQ: COMPILE-040
 // REQ: COMPILE-048
+// REQ: COMPILE-064
 TEST(CompilePhysicalPlanArtifact, EveryPublicPhysicalFamilyPerturbsSemanticIdentity) {
   auto baseline = physical_artifact_state();
   const auto baseline_finalized = finalize_plan_artifact(baseline);
   ASSERT_TRUE(baseline_finalized) << baseline_finalized.error().message;
+  ASSERT_FALSE(baseline.cuda_compute_streams.empty());
   const auto expect_change = [&](auto mutate) {
     auto candidate = physical_artifact_state();
     mutate(candidate);
@@ -385,11 +1211,24 @@ TEST(CompilePhysicalPlanArtifact, EveryPublicPhysicalFamilyPerturbsSemanticIdent
   expect_change([](auto& state) { ++state.channel_subscribers.front().max_borrowed_samples; });
   expect_change([](auto& state) { ++state.generic_output_loans.front().slot_count; });
   expect_change([](auto& state) { ++state.tensor_allocations.front().bounds.max_rank; });
-  expect_change([](auto& state) { ++state.tensor_device_resources.front().slot_capacity; });
   expect_change([](auto& state) {
-    state.tensor_device_resources.front().fused_linear_edges.push_back(EdgeId{9U});
+    state.tensor_allocations.front().layout->strides = TensorStridePolicy::kContiguousOnly;
   });
+  expect_change([](auto& state) {
+    state.tensor_allocations.front().axes.push_back(
+        TensorAxisBounds{.max_extent = 16U, .max_abs_stride_bytes = 256U});
+  });
+  expect_change([](auto& state) { ++state.tensor_device_resources.front().slot_capacity; });
+  expect_change([](auto& state) { state.cuda_compute_streams.front().stream_id += ".changed"; });
   expect_change([](auto& state) { ++*state.tensor_interface_pools.front().logical.max_byte_span; });
+  expect_change([](auto& state) {
+    state.tensor_interface_pools.front().logical.memory_conversion =
+        MemoryConversionPolicy::kAllowIfSafe;
+  });
+  expect_change([](auto& state) {
+    ASSERT_FALSE(state.tensor_interface_pools.front().logical.axes.empty());
+    --state.tensor_interface_pools.front().logical.axes.front().max_extent;
+  });
   expect_change(
       [](auto& state) { ++state.tensor_inline_records.front().fixed_record_bucket_bytes; });
   expect_change(
@@ -420,6 +1259,39 @@ TEST(CompilePhysicalPlanArtifact, EveryPublicPhysicalFamilyPerturbsSemanticIdent
   expect_change([](auto& state) { ++state.missing_aggregates.front().degraded_callback_count; });
 }
 
+// REQ: COMPILE-063
+TEST(CompilePhysicalPlanArtifact, RejectsMalformedCudaExecutionRecordJoinsBeforeSerialization) {
+  // Key setup: independently corrupt every identity join in an otherwise valid physical artifact.
+  const auto expect_rejection = [](auto mutate) {
+    auto candidate = physical_artifact_state();
+    ASSERT_FALSE(candidate.tensor_device_resources.empty());
+    ASSERT_FALSE(candidate.cuda_compute_streams.empty());
+    mutate(candidate);
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().message, "CUDA_EXECUTION_PLAN_INVALID");
+    EXPECT_EQ(diagnostic_id(finalized.error().message),
+              DiagnosticId{
+                  static_cast<std::uint32_t>(StructuralDiagnosticId::kCUDAExecutionPlanInvalid)});
+  };
+
+  // Key assertion: duplicate resources/streams and broken generation, edge, context, or owner
+  // references all fail final validation with the same stable diagnostic.
+  expect_rejection([](auto& state) {
+    state.tensor_device_resources.push_back(state.tensor_device_resources.front());
+  });
+  expect_rejection([](auto& state) {
+    state.cuda_compute_streams.push_back(state.cuda_compute_streams.front());
+  });
+  expect_rejection([](auto& state) { ++state.cuda_compute_streams.front().plan_generation; });
+  expect_rejection(
+      [](auto& state) { state.cuda_compute_streams.front().fused_linear_edges = {EdgeId{999U}}; });
+  expect_rejection([](auto& state) {
+    state.cuda_compute_streams.front().green_context_id = "missing-green-context";
+  });
+  expect_rejection([](auto& state) { state.cuda_compute_streams.front().owner_id += ".wrong"; });
+}
+
 // REQ: COMPILE-002
 // REQ: COMPILE-009
 // REQ: COMPILE-040
@@ -439,6 +1311,10 @@ TEST(CompilePhysicalPlanArtifact, RejectsProcessLocalConstructionFactDrift) {
       [](auto& state) { ++state.process_local_channel_publishers.front().max_loaned_samples; });
   expect_rejection(
       [](auto& state) { ++state.process_local_channel_subscribers.front().cache_capacity; });
+  expect_rejection([](auto& state) {
+    state.process_local_channel_services.front().event_wake_reason =
+        ProcessLocalHoloMQEventWakeReason::kReplayAmbiguity;
+  });
 
   auto ineligible_direct = physical_artifact_state();
   ASSERT_EQ(ineligible_direct.process_local_channel_services.front().delivery_kind,
@@ -524,13 +1400,13 @@ TEST(CompilePhysicalPlanArtifact, RejectsBrokenProcessLocalChannelJoins) {
         output_port(1U, 1U, "out", tensor_payload()),
         input_port(2U, 2U, "in", tensor_payload(), 2U),
     };
-    snapshot.ports.front().setup.tensor_layout = TensorPortLayout{
+    snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
         .memory_kind = MemoryKind::kHost,
         .dtype = DLDataType{kDLUInt, 8U, 1U},
         .rank = 1U,
     };
     snapshot.ports.front().setup.tensor_allocation =
-        TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 64U};
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 64U};
     snapshot.edges = {edge(1U, 1U, 2U, 2U)};
     const auto profiles = standard_profiles(snapshot.vertices.size());
     auto physical = lower_for_test(snapshot, 37U, profiles);
@@ -538,9 +1414,8 @@ TEST(CompilePhysicalPlanArtifact, RejectsBrokenProcessLocalChannelJoins) {
     ASSERT_EQ(physical.tensor_allocations.size(), 1U);
     ASSERT_EQ(physical.process_local_channel_services.size(), 1U);
 
-    ExecutionPlanState ambiguous_tensor_pool;
-    ambiguous_tensor_pool.plan_generation = 37U;
-    detail::publish_physical_plan_records(std::move(physical), ambiguous_tensor_pool);
+    auto ambiguous_tensor_pool = published_physical_plan_state(std::move(physical), 37U);
+    add_valid_rate_records(ambiguous_tensor_pool);
     ASSERT_TRUE(valid_process_local_channel_plan(ambiguous_tensor_pool));
     const auto& direct = ambiguous_tensor_pool.tensor_allocations.front();
     TensorInterfacePoolPlanRecord duplicate_pool;
@@ -553,6 +1428,62 @@ TEST(CompilePhysicalPlanArtifact, RejectsBrokenProcessLocalChannelJoins) {
     const auto finalized = finalize_plan_artifact(ambiguous_tensor_pool);
     ASSERT_FALSE(finalized);
     EXPECT_EQ(finalized.error().message, "PROCESS_LOCAL_CHANNEL_PLAN_INVALID");
+
+    auto duplicate_direct =
+        published_physical_plan_state(lower_for_test(snapshot, 37U, profiles), 37U);
+    add_valid_rate_records(duplicate_direct);
+    ASSERT_EQ(duplicate_direct.tensor_allocations.size(), 1U);
+    auto second_direct = duplicate_direct.tensor_allocations.front();
+    second_direct.pool_id += ".duplicate";
+    duplicate_direct.tensor_allocations.push_back(std::move(second_direct));
+    EXPECT_FALSE(valid_process_local_channel_plan(duplicate_direct));
+
+    auto duplicate_boundary =
+        published_physical_plan_state(lower_for_test(snapshot, 37U, profiles), 37U);
+    add_valid_rate_records(duplicate_boundary);
+    ASSERT_EQ(duplicate_boundary.tensor_allocations.size(), 1U);
+    const auto direct_facts = duplicate_boundary.tensor_allocations.front();
+    duplicate_boundary.tensor_allocations.clear();
+    TensorInterfacePoolPlanRecord first_boundary;
+    first_boundary.graph_port = direct_facts.output;
+    first_boundary.pool_id = direct_facts.pool_id + ".boundary";
+    first_boundary.logical.max_byte_span = direct_facts.bounds.max_byte_span;
+    first_boundary.memory_kind = direct_facts.memory_kind;
+    first_boundary.device = direct_facts.device;
+    duplicate_boundary.tensor_interface_pools.push_back(first_boundary);
+    first_boundary.pool_id += ".duplicate";
+    duplicate_boundary.tensor_interface_pools.push_back(std::move(first_boundary));
+    EXPECT_FALSE(valid_process_local_channel_plan(duplicate_boundary));
+
+    auto duplicate_candidate =
+        published_physical_plan_state(lower_for_test(snapshot, 37U, profiles), 37U);
+    add_valid_rate_records(duplicate_candidate);
+    ASSERT_EQ(duplicate_candidate.tensor_allocations.size(), 1U);
+    const auto candidate_facts = duplicate_candidate.tensor_allocations.front();
+    duplicate_candidate.tensor_allocations.clear();
+    const auto provider = std::ranges::find(duplicate_candidate.provider_allocation_plans,
+                                            candidate_facts.output,
+                                            &ProviderAllocationPlanRecord::output);
+    ASSERT_NE(provider, duplicate_candidate.provider_allocation_plans.end());
+    provider->geometry_mode = AllocationGeometryMode::kLifecycleCandidate;
+    provider->tensor_template = TensorProviderTemplatePlanRecord{
+        .allocator_root_id = candidate_facts.allocator_root_id,
+        .allocator_process_group = candidate_facts.allocator_process_group,
+        .bounds = candidate_facts.bounds,
+        .axes = candidate_facts.axes,
+        .layout = candidate_facts.layout,
+        .memory_kind = candidate_facts.memory_kind,
+        .device = candidate_facts.device,
+        .max_outstanding_loans = candidate_facts.max_outstanding_loans,
+        .max_emits_per_compute = candidate_facts.max_emits_per_compute,
+        .fallback_rejected = true,
+    };
+    ASSERT_TRUE(valid_process_local_channel_plan(duplicate_candidate));
+    auto second_candidate = *provider;
+    second_candidate.id.value += 1U;
+    second_candidate.pool_id += ".duplicate";
+    duplicate_candidate.provider_allocation_plans.push_back(std::move(second_candidate));
+    EXPECT_FALSE(valid_process_local_channel_plan(duplicate_candidate));
   }
 }
 
@@ -591,13 +1522,19 @@ TEST(CompilePhysicalPlanArtifact, RejectsProcessLocalAndExternalLocalityJoinDrif
 // REQ: COMPILE-002
 // REQ: COMPILE-040
 // REQ: COMPILE-048
+// REQ: COMPILE-064
 TEST(CompilePhysicalPlanArtifact, RebindsProcessLocalServiceIdentityAsOneJoinFamily) {
   auto state = physical_artifact_state();
   ASSERT_FALSE(state.process_local_channel_services.empty());
   ASSERT_FALSE(state.tensor_device_resources.empty());
-  const std::string original_stream_id = state.tensor_device_resources.front().stream_id;
+  ASSERT_FALSE(state.cuda_compute_streams.empty());
+  ASSERT_FALSE(state.pool_capacity_dependencies.empty());
+  ASSERT_FALSE(state.provider_allocation_plans.empty());
+  const std::string original_pool_id = state.provider_allocation_plans.front().pool_id;
+  const std::string original_allocator_id = state.tensor_device_resources.front().allocator_root_id;
+  const std::string original_stream_id = state.cuda_compute_streams.front().stream_id;
   state.profile_manifest.derived_capacities.push_back(ProfileDerivedCapacityRecord{
-      .object_id = original_stream_id,
+      .object_id = original_allocator_id,
       .capacity_id = "slot_count",
       .limit = state.tensor_device_resources.front().slot_capacity,
       .unit = "count",
@@ -605,11 +1542,11 @@ TEST(CompilePhysicalPlanArtifact, RebindsProcessLocalServiceIdentityAsOneJoinFam
   state.profile_manifest.materialization_obligations.push_back(
       ProfileMaterializationObligationRecord{
           .object_id = original_stream_id,
-          .strategy_id = "holoscan.runtime.tensor_device_stream/v1",
+          .strategy_id = "holoscan.runtime.cuda_compute_stream/v1",
           .complete_before_stage = LifecycleStage::kArm,
           .cleanup_stage_mask = 0xC0U,
           .max_cleanup_actions = 1U,
-          .evidence_id = "holoscan.compile.tensor_device_resource_plan/v1",
+          .evidence_id = "holoscan.compile.cuda_compute_stream_plan/v1",
       });
 
   rebind_plan_generation(state, 99U);
@@ -620,13 +1557,21 @@ TEST(CompilePhysicalPlanArtifact, RebindsProcessLocalServiceIdentityAsOneJoinFam
   ASSERT_FALSE(state.process_local_channel_subscribers.empty());
   EXPECT_EQ(state.process_local_channel_publishers.front().service_id, service.service_id);
   EXPECT_EQ(state.process_local_channel_subscribers.front().service_id, service.service_id);
-  EXPECT_NE(state.tensor_device_resources.front().stream_id, original_stream_id);
+  EXPECT_NE(state.tensor_device_resources.front().allocator_root_id, original_allocator_id);
+  EXPECT_NE(state.cuda_compute_streams.front().stream_id, original_stream_id);
+  EXPECT_NE(state.provider_allocation_plans.front().pool_id, original_pool_id);
+  EXPECT_EQ(state.pool_capacity_dependencies.front().pool_id,
+            state.provider_allocation_plans.front().pool_id);
+  if (!state.pool_capacity_dependencies.front().predecessor_contributor_id.empty()) {
+    EXPECT_TRUE(state.pool_capacity_dependencies.front().predecessor_contributor_id.starts_with(
+        state.provider_allocation_plans.front().pool_id));
+  }
   ASSERT_EQ(state.profile_manifest.derived_capacities.size(), 1U);
   EXPECT_EQ(state.profile_manifest.derived_capacities.front().object_id,
-            state.tensor_device_resources.front().stream_id);
+            state.tensor_device_resources.front().allocator_root_id);
   ASSERT_EQ(state.profile_manifest.materialization_obligations.size(), 1U);
   EXPECT_EQ(state.profile_manifest.materialization_obligations.front().object_id,
-            state.tensor_device_resources.front().stream_id);
+            state.cuda_compute_streams.front().stream_id);
   const auto finalized = finalize_plan_artifact(state);
   ASSERT_TRUE(finalized) << finalized.error().message;
 }
@@ -639,13 +1584,16 @@ TEST(CompilePhysicalPlanManifest, PublishesFiniteUniqueCanonicalPhysicalRequirem
   constexpr std::array axes{TensorAxisBounds{.max_extent = 16U},
                             TensorAxisBounds{.max_extent = 16U}};
   TopicOptions options;
-  options.tensor = LogicalTensorRequirements{
-      .memory_kind = MemoryKind::kHost,
-      .dtype = DLDataType{kDLFloat, 32U, 1U},
-      .rank = 2U,
-      .logical_bounds = LogicalTensorBounds{.max_rank = 2U, .max_byte_span = 4096U, .axes = axes},
-      .foreign_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
-      .max_inline_bytes = 1024U,
+  options.tensor = TensorBoundaryContract{
+      .representation = {.memory_kind = MemoryKind::kHost,
+                         .dtype = DLDataType{kDLFloat, 32U, 1U},
+                         .rank = 2U},
+      .bounds = TensorBounds{.max_rank = 2U, .max_byte_span = 4096U, .axes = axes},
+      .transfer =
+          TensorTransferPolicy{
+              .foreign_emit_policy = InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded,
+              .max_inline_bytes = 1024U,
+          },
   };
   auto exported = graph.export_topic<Tensor>("holomq://manifest-tensor", options);
   graph.add_flow(source->tensor, exported.input());
@@ -732,16 +1680,13 @@ TEST(CompilePhysicalPlanManifest, AggregatesMultipleImportedTensorGenerationScop
   test::add_compile_test_default_clock(graph);
   const auto tensor_options = [] {
     TopicOptions options;
-    options.tensor = LogicalTensorRequirements{
-        .memory_kind = MemoryKind::kHost,
-        .dtype = DLDataType{kDLUInt, 8U, 1U},
-        .rank = 1U,
-        .logical_bounds =
-            LogicalTensorBounds{
-                .max_rank = 1U,
-                .max_byte_span = 16U,
-            },
-        .foreign_emit_policy = InterfaceTensorEmitPolicy::kRequireExportable,
+    options.tensor = TensorBoundaryContract{
+        .representation = {.memory_kind = MemoryKind::kHost,
+                           .dtype = DLDataType{kDLUInt, 8U, 1U},
+                           .rank = 1U},
+        .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 16U},
+        .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                             InterfaceTensorEmitPolicy::kRequireExportable},
     };
     return options;
   };
@@ -858,7 +1803,7 @@ TEST(CompilePhysicalPlanManifest, DeduplicatesSharedServiceCapacityProjection) {
   manifest.requested_profile = Profile::kStandard;
   manifest.effective_graph_profile = Profile::kStandard;
   manifest.profile_policy_id = profile_policy_id_v1();
-  manifest.plan_schema_version = "holoscan.execution_plan.private.v1";
+  manifest.plan_schema_version = "holoscan.execution_plan.private.v4";
   manifest.runtime_abi_version = "holoscan.runtime_abi.v1";
   manifest.target_triple = std::string(compile_target_triple());
 

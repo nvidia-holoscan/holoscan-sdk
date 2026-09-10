@@ -34,6 +34,7 @@
 #include <holomq/buffer_pool.hpp>
 #include <holomq/context_builder.hpp>
 
+#include "catalog_tensor_clock_health.hpp"
 #include "channel_common.hpp"
 #include "channel_inline_payload.hpp"
 #include "channel_runtime_impl.hpp"
@@ -50,11 +51,6 @@ namespace {
 
 std::atomic<channel_internal::TensorPublisherTestAccess::RequiredPublisherWaitBarrier*>
     g_required_publisher_wait_barrier{};
-
-constexpr std::size_t kClockHealthControlBytes = 34U;
-constexpr std::uint32_t kClockHealthControlMagic = 0x48434835U;
-constexpr std::uint16_t kClockHealthControlVersion = 1U;
-constexpr std::uint16_t kClockHealthControlKind = 1U;
 
 [[nodiscard]] constexpr bool catalog_publication_consumes_authority(const ErrorCode code) noexcept {
   return publication_error_consumes_authority(code) || code == ErrorCode::kProtocolError ||
@@ -238,6 +234,7 @@ struct CatalogTensorLoanSlot {
   Tensor retained_copy_source;
   std::byte* storage{};
   cudaStream_t writer_stream{};
+  cudaEvent_t producer_ready_event{};
 };
 
 struct NormalizedTensorLoanRequest {
@@ -246,7 +243,7 @@ struct NormalizedTensorLoanRequest {
 };
 
 struct ValidatedTensorEndpoint {
-  const LogicalTensorRequirementsRecord* tensor{};
+  const TensorBoundaryContractRecord* tensor{};
   MemoryKind memory_kind{MemoryKind::kUnknown};
   std::uint32_t max_rank{};
   std::uint64_t max_byte_span{};
@@ -261,69 +258,19 @@ struct ValidatedTensorEndpoint {
   return lhs.code == rhs.code && lhs.bits == rhs.bits && lhs.lanes == rhs.lanes;
 }
 
-[[nodiscard]] bool valid_dtype(const DLDataType dtype) noexcept {
-  if (dtype.bits == 0U || dtype.lanes == 0U) {
-    return false;
-  }
-  switch (dtype.code) {
-    case kDLInt:
-    case kDLUInt:
-    case kDLFloat:
-    case kDLOpaqueHandle:
-    case kDLBfloat:
-    case kDLComplex:
-    case kDLBool:
-      return true;
-    default:
-      return false;
-  }
-}
-
-[[nodiscard]] bool valid_health_report(const ClockHealthReport report) noexcept {
-  if (report.assessment == ClockHealthAssessment::kHealthy) {
-    return report.reason == ClockHealthReason::kNone;
-  }
-  return (report.assessment == ClockHealthAssessment::kDegraded ||
-          report.assessment == ClockHealthAssessment::kUnhealthy) &&
-         report.reason != ClockHealthReason::kNone &&
-         static_cast<std::uint8_t>(report.reason) <=
-             static_cast<std::uint8_t>(ClockHealthReason::kUnspecified);
-}
-
-template <typename T>
-void store_little(std::span<std::byte> destination, const std::size_t offset, T value) noexcept {
-  for (std::size_t index = 0U; index < sizeof(T); ++index) {
-    destination[offset + index] =
-        static_cast<std::byte>(static_cast<std::uint8_t>(value >> (index * 8U)));
-  }
-}
-
-[[nodiscard]] std::array<std::byte, kClockHealthControlBytes> encode_clock_health(
-    const std::uint64_t producer_generation, const std::uint64_t operation_sequence,
-    const std::uint64_t report_sequence, const ClockHealthReport report) noexcept {
-  std::array<std::byte, kClockHealthControlBytes> wire{};
-  store_little<std::uint32_t>(wire, 0U, kClockHealthControlMagic);
-  store_little<std::uint16_t>(wire, 4U, kClockHealthControlVersion);
-  store_little<std::uint16_t>(wire, 6U, kClockHealthControlKind);
-  store_little<std::uint64_t>(wire, 8U, producer_generation);
-  store_little<std::uint64_t>(wire, 16U, operation_sequence);
-  store_little<std::uint64_t>(wire, 24U, report_sequence);
-  wire[32U] = static_cast<std::byte>(static_cast<std::uint8_t>(report.assessment));
-  wire[33U] = static_cast<std::byte>(static_cast<std::uint8_t>(report.reason));
-  return wire;
-}
-
 class CatalogTensorPublisherControl {
  public:
   CatalogTensorPublisherControl(ManualTensorPublisher publisher,
                                 std::unique_ptr<channel_internal::InlinePayloadPublisher> health,
                                 holomq::BufferPool pool, const ValidatedTensorEndpoint& endpoint,
                                 const DeviceId synchronization_device, const ClockId capture_clock,
+                                const std::uint64_t catalog_clock_count,
                                 const std::uint64_t producer_generation)
       : publisher_(std::move(publisher)),
         health_(std::move(health)),
         pool_(std::move(pool)),
         capture_clock_(capture_clock),
+        catalog_clock_count_(catalog_clock_count),
         memory_kind_(endpoint.memory_kind),
         device_id_(synchronization_device),
         required_dtype_(endpoint.tensor->dtype),
@@ -340,6 +287,21 @@ class CatalogTensorPublisherControl {
 
   CatalogTensorPublisherControl(const CatalogTensorPublisherControl&) = delete;
   CatalogTensorPublisherControl& operator=(const CatalogTensorPublisherControl&) = delete;
+
+  ~CatalogTensorPublisherControl() {
+    if (!device_id_.valid()) {
+      return;
+    }
+    const ScopedCUDADevice selected{device_id_};
+    if (!selected.active()) {
+      return;
+    }
+    for (auto& slot : slots_) {
+      if (slot.producer_ready_event != nullptr) {
+        static_cast<void>(cudaEventDestroy(slot.producer_ready_event));
+      }
+    }
+  }
 
   [[nodiscard]] expected<void, Error> initialize() {
     const holomq::BufferMemoryType expected_pool_type =
@@ -369,6 +331,16 @@ class CatalogTensorPublisherControl {
     slots_.resize(slot_count_);
     buffered_free_slots_.reserve(slot_count_);
     bufferless_free_slots_.reserve(slot_count_);
+    const bool needs_copy_events =
+        memory_kind_ == MemoryKind::kCudaDevice || memory_kind_ == MemoryKind::kPinnedHost;
+    std::optional<ScopedCUDADevice> selected;
+    if (needs_copy_events) {
+      selected.emplace(device_id_);
+      if (!selected->active()) {
+        return make_unexpected(
+            Error{ErrorCode::kNotSupported, "external Tensor CUDA device is unavailable"});
+      }
+    }
     for (std::size_t index = 0U; index < slot_count_; ++index) {
       auto& slot = slots_[index];
       slot.owner = this;
@@ -399,6 +371,11 @@ class CatalogTensorPublisherControl {
       };
       slot.template_tensor =
           detail::TensorAccess::from_context(slot.context, detail::TensorAuthority::kReadOnly);
+      if (needs_copy_events && cudaEventCreateWithFlags(&slot.producer_ready_event,
+                                                        cudaEventDisableTiming) != cudaSuccess) {
+        return make_unexpected(Error{ErrorCode::kResourceExhausted,
+                                     "external Tensor copy-order event allocation failed"});
+      }
       bufferless_free_slots_.push_back(slot_count_ - index - 1U);
     }
     return {};
@@ -421,8 +398,8 @@ class CatalogTensorPublisherControl {
   }
 
   [[nodiscard]] expected<void, Error> close_stream() noexcept {
-    const std::lock_guard<std::mutex> publication_lock(publication_mutex_);
     std::uint64_t proposed_sequence{};
+    bool fail_pre_submit_for_test{};
     {
       const std::lock_guard<std::mutex> lock(mutex_);
       if (closed_) {
@@ -432,6 +409,7 @@ class CatalogTensorPublisherControl {
         return make_unexpected(Error{ErrorCode::kResourceExhausted});
       }
       proposed_sequence = operation_sequence_ + 1U;
+      fail_pre_submit_for_test = std::exchange(fail_next_terminal_pre_submit_for_test_, false);
     }
     const SampleMetadata metadata{
         .sequence = proposed_sequence,
@@ -439,7 +417,17 @@ class CatalogTensorPublisherControl {
         .payload_kind = PayloadKind::kDescriptorBacked,
     };
     auto result =
-        channel_internal::TensorPublishLoanAccess::emit_end_of_stream(publisher_, metadata);
+        fail_pre_submit_for_test
+            ? expected<std::uint32_t, Error>{make_unexpected(Error{ErrorCode::kResourceExhausted})}
+            : channel_internal::TensorPublishLoanAccess::emit_end_of_stream(publisher_, metadata);
+    // Permanent operation-sequence exhaustion returned above. Resource exhaustion from the
+    // terminal publisher here is therefore a loan rejection before backend submission and keeps
+    // this catalog endpoint and sequence available for retry.
+    if (!result && result.error().code == ErrorCode::kResourceExhausted) {
+      auto error = std::move(result).error();
+      error.code = ErrorCode::kBackpressured;
+      return make_unexpected(std::move(error));
+    }
     inject_post_submit_result_for_test(result);
     if (result ||
         channel_internal::terminal_publication_error_consumes_authority(result.error().code)) {
@@ -599,9 +587,11 @@ class CatalogTensorPublisherControl {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
 
-    // Data and health records share one sequence. Serialize the submit decision so concurrent
-    // callers cannot reserve the same successor while the transport call runs without state lock.
-    const std::lock_guard<std::mutex> publication_lock(publication_mutex_);
+    // Publication time is framework-owned, and this is the caller-facing loan publication.
+    // Erasing a supplied coordinate before validation rather than after keeps the coherence
+    // check in valid_metadata answerable: any coordinate it still sees came from Runtime.
+    metadata.publish_timestamp_ns = 0;
+    metadata.publish_clock_id = {};
 
     Tensor tensor;
     std::uint64_t proposed_sequence{};
@@ -625,8 +615,6 @@ class CatalogTensorPublisherControl {
       } else {
         proposed_sequence = operation_sequence_ + 1U;
         metadata.sequence = proposed_sequence;
-        metadata.publish_timestamp_ns = 0;
-        metadata.publish_clock_id = {};
         metadata.byte_size = slot.byte_size;
         metadata.payload_kind = PayloadKind::kDescriptorBacked;
         slot.phase = TensorLoanSlotPhase::kPublished;
@@ -658,7 +646,7 @@ class CatalogTensorPublisherControl {
     if (foreign_emit_policy_ == InterfaceTensorEmitPolicy::kRequireExportable) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
-    auto staged = stage_foreign_tensor(source, producer_stream.get());
+    auto staged = stage_foreign_tensor(source, producer_stream.get(), nullptr);
     if (!staged) {
       return make_unexpected(std::move(staged).error());
     }
@@ -716,7 +704,7 @@ class CatalogTensorPublisherControl {
   // Keep validation, stream ordering, and the staged-loan ownership transfer auditable together.
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<channel_internal::StagedTensorCopy, Error> stage_foreign_tensor(
-      const Tensor& source, cudaStream_t producer_stream) noexcept {
+      const Tensor& source, cudaStream_t producer_stream, cudaStream_t copy_stream) noexcept {
     if (source.data() == nullptr || source.nbytes() < 0 || !source.is_contiguous()) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
@@ -772,11 +760,24 @@ class CatalogTensorPublisherControl {
     if (!loan) {
       return make_unexpected(std::move(loan).error());
     }
+    auto* const copy_slot = static_cast<CatalogTensorLoanSlot*>(
+        channel_internal::TensorPublishLoanAccess::state(*loan));
+    if (copy_slot == nullptr || copy_slot->owner != this) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    const bool cuda_source =
+        source_device.device_type == kDLCUDA || source_device.device_type == kDLCUDAManaged;
+    // Pageable-host staging is synchronous, so execute it on the explicit producer stream rather
+    // than introducing a cross-stream event for a pool with no declared CUDA device.
+    const cudaStream_t execution_stream =
+        memory_kind_ == MemoryKind::kHost && cuda_source
+            ? producer_stream
+            : (copy_stream != nullptr ? copy_stream : producer_stream);
     const bool asynchronous_copy =
-        producer_stream != nullptr &&
-        (memory_kind_ == MemoryKind::kCudaDevice || memory_kind_ == MemoryKind::kPinnedHost);
+        execution_stream != nullptr && (memory_kind_ == MemoryKind::kCudaDevice ||
+                                        (memory_kind_ == MemoryKind::kPinnedHost && cuda_source));
     auto writer =
-        asynchronous_copy ? loan->write(::cuda::stream_ref{producer_stream}) : loan->write_host();
+        asynchronous_copy ? loan->write(::cuda::stream_ref{execution_stream}) : loan->write_host();
     if (!writer) {
       return make_unexpected(std::move(writer).error());
     }
@@ -786,29 +787,49 @@ class CatalogTensorPublisherControl {
     Tensor retained_copy_source;
     bool source_release_stream_registered = false;
     bool device_copy_enqueued = false;
+    if (cuda_source && producer_stream != execution_stream) {
+      if (copy_slot->producer_ready_event == nullptr ||
+          cudaEventRecord(copy_slot->producer_ready_event, producer_stream) != cudaSuccess ||
+          cudaStreamWaitEvent(execution_stream, copy_slot->producer_ready_event, 0U) !=
+              cudaSuccess) {
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
+    }
     if (memory_kind_ == MemoryKind::kCudaDevice) {
       retained_copy_source = source;
-      source_release_stream_registered =
-          retained_copy_source.set_deallocation_stream(producer_stream);
       if (cudaMemcpyAsync(writer->data(),
                           source.data(),
                           writer->byte_size(),
                           cudaMemcpyDeviceToDevice,
-                          producer_stream) != cudaSuccess) {
+                          execution_stream) != cudaSuccess) {
         return make_unexpected(Error{ErrorCode::kFailure});
       }
       device_copy_enqueued = true;
-    } else if (memory_kind_ == MemoryKind::kPinnedHost && producer_stream != nullptr) {
-      retained_copy_source = source;
       source_release_stream_registered =
-          retained_copy_source.set_deallocation_stream(producer_stream);
-      auto copied = source.copy_to_host_async(writer->data(), writer->byte_size(), producer_stream);
-      if (!copied) {
-        return make_unexpected(std::move(copied).error());
+          retained_copy_source.set_deallocation_stream(execution_stream);
+    } else if (memory_kind_ == MemoryKind::kPinnedHost && cuda_source) {
+      retained_copy_source = source;
+      if (cudaMemcpyAsync(writer->data(),
+                          source.data(),
+                          writer->byte_size(),
+                          cudaMemcpyDeviceToHost,
+                          execution_stream) != cudaSuccess) {
+        return make_unexpected(Error{ErrorCode::kFailure});
       }
       device_copy_enqueued = true;
+      source_release_stream_registered =
+          retained_copy_source.set_deallocation_stream(execution_stream);
+    } else if (memory_kind_ == MemoryKind::kHost && cuda_source) {
+      if (cudaMemcpyAsync(writer->data(),
+                          source.data(),
+                          writer->byte_size(),
+                          cudaMemcpyDeviceToHost,
+                          execution_stream) != cudaSuccess ||
+          cudaStreamSynchronize(execution_stream) != cudaSuccess) {
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
     } else {
-      auto copied = source.copy_to_host(writer->data(), writer->byte_size(), producer_stream);
+      auto copied = source.copy_to_host(writer->data(), writer->byte_size(), execution_stream);
       if (!copied) {
         return make_unexpected(std::move(copied).error());
       }
@@ -816,14 +837,14 @@ class CatalogTensorPublisherControl {
     auto committed = std::move(*writer).commit();
     if (!committed) {
       if (device_copy_enqueued && !source_release_stream_registered) {
-        static_cast<void>(cudaStreamSynchronize(producer_stream));
+        static_cast<void>(cudaStreamSynchronize(execution_stream));
       }
       return make_unexpected(std::move(committed).error());
     }
     auto taken = channel_internal::TensorPublishLoanAccess::take(*loan);
     if (taken.state == nullptr || taken.ops == nullptr) {
       if (device_copy_enqueued && !source_release_stream_registered) {
-        static_cast<void>(cudaStreamSynchronize(producer_stream));
+        static_cast<void>(cudaStreamSynchronize(execution_stream));
       }
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
@@ -832,7 +853,7 @@ class CatalogTensorPublisherControl {
         taken.ops->abandon(taken.state);
       }
       if (device_copy_enqueued && !source_release_stream_registered) {
-        static_cast<void>(cudaStreamSynchronize(producer_stream));
+        static_cast<void>(cudaStreamSynchronize(execution_stream));
       }
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
@@ -840,7 +861,7 @@ class CatalogTensorPublisherControl {
     if (slot.owner != this) {
       kLoanOps.abandon(&slot);
       if (device_copy_enqueued && !source_release_stream_registered) {
-        static_cast<void>(cudaStreamSynchronize(producer_stream));
+        static_cast<void>(cudaStreamSynchronize(execution_stream));
       }
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
@@ -882,7 +903,7 @@ class CatalogTensorPublisherControl {
     if (release_slot_reference) {
       release();
       if (device_copy_enqueued && !source_release_stream_registered) {
-        static_cast<void>(cudaStreamSynchronize(producer_stream));
+        static_cast<void>(cudaStreamSynchronize(execution_stream));
       }
       return make_unexpected(Error{rejection});
     }
@@ -891,7 +912,6 @@ class CatalogTensorPublisherControl {
 
   [[nodiscard]] expected<std::uint32_t, Error> emit_prevalidated_exportable_tensor(
       const Tensor& source, SampleMetadata metadata) noexcept {
-    const std::lock_guard<std::mutex> publication_lock(publication_mutex_);
     std::uint64_t proposed_sequence{};
     {
       const std::lock_guard<std::mutex> lock(mutex_);
@@ -906,8 +926,6 @@ class CatalogTensorPublisherControl {
       }
       proposed_sequence = operation_sequence_ + 1U;
       metadata.sequence = proposed_sequence;
-      metadata.publish_timestamp_ns = 0;
-      metadata.publish_clock_id = {};
       metadata.byte_size = static_cast<std::uint64_t>(source.nbytes());
       metadata.payload_kind = PayloadKind::kDescriptorBacked;
     }
@@ -930,13 +948,12 @@ class CatalogTensorPublisherControl {
   }
 
   [[nodiscard]] expected<void, Error> report_clock_health(const ClockHealthReport report) noexcept {
-    const std::lock_guard<std::mutex> publication_lock(publication_mutex_);
     const std::lock_guard<std::mutex> lock(mutex_);
     if (closed_) {
       return make_unexpected(Error{ErrorCode::kClosed});
     }
     if (clock_health_.capability != ClockHealthCapability::kStatusReports || health_ == nullptr ||
-        !valid_health_report(report)) {
+        !channel_internal::valid_catalog_clock_health_report(report)) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
     if (operation_sequence_ == std::numeric_limits<std::uint64_t>::max() ||
@@ -945,8 +962,8 @@ class CatalogTensorPublisherControl {
     }
     const std::uint64_t proposed_operation = operation_sequence_ + 1U;
     const std::uint64_t proposed_report = report_sequence_ + 1U;
-    const auto wire =
-        encode_clock_health(producer_generation_, proposed_operation, proposed_report, report);
+    const auto wire = channel_internal::encode_tensor_catalog_clock_health(
+        producer_generation_, proposed_operation, proposed_report, report);
     const SampleMetadata metadata{
         .sequence = proposed_operation,
         .byte_size = wire.size(),
@@ -954,15 +971,26 @@ class CatalogTensorPublisherControl {
     };
     auto result = health_->emit_phase(wire, metadata);
     if (result.phase == channel_internal::InlinePublicationPhase::kAccepted &&
+        next_post_submit_result_for_test_) {
+      result.phase = channel_internal::InlinePublicationPhase::kPostSubmitUncertain;
+      result.error = Error{*next_post_submit_result_for_test_};
+      next_post_submit_result_for_test_.reset();
+    }
+    if (result.phase == channel_internal::InlinePublicationPhase::kAccepted &&
         result.recipient_count == 1U) {
       operation_sequence_ = proposed_operation;
       report_sequence_ = proposed_report;
+      channel_internal::TensorPublishLoanAccess::set_health_report_sequence(publisher_,
+                                                                            proposed_report);
       return {};
     }
     if (result.phase == channel_internal::InlinePublicationPhase::kAccepted ||
         result.phase == channel_internal::InlinePublicationPhase::kPostSubmitUncertain) {
       operation_sequence_ = proposed_operation;
       report_sequence_ = proposed_report;
+      closed_ = true;
+      channel_internal::TensorPublishLoanAccess::set_health_report_sequence(publisher_,
+                                                                            proposed_report);
       return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
     }
     return make_unexpected(std::move(result.error));
@@ -982,8 +1010,25 @@ class CatalogTensorPublisherControl {
     return publisher_.has_subscribers() && (health_ == nullptr || health_->has_subscribers());
   }
 
+  [[nodiscard]] bool fail_next_terminal_pre_submit_for_test() noexcept {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    if (closed_ || fail_next_terminal_pre_submit_for_test_) {
+      return false;
+    }
+    fail_next_terminal_pre_submit_for_test_ = true;
+    return true;
+  }
+
+  [[nodiscard]] bool exhaust_operation_sequence_for_test() noexcept {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    if (closed_ || operation_sequence_ == std::numeric_limits<std::uint64_t>::max()) {
+      return false;
+    }
+    operation_sequence_ = std::numeric_limits<std::uint64_t>::max();
+    return true;
+  }
+
   void fail_next_post_submit_for_test(const ErrorCode code) noexcept {
-    const std::lock_guard<std::mutex> publication_lock(publication_mutex_);
     next_post_submit_result_for_test_ = code;
   }
 
@@ -1001,6 +1046,13 @@ class CatalogTensorPublisherControl {
     if (available != nullptr) {
       slots_[available->back()].phase = TensorLoanSlotPhase::kQuarantined;
     }
+  }
+
+  [[nodiscard]] std::size_t preallocated_copy_event_count_for_test() const noexcept {
+    return static_cast<std::size_t>(
+        std::count_if(slots_.begin(), slots_.end(), [](const auto& slot) {
+          return slot.producer_ready_event != nullptr;
+        }));
   }
 
   void inject_post_submit_result_for_test(expected<std::uint32_t, Error>& result) noexcept {
@@ -1124,7 +1176,7 @@ class CatalogTensorPublisherControl {
 
   [[nodiscard]] bool valid_request_header(const TensorLoanRequest& request,
                                           std::uint64_t& item_size) const noexcept {
-    if (!valid_dtype(request.dtype) ||
+    if (!detail::valid_tensor_dtype(request.dtype) ||
         (required_dtype_ && !dtype_equal(request.dtype, *required_dtype_)) ||
         request.shape.size() > max_rank_ || (exact_rank_ && request.shape.size() != *exact_rank_) ||
         (request.byte_strides && request.byte_strides.size() != request.shape.size())) {
@@ -1231,6 +1283,15 @@ class CatalogTensorPublisherControl {
   [[nodiscard]] bool valid_metadata(const SampleMetadata& metadata) const noexcept {
     if (metadata.version.major != 1U || metadata.version.minor != 0U ||
         (static_cast<std::uint32_t>(metadata.flags) & ~0x3U) != 0U) {
+      return false;
+    }
+    // Only Runtime's prevalidated export path can still present a coordinate here. The
+    // caller-facing loan publication erases the pair before validating, and emit_copy
+    // builds its own metadata. That path forwards what it stamped rather than erasing it,
+    // so the pair must name a clock this catalog declares. A bare timestamp with no clock
+    // names no domain, and an identity past the declared range resolves to no record at
+    // all; either one reaches a peer as a plausible number it cannot place on a timeline.
+    if (!channel_internal::publication_coordinate_declared(metadata, catalog_clock_count_)) {
       return false;
     }
     if (capture_clock_.valid()) {
@@ -1376,6 +1437,9 @@ class CatalogTensorPublisherControl {
   std::unique_ptr<channel_internal::InlinePayloadPublisher> health_;
   holomq::BufferPool pool_;
   ClockId capture_clock_{};
+  // Declared clock count of the catalog owning this endpoint, so a forwarded publication coordinate
+  // can be checked against the identities a peer reading that catalog is able to resolve.
+  std::uint64_t catalog_clock_count_{};
   MemoryKind memory_kind_{MemoryKind::kUnknown};
   DeviceId device_id_{};
   std::optional<DLDataType> required_dtype_;
@@ -1393,12 +1457,12 @@ class CatalogTensorPublisherControl {
   std::vector<std::size_t> buffered_free_slots_;
   std::vector<std::size_t> bufferless_free_slots_;
   mutable std::mutex mutex_;
-  std::mutex publication_mutex_;
   std::atomic<std::uint32_t> references_{1U};
   std::uint64_t producer_generation_{};
   std::uint64_t operation_sequence_{};
   std::uint64_t report_sequence_{};
   bool closed_{};
+  bool fail_next_terminal_pre_submit_for_test_{};
   std::optional<ErrorCode> next_post_submit_result_for_test_;
   bool fail_next_readiness_registration_for_test_{};
 };
@@ -1471,9 +1535,10 @@ expected<channel_internal::ForeignTensorDisposition, Error> catalog_classify_for
 }
 
 expected<channel_internal::StagedTensorCopy, Error> catalog_stage_foreign_tensor(
-    void* state, const Tensor& source, cudaStream_t producer_stream) noexcept {
-  return static_cast<CatalogTensorPublisherControl*>(state)->stage_foreign_tensor(source,
-                                                                                  producer_stream);
+    void* state, const Tensor& source, cudaStream_t producer_stream,
+    cudaStream_t copy_stream) noexcept {
+  return static_cast<CatalogTensorPublisherControl*>(state)->stage_foreign_tensor(
+      source, producer_stream, copy_stream);
 }
 
 expected<std::uint32_t, Error> catalog_emit_prevalidated_exportable_tensor(
@@ -1500,6 +1565,15 @@ bool catalog_has_subscribers(const void* state) noexcept {
   return static_cast<const CatalogTensorPublisherControl*>(state)->has_subscribers();
 }
 
+bool catalog_exhaust_operation_sequence_for_test(void* state) noexcept {
+  return static_cast<CatalogTensorPublisherControl*>(state)->exhaust_operation_sequence_for_test();
+}
+
+bool catalog_fail_next_terminal_pre_submit_for_test(void* state) noexcept {
+  return static_cast<CatalogTensorPublisherControl*>(state)
+      ->fail_next_terminal_pre_submit_for_test();
+}
+
 void catalog_fail_next_post_submit_for_test(void* state, const ErrorCode code) noexcept {
   static_cast<CatalogTensorPublisherControl*>(state)->fail_next_post_submit_for_test(code);
 }
@@ -1510,6 +1584,11 @@ void catalog_fail_next_readiness_registration_for_test(void* state) noexcept {
 
 void catalog_corrupt_next_free_slot_for_test(void* state) noexcept {
   static_cast<CatalogTensorPublisherControl*>(state)->corrupt_next_free_slot_for_test();
+}
+
+std::size_t catalog_preallocated_copy_event_count_for_test(const void* state) noexcept {
+  return static_cast<const CatalogTensorPublisherControl*>(state)
+      ->preallocated_copy_event_count_for_test();
 }
 
 constexpr channel_internal::TensorPublisherOps kCatalogTensorPublisherOps{
@@ -1527,9 +1606,12 @@ constexpr channel_internal::TensorPublisherOps kCatalogTensorPublisherOps{
     .report_clock_health = catalog_report_clock_health,
     .update_connections = catalog_update_connections,
     .has_subscribers = catalog_has_subscribers,
+    .exhaust_operation_sequence_for_test = catalog_exhaust_operation_sequence_for_test,
+    .fail_next_terminal_pre_submit_for_test = catalog_fail_next_terminal_pre_submit_for_test,
     .fail_next_post_submit_for_test = catalog_fail_next_post_submit_for_test,
     .fail_next_readiness_registration_for_test = catalog_fail_next_readiness_registration_for_test,
     .corrupt_next_free_slot_for_test = catalog_corrupt_next_free_slot_for_test,
+    .preallocated_copy_event_count_for_test = catalog_preallocated_copy_event_count_for_test,
 };
 
 [[nodiscard]] ChannelQueuePolicy channel_queue_policy(const QueuePolicy policy) noexcept {
@@ -1705,19 +1787,26 @@ constexpr channel_internal::TensorPublisherOps kCatalogTensorPublisherOps{
 }
 
 [[nodiscard]] expected<ValidatedTensorEndpoint, Error> validate_tensor_subscriber_endpoint(
-    const detail::ChannelEndpointRecord& endpoint, const ChannelAttachOptions& options) noexcept {
-  if (!endpoint.subscriber_request) {
-    return make_unexpected(Error{ErrorCode::kInvalidArgument});
-  }
-  const auto& subscriber_request = endpoint.subscriber_request.value();
-  if (subscriber_request.queue_depth == 0U || subscriber_request.max_borrowed_samples == 0U) {
-    return make_unexpected(Error{ErrorCode::kInvalidArgument});
-  }
-  auto validated = validate_tensor_endpoint_common(endpoint, options, TopicDirection::kExport);
+    const detail::ChannelEndpointRecord& endpoint, const ChannelAttachOptions& options,
+    const TopicDirection subscriber_direction) noexcept {
+  auto validated = validate_tensor_endpoint_common(endpoint, options, subscriber_direction);
   if (!validated) {
     return make_unexpected(std::move(validated).error());
   }
-  validated->max_borrowed_samples = subscriber_request.max_borrowed_samples;
+  if (subscriber_direction == TopicDirection::kExport) {
+    if (!endpoint.subscriber_request || endpoint.subscriber_request->queue_depth == 0U ||
+        endpoint.subscriber_request->max_borrowed_samples == 0U) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    validated->max_borrowed_samples = endpoint.subscriber_request->max_borrowed_samples;
+  } else {
+    if (!endpoint.publisher_request || !endpoint.publisher_request->max_loaned_samples ||
+        *endpoint.publisher_request->max_loaned_samples == 0U) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    validated->max_borrowed_samples = endpoint.service_static.max_subscriber_borrowed;
+  }
+  validated->clock_health = endpoint.clock_health;
   return validated;
 }
 
@@ -1727,8 +1816,8 @@ constexpr channel_internal::TensorPublisherOps kCatalogTensorPublisherOps{
   if (endpoint.attach.peer == PeerRequirement::kOptional) {
     return {};
   }
-  if (auto* const barrier =
-          g_required_publisher_wait_barrier.exchange(nullptr, std::memory_order_acq_rel)) {
+  auto* barrier = g_required_publisher_wait_barrier.exchange(nullptr, std::memory_order_acq_rel);
+  if (barrier != nullptr) {
     barrier->reached.release();
     barrier->resume.acquire();
   }
@@ -1740,7 +1829,19 @@ constexpr channel_internal::TensorPublisherOps kCatalogTensorPublisherOps{
     if (!refreshed) {
       return make_unexpected(std::move(refreshed).error());
     }
-    if (subscriber.has_publishers()) {
+    if (barrier != nullptr && barrier->pause_after_refresh) {
+      barrier->refreshed.release();
+      barrier->resume_after_refresh.acquire();
+      barrier = nullptr;
+    }
+    auto ready = subscriber.has_samples();
+    if (!ready) {
+      return make_unexpected(std::move(ready).error());
+    }
+    // A short-lived graph publisher may enqueue terminal control and retire before this required
+    // attachment observes the refreshed peer count. Non-consuming readiness proves that the peer
+    // existed and left usable work; do not turn retained EOS into a spurious attach timeout.
+    if (subscriber.has_publishers() || *ready) {
       return {};
     }
     const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1849,7 +1950,7 @@ channel_internal::TensorPublisherTestAccess::create_catalog_clock_health_subscri
   return channel_internal::create_inline_payload_subscriber(
       runtime.impl_->context_,
       detail::ChannelEndpointCatalogAccess::backend_service_binding(endpoint) + ".clock_health.v1",
-      kClockHealthControlBytes,
+      channel_internal::kTensorCatalogClockHealthControlBytes,
       tensor_health_channel_options(data_options),
       runtime.impl_->context_.pubsub_capabilities());
 }
@@ -1928,13 +2029,13 @@ expected<ChannelPublisher<Tensor>, Error> ChannelRuntime::create_catalog_tensor_
       const ChannelOptions health_options = tensor_health_channel_options(data_options);
       const channel_internal::PublisherPressureOptions health_pressure =
           pressure.for_queue(health_options.queue_policy);
-      auto created_health =
-          channel_internal::create_inline_payload_publisher(impl_->context_,
-                                                            binding + ".clock_health.v1",
-                                                            kClockHealthControlBytes,
-                                                            health_options,
-                                                            impl_->context_.pubsub_capabilities(),
-                                                            health_pressure);
+      auto created_health = channel_internal::create_inline_payload_publisher(
+          impl_->context_,
+          binding + ".clock_health.v1",
+          channel_internal::kTensorCatalogClockHealthControlBytes,
+          health_options,
+          impl_->context_.pubsub_capabilities(),
+          health_pressure);
       if (!created_health) {
         return make_unexpected(std::move(created_health).error());
       }
@@ -1957,6 +2058,7 @@ expected<ChannelPublisher<Tensor>, Error> ChannelRuntime::create_catalog_tensor_
         *validated,
         synchronization_device,
         detail::ChannelEndpointCatalogAccess::capture_clock_id(endpoint),
+        detail::ChannelEndpointCatalogAccess::clock_count(endpoint),
         producer_generation);
     auto initialized = control->initialize();
     if (!initialized) {
@@ -1974,7 +2076,16 @@ expected<ChannelPublisher<Tensor>, Error> ChannelRuntime::create_catalog_tensor_
 }
 
 expected<ChannelSubscriber<Tensor>, Error> ChannelRuntime::create_catalog_tensor_subscriber(
-    const ChannelEndpointCatalog::EndpointView endpoint, ChannelAttachOptions options) {
+    const ChannelEndpointCatalog::EndpointView endpoint, ChannelAttachOptions options,
+    const TopicDirection subscriber_direction, const bool enforce_peer_requirement) {
+  return create_catalog_tensor_subscriber(
+      endpoint, std::move(options), subscriber_direction, enforce_peer_requirement, 0U);
+}
+
+expected<ChannelSubscriber<Tensor>, Error> ChannelRuntime::create_catalog_tensor_subscriber(
+    const ChannelEndpointCatalog::EndpointView endpoint, ChannelAttachOptions options,
+    const TopicDirection subscriber_direction, const bool enforce_peer_requirement,
+    const std::uint32_t receive_control_capacity) {
   if (!impl_) {
     return make_unexpected(Error{ErrorCode::kClosed});
   }
@@ -1982,23 +2093,46 @@ expected<ChannelSubscriber<Tensor>, Error> ChannelRuntime::create_catalog_tensor
   if (record == nullptr) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
-  auto validated = validate_tensor_subscriber_endpoint(*record, options);
+  auto validated = validate_tensor_subscriber_endpoint(*record, options, subscriber_direction);
   if (!validated) {
     return make_unexpected(std::move(validated).error());
+  }
+  if (receive_control_capacity != 0U &&
+      receive_control_capacity < validated->max_borrowed_samples) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
   try {
     const std::string binding =
         detail::ChannelEndpointCatalogAccess::backend_service_binding(endpoint);
-    auto subscriber = create_tensor_subscriber(binding,
-                                               tensor_subscriber_channel_options(*record),
-                                               *validated->tensor,
-                                               validated->max_borrowed_samples);
+    const ChannelOptions data_options = tensor_subscriber_channel_options(*record);
+    std::unique_ptr<channel_internal::InlinePayloadSubscriber> health;
+    if (validated->clock_health.capability == ClockHealthCapability::kStatusReports) {
+      auto created_health = channel_internal::create_inline_payload_subscriber(
+          impl_->context_,
+          binding + ".clock_health.v1",
+          channel_internal::kTensorCatalogClockHealthControlBytes,
+          tensor_health_channel_options(data_options),
+          impl_->context_.pubsub_capabilities());
+      if (!created_health) {
+        return make_unexpected(std::move(created_health).error());
+      }
+      health = std::move(*created_health);
+    }
+    auto subscriber = create_tensor_subscriber(
+        binding,
+        data_options,
+        *validated->tensor,
+        receive_control_capacity == 0U ? validated->max_borrowed_samples : receive_control_capacity,
+        std::move(health),
+        detail::ChannelEndpointCatalogAccess::clock_count(endpoint));
     if (!subscriber) {
       return make_unexpected(std::move(subscriber).error());
     }
-    auto attached = wait_for_required_tensor_publisher(*record, *validated, options, *subscriber);
-    if (!attached) {
-      return make_unexpected(std::move(attached).error());
+    if (enforce_peer_requirement) {
+      auto attached = wait_for_required_tensor_publisher(*record, *validated, options, *subscriber);
+      if (!attached) {
+        return make_unexpected(std::move(attached).error());
+      }
     }
     return subscriber;
   } catch (const std::length_error&) {
@@ -2185,7 +2319,7 @@ expected<void, Error> ChannelPublisher<Tensor>::report_clock_health(ClockHealthR
   return ops_->report_clock_health(state_, report);
 }
 
-expected<void, Error> ChannelPublisher<Tensor>::update_connections() {
+expected<void, Error> ChannelPublisher<Tensor>::update_connections() noexcept {
   if (state_ == nullptr || ops_ == nullptr || ops_->update_connections == nullptr) {
     return make_unexpected(Error{ErrorCode::kClosed});
   }

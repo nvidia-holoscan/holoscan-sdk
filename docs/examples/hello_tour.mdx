@@ -1,6 +1,6 @@
 The `hello_*` examples are the smallest programs that ship with the SDK. Each
-one exercises exactly one slice of the installed SDK — one library target, one
-header family, one API idea — and prints a single `... sample complete` line
+one exercises exactly one slice of the installed SDK — one or two library
+targets, one API idea — and prints a single `... sample complete` line
 when it succeeds. They double as install-tree smoke tests: if
 `find_package(holoscan)` cannot resolve a target or its headers, the matching
 `hello_*` example fails to configure or compile, which is precisely the signal
@@ -18,7 +18,8 @@ tree.
 - What each of the six `hello_*` examples demonstrates, in one screen or less
 - The key API calls each one exercises, and the CMake target it links
 - How the series maps SDK library targets (`holoscan::core`,
-  `holoscan::schema`, `holoscan::logger`) to header families
+  `holoscan::schema`, `holoscan::sensor_io`, `holoscan::logger`) to header
+  families
 - Where to go next in the guide for the full treatment of each concept
 </Note>
 
@@ -89,15 +90,17 @@ timestamps, frame ID), serializes with
 `holoscan::schema::parse_image_metadata()`. Both helpers return
 `expected<..., Error>`, so failure is a value here too. Only the metadata is
 encoded — never the tensor payload bytes. Header:
-`holoscan/schema/image_metadata.hpp`; link target: `holoscan::schema`.
+`holoscan/sensor_io/image_metadata.hpp`; link target: `holoscan::sensor_io`. The
+`Image` and `Imu` schemas belong to that library rather than to Core, so a graph
+that carries either one links `holoscan::sensor_io`; it brings `holoscan::schema`
+with it.
 
 ```cpp
 const holoscan::schema::ImageMetadataOptions options{
     .height = 3,
     .width = 2,
     .encoding = holoscan::schema::ImageEncoding_MONO32F,
-    .time_ns = 987654321,
-    .acqtime_ns = 987654399,
+    .capture_timestamp_ns = 987654321,
     .frame_id = "hello_schema_frame"};
 
 const auto metadata = holoscan::schema::build_image_metadata(tensor, options);
@@ -175,7 +178,7 @@ Concept chapter: [Relevant technologies](/holoscan/sdk-user-guide/introduction/r
   `holoscan::expected<T, Error>` and the `HOLOSCAN_LOG_*` macros.
 - `hello_tensor` and `hello_schema` cover the data plane: the DLPack-backed
   `holoscan::Tensor` and the FlatBuffers metadata helpers in
-  `holoscan::schema`.
+  `holoscan::sensor_io`.
 - `hello_cccl` and `hello_matx` show CCCL and MatX composing with
   `holoscan::core` in the same build, using stream-scoped work and event-based
   completion instead of device-wide synchronization.

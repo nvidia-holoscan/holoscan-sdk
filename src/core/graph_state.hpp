@@ -50,7 +50,7 @@ struct PortStorage {
   const void* declaration{};
   const void* local_type_token{};
   std::optional<std::size_t> operator_index;
-  std::optional<TensorAllocationBounds> setup_tensor_allocation;
+  std::optional<TensorPoolBounds> setup_tensor_allocation;
   std::optional<SchemaPackagePlanRecord> schema_package;
 };
 
@@ -180,6 +180,7 @@ class GraphState {
   std::vector<ReadinessSourceDeclarationRecord> readiness_sources_;
   std::vector<RegionRecord> regions_;
   std::vector<PartitionRecord> partitions_;
+  bool automatic_partition_remaining_{};
   std::deque<ClockStorage> clocks_;
   std::vector<ClockImportAuthoringRecord> clock_imports_;
   std::vector<EmbeddedClockBindingAuthoringRecord> clock_bindings_;

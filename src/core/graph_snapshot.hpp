@@ -77,6 +77,7 @@ struct GraphSnapshotData {
   std::vector<ReadinessSourceDeclarationRecord> readiness_sources;
   std::vector<RegionRecord> regions;
   std::vector<PartitionRecord> partitions;
+  bool automatic_partition_remaining{};
   std::vector<ClockDeclarationRecord> clocks;
   std::vector<ClockCapabilityAuthoringRecord> clock_capabilities;
   std::vector<ClockImportAuthoringRecord> clock_imports;
@@ -149,6 +150,13 @@ canonicalize_graph_snapshot(  // NOLINT(readability-function-cognitive-complexit
     port_ids.emplace(snapshot.ports[index].id.value, index + 1U);
   for (std::size_t index = 0; index < snapshot.ports.size(); ++index) {
     auto& port = snapshot.ports[index];
+    if (port.setup.follows_input) {
+      port.setup.follows_input = GraphPortId{port_ids.at(port.setup.follows_input->value)};
+    }
+    if (port.graph_override.follows_input) {
+      port.graph_override.follows_input =
+          GraphPortId{port_ids.at(port.graph_override.follows_input->value)};
+    }
     port.owner = VertexId{vertex_ids.at(port.owner.value)};
     port.id = GraphPortId{index + 1U};
   }

@@ -50,8 +50,7 @@ cmake_minimum_required(VERSION 4.0)
 
 project(holoscan_hello_world LANGUAGES CXX)
 
-find_package(holoscan REQUIRED CONFIG
-    PATHS "/opt/nvidia/holoscan")
+find_package(holoscan REQUIRED CONFIG)
 
 add_executable(hello_world hello_world.cpp)
 target_link_libraries(hello_world PRIVATE holoscan::core)
@@ -59,10 +58,10 @@ target_link_libraries(hello_world PRIVATE holoscan::core)
 
 Three lines carry the weight:
 
-- `find_package(holoscan REQUIRED CONFIG ...)` locates the SDK's CMake
-  package configuration. `/opt/nvidia/holoscan` is the default install
-  location; point `PATHS` (or `CMAKE_PREFIX_PATH`) at your own install
-  prefix if the SDK lives elsewhere.
+- `find_package(holoscan REQUIRED CONFIG)` locates the SDK's CMake
+  package configuration through CMake's normal package search paths. Set
+  `CMAKE_PREFIX_PATH` or `Holoscan_ROOT` if the SDK is installed in a
+  non-standard prefix.
 - `target_link_libraries(... holoscan::core)` links the core runtime. This
   one imported target brings the include directories, compile features, and
   library dependencies with it — no manual `-I`/`-L` flags.

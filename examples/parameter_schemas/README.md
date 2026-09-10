@@ -56,7 +56,7 @@ From this `cpp/` folder (standalone consumer build, using
 `CMakeLists.min.txt` as the project file):
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

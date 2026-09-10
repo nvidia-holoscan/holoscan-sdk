@@ -1,0 +1,35 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+
+find_package(CUDAToolkit REQUIRED)
+
+# Header-only interface for public holoinfer headers without large dependencies
+add_library(holoinfer_headers INTERFACE)
+add_library(holoscan::infer::headers ALIAS holoinfer_headers)
+target_include_directories(holoinfer_headers
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        # Generated holoinfer/holoinfer_export.h lives at
+        # `<build>/modules/inference/src/include/holoinfer/holoinfer_export.h`, i.e. here.
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+target_link_libraries(holoinfer_headers
+    INTERFACE
+        CUDA::cudart
+        holoscan::logger
+)
+
+# Install. Sources live under `.../include/holoinfer/*.hpp` so consumers write
+# `#include <holoinfer/foo.hpp>` (natural include root, matching Core / HoloMQ).
+install(TARGETS holoinfer_headers
+    EXPORT ${HOLOSCAN_PACKAGE_NAME}-inference-exports
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/holoinfer
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    COMPONENT holoscan-inference
+    FILES_MATCHING PATTERN "*.hpp"
+)

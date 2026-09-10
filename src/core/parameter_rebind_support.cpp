@@ -14,11 +14,7 @@
 #include <vector>
 
 #include "compiler/compile_platform.hpp"
-#include "compiler/deployment_plan_lowering.hpp"
-#include "compiler/execution_plan_state.hpp"
-#include "compiler/parameter_plan_lowering.hpp"
-#include "compiler/partition_plan_lowering.hpp"
-#include "compiler/process_plan_lowering.hpp"
+#include "compiler/parameter_identity.hpp"
 #include "compiler/profile_admission.hpp"
 #include "core/graph_compiler_access.hpp"
 
@@ -42,46 +38,8 @@ expected<ParameterRebindGraphEvidence, Error> capture_parameter_rebind_graph_imp
     profile.manifest.target_triple = std::string(compile_target_triple());
     profile.manifest.producer_build_id = "holoscan-core-5.0";
     const DeploymentBinding deployment_options;
-    const ProcessPlacementBinding process_placement;
-    std::vector<ExecutionPartitionRecord> partitions;
-    if (snapshot->partitions.empty()) {
-      std::vector<VertexId> members;
-      for (const auto& vertex : snapshot->vertices) {
-        if (vertex.kind == VertexKind::kOperator) {
-          members.push_back(vertex.id);
-        }
-      }
-      partitions.push_back(ExecutionPartitionRecord{
-          .id = ExecutionPartitionId{1U},
-          .members = std::move(members),
-          .execution_lane = 0U,
-      });
-    } else {
-      const auto process = lower_process_plan(*snapshot, process_placement);
-      if (!process.error_tokens.empty()) {
-        return make_unexpected(Error{ErrorCode::kIncompatible, "PARAM_REBIND_DEPLOYMENT_REJECTED"});
-      }
-      ExecutionPlanState partition_state;
-      const std::vector<std::uint32_t> unresolved_lanes(snapshot->vertices.size(), 0U);
-      auto partition = lower_partition_plan(*snapshot,
-                                            Profile::kStandard,
-                                            profile.effective_profiles(),
-                                            std::nullopt,
-                                            unresolved_lanes,
-                                            process.process_group_by_vertex,
-                                            partition_state);
-      if (!partition) {
-        return make_unexpected(Error{partition.error().code, "PARAM_REBIND_PARTITION_REJECTED"});
-      }
-      partitions = std::move(partition_state.execution_partitions);
-    }
-    auto deployment = lower_deployment_plan(
-        *snapshot, deployment_options, profile.effective_profiles(), partitions);
-    if (!deployment.error_tokens.empty()) {
-      return make_unexpected(Error{ErrorCode::kIncompatible, "PARAM_REBIND_DEPLOYMENT_REJECTED"});
-    }
     const ParamSchemaHash context = parameter_admission_context_digest(
-        profile.manifest, deployment, empty_parameter_migration_catalog_digest());
+        profile.manifest, deployment_options, empty_parameter_migration_catalog_digest());
     auto factories =
         selected_operators.empty()
             ? GraphCompilerAccess::executable_factories(graph, *snapshot)

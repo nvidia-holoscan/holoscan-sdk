@@ -24,9 +24,62 @@
 #include "core/source_id_internal.hpp"
 #include "runtime/execution_lane.hpp"
 #include "runtime/runtime_phase_counters.hpp"
+#include "threading/thread_placement_contracts.hpp"
 
 namespace holoscan::detail {
 namespace {
+
+TEST(ThreadPlacementContracts, ComparesEverySemanticFieldExplicitly) {
+  const ThreadPlacement baseline{
+      .affinity = CPUAffinity{1U, 3U},
+      .scheduling =
+          ThreadScheduling{
+              .policy = SchedulingPolicy::kFIFO,
+              .priority = 7,
+          },
+      .wake_mode = WakeMode::kBusyPoll,
+      .irq_isolation = IRQIsolation::kRequireIsolated,
+      .probe_failure_policy = ProbeFailurePolicy::kFailAdmission,
+  };
+  const auto expect_different = [&](auto mutate) {
+    ThreadPlacement candidate = baseline;
+    mutate(candidate);
+    EXPECT_FALSE(thread_placement_equal(baseline, candidate));
+  };
+
+  // Key setup: compare one complete placement with copies that change exactly one value field.
+  EXPECT_TRUE(thread_placement_equal(baseline, baseline));
+  EXPECT_TRUE(thread_placement_equal(ThreadPlacement{}, ThreadPlacement{}));
+  expect_different([](auto& value) { value.affinity.reset(); });
+  expect_different([](auto& value) { value.affinity = CPUAffinity{1U, 4U}; });
+  expect_different([](auto& value) { value.scheduling.policy = SchedulingPolicy::kRoundRobin; });
+  expect_different([](auto& value) { value.scheduling.priority.reset(); });
+  expect_different([](auto& value) { value.wake_mode = WakeMode::kSleepingWaitset; });
+  expect_different([](auto& value) { value.irq_isolation = IRQIsolation::kPreferIsolated; });
+  expect_different(
+      [](auto& value) { value.probe_failure_policy = ProbeFailurePolicy::kWarnAndRecordFallback; });
+
+  // Key assertion: equality changes for every field and distinguishes absent optional values.
+  ThreadPlacement no_affinity = baseline;
+  no_affinity.affinity.reset();
+  EXPECT_FALSE(thread_placement_equal(no_affinity, baseline));
+
+  ThreadPlacement deadline = baseline;
+  deadline.scheduling = ThreadScheduling{
+      .policy = SchedulingPolicy::kDeadline,
+      .deadline = DeadlineScheduling{.runtime_ns = 10U, .deadline_ns = 20U, .period_ns = 30U},
+  };
+  const auto expect_deadline_different = [&](auto mutate) {
+    ThreadPlacement candidate = deadline;
+    mutate(*candidate.scheduling.deadline);
+    EXPECT_FALSE(thread_placement_equal(deadline, candidate));
+  };
+  EXPECT_TRUE(deadline_scheduling_equal(std::nullopt, std::nullopt));
+  EXPECT_FALSE(deadline_scheduling_equal(deadline.scheduling.deadline, std::nullopt));
+  expect_deadline_different([](auto& value) { ++value.runtime_ns; });
+  expect_deadline_different([](auto& value) { ++value.deadline_ns; });
+  expect_deadline_different([](auto& value) { ++value.period_ns; });
+}
 
 // Fake PlacementAdapter that records every apply/snapshot call by thread and supports
 // injectable faults: fail a specific core, misreport affinity, or block until released.
@@ -1000,6 +1053,13 @@ TEST(ExecutionLaneSet, PrivatePhaseCountersTrackExactLaneHandoffs) {
   EXPECT_EQ(count(RuntimePhaseCounter::kLaneCallbacksExited), 3U);
   EXPECT_EQ(count(RuntimePhaseCounter::kLaneCompletionsObserved), 3U);
   EXPECT_EQ(count(RuntimePhaseCounter::kLaneSerializationContentions), 0U);
+
+  const auto usage = counters->thread_usage_snapshot();
+  const auto& lane_usage =
+      usage[RuntimePhaseCounters::thread_usage_index(RuntimeThreadUsageRole::kExecutionLane)];
+  EXPECT_EQ(lane_usage.supported, runtime_thread_usage_detail::kSupported);
+  EXPECT_EQ(lane_usage.samples,
+            runtime_thread_usage_detail::kSupported ? lanes.size() : std::size_t{0U});
 }
 
 // REQ: RUNTIME-011
@@ -1052,6 +1112,10 @@ TEST(ExecutionLaneSet, InlineOwnerAppliesPlacementAndInvokesLifecycleWithoutLane
   EXPECT_EQ(count(RuntimePhaseCounter::kLaneCallbacksEntered), 1U);
   EXPECT_EQ(count(RuntimePhaseCounter::kLaneCallbacksExited), 1U);
   EXPECT_TRUE(lane_set->join());
+  const auto usage = counters->thread_usage_snapshot();
+  const auto& lane_usage =
+      usage[RuntimePhaseCounters::thread_usage_index(RuntimeThreadUsageRole::kExecutionLane)];
+  EXPECT_EQ(lane_usage.samples, 0U);
   const auto restored = adapter->restored();
   ASSERT_EQ(restored.size(), 1U);
   EXPECT_EQ(restored.front().affinity.cores, std::vector<std::uint32_t>{19U});

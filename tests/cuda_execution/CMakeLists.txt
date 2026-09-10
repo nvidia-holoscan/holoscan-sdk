@@ -21,6 +21,7 @@ endfunction()
 add_executable(cuda_execution_test
     test_cuda_event_pool.cpp
     test_cuda_green_context.cpp
+    test_cuda_green_context_driver.cpp
     test_cuda_stream_pool.cpp
     ../common/allocation_counter.cpp
 )
@@ -32,8 +33,13 @@ target_link_libraries(cuda_execution_test
         GTest::gtest_main
 )
 
+target_include_directories(cuda_execution_test
+    PRIVATE
+        ${holoscan_SOURCE_DIR}/src
+)
+
 gtest_discover_tests(cuda_execution_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX CUDA_EXECUTION.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )

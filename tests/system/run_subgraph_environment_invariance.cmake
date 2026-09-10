@@ -35,16 +35,11 @@ function(run_subgraph_smoke selector output_variable)
 endfunction()
 
 run_subgraph_smoke("absent" absent_output)
-run_subgraph_smoke("serial_baseline/v1" baseline_output)
-run_subgraph_smoke("source_chain/v1" source_chain_output)
-
-if(NOT absent_output STREQUAL baseline_output)
-    message(FATAL_ERROR
-        "Subgraph topology/provenance changed under serial_baseline/v1\n"
-        "absent:\n${absent_output}\nserial_baseline/v1:\n${baseline_output}")
-endif()
-if(NOT absent_output STREQUAL source_chain_output)
-    message(FATAL_ERROR
-        "Subgraph topology/provenance changed under source_chain/v1\n"
-        "absent:\n${absent_output}\nsource_chain/v1:\n${source_chain_output}")
-endif()
+foreach(retired_value IN ITEMS "serial_baseline/v1" "source_chain/v1" "invalid-retired-value")
+    run_subgraph_smoke("${retired_value}" retired_output)
+    if(NOT absent_output STREQUAL retired_output)
+        message(FATAL_ERROR
+            "Retired selector leaked into Graph authoring for '${retired_value}'\n"
+            "absent:\n${absent_output}\npresent:\n${retired_output}")
+    endif()
+endforeach()

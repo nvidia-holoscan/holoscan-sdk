@@ -9,6 +9,8 @@
 
 #include <fmt/format.h>
 
+#include <nvtx3/nvToolsExtCudaRt.h>
+
 #include <algorithm>
 #include <exception>
 #include <memory>
@@ -41,7 +43,8 @@ using GreenCtxStreamCreateFn = CUresult (*)(CUstream*, CUgreenCtx, unsigned int,
 // magic static.
 const expected<GreenCtxStreamCreateFn, Error>& green_ctx_stream_create_fn() {
   static const expected<GreenCtxStreamCreateFn, Error> fn =
-      resolve_driver_entry_point<GreenCtxStreamCreateFn>("cuGreenCtxStreamCreate");
+      resolve_driver_entry_point<GreenCtxStreamCreateFn>(
+          "cuGreenCtxStreamCreate", cuda_execution_detail::kCUDADriverABIVersion12050);
   return fn;
 }
 #endif
@@ -329,6 +332,7 @@ expected<std::shared_ptr<CudaStreamPool::StreamEntry>, Error> CudaStreamPool::cr
       return forward_error(create_status);
     }
 
+    nvtxNameCudaStreamA(native_stream, name.c_str());
     auto entry = std::make_shared<StreamEntry>(
         StreamEntry{::cuda::stream::from_native_handle(native_stream), std::move(name)});
     return entry;

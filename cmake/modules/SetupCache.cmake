@@ -18,7 +18,7 @@ function(check_cache_dir cache_dir_name)
 
     # If the cache directory is a relative path, make it absolute path. Also normalize the path.
     if(is_relative)
-        cmake_path(ABSOLUTE_PATH ${cache_dir_name} BASE_DIRECTORY ${CMAKE_SOURCE_DIR} NORMALIZE)
+        cmake_path(ABSOLUTE_PATH ${cache_dir_name} BASE_DIRECTORY ${holoscan_SOURCE_DIR} NORMALIZE)
     else()
         cmake_path(NORMAL_PATH ${cache_dir_name})
     endif()

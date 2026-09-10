@@ -9,10 +9,13 @@
 #include <optional>
 #include <string>
 
+#include <holoscan/holoscan_core_export.h>
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/port.hpp>
 
 namespace holoscan {
+
+class HOLOSCAN_CORE_EXPORT ExecutionGraphView;
 
 /// @brief Identify one stable Core structural diagnostic definition.
 ///
@@ -65,5 +68,16 @@ struct Diagnostic {
   std::string provided;      ///< Canonical candidate-side summary when applicable.
   std::optional<DiagnosticId> cause_id;  ///< Earlier report record that caused this result.
 };
+
+/// @brief Format one structural diagnostic for human-readable output.
+/// @param diagnostic Structured diagnostic to render.
+/// @param graph Immutable compiled graph used to resolve a nonzero source vertex. A
+/// default-constructed view leaves vertex names unresolved.
+/// @return One human-readable line without a trailing newline.
+/// @note Source vertex IDs are canonical plan IDs, so an authoring GraphView is not accepted.
+/// @note Preserve and inspect the structured fields when program logic depends on diagnostics.
+/// The rendered text is not a stable machine-readable format.
+[[nodiscard]] HOLOSCAN_CORE_EXPORT std::string format_diagnostic(const Diagnostic& diagnostic,
+                                                                 const ExecutionGraphView& graph);
 
 }  // namespace holoscan

@@ -19,7 +19,8 @@
 #include <utility>
 #include <vector>
 
-#include "compiler/parameter_plan_lowering.hpp"
+#include "compiler/parameter_identity.hpp"
+#include "core/canonical_text_encoding.hpp"
 #include "core/graph_compiler_access.hpp"
 #include "core/parameter_override_set_internal.hpp"
 #include "core/parameter_rebind_support.hpp"
@@ -80,32 +81,13 @@ constexpr std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
                           std::move(migration)};
 }
 
-[[nodiscard]] std::string percent_encode(std::string_view value) {
-  constexpr std::string_view kHex = "0123456789ABCDEF";
-  std::string result;
-  result.reserve(value.size());
-  for (const unsigned char byte : value) {
-    const bool safe = (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-                      (byte >= '0' && byte <= '9') || byte == '-' || byte == '_' || byte == '.' ||
-                      byte == '~';
-    if (safe) {
-      result.push_back(static_cast<char>(byte));
-    } else {
-      result.push_back('%');
-      result.push_back(kHex[(byte >> 4U) & 0x0FU]);
-      result.push_back(kHex[byte & 0x0FU]);
-    }
-  }
-  return result;
-}
-
 [[nodiscard]] std::string render_segments(std::span<const std::string> segments) {
   std::string result;
   for (const auto& segment : segments) {
     if (!result.empty()) {
       result.push_back('/');
     }
-    result += percent_encode(segment);
+    holoscan::detail::append_percent_encoded_uri_component(result, segment);
   }
   return result;
 }
@@ -210,7 +192,7 @@ constexpr std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
     if (!result.empty()) {
       result.push_back('/');
     }
-    result += percent_encode(segment);
+    holoscan::detail::append_percent_encoded_uri_component(result, segment);
   };
   const auto& graph_path = graph.path;
   if (graph_path) {
@@ -382,7 +364,7 @@ struct SelectedTargetOperators {
     if (!result.empty()) {
       result.push_back('/');
     }
-    result += percent_encode(segment);
+    holoscan::detail::append_percent_encoded_uri_component(result, segment);
   }
   return result;
 }
@@ -393,7 +375,7 @@ struct SelectedTargetOperators {
     if (!result.empty()) {
       result.push_back('/');
     }
-    result += percent_encode(segment);
+    holoscan::detail::append_percent_encoded_uri_component(result, segment);
   }
   return result;
 }

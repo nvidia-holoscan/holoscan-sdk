@@ -19,10 +19,10 @@
 
 namespace holoscan {
 
-/// @brief Name the schema emitted by the EA1 temporal-record serializer.
+/// @brief Name the schema emitted by the baseline temporal-record serializer.
 inline constexpr const char* kTemporalRecordSchema = "holoscan.temporal-records";
 
-/// @brief Name the only accepted EA1 temporal-record schema version.
+/// @brief Name the only accepted baseline temporal-record schema version.
 inline constexpr std::uint32_t kTemporalRecordVersion = 1;
 
 /// @brief Identify one normalized closed trigger without retaining an authoring object.
@@ -114,7 +114,7 @@ enum class TemporalPredicateScope : std::uint8_t {
 enum class TemporalPredicateResetPolicy : std::uint8_t {
   /// Reset for a new plan, cold session, restart/rebind, producer epoch, or
   /// relevant clock discontinuity. Pause/resume is explicitly not a reset.
-  kEa1ResetEventsV1 = 0,
+  kResetEventsV1 = 0,
 };
 
 /// @brief Identify whether a predicate record can be recomputed from durable evidence.
@@ -126,7 +126,7 @@ enum class TemporalPredicateReplayKind : std::uint8_t {
 
 /// @brief Carry one copied clock key in a pointer-free normalized record.
 ///
-/// EA1-005 records the authoring/default identity. EA1-009 resolves that key to a
+/// HSDK5-005 records the authoring/default identity. HSDK5-009 resolves that key to a
 /// plan-local clock and direct-conversion record without changing this schema.
 struct TemporalClockKeyRecord {
   bool is_default{true};  ///< Whether this denotes the graph-default clock.
@@ -170,7 +170,7 @@ struct TemporalReferenceRecord {
   TemporalRecordReferenceKind kind{TemporalRecordReferenceKind::kTriggerSample};
   TemporalClockKeyRecord clock{};  ///< Frozen reference clock key.
   TemporalRecordConversionKind conversion{TemporalRecordConversionKind::kSameClock};
-  /// Stable plan-local conversion-record identity resolved by EA1-009, or empty for same-clock.
+  /// Stable plan-local conversion-record identity resolved by HSDK5-009, or empty for same-clock.
   std::string conversion_record_id;
 
   friend bool operator==(const TemporalReferenceRecord&, const TemporalReferenceRecord&) = default;
@@ -211,7 +211,7 @@ struct TemporalWindowRecord {
 
 /// @brief Preserve one ordered predicate input without storing a C++ type address.
 ///
-/// EA1-009 resolves the copied name to a \ref PortId and validates the
+/// HSDK5-009 resolves the copied name to a \ref PortId and validates the
 /// process-local type token against the canonical port catalog. The token
 /// itself is never persisted here or emitted by the serializer.
 struct TemporalPredicateInputRecord {
@@ -245,7 +245,7 @@ struct TemporalPredicateStateRecord {
   std::uint64_t alignment_bytes{};  ///< Exact state alignment, or zero when absent.
   std::uint64_t max_bytes{};        ///< Admitted finite storage bound, or zero when absent.
   std::string schema;               ///< Stable state schema identity, or empty when absent.
-  TemporalPredicateResetPolicy reset_policy{TemporalPredicateResetPolicy::kEa1ResetEventsV1};
+  TemporalPredicateResetPolicy reset_policy{TemporalPredicateResetPolicy::kResetEventsV1};
 
   friend bool operator==(const TemporalPredicateStateRecord&,
                          const TemporalPredicateStateRecord&) = default;
@@ -290,7 +290,7 @@ struct TemporalPredicateRecord {
 ///
 /// The record contains copied names and logical source identities only. It owns
 /// no authoring address, callable bytes, queue, cache, scheduler, clock object,
-/// or backend handle. EA1-009 may embed a validated record into an immutable
+/// or backend handle. HSDK5-009 may embed a validated record into an immutable
 /// \c ExecutionPlan after resolving graph-local identities.
 struct ContractRecord {
   std::uint32_t version{kTemporalRecordVersion};  ///< Exact record schema version.

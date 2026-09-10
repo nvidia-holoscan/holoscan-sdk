@@ -59,25 +59,16 @@ class ScopedEnvironmentMutation {
   std::optional<std::string> previous_;
 };
 
-[[nodiscard]] inline std::optional<std::string_view> expected_algorithm_id() {
-  const auto selected = read_environment();
-  if (!selected.has_value() || *selected == "serial_baseline/v1") {
-    return "holoscan.partition.serial_baseline";
-  }
-  if (*selected == "source_chain/v1") {
-    return "holoscan.partition.source_chain";
-  }
-  return std::nullopt;
-}
-
 inline void expect_accepted_cover(const ExecutionPlan& plan) {
-  const auto expected_algorithm = expected_algorithm_id();
-  ASSERT_TRUE(expected_algorithm.has_value())
-      << "partition parity accepts only the explicit serial_baseline/v1 and source_chain/v1 "
-         "covers";
   ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_TRUE(plan.partitioning_plan().requested_algorithm.has_value());
   ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
-  EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, *expected_algorithm);
+  const std::string_view expected_algorithm =
+      plan.partitioning_plan().mode == PartitioningMode::kManual
+          ? "holoscan.partition.serial_baseline"
+          : "holoscan.partition.source_chain";
+  EXPECT_EQ(plan.partitioning_plan().requested_algorithm->id, expected_algorithm);
+  EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, expected_algorithm);
   EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->version, 1U);
   EXPECT_EQ(plan.scheduler_plan().ready_policy.id, "holoscan.ready.deterministic_serial");
   EXPECT_EQ(plan.scheduler_plan().ready_policy.version, 1U);

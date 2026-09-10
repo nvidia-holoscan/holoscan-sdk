@@ -27,7 +27,7 @@ add_executable(memory_test
     ../common/allocation_counter.cpp
 )
 holoscan_configure_memory_test_clang_tidy(memory_test)
-target_include_directories(memory_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(memory_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 target_link_libraries(memory_test
     PRIVATE
@@ -38,5 +38,5 @@ target_link_libraries(memory_test
 gtest_discover_tests(memory_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX MEMORY.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )

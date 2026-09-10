@@ -147,7 +147,7 @@ enum class ParamLogicalType : std::uint8_t {
 /// fixed-scalar route without retaining a live schema descriptor.
 enum class ParamValueRouteDisposition : std::uint8_t {
   kPortableScalar = 0,  ///< A stable fixed-scalar route is available.
-  kLocalTypedOnly = 1,  ///< Only the owning typed Operator may interpret the field in EA1.
+  kLocalTypedOnly = 1,  ///< Only the owning typed Operator may interpret the field in baseline.
   kUnsupported = 2,     ///< No generic value route is available for the accepted plan.
 };
 
@@ -361,7 +361,7 @@ template <typename T>
   } else if constexpr (std::same_as<Value, std::filesystem::path>) {
     // A native path remains a legal cold typed value, but its character representation and
     // normalization are platform-specific.  Keep the shape unstable until a qualified codec
-    // supplies the explicitly declared logical UTF-8 path identity owned by EA1-018.
+    // supplies the explicitly declared logical UTF-8 path identity owned by HSDK5-018.
     return ParamFieldTypeShape{.type = ParamLogicalType::kFilesystemPath};
   } else if constexpr (kIsChronoDuration<Value>) {
     using Rep = typename Value::rep;
@@ -1154,7 +1154,7 @@ template <typename ParamsT>
 /// @brief Provide a dependency-free portable projection boundary for optional tooling.
 ///
 /// This static view contains no C++ member pointer, operation thunk, object address, parser node,
-/// file path, backend handle, or mutable runtime authority. EA1-018 owns owning archive and
+/// file path, backend handle, or mutable runtime authority. HSDK5-018 owns owning archive and
 /// persistence representations.
 struct ParamSchemaDocument {
   std::string_view stable_id{};       ///< Static stable schema identity.
@@ -1285,8 +1285,7 @@ class ParamFieldBuilder {
       LifecycleStage stage = LifecycleStage::kConfigure) noexcept {
     mutability_ = ParamMutability::kLifecycle;
     earliest_invalidated_stage_ = stage;
-    invalid_lifecycle_stage_ =
-        static_cast<std::uint8_t>(stage) > static_cast<std::uint8_t>(LifecycleStage::kStart);
+    invalid_lifecycle_stage_ = !is_lifecycle_forward_stage(stage);
     return *this;
   }
   /// @brief Require a newly compiled plan for every value change.
@@ -2017,6 +2016,14 @@ struct StaticParamSchema {
 
 namespace detail {
 
+template <typename ParamsT, typename... Fields>
+/// @brief Retain declared field types without adding them to the erased schema descriptor.
+/// @tparam ParamsT Exact aggregate type.
+/// @tparam Fields Exact field builder types in declaration order.
+struct TypedParamSchema : StaticParamSchema<ParamsT, sizeof...(Fields)> {
+  using FieldBuilders = std::tuple<Fields...>;  ///< Typed declarations for optional tooling.
+};
+
 template <typename ParamsT, auto MemberPtr>
 constexpr ParamFieldDescriptor make_field_descriptor(
     std::string_view schema_id, const ParamFieldBuilder<ParamsT, MemberPtr>& builder) {
@@ -2177,9 +2184,11 @@ consteval auto make_param_schema(ParamSchemaHeader header, Fields... builders) {
     throw "invalid parameter field policy or constraint";
   }
 
-  StaticParamSchema<ParamsT, sizeof...(Fields)> result{
-      .header = header,
-      .fields = {detail::make_field_descriptor(header.stable_id(), builders)...},
+  TypedParamSchema<ParamsT, Fields...> result{
+      StaticParamSchema<ParamsT, sizeof...(Fields)>{
+          .header = header,
+          .fields = {detail::make_field_descriptor(header.stable_id(), builders)...},
+      },
   };
   for (std::size_t index = 0; index < result.fields.size(); ++index) {
     result.document_fields[index] = detail::make_document_field(result.fields[index]);
@@ -2224,6 +2233,16 @@ consteval auto make_param_schema(ParamSchemaHeader header, Fields... builders) {
   return result;
 }
 
+template <typename ParamsT>
+  requires ParameterAggregate<ParamsT> && HasParamSchema<ParamsT>
+inline constexpr auto kParamSchema = holoscan_param_schema(type_tag<ParamsT>{});
+
+template <typename ParamsT, std::size_t N>
+[[nodiscard]] const StaticParamSchema<ParamsT, N>& public_param_schema_ref(
+    const StaticParamSchema<ParamsT, N>& schema) noexcept {
+  return schema;
+}
+
 }  // namespace detail
 
 template <typename ParamsT>
@@ -2233,8 +2252,7 @@ template <typename ParamsT>
 /// @return Process-lifetime immutable `StaticParamSchema` reference.
 /// @note This operation performs no registration, allocation, lookup, or synchronization.
 [[nodiscard]] const auto& param_schema() noexcept {
-  static constexpr auto value = holoscan_param_schema(detail::type_tag<ParamsT>{});
-  return value;
+  return detail::public_param_schema_ref(detail::kParamSchema<ParamsT>);
 }
 
 template <typename ParamsT>
@@ -2279,7 +2297,8 @@ template <typename ParamsT>
 /// @brief Return the immutable operation-free logical schema projection.
 /// @tparam ParamsT Exact aggregate type.
 /// @return Process-lifetime document view, or `nullptr` for opaque-local mode.
-/// @note String and field views borrow static schema storage; EA1-018 owns an owning archive form.
+/// @note String and field views borrow static schema storage; HSDK5-018 owns an owning archive
+/// form.
 [[nodiscard]] const ParamSchemaDocument* param_schema_document() noexcept {
   if constexpr (!detail::HasParamSchema<ParamsT>) {
     return nullptr;

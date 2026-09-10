@@ -10,9 +10,7 @@ endif()
 
 add_executable(contract_on_each contract_on_each.cpp)
 target_link_libraries(contract_on_each PRIVATE holoscan::core)
-holoscan_configure_example_install(contract_on_each
-    INSTALL_RPATH "$ORIGIN/../../../../lib"
-)
+holoscan_configure_example_install(contract_on_each)
 
 if(BUILD_TESTING)
     # REQ: SYSTEM-013
@@ -25,6 +23,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS contract_on_each
-    RUNTIME DESTINATION examples/temporal_contracts/on_each/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/temporal_contracts/on_each/cpp"
     COMPONENT holoscan-examples
 )

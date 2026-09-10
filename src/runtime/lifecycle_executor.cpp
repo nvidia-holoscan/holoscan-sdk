@@ -16,6 +16,8 @@
 
 #include <holoscan/core/parameter_catalog.hpp>
 
+#include "../compiler/execution_plan_lookup.hpp"
+#include "../core/diagnostic_registry.hpp"
 #include "../core/lifecycle_context_internal.hpp"
 #include "../core/operator_runtime_access.hpp"
 #include "../core/operator_spec_runtime_access.hpp"
@@ -24,6 +26,7 @@
 #include "parameter_control_state.hpp"
 #include "runtime_callback_context.hpp"
 #include "runtime_notification_source.hpp"
+#include "runtime_rate_state.hpp"
 
 namespace holoscan::detail {
 namespace {
@@ -38,6 +41,38 @@ constexpr std::size_t kForwardStageCount = 6U;
 [[nodiscard]] LifecycleNodeId materialization_node_id(std::span<const OperatorInstanceId> members,
                                                       std::size_t index) noexcept {
   return static_cast<LifecycleNodeId>(first_materialization_node_id(members) + index);
+}
+
+[[nodiscard]] std::optional<LifecycleNodeId> rate_barrier_node_id(
+    const ExecutionPlanState& plan) noexcept {
+  OperatorInstanceId maximum_operator{};
+  for (const auto& factory : plan.executable_factories.operators) {
+    maximum_operator = std::max(maximum_operator, factory.operator_id);
+  }
+  const std::size_t materialization_count =
+      plan.profile_manifest.materialization_obligations.size();
+  if (maximum_operator == std::numeric_limits<LifecycleNodeId>::max() ||
+      materialization_count > std::numeric_limits<LifecycleNodeId>::max() - maximum_operator - 1U) {
+    return std::nullopt;
+  }
+  return static_cast<LifecycleNodeId>(maximum_operator + materialization_count + 1U);
+}
+
+[[nodiscard]] bool has_rate_barriers(const RuntimeRateState* rates) noexcept {
+  if (rates == nullptr) {
+    return false;
+  }
+  for (std::size_t index = 0U; index < kForwardStageCount; ++index) {
+    if (rates->requires_barrier(static_cast<LifecycleStage>(index))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+[[nodiscard]] bool has_rate_work(const RuntimeRateState* rates) noexcept {
+  return rates != nullptr &&
+         (has_rate_barriers(rates) || rates->requires_resource_materialization());
 }
 
 [[nodiscard]] bool contains(std::span<const OperatorInstanceId> members,
@@ -110,6 +145,7 @@ struct RuntimeLifecycleExecutor::CallbackReceiver {
   ExecutionLaneSet* lanes{};
   LifecycleNodeId node_id{};
   std::optional<std::size_t> materialization_index;
+  bool rate_barrier{};
   std::size_t callback_index{};
   LifecycleStage stage{LifecycleStage::kConfigure};
   bool advanced{};
@@ -213,6 +249,37 @@ expected<NotificationSender, Error> RuntimeLifecycleExecutor::resolve_notificati
       bound->instance->vertex, source, bound->stage, bound->context->phase);
 }
 
+expected<void, Error> RuntimeLifecycleExecutor::bind_nominal_rate(void* receiver,
+                                                                  const void* declaration,
+                                                                  Rate value) noexcept {
+  auto* const bound = static_cast<CallbackReceiver*>(receiver);
+  if (bound == nullptr || bound->executor == nullptr || bound->executor->rates_ == nullptr ||
+      bound->instance == nullptr || bound->context == nullptr) {
+    return make_unexpected(
+        Error{ErrorCode::kLifecycleInvalidCallingContext, "PORT_RATE_BIND_NOT_AUTHORIZED"});
+  }
+  auto result = bound->executor->rates_->bind_nominal_rate(
+      bound->instance->operator_id, bound->stage, bound->context->phase, declaration, value);
+  const bool forward = bound->context->phase == LifecycleTransitionPhase::kStartupForward ||
+                       bound->context->phase == LifecycleTransitionPhase::kRestartForward;
+  if (!result && forward) {
+    bound->executor->record_failure_diagnostic(result.error().message);
+  }
+  return result;
+}
+
+expected<PortRateView, Error> RuntimeLifecycleExecutor::resolve_rate(void* receiver,
+                                                                     const void* declaration,
+                                                                     bool output) noexcept {
+  auto* const bound = static_cast<CallbackReceiver*>(receiver);
+  if (bound == nullptr || bound->executor == nullptr || bound->executor->rates_ == nullptr ||
+      bound->instance == nullptr || bound->context == nullptr) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument, "PORT_RATE_VIEW_INVALID"});
+  }
+  return bound->executor->rates_->resolve_lifecycle(
+      bound->instance->operator_id, bound->stage, bound->context->phase, declaration, output);
+}
+
 LifecycleStatus RuntimeLifecycleExecutor::invoke_callback(void* receiver, LifecycleStage stage,
                                                           LifecycleTransitionPhase phase) noexcept {
   auto& bound = *static_cast<CallbackReceiver*>(receiver);
@@ -225,14 +292,14 @@ LifecycleStatus RuntimeLifecycleExecutor::invoke_callback(void* receiver, Lifecy
       // pinning, or user invocation all exclude legacy stop() callbacks whose
       // matching start() was never entered.
       bound.executor->startup_legacy_stop_cutoff_ =
-          !bound.materialization_index.has_value() && bound.instance != nullptr &&
-                  stage == LifecycleStage::kStart
+          !bound.materialization_index.has_value() && !bound.rate_barrier &&
+                  bound.instance != nullptr && stage == LifecycleStage::kStart
               ? bound.executor->startup_position(bound.instance->operator_id)
               : 0U;
     }
     return status;
   };
-  if (bound.materialization_index.has_value()) {
+  if (bound.materialization_index.has_value() || bound.rate_barrier) {
     return finish(invoke_callback_direct(bound, stage, phase));
   }
   if (bound.instance == nullptr || bound.lanes == nullptr) {
@@ -280,6 +347,48 @@ LifecycleStatus RuntimeLifecycleExecutor::invoke_callback_direct(
       .lifecycle_stage = stage,
       .lifecycle_phase = phase,
   }};
+  if (bound.rate_barrier) {
+    if (bound.executor == nullptr || bound.executor->rates_ == nullptr || bound.stage != stage) {
+      return LifecycleStatus::kFatalFailure;
+    }
+    if (bound.executor->rates_->requires_barrier(stage)) {
+      auto closed = bound.executor->rates_->close_stage_barrier(stage, phase);
+      if (!closed) {
+        bound.executor->record_failure_diagnostic(closed.error().message);
+        return LifecycleStatus::kFatalFailure;
+      }
+    }
+    const bool materialize = phase == LifecycleTransitionPhase::kStartupForward ||
+                             phase == LifecycleTransitionPhase::kRestartForward;
+    const bool apply_candidate =
+        materialize && (stage == LifecycleStage::kAllocate || stage == LifecycleStage::kWarmUp ||
+                        stage == LifecycleStage::kArm);
+    if (!apply_candidate) {
+      return LifecycleStatus::kOk;
+    }
+    auto& binding = bound.executor->rate_materialization_;
+    if (binding.state == nullptr || binding.ensure == nullptr) {
+      return LifecycleStatus::kFatalFailure;
+    }
+    struct Invocation {
+      RuntimeRateMaterializationBinding* binding{};
+      LifecycleStage stage{LifecycleStage::kAllocate};
+      LifecycleTransitionPhase phase{LifecycleTransitionPhase::kStartupForward};
+    } invocation{.binding = &binding, .stage = stage, .phase = phase};
+    const bool require_all_resolved = stage == LifecycleStage::kArm;
+    auto ensured = bound.executor->rates_->visit_candidate_materialization(
+        &invocation,
+        [](void* state,
+           const RuntimeRateMaterializationView& view) noexcept -> expected<void, Error> {
+          auto& call = *static_cast<Invocation*>(state);
+          return call.binding->ensure(call.binding->state, view, call.stage, call.phase);
+        },
+        require_all_resolved);
+    if (!ensured) {
+      bound.executor->record_failure_diagnostic(ensured.error().message);
+    }
+    return ensured ? LifecycleStatus::kOk : LifecycleStatus::kFatalFailure;
+  }
   if (bound.materialization_index.has_value()) {
     if (bound.executor == nullptr || !bound.executor->materialization_.has_value() ||
         bound.stage != stage) {
@@ -414,19 +523,24 @@ LifecycleStatus RuntimeLifecycleExecutor::invoke_callback_direct(
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 expected<LifecycleStageGraph, Error> RuntimeLifecycleExecutor::build_graph(
     const ExecutionPlanState& plan, std::span<const OperatorInstanceId> members,
-    std::span<const CallbackReceiver> receivers,
-    const RuntimeMaterializationState* materialization) {
+    std::span<const CallbackReceiver> receivers, const RuntimeMaterializationState* materialization,
+    const RuntimeRateState* rates) {
   LifecycleStageGraphInput input;
   input.scopes.push_back({.scope_id = 1U, .parent_scope_id = std::nullopt});
   const std::size_t materialization_count =
       materialization == nullptr ? 0U : materialization->size();
+  const bool include_rate_barrier = has_rate_work(rates);
+  const auto rate_node = include_rate_barrier ? rate_barrier_node_id(plan) : std::nullopt;
+  if (include_rate_barrier && !rate_node) {
+    return make_unexpected(lifecycle_error("RUNTIME_LIFECYCLE_PLAN_INVALID"));
+  }
   if (materialization_count != 0U &&
       ((!members.empty() && members.back() == std::numeric_limits<OperatorInstanceId>::max()) ||
        materialization_count - 1U >
            std::numeric_limits<LifecycleNodeId>::max() - first_materialization_node_id(members))) {
     return make_unexpected(lifecycle_error("PROFILE_MATERIALIZATION_FAILED"));
   }
-  input.nodes.reserve(members.size() + materialization_count);
+  input.nodes.reserve(members.size() + materialization_count + (include_rate_barrier ? 1U : 0U));
   for (const OperatorInstanceId id : members) {
     const auto factory =
         std::find_if(plan.executable_factories.operators.begin(),
@@ -520,6 +634,40 @@ expected<LifecycleStageGraph, Error> RuntimeLifecycleExecutor::build_graph(
     }
   }
 
+  if (include_rate_barrier) {
+    input.nodes.push_back({
+        .node_id = *rate_node,
+        .scope_id = 1U,
+        .stable_name = "runtime:port-rate-barrier",
+        .stable_order = static_cast<std::uint32_t>(members.size() + materialization_count),
+    });
+    for (std::size_t index = 0U; index < kForwardStageCount; ++index) {
+      const LifecycleStage stage = static_cast<LifecycleStage>(index);
+      const bool rate_resolution_barrier = rates->requires_barrier(stage);
+      const bool allocation_materialization =
+          rates->requires_resource_materialization() && stage == LifecycleStage::kAllocate;
+      if (!rate_resolution_barrier && !allocation_materialization) {
+        continue;
+      }
+      input.callbacks.push_back({
+          .node_id = *rate_node,
+          .stage = stage,
+          .required = true,
+          .method = static_cast<LifecycleMethodId>(static_cast<std::uint8_t>(stage) + 1U),
+          .origin = LifecycleLogicalCallbackOrigin::kAdvancedMember,
+      });
+      for (const OperatorInstanceId member : members) {
+        input.direct_edges.push_back({
+            .declaration_scope_id = 1U,
+            .before_node_id = allocation_materialization ? *rate_node : member,
+            .before_stage = stage,
+            .after_node_id = allocation_materialization ? member : *rate_node,
+            .after_stage = stage,
+        });
+      }
+    }
+  }
+
   for (const auto& checkpoint : plan.lifecycle_checkpoints) {
     if (!contains(members, checkpoint.operator_instance.id) || !checkpoint.callback_present) {
       continue;
@@ -573,7 +721,7 @@ expected<LifecycleStageGraph, Error> RuntimeLifecycleExecutor::build_graph(
 
 std::vector<LifecycleCallbackBinding> RuntimeLifecycleExecutor::bindings_for(
     std::span<CallbackReceiver> receivers, std::span<const OperatorInstanceId> members,
-    bool include_materialization) {
+    bool include_materialization, bool include_rate_barriers) {
   std::vector<LifecycleCallbackBinding> result;
   result.reserve(receivers.size());
   for (auto& receiver : receivers) {
@@ -581,7 +729,8 @@ std::vector<LifecycleCallbackBinding> RuntimeLifecycleExecutor::bindings_for(
         receiver.instance != nullptr && contains(members, receiver.instance->operator_id);
     const bool selected_materialization =
         include_materialization && receiver.materialization_index.has_value();
-    if (selected_operator || selected_materialization) {
+    const bool selected_rate_barrier = include_rate_barriers && receiver.rate_barrier;
+    if (selected_operator || selected_materialization || selected_rate_barrier) {
       result.push_back({
           .node_id = receiver.node_id,
           .stage = receiver.stage,
@@ -591,6 +740,33 @@ std::vector<LifecycleCallbackBinding> RuntimeLifecycleExecutor::bindings_for(
     }
   }
   return result;
+}
+
+expected<void, Error> RuntimeLifecycleExecutor::initialize_restart_runtime(
+    const ExecutionPlanState& plan, std::span<CallbackReceiver> receivers,
+    std::vector<OperatorInstanceId> members, bool union_graph, RestartRuntime& runtime) {
+  const RuntimeRateState* const rates = receivers.empty() || receivers.front().executor == nullptr
+                                            ? nullptr
+                                            : receivers.front().executor->rates_;
+  auto graph = build_graph(plan, members, receivers, nullptr, rates);
+  if (!graph) {
+    return make_unexpected(std::move(graph.error()));
+  }
+  runtime.members = std::move(members);
+  runtime.graph = std::move(graph).value();
+  runtime.bindings = bindings_for(receivers, runtime.members, false, has_rate_work(rates));
+  runtime.state = make_lifecycle_kernel_state(runtime.graph);
+  for (std::size_t stage_index = 0U; stage_index < kForwardStageCount; ++stage_index) {
+    for (const auto& level : runtime.graph.stages[stage_index].levels) {
+      for (const LifecycleNodeId node : level.node_ids) {
+        runtime.state.completed.push_back(
+            {.node_id = node, .stage = static_cast<LifecycleStage>(stage_index)});
+      }
+    }
+  }
+  runtime.state.steady_state = true;
+  runtime.union_graph = union_graph;
+  return {};
 }
 
 std::size_t RuntimeLifecycleExecutor::startup_position(OperatorInstanceId id) const noexcept {
@@ -607,6 +783,15 @@ std::size_t RuntimeLifecycleExecutor::startup_position(OperatorInstanceId id) co
   return position;
 }
 
+expected<void, Error> RuntimeLifecycleExecutor::set_notifications(
+    RuntimeNotificationSourceRegistry* notifications) noexcept {
+  if (notifications == nullptr || (notifications_ != nullptr && notifications_ != notifications)) {
+    return make_unexpected(lifecycle_error("RUNTIME_LIFECYCLE_PLAN_INVALID"));
+  }
+  notifications_ = notifications;
+  return {};
+}
+
 // Cold reconstruction validates every callback, materialization barrier, and restart closure
 // before publishing an executor; keeping the inventory adjacent makes omissions fail closed.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -614,15 +799,22 @@ expected<std::unique_ptr<RuntimeLifecycleExecutor>, Error> RuntimeLifecycleExecu
     const ExecutionPlanState& plan, std::span<RuntimeOperatorInstance> operators,
     RunGenerationId run_generation, const std::atomic_bool* cancellation, GraphExec* exec,
     ExecutionLaneSet* lanes, const RuntimePackageCapabilityMatchReport& package,
-    RuntimeNotificationSourceRegistry* notifications) {
+    RuntimeNotificationSourceRegistry* notifications, RuntimeRateState* rates,
+    RuntimeRateMaterializationBinding rate_materialization) {
   if (lanes == nullptr || !lanes->ready()) {
     return make_unexpected(lifecycle_error("RUNTIME_LANES_NOT_READY"));
+  }
+  if (rates != nullptr && rates->requires_resource_materialization() &&
+      (rate_materialization.state == nullptr || rate_materialization.ensure == nullptr)) {
+    return make_unexpected(lifecycle_error("RUNTIME_LIFECYCLE_PLAN_INVALID"));
   }
   auto result = std::unique_ptr<RuntimeLifecycleExecutor>{new RuntimeLifecycleExecutor};
   result->plan_ = &plan;
   result->exec_ = exec;
   result->lanes_ = lanes;
   result->notifications_ = notifications;
+  result->rates_ = rates;
+  result->rate_materialization_ = rate_materialization;
   result->run_generation_ = run_generation;
   result->cancellation_ = cancellation;
   result->operators_ = operators;
@@ -632,11 +824,8 @@ expected<std::unique_ptr<RuntimeLifecycleExecutor>, Error> RuntimeLifecycleExecu
     if (find_operator(operators, target.target.id) == nullptr) {
       continue;
     }
-    const auto parameters = std::find_if(
-        plan.operator_parameters.begin(), plan.operator_parameters.end(), [&](const auto& record) {
-          return record.owner == target.target;
-        });
-    if (parameters == plan.operator_parameters.end()) {
+    const auto* parameters = find_operator_parameters_by_owner(plan, target.target);
+    if (parameters == nullptr) {
       return make_unexpected(lifecycle_error("RUNTIME_LIFECYCLE_PLAN_INVALID"));
     }
     auto path = OperatorPath::parse(parameters->operator_path);
@@ -700,7 +889,37 @@ expected<std::unique_ptr<RuntimeLifecycleExecutor>, Error> RuntimeLifecycleExecu
     }
   }
   std::sort(all_members.begin(), all_members.end());
-  auto logical_graph = build_graph(plan, all_members, result->receivers_, nullptr);
+  if (has_rate_work(rates)) {
+    const auto node_id = rate_barrier_node_id(plan);
+    if (!node_id) {
+      return make_unexpected(lifecycle_error("RUNTIME_LIFECYCLE_PLAN_INVALID"));
+    }
+    for (std::size_t index = 0U; index < kForwardStageCount; ++index) {
+      const LifecycleStage stage = static_cast<LifecycleStage>(index);
+      const bool rate_resolution_barrier = rates->requires_barrier(stage);
+      const bool allocation_materialization =
+          rates->requires_resource_materialization() && stage == LifecycleStage::kAllocate;
+      if (!rate_resolution_barrier && !allocation_materialization) {
+        continue;
+      }
+      result->receivers_.push_back({
+          .executor = result.get(),
+          .instance = nullptr,
+          .lanes = nullptr,
+          .node_id = *node_id,
+          .materialization_index = std::nullopt,
+          .rate_barrier = true,
+          .callback_index = 0U,
+          .stage = stage,
+          .advanced = false,
+          .context = nullptr,
+      });
+    }
+  }
+  // Compiler checkpoints describe the authored logical callback graph. Runtime-only
+  // rate barriers and resource materializers intentionally add ordering levels, but
+  // must not make those immutable authored checkpoint levels appear stale.
+  auto logical_graph = build_graph(plan, all_members, result->receivers_, nullptr, nullptr);
   if (!logical_graph || !checkpoint_levels_match(logical_graph.value(), plan, all_members)) {
     return make_unexpected(lifecycle_error("RUNTIME_LIFECYCLE_PLAN_INVALID"));
   }
@@ -741,15 +960,19 @@ expected<std::unique_ptr<RuntimeLifecycleExecutor>, Error> RuntimeLifecycleExecu
     receiver.context->notification_sender = &RuntimeLifecycleExecutor::resolve_notification_sender;
     receiver.context->restart_target = &RuntimeLifecycleExecutor::resolve_restart_target;
     receiver.context->restart_path = &RuntimeLifecycleExecutor::resolve_restart_path;
+    receiver.context->rate_state = &receiver;
+    receiver.context->bind_nominal_rate = &RuntimeLifecycleExecutor::bind_nominal_rate;
+    receiver.context->resolve_rate = &RuntimeLifecycleExecutor::resolve_rate;
   }
 
-  auto graph = build_graph(plan, all_members, result->receivers_, &*result->materialization_);
+  auto graph =
+      build_graph(plan, all_members, result->receivers_, &*result->materialization_, rates);
   if (!graph) {
     return make_unexpected(std::move(graph.error()));
   }
   result->graph_ = std::move(graph).value();
   apply_runtime_stop_order(result->graph_);
-  result->bindings_ = bindings_for(result->receivers_, all_members, true);
+  result->bindings_ = bindings_for(result->receivers_, all_members, true, has_rate_work(rates));
   result->state_ = make_lifecycle_kernel_state(result->graph_);
 
   result->restarts_.reserve(plan.lifecycle_restart_closures.size() + 1U);
@@ -779,28 +1002,13 @@ expected<std::unique_ptr<RuntimeLifecycleExecutor>, Error> RuntimeLifecycleExecu
         union_members.insert(position, ref.id);
       }
     }
-    auto restart_graph = build_graph(plan, members, result->receivers_, nullptr);
-    if (!restart_graph) {
-      return make_unexpected(std::move(restart_graph.error()));
+    RestartRuntime runtime;
+    auto initialized =
+        initialize_restart_runtime(plan, result->receivers_, std::move(members), false, runtime);
+    if (!initialized) {
+      return make_unexpected(std::move(initialized.error()));
     }
-    auto bindings = bindings_for(result->receivers_, members, false);
-    auto state = make_lifecycle_kernel_state(restart_graph.value());
-    for (std::size_t stage_index = 0U; stage_index < kForwardStageCount; ++stage_index) {
-      const auto& stage = restart_graph->stages[stage_index];
-      for (const auto& level : stage.levels) {
-        for (const LifecycleNodeId node : level.node_ids) {
-          state.completed.push_back(
-              {.node_id = node, .stage = static_cast<LifecycleStage>(stage_index)});
-        }
-      }
-    }
-    state.steady_state = true;
-    result->restarts_.push_back({
-        .members = std::move(members),
-        .graph = std::move(restart_graph).value(),
-        .bindings = std::move(bindings),
-        .state = std::move(state),
-    });
+    result->restarts_.push_back(std::move(runtime));
   }
   const auto existing_union =
       std::find_if(result->restarts_.begin(), result->restarts_.end(), [&](const auto& runtime) {
@@ -809,33 +1017,19 @@ expected<std::unique_ptr<RuntimeLifecycleExecutor>, Error> RuntimeLifecycleExecu
   if (existing_union != result->restarts_.end()) {
     existing_union->union_graph = true;
   } else if (!union_members.empty()) {
-    auto restart_graph = build_graph(plan, union_members, result->receivers_, nullptr);
-    if (!restart_graph) {
-      return make_unexpected(std::move(restart_graph.error()));
+    RestartRuntime runtime;
+    auto initialized = initialize_restart_runtime(
+        plan, result->receivers_, std::move(union_members), true, runtime);
+    if (!initialized) {
+      return make_unexpected(std::move(initialized.error()));
     }
-    auto bindings = bindings_for(result->receivers_, union_members, false);
-    auto state = make_lifecycle_kernel_state(restart_graph.value());
-    for (std::size_t stage_index = 0U; stage_index < kForwardStageCount; ++stage_index) {
-      for (const auto& level : restart_graph->stages[stage_index].levels) {
-        for (const LifecycleNodeId node : level.node_ids) {
-          state.completed.push_back(
-              {.node_id = node, .stage = static_cast<LifecycleStage>(stage_index)});
-        }
-      }
-    }
-    state.steady_state = true;
-    result->restarts_.push_back({
-        .members = std::move(union_members),
-        .graph = std::move(restart_graph).value(),
-        .bindings = std::move(bindings),
-        .state = std::move(state),
-        .union_graph = true,
-    });
+    result->restarts_.push_back(std::move(runtime));
   }
   return result;
 }
 
 bool RuntimeLifecycleExecutor::startup() noexcept {
+  failure_diagnostic_.store(0U, std::memory_order_release);
   for (auto& receiver : receivers_) {
     if (receiver.context != nullptr) {
       receiver.context->cancellation_requested.store(
@@ -856,6 +1050,7 @@ bool RuntimeLifecycleExecutor::startup() noexcept {
 
 LifecycleRestartExecutionOutcome RuntimeLifecycleExecutor::restart(
     const LifecycleRestartExecutionRequest& request) noexcept {
+  failure_diagnostic_.store(0U, std::memory_order_release);
   auto found = std::find_if(restarts_.begin(), restarts_.end(), [&](const auto& runtime) {
     return runtime.members.size() == request.members.size() &&
            std::equal(runtime.members.begin(), runtime.members.end(), request.members.begin());
@@ -913,6 +1108,7 @@ LifecycleRestartExecutionOutcome RuntimeLifecycleExecutor::restart(
 }
 
 bool RuntimeLifecycleExecutor::shutdown() noexcept {
+  failure_diagnostic_.store(0U, std::memory_order_release);
   for (auto& receiver : receivers_) {
     if (receiver.context != nullptr) {
       receiver.context->cancellation_requested.store(true, std::memory_order_release);
@@ -927,10 +1123,27 @@ bool RuntimeLifecycleExecutor::shutdown() noexcept {
 }
 
 std::string_view RuntimeLifecycleExecutor::failure_token() const noexcept {
+  const auto raw = failure_diagnostic_.load(std::memory_order_acquire);
+  if (raw != 0U) {
+    const auto* descriptor = find_structural_diagnostic(static_cast<StructuralDiagnosticId>(raw));
+    if (descriptor != nullptr) {
+      return descriptor->token;
+    }
+  }
   if (materialization_ && materialization_->failed()) {
     return "PROFILE_MATERIALIZATION_FAILED";
   }
   return "RUNTIME_LIFECYCLE_CALLBACK_FAILED";
+}
+
+void RuntimeLifecycleExecutor::record_failure_diagnostic(const std::string_view token) noexcept {
+  const std::uint32_t id = diagnostic_id(token).value;
+  if (id == 0U) {
+    return;
+  }
+  std::uint32_t expected{};
+  (void)failure_diagnostic_.compare_exchange_strong(
+      expected, id, std::memory_order_release, std::memory_order_relaxed);
 }
 
 }  // namespace holoscan::detail

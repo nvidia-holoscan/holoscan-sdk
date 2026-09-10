@@ -88,8 +88,8 @@ inline constexpr bool kRuntimeMultiDescriptorTensorSchemaPayload = [] {
 
 // Generic output loans keep a live, already-constructed value in plan-owned storage. Use one
 // constraint for both public overload participation and Runtime pool construction so neither layer
-// advertises an authority the other cannot realize. Assignment remains an EA1 eligibility rule even
-// though Runtime resets a retired slot by destruction and no-throw default construction.
+// advertises an authority the other cannot realize. Assignment remains a baseline eligibility rule
+// even though Runtime resets a retired slot by destruction and no-throw default construction.
 template <PublishedPayload T>
 inline constexpr bool kGenericOutputLoanPayload =
     (kRuntimeInlinePodPayload<T> || kRuntimeGeneratedSchemaPayload<T>) &&
@@ -277,11 +277,21 @@ struct RuntimeOutputBinding {
 
 /// @brief Classify the process-local codec for one exact published C++ payload type.
 enum class RuntimePayloadCodecFamily : std::uint8_t {
-  kUnsupported = 0,             ///< No EA1 Runtime Channel materialization path is available.
+  kUnsupported = 0,             ///< No baseline Runtime Channel materialization path is available.
   kInlinePod = 1,               ///< Fixed-width built-in scalar bytes.
   kGeneratedSchema = 2,         ///< Bounded generated-package serialization and materialization.
   kCustomPod = 3,               ///< Explicit fieldwise custom-POD encoding and materialization.
   kDescriptorTensorSchema = 4,  ///< Bounded schema metadata plus sidecar-retained Tensor storage.
+};
+
+/// @brief Metadata decoded verbatim from one descriptor-Tensor wire envelope.
+struct DescriptorTensorWireMetadata {
+  SampleMetadata metadata{};
+};
+
+/// @brief Plan-normalized metadata assigned to one public descriptor-Tensor sample.
+struct DescriptorTensorSampleMetadata {
+  SampleMetadata metadata{};
 };
 
 /// @brief Provide process-local operations for one exact published C++ payload type.
@@ -373,14 +383,19 @@ struct RuntimePortTypeOps {
   /// Validate one descriptor-backed schema envelope and return one indexed Tensor view.
   expected<TensorViewMetadata, Error> (*descriptor_tensor_view_metadata_at)(
       std::span<const std::byte>, std::uint32_t, std::uint64_t expected_generation) noexcept {};
-  /// Populate one cold-constructed sample slot from the same already-validated schema bytes and a
-  /// resolved Tensor.
-  expected<void, Error> (*assign_descriptor_tensor_sample)(void*, std::span<const std::byte>,
-                                                           Tensor, SampleMetadata) noexcept {};
+  /// Populate one cold-constructed sample slot from validated schema bytes and one resolved
+  /// Tensor. `wire_metadata` must match the encoded envelope; `sample_metadata` is the
+  /// plan-normalized metadata assigned to the public sample.
+  expected<void, Error> (*assign_descriptor_tensor_sample)(
+      void*, std::span<const std::byte>, Tensor, DescriptorTensorWireMetadata wire_metadata,
+      DescriptorTensorSampleMetadata sample_metadata) noexcept {};
   /// Transactionally populate one sample from validated schema bytes and indexed Tensors.
-  expected<void, Error> (*assign_descriptor_tensors_sample)(void*, std::span<const std::byte>,
-                                                            std::span<Tensor>,
-                                                            SampleMetadata) noexcept {};
+  /// `wire_metadata` must match the encoded envelope; `sample_metadata` is the plan-normalized
+  /// metadata assigned to the public sample.
+  expected<void, Error> (*assign_descriptor_tensors_sample)(
+      void*, std::span<const std::byte>, std::span<Tensor>,
+      DescriptorTensorWireMetadata wire_metadata,
+      DescriptorTensorSampleMetadata sample_metadata) noexcept {};
   /// Construct one `PredicateInputView<T>` in caller-provided storage.
   expected<void, Error> (*construct_predicate_view)(void*, const void*, InputSelection,
                                                     const std::uint64_t*,
@@ -432,6 +447,7 @@ struct TensorOutputBindingOps {
 struct TensorOutputBinding {
   void* state{};
   const TensorOutputBindingOps* ops{};
+  std::optional<DLDataType> tensor_dtype;
   std::span<const std::optional<DLDataType>> tensor_field_dtypes;
 };
 
@@ -837,7 +853,7 @@ class SelectedBatchView {
 /// A loan exposes an already-constructed value. Move construction transfers authority; copying
 /// and both assignment forms are forbidden so a pool slot has one named owner. Destruction or
 /// explicit cancellation retires unpublished authority without throwing. Constructor-style
-/// `emplace` is deliberately deferred beyond EA1.
+/// `emplace` is deliberately deferred beyond baseline.
 template <PublishedPayload T>
 class LoanedSample {
  public:
@@ -1228,6 +1244,30 @@ class Output : public OutputBase {
     return tensor_binding.ops->allocate(tensor_binding.state, request);
   }
 
+  /// @brief Request one shaped allocation using the output spec's exact dtype.
+  /// @param shape Logical extents copied before return.
+  /// @param byte_strides Optional explicit byte strides copied before return.
+  /// @return Sole provider-backed Tensor loan, or a typed contract/capacity/state error.
+  /// @note The overload participates only for singular descriptor-backed Tensor schemas. The
+  /// output spec must declare one exact dtype.
+  [[nodiscard]] expected<TensorOutputLoan, Error> allocate_tensor(
+      TensorShapeView shape, TensorByteStridesView byte_strides = std::nullopt)
+    requires detail::kRuntimeSingularDescriptorTensorSchemaPayload<T>
+  {  // NOLINT(whitespace/braces)
+    auto& tensor_binding = tensor_output_binding();
+    if (tensor_binding.state == nullptr || tensor_binding.ops == nullptr ||
+        tensor_binding.ops->allocate == nullptr) {
+      return make_unexpected(Error{ErrorCode::kNotReady});
+    }
+    if (!tensor_binding.tensor_dtype) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument, "TENSOR_OUTPUT_DTYPE_UNRESOLVED"});
+    }
+    return tensor_binding.ops->allocate(
+        tensor_binding.state,
+        TensorLoanRequest{
+            .shape = shape, .dtype = *tensor_binding.tensor_dtype, .byte_strides = byte_strides});
+  }
+
   /// @brief Publish provider-backed Tensor storage with descriptor-schema metadata.
   /// @param loan Sole shaped Tensor authority; consumed for success and every error.
   /// @param descriptor Schema value whose non-Tensor fields are encoded synchronously. Its
@@ -1389,6 +1429,28 @@ class Output<Tensor> : public OutputBase {
       return make_unexpected(Error{ErrorCode::kNotReady});
     }
     return tensor_binding.ops->allocate(tensor_binding.state, request);
+  }
+
+  /// @brief Request one shaped allocation using the output spec's exact dtype.
+  /// @param shape Logical extents copied before return.
+  /// @param byte_strides Optional explicit byte strides copied before return.
+  /// @return Sole Tensor loan, or a typed contract/capacity/state error.
+  /// @note The output spec must declare one exact dtype. Use the full request overload when
+  /// dtype is intentionally dynamic.
+  [[nodiscard]] expected<TensorOutputLoan, Error> allocate_tensor(
+      TensorShapeView shape, TensorByteStridesView byte_strides = std::nullopt) {
+    auto& tensor_binding = tensor_output_binding();
+    if (tensor_binding.state == nullptr || tensor_binding.ops == nullptr ||
+        tensor_binding.ops->allocate == nullptr) {
+      return make_unexpected(Error{ErrorCode::kNotReady});
+    }
+    if (!tensor_binding.tensor_dtype) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument, "TENSOR_OUTPUT_DTYPE_UNRESOLVED"});
+    }
+    return tensor_binding.ops->allocate(
+        tensor_binding.state,
+        TensorLoanRequest{
+            .shape = shape, .dtype = *tensor_binding.tensor_dtype, .byte_strides = byte_strides});
   }
 
   /// @brief Publish one terminal tensor loan attempt.
@@ -1661,6 +1723,14 @@ template <PublishedPayload T>
     return static_cast<std::uint64_t>(generated_schema_max_serialized_size_v<T>);
   }
   return 0U;
+}
+
+template <PublishedPayload T>
+[[nodiscard]] std::uint64_t external_topic_payload_capacity_bytes() noexcept {
+  if constexpr (kRuntimeDescriptorTensorSchemaPayload<T>) {
+    return static_cast<std::uint64_t>(runtime_port_type_ops<T>()->wire_capacity);
+  }
+  return serialized_payload_capacity_bytes<T>();
 }
 
 template <PublishedPayload T>

@@ -10,9 +10,7 @@ endif()
 
 add_executable(runtime_params runtime_params.cpp)
 target_link_libraries(runtime_params PRIVATE holoscan::core)
-holoscan_configure_example_install(runtime_params
-    INSTALL_RPATH "$ORIGIN/../../../../lib"
-)
+holoscan_configure_example_install(runtime_params)
 
 if(BUILD_TESTING)
     # REQ: SYSTEM-015
@@ -26,6 +24,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS runtime_params
-    RUNTIME DESTINATION examples/experimental/runtime_params/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/runtime_params/cpp"
     COMPONENT holoscan-examples
 )

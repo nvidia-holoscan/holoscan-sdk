@@ -4,6 +4,7 @@
 # Keep this file intentionally small. Entries should explain why a public declaration is
 # header-only, non-ABI, or intentionally exempt from the generated export macro policy.
 holomq: []
+holoviz: []
 holoscan_core:
   # DSO-local shared-authority constructor used only by the retained manual Tensor facade.
   - public/include/holoscan/channel/runtime.hpp::explicit ChannelRuntime(std::shared_ptr<Impl> impl) noexcept;

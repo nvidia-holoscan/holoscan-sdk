@@ -44,7 +44,7 @@ def parse_cpu_list(text: str) -> list[int]:
     )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("benchmark_binary", type=Path)
     parser.add_argument("--topology", choices=("fanout", "chain"), default="fanout")
@@ -89,7 +89,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--process-timeout-sec", type=float, default=90.0)
     parser.add_argument("--repetitions", type=int, default=1)
     parser.add_argument("--output-dir", type=Path)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def normalize_cpu_list(args: argparse.Namespace, singular_name: str, plural_name: str) -> list[int]:
@@ -147,10 +147,10 @@ def validate_args(args: argparse.Namespace) -> None:
         or args.bulk_work_profile != "full_write"
     ):
         raise ValueError("Tensor storage options require a Tensor-backed payload")
-    if args.payload in MULTI_TENSOR_PAYLOADS and args.tensor_storage != "pageable_host":
-        raise ValueError("multi-Tensor benchmark payloads currently require pageable_host storage")
     if args.payload in MULTI_TENSOR_PAYLOADS and args.warmup == 0:
         raise ValueError("multi-Tensor benchmark payloads require warmup for allocation evidence")
+    if args.payload == "multi_tensor_staging" and args.bulk_work_profile == "full_write":
+        raise ValueError("multi-Tensor staging requires --bulk-work-profile descriptor_only")
     args.consumer_cpus = normalize_cpu_list(args, "consumer_cpu", "consumer_cpus")
     args.consumer_controller_cpus = normalize_cpu_list(
         args, "consumer_controller_cpu", "consumer_controller_cpus"
@@ -222,7 +222,10 @@ def expected_benchmark_name(args: argparse.Namespace) -> str:
     if args.payload == "schema":
         return "runtime_graph_interprocess_schema_time_1to1"
     if args.payload in MULTI_TENSOR_PAYLOADS:
-        return f"runtime_graph_interprocess_{args.payload}"
+        return (
+            f"runtime_graph_interprocess_{args.payload}_1to1_"
+            f"{args.tensor_storage}_{args.bulk_work_profile}"
+        )
     if args.topology == "chain":
         return "runtime_graph_interprocess_pod_source_relay_sink"
     return f"runtime_graph_interprocess_pod_1to{args.fanout}"
@@ -246,6 +249,119 @@ def valid_ingress_latency_bucket(value: object, required: bool) -> bool:
 def valid_optional_ingress_latency_bucket(value: object) -> bool:
     """Return whether one conditionally populated ingress latency bucket is well formed."""
     return valid_ingress_latency_bucket(value, True) or valid_ingress_latency_bucket(value, False)
+
+
+INTERPROCESS_RUNTIME_PHASE_COUNTER_NAMES = (
+    "readiness_scans",
+    "no_progress_scans",
+    "wait_calls",
+    "wake_signals",
+    "wake_returns",
+    "timeout_returns",
+    "channel_samples_received",
+    "channel_readiness_published",
+    "readiness_poll_dispatches",
+    "compute_dispatches",
+)
+
+
+def validate_runtime_phases(
+    role: str, value: object, enabled: bool, counts: dict[str, Any]
+) -> None:
+    """Validate the bounded interprocess Runtime phase-counter payload."""
+    if not enabled:
+        if value != {"enabled": False}:
+            raise RuntimeError(f"{role} reported invalid Runtime phase-counter state")
+        return
+    if not isinstance(value, dict) or value.get("enabled") is not True:
+        raise RuntimeError(f"{role} reported invalid Runtime phase-counter state")
+    if any(type(value.get(name)) is not int for name in INTERPROCESS_RUNTIME_PHASE_COUNTER_NAMES):
+        raise RuntimeError(f"{role} reported incomplete Runtime phase counters")
+    if any(value[name] < 0 for name in INTERPROCESS_RUNTIME_PHASE_COUNTER_NAMES):
+        raise RuntimeError(f"{role} reported negative Runtime phase counters")
+    expected_compute = (
+        counts.get("source_callbacks")
+        if role == "producer"
+        else counts.get("relay_callbacks")
+        if role == "relay"
+        else counts.get("deliveries")
+    )
+    expected_inputs = (
+        0
+        if role == "producer"
+        else counts.get("relay_inputs")
+        if role == "relay"
+        else counts.get("deliveries")
+    )
+    if (
+        type(expected_compute) is not int
+        or type(expected_inputs) is not int
+        or value["compute_dispatches"] != expected_compute
+        or value["channel_samples_received"] != expected_inputs
+        or value["channel_readiness_published"] != expected_inputs
+        or value["wake_returns"] + value["timeout_returns"] != value["wait_calls"]
+        or value["no_progress_scans"] > value["readiness_scans"]
+    ):
+        raise RuntimeError(f"{role} reported inconsistent Runtime phase counters")
+
+
+def validate_runtime_thread_usage(role: str, value: object, enabled: bool) -> None:
+    """Validate opt-in Runtime-role CPU and context-switch evidence."""
+    if not isinstance(value, dict) or value.get("enabled") is not enabled:
+        raise RuntimeError(f"{role} reported invalid Runtime thread-usage state")
+    if not enabled:
+        return
+    records = value.get("roles")
+    if not isinstance(records, list) or len(records) != 4:
+        raise RuntimeError(f"{role} reported invalid Runtime thread-usage roles")
+    by_role = {record.get("role"): record for record in records if isinstance(record, dict)}
+    expected_roles = {"controller", "execution_lanes", "channel_pump", "notification_driver"}
+    if set(by_role) != expected_roles:
+        raise RuntimeError(f"{role} reported invalid Runtime thread-usage roles")
+    fields = (
+        "samples",
+        "user_cpu_ns",
+        "system_cpu_ns",
+        "voluntary_context_switches",
+        "involuntary_context_switches",
+        "minor_page_faults",
+        "major_page_faults",
+    )
+    supported = value.get("supported")
+    if not isinstance(supported, bool):
+        raise RuntimeError(f"{role} reported invalid Runtime thread-usage support")
+    for record in by_role.values():
+        if record.get("supported") is not supported or any(
+            not isinstance(record.get(field), int)
+            or isinstance(record.get(field), bool)
+            or record[field] < 0
+            for field in fields
+        ):
+            raise RuntimeError(f"{role} reported invalid Runtime thread-usage counters")
+    expected_samples = {
+        "controller": 1,
+        "execution_lanes": 0,
+        "channel_pump": 0 if role == "producer" else 1,
+        "notification_driver": 0,
+    }
+    if any(
+        by_role[name]["samples"] != (count if supported else 0)
+        for name, count in expected_samples.items()
+    ):
+        raise RuntimeError(f"{role} reported invalid Runtime thread-usage samples")
+    aggregate = value.get("aggregate")
+    if value.get("scope") != "whole_runtime_thread_lifetime_including_startup_and_teardown" or (
+        not isinstance(aggregate, dict) or aggregate.get("scope") != "sum_of_runtime_roles"
+    ):
+        raise RuntimeError(f"{role} reported inconsistent Runtime thread-usage aggregate")
+    for field in fields:
+        aggregate_value = aggregate.get(field)
+        if (
+            type(aggregate_value) is not int
+            or aggregate_value < 0
+            or aggregate_value != sum(record[field] for record in by_role.values())
+        ):
+            raise RuntimeError(f"{role} reported inconsistent Runtime thread-usage aggregate")
 
 
 def validate_results(
@@ -277,7 +393,7 @@ def validate_results(
     pool_slots = producer_geometry.get("pool_slots")
     expected_benchmark = expected_benchmark_name(args)
     for role, record in role_records:
-        if record.get("schema") != "holoscan.ea1.runtime-interprocess-benchmark/v1":
+        if record.get("schema") != "holoscan.test.runtime-interprocess-benchmark/v1":
             raise RuntimeError(f"{role} reported an unexpected schema")
         if record.get("role") != role:
             raise RuntimeError(f"{role} result reported the wrong role")
@@ -376,6 +492,41 @@ def validate_results(
                 and item.get("observed_affinity") != [requested_cpu]
             ):
                 raise RuntimeError(f"{role} did not apply its {support_role} CPU")
+        validate_runtime_thread_usage(
+            role, record.get("runtime_thread_usage"), args.runtime_phase_trace
+        )
+        counts = record.get("counts", {})
+        validate_runtime_phases(
+            role, record.get("runtime_phases"), args.runtime_phase_trace, counts
+        )
+        callback_evidence = record.get("callback_thread_evidence")
+        if (
+            not isinstance(callback_evidence, dict)
+            or callback_evidence.get("enabled") is not args.runtime_phase_trace
+        ):
+            raise RuntimeError(f"{role} reported invalid callback-owner evidence state")
+        if args.runtime_phase_trace:
+            expected_callback_count = (
+                counts.get("source_callbacks")
+                if role == "producer"
+                else counts.get("relay_callbacks")
+                if role == "relay"
+                else counts.get("deliveries")
+            )
+            if (
+                callback_evidence.get("valid") is not True
+                or callback_evidence.get("thread_identity_kind") != "native_tid"
+                or callback_evidence.get("native_tid_syscall_unavailable") is not False
+                or callback_evidence.get("controller_native_tid")
+                != by_role["controller"].get("native_tid")
+                or callback_evidence.get("callback_role") != record.get("role")
+                or callback_evidence.get("callback_count") != expected_callback_count
+                or callback_evidence.get("callback_native_tid")
+                != by_role["controller"].get("native_tid")
+                or callback_evidence.get("multiple_threads") is not False
+                or callback_evidence.get("callbacks_on_partition_owner") is not True
+            ):
+                raise RuntimeError(f"{role} reported invalid callback-owner evidence")
         trace = record.get("ingress_wake_trace")
         expected_trace = args.runtime_phase_trace and role != "producer"
         if not isinstance(trace, dict) or trace.get("enabled") is not expected_trace:
@@ -400,6 +551,7 @@ def validate_results(
                 and valid_ingress_latency_bucket(
                     trace.get("controller_return_to_readiness_poll_ns"), False
                 )
+                and valid_ingress_latency_bucket(trace.get("readiness_poll_to_candidate_ns"), False)
                 and valid_ingress_latency_bucket(
                     trace.get("readiness_poll_to_compute_dispatch_ns"), False
                 )
@@ -411,6 +563,7 @@ def validate_results(
                     trace.get("controller_return_to_readiness_poll_ns"),
                     trace["parked_wake_samples"] > 0,
                 )
+                and valid_ingress_latency_bucket(trace.get("readiness_poll_to_candidate_ns"), True)
                 and valid_ingress_latency_bucket(
                     trace.get("readiness_poll_to_compute_dispatch_ns"), True
                 )
@@ -428,6 +581,13 @@ def validate_results(
                 )
                 or not valid_ingress_latency_bucket(
                     trace.get("pump_wake_to_controller_return_ns"), trace["parked_wake_samples"] > 0
+                )
+                or not valid_ingress_latency_bucket(
+                    trace.get("controller_return_to_candidate_ns"),
+                    trace["parked_wake_samples"] > 0,
+                )
+                or not valid_ingress_latency_bucket(
+                    trace.get("candidate_to_compute_dispatch_ns"), True
                 )
                 or not readiness_latency_buckets_valid
             ):
@@ -599,7 +759,45 @@ def validate_results(
             "memory_kind_plan_match": True,
             "service_pool_bound": True,
         }
-        if any(record.get("tensor") != expected_tensor for _, record in role_records):
+        tensor_evidence_valid = True
+        for _, record in role_records:
+            tensor = record.get("tensor")
+            tensor_evidence_valid = (
+                tensor_evidence_valid
+                and isinstance(tensor, dict)
+                and all(tensor.get(key) == value for key, value in expected_tensor.items())
+            )
+            if args.payload in MULTI_TENSOR_PAYLOADS and isinstance(tensor, dict):
+                fields = tensor.get("fields")
+                pool_ids: list[str] = []
+                fields_valid = isinstance(fields, list) and len(fields) == 2
+                if fields_valid:
+                    for index, field in enumerate(fields):
+                        pool_id = field.get("pool_id") if isinstance(field, dict) else None
+                        fields_valid = fields_valid and (
+                            isinstance(field, dict)
+                            and field.get("name") == ("first" if index == 0 else "second")
+                            and field.get("dtype") == "uint8"
+                            and field.get("rank") == 1
+                            and field.get("bytes") == args.tensor_bytes
+                            and field.get("tensor_index") == index
+                            and isinstance(pool_id, str)
+                            and bool(pool_id)
+                            and isinstance(field.get("pool_slots"), int)
+                            and not isinstance(field.get("pool_slots"), bool)
+                            and field["pool_slots"] > 0
+                            and isinstance(field.get("release_capacity"), int)
+                            and not isinstance(field.get("release_capacity"), bool)
+                            and field["release_capacity"] > 0
+                        )
+                        if isinstance(pool_id, str):
+                            pool_ids.append(pool_id)
+                tensor_evidence_valid = tensor_evidence_valid and (
+                    tensor.get("field_pools_distinct") is True
+                    and fields_valid
+                    and len(set(pool_ids)) == 2
+                )
+        if not tensor_evidence_valid:
             raise RuntimeError("workers reported invalid Tensor plan or import evidence")
         descriptor_initializations = producer_counts.get("descriptor_backing_initializations", 0)
         measured_initializations = producer_counts.get(
@@ -613,9 +811,48 @@ def validate_results(
                     f"during_measurement={measured_initializations}, "
                     f"warmup={args.warmup}, pool_slots={pool_slots})"
                 )
-            if measured_initializations != 0:
+            # A first-touch callback initializes and cancels its unpublished loan. It therefore
+            # contributes no latency sample, but it would consume time inside a saturated
+            # throughput interval and must remain disallowed there.
+            if measured_initializations != 0 and args.workload == "saturated":
                 raise DescriptorWarmupIncompleteError(
                     "descriptor-only Tensor producer initialized backing during measurement "
+                    f"(total={descriptor_initializations}, "
+                    f"during_measurement={measured_initializations}, "
+                    f"warmup={args.warmup}, pool_slots={pool_slots})"
+                )
+            # The compiled pool also contains bounded failure-recovery reserves. Qualification
+            # warms only the producer loan plus the queued and borrowed steady-state retention
+            # sets; forcing every reserve into circulation can exhaust readiness capacity.
+            # Paced latency may first-touch and cancel the retirement slot outside any published
+            # sample. Saturated throughput must condition that slot before starting its wall-clock
+            # interval, in addition to the active loan and queued/borrowed retention sets.
+            retirement_slots = 1 if args.workload == "saturated" else 0
+            expected_hot_slots = min(pool_slots, 1 + 2 * args.queue_depth + retirement_slots)
+            if (
+                args.payload in {"tensor", "image"}
+                and descriptor_initializations < expected_hot_slots
+            ):
+                raise DescriptorWarmupIncompleteError(
+                    "descriptor-only Tensor producer did not initialize the hot-path inventory "
+                    f"(total={descriptor_initializations}, "
+                    f"during_measurement={measured_initializations}, "
+                    f"warmup={args.warmup}, hot_slots={expected_hot_slots}, "
+                    f"pool_slots={pool_slots})"
+                )
+            if args.payload in {"tensor", "image"} and descriptor_initializations > pool_slots:
+                raise RuntimeError(
+                    "descriptor-only Tensor producer initialized more than the declared pool "
+                    f"inventory (total={descriptor_initializations}, pool_slots={pool_slots})"
+                )
+            if (
+                args.payload == "multi_tensor_loan"
+                and args.workload == "saturated"
+                and descriptor_initializations != pool_slots
+            ):
+                raise DescriptorWarmupIncompleteError(
+                    "descriptor-only multi-Tensor producer did not initialize the saturated "
+                    "field-pool inventory "
                     f"(total={descriptor_initializations}, "
                     f"during_measurement={measured_initializations}, "
                     f"warmup={args.warmup}, pool_slots={pool_slots})"
@@ -627,9 +864,13 @@ def validate_results(
     if args.payload in SCHEMA_PAYLOADS:
         probe_enabled = args.warmup != 0
         expected_access = "selected_batch" if args.payload in MULTI_TENSOR_PAYLOADS else "receive"
-        expected_source_limit = 0 if probe_enabled else None
+        expected_source_limit = (
+            (1 if probe_enabled and args.payload == "multi_tensor_staging" else 0)
+            if probe_enabled
+            else None
+        )
         expected_sink_limit = (
-            6 if probe_enabled and args.payload == "image" else expected_source_limit
+            6 if probe_enabled and args.payload == "image" else 0 if probe_enabled else None
         )
         for role, record in role_records:
             probe = record.get("allocation_probe")
@@ -1028,7 +1269,7 @@ def write_summary(
         for result in result_records
     ]
     summary = {
-        "schema": "holoscan.ea1.runtime-interprocess-summary/v1",
+        "schema": "holoscan.test.runtime-interprocess-summary/v1",
         "benchmark": expected_benchmark_name(args),
         "payload": args.payload,
         "tensor_storage": (args.tensor_storage if args.payload in TENSOR_PAYLOADS else None),

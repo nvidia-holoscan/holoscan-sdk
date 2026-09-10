@@ -26,6 +26,8 @@
 #include <holoscan/core/lifecycle.hpp>
 #include <holoscan/core/operator_ref.hpp>
 
+#include "runtime_rate_state.hpp"
+
 namespace holoscan::detail {
 
 inline constexpr std::size_t kTensorSlotClaimReasonCount =
@@ -165,10 +167,12 @@ class TensorOutputDiagnosticBuffer final {
 /// never records or selects one of these values, and each armed fault is consumed at most once.
 enum class RuntimeTensorOutputTestFault : std::uint8_t {
   kNone,
+  kEventMaterializationFailure,
   kCommitReadinessFailure,
   kPostSubmitIndeterminate,
   kEmitClosedBinding,
   kRestartPublicationPreflightFailure,
+  kRateReuseCompatibilityFailure,
   kPostSubmitPartial,
 };
 
@@ -180,6 +184,25 @@ enum class RuntimeTensorOutputTestCorruption : std::uint8_t {
   kSlotGeneration,
 };
 
+/// Classify one source-tree-private direct Tensor backing decision.
+enum class RuntimeTensorPoolAllocationAction : std::uint8_t {
+  kFresh = 0,
+  kReusedExact = 1,
+  kReusedLarger = 2,
+  kReplaced = 3,
+};
+
+/// Add materialization-owned fields without discarding evidence populated by another provider.
+[[nodiscard]] inline RuntimeProviderMaterializationResult with_provider_materialization(
+    RuntimeProviderMaterializationResult existing, ProviderAllocationPlanRecordId provider,
+    AllocationAction action, std::uint32_t materialized_entries) noexcept {
+  existing.provider = provider;
+  existing.action = action;
+  existing.materialized_entries = materialized_entries;
+  existing.reported = true;
+  return existing;
+}
+
 /// Coordinate deterministic private faults and fixed claim snapshots for source-tree tests.
 class RuntimeTensorOutputTestControl final {
  public:
@@ -190,7 +213,7 @@ class RuntimeTensorOutputTestControl final {
     std::uint64_t count{};
   };
 
-  /// Retain the fixed primitive metrics required before cumulative EA1-017 aggregation.
+  /// Retain the fixed primitive metrics required before cumulative HSDK5-017 aggregation.
   struct PrimitiveMetrics {
     std::uint32_t physical_free_slot_depth{};
     std::uint32_t publisher_loan_credit{};
@@ -207,6 +230,7 @@ class RuntimeTensorOutputTestControl final {
     std::uint32_t failed_loan_publisher_credit{};
     std::uint32_t failed_loan_effective_free_slot_depth{};
     bool failed_loan_physical_limited{};
+    bool failed_loan_active_limited{};
     bool failed_loan_credit_limited{};
     std::uint32_t failed_loan_blocking_claim_mask{};
     std::uint32_t failed_loan_oldest_retained_slot{std::numeric_limits<std::uint32_t>::max()};
@@ -230,6 +254,20 @@ class RuntimeTensorOutputTestControl final {
     std::size_t invariant_failure_count{};
     std::uint64_t minimum_pool_generation{std::numeric_limits<std::uint64_t>::max()};
     std::uint64_t maximum_pool_generation{};
+    std::uint64_t maximum_published_pool_generation{};
+    std::uint64_t materialization_count{};
+    // These counters describe only the test-observed lifetime of OutputPool materializations.
+    // Requested payload bytes exclude provider metadata, alignment, and reservation overhead.
+    std::uint64_t live_materialization_count{};
+    std::uint64_t peak_live_materialization_count{};
+    std::uint64_t live_physical_entry_count{};
+    std::uint64_t peak_live_physical_entry_count{};
+    std::uint64_t live_requested_payload_backing_bytes{};
+    std::uint64_t peak_live_requested_payload_backing_bytes{};
+    std::uint64_t maximum_allocation_generation{};
+    std::uint32_t physical_slot_count{};
+    std::uint32_t active_entry_limit{};
+    RuntimeTensorPoolAllocationAction allocation_action{RuntimeTensorPoolAllocationAction::kFresh};
     PrimitiveMetrics metrics;
     std::uint64_t cuda_streams_created{};
     std::uint64_t cuda_streams_destroyed{};
@@ -245,9 +283,16 @@ class RuntimeTensorOutputTestControl final {
     std::uint64_t cuda_host_waits{};
     std::uint64_t cuda_retirement_queries{};
     std::uint64_t cuda_retirement_completions{};
+    std::uint64_t cuda_stream_quiesce_ns{};
     std::int32_t holomq_generation_vmm_device_ordinal{-1};
     std::uint32_t minimum_retired_slot{std::numeric_limits<std::uint32_t>::max()};
     bool terminal{};
+  };
+
+  struct ServiceCopySnapshot {
+    cudaStream_t producer_stream{};
+    cudaStream_t service_stream{};
+    std::uint64_t count{};
   };
 
   /// Prepare exact cold observation storage before any output pool is materialized.
@@ -256,23 +301,60 @@ class RuntimeTensorOutputTestControl final {
   /// configuration for the pending materialization. They remain armed until
   /// consumed or explicitly replaced.
   void prepare(std::size_t pool_count) {
-    std::lock_guard lock(mutex_);
+    const std::lock_guard lock(mutex_);
     pools_.assign(pool_count, PoolSnapshot{});
     last_diagnostic_ = {};
+    service_copy_ = {};
   }
 
   void arm_fault(RuntimeTensorOutputTestFault fault) noexcept {
+    fault_pool_index_.store(kAnyFaultPool, std::memory_order_relaxed);
+    fault_.store(fault, std::memory_order_release);
+  }
+
+  void arm_fault_for_pool(RuntimeTensorOutputTestFault fault, std::size_t pool_index) noexcept {
+    fault_pool_index_.store(pool_index, std::memory_order_relaxed);
     fault_.store(fault, std::memory_order_release);
   }
 
   [[nodiscard]] bool consume_fault(RuntimeTensorOutputTestFault fault) noexcept {
-    RuntimeTensorOutputTestFault expected = fault;
-    return fault_.compare_exchange_strong(expected,
-                                          RuntimeTensorOutputTestFault::kNone,
-                                          std::memory_order_acq_rel,
-                                          std::memory_order_acquire);
+    // Acquire the published fault before inspecting the selector stored before the arming release.
+    if (fault_.load(std::memory_order_acquire) != fault ||
+        fault_pool_index_.load(std::memory_order_relaxed) != kAnyFaultPool) {
+      return false;
+    }
+    return consume_matching_fault(fault);
   }
 
+  [[nodiscard]] bool consume_fault(RuntimeTensorOutputTestFault fault,
+                                   std::size_t pool_index) noexcept {
+    // The acquire pairs with arm_fault_for_pool() before this relaxed selector read.
+    if (fault_.load(std::memory_order_acquire) != fault) {
+      return false;
+    }
+    const std::size_t selected_pool = fault_pool_index_.load(std::memory_order_relaxed);
+    if (selected_pool != kAnyFaultPool && selected_pool != pool_index) {
+      return false;
+    }
+    return consume_matching_fault(fault);
+  }
+
+ private:
+  static constexpr std::size_t kAnyFaultPool = std::numeric_limits<std::size_t>::max();
+
+  [[nodiscard]] bool consume_matching_fault(RuntimeTensorOutputTestFault fault) noexcept {
+    RuntimeTensorOutputTestFault expected = fault;
+    const bool consumed = fault_.compare_exchange_strong(expected,
+                                                         RuntimeTensorOutputTestFault::kNone,
+                                                         std::memory_order_acq_rel,
+                                                         std::memory_order_acquire);
+    if (consumed) {
+      fault_pool_index_.store(kAnyFaultPool, std::memory_order_release);
+    }
+    return consumed;
+  }
+
+ public:
   void arm_corruption(RuntimeTensorOutputTestCorruption corruption) noexcept {
     corruption_.store(corruption, std::memory_order_release);
   }
@@ -292,9 +374,12 @@ class RuntimeTensorOutputTestControl final {
 
   void record(std::size_t pool_index, std::uint32_t admitted_claim_mask,
               std::uint32_t active_claim_mask, std::size_t active_slot_count,
-              std::uint64_t pool_generation, const PrimitiveMetrics& metrics,
-              bool invariant_failure = false, bool terminal = false) noexcept {
-    std::lock_guard lock(mutex_);
+              std::uint64_t pool_generation, std::uint64_t allocation_generation,
+              std::uint32_t physical_slot_count, std::uint32_t active_entry_limit,
+              RuntimeTensorPoolAllocationAction allocation_action, bool published,
+              const PrimitiveMetrics& metrics, bool invariant_failure = false,
+              bool terminal = false) noexcept {
+    const std::lock_guard lock(mutex_);
     if (pool_index >= pools_.size()) {
       return;
     }
@@ -303,30 +388,98 @@ class RuntimeTensorOutputTestControl final {
     pool.observed_claim_mask |= active_claim_mask;
     pool.active_claim_mask = terminal ? 0U : active_claim_mask;
     pool.active_slot_count = terminal ? 0U : active_slot_count;
+    pool.maximum_allocation_generation =
+        std::max(pool.maximum_allocation_generation, allocation_generation);
     if (pool_generation != 0U) {
       pool.minimum_pool_generation = std::min(pool.minimum_pool_generation, pool_generation);
       pool.maximum_pool_generation = std::max(pool.maximum_pool_generation, pool_generation);
+      if (published) {
+        if (pool_generation >= pool.maximum_published_pool_generation) {
+          pool.physical_slot_count = physical_slot_count;
+          pool.active_entry_limit = active_entry_limit;
+          pool.allocation_action = allocation_action;
+        }
+        pool.maximum_published_pool_generation =
+            std::max(pool.maximum_published_pool_generation, pool_generation);
+      }
     }
     pool.metrics = metrics;
     pool.invariant_failure_count += static_cast<std::size_t>(invariant_failure);
     pool.terminal = pool.terminal || terminal;
   }
 
+  void record_materialization(std::size_t pool_index, std::uint64_t allocation_generation,
+                              std::uint32_t physical_slot_count, std::uint32_t active_entry_limit,
+                              std::uint64_t checked_requested_payload_backing_bytes) noexcept {
+    const std::lock_guard lock(mutex_);
+    if (pool_index >= pools_.size()) {
+      return;
+    }
+    PoolSnapshot& pool = pools_[pool_index];
+    ++pool.materialization_count;
+    ++pool.live_materialization_count;
+    pool.peak_live_materialization_count =
+        std::max(pool.peak_live_materialization_count, pool.live_materialization_count);
+    const std::uint64_t physical_entries = physical_slot_count;
+    pool.live_physical_entry_count += physical_entries;
+    pool.peak_live_physical_entry_count =
+        std::max(pool.peak_live_physical_entry_count, pool.live_physical_entry_count);
+    pool.live_requested_payload_backing_bytes += checked_requested_payload_backing_bytes;
+    pool.peak_live_requested_payload_backing_bytes = std::max(
+        pool.peak_live_requested_payload_backing_bytes, pool.live_requested_payload_backing_bytes);
+    pool.maximum_allocation_generation =
+        std::max(pool.maximum_allocation_generation, allocation_generation);
+    pool.physical_slot_count = physical_slot_count;
+    pool.active_entry_limit = active_entry_limit;
+  }
+
+  void release_materialization(std::size_t pool_index, std::uint32_t physical_slot_count,
+                               std::uint64_t checked_requested_payload_backing_bytes) noexcept {
+    const std::lock_guard lock(mutex_);
+    if (pool_index >= pools_.size()) {
+      return;
+    }
+    PoolSnapshot& pool = pools_[pool_index];
+    const std::uint64_t physical_entries = physical_slot_count;
+    pool.live_materialization_count =
+        pool.live_materialization_count == 0U ? 0U : pool.live_materialization_count - 1U;
+    pool.live_physical_entry_count = pool.live_physical_entry_count < physical_entries
+                                         ? 0U
+                                         : pool.live_physical_entry_count - physical_entries;
+    pool.live_requested_payload_backing_bytes =
+        pool.live_requested_payload_backing_bytes < checked_requested_payload_backing_bytes
+            ? 0U
+            : pool.live_requested_payload_backing_bytes - checked_requested_payload_backing_bytes;
+  }
+
   [[nodiscard]] PoolSnapshot snapshot(std::size_t pool_index) const noexcept {
-    std::lock_guard lock(mutex_);
+    const std::lock_guard lock(mutex_);
     return pool_index < pools_.size() ? pools_[pool_index] : PoolSnapshot{};
   }
 
   void record_diagnostic(std::size_t pool_index, TensorOutputDiagnosticRecord record) noexcept {
-    std::lock_guard lock(mutex_);
+    const std::lock_guard lock(mutex_);
     last_diagnostic_.record = record;
     last_diagnostic_.pool_index = pool_index;
     ++last_diagnostic_.count;
   }
 
   [[nodiscard]] DiagnosticSnapshot last_diagnostic() const noexcept {
-    std::lock_guard lock(mutex_);
+    const std::lock_guard lock(mutex_);
     return last_diagnostic_;
+  }
+
+  void record_cuda_service_copy(cudaStream_t producer_stream,
+                                cudaStream_t service_stream) noexcept {
+    const std::lock_guard lock(mutex_);
+    service_copy_.producer_stream = producer_stream;
+    service_copy_.service_stream = service_stream;
+    ++service_copy_.count;
+  }
+
+  [[nodiscard]] ServiceCopySnapshot service_copy_snapshot() const noexcept {
+    const std::lock_guard lock(mutex_);
+    return service_copy_;
   }
 
   void record_cuda_events_created(std::size_t pool_index, std::uint32_t count) noexcept {
@@ -339,6 +492,11 @@ class RuntimeTensorOutputTestControl final {
 
   void record_cuda_stream_destroyed(std::size_t pool_index) noexcept {
     update(pool_index, [](PoolSnapshot& pool) { ++pool.cuda_streams_destroyed; });
+  }
+
+  void record_cuda_stream_quiesce(std::size_t pool_index, std::uint64_t duration_ns) noexcept {
+    update(pool_index,
+           [duration_ns](PoolSnapshot& pool) { pool.cuda_stream_quiesce_ns += duration_ns; });
   }
 
   void record_cuda_event_destroyed(std::size_t pool_index) noexcept {
@@ -399,8 +557,8 @@ class RuntimeTensorOutputTestControl final {
 
  private:
   template <typename Update>
-  void update(std::size_t pool_index, Update&& update_snapshot) noexcept {
-    std::lock_guard lock(mutex_);
+  void update(std::size_t pool_index, Update update_snapshot) noexcept {
+    const std::lock_guard lock(mutex_);
     if (pool_index < pools_.size()) {
       update_snapshot(pools_[pool_index]);
     }
@@ -409,7 +567,9 @@ class RuntimeTensorOutputTestControl final {
   mutable std::mutex mutex_;
   std::vector<PoolSnapshot> pools_;
   DiagnosticSnapshot last_diagnostic_;
+  ServiceCopySnapshot service_copy_;
   std::atomic<RuntimeTensorOutputTestFault> fault_{RuntimeTensorOutputTestFault::kNone};
+  std::atomic<std::size_t> fault_pool_index_{kAnyFaultPool};
   std::atomic<RuntimeTensorOutputTestCorruption> corruption_{
       RuntimeTensorOutputTestCorruption::kNone};
   std::atomic<std::uint64_t> metric_time_ns_{std::numeric_limits<std::uint64_t>::max()};
@@ -483,6 +643,7 @@ class TensorSlotClaimLedger final {
 
 struct ExecutionPlanState;
 struct RuntimeOperatorInstance;
+class RuntimeCudaExecutionResources;
 
 /// Own the physically materialized direct-Tensor resources for one RunSession.
 ///
@@ -501,10 +662,29 @@ class RuntimeTensorResources final {
   /// Materialize and bind every accepted direct Tensor output for one fresh run.
   [[nodiscard]] static expected<std::unique_ptr<RuntimeTensorResources>, Error> create(
       const ExecutionPlanState& plan, std::span<RuntimeOperatorInstance> operators,
-      RunGenerationId run_generation, ProcessGroupId process_group);
+      RunGenerationId run_generation, ProcessGroupId process_group,
+      const RuntimeCudaExecutionResources& cuda_resources,
+      RuntimeRateMaterializationView materialization = {});
 
   /// Reject new Tensor authority and tombstone outstanding unpublished slots.
   void close() noexcept;
+
+  /// Check whether one logical Operator may consume Channel terminal authority.
+  ///
+  /// Returns false while an unpublished Tensor output loan is still live, or an error when an
+  /// owner pool is quarantined. Published backing, receiver claims, and qualified device work are
+  /// deliberately excluded because they retire only after terminal delivery.
+  [[nodiscard]] expected<bool, Error> preflight_owner_terminal_close(
+      OperatorInstanceId owner) noexcept;
+
+  /// Advance nonblocking retirement for every Tensor output owned by one logical Operator.
+  ///
+  /// Returns true only after every active and restart-retired pool for the owner has released all
+  /// loans, Tensor handles, and qualified CUDA work, or an error if a pool is quarantined. The
+  /// Runtime owner loop calls this after Channel terminal publication while deciding whether
+  /// natural drain may commit.
+  [[nodiscard]] expected<bool, Error> advance_owner_terminal_retirement(
+      OperatorInstanceId owner) noexcept;
 
   /// Remove public port bindings while reconstructed Operators are still alive.
   void detach_ports() noexcept;
@@ -517,6 +697,19 @@ class RuntimeTensorResources final {
   /// still tombstones every unpublished loan/writer from the predecessor activation epoch.
   [[nodiscard]] expected<void, Error> begin_restart(std::span<const OperatorInstanceId> members,
                                                     LifecycleStage from_stage) noexcept;
+
+  /// Apply one lifecycle-selected logical limit to already-materialized startup backing.
+  ///
+  /// This operation is allocation-free and may run at kAllocate, kWarmUp, or kArm. A zero
+  /// unresolved provider capacity is left pending for its later declared binding barrier.
+  [[nodiscard]] expected<void, Error> prepare_rate_candidate_startup(
+      RuntimeRateMaterializationView materialization) noexcept;
+
+  /// Materialize lifecycle-selected replacement geometry after the selected rate barrier.
+  ///
+  /// The predecessor pools remain fenced and rollback-authoritative until publish_restart().
+  [[nodiscard]] expected<void, Error> prepare_rate_candidate_restart(
+      RuntimeRateMaterializationView materialization) noexcept;
 
   /// Verify every prepared pool before any restart participant publishes successor state.
   [[nodiscard]] expected<void, Error> preflight_restart_publication() noexcept;

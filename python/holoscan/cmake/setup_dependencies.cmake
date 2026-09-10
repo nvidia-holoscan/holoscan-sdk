@@ -36,7 +36,7 @@ endif()
 # from the active build tree before the dependency's imported targets have been
 # generated. Restore the caller's setting after Python dependency acquisition.
 set(_HOLOSCAN_PYTHON_DEPS_SAVED_CMAKE_IGNORE_PREFIX_PATH "${CMAKE_IGNORE_PREFIX_PATH}")
-list(APPEND CMAKE_IGNORE_PREFIX_PATH "${CMAKE_BINARY_DIR}")
+list(APPEND CMAKE_IGNORE_PREFIX_PATH "${holoscan_BINARY_DIR}")
 
 rapids_cpm_init()
 

@@ -17,14 +17,19 @@ add_custom_target(holoscan-python-core-init DEPENDS "${HOLOSCAN_PYTHON_CORE_INIT
 add_dependencies(holoscan-python holoscan-python-core-init)
 
 nanobind_add_module(holoscan_core_python STABLE_ABI _core.cpp tensor.cpp dl_converter.cpp)
-target_include_directories(holoscan_core_python PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(holoscan_core_python PRIVATE holoscan::core)
+target_include_directories(holoscan_core_python PRIVATE ${holoscan_SOURCE_DIR}/src)
+target_link_libraries(holoscan_core_python PRIVATE holoscan::core magic_enum::magic_enum)
 add_dependencies(holoscan-python holoscan_core_python)
+file(RELATIVE_PATH HOLOSCAN_PYTHON_CORE_INSTALL_LIBDIR_RELATIVE_PATH
+    "/${HOLOSCAN_PYTHON_CORE_INSTALL_DIR}"
+    "/${CMAKE_INSTALL_LIBDIR}")
 set_target_properties(holoscan_core_python PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${HOLOSCAN_PYTHON_CORE_BINARY_DIR}"
     OUTPUT_NAME _core
-    # _core lives under python/lib/holoscan/core while libholoscan_core.so
-    # lives under lib in both the build tree and installed SDK layout.
-    BUILD_WITH_INSTALL_RPATH ON
-    INSTALL_RPATH "\$ORIGIN/../../../../lib"
+    # The build-tree module lives under python/lib/holoscan/core while the
+    # installed module lives under lib/python<version>/site-packages/holoscan/core.
+    # Keep their origin-relative paths separate so build-tree Python tests do not
+    # use the installed-layout RPATH.
+    BUILD_RPATH "\$ORIGIN/../../../../lib"
+    INSTALL_RPATH "\$ORIGIN/${HOLOSCAN_PYTHON_CORE_INSTALL_LIBDIR_RELATIVE_PATH}"
 )

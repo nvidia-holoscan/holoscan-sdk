@@ -22,7 +22,7 @@
 
 #include "core/diagnostic_registry.hpp"
 #include "detail/canonical_utils.hpp"
-#include "detail/snapshot_lookup.hpp"
+#include "snapshot_lookup.hpp"
 
 namespace holoscan::detail {
 namespace {

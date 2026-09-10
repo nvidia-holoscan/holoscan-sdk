@@ -17,9 +17,31 @@
 #include <vector>
 
 #include "endpoint_clock_health.hpp"
+#include "runtime_phase_counters.hpp"
 #include "scheduling/ready_policy_catalog.hpp"
 
 namespace holoscan::detail {
+
+RuntimeInputSelectionState::ReuseReplacementTransaction::ReuseReplacementTransaction(
+    ReuseReplacementTransaction&& other) noexcept
+    : owner_(other.owner_), retained_(other.retained_) {
+  other.owner_ = nullptr;
+}
+
+RuntimeInputSelectionState::ReuseReplacementTransaction::~ReuseReplacementTransaction() {
+  if (owner_ != nullptr) {
+    assert(owner_->transaction_active_);
+    owner_->retained_ = retained_;
+    owner_->transaction_active_ = false;
+  }
+}
+
+void RuntimeInputSelectionState::ReuseReplacementTransaction::commit() noexcept {
+  assert(owner_ != nullptr);
+  assert(owner_->transaction_active_);
+  owner_->transaction_active_ = false;
+  owner_ = nullptr;
+}
 
 namespace {
 
@@ -261,11 +283,13 @@ expected<void, Error> RuntimeInputSelectionState::Transaction::finish(
 }
 
 RuntimeInputSelectionState::RuntimeInputSelectionState(
-    InputSelectionPlanRecord plan, std::optional<BracketedWindowEngine> bracketed)
+    InputSelectionPlanRecord plan, std::optional<BracketedWindowEngine> bracketed,
+    RuntimeQueueCapacity rate_capacity)
     : plan_(std::move(plan)),
-      cache_(plan_.cache_capacity),
+      cache_(rate_capacity.backing, rate_capacity.active),
       bracketed_(std::move(bracketed)),
-      latest_within_max_age_(plan_.max_age_ns) {}
+      latest_within_max_age_(plan_.max_age_ns),
+      rate_capacity_(rate_capacity) {}
 
 bool RuntimeInputSelectionState::valid_plan(const InputSelectionPlanRecord& selection,
                                             const BracketedWindowPlanRecord* bracketed_window,
@@ -339,8 +363,22 @@ bool RuntimeInputSelectionState::valid_plan(const InputSelectionPlanRecord& sele
 
 expected<RuntimeInputSelectionState, Error> RuntimeInputSelectionState::create(
     const InputSelectionPlanRecord& selection, const BracketedWindowPlanRecord* bracketed_window,
-    std::uint32_t max_pending_windows) {
+    std::uint32_t max_pending_windows, std::optional<RuntimeQueueCapacity> rate_capacity) {
   if (!valid_plan(selection, bracketed_window, max_pending_windows)) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  const RuntimeQueueCapacity effective_capacity = rate_capacity.value_or(RuntimeQueueCapacity{
+      .backing = selection.cache_capacity,
+      .active = selection.cache_capacity,
+  });
+  const std::uint32_t semantic_minimum =
+      selection.selector == InputSelectorKind::kDrainAll ? selection.max_selected_samples
+      : selection.selector == InputSelectorKind::kBracketedWindow && bracketed_window != nullptr
+          ? bracketed_window->max_samples
+          : 1U;
+  if (effective_capacity.backing < selection.cache_capacity || effective_capacity.active == 0U ||
+      effective_capacity.active > effective_capacity.backing ||
+      effective_capacity.active < semantic_minimum) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
@@ -351,15 +389,75 @@ expected<RuntimeInputSelectionState, Error> RuntimeInputSelectionState::create(
       bracketed.emplace(BracketedWindow{.lookbehind = bracketed_window->lookbehind,
                                         .lookahead = bracketed_window->lookahead,
                                         .max_samples = bracketed_window->max_samples},
-                        bracketed_window->cache_capacity,
-                        max_pending_windows);
+                        effective_capacity.backing,
+                        max_pending_windows,
+                        effective_capacity.active);
     }
-    return RuntimeInputSelectionState{selection, std::move(bracketed)};
+    return RuntimeInputSelectionState{selection, std::move(bracketed), effective_capacity};
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   } catch (const std::bad_alloc&) {
     return make_unexpected(Error{ErrorCode::kResourceExhausted});
   }
 #endif
+}
+
+expected<void, Error> RuntimeInputSelectionState::prepare_rate_candidate_capacity(
+    std::uint32_t capacity) noexcept {
+  const std::uint32_t semantic_minimum =
+      plan_.selector == InputSelectorKind::kDrainAll ? plan_.max_selected_samples
+      : plan_.selector == InputSelectorKind::kBracketedWindow && bracketed_
+          ? plan_.max_selected_samples
+          : 1U;
+  if (transaction_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  if (capacity == 0U || capacity > rate_capacity_.backing || capacity < semantic_minimum) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  candidate_rate_capacity_ = capacity;
+  return {};
+}
+
+expected<void, Error> RuntimeInputSelectionState::validate_rate_candidate_capacity_commit()
+    const noexcept {
+  if (!candidate_rate_capacity_) {
+    return {};
+  }
+  if (transaction_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  if (bracketed_) {
+    auto valid = bracketed_->validate_active_cache_capacity(*candidate_rate_capacity_);
+    if (!valid) {
+      return valid;
+    }
+  }
+  return cache_.validate_active_capacity(*candidate_rate_capacity_);
+}
+
+expected<void, Error> RuntimeInputSelectionState::commit_rate_candidate_capacity() noexcept {
+  if (!candidate_rate_capacity_) {
+    return {};
+  }
+  auto valid = validate_rate_candidate_capacity_commit();
+  if (!valid) {
+    return valid;
+  }
+  commit_validated_rate_candidate_capacity();
+  return {};
+}
+
+void RuntimeInputSelectionState::commit_validated_rate_candidate_capacity() noexcept {
+  if (!candidate_rate_capacity_) {
+    return;
+  }
+  const std::uint32_t capacity = *candidate_rate_capacity_;
+  if (bracketed_) {
+    bracketed_->commit_validated_active_cache_capacity(capacity);
+  }
+  cache_.commit_validated_active_capacity(capacity);
+  rate_capacity_.active = capacity;
+  candidate_rate_capacity_.reset();
 }
 
 expected<void, Error> RuntimeInputSelectionState::push(TemporalSampleRecord sample) noexcept {
@@ -416,13 +514,11 @@ expected<void, Error> RuntimeInputSelectionState::close_end_of_stream() noexcept
   if (bracketed_) {
     // End of stream is an unsolicited producer event. Whether the anchor has already closed the
     // last pending window when the producer's close() lands is a race, so a bracketed input can
-    // legitimately have nothing pending. The engine keeps its strict precondition -- closing a
-    // window it never observed is a caller error there -- so tolerate the empty set here, where
-    // the race actually lives, and a well-formed close() cannot terminate the run.
-    if (bracketed_->pending_count() == 0U) {
-      return {};
-    }
-    return bracketed_->close_oldest(SelectionReason::kEndOfStream);
+    // legitimately have nothing pending. One EOS latches terminal closure for every bounded
+    // pending window; if closed-result slots are occupied, the engine continues as those results
+    // retire instead of waiting for a fabricated second EOS or a timeout.
+    bracketed_->close_end_of_stream();
+    return {};
   }
   closure_reason_ = SelectionReason::kEndOfStream;
   return {};
@@ -453,8 +549,8 @@ ScalarSelectionResult RuntimeInputSelectionState::apply_missing(
 // strategy exposes the same commit/rollback boundary to the activation dispatcher.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 expected<RuntimeInputSelectionState::Transaction, Error> RuntimeInputSelectionState::begin(
-    TimePoint reference_time, std::uint64_t arrival_watermark,
-    std::uint64_t producer_epoch) noexcept {
+    TimePoint reference_time, std::uint64_t arrival_watermark, std::uint64_t producer_epoch,
+    std::optional<TimePoint> future_reference_lower_bound) noexcept {
   if (transaction_active_) {
     return make_unexpected(Error{ErrorCode::kBackpressured});
   }
@@ -466,7 +562,7 @@ expected<RuntimeInputSelectionState::Transaction, Error> RuntimeInputSelectionSt
   Transaction transaction{this};
   switch (plan_.selector) {
     case InputSelectorKind::kExact: {
-      auto scalar = cache_.select_exact_transaction(reference_time);
+      auto scalar = cache_.select_exact_transaction(reference_time, arrival_watermark);
       if (!scalar) {
         return make_unexpected(std::move(scalar.error()));
       }
@@ -481,7 +577,8 @@ expected<RuntimeInputSelectionState::Transaction, Error> RuntimeInputSelectionSt
       break;
     }
     case InputSelectorKind::kLatestWithin: {
-      auto scalar = cache_.select_latest_within_transaction(reference_time, latest_within_max_age_);
+      auto scalar = cache_.select_latest_within_transaction(
+          reference_time, latest_within_max_age_, arrival_watermark, future_reference_lower_bound);
       if (!scalar) {
         return make_unexpected(std::move(scalar.error()));
       }
@@ -496,7 +593,13 @@ expected<RuntimeInputSelectionState::Transaction, Error> RuntimeInputSelectionSt
       break;
     }
     case InputSelectorKind::kDrainAll: {
-      auto drain = cache_.snapshot_drain_all(arrival_watermark, plan_.max_selected_samples);
+      // Automatic DrainAll consumes the complete logical prefix admitted by the published rate
+      // generation. Explicit selector bounds remain frozen in the plan.
+      const std::uint32_t service_bound =
+          plan_.max_selected_samples_origin == SelectedSampleBoundOrigin::kResolvedRetainedCapacity
+              ? rate_capacity_.active
+              : plan_.max_selected_samples;
+      auto drain = cache_.snapshot_drain_all(arrival_watermark, service_bound);
       if (!drain) {
         return make_unexpected(std::move(drain.error()));
       }
@@ -550,8 +653,31 @@ expected<void, Error> RuntimeInputSelectionState::reset() noexcept {
   return {};
 }
 
+expected<void, Error> RuntimeInputSelectionState::release_terminal_history() noexcept {
+  if (transaction_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  if (bracketed_ || closure_reason_ != SelectionReason::kEndOfStream) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  auto released = cache_.release_terminal_history();
+  if (!released) {
+    return released;
+  }
+  retained_.reset();
+  return {};
+}
+
 std::size_t RuntimeInputSelectionState::retained_count() const noexcept {
   return cache_.size();
+}
+
+std::size_t RuntimeInputSelectionState::maximum_selected_capacity() const noexcept {
+  return plan_.selector == InputSelectorKind::kDrainAll &&
+                 plan_.max_selected_samples_origin ==
+                     SelectedSampleBoundOrigin::kResolvedRetainedCapacity
+             ? rate_capacity_.backing
+             : plan_.max_selected_samples;
 }
 
 std::size_t RuntimeInputSelectionState::payload_claim_capacity() const noexcept {
@@ -563,6 +689,65 @@ std::size_t RuntimeInputSelectionState::payload_claim_capacity() const noexcept 
     return 0U;
   }
   return cache_.capacity() + static_cast<std::size_t>(retains_reuse);
+}
+
+expected<void, Error> RuntimeInputSelectionState::evict_retained(
+    const std::uint64_t arrival_sequence) noexcept {
+  if (bracketed_) {
+    // A bracketed window owns its retained set through closure ordering. Releasing one record from
+    // underneath it would leave a closed window referencing a retired payload.
+    return make_unexpected(Error{ErrorCode::kNotSupported});
+  }
+  if (transaction_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  return cache_.evict(arrival_sequence);
+}
+
+expected<RuntimeInputSelectionState::ReuseReplacementTransaction, Error>
+RuntimeInputSelectionState::reserve_reuse_replacement(
+    const TemporalSampleRecord& retained) noexcept {
+  if (transaction_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  if (bracketed_ || plan_.missing != TemporalRecordMissingKind::kReuseLast || !retained_ ||
+      *retained_ != retained) {
+    return make_unexpected(Error{ErrorCode::kNotFound});
+  }
+  retained_.reset();
+  transaction_active_ = true;
+  return ReuseReplacementTransaction{this, retained};
+}
+
+std::optional<TemporalSampleRecord> RuntimeInputSelectionState::reuse_retained_record()
+    const noexcept {
+  return plan_.missing == TemporalRecordMissingKind::kReuseLast ? retained_ : std::nullopt;
+}
+
+bool RuntimeInputSelectionState::staged_reuse_eligible(
+    const TimePoint staged_reference, const TimePoint witness_reference) const noexcept {
+  if (!staged_reference.valid() || !witness_reference.valid() ||
+      staged_reference.clock_id != plan_.reference_clock ||
+      witness_reference.clock_id != plan_.reference_clock) {
+    return false;
+  }
+  switch (plan_.selector) {
+    case InputSelectorKind::kExact:
+      return staged_reference.timestamp_ns == witness_reference.timestamp_ns;
+    case InputSelectorKind::kLatestWithin: {
+      if (latest_within_max_age_.count() <= 0 ||
+          staged_reference.timestamp_ns > witness_reference.timestamp_ns) {
+        return false;
+      }
+      const auto age = static_cast<std::uint64_t>(witness_reference.timestamp_ns) -
+                       static_cast<std::uint64_t>(staged_reference.timestamp_ns);
+      return age <= static_cast<std::uint64_t>(latest_within_max_age_.count());
+    }
+    case InputSelectorKind::kDrainAll:
+    case InputSelectorKind::kBracketedWindow:
+      return false;
+  }
+  return false;
 }
 
 expected<std::size_t, Error> RuntimeInputSelectionState::copy_payload_claims(
@@ -588,6 +773,10 @@ expected<std::size_t, Error> RuntimeInputSelectionState::copy_payload_claims(
 
 std::size_t RuntimeInputSelectionState::pending_window_count() const noexcept {
   return bracketed_ ? bracketed_->pending_count() : 0U;
+}
+
+bool RuntimeInputSelectionState::terminal_decision_ready() const noexcept {
+  return bracketed_ && bracketed_->front_closed() != nullptr;
 }
 
 std::optional<TimePoint> RuntimeInputSelectionState::oldest_pending_window_reference()
@@ -655,17 +844,21 @@ expected<void, Error> RuntimeAlignedSelectionState::Transaction::finish(
 
 RuntimeAlignedSelectionState::RuntimeAlignedSelectionState(
     AlignedTriggerPlanRecord plan, std::vector<PortId> member_inputs,
-    std::vector<std::uint32_t> member_capacities, std::vector<AlignedMissingPolicy> missing,
+    std::vector<std::uint32_t> member_backing_capacities,
+    std::vector<std::uint32_t> member_active_capacities, std::vector<AlignedMissingPolicy> missing,
     std::size_t engine_capacity)
     : plan_(std::move(plan)),
       member_inputs_(std::move(member_inputs)),
-      member_capacities_(std::move(member_capacities)),
+      member_backing_capacities_(std::move(member_backing_capacities)),
+      member_active_capacities_(std::move(member_active_capacities)),
+      candidate_member_capacities_(member_inputs_.size()),
       missing_(std::move(missing)),
       open_closure_(member_inputs_.size(), AlignmentClosureProof::kOpen),
       engine_(member_inputs_.size(), engine_capacity) {}
 
 expected<RuntimeAlignedSelectionState, Error> RuntimeAlignedSelectionState::create(
-    const AlignedTriggerPlanRecord& aligned, std::span<const InputSelectionPlanRecord> selections) {
+    const AlignedTriggerPlanRecord& aligned, std::span<const InputSelectionPlanRecord> selections,
+    std::span<const RuntimeQueueCapacity> rate_capacities) {
   constexpr std::array kClosureProofs{
       AlignedClosureProofKind::kStreamAdvancement,
       AlignedClosureProofKind::kLossWitness,
@@ -689,15 +882,20 @@ expected<RuntimeAlignedSelectionState, Error> RuntimeAlignedSelectionState::crea
       aligned.public_watermark_protocol) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
+  if (!rate_capacities.empty() && rate_capacities.size() != aligned.members.size()) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   try {
 #endif
     std::vector<PortId> member_inputs;
-    std::vector<std::uint32_t> member_capacities;
+    std::vector<std::uint32_t> member_backing_capacities;
+    std::vector<std::uint32_t> member_active_capacities;
     std::vector<AlignedMissingPolicy> missing;
     member_inputs.reserve(aligned.members.size());
-    member_capacities.reserve(aligned.members.size());
+    member_backing_capacities.reserve(aligned.members.size());
+    member_active_capacities.reserve(aligned.members.size());
     missing.reserve(aligned.members.size());
     std::size_t engine_capacity = 0U;
     for (std::size_t index = 0U; index < aligned.members.size(); ++index) {
@@ -730,6 +928,14 @@ expected<RuntimeAlignedSelectionState, Error> RuntimeAlignedSelectionState::crea
           selection->lookbehind != 0U || selection->lookahead != 0U) {
         return make_unexpected(Error{ErrorCode::kInvalidArgument});
       }
+      const RuntimeQueueCapacity capacity =
+          rate_capacities.empty() ? RuntimeQueueCapacity{.backing = member.cache_capacity,
+                                                         .active = member.cache_capacity}
+                                  : rate_capacities[index];
+      if (capacity.backing < member.cache_capacity || capacity.active < member.cache_capacity ||
+          capacity.active > capacity.backing) {
+        return make_unexpected(Error{ErrorCode::kInvalidArgument});
+      }
       AlignedMissingPolicy policy;
       switch (selection->missing) {
         case TemporalRecordMissingKind::kUnspecified:
@@ -756,13 +962,15 @@ expected<RuntimeAlignedSelectionState, Error> RuntimeAlignedSelectionState::crea
         return make_unexpected(Error{ErrorCode::kInvalidArgument});
       }
       member_inputs.push_back(member.input);
-      member_capacities.push_back(member.cache_capacity);
+      member_backing_capacities.push_back(capacity.backing);
+      member_active_capacities.push_back(capacity.active);
       missing.push_back(policy);
-      engine_capacity = std::max(engine_capacity, static_cast<std::size_t>(member.cache_capacity));
+      engine_capacity = std::max(engine_capacity, static_cast<std::size_t>(capacity.backing));
     }
     return RuntimeAlignedSelectionState{aligned,
                                         std::move(member_inputs),
-                                        std::move(member_capacities),
+                                        std::move(member_backing_capacities),
+                                        std::move(member_active_capacities),
                                         std::move(missing),
                                         engine_capacity};
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
@@ -770,6 +978,62 @@ expected<RuntimeAlignedSelectionState, Error> RuntimeAlignedSelectionState::crea
     return make_unexpected(Error{ErrorCode::kResourceExhausted});
   }
 #endif
+}
+
+expected<void, Error> RuntimeAlignedSelectionState::prepare_rate_candidate_capacity(
+    PortId input, std::uint32_t capacity) noexcept {
+  if (transaction_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  const std::size_t index = member_index(input);
+  if (index == std::numeric_limits<std::size_t>::max() || capacity == 0U ||
+      capacity > member_backing_capacities_[index] ||
+      capacity < plan_.members[index].cache_capacity) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  candidate_member_capacities_[index] = capacity;
+  return {};
+}
+
+expected<void, Error> RuntimeAlignedSelectionState::validate_rate_candidate_capacities_commit()
+    const noexcept {
+  if (transaction_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  for (std::size_t index = 0U; index < candidate_member_capacities_.size(); ++index) {
+    const std::uint32_t candidate =
+        candidate_member_capacities_[index].value_or(std::numeric_limits<std::uint32_t>::max());
+    if (engine_.queue_size(index) > candidate) {
+      return make_unexpected(Error{ErrorCode::kBackpressured});
+    }
+  }
+  return {};
+}
+
+expected<void, Error> RuntimeAlignedSelectionState::commit_rate_candidate_capacities() noexcept {
+  auto valid = validate_rate_candidate_capacities_commit();
+  if (!valid) {
+    return valid;
+  }
+  commit_validated_rate_candidate_capacities();
+  return {};
+}
+
+void RuntimeAlignedSelectionState::commit_validated_rate_candidate_capacities() noexcept {
+  for (std::size_t index = 0U; index < candidate_member_capacities_.size(); ++index) {
+    auto& candidate = candidate_member_capacities_[index];
+    if (!candidate) {
+      continue;
+    }
+    member_active_capacities_[index] = candidate.value_or(member_active_capacities_[index]);
+    candidate.reset();
+  }
+}
+
+void RuntimeAlignedSelectionState::discard_rate_candidate_capacities() noexcept {
+  for (auto& capacity : candidate_member_capacities_) {
+    capacity.reset();
+  }
 }
 
 std::size_t RuntimeAlignedSelectionState::member_index(PortId input) const noexcept {
@@ -787,7 +1051,7 @@ expected<void, Error> RuntimeAlignedSelectionState::push(PortId input,
   const std::size_t index = member_index(input);
   if (index == std::numeric_limits<std::size_t>::max() ||
       sample.capture_time.clock_id != plan_.comparison_clock ||
-      engine_.queue_size(index) >= member_capacities_[index]) {
+      engine_.queue_size(index) >= member_active_capacities_[index]) {
     return make_unexpected(Error{index == std::numeric_limits<std::size_t>::max() ||
                                          sample.capture_time.clock_id != plan_.comparison_clock
                                      ? ErrorCode::kInvalidArgument
@@ -853,6 +1117,21 @@ expected<void, Error> RuntimeAlignedSelectionState::reset() noexcept {
   return {};
 }
 
+expected<void, Error> RuntimeAlignedSelectionState::release_terminal_history() noexcept {
+  if (transaction_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  const bool every_member_terminal =
+      std::all_of(open_closure_.begin(), open_closure_.end(), [](AlignmentClosureProof proof) {
+        return proof == AlignmentClosureProof::kEndOfStream ||
+               proof == AlignmentClosureProof::kProducerEpochClosed;
+      });
+  if (!every_member_terminal) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  return engine_.release_terminal_history();
+}
+
 std::size_t RuntimeAlignedSelectionState::queued(PortId input) const noexcept {
   const std::size_t index = member_index(input);
   return index == std::numeric_limits<std::size_t>::max() ? 0U : engine_.queue_size(index);
@@ -864,11 +1143,22 @@ std::size_t RuntimeAlignedSelectionState::payload_claim_capacity(PortId input) c
     return 0U;
   }
   const bool retains_reuse = missing_[index].kind == AlignedMissingPolicyKind::kReuseLast;
-  const std::size_t member_capacity = member_capacities_[index];
+  const std::size_t member_capacity = member_backing_capacities_[index];
   if (retains_reuse && member_capacity == std::numeric_limits<std::size_t>::max()) {
     return 0U;
   }
   return member_capacity + static_cast<std::size_t>(retains_reuse);
+}
+
+bool RuntimeAlignedSelectionState::terminal_decision_ready() const noexcept {
+  const bool every_member_closed =
+      std::all_of(open_closure_.begin(), open_closure_.end(), [](AlignmentClosureProof proof) {
+        return proof == AlignmentClosureProof::kEndOfStream ||
+               proof == AlignmentClosureProof::kProducerEpochClosed;
+      });
+  return every_member_closed && std::any_of(member_inputs_.begin(),
+                                            member_inputs_.end(),
+                                            [&](PortId input) { return queued(input) != 0U; });
 }
 
 expected<std::size_t, Error> RuntimeAlignedSelectionState::copy_payload_claims(
@@ -1156,11 +1446,12 @@ expected<std::size_t, Error> BoundedEventPortBinding::drain(
 
 RuntimeCandidateCoordinator::RuntimeCandidateCoordinator(
     std::vector<SourceState> sources, std::vector<std::unique_ptr<TagAllocator>> owned_tags,
-    std::size_t max_outstanding)
+    std::size_t max_outstanding, RuntimePhaseCounters* phase_counters)
     : sources_(std::move(sources)),
       owned_tags_(std::move(owned_tags)),
       tags_(owned_tags_.size()),
-      max_outstanding_(max_outstanding) {
+      max_outstanding_(max_outstanding),
+      phase_counters_(phase_counters) {
   for (std::size_t index = 0U; index < owned_tags_.size(); ++index) {
     tags_[index] = owned_tags_[index].get();
   }
@@ -1170,8 +1461,9 @@ RuntimeCandidateCoordinator::RuntimeCandidateCoordinator(
 
 expected<RuntimeCandidateCoordinator, Error> RuntimeCandidateCoordinator::create_with_tags(
     std::span<const RuntimeSourceBindingRecord> sources,
-    std::span<TagAllocator* const> receiver_tags, std::size_t max_outstanding) {
-  auto result = create(sources, receiver_tags.size(), max_outstanding);
+    std::span<TagAllocator* const> receiver_tags, std::size_t max_outstanding,
+    RuntimePhaseCounters* phase_counters) {
+  auto result = create(sources, receiver_tags.size(), max_outstanding, phase_counters);
   if (!result) {
     return make_unexpected(std::move(result.error()));
   }
@@ -1192,7 +1484,7 @@ expected<RuntimeCandidateCoordinator, Error> RuntimeCandidateCoordinator::create
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 expected<RuntimeCandidateCoordinator, Error> RuntimeCandidateCoordinator::create(
     std::span<const RuntimeSourceBindingRecord> sources, std::size_t receiver_count,
-    std::size_t max_outstanding) {
+    std::size_t max_outstanding, RuntimePhaseCounters* phase_counters) {
   if (sources.empty() || receiver_count == 0U || max_outstanding == 0U) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
@@ -1251,7 +1543,8 @@ expected<RuntimeCandidateCoordinator, Error> RuntimeCandidateCoordinator::create
       state.frozen_sequences.reserve(source.capacity);
       states.push_back(std::move(state));
     }
-    return RuntimeCandidateCoordinator{std::move(states), std::move(tags), max_outstanding};
+    return RuntimeCandidateCoordinator{
+        std::move(states), std::move(tags), max_outstanding, phase_counters};
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   } catch (const std::bad_alloc&) {
     return make_unexpected(Error{ErrorCode::kResourceExhausted});
@@ -1261,6 +1554,9 @@ expected<RuntimeCandidateCoordinator, Error> RuntimeCandidateCoordinator::create
 
 std::size_t RuntimeCandidateCoordinator::find_source(SourceId source) const noexcept {
   const auto found = std::find_if(sources_.begin(), sources_.end(), [&](const SourceState& state) {
+    if (phase_counters_ != nullptr) {
+      phase_counters_->increment(RuntimePhaseCounter::kCandidateSourceLookupProbes);
+    }
     return state.binding.source == source;
   });
   return found == sources_.end() ? sources_.size()
@@ -1324,7 +1620,14 @@ expected<void, Error> RuntimeCandidateCoordinator::accept_event(RuntimeEvent eve
         event.clock_health_disposition != EndpointClockHealthDisposition::kNotApplicable))) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
-  if (source.binding.deadline) {
+  if (event.kind == RuntimeEventKind::kInputEndOfStream) {
+    // EOS is control evidence, not a sample-capture witness. It retains the reference-clock
+    // observation in both fields for deterministic ordering but never establishes a deadline
+    // source coordinate.
+    if (!event.source_decision_time.valid() || event.source_decision_time != event.reference_time) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+  } else if (source.binding.deadline) {
     auto coordinates = validate_event_coordinates(
         *source.binding.deadline, event.source_decision_time, event.reference_time);
     if (!coordinates) {
@@ -1389,12 +1692,66 @@ expected<std::size_t, Error> RuntimeCandidateCoordinator::ingest(
   return drained_count;
 }
 
+std::optional<TimePoint> RuntimeCandidateCoordinator::oldest_pending_reference() const noexcept {
+  std::optional<TimePoint> oldest;
+  for (const PendingEvent& pending : pending_) {
+    // Compare on the same key freeze_next orders by, so this reports the coordinate that ordering
+    // would actually pick rather than a differently-derived approximation of it.
+    if (!oldest || pending.event.reference_time.timestamp_ns < oldest->timestamp_ns) {
+      oldest = pending.event.reference_time;
+    }
+  }
+  return oldest;
+}
+
+std::optional<TimePoint> RuntimeCandidateCoordinator::oldest_pending_nonterminal_trigger_reference(
+    const VertexId owner, const SourceId witness_source, const PortId witness_port) const noexcept {
+  if (!owner || !witness_source) {
+    return std::nullopt;
+  }
+  std::optional<TimePoint> oldest;
+  for (const PendingEvent& pending : pending_) {
+    if (pending.source_slot >= sources_.size() ||
+        sources_[pending.source_slot].binding.vertex != owner ||
+        sources_[pending.source_slot].binding.source != witness_source ||
+        (witness_port && pending.event.port != witness_port) ||
+        pending.event.kind == RuntimeEventKind::kInputEndOfStream) {
+      continue;
+    }
+    if (!oldest || pending.event.reference_time.timestamp_ns < oldest->timestamp_ns) {
+      oldest = pending.event.reference_time;
+    }
+  }
+  return oldest;
+}
+
+bool RuntimeCandidateCoordinator::no_pending_trigger_witness(
+    const VertexId owner, const PortId witness_port) const noexcept {
+  if (!owner || !witness_port) {
+    return false;
+  }
+  for (const PendingEvent& pending : pending_) {
+    if (pending.source_slot >= sources_.size() ||
+        sources_[pending.source_slot].binding.vertex != owner ||
+        pending.event.port != witness_port) {
+      continue;
+    }
+    if (pending.event.kind != RuntimeEventKind::kInputEndOfStream) {
+      return false;
+    }
+  }
+  return true;
+}
+
 expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_next() noexcept {
   if (pending_.empty()) {
     return make_unexpected(Error{ErrorCode::kNotReady});
   }
   const auto selected = std::min_element(
       pending_.begin(), pending_.end(), [&](const PendingEvent& lhs, const PendingEvent& rhs) {
+        if (phase_counters_ != nullptr) {
+          phase_counters_->increment(RuntimePhaseCounter::kCandidateOrderComparisons);
+        }
         const SourceState& lhs_source = sources_[lhs.source_slot];
         const SourceState& rhs_source = sources_[rhs.source_slot];
         return std::tuple{lhs.event.reference_time.timestamp_ns,
@@ -1416,6 +1773,44 @@ expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_next
     // Independently accepted sources can become visible after a later reference coordinate was
     // already frozen. Preserve the semantic reference time in the witness while advancing the
     // process-local logical cursor instead of backdating the new activation.
+    logical_ns = last_logical_ns_;
+    microstep = last_microstep_ + 1U;
+  }
+  return freeze_pending(static_cast<std::size_t>(std::distance(pending_.begin(), selected)),
+                        TagTime{logical_ns, microstep, 0U});
+}
+
+expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_input_prerequisite(
+    const VertexId owner, const PortId input, const TimePoint reference_time) noexcept {
+  if (!owner || !input || !reference_time.valid()) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  const auto selected = std::min_element(
+      pending_.begin(), pending_.end(), [&](const PendingEvent& lhs, const PendingEvent& rhs) {
+        const auto eligible = [&](const PendingEvent& pending) {
+          return pending.source_slot < sources_.size() &&
+                 sources_[pending.source_slot].binding.vertex == owner &&
+                 pending.event.kind == RuntimeEventKind::kInputArrival &&
+                 pending.event.port == input && pending.event.reference_time == reference_time;
+        };
+        const bool lhs_eligible = eligible(lhs);
+        const bool rhs_eligible = eligible(rhs);
+        return lhs_eligible != rhs_eligible
+                   ? lhs_eligible
+                   : lhs_eligible && lhs.event.source_sequence < rhs.event.source_sequence;
+      });
+  if (selected == pending_.end() || selected->source_slot >= sources_.size() ||
+      sources_[selected->source_slot].binding.vertex != owner ||
+      selected->event.kind != RuntimeEventKind::kInputArrival || selected->event.port != input ||
+      selected->event.reference_time != reference_time) {
+    return make_unexpected(Error{ErrorCode::kNotReady});
+  }
+  std::int64_t logical_ns = selected->event.reference_time.timestamp_ns;
+  std::uint32_t microstep = 0U;
+  if (tag_time_initialized_ && logical_ns <= last_logical_ns_) {
+    if (last_microstep_ == std::numeric_limits<std::uint32_t>::max()) {
+      return make_unexpected(Error{ErrorCode::kResourceExhausted});
+    }
     logical_ns = last_logical_ns_;
     microstep = last_microstep_ + 1U;
   }
@@ -1460,6 +1855,9 @@ expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_pend
   if (!tag) {
     return make_unexpected(std::move(tag.error()));
   }
+  if (phase_counters_ != nullptr) {
+    phase_counters_->increment(RuntimePhaseCounter::kCandidateTagTimeReservations);
+  }
 
   const bool event_health_snapshot = selected.event.clock_health_generation != 0U;
   const EndpointClockHealthDisposition clock_health_disposition =
@@ -1499,8 +1897,51 @@ expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_pend
   last_logical_ns_ = tag_time.logical_ns;
   last_microstep_ = tag_time.microstep;
   tag_time_initialized_ = true;
+  if (phase_counters_ != nullptr) {
+    phase_counters_->add(RuntimePhaseCounter::kCandidateOrderMoves,
+                         pending_.size() - pending_index - 1U);
+  }
   pending_.erase(pending_.begin() + static_cast<std::ptrdiff_t>(pending_index));
   return result;
+}
+
+expected<void, Error> RuntimeCandidateCoordinator::rearm_terminal_successor(
+    FrozenRuntimeCandidate& candidate) noexcept {
+  if (candidate.source_retired || candidate.witness.kind != RuntimeEventKind::kInputEndOfStream ||
+      candidate.source_slot >= sources_.size() || !candidate.candidate.tag.valid() ||
+      !candidate.candidate.ready.tag_time.valid() || !tag_time_initialized_ ||
+      candidate.candidate.ready.tag_time.logical_ns != last_logical_ns_ ||
+      candidate.candidate.ready.tag_time.microstep != last_microstep_ ||
+      last_microstep_ == std::numeric_limits<std::uint32_t>::max()) {
+    return make_unexpected(Error{last_microstep_ == std::numeric_limits<std::uint32_t>::max()
+                                     ? ErrorCode::kResourceExhausted
+                                     : ErrorCode::kInvalidArgument});
+  }
+  SourceState& source = sources_[candidate.source_slot];
+  if (candidate.witness.source != source.binding.source ||
+      candidate.witness.source_generation != source.binding.source_generation ||
+      candidate.candidate.receiver_index != source.binding.receiver_index ||
+      source.outstanding == 0U || outstanding_count_ == 0U ||
+      std::count(source.frozen_sequences.begin(),
+                 source.frozen_sequences.end(),
+                 candidate.witness.source_sequence) != 1) {
+    return make_unexpected(Error{ErrorCode::kStaleEndpoint});
+  }
+  TagAllocator* const allocator = tags_[source.binding.receiver_index];
+  if (allocator == nullptr) {
+    return make_unexpected(Error{ErrorCode::kFailure});
+  }
+  auto tag = allocator->reserve_candidate();
+  if (!tag) {
+    return make_unexpected(std::move(tag.error()));
+  }
+  ++last_microstep_;
+  candidate.candidate.tag = *tag;
+  candidate.candidate.ready.tag_time = TagTime{last_logical_ns_, last_microstep_, 0U};
+  if (phase_counters_ != nullptr) {
+    phase_counters_->increment(RuntimePhaseCounter::kCandidateTagTimeReservations);
+  }
+  return {};
 }
 
 expected<void, Error> RuntimeCandidateCoordinator::retire(
@@ -1754,7 +2195,7 @@ Dispatcher::Dispatcher(const SchedulerPlanRecord& plan,
 
 expected<Dispatcher, Error> Dispatcher::create(const SchedulerPlanRecord& plan,
                                                std::size_t max_candidates) {
-  auto catalog = scheduling::ReadyPolicyCatalog::create_ea1_builtins();
+  auto catalog = scheduling::ReadyPolicyCatalog::create_default_builtins();
   if (!catalog) {
     return make_unexpected(std::move(catalog.error()));
   }

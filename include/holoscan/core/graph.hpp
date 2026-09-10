@@ -38,6 +38,7 @@
 #include <holoscan/core/payload_identity.hpp>
 #include <holoscan/core/payload_options.hpp>
 #include <holoscan/core/profile.hpp>
+#include <holoscan/core/rate.hpp>
 #include <holoscan/core/readiness_source.hpp>
 #include <holoscan/core/tensor_field.hpp>
 #include <holoscan/time/clock.hpp>
@@ -48,6 +49,7 @@ namespace holoscan {
 class Graph;
 class HOLOSCAN_CORE_EXPORT TensorOutputPortConfigurator;
 class GraphInstancePath;
+class ExecutionPartitionsView;
 
 namespace detail {
 class GraphState;
@@ -172,7 +174,7 @@ struct ExternalTopicId {
 
 /// @brief Identify one port record within a GraphView authoring snapshot.
 ///
-/// This value is never a compiler-assigned \c PortId. EA1-009 remaps it to a
+/// This value is never a compiler-assigned \c PortId. HSDK5-009 remaps it to a
 /// plan-local identity when compilation freezes an authoring snapshot.
 struct GraphPortId {
   std::uint64_t value{};  ///< Nonzero snapshot-local authoring identity.
@@ -197,7 +199,7 @@ enum class PortOwnerKind : std::uint8_t {
 };
 
 /// @brief Preserve logical Tensor boundary requirements without retaining spans.
-struct LogicalTensorRequirementsRecord {
+struct TensorBoundaryContractRecord {
   std::optional<MemoryKind> memory_kind;       ///< Exact required memory kind when present.
   std::optional<DLDataType> dtype;             ///< Exact required element type when present.
   std::optional<std::uint32_t> rank;           ///< Exact logical rank when present; zero is scalar.
@@ -208,6 +210,18 @@ struct LogicalTensorRequirementsRecord {
   InterfaceTensorEmitPolicy foreign_emit_policy{
       InterfaceTensorEmitPolicy::kRequireExportable};  ///< Foreign storage policy.
   std::optional<std::uint32_t> max_inline_bytes;       ///< Positive inline cap when authored.
+  /// Positive foreign-storage staging cap when copying is admitted.
+  std::optional<std::uint64_t> max_staging_byte_span;
+  /// Consumer-side memory conversion policy at this external boundary.
+  std::optional<MemoryConversionPolicy> memory_conversion;
+  TensorContractOrigins origins;  ///< Cold diagnostic authored-versus-derived provenance.
+};
+
+/// @brief Preserve one canonical descriptor-schema external Tensor field contract.
+struct DescriptorTensorTopicFieldRecord {
+  std::uint16_t field_id{};             ///< Canonical FlatBuffers field id.
+  std::uint16_t tensor_index{};         ///< Dense index in ascending field-id order.
+  TensorBoundaryContractRecord tensor;  ///< Complete finite field boundary contract.
 };
 
 /// @brief Preserve one copied edge-options record and its authored presence bits.
@@ -230,17 +244,28 @@ struct ConnectionOverrideRecord {
 
 /// @brief Preserve one authored port-configuration layer.
 ///
-/// Setup defaults and Graph overrides occupy separate instances so EA1-009 can
+/// Setup defaults and Graph overrides occupy separate instances so HSDK5-009 can
 /// resolve precedence without reconstructing author intent.
 struct PortConfigurationRecord {
-  std::optional<std::uint32_t> queue_depth;                 ///< Input history depth when present.
-  std::optional<std::uint32_t> max_emits_per_compute;       ///< Output burst bound when present.
-  std::optional<std::uint32_t> late_joiner_history_depth;   ///< Output retained history.
+  std::optional<std::uint32_t> queue_depth;                ///< Input history depth when present.
+  std::optional<std::uint32_t> max_emits_per_compute;      ///< Output burst bound when present.
+  std::optional<std::uint32_t> late_joiner_history_depth;  ///< Output retained history.
+  PortRateKind rate_kind{PortRateKind::kUnspecified};      ///< Normalized setup rate form.
+  std::optional<Rate> declared_nominal_rate;               ///< Fixed output nominal rate.
+  std::optional<Rate> declared_expected_rate;              ///< Advisory input expectation.
+  std::optional<GraphPortId> follows_input;                ///< Canonical owner-local input.
+  std::optional<RateRatio> follows_ratio;                  ///< Exact follows multiplier.
+  std::optional<LifecycleStage> lifecycle_binding_stage;   ///< Output binding deadline.
+  /// Maximum selectable nominal average for a lifecycle-selected root output.
+  std::optional<Rate> declared_max_nominal_rate;
   std::optional<std::string> diagnostic_alias;              ///< Owned diagnostic-only alias.
-  std::optional<TensorPortLayout> tensor_layout;            ///< Logical Tensor facts when authored.
+  std::optional<TensorRepresentation> tensor_layout;        ///< Logical Tensor facts when authored.
+  std::optional<TensorContractRecord> tensor_contract;      ///< Owned normalized role contract.
   std::optional<MemoryConversionPolicy> memory_conversion;  ///< Port conversion request.
-  std::optional<TensorAllocationBounds> tensor_allocation;  ///< Direct Tensor allocation bound.
-  std::optional<PayloadOptionsRecord> payload_options;      ///< Deep-owned producer options.
+  std::optional<TensorPoolBounds> tensor_allocation;        ///< Direct Tensor allocation bound.
+  /// Immutable compile-derived Tensor slot-capacity expression when authored.
+  std::optional<TensorByteSpanExpressionRecord> tensor_byte_span_expression;
+  std::optional<PayloadOptionsRecord> payload_options;  ///< Deep-owned producer options.
   /// Field-scoped Tensor facts in canonical ascending field-id order.
   std::vector<TensorFieldConfigurationRecord> tensor_fields;
 };
@@ -316,7 +341,9 @@ struct ExternalTopicRecord {
   ClockHealthOptions clock_health{};  ///< Normalized ordinary or monitored health contract.
   bool clock_health_authored{};       ///< True when health options were explicitly supplied.
   TopicAttachPolicy attach{};         ///< External peer presence and finite wait request.
-  std::optional<LogicalTensorRequirementsRecord> tensor;  ///< Deep-owned Tensor contract.
+  std::optional<TensorBoundaryContractRecord> tensor;  ///< Deep-owned Tensor contract.
+  /// Complete descriptor-schema field inventory in canonical ascending field-id order.
+  std::vector<DescriptorTensorTopicFieldRecord> tensor_fields;
   EndpointBounds bounds{};  ///< Direction-specific external peer resource bounds.
 };
 
@@ -328,7 +355,7 @@ enum class ReadinessWakeRequirement : std::uint8_t {
 
 /// @brief Describe one logical readiness declaration after Graph composition.
 ///
-/// This record is pointer-free authoring provenance. EA1-006 assigns no physical
+/// This record is pointer-free authoring provenance. HSDK5-006 assigns no physical
 /// descriptor, CUDA event, HoloMQ handle, callback adapter, or plan-local
 /// `SourceId`; compiler/runtime binding belongs to later components.
 struct ReadinessSourceDeclarationRecord {
@@ -341,7 +368,7 @@ struct ReadinessSourceDeclarationRecord {
   ClockKey requested_clock;  ///< Owned named/default clock key for time-based readiness.
   ReadinessWakeRequirement wake_requirement{
       ReadinessWakeRequirement::kDeploymentSelected};  ///< Source-derived wake requirement.
-  bool referenced{};  ///< Reserved for later Contract lowering; false in EA1-006 snapshots.
+  bool referenced{};  ///< Reserved for later Contract lowering; false in HSDK5-006 snapshots.
 };
 
 /// @brief Classify a backend-neutral region constraint.
@@ -408,14 +435,17 @@ struct RegionRecord {
 /// @brief Describe one developer-preview manual execution partition.
 ///
 /// Partition declarations are distinct from overlapping \ref RegionRecord
-/// scopes. Each record owns its name and direct Operator membership. The
-/// compiler later requires authored partitions to form a nonempty, disjoint,
-/// exact cover before lowering them into execution-plan partitions.
+/// scopes. Each record owns its name and either direct Operator membership or
+/// the mutually exclusive compile-root \ref PartitionHandle::include_all
+/// directive. Without an explicit automatic-remainder request, the compiler
+/// requires ordinary authored membership to form a nonempty, disjoint, exact
+/// cover before lowering it into execution-plan partitions.
 struct PartitionRecord {
   PartitionId id{};               ///< Nonzero snapshot-local partition identity.
   GraphId graph{};                ///< Exact owning Graph instance.
   std::string name;               ///< Owned unique partition name in the Graph scope.
   std::vector<VertexId> members;  ///< Canonical direct-Operator membership.
+  bool include_all{};             ///< Expand to the complete compile-root application at compile.
 };
 
 /// @brief Describe one owned/replayable clock declaration.
@@ -884,6 +914,17 @@ struct EmbeddedGraphRegistration {
   std::size_t index{};
 };
 
+/// @brief Carry one immutable root-Graph Operator-handle lookup identity.
+///
+/// This private bridge deliberately excludes embedded Graph handles. The execution plan combines
+/// these source-Graph facts with its own immutable root-index table without mutating authoring
+/// storage or publishing a plan-bound \ref OperatorRef back into the Graph.
+struct GraphOperatorLocator {
+  GraphInstanceId graph{};
+  GraphGeneration generation{};
+  std::size_t root_operator_index{};
+};
+
 HOLOSCAN_CORE_EXPORT expected<OperatorRegistration, Error> graph_register_operator(
     const std::shared_ptr<GraphState>& state, std::string_view name,
     std::shared_ptr<OperatorFactoryBase> factory, std::unique_ptr<OperatorBase> prototype,
@@ -902,6 +943,8 @@ HOLOSCAN_CORE_EXPORT std::string_view graph_operator_name(const std::shared_ptr<
                                                           std::size_t index) noexcept;
 HOLOSCAN_CORE_EXPORT OperatorRef graph_operator_ref(const std::shared_ptr<GraphState>& state,
                                                     std::size_t index) noexcept;
+HOLOSCAN_CORE_EXPORT expected<GraphOperatorLocator, Error> graph_operator_locator(
+    const std::shared_ptr<GraphState>& state, std::size_t index) noexcept;
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_set_operator_params(
     const std::shared_ptr<GraphState>& state, std::size_t index, const void* params,
     const void* parameter_type_token);
@@ -930,22 +973,18 @@ HOLOSCAN_CORE_EXPORT bool graph_flow_valid(const std::shared_ptr<GraphState>& st
 
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_input_queue(
     const std::shared_ptr<GraphState>&, GraphPortId, std::uint32_t);
-HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_input_tensor(
-    const std::shared_ptr<GraphState>&, GraphPortId, TensorPortLayout);
-HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_input_memory(
-    const std::shared_ptr<GraphState>&, GraphPortId, MemoryConversionPolicy);
+HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_input_tensor_spec(
+    const std::shared_ptr<GraphState>&, GraphPortId, const TensorInputSpec&);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_port_alias(
     const std::shared_ptr<GraphState>&, GraphPortId, std::string_view);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_output_emits(
     const std::shared_ptr<GraphState>&, GraphPortId, std::uint32_t);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_output_history(
     const std::shared_ptr<GraphState>&, GraphPortId, std::uint32_t);
-HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_output_tensor(
-    const std::shared_ptr<GraphState>&, GraphPortId, TensorPortLayout);
+HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_output_tensor_spec(
+    const std::shared_ptr<GraphState>&, GraphPortId, const TensorOutputSpec&);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_output_payload(
     const std::shared_ptr<GraphState>&, GraphPortId, PayloadOptions);
-HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_tensor_allocation(
-    const std::shared_ptr<GraphState>&, GraphPortId, TensorAllocationBounds);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_flow_policy(
     const std::shared_ptr<GraphState>&, EdgeId, QueuePolicy);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_flow_depth(
@@ -960,11 +999,15 @@ HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_flow_inflight(
 HOLOSCAN_CORE_EXPORT expected<GraphPortId, Error> graph_register_import(
     const std::shared_ptr<GraphState>&, std::string_view, TopicOptions, std::unique_ptr<OutputBase>,
     PayloadIdentityRecord, std::optional<SchemaPackagePlanRecord>,
-    std::uint64_t serialized_payload_capacity_bytes);
+    std::uint64_t serialized_payload_capacity_bytes,
+    std::vector<AuthoredDescriptorTensorTopicField> tensor_fields = {},
+    std::uint16_t descriptor_tensor_field_count = 0U);
 HOLOSCAN_CORE_EXPORT expected<GraphPortId, Error> graph_register_export(
     const std::shared_ptr<GraphState>&, std::string_view, TopicOptions, std::unique_ptr<InputBase>,
     PayloadIdentityRecord, std::optional<SchemaPackagePlanRecord>,
-    std::uint64_t serialized_payload_capacity_bytes);
+    std::uint64_t serialized_payload_capacity_bytes,
+    std::vector<AuthoredDescriptorTensorTopicField> tensor_fields = {},
+    std::uint16_t descriptor_tensor_field_count = 0U);
 
 HOLOSCAN_CORE_EXPORT expected<RegionId, Error> graph_add_region(const std::shared_ptr<GraphState>&,
                                                                 std::string_view);
@@ -983,6 +1026,12 @@ HOLOSCAN_CORE_EXPORT expected<PartitionId, Error> graph_add_partition(
     const std::shared_ptr<GraphState>&, std::string_view);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_partition_add_operator(
     const std::shared_ptr<GraphState>&, PartitionId, std::size_t);
+HOLOSCAN_CORE_EXPORT expected<void, Error> graph_partition_add_operators(
+    const std::shared_ptr<GraphState>&, PartitionId, std::span<const std::size_t>);
+HOLOSCAN_CORE_EXPORT expected<void, Error> graph_partition_include_all(
+    const std::shared_ptr<GraphState>&, PartitionId);
+HOLOSCAN_CORE_EXPORT expected<void, Error> graph_auto_partition_remaining(
+    const std::shared_ptr<GraphState>&);
 
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_lifecycle_before(
     const std::shared_ptr<GraphState>&, std::size_t, std::size_t, LifecycleStage);
@@ -1152,22 +1201,22 @@ class OperatorHandle {
   [[nodiscard]] explicit operator bool() const noexcept { return graph_valid(); }
 
   /// @brief Return the compiled operator reference when one exists.
-  /// @return Invalid zero reference in EA1-006; EA1-009 binds plan identity.
+  /// @return Invalid zero reference in HSDK5-006; HSDK5-009 binds plan identity.
   [[nodiscard]] OperatorRef ref() const noexcept {
     auto state = state_.lock();
     return state ? detail::graph_operator_ref(state, index_) : OperatorRef{};
   }
 
   /// @brief Return the compiled operator identity when one exists.
-  /// @return Zero in EA1-006 because authoring handles never fabricate plan IDs.
+  /// @return Zero in HSDK5-006 because authoring handles never fabricate plan IDs.
   [[nodiscard]] OperatorInstanceId id() const noexcept { return ref().id; }
 
   /// @brief Return the immutable compiled-plan generation when one exists.
-  /// @return Zero until EA1-009 freezes this declaration into a plan.
+  /// @return Zero until HSDK5-009 freezes this declaration into a plan.
   [[nodiscard]] PlanGenerationId plan_generation() const noexcept { return ref().plan_generation; }
 
   /// @brief Return whether this handle is bound to an immutable compiled plan.
-  /// @return Always false for the EA1-006 authoring-only handle.
+  /// @return Always false for the HSDK5-006 authoring-only handle.
   [[nodiscard]] bool plan_bound() const noexcept { return ref().plan_bound(); }
 
  private:
@@ -1180,6 +1229,7 @@ class OperatorHandle {
   friend class RegionHandle;
   friend class PartitionHandle;
   friend class GraphLifecycleBuilder;
+  friend class ExecutionPartitionsView;
   friend class detail::ParameterConfigBindingAccess;
 };
 
@@ -1341,25 +1391,11 @@ class InputPortConfigurator {
     return *this;
   }
 
-  /// @brief Override logical Tensor requirements for this input.
-  /// @param layout Backend-neutral logical Tensor facts.
+  /// @brief Override this input with one common consumer Tensor spec.
+  /// @param spec Representation, finite bounds, and conversion requirements.
   /// @return This configurator for fluent authoring.
-  /// @throws RuntimeError if the layout contains an invalid closed value, the
-  /// source Graph is unavailable, or the port is neither a direct Tensor nor an
-  /// Operator-setup-declared Tensor carrier.
-  /// @note Tensor facts may describe a typed carrier port; this method does not
-  /// grant direct Tensor allocation capability.
-  InputPortConfigurator& expects_tensor(TensorPortLayout layout) {
-    apply(detail::graph_configure_input_tensor(state(), port_, layout));
-    return *this;
-  }
-
-  /// @brief Override the input Tensor memory-conversion request.
-  /// @param policy Closed conversion policy.
-  /// @return This configurator for fluent authoring.
-  /// @throws RuntimeError if \p policy is invalid or this is not a Tensor port.
-  InputPortConfigurator& memory_conversion(MemoryConversionPolicy policy) {
-    apply(detail::graph_configure_input_memory(state(), port_, policy));
+  InputPortConfigurator& expects_tensor(const TensorInputSpec& spec) {
+    apply(detail::graph_configure_input_tensor_spec(state(), port_, spec));
     return *this;
   }
 
@@ -1421,23 +1457,19 @@ class OutputPortConfigurator {
     return *this;
   }
 
-  /// @brief Override logical Tensor production facts for this output.
-  /// @param layout Backend-neutral logical Tensor facts.
+  /// @brief Override this output with one Tensor spec.
+  /// @param spec Representation, finite bounds, and transfer promises.
   /// @return This configurator for fluent authoring.
-  /// @throws RuntimeError if the layout contains an invalid closed value, the
-  /// source Graph is unavailable, or the port is neither a direct Tensor nor an
-  /// Operator-setup-declared Tensor carrier.
-  /// @note Tensor facts may describe a typed carrier output; this method does
-  /// not add the direct-Tensor allocation configurator.
-  OutputPortConfigurator& produces_tensor(TensorPortLayout layout) {
-    apply(detail::graph_configure_output_tensor(state(), port_, layout));
+  /// @note kPassThrough does not remove Runtime-pool storage declared during Operator setup;
+  /// Graph overrides may tighten setup resource declarations but do not retract them.
+  OutputPortConfigurator& produces_tensor(const TensorOutputSpec& spec) {
+    apply(detail::graph_configure_output_tensor_spec(state(), port_, spec));
     return *this;
   }
 
-  /// @brief Override producer-side payload materialization options.
-  /// @param options Schema and interface Tensor policy copied before return.
+  /// @brief Override schema identity and payload options for this output.
+  /// @param options Options copied before return.
   /// @return This configurator for fluent authoring.
-  /// @throws RuntimeError if \p options is invalid for the payload type.
   OutputPortConfigurator& payload_options(PayloadOptions options) {
     apply(detail::graph_configure_output_payload(state(), port_, options));
     return *this;
@@ -1485,19 +1517,14 @@ class HOLOSCAN_CORE_EXPORT TensorOutputPortConfigurator {
   /// @throws RuntimeError if \p depth is zero or the source Graph is unavailable.
   TensorOutputPortConfigurator& late_joiner_history_depth(std::uint32_t depth);
 
-  /// @brief Override logical Tensor production facts.
-  /// @param layout Backend-neutral logical Tensor facts.
+  /// @brief Override this output with one common producer Tensor spec.
+  /// @param spec Representation, finite bounds, storage intent, and transfer policy.
   /// @return This stable Graph-owned configurator.
-  /// @throws RuntimeError if the layout contains an invalid closed value or the
-  /// source Graph is unavailable.
-  TensorOutputPortConfigurator& produces_tensor(TensorPortLayout layout);
+  TensorOutputPortConfigurator& produces_tensor(const TensorOutputSpec& spec);
 
-  /// @brief Override producer-side Tensor materialization options.
-  /// @param options Schema and interface Tensor policy copied before return.
+  /// @brief Override schema identity and payload options for this output.
+  /// @param options Options copied before return.
   /// @return This stable Graph-owned configurator.
-  /// @throws RuntimeError if policy/cap validation or effective-boundary
-  /// normalization fails, or the source Graph is unavailable. A rejected update
-  /// leaves the port and all existing edges unchanged.
   TensorOutputPortConfigurator& payload_options(PayloadOptions options);
 
   /// @brief Assign an owned diagnostic alias without changing port identity.
@@ -1505,12 +1532,6 @@ class HOLOSCAN_CORE_EXPORT TensorOutputPortConfigurator {
   /// @return This stable Graph-owned configurator.
   /// @throws RuntimeError if \p alias is invalid or the source Graph is unavailable.
   TensorOutputPortConfigurator& diagnostic_alias(std::string_view alias);
-
-  /// @brief Tighten the allocation bounds declared by `OperatorSpec`.
-  /// @param bounds Positive bounds no wider than the declaration capability.
-  /// @return This stable Graph-owned configurator.
-  /// @throws RuntimeError if allocation was not declared or \p bounds widens it.
-  TensorOutputPortConfigurator& tensor_allocation(TensorAllocationBounds bounds);
 
  private:
   TensorOutputPortConfigurator(std::weak_ptr<detail::GraphState> state, GraphPortId port) noexcept
@@ -1676,10 +1697,10 @@ class HOLOSCAN_CORE_EXPORT RegionHandle {
 /// @brief Author one developer-preview manual execution partition.
 ///
 /// This non-owning handle refers to one partition declaration in the
-/// originating Graph. It accepts only direct Operator declarations from that
-/// Graph; embedded-Graph membership is intentionally outside the EA1 surface.
-/// A compiler validates that the complete authored partition set is nonempty,
-/// disjoint, and covers every executable Operator exactly once.
+/// originating Graph. Explicit membership accepts only direct Operator
+/// declarations from that Graph. The compile-root \ref include_all directive
+/// instead expands to all composed Operators. A compiler validates the final
+/// cover according to the Graph's exact manual or automatic-remainder intent.
 ///
 /// The handle remains usable only while the originating Graph and declaration
 /// remain live. Mutation is atomic on failure but is not thread-safe with any
@@ -1709,6 +1730,60 @@ class HOLOSCAN_CORE_EXPORT PartitionHandle {
       detail::throw_graph_error(std::move(result.error()));
     return *this;
   }
+
+  /// @brief Add a complete batch of direct logical Operators to this partition.
+  /// @tparam Ops Exact Operator types.
+  /// @param operators Graph-owned direct Operator declarations.
+  /// @return This handle for fluent authoring.
+  /// @throws RuntimeError if a handle is foreign or stale, if any Operator is
+  /// duplicated within the batch or already assigned, or if this declaration
+  /// uses \ref include_all. A rejected batch leaves membership unchanged.
+  template <std::derived_from<OperatorBase>... Ops>
+    requires(sizeof...(Ops) > 1U)
+  PartitionHandle& add(const OperatorHandle<Ops>&... operators) {
+    auto state = state_.lock();
+    if (!state) {
+      detail::throw_graph_error(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"});
+    }
+
+    std::array<std::size_t, sizeof...(Ops)> indexes{};
+    std::size_t index{};
+    bool invalid{};
+    bool foreign{};
+    const auto collect = [&](const auto& op) {
+      auto op_state = op.state_.lock();
+      if (!op_state) {
+        invalid = true;
+      } else if (state != op_state) {
+        foreign = true;
+      }
+      indexes[index++] = op.index_;
+    };
+    (collect(operators), ...);
+    if (invalid) {
+      detail::throw_graph_error(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"});
+    }
+    if (foreign) {
+      detail::throw_graph_error(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_PARTITION_MEMBER_FOREIGN"});
+    }
+
+    auto result = detail::graph_partition_add_operators(state, id_, indexes);
+    if (!result)
+      detail::throw_graph_error(std::move(result.error()));
+    return *this;
+  }
+
+  /// @brief Expand this partition to the complete compile-root application.
+  /// @return This handle for fluent authoring.
+  /// @throws RuntimeError if the declaration has explicit members, another
+  /// partition exists, automatic remainder authoring was requested, or the
+  /// declaration is later embedded below the compile root.
+  /// @note Expansion occurs from the final composed snapshot at compile time,
+  /// so Operators and embedded Graphs authored after this call are included.
+  PartitionHandle& include_all();
 
  private:
   PartitionHandle(std::weak_ptr<detail::GraphState> state, PartitionId id) noexcept
@@ -1886,6 +1961,9 @@ class HOLOSCAN_CORE_EXPORT GraphView {
   /// @return Borrowed immutable records, or an empty span for an empty view.
   /// @note The span remains valid only while a \ref GraphView sharing this snapshot remains alive.
   [[nodiscard]] std::span<const PartitionRecord> partitions() const noexcept;
+  /// @brief Return whether automatic partitioning was requested for uncovered executable members.
+  /// @return `true` when the frozen Graph authored \ref Graph::auto_partition_remaining.
+  [[nodiscard]] bool automatic_partition_remaining() const noexcept;
   /// @brief Return frozen owned/shared clock declarations.
   /// @return Borrowed immutable records, or an empty span for an empty view.
   /// @note The span remains valid only while a \ref GraphView sharing this snapshot remains alive.
@@ -2347,6 +2425,7 @@ class HOLOSCAN_CORE_EXPORT Graph {
   /// @note Ordinary typed validation rejection consumes the next mixed external
   /// declaration ordinal. An exception before publication restores that ordinal.
   template <detail::ExternalTopicPayload T>
+    requires(!detail::kRuntimeDescriptorTensorSchemaPayload<T>)
   ImportedTopic<T> import_topic(
       std::string_view uri,
       TopicOptions options = {}) {  // NOLINT(performance-unnecessary-value-param)
@@ -2367,6 +2446,38 @@ class HOLOSCAN_CORE_EXPORT Graph {
     return ImportedTopic<T>{state_, result.value().value};
   }
 
+  /// @brief Declare a descriptor-backed schema external-to-Graph topic boundary.
+  /// @tparam T Owning singular or multi-Tensor descriptor-backed schema type.
+  /// @param uri Nonempty bounded `holomq://` topic URI copied before return.
+  /// @param options Common cold boundary contract copied before return.
+  /// @param tensors Complete typed Tensor field inventory copied before return.
+  /// @return Typed handle exposing the stable Graph-side output declaration.
+  /// @throws RuntimeError if identity, URI, field inventory, bounds, or name validation fails.
+  template <detail::ExternalTopicPayload T>
+    requires detail::kRuntimeDescriptorTensorSchemaPayload<T>
+  ImportedTopic<T> import_topic(
+      std::string_view uri,
+      TopicOptions options,  // NOLINT(performance-unnecessary-value-param)
+      DescriptorTensorTopicContract<T> tensors) {
+    auto prepared = detail::graph_prepare_authoring(state_);
+    if (!prepared)
+      detail::throw_graph_error(std::move(prepared.error()));
+    auto port = std::make_unique<Output<T>>("external");
+    auto result = detail::graph_register_import(
+        state_,
+        uri,
+        std::move(options),
+        std::unique_ptr<OutputBase>(std::move(port)),
+        detail::operator_spec_payload_identity<T>(),
+        detail::operator_spec_schema_package_plan_record<T>(),
+        detail::external_topic_payload_capacity_bytes<T>(),
+        std::move(tensors.fields_),
+        static_cast<std::uint16_t>(detail::descriptor_tensor_schema_tensor_count_v<T>));
+    if (!result)
+      detail::throw_graph_error(std::move(result.error()));
+    return ImportedTopic<T>{state_, result.value().value};
+  }
+
   /// @brief Declare an intrinsic Graph-to-external typed topic boundary.
   /// @tparam T Exact portable scalar, Tensor, schema-root, or explicit POD payload type.
   /// @param uri Nonempty bounded `holomq://` topic URI copied before return.
@@ -2380,6 +2491,7 @@ class HOLOSCAN_CORE_EXPORT Graph {
   /// @note Ordinary typed validation rejection consumes the next mixed external
   /// declaration ordinal. An exception before publication restores that ordinal.
   template <detail::ExternalTopicPayload T>
+    requires(!detail::kRuntimeDescriptorTensorSchemaPayload<T>)
   ExportedTopic<T> export_topic(
       std::string_view uri,
       TopicOptions options = {}) {  // NOLINT(performance-unnecessary-value-param)
@@ -2400,6 +2512,38 @@ class HOLOSCAN_CORE_EXPORT Graph {
     return ExportedTopic<T>{state_, result.value().value};
   }
 
+  /// @brief Declare a descriptor-backed schema Graph-to-external topic boundary.
+  /// @tparam T Owning singular or multi-Tensor descriptor-backed schema type.
+  /// @param uri Nonempty bounded `holomq://` topic URI copied before return.
+  /// @param options Common cold boundary contract copied before return.
+  /// @param tensors Complete typed Tensor field inventory copied before return.
+  /// @return Typed handle exposing the stable Graph-side input declaration.
+  /// @throws RuntimeError if identity, URI, field inventory, bounds, or name validation fails.
+  template <detail::ExternalTopicPayload T>
+    requires detail::kRuntimeDescriptorTensorSchemaPayload<T>
+  ExportedTopic<T> export_topic(
+      std::string_view uri,
+      TopicOptions options,  // NOLINT(performance-unnecessary-value-param)
+      DescriptorTensorTopicContract<T> tensors) {
+    auto prepared = detail::graph_prepare_authoring(state_);
+    if (!prepared)
+      detail::throw_graph_error(std::move(prepared.error()));
+    auto port = std::make_unique<Input<T>>("external");
+    auto result = detail::graph_register_export(
+        state_,
+        uri,
+        std::move(options),
+        std::unique_ptr<InputBase>(std::move(port)),
+        detail::operator_spec_payload_identity<T>(),
+        detail::operator_spec_schema_package_plan_record<T>(),
+        detail::external_topic_payload_capacity_bytes<T>(),
+        std::move(tensors.fields_),
+        static_cast<std::uint16_t>(detail::descriptor_tensor_schema_tensor_count_v<T>));
+    if (!result)
+      detail::throw_graph_error(std::move(result.error()));
+    return ExportedTopic<T>{state_, result.value().value};
+  }
+
   /// @brief Add one uniquely named backend-neutral policy region.
   /// @param name Nonempty unique bounded UTF-8 name copied before return.
   /// @return Fluent region handle.
@@ -2410,15 +2554,22 @@ class HOLOSCAN_CORE_EXPORT Graph {
   /// @param name Nonempty unique bounded UTF-8 name copied before return.
   /// @return Fluent partition handle accepting direct Operator members.
   /// @throws RuntimeError if \p name is invalid or duplicated.
-  /// @note If any partition is authored, compile requires all partitions to be
+  /// @note Without \ref auto_partition_remaining or
+  /// \ref PartitionHandle::include_all, compile requires all partitions to be
   /// nonempty and to cover every executable Operator exactly once.
   /// @note Manual partitions and \ref region declarations are orthogonal;
   /// regions may overlap partition boundaries.
-  /// @note Manual partitions are incompatible with embedded sub-graphs.
-  /// Compiling a Graph that has both reports
-  /// `PARTITION_MANUAL_EMBEDDED_GRAPH_UNSUPPORTED`; remove `partition()`
-  /// declarations or avoid `embed()` to recover automatic partitioning.
+  /// @note Direct root members may anchor an automatic remainder that includes
+  /// embedded descendants. A root \ref PartitionHandle::include_all declaration
+  /// may cover the complete composed application. Other manual selection
+  /// inside embedded Graph instances remains unsupported.
   PartitionHandle partition(std::string_view name);
+
+  /// @brief Automatically partition Operators omitted from exact authored partitions.
+  /// @throws RuntimeError if a partition already uses \ref PartitionHandle::include_all.
+  /// @note The request is idempotent and may precede or follow exact partition authoring.
+  /// Compilation rejects a request with no nonempty exact partition anchor.
+  void auto_partition_remaining();
 
   /// @brief Create a lifecycle ordering/permission authoring builder.
   /// @return Short-lived builder tied to this Graph.

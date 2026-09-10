@@ -1,0 +1,307 @@
+Two of the SDK schema payloads describe measurements rather than transport: `ImageT`
+carries a camera frame and `ImuT` carries one inertial sample. Both are ordinary
+[schema payloads](/holoscan/sdk-user-guide/data-and-payloads/schema-payloads) — declare
+`Output<holoscan::schema::ImageT>`, wire it with `add_flow()`, and the runtime does the
+rest. What makes them worth a page of their own is that they are the SDK's opinion about
+what a sensor message means, and that opinion is load-bearing: a consumer fusing a frame
+against an inertial window is relying on facts the schema states normatively rather than
+on whatever the producer found convenient.
+
+Both are owned by `holoscan::sensor_io` rather than by Core, so a graph carrying either
+one links that library and installs the `holoscan-sensor-io` component. The type names
+did not move with the ownership: a FlatBuffers namespace is part of the wire identity, so
+these remain `holoscan::schema::ImageT` and `holoscan::schema::ImuT`.
+
+This page is about the contract rather than the mechanics. It covers what the shared
+`Header` promises and why, where a new field belongs when the shipped shape does not carry
+what you need, and what a schema change costs a deployment that is already running.
+
+<Note title="You will learn">
+  - Why `capture_timestamp_ns` is normatively the *start* of integration, and what
+    breaks when a producer publishes the midpoint instead
+  - How `device_sequence` differs from the runtime's own emit counter, and why only one
+    of the two can show you a dropped sample
+  - Why capture time and device sequence live inside the payload rather than only in the
+    runtime's `SampleMetadata` envelope
+  - When a new fact belongs in the schema, when it belongs in a port declaration, and
+    when it belongs in a table of your own
+  - Why composition, not inheritance, is how a vendor quantity stays out of the shared
+    schema
+  - What a schema change does to a deployed application, and exactly where the mismatch
+    is caught
+</Note>
+
+## The two payloads and their shared header
+
+Each payload pins a complete identity: a canonical name, a version, a SHA-256 digest over
+its compiled binary schema, and a compact 128-bit id derived from those.
+
+| Payload | Canonical name | Version | Defined in |
+|---|---|---|---|
+| `holoscan::schema::ImageT` | `holoscan.schema.Image` | 4 | `src/sensor_io/schemas/image.fbs` |
+| `holoscan::schema::ImuT` | `holoscan.schema.Imu` | 3 | `src/sensor_io/schemas/imu.fbs` |
+
+Both include `schemas/header.fbs` and carry its `Header` table as their field 0. The
+`Header` is the part that is common to any sensor message: when the measurement happened,
+which coordinate frame it is expressed in, and which sample it is.
+
+```text
+table Header {
+  stamp: Time (id: 0);                  // deprecated; new producers must not set it
+  frame_id: string (id: 1);
+  capture_timestamp_ns: int64 (id: 2);
+  device_sequence: uint64 (id: 3);
+}
+```
+
+`ImageT` is a descriptor-Tensor payload: its `data` field is a Core `Tensor`, so pixel
+storage stays in the plan-owned pool and only the frame metadata is serialized. See
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth) for what
+that means on the producing side. `ImuT` is an ordinary generated schema whose field set
+is deliberately the ROS `sensor_msgs/Imu` set: three measurements, their three
+covariances, a flag word, and the header.
+
+## The Header contract
+
+### Capture time is the start of integration
+
+`capture_timestamp_ns` is the instant the measurement was taken, in nanoseconds, in a
+clock domain the producer states out of band. Zero means absent, and absent means absent —
+a consumer must not substitute arrival or publication time, because a plausible wrong
+capture time biases every downstream window, alignment, and latency measurement instead of
+failing visibly.
+
+For a sensor that integrates over an interval rather than sampling an instant — an image
+sensor above all — the field is **normatively the start of that interval**, never its
+midpoint and never its end. This is not the producer's choice to make.
+
+<Warning>
+  **Publishing the midpoint is a different fact under the same name.** Two cameras that
+  both consider themselves conformant, one reporting the start of exposure and the other
+  its midpoint, produce a silent misalignment of half an exposure — not a visible error.
+  A consumer that wants the centre of integration derives it from
+  `capture_timestamp_ns` plus half of `Image::exposure_time_ns`, which is exactly what
+  that field is for. Publishing the midpoint in `capture_timestamp_ns` instead makes
+  `exposure_time_ns` useless for the correction it exists to enable.
+</Warning>
+
+`exposure_time_ns` is a duration, not an instant, and it is defined for single-exposure
+frames. A multi-exposure sensor reports one integration time per exposure, and a single
+scalar cannot say which exposure of an HDR frame it describes; representing that case is
+deferred rather than guessed at. Should rolling-shutter work later need the readout span,
+it arrives as a field under its own name rather than by redefining this one.
+
+### device_sequence versus the runtime's emit counter
+
+`device_sequence` is the monotonic per-source sample number **as the device reported it**,
+or zero when the device has none. It is named for the device because there are two counters
+in play and the runtime envelope already owns the shorter word: `SampleMetadata::sequence`
+increments once per emit.
+
+The distinction is the whole point. A publication counter can never reveal that the sensor
+dropped a sample, because the runtime faithfully counts what it was handed. A gap in
+`device_sequence` is exactly that evidence. Anyone reading a bare "sequence" would have no
+way to tell from the call site which of the two they had, and the two disagree precisely in
+the case someone is usually debugging when they go looking.
+
+### frame_id names a coordinate frame
+
+`frame_id` is the coordinate frame the payload is expressed in, carried as a name rather
+than an index. A name survives recording and crossing a process boundary, where a locally
+minted integer frame handle does not; consumers resolve it against the pose tree once and
+cache the handle.
+
+<Note>
+  `SampleMetadata::frame_id` is an unrelated field that happens to share the name. The
+  envelope's is a `std::uint64_t` application frame or sample identity; the `Header`'s is
+  a coordinate frame name. Neither is derived from the other.
+</Note>
+
+### Why these facts live in the payload
+
+Capture time and sequence numbers also exist on the runtime envelope, which invites the
+question of why the payload repeats them. The answer is lifetime: **the envelope does not
+survive recording.** `SampleMetadata` is a runtime record attached to a sample in flight.
+Once the stream is written to a container and read back later, what remains is the message
+bytes — and a recorded frame whose capture time lived only in the envelope is a frame
+nobody can align afterwards. Every sensor payload needs these facts, so they live in the
+one table every sensor payload includes.
+
+The same reasoning cuts the other way for publication time, which is why
+`publish_timestamp_ns` was deliberately removed from the `Header`. Publication is something
+the transport does, not something the sensor observed, so a payload copy would be a second
+answer to a question the payload does not own — and a producer could set the two
+inconsistently. `SampleMetadata` owns that answer in `publish_timestamp_ns` and the
+`publish_clock_id` that names its domain.
+
+<Note>
+Read publication time from the envelope, not the payload. The runtime stamps both fields from
+the Graph default clock at the instant it submits the sample, so `publish_time()` is a real
+coordinate for a sample your graph published. It reads absent on a sample imported across an
+external channel boundary, and it is comparable only within the clock generation that stamped
+it — do not subtract it from a reading taken in another process. See
+[time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+</Note>
+
+`Header::stamp` is a deprecated nested `Time` table, retained only so that existing
+producers keep deserializing while they migrate. New producers must not set it; a consumer
+that reads it cannot tell which instant it holds.
+
+## Extending a sensor payload
+
+When the shipped shape does not carry what you need, there are three places the addition
+could go, and only one of them is right for any given case.
+
+| What you want to add | Where it belongs |
+|---|---|
+| A new fact about the measurement itself | A field in the schema, with a version bump |
+| A constraint on how the payload is carried, or on a Tensor member's layout, memory, or allocation | A port declaration in `setup()` |
+| A vendor- or device-specific quantity | A table of your own that includes the shared one |
+
+### A new fact about the measurement is a schema field
+
+If a consumer cannot interpret the payload correctly without knowing the thing, it is a
+schema field. `Image` gained `significant_bits` this way: a 10-bit sensor packed into
+16-bit words needs somewhere to say so, because black level, normalization, and display
+mapping are all wrong without it.
+
+The test is what a consumer that ignores the field does. If it produces a *wrong* result
+rather than merely a less observable one, the fact is payload semantics and nothing outside
+the schema can carry it. That test is why `sub_frame_offset` — the metadata gap most often
+raised for the Holoscan Sensor Bridge — is image schema rather than diagnostics: it changes
+how the pixels are decoded, so carrying it on a side channel would let the payload be
+interpreted correctly only by consumers who also subscribed to that channel.
+
+### A port declaration cannot add a fact
+
+Port declarations look like the cheap place to put things, because they need no schema
+change and no version bump. They cannot carry a measurement fact at all.
+`payload_options()` states carriage: inline byte bounds, Tensor byte spans, and
+materialization policy. `tensor_field()` selects a Tensor member of a descriptor-backed
+schema and states that member's layout, allocation, and memory-conversion contract. Both
+describe how bytes travel and what a Tensor must look like.
+
+<Warning>
+  **A port declaration is not a place to encode payload semantics.** Schema identity is
+  port-wide and comes from the type, not from anything a declaration says, so a fact
+  expressed only in `setup()` is invisible to every other participant: it does not enter
+  the payload, it does not enter the schema identity, and it does not survive recording.
+  A consumer in another process cannot see it, and neither can you when you replay the
+  stream.
+</Warning>
+
+### Composition is usually the right answer
+
+Between "amend the shared schema" and "there is nowhere to put this" sits the answer that
+is usually correct: declare your own table that carries the shared one as a field. `imu.fbs`
+documents the pattern for a vendor reporting die temperature:
+
+```text
+table ImuVectorNavVn {
+  base: Imu;
+  temperature_c: float;
+}
+```
+
+This **composes rather than inherits** — FlatBuffers has no inheritance — and the
+consequence is deliberate. `ImuVectorNavVnT` is a distinct port type with its own identity,
+and it will not connect to a port expecting an `ImuT`. That is the feature, not a
+limitation to work around: a pipeline that wants both feeds the vendor table to
+vendor-aware consumers and publishes a plain `ImuT` alongside it. A consumer that knows
+only `Imu` can still decode the `base` table out of the vendor message without knowing
+anything about the vendor.
+
+The `.fbs` sources install to `share/holoscan/schemas/sensor_io` for exactly this reason —
+a schema that includes another needs the source to compile against, not just the generated
+C++. Generate your table with `holoscan_add_flatbuffer_schema()` as described in
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas);
+nothing about the SDK's own registration is a private mechanism, and a vendor schema
+registers itself identically.
+
+## What a schema change costs
+
+### Identity is exact
+
+Compatibility is exact identity. A producer and a consumer agree only when all four
+components match: the canonical name, the version, the `schema_sha256` digest over the
+embedded binary schema, and the compact id derived from those. There is no negotiation, no
+field-evolution policy, and no additive-compatibility rule.
+
+The digest is what makes this strict. It is taken over the compiled binary schema, which
+records field *names* as well as types and offsets, so a pure rename with identical wire
+layout still moves the digest. Renames therefore ride a version bump, which is why `Image`
+is at version 4 after `analog_gain` became `gain` and `plane_pitches` became
+`plane_layouts`.
+
+### Where a mismatch is caught
+
+A schema change means every participant rebuilds. Where the mismatch surfaces depends
+entirely on whether the participant is in your graph.
+
+Within a single graph it **fails closed at construction**, before `compile()` runs:
+
+- `add_flow()` rejects a connection between ports whose payload identities differ with
+  `kIncompatible` and the diagnostic `GRAPH_PORT_TYPE_MISMATCH`.
+- Registering an external topic whose declared schema disagrees with the port's identity
+  fails with `kIncompatible` and `GRAPH_TOPIC_SCHEMA_MISMATCH`.
+
+Across processes, a peer is not in your graph, so there is nothing to check at
+construction. The mismatch surfaces at run time in two stages. When an endpoint attaches,
+the complete four-component tuple is compared and a mismatch is refused with
+`kIncompatible`, so a wrong peer never reaches steady state. Then every received message
+revalidates the identity carried in its envelope and fails with `kProtocolError` before a
+single payload byte is exposed.
+
+<Warning>
+  **There is no build-time gate across a process boundary.** A cross-process schema
+  mismatch is a hard, diagnosable refusal at run time — never misinterpreted bytes, and
+  never a partially decoded value reaching `compute()`. But it is not a compile error and
+  not a `compile()` failure. Independently built peers that disagree link and start
+  cleanly; they fail when they meet. Roll producer and consumer out together and treat a
+  schema change as a coordinated deployment.
+</Warning>
+
+### header.fbs is the one shared surface
+
+`Header` is the coupling worth knowing about. Both payloads include it, and the identity
+digest covers the whole include closure rather than the root schema alone — `Image` records
+`tensor.fbs`, `header.fbs`, and `time.fbs`; `Imu` records `geometry.fbs`, `header.fbs`, and
+`time.fbs`. Because the binary schema records the field names of included schemas too,
+**any edit to `header.fbs` moves both digests and forces both versions**, whether or not
+either payload's own text changes.
+
+That has already happened. Renaming the `Header` counter to `device_sequence` changed
+nothing in `imu.fbs`, and it moved `Imu`'s digest anyway, because the field names of an
+included schema are part of the bytes the digest covers — so the rename had to ride a
+version bump, and it rode the one that produced `Imu` version 3. `Image` took the same
+rename into its version 4. Anyone proposing a `Header` change should expect to reissue
+every sensor payload with it — which is the intended friction, since `Header` is the part
+every sensor consumer already depends on.
+
+## Recap
+
+- `ImageT` and `ImuT` share the `Header` table: capture time, coordinate frame, and the
+  device's own sample number.
+- `capture_timestamp_ns` is normatively the **start** of integration. Derive a midpoint
+  from it plus half of `Image::exposure_time_ns`; never publish the midpoint under this
+  name.
+- `device_sequence` is the device's counter; `SampleMetadata::sequence` counts emits. Only
+  a gap in the former is evidence that the sensor dropped a sample.
+- Capture time and device sequence live in the payload because the runtime envelope does
+  not survive recording. Publication time deliberately does not, because the runtime owns
+  that answer and carries it out of band.
+- A new fact about the measurement is a schema field; a port declaration expresses
+  carriage and Tensor contracts and can never add a fact; a vendor quantity belongs in
+  your own table that includes the shared one.
+- Composition is not inheritance: the composed table is a distinct port type that will not
+  connect to an `ImuT` port, and that is what keeps vendor quantities out of the shared
+  schema.
+- Compatibility is exact identity over name, version, binary-schema digest, and compact
+  id. In-graph mismatches fail closed at construction; cross-process mismatches fail at
+  attach and then per message with `kProtocolError`. There is no build-time cross-process
+  gate.
+- Any `header.fbs` edit moves both payload digests and forces both versions.
+
+Next: [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+covers generating your own `.fbs` definition, including the composed vendor table this
+page recommends.

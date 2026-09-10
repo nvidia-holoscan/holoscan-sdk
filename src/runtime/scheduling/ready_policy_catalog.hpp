@@ -32,9 +32,9 @@ inline constexpr std::size_t kMaxReadyPolicyRegistrations = 4U;
 
 /// Own a bounded constructor-injected catalog of private READY policies.
 ///
-/// The EA1 built-in catalog contains exactly one production entry. The larger fixed registration
-/// capacity exists only for controlled tests and later private implementations; it creates no
-/// installed extension ABI, self-registration path, dynamic loader, or runtime selector.
+/// The baseline built-in catalog contains exactly one production entry. The larger fixed
+/// registration capacity exists only for controlled tests and later private implementations; it
+/// creates no installed extension ABI, self-registration path, dynamic loader, or runtime selector.
 class ReadyPolicyCatalog {
  public:
   /// Validate and copy an explicit bounded registration table.
@@ -42,8 +42,8 @@ class ReadyPolicyCatalog {
       std::span<const ReadyPolicyRegistration> registrations,
       ReadyPolicyCapabilities available_capabilities = kAllReadyPolicyCapabilities);
 
-  /// Create the exact one-entry EA1 deterministic-serial catalog.
-  [[nodiscard]] static expected<ReadyPolicyCatalog, Error> create_ea1_builtins();
+  /// Create the exact one-entry baseline deterministic-serial catalog.
+  [[nodiscard]] static expected<ReadyPolicyCatalog, Error> create_default_builtins();
 
   /// Construct a fresh policy for one exact algorithm identifier and version.
   [[nodiscard]] expected<std::unique_ptr<ReadyPolicy>, Error> make(

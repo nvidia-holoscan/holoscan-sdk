@@ -29,7 +29,8 @@
 #include "channel/endpoint_catalog_state.hpp"
 #include "compile_test_graph.hpp"
 #include "compiler/compile_internal.hpp"
-#include "compiler/plan_artifact_lowering.hpp"
+#include "compiler/endpoint_catalog_lowering.hpp"
+#include "compiler/endpoint_clock_health_lowering.hpp"
 #include "compiler/runtime_package_capabilities.hpp"
 #include "core/graph_compiler_access.hpp"
 
@@ -290,6 +291,7 @@ void add_cross_domain_latest_path(Graph& graph, ClockHealthOptions health) {
 }
 
 // REQ: COMPILE-022
+// REQ: COMPILE-066
 TEST(EndpointCatalog, ExplicitNameProducesLookupableImmutableRecord) {
   Graph graph{"explicit-endpoint"};
   TopicOptions topic;
@@ -323,6 +325,7 @@ TEST(EndpointCatalog, ExplicitNameProducesLookupableImmutableRecord) {
 }
 
 // REQ: COMPILE-022
+// REQ: COMPILE-066
 TEST(EndpointCatalog, AttachBoundDefaultIsProfileAwareAndConstrainedProfilesRequireAuthorship) {
   Graph graph{"attach-profile"};
   TopicOptions options;
@@ -520,6 +523,7 @@ TEST(EndpointCatalog, SuppliedCatalogMustMatchTheDerivedSetExactly) {
 }
 
 // REQ: COMPILE-007
+// REQ: COMPILE-066
 TEST(EndpointCatalog, LoweringRejectsUnicodeControlsAndEdgeWhitespace) {
   const auto reject_name = [](std::string name) {
     auto snapshot = explicit_topic_snapshot("valid");
@@ -563,6 +567,8 @@ TEST(EndpointCatalog, LoweringRejectsReservedAndDuplicateFinalNamesWithoutRepair
   EXPECT_EQ(endpoint_count(reserved_result.catalog), 0U);
   EXPECT_FALSE(reserved_result.catalog.json().empty());
 
+  // Graph topology:
+  //   import(first)    export(second)  (disconnected external endpoints)
   Graph graph{"duplicate-final-name"};
   TopicOptions first;
   first.endpoint_name = "first";
@@ -570,13 +576,24 @@ TEST(EndpointCatalog, LoweringRejectsReservedAndDuplicateFinalNamesWithoutRepair
   second.endpoint_name = "second";
   (void)graph.import_topic<std::uint32_t>("holomq://first", first);
   (void)graph.export_topic<std::uint32_t>("holomq://second", second);
+  // Key setup: force the later declaration to reuse the first declaration's final name.
   auto duplicate = *detail::GraphCompilerAccess::canonical_snapshot(graph);
   ASSERT_EQ(duplicate.external_topics.size(), 2U);
   duplicate.external_topics.back().endpoint_name = duplicate.external_topics.front().endpoint_name;
+  const auto& later_topic = duplicate.external_topics.back();
   const auto duplicate_result = detail::lower_endpoint_catalog(
       duplicate, DeploymentBinding{}, Profile::kStandard, std::nullopt);
   EXPECT_FALSE(duplicate_result.accepted());
   EXPECT_TRUE(has_endpoint_diagnostic(duplicate_result, "ENDPOINT_NAME_DUPLICATE"));
+  const auto duplicate_diagnostic = std::find_if(
+      duplicate_result.errors.begin(), duplicate_result.errors.end(), [](const auto& diagnostic) {
+        return diagnostic.token == "ENDPOINT_NAME_DUPLICATE";
+      });
+  ASSERT_NE(duplicate_diagnostic, duplicate_result.errors.end());
+  // Key assertion: sorting equal endpoint names preserves authoring order and attributes the
+  // duplicate to the later declaration rather than resolving the first matching name again.
+  EXPECT_EQ(duplicate_diagnostic->source.vertex, later_topic.vertex);
+  EXPECT_EQ(duplicate_diagnostic->source.port, PortId{later_topic.graph_port.value});
   // Duplicate stable names cannot inhabit a valid immutable catalog. The
   // lowering result retains deterministic diagnostics, but publishes no
   // catalog value whose lookup semantics would be ambiguous.
@@ -607,6 +624,7 @@ TEST(EndpointCatalog, SyntheticRootMarkerCannotCollideWithAuthoredPathSegment) {
 
 // REQ: COMPILE-007
 // REQ: COMPILE-022
+// REQ: COMPILE-066
 TEST(EndpointCatalog, StandaloneBuilderRoundTripsTheCompleteCanonicalCatalog) {
   using namespace std::chrono_literals;
 
@@ -685,6 +703,95 @@ TEST(EndpointCatalog, StandaloneBuilderRoundTripsTheCompleteCanonicalCatalog) {
   EXPECT_EQ(result_record.service_static.max_subscriber_depth, 4U);
   EXPECT_EQ(result_record.service_static.max_subscriber_borrowed, 2U);
   EXPECT_EQ(parsed->json().find("\"profile\""), std::string::npos);
+}
+
+// REQ: COMPILE-007
+// REQ: COMPILE-022
+// REQ: EXTERNAL-010
+TEST(EndpointCatalog, DescriptorTensorSchemaFieldsRoundTripAsServiceIdentity) {
+  SchemaIdentityRecord schema{
+      .canonical_name = "nvidia.holoscan.test.ExternalDescriptorSchema",
+      .version = 1U,
+      .schema_sha256 = {std::byte{0x5A}},
+  };
+  schema.id = derive_schema_id(SchemaIdentity{
+      .canonical_name = schema.canonical_name,
+      .version = schema.version,
+      .schema_sha256 = schema.schema_sha256,
+  });
+  auto endpoint = identity_endpoint(PayloadIdentityRecord{
+      .kind = PayloadIdentityKind::kSchema,
+      .payload_kind = PayloadKind::kDescriptorBacked,
+      .schema = schema,
+  });
+  endpoint.serialized_payload_capacity_bytes = 256U;
+  endpoint.schema_identity = schema;
+  // Key setup: encode two descriptor Tensor fields with distinct IDs, indices, memory kinds,
+  // byte bounds, and memory-conversion policies into one service identity.
+  endpoint.tensor_fields = {
+      DescriptorTensorTopicFieldRecord{
+          .field_id = 0U,
+          .tensor_index = 0U,
+          .tensor =
+              TensorBoundaryContractRecord{
+                  .memory_kind = MemoryKind::kCudaDevice,
+                  .dtype = DLDataType{kDLUInt, 8U, 1U},
+                  .rank = 1U,
+                  .max_rank = 1U,
+                  .max_byte_span = 4096U,
+                  .strides = TensorStridePolicy::kContiguousOnly,
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kRequireExportable,
+                  .memory_conversion = MemoryConversionPolicy::kDisable,
+              },
+      },
+      DescriptorTensorTopicFieldRecord{
+          .field_id = 4U,
+          .tensor_index = 1U,
+          .tensor =
+              TensorBoundaryContractRecord{
+                  .memory_kind = MemoryKind::kPinnedHost,
+                  .dtype = DLDataType{kDLUInt, 16U, 1U},
+                  .rank = 2U,
+                  .max_rank = 2U,
+                  .max_byte_span = 8192U,
+                  .strides = TensorStridePolicy::kContiguousOnly,
+                  .foreign_emit_policy = InterfaceTensorEmitPolicy::kRequireExportable,
+                  .memory_conversion = MemoryConversionPolicy::kAllowIfSafe,
+              },
+      },
+  };
+
+  auto normalized = detail::ChannelEndpointCatalogAccess::normalize("descriptor-tensor-fields",
+                                                                    {std::move(endpoint)});
+  ASSERT_TRUE(normalized) << normalized.error().message;
+  EXPECT_NE(normalized->json().find("\"descriptor_tensor_fields\":[{"), std::string::npos);
+  EXPECT_NE(normalized->json().find("\"memory_conversion\":\"disable\""), std::string::npos);
+
+  auto parsed = ChannelEndpointCatalog::parse_json(normalized->json());
+  ASSERT_TRUE(parsed) << parsed.error().message;
+  // Key assertion: canonical JSON round-trip retains every per-field contract value and rejects
+  // a duplicate field ID rather than normalizing the inventory ambiguously.
+  EXPECT_EQ(parsed->json(), normalized->json());
+  EXPECT_EQ(parsed->digest(), normalized->digest());
+  const auto* state = detail::ChannelEndpointCatalogAccess::state(*parsed);
+  ASSERT_NE(state, nullptr);
+  ASSERT_EQ(state->endpoints.size(), 1U);
+  const auto& fields = state->endpoints.front().service_static.tensor_fields;
+  ASSERT_EQ(fields.size(), 2U);
+  EXPECT_EQ(fields[0].field_id, 0U);
+  EXPECT_EQ(fields[0].tensor.memory_kind, MemoryKind::kCudaDevice);
+  EXPECT_EQ(fields[0].tensor.memory_conversion, MemoryConversionPolicy::kDisable);
+  EXPECT_EQ(fields[1].field_id, 4U);
+  EXPECT_EQ(fields[1].tensor_index, 1U);
+  EXPECT_EQ(fields[1].tensor.max_byte_span, 8192U);
+  EXPECT_EQ(fields[1].tensor.memory_conversion, MemoryConversionPolicy::kAllowIfSafe);
+
+  auto duplicate = state->endpoints.front();
+  duplicate.tensor_fields[1].field_id = duplicate.tensor_fields[0].field_id;
+  auto rejected = detail::ChannelEndpointCatalogAccess::normalize("descriptor-tensor-fields",
+                                                                  {std::move(duplicate)});
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().message, "ENDPOINT_TENSOR_POLICY_INVALID");
 }
 
 // REQ: COMPILE-007
@@ -1346,6 +1453,48 @@ TEST(EndpointCatalog, CompilerCatalogProjectsOnlyAuthoritativePlanClockFacts) {
             "holoscan.execution-plan.clock-conversion.v1/" + std::to_string(plan_conversion.id));
 }
 
+// REQ: COMPILE-023
+TEST(EndpointCatalog, ClockProjectionClosesTransitiveConversionsIndependentOfRecordOrder) {
+  // Graph topology:
+  //   import(capture clock)    capture --> intermediate --> reference
+  Graph graph{"catalog-clock-transitive-closure"};
+  const ClockKey capture = graph.add_clock<ManualClock>("capture", std::int64_t{0});
+  const ClockKey intermediate = graph.add_clock<ManualClock>("intermediate", std::int64_t{0});
+  const ClockKey reference = graph.add_clock<ManualClock>("reference", std::int64_t{0});
+  graph.set_default_clock(reference);
+  graph.add_clock_conversion(capture, intermediate, AffineClockConversion{});
+  graph.add_clock_conversion(intermediate, reference, AffineClockConversion{});
+  TopicOptions options;
+  options.endpoint_name = "transitive-clock-import";
+  options.capture_time = RequireCaptureTime{.clock = capture};
+  (void)graph.import_topic<std::uint32_t>("holomq://transitive-clock-import", std::move(options));
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.clock_conversions().size(), 2U);
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  ASSERT_TRUE(snapshot);
+  std::vector<ClockConversionRecord> reversed_conversions{plan.clock_conversions().begin(),
+                                                          plan.clock_conversions().end()};
+  std::reverse(reversed_conversions.begin(), reversed_conversions.end());
+
+  // Key setup: present B->C before A->B even though only A is named by the endpoint.
+  const auto lowered = detail::lower_endpoint_catalog(*snapshot,
+                                                      DeploymentBinding{},
+                                                      Profile::kStandard,
+                                                      std::nullopt,
+                                                      plan.clock_catalog().clocks,
+                                                      reversed_conversions);
+
+  // Key assertion: reachability closes to a fixpoint and retains both conversion rows and all
+  // three clocks regardless of conversion declaration order.
+  ASSERT_TRUE(lowered.accepted());
+  const auto* catalog = detail::ChannelEndpointCatalogAccess::state(lowered.catalog);
+  ASSERT_NE(catalog, nullptr);
+  EXPECT_EQ(catalog->clocks.size(), 3U);
+  EXPECT_EQ(catalog->clock_conversions.size(), 2U);
+}
+
 // REQ: COMPILE-017
 TEST(EndpointCatalog, CrossDomainSelectionFamiliesJoinTheImportHealthContract) {
   using namespace std::chrono_literals;
@@ -1551,6 +1700,7 @@ TEST(EndpointCatalog, UnspecifiedClockHealthReasonUsesTheExactFiveProfileMatrixW
 }
 
 // REQ: COMPILE-022
+// REQ: COMPILE-066
 TEST(EndpointCatalog, TensorCatalogRoundTripPreservesEveryLogicalBoundaryConstraint) {
   // Key setup: full HD CUDA-device uint8 tensor (1080×1920, bounded strided,
   // copy-if-needed) with per-axis stride bounds; all fields must survive JSON
@@ -1560,18 +1710,26 @@ TEST(EndpointCatalog, TensorCatalogRoundTripPreservesEveryLogicalBoundaryConstra
       {.max_extent = 1920U, .max_abs_stride_bytes = 4U},
   }};
   TopicOptions options;
-  options.tensor = LogicalTensorRequirements{
-      .memory_kind = MemoryKind::kCudaDevice,
-      .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
-      .rank = 2U,
-      .logical_bounds =
-          LogicalTensorBounds{
+  options.tensor = TensorBoundaryContract{
+      .representation =
+          TensorRepresentation{
+              .memory_kind = MemoryKind::kCudaDevice,
+              .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+              .rank = 2U,
+              .strides = TensorStridePolicy::kBoundedStrided,
+          },
+      .bounds =
+          TensorBounds{
               .max_rank = 2U,
               .max_byte_span = 8'294'400U,
               .axes = axes,
           },
-      .strides = TensorStridePolicy::kBoundedStrided,
-      .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+      .transfer =
+          TensorTransferPolicy{
+              .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              .max_staging_byte_span = 4'147'200U,
+          },
+      .memory_conversion = MemoryConversionPolicy::kDisable,
   };
 
   auto builder = ChannelEndpointCatalog::builder("tensor-roundtrip");
@@ -1579,6 +1737,14 @@ TEST(EndpointCatalog, TensorCatalogRoundTripPreservesEveryLogicalBoundaryConstra
   auto built = std::move(builder).build();
   ASSERT_TRUE(built);
   EXPECT_NE(built->json().find("\"memory_kind\":\"cuda_device\""), std::string::npos);
+  EXPECT_NE(built->json().find("\"tensor\":{\"role\":\"external_boundary\",\"representation\":"),
+            std::string::npos);
+  EXPECT_NE(built->json().find("\"bounds\":{\"max_rank\":2"), std::string::npos);
+  EXPECT_NE(built->json().find("\"transfer\":{\"foreign_emit_policy\":\"copy_if_needed\""),
+            std::string::npos);
+  EXPECT_NE(built->json().find("\"max_staging_byte_span\":4147200"), std::string::npos);
+  EXPECT_NE(built->json().find("\"memory_conversion\":\"disable\""), std::string::npos);
+  EXPECT_EQ(built->json().find("\"origins\":"), std::string::npos);
   EXPECT_NE(built->json().find("\"dtype\":{\"code\":1,\"bits\":8,\"lanes\":1}"), std::string::npos);
   EXPECT_NE(built->json().find("\"rank\":2"), std::string::npos);
   EXPECT_NE(built->json().find("\"max_extent\":1080"), std::string::npos);
@@ -1600,6 +1766,7 @@ TEST(EndpointCatalog, TensorCatalogRoundTripPreservesEveryLogicalBoundaryConstra
   EXPECT_EQ(tensor_view->stride_policy(), TensorStridePolicy::kBoundedStrided);
   EXPECT_EQ(tensor_view->foreign_emit_policy(), InterfaceTensorEmitPolicy::kCopyIfNeeded);
   EXPECT_FALSE(tensor_view->max_inline_bytes().has_value());
+  EXPECT_EQ(tensor_view->max_staging_byte_span(), 4'147'200U);
   ASSERT_EQ(tensor_view->axes().size(), 2U);
   EXPECT_EQ(tensor_view->axes()[0].max_extent, 1080U);
   const auto* state = detail::ChannelEndpointCatalogAccess::state(*parsed);
@@ -1615,6 +1782,8 @@ TEST(EndpointCatalog, TensorCatalogRoundTripPreservesEveryLogicalBoundaryConstra
   EXPECT_EQ(tensor.rank, 2U);
   EXPECT_EQ(tensor.max_rank, 2U);
   EXPECT_EQ(tensor.max_byte_span, 8'294'400U);
+  EXPECT_EQ(tensor.max_staging_byte_span, 4'147'200U);
+  EXPECT_EQ(tensor.memory_conversion, MemoryConversionPolicy::kDisable);
   ASSERT_EQ(tensor.axes.size(), 2U);
   EXPECT_EQ(tensor.axes[0].max_extent, 1080U);
   EXPECT_EQ(tensor.axes[0].max_abs_stride_bytes, 7680U);
@@ -1661,15 +1830,15 @@ TEST(EndpointCatalog, StrictParserRejectsAmbiguousOrLossyCatalogDocuments) {
   expect_failure(std::move(unknown), "ENDPOINT_CATALOG_FORMAT_UNSUPPORTED");
 
   std::string unsupported_version = built->json();
-  const auto version = unsupported_version.find("\"version\":1");
+  const auto version = unsupported_version.find("\"version\":2");
   ASSERT_NE(version, std::string::npos);
-  unsupported_version.replace(version, std::string_view{"\"version\":1"}.size(), "\"version\":2");
+  unsupported_version.replace(version, std::string_view{"\"version\":2"}.size(), "\"version\":3");
   expect_failure(std::move(unsupported_version), "ENDPOINT_CATALOG_FORMAT_UNSUPPORTED");
 
   std::string floating_version = built->json();
-  const auto floating = floating_version.find("\"version\":1");
+  const auto floating = floating_version.find("\"version\":2");
   ASSERT_NE(floating, std::string::npos);
-  floating_version.replace(floating, std::string_view{"\"version\":1"}.size(), "\"version\":1.0");
+  floating_version.replace(floating, std::string_view{"\"version\":2"}.size(), "\"version\":2.0");
   expect_failure(std::move(floating_version), "ENDPOINT_CATALOG_CANONICALIZATION_UNSUPPORTED");
 
   std::string invalid_utf8 = built->json();
@@ -1687,7 +1856,8 @@ TEST(EndpointCatalog, StrictParserRejectsAmbiguousOrLossyCatalogDocuments) {
 }
 
 // REQ: COMPILE-022
-TEST(EndpointCatalog, ParserEnforcesFixedSchemaV1ResourceLimitsAtTheExactBoundary) {
+// REQ: COMPILE-066
+TEST(EndpointCatalog, ParserEnforcesFixedSchemaV2ResourceLimitsAtTheExactBoundary) {
   const auto expect_within_parser_limit = [](std::string_view source) {
     const auto parsed = ChannelEndpointCatalog::parse_json(source);
     ASSERT_FALSE(parsed);
@@ -1752,7 +1922,8 @@ TEST(EndpointCatalog, ParserEnforcesFixedSchemaV1ResourceLimitsAtTheExactBoundar
 }
 
 // REQ: COMPILE-022
-TEST(EndpointCatalog, NormalizationEnforcesFixedSchemaV1CollectionLimits) {
+// REQ: COMPILE-066
+TEST(EndpointCatalog, NormalizationEnforcesFixedSchemaV2CollectionLimits) {
   const auto make_scalar_endpoint = [](std::size_t index) {
     return detail::ChannelEndpointRecord{
         .name = "endpoint-" + std::to_string(index),
@@ -1824,7 +1995,7 @@ TEST(EndpointCatalog, NormalizationEnforcesFixedSchemaV1CollectionLimits) {
         .kind = PayloadIdentityKind::kTensor,
         .payload_kind = PayloadKind::kDescriptorBacked,
     };
-    endpoint.tensor = LogicalTensorRequirementsRecord{
+    endpoint.tensor = TensorBoundaryContractRecord{
         .memory_kind = MemoryKind::kHost,
         .rank = static_cast<std::uint32_t>(axis_count),
         .max_rank = static_cast<std::uint32_t>(axis_count),
@@ -1849,6 +2020,7 @@ TEST(EndpointCatalog, NormalizationEnforcesFixedSchemaV1CollectionLimits) {
 }
 
 // REQ: COMPILE-022
+// REQ: COMPILE-066
 // REQ: CHAN-074
 TEST(EndpointCatalog, PodAdmissionRequiresCompletePortableLayoutAndVerifiesDerivedDigests) {
   auto valid = detail::ChannelEndpointCatalogAccess::normalize(
@@ -1918,6 +2090,7 @@ TEST(EndpointCatalog, NormalizationPreservesPodAuthorityCollisionChecks) {
 }
 
 // REQ: COMPILE-022
+// REQ: COMPILE-066
 TEST(EndpointCatalog, SchemaAdmissionRejectsAnIdThatDoesNotMatchCompleteIdentity) {
   SchemaIdentityRecord schema{
       .canonical_name = "nvidia.holoscan.test.EndpointSchema",
@@ -1964,6 +2137,7 @@ TEST(EndpointCatalog, RawSourceProvenanceIsNonsemanticAndNeverFabricated) {
 
 // REQ: COMPILE-007
 // REQ: COMPILE-022
+// REQ: COMPILE-066
 TEST(EndpointCatalog, SaveIsAtomicLoadableAndDoesNotRewriteIdenticalCanonicalBytes) {
   auto builder = ChannelEndpointCatalog::builder("save-contract");
   ASSERT_TRUE(builder.import_topic<std::uint32_t>("sensor", "holomq://sensor"));
@@ -1993,6 +2167,7 @@ TEST(EndpointCatalog, SaveIsAtomicLoadableAndDoesNotRewriteIdenticalCanonicalByt
 
 // REQ: COMPILE-007
 // REQ: COMPILE-022
+// REQ: COMPILE-066
 TEST(EndpointCatalog, SaveRepairsAnOversizedExistingDestination) {
   auto builder = ChannelEndpointCatalog::builder("save-oversized-destination");
   ASSERT_TRUE(builder.import_topic<std::uint32_t>("sensor", "holomq://sensor"));
@@ -2025,6 +2200,7 @@ TEST(EndpointCatalog, SaveRepairsAnOversizedExistingDestination) {
 
 // REQ: COMPILE-007
 // REQ: COMPILE-022
+// REQ: COMPILE-066
 TEST(EndpointCatalog, SaveRejectsAndCleansAnOversizedStagedFile) {
   auto builder = ChannelEndpointCatalog::builder("save-oversized-stage");
   ASSERT_TRUE(builder.import_topic<std::uint32_t>("sensor", "holomq://sensor"));

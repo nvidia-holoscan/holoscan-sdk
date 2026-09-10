@@ -17,7 +17,7 @@ target_link_libraries(time_test
 gtest_discover_tests(time_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX TIME.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
 add_executable(clock_registry_test
@@ -25,7 +25,7 @@ add_executable(clock_registry_test
 )
 holoscan_configure_test_clang_tidy(clock_registry_test)
 
-target_include_directories(clock_registry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(clock_registry_test PRIVATE ${holoscan_SOURCE_DIR}/src)
 
 target_link_libraries(clock_registry_test
     PRIVATE
@@ -36,5 +36,5 @@ target_link_libraries(clock_registry_test
 gtest_discover_tests(clock_registry_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX CLOCK_REGISTRY.
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )

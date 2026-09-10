@@ -48,7 +48,7 @@ constexpr DLDataType kByteDtype{kDLUInt, 8U, 1U};
 constexpr std::size_t kFrameBytes = 128U;
 constexpr std::size_t kFramesPerRun = 4U;
 constexpr std::array<std::int64_t, 1U> kFrameShape{static_cast<std::int64_t>(kFrameBytes)};
-constexpr holoscan::TensorPortLayout kDeviceFrame{
+constexpr holoscan::TensorRepresentation kDeviceFrame{
     .memory_kind = holoscan::MemoryKind::kCudaDevice,
     .dtype = kByteDtype,
     .rank = 1U,
@@ -96,9 +96,11 @@ class DeviceSource final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
     spec.output(frame, "frame")
-        .produces_tensor(kDeviceFrame)
-        .tensor_allocation(
-            holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = kFrameBytes});
+        .produces_tensor(holoscan::TensorOutputSpec{
+            .representation = kDeviceFrame,
+            .bounds = holoscan::tensor_bounds(kFrameBytes),
+            .storage = holoscan::TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {
@@ -150,7 +152,9 @@ class DeviceSource final : public holoscan::Operator<> {
 class DeviceSink final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
-    spec.input(frame, "frame").queue_depth(kFramesPerRun).expects_tensor(kDeviceFrame);
+    spec.input(frame, "frame")
+        .queue_depth(kFramesPerRun)
+        .expects_tensor(holoscan::TensorInputSpec{.representation = kDeviceFrame});
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {
@@ -220,7 +224,7 @@ void bind_device(holoscan::CompileOptions& options, std::string_view source_path
   graph.bind_clock(stage, stage->clock_import(), runtime_clock);
 
   holoscan::CompileOptions options;
-  bind_device(options, "/device-stage/source");
+  bind_device(options, "device-stage/source");
   return holoscan::compile(graph, std::move(options));
 }
 
@@ -316,7 +320,8 @@ void print_diagnostics(const holoscan::RunSession& session) {
 [[nodiscard]] bool equivalent_tensor_resource_shape(
     const holoscan::ExecutionPlan& flat, const holoscan::ExecutionPlan& embedded) noexcept {
   if (flat.tensor_device_resources().size() != 1U ||
-      embedded.tensor_device_resources().size() != 1U || flat.payload_edges().size() != 1U ||
+      embedded.tensor_device_resources().size() != 1U || flat.cuda_compute_streams().size() != 1U ||
+      embedded.cuda_compute_streams().size() != 1U || flat.payload_edges().size() != 1U ||
       embedded.payload_edges().size() != 1U) {
     return false;
   }
@@ -324,10 +329,13 @@ void print_diagnostics(const holoscan::RunSession& session) {
       flat.tensor_device_resources().front();
   const holoscan::TensorDeviceResourcePlanRecord& embedded_resource =
       embedded.tensor_device_resources().front();
-  return flat_resource.fused_linear_edges == embedded_resource.fused_linear_edges &&
-         flat_resource.fused_linear_edges.size() == 1U &&
-         flat_resource.fused_linear_edges.front() == flat.payload_edges().front().edge &&
-         embedded_resource.fused_linear_edges.front() == embedded.payload_edges().front().edge &&
+  const holoscan::CudaComputeStreamPlanRecord& flat_stream = flat.cuda_compute_streams().front();
+  const holoscan::CudaComputeStreamPlanRecord& embedded_stream =
+      embedded.cuda_compute_streams().front();
+  return flat_stream.fused_linear_edges == embedded_stream.fused_linear_edges &&
+         flat_stream.fused_linear_edges.size() == 1U &&
+         flat_stream.fused_linear_edges.front() == flat.payload_edges().front().edge &&
+         embedded_stream.fused_linear_edges.front() == embedded.payload_edges().front().edge &&
          flat_resource.device.value == 0 && embedded_resource.device.value == 0 &&
          flat_resource.pool_count == embedded_resource.pool_count &&
          flat_resource.slot_capacity == embedded_resource.slot_capacity;

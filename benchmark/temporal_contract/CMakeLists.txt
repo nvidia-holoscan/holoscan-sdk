@@ -3,7 +3,9 @@
 
 add_executable(temporal_contract_benchmark temporal_contract_benchmark.cpp)
 add_dependencies(holoscan-benchmark-targets temporal_contract_benchmark)
-target_include_directories(temporal_contract_benchmark PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(temporal_contract_benchmark
+    PRIVATE ${holoscan_SOURCE_DIR}/src
+)
 target_link_libraries(temporal_contract_benchmark
     PRIVATE
         benchmark::benchmark_main

@@ -10,9 +10,7 @@ endif()
 
 add_executable(plan_artifacts plan_artifacts.cpp)
 target_link_libraries(plan_artifacts PRIVATE holoscan::core)
-holoscan_configure_example_install(plan_artifacts
-    INSTALL_RPATH "$ORIGIN/../../../../lib"
-)
+holoscan_configure_example_install(plan_artifacts)
 
 if(BUILD_TESTING)
     # REQ: SYSTEM-015
@@ -51,6 +49,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS plan_artifacts
-    RUNTIME DESTINATION examples/experimental/plan_artifacts/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/plan_artifacts/cpp"
     COMPONENT holoscan-examples
 )

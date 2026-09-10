@@ -133,9 +133,9 @@ class HOLOSCAN_CORE_EXPORT OperatorBase {
 /// legacy `start()` and `stop()` observe the exact phase-selected generation. Advanced lifecycle
 /// callbacks instead consume their pinned view through `LifecycleContext`; compute callbacks use
 /// `ExecutionContext`. A parameter aggregate need not be nothrow-swappable to provide typed
-/// callback storage. The private EA1 generation-zero whole-aggregate replacement seam may reject a
-/// non-default candidate when it cannot publish that candidate with a non-throwing swap; later
-/// compiler-selected materialization strategies own broader replacement support.
+/// callback storage. The private baseline generation-zero whole-aggregate replacement seam may
+/// reject a non-default candidate when it cannot publish that candidate with a non-throwing swap;
+/// later compiler-selected materialization strategies own broader replacement support.
 template <typename ParamsT = NoParams>
   requires ParameterAggregate<ParamsT>
 class Operator : public OperatorBase {
@@ -186,8 +186,8 @@ class Operator : public OperatorBase {
 
   void replace_runtime_parameter_value_impl(const void* value) noexcept override {
     if constexpr (!std::same_as<Params, NoParams>) {
-      // EA1 runtime generations admit only trivially copyable complete aggregates. Updating the
-      // session-owned Operator copy while callbacks are quiesced lets legacy start()/stop()
+      // baseline runtime generations admit only trivially copyable complete aggregates. Updating
+      // the session-owned Operator copy while callbacks are quiesced lets legacy start()/stop()
       // callbacks observe their exact phase view without exposing a second public lifecycle
       // context.
       if constexpr (std::is_trivially_copyable_v<Params>) {

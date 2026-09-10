@@ -3,11 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Smoke test for installed-SDK consumers: exercises the holoscan::core expected<T, Error> API,
-// which pulls in the header-only PUBLIC dependencies tl::expected (expected.hpp) and magic_enum
-// (errors.hpp / error_code_name). If find_package(holoscan) cannot resolve those interface targets,
-// or their headers are not installed, this example fails to configure/compile against the install
-// tree -- which is exactly what we want CI to catch.
+// Smoke test for installed-SDK consumers: exercises the public expected<T, Error> headers and the
+// compiled error_code_name() ABI. If find_package(holoscan) cannot resolve the public interface
+// targets, headers, or core library, this example fails against the installed tree.
 
 #include <iostream>
 #include <string>
@@ -37,7 +35,7 @@ int main() {
     return 1;
   }
 
-  // error_code_name() is backed by magic_enum.
+  // error_code_name() verifies the linked core error-name implementation through its public ABI.
   const std::string_view code_name = holoscan::error_code_name(bad.error().code);
   if (code_name != "kInvalidArgument") {
     std::cerr << "holoscan core sample FAILED: error_code_name was '" << code_name << "'\n";

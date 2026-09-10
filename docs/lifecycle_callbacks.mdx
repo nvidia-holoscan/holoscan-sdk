@@ -18,7 +18,7 @@ when lifecycle work fails, and how restarts are authorized and requested.
   **Beta.** Everything on this page works today as described: both authoring
   paths, the stage barriers, cross-operator ordering, phase-selected parameter
   views, and the rollback semantics. The API may still evolve in upcoming
-  releases. Not yet in EA1: automatic retry or backoff of a failed stage
+  releases. Not yet in baseline: automatic retry or backoff of a failed stage
   (`kRetryableFailure` is a classification only), parallel execution of
   independent same-level callbacks, and restart requests from inside a
   lifecycle callback.
@@ -70,6 +70,12 @@ forward work when a startup pass or a restart's forward suffix fails:
 |---|---|
 | `kStop` | Close activation acceptance and quiesce steady-state work. |
 | `kRelease` | Release resources owned by the active lifecycle epoch. |
+
+A requested completion or stop closes callback admission before teardown.
+Callback claims ordered before that session-wide boundary may proceed and
+retire; no claim ordered afterward enters. Teardown still runs, and a cleanup
+failure overrides `kCompleted`, `kRequestedCompleted`, or `kStopped` with
+terminal `kFailed`.
 
 The helper `is_lifecycle_forward_stage()` returns `true` only for `kConfigure`
 through `kStart`; the teardown stages are never valid restart entry points
@@ -264,8 +270,8 @@ contract validation happen earlier and may be replayed:
   dispatched synchronously onto its operator's assigned lane — not on the
   thread that called `run()`/`run_async()` — serially and in deterministic
   order: topological levels, then a stable registration-keyed order within a
-  level. EA1 never runs two callbacks of one transition in parallel.
-- **Shutdown fences inputs first.** On drain, `request_stop()`, or failure,
+  level. The baseline never runs two callbacks of one transition in parallel.
+- **Shutdown fences inputs first.** On completion, `request_stop()`, or failure,
   the runtime first cancels readiness sources, closes notifications, stops
   channels, and closes tensor resources; only then does the `kStop` stage run,
   followed by `kRelease`, and finally the lanes stop. Advanced teardown
@@ -330,7 +336,7 @@ contract validation happen earlier and may be replayed:
   <text x="336" y="256" textAnchor="start" fill="currentColor" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">…</text>
   <text x="744" y="256" textAnchor="end" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">first compute() only after every operator's kStart</text>
   <line x1="40" y1="270" x2="40" y2="298" stroke="currentColor" strokeWidth="1.5" opacity="0.55" markerEnd="url(#lifecycle-hook-timing-arrow)" />
-  <text x="120" y="296" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">shutdown — drain, request_stop(), or failure</text>
+  <text x="120" y="296" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">shutdown — completion, stop request, or failure</text>
   <rect x="20" y="306" width="210" height="40" rx="8" fill="currentColor" opacity="0.06" />
   <rect x="20" y="306" width="210" height="40" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
   <text x="125" y="323" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">inputs fenced first:</text>
@@ -442,7 +448,10 @@ nothing that could submit or await lifecycle work itself:
 ```cpp
 holoscan::LifecycleStatus allocate(holoscan::LifecycleContext& ctx) noexcept {
   if (ctx.cancellation().stop_requested()) {
-    // Forward kAllocate: no work started, so nothing needs unwinding.
+    // Forward kAllocate: no work started, so this reserved nothing. Note that teardown is still
+    // scheduled -- a stage that returns kSkipped is recorded as completed exactly as a kOk one is,
+    // and kRelease is gated on that record -- so the matching release body must tolerate being
+    // called with nothing to hand back.
     return holoscan::LifecycleStatus::kSkipped;
   }
   const DetectorParams& p = ctx.params<DetectorParams>();   // phase-selected params
@@ -461,6 +470,116 @@ holoscan::LifecycleStatus allocate(holoscan::LifecycleContext& ctx) noexcept {
   [typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters)
   for the parameter model itself.
 </Warning>
+
+## Bind a lifecycle-selected output rate
+
+An output whose exact nominal rate depends on device configuration or discovery
+can declare the stage that owns the selection:
+
+```cpp
+void setup(holoscan::OperatorSpec& spec) override {
+  spec.output(frame_, "frame")
+      .lifecycle_nominal_rate(holoscan::LifecycleStage::kDiscover)
+      .max_nominal_rate(holoscan::Rate::hz(120U))
+      .produces_tensor(frame_spec_);
+
+  spec.lifecycle().stage(holoscan::LifecycleStage::kDiscover,
+                         &CameraSource::discover);
+}
+
+holoscan::LifecycleStatus discover(holoscan::LifecycleContext& ctx) noexcept {
+  const auto selected = ctx.bind_nominal_rate(frame_, holoscan::Rate::hz(60U));
+  if (!selected) {
+    return holoscan::LifecycleStatus::kFatalFailure;
+  }
+
+  const auto same_stage = ctx.rate(frame_);
+  // This callback is still inside the global Discover barrier. The binding is
+  // candidate-private and the resolved value remains pending until every
+  // Discover callback succeeds.
+  return same_stage &&
+                 same_stage->state == holoscan::PortRateViewState::kPendingBarrier
+             ? holoscan::LifecycleStatus::kOk
+             : holoscan::LifecycleStatus::kFatalFailure;
+}
+```
+
+`bind_nominal_rate()` accepts only an output owned by the callback's Operator,
+at the stage declared for that output, during startup or restart forward work.
+The value must be a positive exact rational and cannot exceed
+`max_nominal_rate()`. Repeating an equivalent normalized value in the same
+candidate is idempotent; repeating a different value is a conflict. Ignoring a
+failed bind does not make the candidate publishable.
+
+The stage barrier is the visibility boundary. A same-stage `ctx.rate()` query
+reports `kPendingBarrier`; a later stage sees the globally resolved value and
+its propagated input/`follows()` dependents. During steady state,
+`ExecutionContext::rate(port)` returns the same published generation in O(1)
+without graph traversal or rate arithmetic. `RunGenerationId` stays stable for
+the `RunSession`; `RateGenerationId` changes when startup or restart publishes
+a new coherent rate snapshot.
+
+For `kConfigure` and `kDiscover`, Core closes the selected barrier, evaluates
+the complete queue/pool geometry, and performs framework-owned materialization
+as the first `kAllocate` work, before any user `kAllocate` callback. A finite
+maximum lets compilation preallocate the admitted ceiling and later install a
+smaller logical active limit. An ordinary non-Tensor queue may instead remain
+candidate geometry until this early barrier supplies the rate, because Core can
+close and materialize that queue before user allocation begins.
+
+Lifecycle-bound runtime-pool Tensor output is deliberately narrower. Without a
+finite maximum, only direct-host raw-Tensor geometry that Core can completely
+define is admitted. A descriptor-backed multi-field Tensor output needs a
+finite maximum and otherwise fails compilation without a partial allocation
+inventory. This Tensor exception must not be generalized into a requirement
+that every early lifecycle-bound non-Tensor queue declare a maximum.
+
+`kWarmUp` and `kArm` occur after physical allocation. A rate selected there
+therefore needs `max_nominal_rate()` or an exact explicit queue depth that
+proves the preallocated domain. The later callback may change an active logical
+limit within that domain, but it cannot allocate or silently grow backing.
+
+On restart, re-enter at or before the declared binding stage to discover a new
+value. Compatible exact or larger backing can be retained while Runtime installs
+a fresh empty binding generation and a smaller active limit. If the candidate
+needs unadmitted growth or an incompatible provider, it fails before
+publication and the old generation remains recoverable. A restart that begins
+after the binding stage retains the published value rather than pretending the
+selection ran again.
+
+The installed
+[`rate_aware_ports` example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/rate_aware_ports)
+runs this boundary end to end: Discover propagation and callback/compute
+queries, in-capacity 100 Hz selections at both `kWarmUp` and `kArm`, typed
+rejection of a 144 Hz selection above a 120 Hz maximum, and a 60-to-30 Hz
+restart that retains the allocation generation while publishing a fresh rate
+and storage-binding generation.
+
+The following is **Essential integration pseudocode**, not a Core camera or
+receive-pool API. The bridge and its mode/layout types are vendor-owned:
+
+```cpp
+holoscan::LifecycleStatus CameraSource::discover(
+    holoscan::LifecycleContext& ctx) noexcept {
+  const auto mode = bridge_.discover_camera_mode();  // Essential-side pseudocode
+  if (!mode || mode->fps == 0U || mode->fps > 120U) {
+    return holoscan::LifecycleStatus::kFatalFailure;
+  }
+  return ctx.bind_nominal_rate(frame_, holoscan::Rate::hz(mode->fps))
+             ? holoscan::LifecycleStatus::kOk
+             : holoscan::LifecycleStatus::kFatalFailure;
+}
+```
+
+Core owns rate admission and Core-owned queue/Tensor-pool materialization. An
+HSB-shaped Essential adapter still needs independent maximum payload, layout,
+alignment, placement, registration, descriptor, and in-flight bounds for its
+own receive pool. A maximum frame rate bounds entry pressure; it does not prove
+those byte or transport properties. During pre-restart teardown, use
+`transition_phase()` to quiesce and retain adapter-owned backing. Compare the
+newly discovered candidate with that retained geometry only after the new
+Discover barrier; do not release a compatible larger pool merely because the
+new mode is smaller.
 
 ## Ordering across operators
 
@@ -570,7 +689,8 @@ class Detector final : public holoscan::Operator<DetectorParams> {
 
   holoscan::LifecycleStatus allocate(holoscan::LifecycleContext& ctx) noexcept {
     if (ctx.cancellation().stop_requested()) {
-      // Forward kAllocate: no work started, so nothing needs unwinding.
+      // Forward kAllocate: nothing was reserved. Teardown is still scheduled for a stage
+      // that returned kSkipped, which is harmless here only because pool_ owns what it holds.
       return holoscan::LifecycleStatus::kSkipped;
     }
     const DetectorParams& p = ctx.params<DetectorParams>();  // phase-selected

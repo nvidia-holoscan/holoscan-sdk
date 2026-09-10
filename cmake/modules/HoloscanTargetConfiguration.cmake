@@ -18,12 +18,13 @@ function(holoscan_is_linux_gnu_like_frontend output_variable)
 endfunction()
 
 # Configure the ELF origin-relative build and install lookup paths only for the frontend/platform
-# lane that owns that loader convention. Directory-scope variables are returned to the caller so
-# one top-level invocation applies consistently to subsequently created targets.
+# lane that owns that loader convention. CMAKE_LIBRARY_OUTPUT_DIRECTORY is the configured build-tree
+# library location; the install layout remains independent. Directory-scope variables are returned
+# to the caller so one top-level invocation applies consistently to subsequently created targets.
 function(holoscan_configure_linux_origin_rpath)
     holoscan_is_linux_gnu_like_frontend(_holoscan_linux_origin_rpath)
     if(_holoscan_linux_origin_rpath)
-        set(CMAKE_BUILD_RPATH "\$ORIGIN:${CMAKE_BINARY_DIR}/lib" PARENT_SCOPE)
+        set(CMAKE_BUILD_RPATH "\$ORIGIN:${CMAKE_LIBRARY_OUTPUT_DIRECTORY}" PARENT_SCOPE)
         set(CMAKE_INSTALL_RPATH "\$ORIGIN" PARENT_SCOPE)
     endif()
     unset(_holoscan_linux_origin_rpath)

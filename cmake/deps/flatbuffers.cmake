@@ -31,10 +31,6 @@ if(NOT TARGET flatbuffers::flatbuffers OR NOT TARGET flatbuffers::flatc)
       GITHUB_REPOSITORY google/flatbuffers
       GIT_TAG v${HOLOSCAN_FLATBUFFERS_VERSION_EXACT}
       GIT_SHALLOW TRUE
-      # Backport https://github.com/google/flatbuffers/commit/21b033227e15a47eec455a969023e6312153ee88
-      # so Release builds retain the AddFlatBuffer bounds checks. Accept an already-applied patch
-      # on reconfigure.
-      PATCH_COMMAND bash -c "patch -p1 -N --dry-run -i ${CMAKE_CURRENT_LIST_DIR}/patches/flatbuffers-add-buffer-bounds-check.patch >/dev/null && patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/flatbuffers-add-buffer-bounds-check.patch || patch -p1 -R --dry-run -i ${CMAKE_CURRENT_LIST_DIR}/patches/flatbuffers-add-buffer-bounds-check.patch >/dev/null"
       EXCLUDE_FROM_ALL
     OPTIONS
       "FLATBUFFERS_BUILD_TESTS OFF"
@@ -45,9 +41,9 @@ if(NOT TARGET flatbuffers::flatbuffers OR NOT TARGET flatbuffers::flatc)
       "FLATBUFFERS_STRICT_MODE ON"
   )
 
-  # GCC 13 still reports -Wstringop-overflow from libstdc++'s vector::insert implementation after
-  # the upstream bounds checks. FlatBuffers already classifies this diagnostic as a non-error in
-  # strict mode; suppress it completely on the two fetched targets so CDash remains warning-free.
+  # GCC 13 reports -Wstringop-overflow from libstdc++'s vector::insert implementation.
+  # FlatBuffers already classifies this diagnostic as a non-error in strict mode; suppress it
+  # completely on the two fetched targets so CDash remains warning-free.
   if(Flatbuffers_ADDED AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(flatbuffers PRIVATE -Wno-stringop-overflow)
     target_compile_options(flatc PRIVATE -Wno-stringop-overflow)
@@ -130,8 +126,9 @@ if(NOT _holoscan_flatbuffers_include_root)
     "FlatBuffers provider does not expose an installable flatbuffers header directory"
   )
 endif()
+include(GNUInstallDirs)
 install(DIRECTORY "${_holoscan_flatbuffers_include_root}/flatbuffers"
-  DESTINATION include
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   COMPONENT holoscan-dependencies
 )
 install(PROGRAMS "$<TARGET_FILE:flatbuffers::flatc>"

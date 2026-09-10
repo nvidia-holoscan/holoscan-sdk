@@ -47,11 +47,11 @@ For historical context and to help interpret older code or documentation, here i
 |---|---|---|
 | **Entity** | (implicit) | A node in the computation graph; a container for components. In the Holoscan SDK, an Operator implicitly represents an entity. |
 | **Codelet** | **[Operator](/holoscan/sdk-user-guide/api-reference/holoscan/classes/operator)** | A component that executes custom code via lifecycle methods (`start`, `tick`/`compute`, `stop`). |
-| **Component** | **[Resource](/holoscan/sdk-user-guide/api-reference/holoscan/classes/resource)** | Supporting functionality such as memory allocators, clocks, or serializers attached to an entity. |
-| **Scheduling Term** | **[Condition](/holoscan/sdk-user-guide/api-reference/holoscan/classes/condition)** | A predicate that determines when an operator is ready for execution. |
-| **Receiver / Transmitter** | **[Input / Output Port](/holoscan/sdk-user-guide/api-reference/holoscan/classes/iospec)** | Message-passing endpoints between operators. |
+| **Component** | **[Preallocated pools and graph regions](/holoscan/sdk-user-guide/introduction/migrating-from-4x#resources-and-allocators-become-pools-and-regions)** | Supporting functionality such as memory allocation is planned and reserved before execution. |
+| **Scheduling Term** | **[Temporal contract](/holoscan/sdk-user-guide/building-operators/temporal-contracts)** | Declares when an operator activates, which input samples it sees, and how missing data is handled. |
+| **Receiver / Transmitter** | **[Typed input / output ports](/holoscan/sdk-user-guide/getting-started/first-operator)** | Message-passing endpoints declared by an operator. |
 | **Connection** | **Flow (Edge)** | A directed edge in the application graph connecting an output port to an input port. |
-| **Scheduler** | **[Scheduler](/holoscan/sdk-user-guide/api-reference/holoscan/classes/scheduler)** | Orchestrates the execution of operators based on their conditions. |
+| **Scheduler** | **[Compiled execution plan and dispatcher](/holoscan/sdk-user-guide/introduction/migrating-from-4x#schedulers-become-a-compiled-plan)** | Plans and drives operator activation from declared temporal contracts. |
 | **GXF Extension** | **Operator / Resource library** | A shared library that registers components with the runtime. Native Holoscan operators do not require GXF extension registration. |
 
 <Anchor id="tensorrt" />
@@ -74,7 +74,14 @@ The Holoviz module uses the [external resource interoperability](https://docs.nv
 
 ## Accelerated image transformations
 
-Streaming image processing often requires common 2D operations like resizing, converting bit widths, and changing color formats. NVIDIA has built the CUDA accelerated NVIDIA Performance Primitive Library ([NPP](https://docs.nvidia.com/cuda/npp/index.html)) that can help with many of these common transformations. NPP is extensively showcased in the Format Converter operator of the Holoscan SDK.
+Streaming image processing often requires common GPU operations such as
+resizing, cropping, coordinate remapping, normalization, element-type
+conversion, and layout conversion. The
+[Holoscan Vision](/holoscan/sdk-user-guide/advanced/holoscan-vision) module
+provides HSDK 5 operators backed by CV-CUDA for these transformations and
+for non-maximum suppression. The operators consume and produce CUDA-resident
+Holoscan tensors on the runtime CUDA stream without staging through host
+memory.
 
 <Anchor id="matx" />
 

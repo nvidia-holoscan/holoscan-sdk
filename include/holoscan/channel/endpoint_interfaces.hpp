@@ -15,19 +15,24 @@
 #include <holoscan/core/tensor_output_loan.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace holoscan {
 namespace channel_internal {
+
+class SubscriberWaitContext;
 
 /// @brief Attach one private Channel subscriber to a shared backend wait set.
 ///
@@ -38,7 +43,10 @@ namespace channel_internal {
 /// Tensor-schema subscribers without exposing backend endpoint or wait-set types.
 class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
  public:
-  WaitSetSubscriber() = default;
+  /// @brief Construct a subscriber with no wait context; one is built on the first wait.
+  /// @note Defined out of line because the cached wait context is an incomplete type here, and a
+  /// defaulted constructor would need its deleter instantiated for construction-time unwinding.
+  HOLOSCAN_CORE_EXPORT WaitSetSubscriber();
   WaitSetSubscriber(const WaitSetSubscriber&) = delete;
   WaitSetSubscriber& operator=(const WaitSetSubscriber&) = delete;
   WaitSetSubscriber(WaitSetSubscriber&&) = delete;
@@ -50,7 +58,189 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
   /// @return Stable wait-set-local identity, or \ref ErrorCode::kInvalidArgument for a null or
   /// repeated attachment, or another checked backend setup error.
   [[nodiscard]] virtual expected<std::uint64_t, Error> attach_wait_set(void* wait_set) = 0;
+
+  /// @brief Query pending samples without consuming one.
+  /// @return Readiness, or a checked backend query error.
+  /// @note Readiness is a snapshot hint. A following receive may still report
+  /// \ref ErrorCode::kNotReady when a lossy replacement, a private control operation, or a
+  /// competing consumer changed the queue in between. Implementations that own more than one
+  /// transport lane report the union, so one call answers for the whole subscriber.
+  [[nodiscard]] virtual expected<bool, Error> has_samples() const = 0;
+
+  /// @brief Return whether this subscriber's service admits kernel event wake.
+  /// @return True when the service-static \ref ChannelOptions::enable_event_wake contract is
+  /// enabled for this endpoint.
+  /// @note This function does not throw. It is a frozen creation-time fact, not a runtime state.
+  [[nodiscard]] virtual bool event_wake_enabled() const noexcept = 0;
+
+  /// @brief Block until this subscriber may have a sample, the deadline expires, or a stop is
+  /// requested.
+  ///
+  /// The first call builds and caches a private wait set, attaches this subscriber's transport
+  /// lanes and a cancellation trigger, and establishes the inbound connection. Later calls reuse
+  /// that context and rebuild none of it. They are not unconditionally allocation-free: the wait
+  /// backend records which lanes woke it in a vector that is cleared rather than shrunk and is
+  /// still empty after setup, so the first later call that a lane actually satisfies grows it once.
+  /// That growth is bounded by the lane count and does not recur, and the first wait after a
+  /// cancellation allocates a replacement trigger. Nothing on this path allocates per call.
+  ///
+  /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+  /// @param stop_token Optional borrowed cancellation observer; null disables cancellation.
+  /// @return Empty success when a sample may be available, or a checked wait error.
+  /// @retval ErrorCode::kTimeout \p deadline elapsed with no readiness.
+  /// @retval ErrorCode::kInterrupted \p stop_token requested a stop.
+  /// @retval ErrorCode::kNotSupported This endpoint was created without event wake, so it has no
+  /// kernel event lane. This operation deliberately does not fall back to polling.
+  /// @retval ErrorCode::kInvalidArgument This subscriber's readiness is already owned by another
+  /// wait set, such as the Runtime readiness pump, or another wait on this subscriber is already
+  /// in flight. Both are caller errors that leave the subscriber unchanged.
+  /// @retval ErrorCode::kResourceExhausted Setting up the wait ran out of memory. Building the
+  /// first wait context, re-arming a cancelled trigger, and the diagnostics attached to the errors
+  /// above all allocate, and none of them can report failure any other way.
+  /// @note The wait is event-driven with a bounded recovery poll, not purely event-driven. A
+  /// publication wakes it from a kernel wait, but transport notification is best effort, so a
+  /// blocked wait also re-checks readiness about once a second. An idle waiting subscriber
+  /// therefore costs roughly one wakeup per second rather than nothing at all, and readiness that
+  /// is reported by a lane which is not attached to the wait set -- currently the catalog
+  /// clock-health lane -- is discovered on that fallback rather than by a wake. Treat the interval
+  /// as an implementation bound rather than a contract.
+  /// @note Cancellation is spelled \c std::stop_token here on purpose: a token is reusable and
+  /// standard, where the transport's own wake primitive is a monotonic single-use latch. This
+  /// layer owns one of those internally and fires it from a \c std::stop_callback, so a caller
+  /// never has to see it or replace it after a cancellation. Naming the transport type here would
+  /// breach this header's transport opacity, so the pointer runs the other way: the transport
+  /// header documents the correspondence.
+  /// @note This function does not throw: an allocation failure on the setup path is translated to
+  /// \ref ErrorCode::kResourceExhausted rather than crossing the \c noexcept boundary. One
+  /// subscriber supports one waiting thread; calls are not
+  /// internally serialized. A second concurrent waiter is rejected with
+  /// \ref ErrorCode::kInvalidArgument in every build configuration, rather than being allowed to
+  /// share the first waiter's wait context. The rejected call does not disturb the wait already in
+  /// flight.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> wait_for_readiness(
+      std::chrono::steady_clock::time_point deadline, const std::stop_token* stop_token) noexcept;
+
+  /// @brief Return the private transport runtime used to build this subscriber's wait context.
+  /// @return Borrowed backend-private runtime address, or nullptr when this binding has none.
+  /// @note The parent Channel runtime outlives every endpoint created from it, so the returned
+  /// borrow stays valid for this subscriber's lifetime. This stays in \ref channel_internal rather
+  /// than being protected so a composite binding can delegate to the inner binding that owns the
+  /// transport lanes.
+  [[nodiscard]] virtual void* wait_context_runtime() noexcept = 0;
+
+ private:
+  /// Body of \ref wait_for_readiness. Separated so the public entry point is a thin translator that
+  /// can catch an allocation failure and honour its \c noexcept, rather than asserting a promise
+  /// the body cannot keep. Private and non-virtual, so it adds no layout or vtable surface.
+  [[nodiscard]] expected<void, Error> wait_for_readiness_checked(
+      std::chrono::steady_clock::time_point deadline, const std::stop_token* stop_token);
+
+  /// @warning These two members are the entire per-subscriber wait state, and they live in an
+  /// exported polymorphic base that all three endpoint families derive from. Adding a third field
+  /// here is an ABI break for every one of them, so new wait state belongs inside
+  /// \ref SubscriberWaitContext -- which is heap-held, private to the implementation, and already
+  /// where everything else about a wait lives. The two that are here have to be: the context
+  /// pointer is what makes a warmed wait rebuild nothing, and the flag has to be readable before
+  /// the context exists.
+  std::unique_ptr<SubscriberWaitContext> wait_context_;
+  /// Claimed for the duration of one wait, so a second concurrent waiter can be rejected rather
+  /// than allowed to share wait_context_. Both the claim and the rejection are unconditional, so
+  /// this exported class has the same layout and the same behaviour in every configuration.
+  std::atomic_flag waiting_;
 };
+
+/// @brief Return a borrowed stop-token pointer for \ref WaitSetSubscriber::wait_for_readiness.
+///
+/// This is the one place the two spellings of a stop token meet. Everything a caller can see takes
+/// \c const \c std::stop_token&, matching the rest of the SDK: a wait observes the token, it never
+/// owns it, and passing by value would cost an atomic refcount pair per call even on
+/// \ref ChannelSubscriber::wait_for_sample's fast path, which can return without waiting at all.
+/// The virtual layer below takes a raw pointer instead, because that is what lets this function
+/// answer "no usable token" with nullptr so the wait can skip constructing a
+/// \c std::stop_callback. That asymmetry is deliberate and is confined to \ref channel_internal.
+///
+/// @param token Caller-owned token that must outlive every wait it is passed to.
+/// @return Address of \p token when it can still observe a stop, or nullptr when it cannot.
+/// @note This function does not throw. A default-constructed token has no stop state, so this
+/// returns nullptr and the wait skips constructing a \c std::stop_callback entirely.
+[[nodiscard]] inline const std::stop_token* borrowed_stop_token(
+    const std::stop_token& token) noexcept {
+  return token.stop_possible() ? &token : nullptr;
+}
+
+/// @brief Report readiness for \p subscriber, blocking until \p deadline only if it is not ready.
+///
+/// The shared tail of every family's \c wait_for_sample. Each facade still owns its own prologue --
+/// the moved-from check and, where the family has one, the end-of-stream latch -- because that is
+/// facade state rather than subscriber state. Everything after it is identical, and was
+/// triplicated across three headers until the three drifted apart once already.
+///
+/// @param subscriber Endpoint whose readiness is queried and then awaited; must outlive this call.
+/// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+/// @param stop_token Optional borrowed cancellation observer; null disables cancellation.
+/// @return Empty success when a sample may be available, or a checked wait error.
+/// @note An endpoint that is already ready returns success without consulting the event lane, so a
+/// poll-only endpoint holding a sample is not refused with \ref ErrorCode::kNotSupported.
+[[nodiscard]] inline expected<void, Error> wait_for_sample_readiness(
+    WaitSetSubscriber& subscriber, const std::chrono::steady_clock::time_point deadline,
+    const std::stop_token* const stop_token) {
+  auto ready = subscriber.has_samples();
+  if (!ready) {
+    return make_unexpected(std::move(ready).error());
+  }
+  if (*ready) {
+    return {};
+  }
+  return subscriber.wait_for_readiness(deadline, stop_token);
+}
+
+/// @brief Receive one sample from \p subscriber, waiting for readiness until \p deadline.
+///
+/// The first attempt runs before any wait context exists, so an already queued sample is returned
+/// without building a wait set and without a kernel wait. \ref ErrorCode::kNotReady is absorbed
+/// from both the attempt and the wait, because readiness is only a hint: an attempt that loses its
+/// race against a lossy replacement, a private control operation, or a competing consumer waits
+/// again against the same absolute deadline. Every other error is returned unchanged from the
+/// first attempt that produces it, so a terminal \ref ErrorCode::kClosed or an active-loan
+/// \ref ErrorCode::kFailure is reported before any wait is built.
+///
+/// @tparam Receive Callable taking no arguments and returning this endpoint family's expected
+/// receive result.
+/// @param subscriber Endpoint whose readiness is awaited; it must outlive this call.
+/// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+/// @param stop_token Optional borrowed cancellation observer; null disables cancellation.
+/// @param receive One repeatable receive attempt, invoked at least once.
+/// @return The receive result, or the first error that is not \ref ErrorCode::kNotReady.
+/// @retval ErrorCode::kTimeout \p deadline elapsed with no receivable sample.
+/// @retval ErrorCode::kInterrupted \p stop_token requested a stop.
+/// @note This function never returns \ref ErrorCode::kNotReady. A subscriber that keeps reporting
+/// readiness while every attempt loses its race retries at full speed until \p deadline, which is
+/// checked after every readiness query on both its outcomes; that absolute deadline is the only
+/// bound, which is why no duration overload exists.
+template <typename Receive>
+[[nodiscard]] std::invoke_result_t<Receive&> wait_and_receive_next(
+    WaitSetSubscriber& subscriber, const std::chrono::steady_clock::time_point deadline,
+    const std::stop_token* const stop_token, Receive&& receive) {
+  while (true) {
+    auto received = receive();
+    if (received || received.error().code != ErrorCode::kNotReady) {
+      return received;
+    }
+
+    auto ready = subscriber.wait_for_readiness(deadline, stop_token);
+    if (!ready && ready.error().code != ErrorCode::kNotReady) {
+      return make_unexpected(std::move(ready).error());
+    }
+    // Both outcomes land here. Readiness is only a hint and wait_for_readiness returns success as
+    // soon as has_samples() is true, without blocking and without consulting the deadline, so a
+    // subscriber whose readiness never yields a receivable sample would otherwise retry at full
+    // speed forever -- the caller's absolute deadline is the only bound this loop has, and it has
+    // to be read on the hint path too, not just when the readiness query itself reports not-ready.
+    if (deadline <= std::chrono::steady_clock::now()) {
+      return make_unexpected(Error{ErrorCode::kTimeout});
+    }
+  }
+}
 
 /// @brief Classify whether an inline publication has crossed the submit boundary.
 enum class InlinePublicationPhase : std::uint8_t {
@@ -170,6 +360,8 @@ class HOLOSCAN_CORE_EXPORT InlinePayloadWaitSet {
  * @param code Error code.
  * @param message Diagnostic message.
  * @return Error containing code and message. */
+// The by-value string is a sink: callers may transfer an owned diagnostic without another copy.
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
 [[nodiscard]] inline Error make_channel_error(ErrorCode code, std::string message) noexcept {
   return Error{code, std::move(message)};
 }
@@ -251,6 +443,18 @@ class HOLOSCAN_CORE_EXPORT InlinePayloadPublisher {
   [[nodiscard]] virtual bool has_subscribers() const noexcept = 0;
 };
 
+/// @brief Report one received inline payload's metadata and the exact bytes this operation wrote.
+///
+/// \ref payload_size is transport evidence: it counts only the bytes the completed receive placed
+/// in the caller's destination. \ref SampleMetadata::byte_size is a producer claim carried on the
+/// wire and may disagree. A caller that reuses a destination buffer across receives must reject
+/// any sample whose \ref payload_size does not cover every byte it later reads; otherwise the
+/// unwritten tail still holds bytes retained from an earlier sample.
+struct InlinePayloadReceiveResult {
+  SampleMetadata metadata{};   ///< Metadata carried by the received sample.
+  std::size_t payload_size{};  ///< Exact bytes written into the caller's destination.
+};
+
 /// @brief Receive inline payload bytes and metadata through a private transport binding.
 ///
 /// Implementations own one backend endpoint but borrow their parent Channel runtime. They are
@@ -264,9 +468,6 @@ class HOLOSCAN_CORE_EXPORT InlinePayloadSubscriber : public WaitSetSubscriber {
   InlinePayloadSubscriber& operator=(InlinePayloadSubscriber&&) = delete;
   HOLOSCAN_CORE_EXPORT virtual ~InlinePayloadSubscriber();
 
-  /** @brief Query pending samples.
-   * @return Readiness or Error from the transport. */
-  [[nodiscard]] virtual expected<bool, Error> has_samples() const = 0;
   /// @brief Return whether this subscriber's service currently reports at least one publisher.
   /// @return True when a publisher is connected; false otherwise.
   /// @note This cold-path advisory observation is not receive readiness and does not prove that a
@@ -274,11 +475,24 @@ class HOLOSCAN_CORE_EXPORT InlinePayloadSubscriber : public WaitSetSubscriber {
   [[nodiscard]] virtual bool has_publishers() const noexcept = 0;
   /** @brief Receive one payload.
    * @param payload Destination bytes.
-   * @return SampleMetadata or ErrorCode::kNotReady/receive failure. */
-  [[nodiscard]] virtual expected<SampleMetadata, Error> receive(std::span<std::byte> payload) = 0;
+   * @return Metadata and the exact written length, or ErrorCode::kNotReady/receive failure.
+   * @note Implementations must report the bytes they actually wrote, never a length taken from
+   * \ref SampleMetadata::byte_size. A peer may claim one width and submit another; only the
+   * reported length proves which destination bytes belong to this sample. */
+  [[nodiscard]] virtual expected<InlinePayloadReceiveResult, Error> receive(
+      std::span<std::byte> payload) = 0;
   /// @brief Borrow one transport payload through verification and typed materialization.
   /// @return Guard exposing the exact used payload prefix and its metadata, or a receive error.
   [[nodiscard]] virtual expected<InlinePayloadReceiveGuard, Error> receive_borrowed();
+  /// @brief Stage one bounded transport operation and borrow data only when Runtime can retain it.
+  /// @param accept_data Whether a data operation may be returned to the caller.
+  /// @return A borrowed data guard, kBackpressured with data retained, kClosed for terminal
+  /// control, kNotReady for an empty transport, or a checked transport error.
+  /// @note This source-private admission hook lets Runtime observe terminal control without first
+  /// reserving typed payload storage. Implementations that do not support bounded staging retain
+  /// the conservative default behavior.
+  [[nodiscard]] virtual expected<InlinePayloadReceiveGuard, Error>
+  receive_borrowed_if_data_accepted(bool accept_data);
 
   /// @brief Release the active borrowed payload loan, if any.
   /// @note This function does not throw.
@@ -294,12 +508,23 @@ class HOLOSCAN_CORE_EXPORT InlinePayloadSubscriber : public WaitSetSubscriber {
 
 /// @brief Carry compiler-bounded storage facts for one private Tensor-schema staging pool.
 struct TensorSchemaStagingOptions {
+  /// Maximum logical byte span admitted for this field.
   std::uint64_t max_byte_span{};
+  /// Number of finite staging slots, or zero when staging is forbidden.
   std::uint32_t slot_count{};
+  /// Exact element type when constrained.
   std::optional<DLDataType> dtype;
+  /// Exact logical rank when constrained.
   std::optional<std::uint32_t> rank;
+  /// Per-axis extent and absolute byte-stride limits.
+  std::vector<TensorAxisBounds> axes;
+  /// Admitted logical stride family.
+  TensorStridePolicy strides{TensorStridePolicy::kContiguousOnly};
+  /// Exact physical storage class.
   MemoryKind memory_kind{MemoryKind::kUnknown};
+  /// Exact CUDA device for device storage.
   DeviceId device{};
+  /// Whether foreign backing must already be exportable or may be copied.
   InterfaceTensorEmitPolicy foreign_emit_policy{InterfaceTensorEmitPolicy::kRequireExportable};
 };
 
@@ -439,15 +664,57 @@ class HOLOSCAN_CORE_EXPORT TensorSchemaPayloadPublisher {
   /** @brief Publish schema bytes with their reserved Tensor payload reference.
    * @param payload Serialized schema payload bytes.
    * @param reservation Descriptor and optional Tensor ownership consumed by the publication.
+   * @param transport_metadata Catalog operation metadata, or an empty record for a manual channel.
    * @return Recipient count on success, or Error for invalid size, loan, or send failure. */
+  // Defaults are part of this installed convenience API and are intentionally visible through
+  // the abstract endpoint type used by callers.
+  // NOLINTNEXTLINE(google-default-arguments)
   [[nodiscard]] virtual expected<std::uint32_t, Error> publish_payload(
-      std::span<const std::byte> payload, TensorSchemaPayloadReservation reservation) = 0;
+      std::span<const std::byte> payload, TensorSchemaPayloadReservation reservation,
+      SampleMetadata transport_metadata = {}) = 0;
   /** @brief Encode directly into an outbound transport loan and publish its used prefix.
    * @param encoder Allocation-free encoder callback and bounded codec capacity.
    * @param reservation Descriptor and Tensor ownership consumed by the publication.
+   * @param transport_metadata Catalog operation metadata, or an empty record for a manual channel.
    * @return Recipient count on success, or a checked pre-submit or publication error. */
+  // NOLINTNEXTLINE(google-default-arguments)
   [[nodiscard]] virtual expected<std::uint32_t, Error> publish_encoded_payload(
-      const TensorSchemaPayloadEncoder& encoder, TensorSchemaPayloadReservation reservation);
+      const TensorSchemaPayloadEncoder& encoder, TensorSchemaPayloadReservation reservation,
+      SampleMetadata transport_metadata = {});
+  /** @brief Validate caller-authored semantic metadata for this endpoint.
+   * @param metadata Metadata before sequence, byte size, and payload kind normalization.
+   * @return Success when the metadata belongs to this endpoint's capture-clock contract. */
+  [[nodiscard]] virtual expected<void, Error> validate_sample_metadata(
+      const SampleMetadata& metadata) const noexcept;
+  /** @brief Validate one decoded descriptor field against this endpoint's immutable contract.
+   * @param field_index Canonical Tensor-field index.
+   * @param metadata Schema-derived Tensor view metadata.
+   * @param descriptor Transport descriptor paired with the schema field.
+   * @warning The default implementation accepts every field. Third-party catalog transports must
+   * override this function to enforce immutable descriptor-field contracts.
+   * @return Success for an admitted field, or a checked pre-submit contract error. */
+  [[nodiscard]] virtual expected<void, Error> validate_field_descriptor(
+      std::uint32_t field_index, const TensorViewMetadata& metadata,
+      const PayloadDescriptor& descriptor) const noexcept;
+  /** @brief Label one capture coordinate with this endpoint's catalog clock.
+   * @param timestamp_ns Exact caller-supplied nanosecond coordinate.
+   * @return Bound time point, or \ref ErrorCode::kInvalidArgument when unavailable. */
+  [[nodiscard]] virtual expected<TimePoint, Error> make_capture_time(
+      std::int64_t timestamp_ns) const noexcept;
+  /// @brief Publish one ordered catalog clock-health operation.
+  /// @param report Valid payload-independent health assessment.
+  /// @return Success after bounded acceptance, or a checked unsupported/publication error.
+  [[nodiscard]] virtual expected<void, Error> report_clock_health(ClockHealthReport report);
+  /// @brief Publish an ordered end-of-stream operation for this catalog generation.
+  /// @param metadata Sequence and semantic payload identity for the terminal operation.
+  /// @return Submit phase, recipient count, and checked error evidence for authority accounting.
+  [[nodiscard]] virtual InlinePublicationResult close_stream(SampleMetadata metadata);
+  /// @brief Return this catalog publisher's producer-incarnation identity.
+  /// @return Nonzero identity for catalog publishers; zero for manual compatibility publishers.
+  [[nodiscard]] virtual std::uint64_t producer_generation() const noexcept;
+  /// @brief Return the next ordered catalog operation sequence without consuming it.
+  /// @return Next nonzero sequence, or a checked unsupported/closed/exhaustion error.
+  [[nodiscard]] virtual expected<std::uint64_t, Error> next_operation_sequence() const noexcept;
   /** @brief Release an unpublished Tensor reservation.
    * @param reservation Reservation whose local sidecar claim or retained owner is released.
    * @note This function does not throw. */
@@ -507,9 +774,9 @@ class HOLOSCAN_CORE_EXPORT TensorSchemaPayloadSubscriber : public WaitSetSubscri
   TensorSchemaPayloadSubscriber& operator=(TensorSchemaPayloadSubscriber&&) = delete;
   HOLOSCAN_CORE_EXPORT virtual ~TensorSchemaPayloadSubscriber();
 
-  /** @brief Query pending schema payloads without consuming one.
-   * @return Readiness or Error when the backend query fails. */
-  [[nodiscard]] virtual expected<bool, Error> has_samples() const = 0;
+  /// @brief Return whether this subscriber currently observes a publisher.
+  /// @return True when a publisher is connected; false otherwise.
+  [[nodiscard]] virtual bool has_publishers() const noexcept = 0;
   /** @brief Receive schema bytes while retaining the underlying transport loan.
    * @param payload Destination for the fixed-size schema payload bytes.
    * @return Receive guard on success, or Error for invalid size, an active loan, or receive
@@ -519,6 +786,18 @@ class HOLOSCAN_CORE_EXPORT TensorSchemaPayloadSubscriber : public WaitSetSubscri
   /** @brief Borrow one exact descriptor-envelope prefix from the active transport sample.
    * @return Receive guard exposing borrowed bytes, or a checked receive error. */
   [[nodiscard]] virtual expected<TensorSchemaPayloadReceiveGuard, Error> borrow_payload();
+  /** @brief Stage one bounded schema operation and borrow data only when Runtime can retain it.
+   * @param accept_data Whether a data operation may be returned to the caller.
+   * @return A borrowed data guard, kBackpressured with data retained, kClosed for terminal
+   * control, kNotReady for an empty transport, or a checked transport error.
+   * @note This source-private admission hook keeps terminal control independent of typed payload
+   * capacity. Implementations without bounded staging retain the conservative default behavior. */
+  [[nodiscard]] virtual expected<TensorSchemaPayloadReceiveGuard, Error>
+  borrow_payload_if_data_accepted(bool accept_data);
+  /** @brief Return the accepted ordinary-channel terminal sequence.
+   * @return The terminal sequence after a validated manual EOS, otherwise no value.
+   * @note Catalog-controlled imports keep EOS metadata in the Runtime-private receive path. */
+  [[nodiscard]] virtual std::optional<std::uint64_t> end_of_stream_sequence() const noexcept;
   /** @brief Resolve a same-process payload descriptor through the Tensor sidecar.
    * @param descriptor Local payload reference to resolve.
    * @return Tensor on success, or Error when the descriptor is stale or otherwise invalid. */
@@ -533,6 +812,16 @@ class HOLOSCAN_CORE_EXPORT TensorSchemaPayloadSubscriber : public WaitSetSubscri
   [[nodiscard]] virtual expected<Tensor, Error> import_buffer_handle_tensor(
       const PayloadDescriptor& descriptor, const TensorViewMetadata& metadata,
       std::uint32_t field_index) = 0;
+  /** @brief Validate one decoded field before resolving or importing its backing.
+   * @param field_index Canonical Tensor-field index.
+   * @param metadata Schema-derived Tensor view metadata.
+   * @param descriptor Transport descriptor paired with the schema field.
+   * @warning The default implementation accepts every field. Third-party catalog transports must
+   * override this function to enforce immutable descriptor-field contracts.
+   * @return Success for an admitted field, or a checked pre-import contract error. */
+  [[nodiscard]] virtual expected<void, Error> validate_field_descriptor(
+      std::uint32_t field_index, const TensorViewMetadata& metadata,
+      const PayloadDescriptor& descriptor) const noexcept;
   /** @brief Release a same-process recipient claim without materializing its Tensor.
    * @param descriptor Local payload reference whose claim is released.
    * @note This function does not throw. */

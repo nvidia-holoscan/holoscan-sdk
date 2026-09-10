@@ -23,6 +23,7 @@
 #include "../core/lifecycle_capacity_derivation.hpp"
 #include "../core/lifecycle_graph_lowering.hpp"
 #include "../core/lifecycle_kernel.hpp"
+#include "snapshot_lookup.hpp"
 
 namespace holoscan::detail {
 namespace {
@@ -36,21 +37,15 @@ constexpr std::uint8_t kAllForwardStagesMask = 0x3FU;
 void append_diagnostic(LifecyclePlanLowering& result, std::string_view token,
                        DiagnosticSource source = {}, std::string json_pointer = {},
                        std::string required = {}, std::string provided = {}) {
-  const auto duplicate = std::find_if(
-      result.diagnostics.begin(), result.diagnostics.end(), [&](const auto& diagnostic) {
-        return diagnostic.token == token && diagnostic.source.vertex == source.vertex &&
-               diagnostic.json_pointer == json_pointer && diagnostic.required == required &&
-               diagnostic.provided == provided;
-      });
-  if (duplicate == result.diagnostics.end()) {
-    result.diagnostics.push_back({
-        .token = std::string(token),
-        .source = source,
-        .json_pointer = std::move(json_pointer),
-        .required = std::move(required),
-        .provided = std::move(provided),
-    });
-  }
+  static_cast<void>(
+      append_unique_plan_lowering_diagnostic(result.diagnostics,
+                                             LifecyclePlanDiagnostic{
+                                                 .token = std::string(token),
+                                                 .source = source,
+                                                 .json_pointer = std::move(json_pointer),
+                                                 .required = std::move(required),
+                                                 .provided = std::move(provided),
+                                             }));
   result.accepted = false;
 }
 
@@ -74,14 +69,6 @@ void append_diagnostic(LifecyclePlanLowering& result, std::string_view token,
       return false;
   }
   return false;
-}
-
-[[nodiscard]] std::optional<Profile> effective_profile_for_vertex(
-    std::span<const std::optional<Profile>> effective_vertex_profiles, VertexId vertex) noexcept {
-  if (vertex.value == 0U || vertex.value > effective_vertex_profiles.size()) {
-    return std::nullopt;
-  }
-  return effective_vertex_profiles[static_cast<std::size_t>(vertex.value - 1U)];
 }
 
 [[nodiscard]] bool all_operator_profiles_support_active_transactions(
@@ -213,16 +200,14 @@ void append_lifecycle_graph_diagnostic(LifecyclePlanLowering& result,
          values.max_rollback_records > 0U;
 }
 
-[[nodiscard]] constexpr bool forward_stage(LifecycleStage stage) noexcept {
-  return static_cast<std::uint8_t>(stage) <= static_cast<std::uint8_t>(LifecycleStage::kStart);
-}
-
 // Closure publication validates and emits one complete restart-authority record family.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void append_restart_closures(const std::unordered_map<std::uint64_t, LifecycleNodeId>& nodes,
-                             std::span<const LifecycleDependencyPlanRecord> dependencies,
-                             std::span<const LifecycleCheckpointPlanRecord> checkpoints,
-                             PlanGenerationId plan_generation, LifecyclePlanLowering& result) {
+void append_restart_closures(
+    const std::unordered_map<std::uint64_t, LifecycleNodeId>& nodes,
+    std::span<const LifecycleDependencyPlanRecord> dependencies,
+    std::span<const LifecycleRestartClosureDependency> closure_dependencies,
+    std::span<const LifecycleCheckpointPlanRecord> checkpoints, PlanGenerationId plan_generation,
+    LifecyclePlanLowering& result) {
   result.restart_closures.reserve(nodes.size());
   std::vector<LifecycleNodeId> ordered_nodes;
   ordered_nodes.reserve(nodes.size());
@@ -231,6 +216,18 @@ void append_restart_closures(const std::unordered_map<std::uint64_t, LifecycleNo
     ordered_nodes.push_back(node);
   }
   std::sort(ordered_nodes.begin(), ordered_nodes.end());
+
+  std::vector<std::pair<LifecycleNodeId, LifecycleNodeId>> closure_edges;
+  closure_edges.reserve(closure_dependencies.size());
+  for (const auto& dependency : closure_dependencies) {
+    const auto source = nodes.find(dependency.source_owner.value);
+    const auto dependent = nodes.find(dependency.dependent_owner.value);
+    if (source != nodes.end() && dependent != nodes.end() && source->second != dependent->second) {
+      closure_edges.emplace_back(source->second, dependent->second);
+    }
+  }
+  std::sort(closure_edges.begin(), closure_edges.end());
+  closure_edges.erase(std::unique(closure_edges.begin(), closure_edges.end()), closure_edges.end());
 
   for (const LifecycleNodeId target : ordered_nodes) {
     std::vector<LifecycleNodeId> closure{target};
@@ -241,6 +238,13 @@ void append_restart_closures(const std::unordered_map<std::uint64_t, LifecycleNo
         if (std::find(closure.begin(), closure.end(), dependency.before.id) != closure.end() &&
             std::find(closure.begin(), closure.end(), dependency.after.id) == closure.end()) {
           closure.push_back(dependency.after.id);
+          changed = true;
+        }
+      }
+      for (const auto& [source, dependent] : closure_edges) {
+        if (std::find(closure.begin(), closure.end(), source) != closure.end() &&
+            std::find(closure.begin(), closure.end(), dependent) == closure.end()) {
+          closure.push_back(dependent);
           changed = true;
         }
       }
@@ -261,7 +265,7 @@ void append_restart_closures(const std::unordered_map<std::uint64_t, LifecycleNo
          ++requested) {
       LifecycleStage effective = static_cast<LifecycleStage>(requested);
       for (const auto& dependency : dependencies) {
-        if (!forward_stage(dependency.stage) ||
+        if (!is_lifecycle_forward_stage(dependency.stage) ||
             std::find(closure.begin(), closure.end(), dependency.before.id) == closure.end() ||
             std::find(closure.begin(), closure.end(), dependency.after.id) == closure.end()) {
           continue;
@@ -286,7 +290,7 @@ void append_restart_closures(const std::unordered_map<std::uint64_t, LifecycleNo
             continue;
           }
           const bool forward_work =
-              forward_stage(checkpoint.stage) &&
+              is_lifecycle_forward_stage(checkpoint.stage) &&
               static_cast<std::uint8_t>(checkpoint.stage) >= static_cast<std::uint8_t>(effective);
           const bool teardown_work = checkpoint.stage == LifecycleStage::kStop ||
                                      checkpoint.stage == LifecycleStage::kRelease;
@@ -652,11 +656,12 @@ LifecyclePlanLowering lower_lifecycle_plan(
     std::span<const LifecycleMutableFieldPlanRecord> lifecycle_mutable_fields,
     const std::optional<ParameterRuntimeCapacityPlanRecord>& parameter_capacity,
     const std::optional<LifecycleTransactionOptions>& transaction_options,
-    PlanGenerationId plan_generation) {
+    PlanGenerationId plan_generation,
+    std::span<const LifecycleRestartClosureDependency> closure_dependencies) {
   LifecyclePlanLowering result;
   result.mutable_fields.reserve(lifecycle_mutable_fields.size());
   for (const auto& field : lifecycle_mutable_fields) {
-    if (!forward_stage(field.from_stage)) {
+    if (!is_lifecycle_forward_stage(field.from_stage)) {
       append_diagnostic(result,
                         "LIFECYCLE_RESTART_STAGE_MASK_INVALID",
                         DiagnosticSource{.vertex = VertexId{field.owner.id}},
@@ -708,7 +713,12 @@ LifecyclePlanLowering lower_lifecycle_plan(
     }
   }
 
-  append_restart_closures(nodes, result.dependencies, result.checkpoints, plan_generation, result);
+  append_restart_closures(nodes,
+                          result.dependencies,
+                          closure_dependencies,
+                          result.checkpoints,
+                          plan_generation,
+                          result);
 
   // Resolve target authority before deriving capacity. Rejected and
   // nonrequested targets cannot contribute runtime work, while admitted

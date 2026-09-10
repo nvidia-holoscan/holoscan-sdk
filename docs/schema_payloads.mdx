@@ -36,19 +36,28 @@ generated code.
 
 ## The SDK schema types
 
-Three schema types are available directly as port payloads. Each is an owning native
+Four schema types are available directly as port payloads. Each is an owning native
 value type — plain fields you read and write, no builder objects on the pipeline path:
 
 | Type | Carries | Fields |
 |---|---|---|
 | `holoscan::schema::TimeT` | A timestamp pair | `time_ns`, `acqtime_ns` (both `int64_t`) |
 | `holoscan::schema::StringT` | A variable-length string | `data` (`std::string`) |
-| `holoscan::schema::ImuT` | An IMU sample | `header`, `orientation` (quaternion), `angular_velocity`, `linear_acceleration` (3-vectors) |
+| `holoscan::schema::ImageT` | One image frame and its pixels | `header`, `height`, `width`, `encoding`, `data` (a Core `Tensor`), `color_space`, `significant_bits`, `roi_offset_x`, `roi_offset_y`, `plane_layouts`, `exposure_time_ns`, `gain` |
+| `holoscan::schema::ImuT` | One IMU sample | `header`, `orientation` (quaternion), `angular_velocity`, `linear_acceleration` (3-vectors), `flags`, `orientation_covariance`, `angular_velocity_covariance`, `linear_acceleration_covariance` (row-major 3x3 matrices) |
 
-`ImuT` is the natural carrier for the high-rate sensor leg of a fusion pipeline — the
-camera + IMU examples use it for exactly that. `StringT` suits status, description, and
-control-text messages. `TimeT` carries a capture/acquisition timestamp pair when the
-payload itself *is* the timestamp.
+`ImageT` and `ImuT` are the two sensor payloads, and the two that share a `header`. What
+that header promises, how to extend either payload, and what a schema change costs a
+running deployment are covered in
+[Sensor payloads](/holoscan/sdk-user-guide/data-and-payloads/sensor-payloads).
+`ImuT` is the natural carrier for the high-rate leg of a fusion pipeline and `ImageT`
+for the frame leg; the schema-payloads example above emits `ImuT` for exactly that.
+`ImageT` keeps its pixels in a Core `Tensor` rather than inside the FlatBuffer, so frame
+metadata and pixel storage stay bounded independently of each other; that makes it a
+descriptor-Tensor payload, and an operator producing one declares its Tensor layout and
+allocation bounds like any other Tensor-carrying port. `StringT` suits status,
+description, and control-text messages. `TimeT` carries a capture/acquisition timestamp
+pair when the payload itself *is* the timestamp.
 
 Pick a schema type for ordinary structured messages: you skip manual identity and byte-layout
 traits and gain verified variable-length, optional, and nested fields. Define an
@@ -155,8 +164,11 @@ type itself:
 
 *Pinned* means matched **exactly**: a producer and a consumer agree on a schema payload
 only if all four components are equal. There is no negotiation protocol, no
-field-evolution policy, and no "close enough" — a frame whose identity differs in any
-component is rejected with a typed `kIncompatible` error before delivery.
+field-evolution policy, and no "close enough". At a process boundary the agreement is
+checked twice. Attaching an endpoint compares the complete four-component tuple and
+refuses a mismatch with a typed `kIncompatible` error, so a wrong peer never reaches
+steady state. Every received frame then revalidates the identity its envelope carries
+and fails with a typed `kProtocolError` before a single payload byte is exposed.
 
 Inside one process the C++ type system already enforces most of this: `add_flow()` only
 connects an `Output<T>` to an `Input<T>` of the same `T`. Identity pinning earns its keep
@@ -200,8 +212,13 @@ Do not use raw POD as the ordinary alternative to an SDK schema type.
 
 ## Recap
 
-- SDK schema types (`schema::TimeT`, `schema::StringT`, `schema::ImuT`) are the
-  zero-declaration payload path: use them directly as `Output<T>`/`Input<T>` types.
+- SDK schema types (`schema::TimeT`, `schema::StringT`, `schema::ImageT`,
+  `schema::ImuT`) are the zero-declaration payload path: use them directly as
+  `Output<T>`/`Input<T>` types. The sensor payloads among them, `schema::ImageT` and
+  `schema::ImuT`, are owned by `holoscan::sensor_io` rather than by Core, so carrying
+  either one means linking that library and installing the `holoscan-sensor-io`
+  component. The type names are unchanged: a FlatBuffers namespace is part of the wire
+  identity, so these stayed `holoscan::schema::*` when their ownership moved.
 - The codec is selected automatically at `compile()`; the same operator code works
   in-process and across processes.
 - Received values are verified before delivery and arrive as owning native values with
@@ -209,7 +226,9 @@ Do not use raw POD as the ordinary alternative to an SDK schema type.
 - Serialized size is bounded by `generated_schema_max_serialized_size_v<T>`; overflow is
   a typed `kResourceExhausted`, never unbounded allocation.
 - Identity is pinned — canonical name + version + content hash (+ stable 128-bit id) —
-  and matched exactly; any mismatch fails with `kIncompatible` before delivery.
+  and matched exactly; a peer whose tuple differs is refused at attach with
+  `kIncompatible`, and a frame whose envelope identity differs fails with
+  `kProtocolError` before delivery.
 - Application-owned `.fbs` files generate owning port types and package traits — see
   [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas).
 

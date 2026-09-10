@@ -19,6 +19,39 @@
 
 namespace holoscan::detail {
 
+[[nodiscard]] inline bool validate_tensor_allocation_axes(
+    const TensorPoolBounds& bounds, const std::optional<TensorRepresentation>& layout,
+    const std::span<const TensorAxisBounds> axes) noexcept {
+  if (axes.size() > bounds.max_rank ||
+      (layout && layout->strides &&
+       static_cast<std::uint32_t>(*layout->strides) >
+           static_cast<std::uint32_t>(TensorStridePolicy::kBoundedStrided))) {
+    return false;
+  }
+  if (!layout || layout->strides != TensorStridePolicy::kBoundedStrided) {
+    return true;
+  }
+  return axes.size() == bounds.max_rank &&
+         std::all_of(axes.begin(), axes.end(), [](const TensorAxisBounds& axis) {
+           return axis.max_abs_stride_bytes != 0U;
+         });
+}
+
+/// Return whether Tensor-field allocation records are in canonical output/field order.
+[[nodiscard]] inline bool canonical_tensor_field_allocation_order(
+    const TensorFieldAllocationPlanRecord& left,
+    const TensorFieldAllocationPlanRecord& right) noexcept {
+  return left.output == right.output ? left.field_id < right.field_id
+                                     : left.output.value() < right.output.value();
+}
+
+/// Validate the ordering required by contiguous per-output Tensor-field plan lookups.
+[[nodiscard]] inline bool validate_tensor_field_allocation_order(
+    std::span<const TensorFieldAllocationPlanRecord> allocations) noexcept {
+  return std::is_sorted(
+      allocations.begin(), allocations.end(), canonical_tensor_field_allocation_order);
+}
+
 /// Validate the immutable, environment-independent portion of a direct Tensor pool record.
 [[nodiscard]] inline bool validate_tensor_allocation_record(
     const TensorAllocationPlanRecord& allocation,
@@ -56,6 +89,7 @@ namespace holoscan::detail {
          *allocation.layout->memory_kind == allocation.memory_kind &&
          (!allocation.layout->dtype || valid_tensor_dtype(*allocation.layout->dtype)) &&
          (!allocation.layout->rank || *allocation.layout->rank <= allocation.bounds.max_rank) &&
+         validate_tensor_allocation_axes(allocation.bounds, allocation.layout, allocation.axes) &&
          memory_and_device_valid && allocation.max_emits_per_compute != 0U &&
          allocation.max_outstanding_loans == allocation.max_emits_per_compute &&
          allocation.max_outstanding_loans <= allocation.slot_count &&
@@ -103,6 +137,7 @@ namespace holoscan::detail {
          *allocation.layout->memory_kind == allocation.memory_kind &&
          (!allocation.layout->dtype || valid_tensor_dtype(*allocation.layout->dtype)) &&
          (!allocation.layout->rank || *allocation.layout->rank <= allocation.bounds.max_rank) &&
+         validate_tensor_allocation_axes(allocation.bounds, allocation.layout, allocation.axes) &&
          memory_and_device_valid && allocation.max_emits_per_compute != 0U &&
          allocation.max_outstanding_loans == allocation.max_emits_per_compute &&
          allocation.max_outstanding_loans <= allocation.slot_count &&
@@ -122,7 +157,7 @@ namespace holoscan::detail {
   constexpr std::array<std::string_view, 5U> kSuffixes{
       ".producer", ".delivery", ".transport-retention", ".retention", ".retirement"};
   std::array<bool, kSuffixes.size()> seen{};
-  std::uint32_t total = 0U;
+  auto total = std::uint32_t{};
   for (const auto& contributor : contributors) {
     if (contributor.pool_id != allocation.pool_id) {
       continue;

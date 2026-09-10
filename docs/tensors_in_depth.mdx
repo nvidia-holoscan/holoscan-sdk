@@ -1,13 +1,15 @@
 <Warning>
   **Beta.** The tensor stream/pool model, declared memory-kind awareness, and
   bounded staging described on this page ship today, and the API may still
-  evolve in upcoming releases. Exact EA1 limits: every tensor obligation of
+  evolve in upcoming releases. Current limits: every tensor obligation of
   one operator must resolve to a single device, the runtime never inserts
   cross-device copies, managed memory (`MemoryKind::kCudaManaged`) does not
-  cross process boundaries, and unpooled pass-through emits skip memory-kind
-  validation at receive. See [EA1 limitations](#ea1-limitations)
-  below. GPU-resident execution and automatic host↔device converter insertion
-  remain deferred to a later release — the Beta label does not claim them.
+  cross process boundaries, and unpooled pass-through outputs do not provision
+  runtime-owned backing storage. Declared receive-side Tensor layout
+  requirements are still enforced for those pass-through values. See
+  [current limitations](#preview-limitations) below. GPU-resident execution and
+  automatic host↔device converter insertion remain deferred to a later release
+  — the Beta label does not claim them.
 </Warning>
 
 [Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101) covered the
@@ -36,6 +38,8 @@ path** — the design goes out of its way to make that unnecessary.
   - The rules for foreign DLPack tensors and for explicit host access
   - How pools bound memory: cold materialization, `kResourceExhausted`, and
     fanout release-stream caps
+  - How deployment Parameters and proven input bounds derive finite pool-slot
+    capacity while a new execution plan is compiled
 </Note>
 
 ## Two stream roles order every device tensor
@@ -117,16 +121,18 @@ path.
 ```cpp
 constexpr DLDataType kByteDtype{kDLUInt, 8U, 1U};
 constexpr std::size_t kFrameBytes = 256U;
-constexpr holoscan::TensorPortLayout kDeviceByteFrame{
+constexpr holoscan::TensorRepresentation kDeviceByteFrame{
     .memory_kind = holoscan::MemoryKind::kCudaDevice, .dtype = kByteDtype, .rank = 1U};
 constexpr std::array<std::int64_t, 1U> kFrameShape{
     static_cast<std::int64_t>(kFrameBytes)};
 
 void setup(holoscan::OperatorSpec& spec) override {
   spec.output(frame, "frame")
-      .produces_tensor(kDeviceByteFrame)
-      .tensor_allocation(
-          holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = kFrameBytes});
+      .produces_tensor(holoscan::TensorOutputSpec{
+          .representation = kDeviceByteFrame,
+          .bounds = holoscan::tensor_bounds(kFrameBytes),
+          .storage = holoscan::TensorOutputStorage::kRuntimePool,
+      });
 }
 
 holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& context) override {
@@ -262,11 +268,13 @@ Host access is explicit, and it is where the only sanctioned blocking lives:
 - `copy_to_host_async(dst, bytes, stream)` enqueues the copy and returns; you
   own the completion wait on your own stream.
 
-These three are the *entire* blocking surface of the tensor data path. Native
-device emit and receive never block a host thread: emit is an event record,
-receive is an event wait, retirement is event polling. If a profile shows a
-host stall inside tensor handling, look for one of these calls (or a foreign
-staging copy at a catalog boundary) — not the runtime's fences.
+These three are the entire *author-facing* blocking surface of the tensor data
+path. Native device emit and receive never block a host thread: emit is an
+event record, receive is an event wait, retirement is event polling. The
+runtime has one automatic host-ordering exception for cross-process
+pinned-host descriptor schemas, described below. If a profile shows a host
+stall inside tensor handling, look for one of these calls, that scoped
+exception, or a foreign staging copy at a catalog boundary.
 
 <Warning>
   Budget host access off the per-frame path. `synchronize_for_host()` and the
@@ -278,13 +286,14 @@ staging copy at a catalog boundary) — not the runtime's fences.
 ## Crossing process boundaries: the generation fence
 
 CUDA events are process-local, so a cross-process boundary cannot reuse the
-in-process readiness event. Instead, the transport records a **generation
-fence** on the producer's stream at commit, before the sample's descriptor is
-armed for delivery. The importing process waits on that fence *on its own
-consumer stream* before the tensor is exposed to typed code — implemented with
-stream-level operations, so the device path crosses the process boundary
-without ever blocking a host thread. Release follows the same discipline: the
-exporting side's slot is not recycled until every importer's claim retires.
+in-process readiness event. For a stream-ordered device contract, the
+transport records a **generation fence** on the producer's stream at commit,
+before the sample's descriptor is armed for delivery. The importing process
+waits on that fence *on its own consumer stream* before the tensor is exposed
+to typed code — implemented with stream-level operations, so the device path
+crosses the process boundary without ever blocking a host thread. Release
+follows the same discipline: the exporting side's slot is not recycled until
+every importer's claim retires.
 
 One exception is worth knowing: publishing a *foreign* device tensor through a
 boundary whose frozen contract requires host memory performs one blocking
@@ -293,6 +302,29 @@ shared across all attached subscribers, but it is a real host sync — keep
 foreign device tensors away from host-contract boundaries on latency-critical
 paths. A device-contract boundary instead enqueues one same-device copy plus
 the generation fence on the producer stream, with no host block.
+
+### Pinned-host descriptor schemas are host-ordered
+
+A cross-process descriptor-backed Tensor schema with
+`MemoryKind::kPinnedHost` is a scoped exception to the stream model above. The
+compiler treats this service as host-ordered on both sides: it emits no Tensor
+device resource or CUDA service stream for the producer or consumer. An
+operator whose only Tensor obligation is this endpoint therefore receives a
+default `ExecutionContext::cuda_stream()` (`cuda_stream().get() == nullptr`),
+not a runtime-managed non-blocking stream.
+
+Write a plan-owned pinned-host schema loan through its host writer. The CUDA
+stream writer rejects this topology because there is no compiler-owned stream
+to authorize. Before invoking the receiving operator, the runtime completes
+the imported producer-readiness contract with a host synchronization. This
+can block once per received sample; there is no consumer-stream event wait to
+inspect in the execution plan.
+
+Use `MemoryKind::kCudaDevice` when CUDA must produce or consume a
+descriptor-backed schema without that host synchronization. Its cross-process
+provider carries the explicit device placement and planned streams needed for
+device-to-device staging and consumer ordering. This pinned-host rule applies
+to every graph, whether or not it uses CUDA Green Contexts.
 
 <Warning>
   **One graph, one vocabulary.** Inside a graph, operators communicate through
@@ -313,12 +345,14 @@ for the client side, see
 
 ### Sized cold, borrowed hot
 
-A tensor pool exists only where you declared it: `produces_tensor(layout)`
-plus `tensor_allocation(bounds)` on the output. The bounds are hard
-compile-time caps — and a **zero** `max_rank` or `max_byte_span` means
+A Tensor pool exists only where one `TensorOutputSpec` passed to
+`produces_tensor()` selects `storage = TensorOutputStorage::kRuntimePool` and
+provides a finite slot bound, either literally in the spec or through a
+`TensorByteSpanExpression` resolved while compiling the plan. Literal bounds
+are hard compile-time caps — and a **zero** `max_rank` or `max_byte_span` means
 *reject allocation*, not "unbounded." The compiler sizes the slot count from
-your declared bounds together with the graph's queue, fanout, cache, and
-history capacities, so the pool can cover every claim the plan admits.
+the resolved bound together with the graph's queue, fanout, cache, and history
+capacities, so the pool can cover every claim the plan admits.
 
 Physical allocation happens exactly once, on the cold path: the runtime
 materializes every pool's backing, per-slot metadata, and CUDA event inventory
@@ -329,6 +363,239 @@ call only *borrows* a preallocated slot: no `cudaMalloc`, no growth, no
 fallback allocation, ever. (See
 [lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
 for where cold materialization sits in the operator lifecycle.)
+
+### Derive slot bytes from deployment parameters
+
+A runtime-pooled output does not have to hard-code its slot byte capacity in
+`setup()`. A bounded integral shape Parameter can provide the contiguous byte
+span when the plan is compiled:
+
+```cpp
+spec.output(output, "output")
+    .produces_tensor(
+        holoscan::TensorOutputSpec{
+            .representation = {
+                .memory_kind = holoscan::MemoryKind::kCudaDevice,
+                .dtype = kByteDtype,
+                .rank = 3U,
+            },
+            .storage = holoscan::TensorOutputStorage::kRuntimePool,
+        },
+        holoscan::parameter_contiguous_byte_span(
+            holoscan::param_ref<&ResizeParams::output_shape>()));
+```
+
+The expression is stable setup metadata. Compilation reads the accepted
+generation-zero Parameter value, checks the shape length against the exact
+rank, performs overflow-checked arithmetic, and writes the result into the
+ordinary `TensorAllocationPlanRecord`. Runtime materializes that ordinary
+finite pool and does not retain or evaluate the expression.
+
+Use `input_max_byte_span(input)` to start with a connected producer's proven
+finite byte bound. After embedded-Graph input and output aliases are resolved,
+the input must have exactly one concrete producer with a runtime-pool
+allocation, a bounded Tensor contract, or an imported external-topic bound.
+This supports both parent-to-child and child-to-parent embedded-Graph
+connections. Disconnected, fan-in, and otherwise unbounded dependencies are
+rejected while the plan is compiled. Closed, checked operations can then apply
+multiplication, ceiling division, maximum selection, or alignment. For
+example, packed RGBA-to-grayscale conversion can use
+`input_max_byte_span(input).ceiling_divided_by(tensor_byte_span(4U))`.
+That ratio is not valid when the producer's bound includes padded rows or an
+otherwise non-packed layout; use a conservative bound or another formula whose
+relationship is guaranteed by the input contract.
+
+Inspect `ExecutionPlan::tensor_byte_span_derivations()` together with
+`tensor_allocations()` to explain memory use. The derivation reports resolved
+per-slot bytes; the allocation remains authoritative for slot count and
+aggregate bytes. The
+[`derived_tensor_pool_capacity` example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/derived_tensor_pool_capacity/cpp)
+prints all three values and contrasts a configured resize, a checked packed
+grayscale formula, and a conservative input-derived bound.
+
+Expressions admit at most 32 nodes, depth 16, eight dependencies, and eight
+shape extents. A Graph-level Tensor override cannot replace a derived output's
+runtime-pool allocation or capacity. A compatible top-level pass-through
+logical or transfer refinement may narrow how the output is used while the
+setup-derived pool remains authoritative. For descriptor-backed schemas,
+declare the expression on the selected field with
+`tensor_field(selector).produces_tensor(spec, expression)`; the port-level
+derived overload is reserved for raw Tensor outputs, and multi-Tensor
+refinements likewise require field scope.
+
+<Warning>
+  A capacity-affecting Parameter must be compile-time or
+  `.recompile_required()` and must not be `.sensitive()`. Compilation must read
+  the generation-zero value to derive public resource geometry, which is
+  incompatible with the redaction contract of a sensitive field. Changing an
+  eligible value requires compiling a **new execution
+  plan and rematerializing its resources**, not rebuilding or relinking the C++
+  binary, and it cannot be applied as a live Runtime Parameter update to an
+  already materialized pool.
+</Warning>
+
+### Size queue entries from nominal rates
+
+Byte-span derivation answers **how many logical payload bytes fit in one
+slot**. Rate-aware queue sizing answers **how many logical entries an edge and
+its provider must cover**. The compiler keeps those analyses independent until
+it joins their immutable results by stable pool identity:
+
+```text
+per-slot bytes = TensorByteSpanExpression result
+logical payload capacity = per-slot bytes × final logical provider entries
+```
+
+Runtime receives concrete plan or generation records. It does not reevaluate a
+byte expression, multiply rates, walk the graph, observe traffic to tune a
+queue, or resize storage from `compute()`.
+
+Declare rate provenance on the port that owns it:
+
+```cpp
+spec.output(camera_frames, "camera_frames")
+    .nominal_rate(holoscan::Rate::hz(60U));
+
+spec.input(frames, "frames")
+    .expected_rate(holoscan::Rate::hz(60U));
+
+spec.output(thumbnails, "thumbnails")
+    .follows(frames, holoscan::RateRatio{1U, 4U});
+```
+
+A connected upstream output is authoritative for the input. `expected_rate()`
+is a weaker fallback and comparison hint, used for sizing only when upstream
+rate metadata is positively absent and the temporal contract supplies a finite
+accumulation horizon. `follows()` derives a rate from an input owned by the
+same Operator. It does not select a trigger, call `compute()`, consume input, or
+force an output emission; the Operator's temporal contract remains the only
+scheduling authority.
+
+The installed
+[`rate_aware_ports` example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/rate_aware_ports)
+checks the fixed, one-to-one, and 1/4 declaration chain; the camera-driven
+1 kHz IMU calculation (34 logical entries at the default headroom); an exact
+explicit-depth sibling; and the weaker fallback used only when upstream rate
+metadata is genuinely undeclared.
+
+For an omitted queue depth and a proven finite horizon, the compiler uses exact
+rational arithmetic:
+
+```text
+nominal_arrivals = ceil(resolved_rate × accumulation_horizon)
+recommendation   = ceil(nominal_arrivals × headroom_ratio)
+automatic_depth  = max(hard_floor, recommendation)
+
+admitted_ceiling = max(
+    hard_floor,
+    ceil(ceil(max_nominal_rate × accumulation_horizon) × headroom_ratio))
+```
+
+The hard floor is semantic rather than statistical. Within each admitted
+scenario, the compiler takes the maximum of mutually alternative contributors,
+sums groups that represent distinct simultaneously live storage, and finally
+takes the maximum across mutually exclusive scenarios. Minimum queue, producer
+burst, selector retention, and window retention therefore compose without
+double-counting two views of the same entries.
+
+The default headroom ratio is `RateRatio{2, 1}`. It is a compile-wide release
+policy, not a port-level "safe factor":
+
+```cpp
+holoscan::CompileOptions options;
+options.automatic_queue_sizing.headroom_ratio = holoscan::RateRatio{3U, 2U};
+const holoscan::ExecutionPlan plan = holoscan::compile(graph, options);
+```
+
+The ratio changes only the soft nominal-arrival recommendation. It is not a
+jitter envelope, a burst bound, a scheduling instruction, or a safety
+guarantee. Profiles that require bounded arrival evidence reject nominal-only
+metadata because increasing a queue does not prove a maximum arrival process.
+
+An explicit depth remains exact authority:
+
+```cpp
+graph.add_flow(source->frames, recorder->frames);  // automatic when evidence is sufficient
+graph.add_flow(source->frames,
+               preview->frames,
+               holoscan::ConnectionOptions{.queue_depth = 4U});  // exactly four
+```
+
+For a rate-aware edge, an explicit depth below a semantic hard floor fails
+compilation. A depth at or above that floor but below the nominal recommendation
+is preserved and receives a warning. Pool-capacity lowering uses the explicit
+four-entry obligation for that edge; it does not silently substitute a larger
+rate recommendation. A physical provider may still reserve additional entries
+for other proven loans, histories, caches, or retirement records, but those
+entries never expand the edge's active backpressure/drop semantics.
+
+The `derived_tensor_pool_capacity` example combines the two dimensions. Its
+finite-maximum lifecycle graph uses a 6 MiB Parameter-derived slot bound, an
+automatic edge that is 8 entries at the selected 60 Hz and 16 over the 120 Hz
+admitted domain, four retained-history entries, one producer loan, and one
+retirement entry:
+
+```text
+active:    8 + 4 + 1 + 1 = 14 entries; 14 × 6 MiB =  84 MiB
+admitted: 16 + 4 + 1 + 1 = 22 entries; 22 × 6 MiB = 132 MiB
+```
+
+These are logical payload-capacity products, not necessarily the provider's
+physical reserved bytes. Alignment, allocator metadata, per-entry stride,
+rounding, or shared backing may differ. Inspection preserves unavailable
+physical values as unavailable rather than reporting zero.
+
+Use `ExecutionPlan::port_rates()`, `accumulation_horizons()`,
+`hard_floor_contributors()`, `queue_sizing_recipes()`,
+`pool_capacity_dependencies()`, and `provider_allocation_plans()` to explain
+the cold recipe. During a run, `ctx.rate(port)` gives an O(1), allocation-free
+`PortRateView` in `LifecycleContext` or `ExecutionContext`, and
+`RunSession::capture_rate_generations()` returns owning cold evidence for the
+published generation and latest rejected candidate.
+
+For a review or diagnostic tool that needs one joined edge explanation, call
+`render_rate_queue_inspection(plan, snapshot, generation, edge, format)`. It joins the immutable
+plan recipe with the selected session generation without importing, mutating, or resizing
+anything:
+
+```cpp
+if (const auto* published = snapshot->published(); published != nullptr) {
+  const auto human = holoscan::render_rate_queue_inspection(
+      plan, *snapshot, published->rate_generation, edge.edge,
+      holoscan::RateQueueInspectionFormat::kHumanText);
+  const auto json = holoscan::render_rate_queue_inspection(
+      plan, *snapshot, published->rate_generation, edge.edge,
+      holoscan::RateQueueInspectionFormat::kCanonicalJson);
+  // Check `human` and `json` before consuming their rendered values.
+}
+
+if (const auto* rejected = snapshot->last_rejected(); rejected != nullptr) {
+  const auto rejected_json = holoscan::render_rate_queue_inspection(
+      plan, *snapshot, rejected->rate_generation, edge.edge,
+      holoscan::RateQueueInspectionFormat::kCanonicalJson);
+  // A diagnostic tool can report this candidate independently of the published one.
+}
+```
+
+The two accessors are independently nullable. In particular, the first lifecycle candidate can
+fail before any generation is published: snapshot capture then succeeds with
+`published() == nullptr` and only `last_rejected()` populated. Always branch on the accessor result
+before selecting a generation for inspection.
+
+Human text is line-oriented and review-friendly; canonical JSON is deterministic machine-readable
+inspection output. Neither representation is the private execution-plan artifact or a reload API.
+The renderer exposes the logical payload product (`per-slot bytes × final logical provider
+entries`) separately from provider reservation bytes; a reservation that was not reported remains
+`null`/unavailable rather than being invented as zero. It emits a paste-ready exact
+`ConnectionOptions{.queue_depth = N}` only when automatic rate-and-contract sizing selected the
+active depth. Explicit depth remains authoritative and is reported without a replacement pin.
+The `derived_tensor_pool_capacity` example exercises both renderings against its real published
+lifecycle generation and checks the canonical schema marker.
+
+The private-v4 artifact writer/finalizer includes the immutable recipe and
+capability evidence. There is no persisted `ExecutionPlan` importer or
+reconstructor in this release; `plan.json()` is canonical inspection output,
+not a reload API.
 
 ### Exhaustion fails fast — by design
 
@@ -355,15 +622,19 @@ registrations of the same stream are deduplicated and do not consume capacity.
 
 <Anchor id="preview-limitations" />
 
-## EA1 limitations
+## Current limitations
 
 The current release draws four hard lines you should plan around:
 
 - **One device per operator.** Every tensor input, output, and boundary
   obligation of a single operator must resolve to one device, because
   `ExecutionContext` exposes exactly one compute stream. A conflicting
-  placement rejects at compile time, and CUDA-backed pools require an explicit
-  device binding — the compiler never silently infers device zero.
+  placement rejects at compile time. Every producer whose `TensorOutputSpec`
+  requests a runtime pool in `kCudaDevice` or `kCudaManaged` memory must be
+  assigned with `CompileOptions::deployment.bind_tensor_output_device` (or an
+  equivalent deployment binding). This is a general Holoscan 5 requirement,
+  not a requirement specific to Vision. Omitting the binding makes compilation
+  fail because the compiler never silently infers device zero.
 - **No cross-device copy.** The runtime does not insert device-to-device
   transfers between operators placed on different GPUs, and DLPack
   import/export refuses a request that would require copying to another
@@ -372,14 +643,15 @@ The current release draws four hard lines you should plan around:
   pools work within a process, but there is no cross-process transport
   representation for managed storage — a plan that would need one fails closed
   at compile rather than degrading to a hidden copy.
-- **Unpooled pass-through emits skip memory-kind validation.** An output that
-  calls `emit(Tensor)` without `tensor_allocation()` owns no pool and declares
-  no physical layout, so the receive side performs **no host/device check at
-  all** — whatever was emitted is handed over. (Explicitly declared,
-  conflicting producer/consumer layouts still reject at authoring time, and a
-  *pooled* producer's frozen memory kind is enforced on every receive, failing
-  with `kProtocolError` on mismatch.) Prefer pooled outputs wherever a
-  consumer declares `expects_tensor()` expectations. See
+- **Pass-through outputs do not provide runtime-owned storage.** An output
+  whose `TensorOutputSpec` keeps the default `kPassThrough` storage intent
+  publishes caller-supplied backing instead of borrowing from a runtime pool.
+  Any `TensorInputSpec` memory-kind, dtype, or rank requirements declared
+  by the consumer are nevertheless checked before the received value enters
+  its cache; a mismatch fails with `kProtocolError`. Explicitly conflicting
+  producer and consumer declarations also reject during authoring. Select
+  `kRuntimePool` with finite output bounds when the runtime must provision
+  backing storage rather than merely validate pass-through values. See
   [payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules)
   for the full validation matrix.
 
@@ -400,8 +672,14 @@ The current release draws four hard lines you should plan around:
   contract.
 - Blocking lives only in `synchronize_for_host()` / `copy_to_host*()`; catalog
   boundaries use a generation fence with no host block on the device path.
+- Cross-process pinned-host descriptor schemas are host-ordered: use the host
+  writer, expect one receive-side host synchronization per sample, and choose
+  CUDA-device storage when the schema path must remain stream-ordered.
 - Pools materialize cold before arming and fail fast: `allocate_tensor()`
   borrows or returns `kResourceExhausted` — no hidden waits, no growth, and
   bounded fanout release-stream caps that fail closed.
+- Parameter-derived slot bytes are resolved when a new plan is compiled;
+  Runtime consumes the ordinary finite allocation and performs no expression
+  evaluation while the graph runs.
 
 Next: [Configuring applications](/holoscan/sdk-user-guide/configuration/configuring-applications).

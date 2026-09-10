@@ -78,7 +78,7 @@ From this `cpp/` folder, `CMakeLists.txt` is the standalone `cmake -S .`
 entry point and forwards that mode to `CMakeLists.min.txt`:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 
@@ -167,7 +167,7 @@ from a `TunerScopeId` — 16 OS-entropy bytes rendered as 32 lowercase hex
 characters. These are deliberately *routing* identity, not authorization:
 the actual credential is minted during the bootstrap GET as a scoped,
 HttpOnly, SameSite=Strict cookie valid only under that path, for one logical
-client (`max_clients` supports only 1 in EA1). Combined with the
+client (`max_clients` supports only 1 in baseline). Combined with the
 loopback-only bind (`kIpv4` → exactly 127.0.0.1, no fallback), printing the
 URL — as this example does, and as `run_with_tuner()`'s `kLogOrigin` INFO
 record does for the blocking facade — leaks nothing a local attacker could

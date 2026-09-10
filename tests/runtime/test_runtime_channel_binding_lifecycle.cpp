@@ -84,6 +84,7 @@ class MonitoredImportSinkOperator final : public Operator<MonitoredImportSinkPar
 // REQ: RUNTIME-022
 // REQ: RUNTIME-024
 // REQ: RUNTIME-026
+// REQ: SYSTEM-024
 TEST(RuntimeChannelBinding,
      MonitoredImportPreservesProtectedDataAndExplicitEosAcrossGenerationFencedRebind) {
   enum class RebindForm : std::uint8_t { kScopedReset, kFullReset, kLifecycleRestart };
@@ -247,6 +248,37 @@ TEST(RuntimeChannelBinding,
     // lane-polled even before a typed cache revision is visible.
     EXPECT_TRUE((*binding)->poll_target().has_value());
 
+    const std::array affected{sink_vertex};
+    const auto apply_rebind = [&]() -> expected<void, Error> {
+      switch (rebind_form) {
+        case RebindForm::kScopedReset:
+          return (*session)->reset(sink_vertex);
+        case RebindForm::kFullReset:
+          return (*session)->reset();
+        case RebindForm::kLifecycleRestart:
+          return (*session)->commit_restart(sink_vertex, affected);
+      }
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    };
+
+    // Peer absence alone is not an incarnation fence. Every reset form rejects before changing
+    // the input state when no accepted operation and explicit EOS identify the old generation.
+    const auto unattached_before =
+        RuntimeChannelSessionTestAccess::input_reset_state(**session, sink_input);
+    ASSERT_TRUE(unattached_before) << runtime_error_message(unattached_before.error());
+    auto unsupported = apply_rebind();
+    ASSERT_FALSE(unsupported);
+    EXPECT_EQ(unsupported.error().code, ErrorCode::kNotSupported);
+    const auto unattached_after =
+        RuntimeChannelSessionTestAccess::input_reset_state(**session, sink_input);
+    ASSERT_TRUE(unattached_after) << runtime_error_message(unattached_after.error());
+    EXPECT_EQ(unattached_after->active_generation, unattached_before->active_generation);
+    EXPECT_EQ(unattached_after->view_generation, unattached_before->view_generation);
+    EXPECT_EQ(unattached_after->producer_epoch, unattached_before->producer_epoch);
+    EXPECT_EQ(unattached_after->latched_producer_generation,
+              unattached_before->latched_producer_generation);
+    EXPECT_EQ(unattached_after->end_of_stream_received, unattached_before->end_of_stream_received);
+
     auto external_runtime = ChannelRuntime::create();
     ASSERT_TRUE(external_runtime) << runtime_error_message(external_runtime.error());
     auto created_publisher =
@@ -362,7 +394,6 @@ TEST(RuntimeChannelBinding,
     auto live_peer_full_reset = (*session)->reset();
     ASSERT_FALSE(live_peer_full_reset);
     EXPECT_EQ(live_peer_full_reset.error().code, ErrorCode::kBackpressured);
-    const std::array affected{sink_vertex};
     auto live_peer_restart = (*session)->commit_restart(sink_vertex, affected);
     ASSERT_FALSE(live_peer_restart);
     EXPECT_EQ(live_peer_restart.error().code, ErrorCode::kBackpressured);
@@ -402,18 +433,6 @@ TEST(RuntimeChannelBinding,
     }
     const std::size_t pending_updates_before = receiver->pending_update_count();
 
-    const auto apply_rebind = [&]() -> expected<void, Error> {
-      switch (rebind_form) {
-        case RebindForm::kScopedReset:
-          return (*session)->reset(sink_vertex);
-        case RebindForm::kFullReset:
-          return (*session)->reset();
-        case RebindForm::kLifecycleRestart:
-          return (*session)->commit_restart(sink_vertex, affected);
-      }
-      return make_unexpected(Error{ErrorCode::kProtocolError});
-    };
-
     std::binary_semaphore reset_waiting{0};
     ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_clock_health_lock_observer(
         **session, &reset_waiting, [](void* state) noexcept {
@@ -428,6 +447,15 @@ TEST(RuntimeChannelBinding,
     EXPECT_EQ(status_before_release, std::future_status::timeout);
     auto rebound = rebound_future.get();
     ASSERT_TRUE(rebound) << runtime_error_message(rebound.error());
+
+    // Channel reset/restart publishes the transport, input, and producer epochs. The enclosing
+    // Runtime transaction advances its independently owned scheduler source afterward; that
+    // distinct cut reopens an EOS-retired readiness binding without exposing successor data under
+    // the predecessor source generation.
+    auto advanced_source_generation = (*binding)->advance_source_generation();
+    ASSERT_TRUE(advanced_source_generation)
+        << runtime_error_message(advanced_source_generation.error());
+    EXPECT_EQ(*advanced_source_generation, 2U);
     const auto input_after =
         RuntimeChannelSessionTestAccess::input_reset_state(**session, sink_input);
     ASSERT_TRUE(input_after) << runtime_error_message(input_after.error());
@@ -610,6 +638,81 @@ TEST(RuntimeChannelBinding, FullResetPreflightsEveryProducerEpochBeforeMutation)
   EXPECT_EQ(second_after->occupied_samples, second_before->occupied_samples);
   EXPECT_TRUE((*session)->temporal_sample(first_event->port, first_event->source_sequence));
   EXPECT_TRUE((*session)->temporal_sample(second_event->port, second_event->source_sequence));
+}
+
+// Whole-session cleanup and ordinary slot retirement must erase the same complete set of slot
+// claims. This regression saturates every independently reset field before exercising the public
+// administrative reset.
+// REQ: RUNTIME-020
+// REQ: RUNTIME-024
+TEST(RuntimeChannelBinding, FullResetUsesCanonicalResetForEveryRetainedSlotField) {
+  // Source --output--> input-- sink
+  // Key setup: retain one typed sample, then saturate every private slot and subscriber reset
+  // field through the source-tree conformance seam.
+  SessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto binding =
+      (*session)->create_readiness_binding(VertexId{2U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(1U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 8U,
+                                           });
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{71}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  auto event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(event) << runtime_error_message(event.error());
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+  ASSERT_TRUE(
+      RuntimeChannelSessionTestAccess::saturate_single_occupied_reset_state(**session, PortId{2U}));
+  const auto before = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(before) << runtime_error_message(before.error());
+  ASSERT_EQ(before->uncleared_sample_slots, 1U);
+  ASSERT_FALSE(before->subscriber_sequence_state_reset);
+
+  ASSERT_TRUE((*session)->reset());
+
+  // Key assertion: the canonical slot primitive clears every payload/claim/temporal field, while
+  // clear_samples() retains its subscriber-level sequence and EOS reset obligations.
+  const auto after = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(after) << runtime_error_message(after.error());
+  EXPECT_EQ(after->occupied_samples, 0U);
+  EXPECT_EQ(after->pending_direct_ingress_samples, 0U);
+  EXPECT_EQ(after->uncleared_sample_slots, 0U);
+  EXPECT_EQ(after->next_arrival_sequence, 1U);
+  EXPECT_FALSE(after->end_of_stream_received);
+  EXPECT_TRUE(after->subscriber_sequence_state_reset);
+}
+
+// Source-tree reset-counter injection is a cold-session seam. Rejecting a live session prevents
+// test-only generation writes from racing the pump or an armed activation.
+TEST(RuntimeChannelBinding, ResetCounterInjectionRejectsLiveSession) {
+  // Source --output--> input-- sink
+  SessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+
+  // Key setup: attempt to mutate input reset counters after startup has armed the session.
+  const auto injected =
+      RuntimeChannelSessionTestAccess::set_input_reset_counters(**session, PortId{2U}, 1U, 1U, 1U);
+
+  // Key assertion: the live session rejects the source-tree-only mutation as backpressured.
+  ASSERT_FALSE(injected);
+  EXPECT_EQ(injected.error().code, ErrorCode::kBackpressured);
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
 }
 
 // Scoped reset/restart classify retryable quiescence failures separately from terminal bounded-

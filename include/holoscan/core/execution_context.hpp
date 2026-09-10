@@ -21,6 +21,7 @@
 #include <holoscan/core/operator_ref.hpp>
 #include <holoscan/core/parameter.hpp>
 #include <holoscan/core/parameter_compute_control.hpp>
+#include <holoscan/core/rate.hpp>
 #include <holoscan/core/sample.hpp>
 #include <holoscan/core/tag.hpp>
 #include <holoscan/time/clock_registry.hpp>
@@ -36,10 +37,12 @@ class OperatorRuntimeAccess;
 
 /// @brief Borrow the runtime services and immutable evidence for one Operator callback.
 ///
-/// The facade contains one hidden-state pointer and is valid only during `compute()`. All queries
+/// The facade contains one hidden-state pointer and is valid only during \c compute(). All queries
 /// are O(1), nonblocking, and allocation-free. It exposes no graph mutation, scheduler wait, clock
-/// registry lookup, or `reference_time()` operation. Restart methods enqueue only through an
+/// registry lookup, or \c reference_time() operation. Restart methods enqueue only through an
 /// active lifecycle-transaction binding and otherwise return a typed disabled error.
+/// Retaining or using the facade, or any view borrowed from it, after \c compute() returns is
+/// invalid; no post-callback safety or no-op behavior is promised.
 class HOLOSCAN_CORE_EXPORT ExecutionContext {
  public:
   /// @brief Return the activation identity.
@@ -166,9 +169,67 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   [[nodiscard]] expected<LifecycleRestartReceipt, Error> request_restart(
       OperatorRef target, LifecycleRestartOptions options = {}) noexcept;
 
+  /// @brief Return the atomically published rate view for one owned input.
+  /// @tparam T Exact published payload type.
+  /// @param input Exact \c Input member subobject registered by this callback's Operator during
+  /// \c setup(). A copied declaration, foreign Operator declaration, or output declaration does
+  /// not carry query authority.
+  /// @return Current published rate view for \p input, or a typed error without state change.
+  /// @retval ErrorCode::kInvalidArgument The context is not bound, the declaration is not the
+  /// exact registered member subobject, the port is not owned by this Operator, or its direction
+  /// is not input.
+  /// @retval ErrorCode::kNotReady No rate generation has been published for this run.
+  /// @note Call only during the active \c compute() callback and do not retain the context after
+  /// callback return. The returned \c PortRateView is a value and may be retained. The query is
+  /// O(1), allocation-free, nonblocking, and observes one atomically pinned generation.
+  template <PublishedPayload T>
+  [[nodiscard]] expected<PortRateView, Error> rate(const Input<T>& input) const noexcept {
+    return rate_port(static_cast<const void*>(&input), false);
+  }
+
+  /// @brief Return the atomically published rate view for one owned output.
+  /// @tparam T Exact published payload type.
+  /// @param output Exact \c Output member subobject registered by this callback's Operator during
+  /// \c setup(). A copied declaration, foreign Operator declaration, or input declaration does
+  /// not carry query authority.
+  /// @return Current published rate view for \p output, or a typed error without state change.
+  /// @retval ErrorCode::kInvalidArgument The context is not bound, the declaration is not the
+  /// exact registered member subobject, the port is not owned by this Operator, or its direction
+  /// is not output.
+  /// @retval ErrorCode::kNotReady No rate generation has been published for this run.
+  /// @note Call only during the active \c compute() callback and do not retain the context after
+  /// callback return. The returned \c PortRateView is a value and may be retained. The query is
+  /// O(1), allocation-free, nonblocking, and observes one atomically pinned generation.
+  template <PublishedPayload T>
+  [[nodiscard]] expected<PortRateView, Error> rate(const Output<T>& output) const noexcept {
+    return rate_port(static_cast<const void*>(&output), true);
+  }
+
+  /// @brief Request explicit immediate whole-run success.
+  /// @note This call is bounded, nonblocking, and allocation-free. It closes the session-wide
+  /// callback-admission gate at one monotonic publication point. Callbacks admitted before that
+  /// point may retire; no callback is admitted afterward. After mandatory cleanup, Runtime reports
+  /// \c RunTermination::kRequestedCompleted unless a stop or failure takes precedence.
+  /// @warning Requested completion is imperative cancellation, not EOS or natural completion. It
+  /// does not guarantee source closure, downstream drain, or delivery of queued samples.
+  /// @warning This method may be called only through the \c ExecutionContext of the active
+  /// \c compute() callback. Using a retained context after callback return is invalid.
+  void request_completion() noexcept;
+
+  /// @brief Request cooperative stop of the current run.
+  /// @note This call is bounded, nonblocking, and allocation-free. It closes the same session-wide
+  /// callback-admission gate and reports \c RunTermination::kStopped after mandatory cleanup unless
+  /// a failure occurs. A stop request promotes an earlier completion request; completion never
+  /// weakens stop.
+  /// @warning This method may be called only through the \c ExecutionContext of the active
+  /// \c compute() callback. Using a retained context after callback return is invalid.
+  void request_stop() noexcept;
+
  private:
   explicit ExecutionContext(detail::ExecutionContextState* state) noexcept : state_(state) {}
   [[nodiscard]] const void* parameter_address(const void* exact_type) const noexcept;
+  [[nodiscard]] expected<PortRateView, Error> rate_port(const void* declaration,
+                                                        bool output) const noexcept;
 
   detail::ExecutionContextState* state_{};
 

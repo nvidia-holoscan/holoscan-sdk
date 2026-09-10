@@ -58,7 +58,7 @@ class OperatorRuntimeAccess {
   /// @brief Replace the session-owned Operator aggregate with a published runtime generation.
   /// @param op Fresh session-owned Operator whose callbacks are quiesced.
   /// @param value Exact aggregate value from the Operator's pinned generation store.
-  /// @note The EA1 runtime invokes this only for the admitted trivially copyable generation
+  /// @note The baseline runtime invokes this only for the admitted trivially copyable generation
   /// strategy immediately before a legacy start() or stop() callback. A rollback or restoration
   /// phase replaces the value again before invoking user code.
   static void replace_runtime_parameter_value(OperatorBase& op, const void* value) noexcept {

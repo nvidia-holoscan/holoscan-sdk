@@ -206,6 +206,18 @@ struct ChannelSampleDescriptor {
 static_assert(std::is_standard_layout_v<ChannelSampleDescriptor>);
 static_assert(std::is_trivially_copyable_v<ChannelSampleDescriptor>);
 static_assert(sizeof(ChannelSampleDescriptor) == 72U);
+static_assert(alignof(ChannelSampleDescriptor) == 8U);
+static_assert(offsetof(ChannelSampleDescriptor, magic) == 0U);
+static_assert(offsetof(ChannelSampleDescriptor, abi_version) == 4U);
+static_assert(offsetof(ChannelSampleDescriptor, payload_kind) == 6U);
+static_assert(offsetof(ChannelSampleDescriptor, flags) == 8U);
+static_assert(offsetof(ChannelSampleDescriptor, expected_recipient_count) == 12U);
+static_assert(offsetof(ChannelSampleDescriptor, process_id) == 16U);
+static_assert(offsetof(ChannelSampleDescriptor, sidecar_token) == 24U);
+static_assert(offsetof(ChannelSampleDescriptor, generation) == 32U);
+static_assert(offsetof(ChannelSampleDescriptor, schema_id) == 40U);
+static_assert(offsetof(ChannelSampleDescriptor, sequence) == 56U);
+static_assert(offsetof(ChannelSampleDescriptor, byte_size) == 64U);
 
 /// Map a private Channel representation to the Core whole-sample semantic kind.
 ///

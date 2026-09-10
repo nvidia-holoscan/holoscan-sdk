@@ -62,7 +62,7 @@ enum class ParameterFieldUpdateDisposition : std::uint8_t {
   kCompileTime = 2,             ///< Field is immutable for the accepted plan.
   kLifecycleDeferred = 3,       ///< Lifecycle integration is not active for this compile.
   kRecompileRequired = 4,       ///< Updating the field requires a newly compiled plan.
-  kUnsupportedLogicalType = 5,  ///< EA1 has no bounded scalar patch representation.
+  kUnsupportedLogicalType = 5,  ///< baseline has no bounded scalar patch representation.
   kReplacementUnavailable = 6,  ///< No exact non-throwing scalar replacement route exists.
   kProfileDisallowed = 7,       ///< Effective profile rejects active mutation.
   kCapacityUnavailable = 8,     ///< Finite capacity validation rejected enablement.
@@ -85,7 +85,7 @@ enum class ParameterMaterializationStrategy : std::uint8_t {
   kRejected = 3,        ///< No strategy satisfies the effective profile and schema evidence.
 };
 
-/// @brief Select the only ordinary catalog projection admitted by EA1.
+/// @brief Select the only ordinary catalog projection admitted by baseline.
 enum class ParamCatalogAccessPolicy : std::uint8_t {
   kPublic = 0,  ///< Apply transient/sensitive/internal/profile/codec projection policy.
 };

@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# 03 - model_a's output tensor feeds model_b's input. This tensor-name overlap between
+# output_map[model_a] and input_map[model_b] forces the canonical dispatch path
+# (fallback ladder case H) instead of a fast path -- expected for this scenario.
+model_path_map:
+  model_a: ../models/identity_model.onnx
+  model_b: ../models/identity_model.onnx
+input_map:
+  model_a: [tensor_a_in]
+  model_b: [tensor_ab]
+output_map:
+  model_a: [tensor_ab]
+  model_b: [tensor_b_out]
+parallel_inference: false

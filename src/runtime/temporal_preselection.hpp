@@ -192,7 +192,7 @@ struct UInt128 {
 
   std::uint64_t partial = lhs_low * rhs_low;
   const std::uint64_t low_word = partial & kLowMask;
-  std::uint64_t carry = partial >> 32U;
+  const std::uint64_t carry = partial >> 32U;
 
   partial = lhs_high * rhs_low + carry;
   const std::uint64_t middle_low = partial & kLowMask;

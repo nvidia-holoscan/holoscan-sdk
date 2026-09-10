@@ -26,6 +26,7 @@
 #include <holoscan/core/compile.hpp>
 // Provides generated owning types and schema-trait specializations.
 #include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "compiler/compile_internal.hpp"
@@ -219,15 +220,16 @@ class DescriptorSchemaWorkerProducer final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.output(output_, "output")
         .max_emits_per_compute(1U)
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = memory_kind_,
-            .dtype = DLDataType{kDLUInt, 8U, 1U},
-            .rank = 1U,
-        })
-        .payload_options(PayloadOptions{
-            .schema = schema_identity<schema::ImageT>(),
-            .max_tensor_byte_span = 8U,
-            .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+        .produces_tensor(TensorOutputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = memory_kind_,
+                    .dtype = DLDataType{kDLUInt, 8U, 1U},
+                    .rank = 1U,
+                },
+            .bounds = tensor_bounds(8U),
+            .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                                 InterfaceTensorEmitPolicy::kCopyIfNeeded},
         });
     spec.notification_source(notification_, "notification")
         .capacity(1U)
@@ -258,10 +260,13 @@ class DescriptorSchemaWorkerConsumer final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.input(input_, "input")
         .queue_depth(1U)
-        .expects_tensor(TensorPortLayout{
-            .memory_kind = memory_kind_,
-            .dtype = DLDataType{kDLUInt, 8U, 1U},
-            .rank = 1U,
+        .expects_tensor(TensorInputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = memory_kind_,
+                    .dtype = DLDataType{kDLUInt, 8U, 1U},
+                    .rank = 1U,
+                },
         });
   }
 
@@ -436,8 +441,9 @@ TEST(RunSessionLaneEvidenceTest, ProcessGroupWorkerStartsOnlyItsOwnedExecutionLa
   EXPECT_EQ(placement->apply_count(), 1U);
 }
 
-// Descriptor-backed schema workers need the same frozen CUDA stream on the publisher and importer
-// sides so same-kind pinned/device staging cannot silently fall back through pageable host.
+// Descriptor-backed device-schema workers need frozen CUDA streams on the publisher and importer
+// sides. Pinned-host descriptor staging instead uses caller-supplied producer ordering and needs no
+// runtime-owned CUDA stream on either worker.
 // REQ: CHAN-106
 TEST(RunSessionLaneEvidenceTest, DescriptorSchemaWorkersMaterializeSourceAndTargetDeviceResources) {
   if (cudaFree(nullptr) != cudaSuccess) {
@@ -453,7 +459,8 @@ TEST(RunSessionLaneEvidenceTest, DescriptorSchemaWorkersMaterializeSourceAndTarg
     ASSERT_TRUE(plan.ok()) << plan.json();
     const auto process_roles = detail::ProcessPlacementPlanAccess::process_roles(plan);
     ASSERT_EQ(process_roles.size(), 2U);
-    ASSERT_EQ(plan.tensor_device_resources().size(), 2U);
+    const std::size_t expected_device_resources = memory_kind == MemoryKind::kCudaDevice ? 2U : 0U;
+    ASSERT_EQ(plan.tensor_device_resources().size(), expected_device_resources);
 
     const auto producer_role = std::find_if(
         process_roles.begin(),
@@ -475,8 +482,8 @@ TEST(RunSessionLaneEvidenceTest, DescriptorSchemaWorkersMaterializeSourceAndTarg
     ASSERT_TRUE(consumer_group);
 
     {
-      // Key setup: reconstruct the importer without a live publisher; its exact target-group
-      // resource must still reach lifecycle Start.
+      // Key setup: reconstruct the importer without a live publisher. Device staging materializes
+      // its target-group stream; pinned-host staging reaches Start without one.
       RunSession session = detail::run_async_worker(plan, consumer_group);
       const bool started = DescriptorSchemaWorkerProbeState::wait_for_start(false);
       session.request_stop();
@@ -487,8 +494,8 @@ TEST(RunSessionLaneEvidenceTest, DescriptorSchemaWorkersMaterializeSourceAndTarg
       ASSERT_TRUE(session.diagnostics().empty());
     }
     {
-      // Key assertion: the producer group independently materializes and binds the source stream
-      // required by readiness-ordered schema staging.
+      // Key assertion: the producer independently reaches Start with exactly the storage-ordered
+      // resource shape: a source stream for device staging and none for pinned-host staging.
       RunSession session = detail::run_async_worker(plan, producer_group);
       const bool started = DescriptorSchemaWorkerProbeState::wait_for_start(true);
       session.request_stop();

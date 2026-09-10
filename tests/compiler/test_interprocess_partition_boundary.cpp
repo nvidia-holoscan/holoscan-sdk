@@ -30,6 +30,7 @@
 #include <holoscan/core/temporal_contract.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
+#include "../support/host_unique_test_name.hpp"
 #include "compile_test_graph.hpp"
 #include "compiler/compile_internal.hpp"
 #include "compiler/execution_plan_state.hpp"
@@ -49,11 +50,7 @@ namespace {
 // same service names. Static compiler tests below keep their fixed graph names to verify
 // deterministic lowering.
 [[nodiscard]] std::string unique_runtime_graph_name(const std::string_view base) {
-  static std::atomic<std::uint64_t> counter{};
-  const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
-  return std::string(base) + "-" + std::to_string(static_cast<long long>(::getpid())) + "-" +
-         std::to_string(timestamp) + "-" +
-         std::to_string(counter.fetch_add(1U, std::memory_order_relaxed));
+  return make_host_unique_test_name(base);
 }
 
 // Places "source" in "producer-process" and "target" in "consumer-process".
@@ -96,19 +93,6 @@ namespace {
                              .launch_group = "consumer-process",
                          });
   return placement;
-}
-
-// Maps HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM to the canonical algorithm key
-// expected in the compiled ExecutionPlan. Defaults to serial_baseline when unset.
-[[nodiscard]] std::string_view selected_partition_algorithm() {
-  const char* const selector = std::getenv("HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM");
-  if (selector == nullptr || std::string_view(selector) == "serial_baseline/v1") {
-    return "holoscan.partition.serial_baseline";
-  }
-  if (std::string_view(selector) == "source_chain/v1") {
-    return "holoscan.partition.source_chain";
-  }
-  return {};
 }
 
 // One source fanning out to two independent consumers; used in
@@ -372,6 +356,7 @@ TEST(InterprocessPartitionBoundaryTest, FanoutCoalescingPreservesQueueGeometryAn
 //
 // Planning references: SP32, SP36, SP47, SP-T15, SP-T41.
 // REQ: CHAN-085
+// REQ: COMPILE-068
 TEST(InterprocessPartitionBoundaryTest, AcceptedCoverPreservesLocalityAndLogicalEdgeIdentity) {
   // Key setup: split_fanout_placement collapses both consumers into one process group
   // while keeping the source separate, producing two cross-process edges.
@@ -380,12 +365,10 @@ TEST(InterprocessPartitionBoundaryTest, AcceptedCoverPreservesLocalityAndLogical
       detail::compile_with_process_placement(graph, CompileOptions{}, split_fanout_placement());
   ASSERT_TRUE(plan.ok()) << plan.json();
 
-  const std::string_view expected_algorithm = selected_partition_algorithm();
-  ASSERT_FALSE(expected_algorithm.empty());
   ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
   const AlgorithmKey accepted_algorithm =
       plan.partitioning_plan().accepted_algorithm.value_or(AlgorithmKey{});
-  EXPECT_EQ(accepted_algorithm.id, expected_algorithm);
+  EXPECT_EQ(accepted_algorithm.id, "holoscan.partition.source_chain");
   EXPECT_EQ(accepted_algorithm.version, 1U);
   EXPECT_EQ(plan.scheduler_plan().ready_policy.id, "holoscan.ready.deterministic_serial");
   EXPECT_EQ(plan.scheduler_plan().max_concurrent_activations, plan.execution_partitions().size());
@@ -433,14 +416,9 @@ TEST(InterprocessPartitionBoundaryTest, AcceptedCoverPreservesLocalityAndLogical
   ASSERT_EQ(service.target_process_groups.size(), 1U);
   EXPECT_EQ(service.target_process_groups.front(), service.target_process_group);
 
-  // The baseline uses one partition per process domain. Source-chain is free
-  // to split the two fan-out legs, but both covers retain the same two
-  // cross-process logical edges and their deterministic shared service.
-  if (expected_algorithm == "holoscan.partition.serial_baseline") {
-    EXPECT_EQ(plan.execution_partitions().size(), 2U);
-  } else {
-    EXPECT_EQ(plan.execution_partitions().size(), 3U);
-  }
+  // Production source-chain planning splits the source and both fan-out legs while retaining the
+  // same two cross-process logical edges and their deterministic shared service.
+  EXPECT_EQ(plan.execution_partitions().size(), 3U);
 }
 namespace {
 
@@ -678,13 +656,13 @@ class CrossProcessHostTensorSource final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.output(output, "output")
         .max_emits_per_compute(1U)
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = Storage,
-            .dtype = DLDataType{kDLUInt, 64U, 1U},
-            .rank = 0U,
-        })
-        .tensor_allocation(
-            TensorAllocationBounds{.max_rank = 1U, .max_byte_span = sizeof(std::uint64_t)});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = Storage,
+                               .dtype = DLDataType{kDLUInt, 64U, 1U},
+                               .rank = 0U},
+            .bounds = tensor_bounds(sizeof(std::uint64_t)),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -795,10 +773,10 @@ class CrossProcessHostTensorSink final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.input(input, "input")
         .queue_depth(1U)
-        .expects_tensor(TensorPortLayout{
-            .memory_kind = Storage,
-            .dtype = DLDataType{kDLUInt, 64U, 1U},
-            .rank = 0U,
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = Storage,
+                               .dtype = DLDataType{kDLUInt, 64U, 1U},
+                               .rank = 0U},
         });
   }
 
@@ -884,13 +862,13 @@ class CrossProcessDeviceTensorSource final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.output(output, "output")
         .max_emits_per_compute(1U)
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = MemoryKind::kCudaDevice,
-            .dtype = DLDataType{kDLUInt, 64U, 1U},
-            .rank = 0U,
-        })
-        .tensor_allocation(
-            TensorAllocationBounds{.max_rank = 1U, .max_byte_span = sizeof(std::uint64_t)});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLUInt, 64U, 1U},
+                               .rank = 0U},
+            .bounds = tensor_bounds(sizeof(std::uint64_t)),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -963,10 +941,10 @@ class CrossProcessDeviceTensorSink final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.input(input, "input")
         .queue_depth(1U)
-        .expects_tensor(TensorPortLayout{
-            .memory_kind = MemoryKind::kCudaDevice,
-            .dtype = DLDataType{kDLUInt, 64U, 1U},
-            .rank = 0U,
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLUInt, 64U, 1U},
+                               .rank = 0U},
         });
   }
 
@@ -1242,14 +1220,15 @@ TEST(InterprocessPartitionBoundaryTest, DirectTensorLoanCrossesProcessGroupsWith
   // queue-depth-one contributors in addition to producer and retirement capacity.
   EXPECT_EQ(state->tensor_allocations.front().slot_count, 4U);
   const auto imported_retention =
-      std::find_if(state->pool_capacity_contributors.begin(),
-                   state->pool_capacity_contributors.end(),
-                   [&](const auto& contributor) {
-                     return contributor.pool_id == state->tensor_allocations.front().pool_id &&
-                            contributor.contributor_id.ends_with(".transport-retention");
+      std::find_if(state->pool_capacity_dependencies.begin(),
+                   state->pool_capacity_dependencies.end(),
+                   [&](const auto& dependency) {
+                     return dependency.pool_id == state->tensor_allocations.front().pool_id &&
+                            dependency.origin == PoolClaimOrigin::kTransportRetention;
                    });
-  ASSERT_NE(imported_retention, state->pool_capacity_contributors.end());
-  EXPECT_EQ(imported_retention->maximum_distinct_slots, 1U);
+  ASSERT_NE(imported_retention, state->pool_capacity_dependencies.end());
+  EXPECT_EQ(imported_retention->source, PoolCapacityDependencySource::kQueueSizingRecipe);
+  EXPECT_EQ(imported_retention->mapping_multiplicity, 1U);
   EXPECT_EQ(imported_retention->reasons,
             (std::vector{TensorSlotClaimReason::kSubscriberBorrowOrImport,
                          TensorSlotClaimReason::kDlpackOrFrameworkBorrow}));
@@ -1468,7 +1447,15 @@ TEST(InterprocessPartitionBoundaryTest, DirectCudaTensorLoanPreservesDeviceOrder
   ASSERT_NE(target_resource, state->tensor_device_resources.end());
   EXPECT_EQ(target_resource->pool_count, 0U);
   EXPECT_EQ(target_resource->slot_capacity, 0U);
-  EXPECT_FALSE(target_resource->stream_id.empty());
+  const auto target_stream =
+      std::find_if(state->cuda_compute_streams.begin(),
+                   state->cuda_compute_streams.end(),
+                   [&](const auto& stream) {
+                     return stream.process_group == service.target_process_group &&
+                            stream.device == service.tensor_device;
+                   });
+  ASSERT_NE(target_stream, state->cuda_compute_streams.end());
+  EXPECT_FALSE(target_stream->stream_id.empty());
 
   // Key assertion: kValue bytes arrive read-only after the sink consumes the generation fence,
   // proving device ordering crossed the process boundary without staging the payload.

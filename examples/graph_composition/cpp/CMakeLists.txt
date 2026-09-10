@@ -25,6 +25,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS graph_composition
-    RUNTIME DESTINATION examples/graph_composition/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/graph_composition/cpp"
     COMPONENT holoscan-examples
 )

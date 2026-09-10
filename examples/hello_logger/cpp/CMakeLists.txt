@@ -26,6 +26,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS hello_logger
-    RUNTIME DESTINATION examples/hello_logger/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/hello_logger/cpp"
     COMPONENT holoscan-examples
 )

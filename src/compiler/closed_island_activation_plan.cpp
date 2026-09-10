@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "compiler/execution_plan_lookup.hpp"
 #include "compiler/process_local_channel_plan_validation.hpp"
 
 namespace holoscan::detail {
@@ -82,21 +83,6 @@ namespace {
                     }));
 }
 
-[[nodiscard]] const TemporalTriggerPlanRecord* temporal_trigger_for(
-    const ExecutionPlanState& state, OperatorInstanceId owner) noexcept {
-  const TemporalTriggerPlanRecord* result = nullptr;
-  for (const auto& candidate : state.temporal_triggers) {
-    if (candidate.owner.id != owner) {
-      continue;
-    }
-    if (result != nullptr) {
-      return nullptr;
-    }
-    result = &candidate;
-  }
-  return result;
-}
-
 [[nodiscard]] bool operator_parameters_are_frozen(const ExecutionPlanState& state,
                                                   OperatorInstanceId owner) noexcept {
   const OperatorParameterPlanRecord* parameters = nullptr;
@@ -137,7 +123,7 @@ namespace {
   if (input_port == nullptr) {
     return false;
   }
-  const auto* trigger = temporal_trigger_for(state, owner);
+  const auto* trigger = find_unique_temporal_trigger_by_owner(state, owner);
   if (trigger == nullptr || trigger->kind != TemporalRecordTriggerKind::kEach ||
       trigger->trigger_input != input || !trigger->declared_inputs.empty() ||
       trigger->presence_guaranteed_inputs.size() != 1U ||
@@ -216,7 +202,7 @@ struct ReadinessRootFacts {
 
 [[nodiscard]] std::optional<ReadinessRootFacts> source_readiness_root(
     const ExecutionPlanState& state, VertexId vertex, OperatorInstanceId owner) noexcept {
-  const auto* trigger = temporal_trigger_for(state, owner);
+  const auto* trigger = find_unique_temporal_trigger_by_owner(state, owner);
   if (trigger == nullptr || trigger->trigger_input || !trigger->declared_inputs.empty() ||
       !trigger->presence_guaranteed_inputs.empty() || !trigger->readiness_source ||
       trigger->deadline_ns.has_value() || trigger->violation.has_value()) {
@@ -337,8 +323,13 @@ struct ReadinessRootFacts {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] std::optional<ClosedIslandActivationPlanRecord> derive_edge(
     const ExecutionPlanState& state, const PayloadEdgePlanRecord& edge) noexcept {
+  const bool lifecycle_candidate =
+      std::ranges::any_of(state.queue_sizing_recipes, [&](const auto& recipe) {
+        return recipe.edge == edge.edge && recipe.disposition == PlanDisposition::kAccepted &&
+               recipe.geometry_mode == AllocationGeometryMode::kLifecycleCandidate;
+      });
   if (edge.disposition != PlanDisposition::kAccepted ||
-      state.lifecycle_transaction_capacity.has_value()) {
+      state.lifecycle_transaction_capacity.has_value() || lifecycle_candidate) {
     return std::nullopt;
   }
   const auto* source_port = dense_port(state, edge.source);
@@ -417,7 +408,8 @@ struct ReadinessRootFacts {
   }
 
   const auto root = source_readiness_root(state, source_port->owner, source_factory->operator_id);
-  const auto* successor_trigger = temporal_trigger_for(state, target_factory->operator_id);
+  const auto* successor_trigger =
+      find_unique_temporal_trigger_by_owner(state, target_factory->operator_id);
   if (!root || successor_trigger == nullptr || !successor_trigger->readiness_source) {
     return std::nullopt;
   }

@@ -26,10 +26,12 @@
 
 namespace holoscan::detail {
 
+class RuntimeInputSelectionState;
+
 // Every valid TimePoint accepted by this file must already be normalized into one validated
 // immutable plan/clock-catalog scope. These payload-independent cache records intentionally carry
 // no catalog identity and cannot detect a foreign ClockId that happens to collide numerically.
-// Payload-independent candidate evidence lets EA1-005 prove the causal algorithms without
+// Payload-independent candidate evidence lets HSDK5-005 prove the causal algorithms without
 // acquiring Channel or Tensor ownership. Later bindings retain the actual Sample and lease under
 // the exact same arrival/source identities.
 struct TemporalSampleRecord {
@@ -38,8 +40,30 @@ struct TemporalSampleRecord {
   std::uint64_t producer_epoch{};
   std::uint64_t arrival_sequence{};
 
-  friend constexpr bool operator==(TemporalSampleRecord, TemporalSampleRecord) noexcept = default;
+  friend constexpr bool operator==(const TemporalSampleRecord& left,
+                                   const TemporalSampleRecord& right) noexcept {
+    return left.capture_time == right.capture_time &&
+           left.source_sequence == right.source_sequence &&
+           left.producer_epoch == right.producer_epoch &&
+           left.arrival_sequence == right.arrival_sequence;
+  }
 };
+
+/// @brief Order two records by producer generation, then by generation-local arrival order.
+/// @param candidate Record being tested for supersession.
+/// @param reference Record the candidate would supersede.
+/// @return True when \p candidate is strictly newer than \p reference.
+/// @note \c source_sequence is epoch-local: it restarts at the request's initial value on an
+/// admitted rearm while the producer epoch is bumped. Comparing sequences alone therefore reports a
+/// pre-restart record as newer than every post-restart one, permanently and silently. Comparing
+/// records from two different subscribers is meaningless under any ordering, because their sequence
+/// spaces are independent; callers must establish a single subscriber space first.
+[[nodiscard]] constexpr bool is_strictly_newer_sample(
+    const TemporalSampleRecord& candidate, const TemporalSampleRecord& reference) noexcept {
+  return candidate.producer_epoch != reference.producer_epoch
+             ? candidate.producer_epoch > reference.producer_epoch
+             : candidate.source_sequence > reference.source_sequence;
+}
 
 struct ScalarSelectionResult {
   InputSelection selection{};
@@ -79,7 +103,9 @@ class TemporalInputCache {
     ScalarTransaction(const ScalarTransaction&) = delete;
     ScalarTransaction& operator=(const ScalarTransaction&) = delete;
     ScalarTransaction(ScalarTransaction&& other) noexcept
-        : owner_(std::exchange(other.owner_, nullptr)), result_(other.result_) {}
+        : owner_(std::exchange(other.owner_, nullptr)),
+          result_(other.result_),
+          missing_evidence_(other.missing_evidence_) {}
     ScalarTransaction& operator=(ScalarTransaction&&) = delete;
     ~ScalarTransaction() {
       if (owner_ != nullptr) {
@@ -103,17 +129,29 @@ class TemporalInputCache {
         }
         owner_->samples_.erase(found);
       }
+      if (missing_evidence_) {
+        const auto found = std::find_if(
+            owner_->samples_.begin(), owner_->samples_.end(), [&](const auto& candidate) {
+              return candidate.arrival_sequence == missing_evidence_->arrival_sequence;
+            });
+        if (found == owner_->samples_.end()) {
+          return make_unexpected(Error{ErrorCode::kFailure});
+        }
+        owner_->samples_.erase(found);
+      }
       owner_->scalar_active_ = false;
       owner_ = nullptr;
       return {};
     }
 
    private:
-    ScalarTransaction(TemporalInputCache* owner, ScalarSelectionResult result) noexcept
-        : owner_(owner), result_(result) {}
+    ScalarTransaction(TemporalInputCache* owner, ScalarSelectionResult result,
+                      std::optional<TemporalSampleRecord> missing_evidence = std::nullopt) noexcept
+        : owner_(owner), result_(result), missing_evidence_(missing_evidence) {}
 
     TemporalInputCache* owner_{};
     ScalarSelectionResult result_{};
+    std::optional<TemporalSampleRecord> missing_evidence_;
 
     friend class TemporalInputCache;
   };
@@ -171,20 +209,47 @@ class TemporalInputCache {
     friend class TemporalInputCache;
   };
 
-  explicit TemporalInputCache(std::size_t capacity) : capacity_(capacity) {
+  explicit TemporalInputCache(std::size_t capacity, std::size_t active_capacity = 0U)
+      : capacity_(capacity),
+        active_capacity_(active_capacity == 0U ? capacity : std::min(active_capacity, capacity)) {
     samples_.reserve(capacity);
     drain_snapshot_.reserve(capacity);
   }
 
   [[nodiscard]] std::size_t size() const noexcept { return samples_.size(); }
+  /// Return the immutable physical reservation used for payload-claim scratch.
   [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
+  /// Return the published logical admission limit for the current rate generation.
+  [[nodiscard]] std::size_t active_capacity() const noexcept { return active_capacity_; }
+
+  /// Validate one lifecycle-selected logical limit without publishing it.
+  [[nodiscard]] expected<void, Error> validate_active_capacity(
+      std::size_t capacity) const noexcept {
+    if (scalar_active_ || drain_active_) {
+      return make_unexpected(Error{ErrorCode::kBackpressured});
+    }
+    if (capacity == 0U || capacity > capacity_ || samples_.size() > capacity) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    return {};
+  }
+
+  /// Publish one lifecycle-prevalidated logical limit without changing physical storage.
+  [[nodiscard]] expected<void, Error> set_active_capacity(std::size_t capacity) noexcept {
+    auto valid = validate_active_capacity(capacity);
+    if (!valid) {
+      return valid;
+    }
+    commit_validated_active_capacity(capacity);
+    return {};
+  }
 
   [[nodiscard]] expected<void, Error> push(TemporalSampleRecord sample) noexcept {
     if (sample.arrival_sequence == 0U || sample.source_sequence == 0U ||
         sample.producer_epoch == 0U) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
-    if (samples_.size() == capacity_) {
+    if (samples_.size() >= active_capacity_) {
       return make_unexpected(Error{ErrorCode::kResourceExhausted});
     }
     if (sample.arrival_sequence <= last_arrival_sequence_) {
@@ -192,6 +257,42 @@ class TemporalInputCache {
     }
     samples_.push_back(sample);
     last_arrival_sequence_ = sample.arrival_sequence;
+    return {};
+  }
+
+  /// @brief Remove one exactly identified retained record without disturbing arrival identity.
+  ///
+  /// This is the caller-directed counterpart to \ref push, which deliberately fails closed on a
+  /// full cache rather than discarding causal evidence. Eviction never happens implicitly: the
+  /// caller names the record, so this cache never has to know an edge's \c QueuePolicy or whether
+  /// a payload is still borrowed. A \c kDropOldest edge whose retained candidate has been
+  /// superseded uses this to release the stale record before ingesting the newer one; retiring
+  /// that record's payload claim remains the caller's responsibility.
+  ///
+  /// \c last_arrival_sequence_ is intentionally left untouched. It is the monotonic admission
+  /// watermark, not a property of the retained set, and rewinding it would let an already-admitted
+  /// arrival identity be pushed a second time.
+  ///
+  /// @param arrival_sequence Arrival identity of the record to remove.
+  /// @return Empty success, \c kNotFound when no retained record carries that identity, or
+  ///         \c kBackpressured while a scalar or drain transaction is reading the retained set.
+  [[nodiscard]] expected<void, Error> evict(std::uint64_t arrival_sequence) noexcept {
+    if (arrival_sequence == 0U) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    // An open transaction holds the frozen selection for the running activation; erasing under it
+    // would invalidate the record the caller is about to commit.
+    if (scalar_active_ || drain_active_) {
+      return make_unexpected(Error{ErrorCode::kBackpressured});
+    }
+    const auto found =
+        std::find_if(samples_.begin(), samples_.end(), [&](const TemporalSampleRecord& candidate) {
+          return candidate.arrival_sequence == arrival_sequence;
+        });
+    if (found == samples_.end()) {
+      return make_unexpected(Error{ErrorCode::kNotFound});
+    }
+    samples_.erase(found);
     return {};
   }
 
@@ -229,12 +330,15 @@ class TemporalInputCache {
   }
 
   [[nodiscard]] expected<ScalarTransaction, Error> select_exact_transaction(
-      TimePoint reference) noexcept {
+      TimePoint reference,
+      std::uint64_t arrival_watermark = std::numeric_limits<std::uint64_t>::max()) noexcept {
     if (scalar_active_ || drain_active_) {
       return make_unexpected(Error{ErrorCode::kBackpressured});
     }
     scalar_active_ = true;
-    return ScalarTransaction{this, select_exact(reference)};
+    const ScalarSelectionResult result = select_exact(reference);
+    return ScalarTransaction{
+        this, result, capture_absent_missing_evidence(result, arrival_watermark)};
   }
 
   [[nodiscard]] ScalarSelectionResult select_latest_within(
@@ -285,12 +389,20 @@ class TemporalInputCache {
   }
 
   [[nodiscard]] expected<ScalarTransaction, Error> select_latest_within_transaction(
-      TimePoint reference, std::chrono::nanoseconds max_age) noexcept {
+      TimePoint reference, std::chrono::nanoseconds max_age,
+      std::uint64_t arrival_watermark = std::numeric_limits<std::uint64_t>::max(),
+      std::optional<TimePoint> future_reference_lower_bound = std::nullopt) noexcept {
     if (scalar_active_ || drain_active_) {
       return make_unexpected(Error{ErrorCode::kBackpressured});
     }
     scalar_active_ = true;
-    return ScalarTransaction{this, select_latest_within(reference, max_age)};
+    const ScalarSelectionResult result = select_latest_within(reference, max_age);
+    const std::optional<TemporalSampleRecord> retirement =
+        result.selection.reason == SelectionReason::kTooStale
+            ? stale_missing_evidence(
+                  result, reference, future_reference_lower_bound, max_age, arrival_watermark)
+            : capture_absent_missing_evidence(result, arrival_watermark);
+    return ScalarTransaction{this, result, retirement};
   }
 
   [[nodiscard]] expected<DrainTransaction, Error> snapshot_drain_all(
@@ -298,7 +410,7 @@ class TemporalInputCache {
     if (drain_active_ || scalar_active_) {
       return make_unexpected(Error{ErrorCode::kBackpressured});
     }
-    if (selected_capacity > capacity_) {
+    if (selected_capacity > active_capacity_) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
     drain_snapshot_.clear();
@@ -328,13 +440,80 @@ class TemporalInputCache {
     return {};
   }
 
+  /// Release payload-retaining history after the current input generation is terminal.
+  ///
+  /// Unlike \ref reset, this preserves the last accepted arrival sequence. A terminal drain can
+  /// therefore release typed Channel claims without making a late or duplicate record admissible
+  /// as the first record of a new generation.
+  [[nodiscard]] expected<void, Error> release_terminal_history() noexcept {
+    if (scalar_active_ || drain_active_) {
+      return make_unexpected(Error{ErrorCode::kBackpressured});
+    }
+    samples_.clear();
+    drain_snapshot_.clear();
+    return {};
+  }
+
  private:
+  /// Publish a limit already accepted by \ref validate_active_capacity.
+  void commit_validated_active_capacity(std::size_t capacity) noexcept {
+    active_capacity_ = capacity;
+  }
+
+  [[nodiscard]] std::optional<TemporalSampleRecord> capture_absent_missing_evidence(
+      const ScalarSelectionResult& result, std::uint64_t arrival_watermark) const noexcept {
+    if (result.selection.state == InputState::kSelected ||
+        result.selection.reason != SelectionReason::kCaptureTimeAbsent) {
+      return std::nullopt;
+    }
+    const TemporalSampleRecord* newest = nullptr;
+    for (const auto& sample : samples_) {
+      if (!sample.capture_time.valid() && sample.arrival_sequence <= arrival_watermark &&
+          (newest == nullptr || sample.arrival_sequence > newest->arrival_sequence)) {
+        newest = &sample;
+      }
+    }
+    return newest != nullptr ? std::optional<TemporalSampleRecord>{*newest} : std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<TemporalSampleRecord> stale_missing_evidence(
+      const ScalarSelectionResult& result, TimePoint reference,
+      std::optional<TimePoint> future_reference_lower_bound, std::chrono::nanoseconds max_age,
+      std::uint64_t arrival_watermark) const noexcept {
+    if (result.selection.state == InputState::kSelected ||
+        result.selection.reason != SelectionReason::kTooStale || !future_reference_lower_bound ||
+        !reference.valid() || !future_reference_lower_bound->valid() ||
+        future_reference_lower_bound->clock_id != reference.clock_id || max_age.count() <= 0) {
+      return std::nullopt;
+    }
+    // Arrival order is the cache's queue order. Retire one oldest record only when the caller has
+    // proved a same-clock lower bound for every future semantic reference. The current reference
+    // alone is insufficient because independently accepted input witnesses can become visible in
+    // decreasing semantic-reference order.
+    for (const auto& sample : samples_) {
+      if (sample.arrival_sequence > arrival_watermark || !sample.capture_time.valid() ||
+          sample.capture_time.clock_id != future_reference_lower_bound->clock_id ||
+          sample.capture_time.timestamp_ns > future_reference_lower_bound->timestamp_ns) {
+        continue;
+      }
+      const auto age = static_cast<std::uint64_t>(future_reference_lower_bound->timestamp_ns) -
+                       static_cast<std::uint64_t>(sample.capture_time.timestamp_ns);
+      if (age > static_cast<std::uint64_t>(max_age.count())) {
+        return sample;
+      }
+    }
+    return std::nullopt;
+  }
+
   std::size_t capacity_{};
+  std::size_t active_capacity_{};
   std::vector<TemporalSampleRecord> samples_;
   std::vector<TemporalSampleRecord> drain_snapshot_;
   bool drain_active_{};
   bool scalar_active_{};
   std::uint64_t last_arrival_sequence_{};
+
+  friend class RuntimeInputSelectionState;
 };
 
 [[nodiscard]] inline ScalarSelectionResult apply_scalar_missing_policy(
@@ -421,16 +600,16 @@ class AlignedJoinEngine {
     [[nodiscard]] TimePoint reference_time() const noexcept { return reference_time_; }
     [[nodiscard]] SelectionReason reason() const noexcept { return reason_; }
     [[nodiscard]] std::span<const TemporalSampleRecord> members() const noexcept {
-      return owner_ ? std::span<const TemporalSampleRecord>{owner_->selected_}
-                    : std::span<const TemporalSampleRecord>{};
+      return owner_ != nullptr ? std::span<const TemporalSampleRecord>{owner_->selected_}
+                               : std::span<const TemporalSampleRecord>{};
     }
     [[nodiscard]] std::span<const InputSelection> selections() const noexcept {
-      return owner_ ? std::span<const InputSelection>{owner_->selections_}
-                    : std::span<const InputSelection>{};
+      return owner_ != nullptr ? std::span<const InputSelection>{owner_->selections_}
+                               : std::span<const InputSelection>{};
     }
     [[nodiscard]] std::span<const AlignmentClosureProof> closure_evidence() const noexcept {
-      return owner_ ? std::span<const AlignmentClosureProof>{owner_->closure_evidence_}
-                    : std::span<const AlignmentClosureProof>{};
+      return owner_ != nullptr ? std::span<const AlignmentClosureProof>{owner_->closure_evidence_}
+                               : std::span<const AlignmentClosureProof>{};
     }
 
     [[nodiscard]] expected<void, Error> commit() noexcept {
@@ -607,6 +786,29 @@ class AlignedJoinEngine {
     return {};
   }
 
+  /// Release payload-retaining queues and reuse state after every member generation is terminal.
+  ///
+  /// Member epochs and last-observed ordering witnesses remain intact so this terminal operation
+  /// cannot masquerade as a new generation boundary.
+  [[nodiscard]] expected<void, Error> release_terminal_history() noexcept {
+    if (active_) {
+      return make_unexpected(Error{ErrorCode::kBackpressured});
+    }
+    for (auto& queue : queues_) {
+      queue.clear();
+    }
+    std::fill(consume_.begin(), consume_.end(), 0U);
+    std::fill(selections_.begin(),
+              selections_.end(),
+              InputSelection{InputState::kAbsent, SelectionReason::kNeverSeen});
+    for (auto& retained : retained_) {
+      retained.reset();
+    }
+    std::fill(closure_evidence_.begin(), closure_evidence_.end(), AlignmentClosureProof::kOpen);
+    selected_.clear();
+    return {};
+  }
+
  private:
   [[nodiscard]] static constexpr bool valid_closure(AlignmentClosureProof value) noexcept {
     switch (value) {
@@ -682,6 +884,9 @@ class AlignedJoinEngine {
                        matched ? SelectionReason::kNone : SelectionReason::kAlignmentWindowMiss};
   }
 
+  // Closure selection validates and stages one all-or-nothing aligned transaction. Keeping the
+  // proof and provisional state updates together makes rollback obligations visible.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<Transaction, Error> select_proof_closed_partial(
       std::chrono::nanoseconds window, std::span<const AlignedMissingPolicy> missing,
       std::span<const AlignmentClosureProof> closure, TimePoint closure_time) noexcept {
@@ -844,12 +1049,15 @@ struct BracketedSelectionResult {
 class BracketedWindowEngine {
  public:
   BracketedWindowEngine(BracketedWindow selector, std::size_t cache_capacity,
-                        std::size_t pending_capacity)
+                        std::size_t pending_capacity, std::size_t active_cache_capacity = 0U)
       : selector_(selector),
         cache_capacity_(cache_capacity),
+        active_cache_capacity_(active_cache_capacity == 0U ? cache_capacity
+                                                           : active_cache_capacity),
         pending_capacity_(pending_capacity),
         valid_(selector.lookbehind > 0U && selector.lookahead > 0U && selector.max_samples > 0U &&
-               cache_capacity > 0U && pending_capacity > 0U) {
+               cache_capacity > 0U && active_cache_capacity_ <= cache_capacity &&
+               pending_capacity > 0U) {
     cache_.reserve(cache_capacity);
     pending_.reserve(pending_capacity);
     before_.reserve(cache_capacity);
@@ -932,9 +1140,9 @@ class BracketedWindowEngine {
         })) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
-    if (cache_.size() == cache_capacity_) {
+    if (cache_.size() >= active_cache_capacity_) {
       prune_cache();
-      if (cache_.size() == cache_capacity_) {
+      if (cache_.size() >= active_cache_capacity_) {
         return make_unexpected(Error{ErrorCode::kResourceExhausted});
       }
     }
@@ -960,6 +1168,18 @@ class BracketedWindowEngine {
     return {};
   }
 
+  /// Latch one producer EOS and close every window already pending for that generation.
+  ///
+  /// Closed decisions use the constructor-bounded result ring. If earlier decisions occupy that
+  /// ring, the latch closes the remaining pending windows incrementally as callers retire results;
+  /// any ordinarily ready windows publish first, and no second transport EOS or timeout is
+  /// required.
+  void close_end_of_stream() noexcept {
+    end_of_stream_latched_ = true;
+    close_ready();
+    close_end_of_stream_pending();
+  }
+
   [[nodiscard]] const BracketedSelectionResult* front_closed() const noexcept {
     return closed_count_ == 0U ? nullptr : &closed_slots_[closed_head_];
   }
@@ -972,10 +1192,41 @@ class BracketedWindowEngine {
     closed_head_ = (closed_head_ + 1U) % closed_slots_.size();
     --closed_count_;
     close_ready();
+    if (end_of_stream_latched_) {
+      close_end_of_stream_pending();
+    }
     prune_cache();
   }
 
   [[nodiscard]] std::size_t pending_count() const noexcept { return pending_.size(); }
+
+  /// Return the immutable physical retained-entry reservation.
+  [[nodiscard]] std::size_t cache_capacity() const noexcept { return cache_capacity_; }
+
+  /// Return the published logical retained-entry limit.
+  [[nodiscard]] std::size_t active_cache_capacity() const noexcept {
+    return active_cache_capacity_;
+  }
+
+  /// Validate one lifecycle-selected retained-entry limit without publishing it.
+  [[nodiscard]] expected<void, Error> validate_active_cache_capacity(
+      std::size_t capacity) const noexcept {
+    if (capacity == 0U || capacity > cache_capacity_ || cache_.size() > capacity ||
+        closed_count_ != 0U || !pending_.empty()) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    return {};
+  }
+
+  /// Publish one lifecycle-prevalidated logical limit without changing backing vectors.
+  [[nodiscard]] expected<void, Error> set_active_cache_capacity(std::size_t capacity) noexcept {
+    auto valid = validate_active_cache_capacity(capacity);
+    if (!valid) {
+      return valid;
+    }
+    commit_validated_active_cache_capacity(capacity);
+    return {};
+  }
 
   [[nodiscard]] std::optional<TimePoint> oldest_pending_reference() const noexcept {
     return pending_.empty() ? std::nullopt
@@ -1032,6 +1283,11 @@ class BracketedWindowEngine {
   }
 
  private:
+  /// Publish a limit already accepted by \ref validate_active_cache_capacity.
+  void commit_validated_active_cache_capacity(std::size_t capacity) noexcept {
+    active_cache_capacity_ = capacity;
+  }
+
   struct Pending {
     TemporalSampleRecord previous;
     TemporalSampleRecord current;
@@ -1071,12 +1327,48 @@ class BracketedWindowEngine {
     return WindowResetReason::kNone;
   }
 
+  void close_end_of_stream_pending() noexcept {
+    std::size_t closed_pending_count = 0U;
+    while (closed_pending_count < pending_.size() && closed_count_ < closed_slots_.size()) {
+      const Pending& window = pending_[closed_pending_count];
+      if (!enqueue({InputState::kAbsent, SelectionReason::kEndOfStream},
+                   window.current.capture_time,
+                   {})) {
+        break;
+      }
+      ++closed_pending_count;
+    }
+    if (closed_pending_count != 0U) {
+      pending_.erase(pending_.begin(),
+                     pending_.begin() + static_cast<std::ptrdiff_t>(closed_pending_count));
+      prune_cache();
+    }
+    release_terminal_history_if_closed();
+  }
+
+  void release_terminal_history_if_closed() noexcept {
+    if (!end_of_stream_latched_ || !pending_.empty()) {
+      return;
+    }
+    // Closed result slots own copies of every sample they can still expose. Once no pending
+    // window can observe live history, discard the selector cache and anchor scratch so Channel
+    // payload claims can retire even if bounded closed decisions await ordinary consumption.
+    cache_.clear();
+    before_.clear();
+    middle_.clear();
+    after_.clear();
+    previous_anchor_.reset();
+    last_sample_.reset();
+    normalized_clock_.reset();
+  }
+
   void reset_state() noexcept {
     pending_.clear();
     cache_.clear();
     previous_anchor_.reset();
     last_sample_.reset();
     normalized_clock_.reset();
+    end_of_stream_latched_ = false;
   }
 
   void close_ready() {
@@ -1176,6 +1468,7 @@ class BracketedWindowEngine {
 
   BracketedWindow selector_;
   std::size_t cache_capacity_{};
+  std::size_t active_cache_capacity_{};
   std::size_t pending_capacity_{};
   std::vector<TemporalSampleRecord> cache_;
   std::vector<Pending> pending_;
@@ -1188,7 +1481,10 @@ class BracketedWindowEngine {
   std::optional<TemporalSampleRecord> previous_anchor_;
   std::optional<TemporalSampleRecord> last_sample_;
   std::optional<ClockId> normalized_clock_;
+  bool end_of_stream_latched_{};
   bool valid_{};
+
+  friend class RuntimeInputSelectionState;
 };
 
 struct ClockTickCandidate {
@@ -1252,14 +1548,65 @@ class CoalescingClockSchedule {
       : phase_(phase), period_(period) {}
 
   [[nodiscard]] expected<std::optional<ClockTickCandidate>, Error> due(TimePoint now) noexcept {
-    if (!phase_.valid() || !now.valid() || phase_.clock_id != now.clock_id ||
-        period_.count() <= 0) {
+    if (!accepts(now)) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
     if (last_observed_now_ && now.timestamp_ns < last_observed_now_->timestamp_ns) {
       return make_unexpected(Error{ErrorCode::kProtocolError});
     }
+    // Recorded before the candidate is computed, so a schedule that reports nothing due, or that
+    // overflows its coordinate, still advances the monotonic observation bound exactly as before.
     last_observed_now_ = now;
+    auto candidate = candidate_at(now);
+    if (!candidate) {
+      return make_unexpected(std::move(candidate).error());
+    }
+    const auto& due_candidate = *candidate;
+    if (!due_candidate.has_value()) {
+      return std::optional<ClockTickCandidate>{};
+    }
+    handled_ = due_candidate->index;
+    return candidate;
+  }
+
+  /// @brief Report the coordinate of the tick that would fire at \p now without consuming it.
+  ///
+  /// This is the reference time the witness produced by the next drain will carry. Callers that
+  /// must reason about a witness before it exists need that coordinate, and must not take the tick
+  /// while doing so: \ref due marks the tick handled and advances the monotonic observation bound,
+  /// so calling it speculatively would drop a real firing.
+  ///
+  /// @param now Current reading of this schedule's clock.
+  /// @return The scheduled coordinate, \c std::nullopt when no tick is due, or
+  ///         \ref ErrorCode::kInvalidArgument for a foreign or invalid clock reading.
+  /// @note This function does not throw and leaves the schedule unchanged. It deliberately omits
+  /// \ref due's monotonicity check, because observing a coordinate is not an observation of time.
+  [[nodiscard]] expected<std::optional<TimePoint>, Error> peek_scheduled(
+      TimePoint now) const noexcept {
+    if (!accepts(now)) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    auto candidate = candidate_at(now);
+    if (!candidate) {
+      return make_unexpected(std::move(candidate).error());
+    }
+    const auto& due_candidate = *candidate;
+    if (!due_candidate.has_value()) {
+      return std::optional<TimePoint>{};
+    }
+    return std::optional<TimePoint>{due_candidate->scheduled_time};
+  }
+
+ private:
+  /// @brief Return whether \p now is a usable reading of this schedule's clock.
+  [[nodiscard]] bool accepts(const TimePoint now) const noexcept {
+    return phase_.valid() && now.valid() && phase_.clock_id == now.clock_id && period_.count() > 0;
+  }
+
+  /// @brief Compute the tick due at \p now without recording that it was observed or taken.
+  /// @pre \ref accepts returned true for \p now.
+  [[nodiscard]] expected<std::optional<ClockTickCandidate>, Error> candidate_at(
+      const TimePoint now) const noexcept {
     if (now.timestamp_ns < phase_.timestamp_ns) {
       return std::optional<ClockTickCandidate>{};
     }
@@ -1306,11 +1653,9 @@ class CoalescingClockSchedule {
       candidate.missed_last = index - 1U;
       candidate.missed_count = index - first;
     }
-    handled_ = index;
     return std::optional<ClockTickCandidate>{candidate};
   }
 
- private:
   TimePoint phase_{};
   std::chrono::nanoseconds period_{};
   std::optional<std::uint64_t> handled_;

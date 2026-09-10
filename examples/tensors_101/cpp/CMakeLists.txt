@@ -28,6 +28,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS tensors_101
-    RUNTIME DESTINATION examples/tensors_101/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/tensors_101/cpp"
     COMPONENT holoscan-examples
 )

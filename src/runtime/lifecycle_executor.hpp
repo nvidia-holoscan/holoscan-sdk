@@ -21,6 +21,7 @@
 #include "../core/lifecycle_kernel.hpp"
 #include "../core/lifecycle_parameter_view.hpp"
 #include "runtime_materialization.hpp"
+#include "runtime_rate_state.hpp"
 
 namespace holoscan::detail {
 
@@ -83,13 +84,18 @@ class RuntimeLifecycleExecutor {
       const ExecutionPlanState& plan, std::span<RuntimeOperatorInstance> operators,
       RunGenerationId run_generation, const std::atomic_bool* cancellation, GraphExec* exec,
       ExecutionLaneSet* lanes, const RuntimePackageCapabilityMatchReport& package,
-      RuntimeNotificationSourceRegistry* notifications = nullptr);
+      RuntimeNotificationSourceRegistry* notifications = nullptr, RuntimeRateState* rates = nullptr,
+      RuntimeRateMaterializationBinding rate_materialization = {});
 
   [[nodiscard]] bool startup() noexcept;
   [[nodiscard]] LifecycleRestartExecutionOutcome restart(
       const LifecycleRestartExecutionRequest& request) noexcept;
   [[nodiscard]] bool shutdown() noexcept;
   [[nodiscard]] std::string_view failure_token() const noexcept;
+
+  /// Install the registry materialized by first ordered kAllocate work before kArm callbacks.
+  [[nodiscard]] expected<void, Error> set_notifications(
+      RuntimeNotificationSourceRegistry* notifications) noexcept;
 
  private:
   friend class RuntimeLifecycleExecutorTestAccess;
@@ -108,21 +114,33 @@ class RuntimeLifecycleExecutor {
       void* receiver, const OperatorPath& path) noexcept;
   [[nodiscard]] static expected<NotificationSender, Error> resolve_notification_sender(
       void* receiver, NotificationSource& source) noexcept;
+  [[nodiscard]] static expected<void, Error> bind_nominal_rate(void* receiver,
+                                                               const void* declaration,
+                                                               Rate value) noexcept;
+  [[nodiscard]] static expected<PortRateView, Error> resolve_rate(void* receiver,
+                                                                  const void* declaration,
+                                                                  bool output) noexcept;
   [[nodiscard]] static LifecycleStatus invoke_callback_direct(
       CallbackReceiver& bound, LifecycleStage stage, LifecycleTransitionPhase phase) noexcept;
   [[nodiscard]] static expected<LifecycleStageGraph, Error> build_graph(
       const ExecutionPlanState& plan, std::span<const OperatorInstanceId> members,
       std::span<const CallbackReceiver> receivers,
-      const RuntimeMaterializationState* materialization);
+      const RuntimeMaterializationState* materialization, const RuntimeRateState* rates);
   [[nodiscard]] static std::vector<LifecycleCallbackBinding> bindings_for(
       std::span<CallbackReceiver> receivers, std::span<const OperatorInstanceId> members,
-      bool include_materialization);
+      bool include_materialization, bool include_rate_barriers);
+  [[nodiscard]] static expected<void, Error> initialize_restart_runtime(
+      const ExecutionPlanState& plan, std::span<CallbackReceiver> receivers,
+      std::vector<OperatorInstanceId> members, bool union_graph, RestartRuntime& runtime);
   [[nodiscard]] std::size_t startup_position(OperatorInstanceId id) const noexcept;
+  void record_failure_diagnostic(std::string_view token) noexcept;
 
   const ExecutionPlanState* plan_{};
   GraphExec* exec_{};
   ExecutionLaneSet* lanes_{};
   RuntimeNotificationSourceRegistry* notifications_{};
+  RuntimeRateState* rates_{};
+  RuntimeRateMaterializationBinding rate_materialization_{};
   RunGenerationId run_generation_{};
   const std::atomic_bool* cancellation_{};
   std::span<RuntimeOperatorInstance> operators_;
@@ -135,6 +153,7 @@ class RuntimeLifecycleExecutor {
   std::vector<RestartTargetBinding> restart_target_bindings_;
   std::span<const OperatorInstanceId> active_restart_members_;
   std::span<const LifecycleRestartParameterCandidate> active_restart_candidates_;
+  std::atomic<std::uint32_t> failure_diagnostic_{};
   bool startup_in_progress_{};
   std::size_t startup_legacy_stop_cutoff_{};
 };

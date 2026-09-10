@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -47,13 +48,28 @@ namespace holoscan {
 namespace {
 
 constexpr std::string_view kSelectorName = "HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM";
-constexpr std::string_view kBaselineAlgorithm = "holoscan.partition.serial_baseline";
 constexpr std::string_view kSourceChainAlgorithm = "holoscan.partition.source_chain";
 constexpr std::string_view kExperimentalWarning = "PARTITION_PLANNER_EXPERIMENTAL_SELECTED";
 constexpr std::string_view kAbsentSelectorArgument = "-";
-constexpr std::string_view kFanoutProbeInstance = "HOLOSCAN_TEST_FANOUT_PROBE_INSTANCE";
+constexpr std::string_view kProbeInstance = "HOLOSCAN_TEST_PARTITION_PROBE_INSTANCE";
 
 using namespace std::chrono_literals;
+
+[[nodiscard]] bool ensure_probe_instance(const std::string_view scenario) {
+  if (std::getenv(kProbeInstance.data()) != nullptr) {
+    return true;
+  }
+  const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
+  const std::string instance = std::string(scenario) + "-" +
+                               std::to_string(static_cast<std::uint64_t>(getpid())) + "-" +
+                               std::to_string(tick);
+  return setenv(kProbeInstance.data(), instance.c_str(), 1) == 0;
+}
+
+[[nodiscard]] std::string probe_graph_name(const std::string_view base) {
+  const char* const instance = std::getenv(kProbeInstance.data());
+  return instance == nullptr ? std::string{base} : std::string{base} + "-" + std::string{instance};
+}
 
 // Select the CUDA device on the Runtime controller thread, where Tensor pools are materialized.
 class CUDADeviceSupportThreadControl final : public detail::RuntimeSupportThreadControl {
@@ -244,13 +260,16 @@ class WorkerHostTensorSource final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.output(output, "output")
         .max_emits_per_compute(1U)
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = Storage,
-            .dtype = DLDataType{kDLUInt, 32U, 1U},
-            .rank = 0U,
-        })
-        .tensor_allocation(
-            TensorAllocationBounds{.max_rank = 1U, .max_byte_span = sizeof(std::uint32_t)});
+        .produces_tensor(TensorOutputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = Storage,
+                    .dtype = DLDataType{kDLUInt, 32U, 1U},
+                    .rank = 0U,
+                },
+            .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = sizeof(std::uint32_t)},
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -363,10 +382,13 @@ class WorkerHostTensorSink final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.input(input, "input")
         .queue_depth(2U)
-        .expects_tensor(TensorPortLayout{
-            .memory_kind = Storage,
-            .dtype = DLDataType{kDLUInt, 32U, 1U},
-            .rank = 0U,
+        .expects_tensor(TensorInputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = Storage,
+                    .dtype = DLDataType{kDLUInt, 32U, 1U},
+                    .rank = 0U,
+                },
         });
   }
 
@@ -440,7 +462,7 @@ using WorkerDeviceTensorSource = WorkerHostTensorSource<MemoryKind::kCudaDevice>
 using WorkerDeviceTensorSink = WorkerHostTensorSink<MemoryKind::kCudaDevice>;
 
 [[nodiscard]] ExecutionPlan compile_linear(Profile profile = Profile::kStandard) {
-  Graph graph{"partition-environment-fresh-process"};
+  Graph graph{probe_graph_name("partition-environment-fresh-process")};
   test::add_linear_graph(graph);
   CompileOptions options;
   options.profile = profile;
@@ -448,7 +470,7 @@ using WorkerDeviceTensorSink = WorkerHostTensorSink<MemoryKind::kCudaDevice>;
 }
 
 [[nodiscard]] ExecutionPlan compile_worker_plan() {
-  Graph graph{"partition-worker-environment"};
+  Graph graph{probe_graph_name("partition-worker-environment")};
   const ClockKey runtime_clock = graph.add_clock<RealtimeClock>("runtime-clock");
   graph.set_default_clock(runtime_clock);
   auto source = graph.op<test::ScalarProcessBoundarySource>("source", worker_scalar_hooks());
@@ -473,11 +495,7 @@ using WorkerDeviceTensorSink = WorkerHostTensorSink<MemoryKind::kCudaDevice>;
 }
 
 [[nodiscard]] ExecutionPlan compile_fanout_worker_plan() {
-  const char* const instance = std::getenv(kFanoutProbeInstance.data());
-  const std::string graph_name =
-      instance == nullptr ? "partition-fanout-worker-environment"
-                          : "partition-fanout-worker-environment-" + std::string{instance};
-  Graph graph{graph_name};
+  Graph graph{probe_graph_name("partition-fanout-worker-environment")};
   const ClockKey runtime_clock = graph.add_clock<RealtimeClock>("runtime-clock");
   graph.set_default_clock(runtime_clock);
   auto source = graph.op<test::FanoutProcessBoundarySource>("source", worker_fanout_hooks());
@@ -521,7 +539,7 @@ template <MemoryKind Storage>
     }
     return "partition-tensor-worker-environment";
   }();
-  Graph graph{graph_name};
+  Graph graph{probe_graph_name(graph_name)};
   const ClockKey runtime_clock = graph.add_clock<RealtimeClock>("runtime-clock");
   graph.set_default_clock(runtime_clock);
   auto source = graph.op<WorkerHostTensorSource<Storage>>("source");
@@ -640,40 +658,35 @@ template <MemoryKind Storage>
   return valid;
 }
 
-[[nodiscard]] bool check_rejected_plan(const ExecutionPlan& plan, std::string_view token,
-                                       std::optional<std::string_view> requested_algorithm,
-                                       std::optional<AlgorithmMaturity> maturity) {
+[[nodiscard]] bool check_removed_selector_plan(const ExecutionPlan& plan) {
   const auto& record = plan.partitioning_plan();
-  const Diagnostic* const diagnostic = find_diagnostic(plan, token);
+  constexpr std::string_view kToken = "PARTITION_ENVIRONMENT_SELECTOR_REMOVED";
+  const Diagnostic* const diagnostic = find_diagnostic(plan, kToken);
   bool valid = true;
   valid &= check(!plan.ok(), "expected a rejected plan");
   valid &= check(record.disposition == PlanDisposition::kRejected,
                  "expected a rejected partition disposition");
-  valid &= check(record.selection_source == PlanSelectionSource::kEnvironmentOverride,
-                 "rejected selector provenance mismatch");
+  valid &= check(record.selection_source == PlanSelectionSource::kCoreDefault,
+                 "removed selector acquired selection provenance");
   valid &=
       check(!record.accepted_algorithm.has_value(), "rejected plan retained an accepted algorithm");
-  valid &= check(record.maturity == maturity, "rejected selector maturity mismatch");
+  valid &= check(record.maturity == AlgorithmMaturity::kProduction,
+                 "removed selector changed default planner maturity");
   valid &= check(record.config_digest != PlanDigest{}, "rejected config digest is zero");
   valid &= check(diagnostic != nullptr, "expected rejection diagnostic is absent");
-  valid &= check(diagnostic_count(plan, token, DiagnosticSeverity::kError) == 1U,
+  valid &= check(diagnostic_count(plan, kToken, DiagnosticSeverity::kError) == 1U,
                  "rejection diagnostic count mismatch");
   if (diagnostic != nullptr) {
     valid &= check(record.reason == diagnostic->id,
                    "partition rejection reason does not identify its diagnostic");
   }
-  if (requested_algorithm.has_value()) {
-    valid &= check(record.requested_algorithm.has_value(),
-                   "rejected valid selector lost its requested algorithm");
-    if (record.requested_algorithm.has_value()) {
-      valid &= check(record.requested_algorithm->id == *requested_algorithm,
-                     "rejected requested algorithm mismatch");
-      valid &= check(record.requested_algorithm->version == 1U,
-                     "rejected requested algorithm version mismatch");
-    }
-  } else {
-    valid &= check(!record.requested_algorithm.has_value(),
-                   "invalid selector fabricated a requested algorithm");
+  valid &= check(record.requested_algorithm.has_value(),
+                 "removed selector erased the production default attempt");
+  if (record.requested_algorithm.has_value()) {
+    valid &= check(record.requested_algorithm->id == kSourceChainAlgorithm,
+                   "removed selector changed the production default attempt");
+    valid &= check(record.requested_algorithm->version == 1U,
+                   "production default algorithm version mismatch");
   }
   valid &= check(diagnostic_count(plan, kExperimentalWarning, DiagnosticSeverity::kWarning) == 0U,
                  "rejected selector emitted an experimental acceptance warning");
@@ -693,16 +706,13 @@ template <MemoryKind Storage>
   WorkerProbeState::reset();
   bool valid = set_selector(compile_selector);
   const ExecutionPlan plan = compile_worker_plan();
-  const std::string_view selected =
-      compile_selector.value_or(std::string_view("serial_baseline/v1"));
-  const bool source_chain = selected == "source_chain/v1";
-  valid &= check_valid_plan(
-      plan,
-      source_chain ? kSourceChainAlgorithm : kBaselineAlgorithm,
-      compile_selector.has_value() ? PlanSelectionSource::kEnvironmentOverride
-                                   : PlanSelectionSource::kCoreDefault,
-      source_chain ? AlgorithmMaturity::kExperimental : AlgorithmMaturity::kProduction,
-      source_chain ? 1U : 0U);
+  valid &= check(!compile_selector.has_value(),
+                 "worker compile must not use the removed environment selector");
+  valid &= check_valid_plan(plan,
+                            kSourceChainAlgorithm,
+                            PlanSelectionSource::kCoreDefault,
+                            AlgorithmMaturity::kProduction,
+                            0U);
   valid &= set_selector(runtime_selector);
   valid &= check_selector(runtime_selector);
 
@@ -851,10 +861,6 @@ template <MemoryKind Storage>
 // REQ: CHAN-085
 [[nodiscard]] bool run_fanout_worker_plan() {
 #if defined(__linux__)
-  const std::string instance = std::to_string(static_cast<std::uint64_t>(getpid()));
-  if (setenv(kFanoutProbeInstance.data(), instance.c_str(), 1) != 0) {
-    return check(false, "failed to set the fanout probe instance");
-  }
   WorkerFanoutProbeState::reset();
 
   // Key setup: two exec'd consumers independently reconstruct and arm the same shared service.
@@ -1256,37 +1262,43 @@ template <MemoryKind Storage>
 }
 #endif
 
+// REQ: COMPILE-068
 [[nodiscard]] bool run_worker_environment_matrix(std::optional<std::string_view> compile_selector) {
 #if defined(__linux__)
   if (!check_selector(compile_selector)) {
     return false;
   }
+  if (!check(!compile_selector.has_value(),
+             "worker compile must not use the removed environment selector")) {
+    return false;
+  }
   const ExecutionPlan plan = compile_worker_plan();
-  const std::string_view matching =
-      compile_selector.value_or(std::string_view{"serial_baseline/v1"});
-  const std::string_view conflicting = matching == "source_chain/v1"
-                                           ? std::string_view{"serial_baseline/v1"}
-                                           : std::string_view{"source_chain/v1"};
-  const std::string_view expected_algorithm =
-      matching == "source_chain/v1" ? kSourceChainAlgorithm : kBaselineAlgorithm;
-  const PlanSelectionSource expected_source = compile_selector.has_value()
-                                                  ? PlanSelectionSource::kEnvironmentOverride
-                                                  : PlanSelectionSource::kCoreDefault;
-  const AlgorithmMaturity expected_maturity = matching == "source_chain/v1"
-                                                  ? AlgorithmMaturity::kExperimental
-                                                  : AlgorithmMaturity::kProduction;
-  const std::size_t expected_warning = matching == "source_chain/v1" ? 1U : 0U;
-  if (!check_valid_plan(
-          plan, expected_algorithm, expected_source, expected_maturity, expected_warning)) {
+  if (!check_valid_plan(plan,
+                        kSourceChainAlgorithm,
+                        PlanSelectionSource::kCoreDefault,
+                        AlgorithmMaturity::kProduction,
+                        0U)) {
     return false;
   }
 
   bool valid = true;
-  valid &= run_worker_child(plan, "absent", std::nullopt, expected_algorithm, expected_source);
-  valid &= run_worker_child(plan, "matching", matching, expected_algorithm, expected_source);
-  valid &= run_worker_child(plan, "conflicting", conflicting, expected_algorithm, expected_source);
   valid &= run_worker_child(
-      plan, "invalid", "definitely-not-an-algorithm", expected_algorithm, expected_source);
+      plan, "absent", std::nullopt, kSourceChainAlgorithm, PlanSelectionSource::kCoreDefault);
+  valid &= run_worker_child(plan,
+                            "retired-source-chain",
+                            "source_chain/v1",
+                            kSourceChainAlgorithm,
+                            PlanSelectionSource::kCoreDefault);
+  valid &= run_worker_child(plan,
+                            "retired-serial-baseline",
+                            "serial_baseline/v1",
+                            kSourceChainAlgorithm,
+                            PlanSelectionSource::kCoreDefault);
+  valid &= run_worker_child(plan,
+                            "retired-invalid",
+                            "definitely-not-an-algorithm",
+                            kSourceChainAlgorithm,
+                            PlanSelectionSource::kCoreDefault);
   return valid;
 #else
   // The installed SDK remains portable; this process-inheritance proof is a
@@ -1299,46 +1311,26 @@ template <MemoryKind Storage>
 [[nodiscard]] bool run_case(std::string_view scenario) {
   if (scenario == "absent") {
     return check_selector(std::nullopt) && check_valid_plan(compile_linear(),
-                                                            kBaselineAlgorithm,
+                                                            kSourceChainAlgorithm,
                                                             PlanSelectionSource::kCoreDefault,
                                                             AlgorithmMaturity::kProduction,
                                                             0U);
   }
   if (scenario == "serial-baseline") {
-    return check_selector("serial_baseline/v1") &&
-           check_valid_plan(compile_linear(),
-                            kBaselineAlgorithm,
-                            PlanSelectionSource::kEnvironmentOverride,
-                            AlgorithmMaturity::kProduction,
-                            0U);
+    return check_selector("serial_baseline/v1") && check_removed_selector_plan(compile_linear());
   }
   if (scenario == "source-chain") {
-    return check_selector("source_chain/v1") &&
-           check_valid_plan(compile_linear(),
-                            kSourceChainAlgorithm,
-                            PlanSelectionSource::kEnvironmentOverride,
-                            AlgorithmMaturity::kExperimental,
-                            1U);
+    return check_selector("source_chain/v1") && check_removed_selector_plan(compile_linear());
   }
   if (scenario == "invalid") {
-    return check_selector("source_chain") &&
-           check_rejected_plan(compile_linear(),
-                               "PARTITION_SELECTION_ENV_VALUE_INVALID",
-                               std::nullopt,
-                               std::nullopt);
+    return check_selector("source_chain") && check_removed_selector_plan(compile_linear());
   }
   if (scenario == "forbidden-profile") {
     return check_selector("source_chain/v1") &&
-           check_rejected_plan(compile_linear(Profile::kRobotics),
-                               "PARTITION_SELECTION_PROFILE_FORBIDDEN",
-                               kSourceChainAlgorithm,
-                               AlgorithmMaturity::kExperimental);
+           check_removed_selector_plan(compile_linear(Profile::kRobotics));
   }
-  if (scenario == "worker-baseline") {
+  if (scenario == "worker-default") {
     return run_worker_environment_matrix(std::nullopt);
-  }
-  if (scenario == "worker-source-chain") {
-    return run_worker_environment_matrix("source_chain/v1");
   }
   if (scenario == "worker-fanout") {
     return run_fanout_worker_plan();
@@ -1365,6 +1357,10 @@ template <MemoryKind Storage>
 }  // namespace holoscan
 
 int main(int argc, char** argv) {
+  if (argc >= 2 && !holoscan::ensure_probe_instance(argv[1])) {
+    std::cerr << "failed to set the partition probe instance\n";
+    return 2;
+  }
 #if defined(__linux__)
   if (argc == 4 && std::string_view(argv[1]) == "fanout-worker-consumer") {
     char* end = nullptr;

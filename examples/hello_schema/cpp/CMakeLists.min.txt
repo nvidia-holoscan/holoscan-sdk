@@ -9,16 +9,18 @@ include(CTest)
 
 find_package(holoscan REQUIRED CONFIG
     PATHS
-        "/opt/nvidia/holoscan"
         "/workspace/holoscan-sdk/install"
         "/workspace/holoscan-sdk/public/install-cu13-x86_64"
 )
 
 add_executable(hello_schema hello_schema.cpp)
 target_compile_features(hello_schema PRIVATE cxx_std_20)
+# holoscan::sensor_io supplies the Image schema and its metadata helper; it is a separate package
+# component from holoscan-core, so an install that omitted it will not configure here.
 target_link_libraries(hello_schema
     PRIVATE
         holoscan::schema
+        holoscan::sensor_io
 )
 
 if(BUILD_TESTING)

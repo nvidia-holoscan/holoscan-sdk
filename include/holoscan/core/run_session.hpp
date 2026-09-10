@@ -16,6 +16,7 @@
 #include <holoscan/core/lifecycle_control.hpp>
 #include <holoscan/core/operator_ref.hpp>
 #include <holoscan/core/parameter_control.hpp>
+#include <holoscan/core/rate_generation.hpp>
 
 namespace holoscan {
 
@@ -26,10 +27,30 @@ class RunSessionAccess;
 
 /// @brief Summarize one run session's coarse execution outcome.
 enum class RunTermination : std::uint8_t {
-  kRunning = 0,    ///< Startup, execution, stop request, or cleanup still owns work.
-  kCompleted = 1,  ///< Natural finite execution and cleanup completed successfully.
-  kStopped = 2,    ///< Cooperative stop completed, or this wrapper is moved-from and inert.
-  kFailed = 3,     ///< Startup or execution failed and cleanup has completed.
+  kRunning = 0,    ///< Startup, execution, a termination request, or cleanup still owns work.
+  kCompleted = 1,  ///< Natural finite execution and mandatory cleanup completed successfully.
+  /// An explicit immediate whole-run success request and mandatory cleanup completed successfully.
+  kRequestedCompleted = 2,
+  kStopped = 3,  ///< Cooperative stop completed successfully, or this wrapper is moved-from.
+  kFailed = 4,   ///< Startup, execution, or mandatory cleanup failed.
+};
+
+/// @brief Report terminal progress for one session-local planned Operator completion rule.
+///
+/// Records are immutable, bounded by the selected process group's canonical
+/// plan subsequence, and available only after the RunSession outcome has
+/// frozen. They are inspection state, not a mutable counter or a run-control
+/// surface.
+struct OperatorCompletionProgressRecord {
+  OperatorRef owner{};  ///< Run-bound logical Operator identity.
+  OperatorCompletionRuleKind kind{
+      OperatorCompletionRuleKind::kComputeCalls};  ///< Closed completion-rule discriminator.
+  std::uint64_t configured_limit{};                ///< Exact configured unsigned limit.
+  std::uint64_t successful_compute_calls{};        ///< Successful calls committed by this session.
+  bool limit_reached{};  ///< True exactly when progress reached the limit.
+
+  friend constexpr bool operator==(const OperatorCompletionProgressRecord&,
+                                   const OperatorCompletionProgressRecord&) noexcept = default;
 };
 
 /// @brief Own one accepted-plan attempt and every runtime activity it starts.
@@ -96,6 +117,8 @@ class HOLOSCAN_CORE_EXPORT RunSession {
   /// @throws std::system_error if the platform thread join operation fails.
   /// @warning This call may block indefinitely when user code ignores the
   /// cooperative cancellation view and does not return.
+  /// @warning Completion includes quiescing every runtime-owned CUDA stream. A
+  /// CUDA kernel that does not terminate can therefore block this call indefinitely.
   void wait();
 
   /// @brief Return bounded structural diagnostics retained by this session.
@@ -104,6 +127,16 @@ class HOLOSCAN_CORE_EXPORT RunSession {
   /// destroyed. Later calls may expose a longer append-only prefix. Before terminal completion,
   /// callers must not treat the observed prefix as complete.
   [[nodiscard]] std::span<const Diagnostic> diagnostics() const noexcept;
+
+  /// @brief Return bounded terminal progress for planned Operator completion rules.
+  /// @return Empty before terminal outcome freeze, after move, for an
+  /// unselected multi-process attempt, or when cold startup fails before
+  /// session-local progress storage exists; otherwise one immutable record per rule
+  /// owned by this session's selected process group, in canonical plan order.
+  /// @note The borrowed span remains valid until this wrapper is moved or destroyed.
+  /// A remote rule is absent rather than represented by a zero-valued record.
+  [[nodiscard]] std::span<const OperatorCompletionProgressRecord> operator_completion_progress()
+      const noexcept;
 
   /// @brief Bind a plan-only Operator identity to this run generation.
   /// @param plan_ref Valid zero-run-generation reference from this session's plan.
@@ -176,6 +209,18 @@ class HOLOSCAN_CORE_EXPORT RunSession {
   /// asynchronous startup this call may block without a timeout until coordinator attachment or
   /// startup retirement. The call is forbidden from Runtime callbacks.
   [[nodiscard]] expected<ParamSnapshot, Error> capture_params(ParamCaptureOptions options = {});
+
+  /// @brief Capture owning evidence for the active and latest rejected rate generations.
+  /// @return A coherent value snapshot that remains valid after this session wrapper.
+  /// @retval ErrorCode::kInvalidArgument The call occurs from a Runtime callback context.
+  /// @retval ErrorCode::kClosed This wrapper is moved-from or startup retired before attaching
+  /// rate-generation state.
+  /// @retval ErrorCode::kNotReady No rate generation has reached a terminal published or rejected
+  /// state.
+  /// @retval ErrorCode::kResourceExhausted Owning snapshot storage could not be allocated.
+  /// @note During asynchronous startup this cold operation may wait until rate state attaches or
+  /// the run retires. It never changes the active rate, queue, or provider generation.
+  [[nodiscard]] expected<RateGenerationSnapshot, Error> capture_rate_generations();
 
  private:
   explicit RunSession(detail::RunSessionState* state) noexcept;

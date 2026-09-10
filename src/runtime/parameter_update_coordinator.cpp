@@ -307,6 +307,31 @@ class FixedEventLedger {
   return false;
 }
 
+[[nodiscard]] bool reusable_result_slot(const ResultLedgerEntry& entry) noexcept {
+  return (!entry.valid && !entry.reserved) ||
+         (entry.valid && terminal_state(entry.result.state) &&
+          entry.result.state != ParamUpdateState::kPublished && entry.acknowledged);
+}
+
+template <typename Entry>
+[[nodiscard]] Entry* select_reusable_result_slot(Entry* entries, std::uint32_t capacity) noexcept {
+  Entry* oldest_acknowledged = nullptr;
+  for (std::uint32_t index = 0U; index < capacity; ++index) {
+    Entry& entry = entries[index];
+    if (!reusable_result_slot(entry)) {
+      continue;
+    }
+    if (!entry.valid) {
+      return &entry;
+    }
+    if (oldest_acknowledged == nullptr ||
+        entry.result.update_sequence < oldest_acknowledged->result.update_sequence) {
+      oldest_acknowledged = &entry;
+    }
+  }
+  return oldest_acknowledged;
+}
+
 [[nodiscard]] bool final_evidence_state(ParamUpdateState state) noexcept {
   return terminal_state(state) && state != ParamUpdateState::kPublished;
 }
@@ -649,6 +674,10 @@ class ParameterGenerationStore {
         }
       }
     }
+    if (owned_static_value_ != nullptr && type_ != nullptr) {
+      type_->destroy(owned_static_value_);
+      ::operator delete(owned_static_value_, std::align_val_t{owned_static_alignment_});
+    }
     if (arena_ != nullptr) {
       ::operator delete(arena_, std::align_val_t{arena_alignment_});
     }
@@ -715,6 +744,26 @@ class ParameterGenerationStore {
       return verified;
     }
     if (!plan_->runtime_updates_enabled && !plan_->lifecycle_updates_enabled) {
+      // GraphExec owns the reconstructed Operator aggregate, but the coordinator can outlive
+      // GraphExec so terminal handles and RunSession::capture_params() remain inspectable after
+      // wait(). Keep generation-zero-only values in distinct immutable storage; this is not an
+      // update-generation arena and therefore does not consume parameter_arena_bytes capacity.
+      if (!plan_->no_params) {
+        if (type_->copy_construct == nullptr) {
+          return make_unexpected(Error{ErrorCode::kIncompatible});
+        }
+        owned_static_alignment_ = std::max(type_->object_alignment, alignof(std::max_align_t));
+        void* const storage =
+            ::operator new(type_->object_size, std::align_val_t{owned_static_alignment_});
+        try {
+          type_->copy_construct(storage, binding.initial_value);
+        } catch (...) {
+          ::operator delete(storage, std::align_val_t{owned_static_alignment_});
+          throw;
+        }
+        owned_static_value_ = storage;
+        static_header_.value = owned_static_value_;
+      }
       return initialize_derived_term_storage(1U);
     }
     if (capacity.generation_slots_per_operator == 0U || type_->copy_construct == nullptr ||
@@ -1586,6 +1635,8 @@ class ParameterGenerationStore {
   const ParamTypeDescriptor* type_{};
   const ParamSchemaDescriptor* schema_{};
   PinnedParameterHeader static_header_{};
+  void* owned_static_value_{};
+  std::size_t owned_static_alignment_{};
   // All generation storage is compiler-bounded and allocated once during reconstruction.
   using SlotStorage =  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays)
       std::unique_ptr<GenerationSlot[]>;
@@ -1677,32 +1728,12 @@ struct ParameterUpdateCoordinator::State {
   }
 
   [[nodiscard]] bool can_record_result() const noexcept {
-    for (std::uint32_t index = 0U; index < result_capacity; ++index) {
-      if ((!results[index].valid && !results[index].reserved) ||
-          (terminal_state(results[index].result.state) &&
-           results[index].result.state != ParamUpdateState::kPublished &&
-           results[index].acknowledged)) {
-        return true;
-      }
-    }
-    return false;
+    return select_reusable_result_slot(static_cast<const ResultLedgerEntry*>(results.get()),
+                                       result_capacity) != nullptr;
   }
 
   [[nodiscard]] ResultLedgerEntry* reserve_result() noexcept {
-    ResultLedgerEntry* selected = nullptr;
-    for (std::uint32_t index = 0U; index < result_capacity; ++index) {
-      if (!results[index].valid && !results[index].reserved) {
-        selected = &results[index];
-        break;
-      }
-      if (terminal_state(results[index].result.state) &&
-          results[index].result.state != ParamUpdateState::kPublished &&
-          results[index].acknowledged &&
-          (selected == nullptr ||
-           results[index].result.update_sequence < selected->result.update_sequence)) {
-        selected = &results[index];
-      }
-    }
+    ResultLedgerEntry* const selected = select_reusable_result_slot(results.get(), result_capacity);
     if (selected == nullptr ||
         !events.replace_accepted_transition_reservation(selected->event_reservations)) {
       return nullptr;
@@ -1759,6 +1790,40 @@ struct ParameterUpdateCoordinator::State {
       return false;
     }
     return scope.field == 0U || (entry->single_field && scope.field == entry->sole_field);
+  }
+
+  [[nodiscard]] ParamUpdateResult project_result(ResultLedgerEntry& entry) noexcept {
+    const ParamUpdateResult result = entry.result;
+    if (terminal_state(result.state)) {
+      entry.acknowledged = true;
+    }
+    return result;
+  }
+
+  [[nodiscard]] ParamUpdateResult project_wait_result(ResultLedgerEntry& entry) noexcept {
+    const ParamUpdateResult result = entry.result;
+    // A completed wait consumes its observation even when detach, rather than a terminal state,
+    // satisfied the wait predicate. Keep this distinct from non-blocking result() projection.
+    entry.acknowledged = true;
+    return result;
+  }
+
+  [[nodiscard]] expected<ParamUpdateResult, Error> await_terminal_result(
+      std::unique_lock<std::mutex>& lock, ParamUpdateSequence sequence,
+      std::chrono::nanoseconds timeout, ErrorCode missing_error) {
+    const auto complete = [&] {
+      const ResultLedgerEntry* const entry = find_result(sequence);
+      return detached || (entry != nullptr && terminal_state(entry->result.state));
+    };
+    if (!complete() && (timeout == std::chrono::nanoseconds::zero() ||
+                        !state_changed.wait_for(lock, timeout, complete))) {
+      return make_unexpected(Error{ErrorCode::kTimeout});
+    }
+    ResultLedgerEntry* const entry = find_result(sequence);
+    if (entry == nullptr) {
+      return make_unexpected(Error{detached ? ErrorCode::kClosed : missing_error});
+    }
+    return project_wait_result(*entry);
   }
 
   void update_result(ParamUpdateResult result) noexcept {
@@ -3089,11 +3154,7 @@ expected<ParamUpdateResult, Error> ParameterUpdateCoordinator::result(
   if (entry == nullptr) {
     return make_unexpected(Error{state_->detached ? ErrorCode::kClosed : ErrorCode::kNotFound});
   }
-  const ParamUpdateResult result = entry->result;
-  if (terminal_state(result.state)) {
-    entry->acknowledged = true;
-  }
-  return result;
+  return state_->project_result(*entry);
 }
 
 expected<ParamUpdateResult, Error> ParameterUpdateCoordinator::await(
@@ -3105,23 +3166,7 @@ expected<ParamUpdateResult, Error> ParameterUpdateCoordinator::await(
   if (state_->find_result(sequence) == nullptr) {
     return make_unexpected(Error{state_->detached ? ErrorCode::kClosed : ErrorCode::kNotFound});
   }
-  const auto complete = [&] {
-    const ResultLedgerEntry* const entry = state_->find_result(sequence);
-    return state_->detached || (entry != nullptr && terminal_state(entry->result.state));
-  };
-  if (!complete()) {
-    if (timeout == std::chrono::nanoseconds::zero() ||
-        !state_->state_changed.wait_for(lock, timeout, complete)) {
-      return make_unexpected(Error{ErrorCode::kTimeout});
-    }
-  }
-  ResultLedgerEntry* const entry = state_->find_result(sequence);
-  if (entry == nullptr) {
-    return make_unexpected(Error{state_->detached ? ErrorCode::kClosed : ErrorCode::kNotFound});
-  }
-  const ParamUpdateResult result = entry->result;
-  entry->acknowledged = true;
-  return result;
+  return state_->await_terminal_result(lock, sequence, timeout, ErrorCode::kNotFound);
 }
 
 expected<ParamUpdateResult, Error> ParameterUpdateCoordinator::await_authorized(
@@ -3136,24 +3181,7 @@ expected<ParamUpdateResult, Error> ParameterUpdateCoordinator::await_authorized(
     // its field/visibility boundary, so guessed run-local sequence numbers are not an oracle.
     return make_unexpected(Error{ErrorCode::kPermissionDenied});
   }
-  const auto complete = [&] {
-    const ResultLedgerEntry* const entry = state_->find_result(sequence);
-    return state_->detached || (entry != nullptr && terminal_state(entry->result.state));
-  };
-  if (!complete()) {
-    if (timeout == std::chrono::nanoseconds::zero() ||
-        !state_->state_changed.wait_for(lock, timeout, complete)) {
-      return make_unexpected(Error{ErrorCode::kTimeout});
-    }
-  }
-  ResultLedgerEntry* const entry = state_->find_result(sequence);
-  if (entry == nullptr) {
-    return make_unexpected(
-        Error{state_->detached ? ErrorCode::kClosed : ErrorCode::kPermissionDenied});
-  }
-  const ParamUpdateResult result = entry->result;
-  entry->acknowledged = true;
-  return result;
+  return state_->await_terminal_result(lock, sequence, timeout, ErrorCode::kPermissionDenied);
 }
 
 std::optional<ParamUpdateResult> ParameterUpdateCoordinator::publish_next_at_callback_boundary(

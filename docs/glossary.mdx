@@ -184,7 +184,9 @@ See [Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
 The handle for one execution of a plan (`RunSession`). It owns startup and
 shutdown, exposes stop and restart control, and reports how the run terminated
 (`RunTermination`). The blocking convenience `holoscan::run(plan)` wraps one
-session.
+session and, on Linux, manages SIGINT/SIGTERM by default. Its transient path
+requires exactly one live process task at both admission census reads;
+multithreaded hosts use an early managed domain or caller-managed policy.
 See [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
 
 ## S

@@ -26,5 +26,5 @@ int main() {
   holoscan::Graph graph;
   holoscan::Output<CarrierPayload> output{"output"};
   graph.configure(output).tensor_allocation(
-      holoscan::TensorAllocationBounds{.max_rank = 1, .max_byte_span = 4});
+      holoscan::TensorPoolBounds{.max_rank = 1, .max_byte_span = 4});
 }

@@ -14,8 +14,10 @@
 
 namespace holoscan::schema {
 
-struct Image;
-struct Imu;
+// Image and Imu are sensor payloads owned by holoscan::sensor_io, and their identities live in
+// holoscan/sensor_io/sensor_schema_traits.hpp. They keep this namespace because a FlatBuffers
+// namespace is part of the wire identity, so the types are still holoscan::schema::Image and
+// holoscan::schema::Imu; only the component that declares them changed.
 struct String;
 struct Tensor;
 struct TensorPacket;
@@ -61,49 +63,6 @@ template <std::size_t Size>
 /// capacity instead of treating these convenience defaults as negotiation.
 template <typename Root>
 struct FlatBufferSchemaTraits;
-
-/// @brief Describe the SDK Image root's complete identity and authoring defaults.
-template <>
-struct FlatBufferSchemaTraits<Image> {
-  using root_type = Image;  ///< Public generated semantic root type.
-  /// @brief Carry the exact name, version, artifact digest, and derived compact identity.
-  static constexpr SchemaIdentity identity{
-      .canonical_name = "holoscan.schema.Image",
-      .version = 1U,
-      .schema_sha256 = detail::schema_hex_bytes<32>(
-          "f97002630e87983a7d288cca2657106cda311e15df9b1eebc6574a3233fe01b8"),
-      .id = SchemaId{.value = detail::schema_hex_bytes<16>("8cff83cfc82e69e8de33609499a98b04")},
-  };
-  static constexpr std::uint32_t schema_version = 1U;  ///< Exact semantic schema version.
-  static constexpr std::string_view root_name =
-      identity.canonical_name;  ///< Canonical globally scoped UTF-8 name.
-  static constexpr std::size_t default_inline_capacity = 2048U;  ///< Inline authoring default.
-  // Metadata-only Image FlatBuffers are small in the current schema examples (~208 bytes). Keep the
-  // descriptor-backed default in the 1024-byte transport bucket; callers can spell a larger
-  // explicit DescriptorFlatBufferPayload<Image, N> when metadata strings or future fields need it.
-  static constexpr std::size_t default_descriptor_metadata_capacity =
-      512U;  ///< Descriptor metadata authoring default.
-};
-
-/// @brief Describe the SDK Imu root's complete identity and authoring defaults.
-template <>
-struct FlatBufferSchemaTraits<Imu> {
-  using root_type = Imu;  ///< Public generated semantic root type.
-  /// @brief Carry the exact name, version, artifact digest, and derived compact identity.
-  static constexpr SchemaIdentity identity{
-      .canonical_name = "holoscan.schema.Imu",
-      .version = 1U,
-      .schema_sha256 = detail::schema_hex_bytes<32>(
-          "5ea722651373e568c0c1ab8a4d96b87085a168c229c9168bba2a177d662947f4"),
-      .id = SchemaId{.value = detail::schema_hex_bytes<16>("4a880d527cb93733988fa6f3ba63ccf0")},
-  };
-  static constexpr std::uint32_t schema_version = 1U;  ///< Exact semantic schema version.
-  static constexpr std::string_view root_name =
-      identity.canonical_name;  ///< Canonical globally scoped UTF-8 name.
-  static constexpr std::size_t default_inline_capacity = 512U;  ///< Inline authoring default.
-  static constexpr std::size_t default_descriptor_metadata_capacity =
-      512U;  ///< Descriptor metadata authoring default.
-};
 
 /// @brief Describe the SDK String root's complete identity and authoring defaults.
 template <>
@@ -217,18 +176,6 @@ inline constexpr std::size_t flatbuffer_default_descriptor_metadata_capacity_v =
 }  // namespace holoscan::schema
 
 namespace holoscan {
-
-/// @brief Return the generated SDK Image schema identity.
-template <>
-consteval SchemaIdentity schema_identity<schema::Image>() {
-  return schema::FlatBufferSchemaTraits<schema::Image>::identity;
-}
-
-/// @brief Return the generated SDK Imu schema identity.
-template <>
-consteval SchemaIdentity schema_identity<schema::Imu>() {
-  return schema::FlatBufferSchemaTraits<schema::Imu>::identity;
-}
 
 /// @brief Return the generated SDK String schema identity.
 template <>

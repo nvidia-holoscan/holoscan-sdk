@@ -140,7 +140,7 @@ if(HOLOSCAN_ARTIFACT_FIXTURE_MODE STREQUAL "default_install_excluded")
             "Default install unexpectedly executed artifact generation:\n"
             "${default_install_stdout}\n${default_install_stderr}")
     endif()
-    if(EXISTS "${fixture_install_prefix}/share/graph-artifact-install-fixture")
+    if(EXISTS "${fixture_install_prefix}/share/holoscan/graph-artifact-install-fixture")
         message(FATAL_ERROR "Default install included the optional graph-artifact component")
     endif()
     return()

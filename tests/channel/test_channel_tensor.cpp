@@ -12,6 +12,7 @@
 #include "../../src/channel/channel_tensor_sidecar_store.hpp"
 #include "../../src/channel/channel_tensor_test_access.hpp"
 #include "../../src/channel/holomq_tensor.hpp"
+#include "../../src/runtime/channel_runtime_binding_access.hpp"
 #include "../common/allocation_counter.hpp"
 #include "../common/cuda_test_utils.hpp"
 #include "channel_holomq_test_support.hpp"
@@ -314,6 +315,7 @@ TEST(ChannelTensorTest, HoloMQConstBufferTensorOwnsReadOnlyImportLease) {
   ASSERT_TRUE(imported_or.has_value());
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
   holomq::ConstBuffer imported = std::move(*imported_or);
+  EXPECT_FALSE(imported.has_producer_readiness_fence());
   const void* const original_data_pointer = imported.ptr();
 
   const std::array<int64_t, 1> shape{16};
@@ -431,6 +433,7 @@ TEST(ChannelTensorTest, HoloMQImportedHostTensorWaitsForProducerReadiness) {
 
   auto imported_or = fixture->context.import_buffer_unsynchronized(descriptor->buffer_handle);
   ASSERT_TRUE(imported_or.has_value());
+  EXPECT_TRUE(imported_or->has_producer_readiness_fence());
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
   auto imported_tensor = holoscan::channel_internal::make_tensor_from_holomq_const_buffer(
       descriptor.value(), std::move(*imported_or));
@@ -2027,7 +2030,7 @@ TEST(ChannelTensorTest, ManualPublisherAdmitsExactlyOneSubscriber) {
 }
 
 // Verifies a retired manual service cannot be rebound while an older subscriber still retains its
-// sidecar generation. EA1 deliberately reserves the name until ChannelRuntime destruction.
+// sidecar generation. Baseline deliberately reserves the name until ChannelRuntime destruction.
 // REQ: CHANNEL-API-003
 TEST(ChannelTensorTest, ManualPublisherServiceNameIsOneShotWithinRuntime) {
   auto runtime = holoscan::ChannelRuntime::create();
@@ -2221,6 +2224,88 @@ TEST(ChannelTensorTest, BlockingOneToOneHotPathDoesNotAllocateAfterWarmup) {
 
   EXPECT_TRUE(all_cycles_succeeded);
   EXPECT_EQ(allocation_count, 0U);
+}
+
+// The data and protected-terminal services are observed independently. A final data publication
+// that becomes visible after the receiver's first data probe must still drain before EOS.
+// REQ: CHAN-136
+TEST(ChannelTensorTest, ProtectedTerminalRechecksDataPublishedAfterInitialProbe) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  holoscan::ChannelOptions options{};
+  options.queue_policy = holoscan::ChannelQueuePolicy::kDropOldest;
+  options.expected_recipient_count = 1U;
+  options.max_subscriber_queue_depth = 1U;
+  options.subscriber_queue_depth = 1U;
+
+  auto publisher = create_tensor_publisher(runtime.value(), channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  holoscan::channel_internal::TensorPublisherTestAccess::ReceiveProbeBarrier barrier;
+  holoscan::channel_internal::TensorPublisherTestAccess::
+      attach_receive_probe_barrier_to_next_subscriber_for_test(barrier);
+  auto subscriber = runtime->create_subscriber<holoscan::Tensor>(channel_name, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(publisher.value(), std::chrono::seconds(2)));
+
+  auto receive_future =
+      std::async(std::launch::async, [&subscriber] { return subscriber->receive_sample(); });
+  const bool first_data_probe_completed = barrier.reached.try_acquire_for(std::chrono::seconds(2));
+
+  std::optional<holoscan::expected<std::uint32_t, holoscan::Error>> emitted;
+  std::optional<holoscan::expected<std::uint32_t, holoscan::Error>> terminal_emitted;
+  auto destroyed = std::make_shared<std::atomic<int>>(0);
+  void* expected_data = nullptr;
+  if (first_data_probe_completed) {
+    holoscan::SampleMetadata data_metadata{};
+    data_metadata.sequence = 1U;
+    emitted.emplace(publisher->emit_sample(holoscan::Sample<holoscan::Tensor>(
+        make_counting_tensor(destroyed, &expected_data, 0x39U), data_metadata)));
+
+    holoscan::SampleMetadata terminal_metadata{};
+    terminal_metadata.sequence = 2U;
+    terminal_metadata.payload_kind = holoscan::PayloadKind::kDescriptorBacked;
+    terminal_emitted.emplace(
+        holoscan::channel_internal::TensorPublisherTestAccess::emit_end_of_stream(
+            publisher.value(), terminal_metadata));
+  }
+  barrier.resume.release();
+
+  auto received = receive_future.get();
+  ASSERT_TRUE(first_data_probe_completed);
+  ASSERT_TRUE(emitted.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+  const auto& emitted_result = *emitted;
+  ASSERT_TRUE(emitted_result) << holoscan::runtime_error_message(emitted_result.error());
+  EXPECT_EQ(*emitted_result, 1U);
+  ASSERT_TRUE(terminal_emitted.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+  const auto& terminal_emitted_result = *terminal_emitted;
+  ASSERT_TRUE(terminal_emitted_result)
+      << holoscan::runtime_error_message(terminal_emitted_result.error());
+  EXPECT_EQ(*terminal_emitted_result, 1U);
+
+  ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  EXPECT_EQ(received->metadata.sequence, 1U);
+  EXPECT_EQ(received->data.data(), expected_data);
+  EXPECT_EQ(holoscan::detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(
+                *subscriber),
+            0U);
+
+  auto end_of_stream = subscriber->receive_sample();
+  ASSERT_FALSE(end_of_stream);
+  EXPECT_EQ(end_of_stream.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ(holoscan::detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(
+                *subscriber),
+            2U);
+
+  auto repeated = subscriber->receive_sample();
+  ASSERT_FALSE(repeated);
+  EXPECT_EQ(repeated.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ(holoscan::detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(
+                *subscriber),
+            2U);
 }
 
 // Verifies blocking Tensor fanout keeps storage alive until every expected subscriber releases its

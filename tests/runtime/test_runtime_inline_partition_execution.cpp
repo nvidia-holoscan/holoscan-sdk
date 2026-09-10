@@ -33,6 +33,7 @@
 #include <holoscan/core/tensor_output_loan.hpp>
 // Provides generated owning types and schema-trait specializations.
 #include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "compiler/compile_internal.hpp"
@@ -1114,12 +1115,13 @@ class InlineTensorSource final : public Operator<>,
     this->setup_lifecycle(spec);
     spec.output(output, "output")
         .max_emits_per_compute(1U)
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = Kind,
-            .dtype = DLDataType{kDLUInt, 8U, 1U},
-            .rank = 1U,
-        })
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1U});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = Kind,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U},
+            .bounds = tensor_bounds(1U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -1219,10 +1221,10 @@ class InlineTensorRelay final : public Operator<>,
     this->setup_lifecycle(spec);
     spec.input(input, "input")
         .queue_depth(2U)
-        .expects_tensor(TensorPortLayout{
-            .memory_kind = Kind,
-            .dtype = DLDataType{kDLUInt, 8U, 1U},
-            .rank = 1U,
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = Kind,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U},
         });
     spec.output(output, "output").max_emits_per_compute(1U);
   }
@@ -1293,22 +1295,19 @@ class InlineImageSource final : public Operator<>,
 
   void setup(OperatorSpec& spec) override {
     this->setup_lifecycle(spec);
-    auto& output_spec =
-        spec.output(output, "output")
-            .max_emits_per_compute(1U)
-            .produces_tensor(TensorPortLayout{
-                .memory_kind = Kind,
-                .dtype = DLDataType{kDLUInt, 8U, 1U},
-                .rank = 1U,
-            })
-            .payload_options(PayloadOptions{
-                .schema = schema_identity<schema::ImageT>(),
-                .max_tensor_byte_span = 8U,
-                .interface_tensor_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
-            });
+    TensorOutputSpec contract{
+        .representation = {.memory_kind = Kind, .dtype = DLDataType{kDLUInt, 8U, 1U}, .rank = 1U},
+        .bounds = tensor_bounds(8U),
+        .transfer =
+            TensorTransferPolicy{
+                .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+                .max_staging_byte_span = 8U,
+            },
+    };
     if (declare_allocation_) {
-      output_spec.tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 8U});
+      contract.storage = TensorOutputStorage::kRuntimePool;
     }
+    spec.output(output, "output").max_emits_per_compute(1U).produces_tensor(contract);
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -1420,10 +1419,10 @@ class InlineImageRelay final : public Operator<>,
     this->setup_lifecycle(spec);
     spec.input(input, "input")
         .queue_depth(2U)
-        .expects_tensor(TensorPortLayout{
-            .memory_kind = Kind,
-            .dtype = DLDataType{kDLUInt, 8U, 1U},
-            .rank = 1U,
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = Kind,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U},
         });
     spec.output(output, "output").max_emits_per_compute(1U);
   }
@@ -1507,12 +1506,13 @@ class InlineTensorBranch final : public Operator<> {
     spec.input(input, "input").queue_depth(2U);
     spec.output(output, "output")
         .max_emits_per_compute(1U)
-        .produces_tensor(TensorPortLayout{
-            .memory_kind = Kind,
-            .dtype = DLDataType{kDLUInt, 8U, 1U},
-            .rank = 1U,
-        })
-        .tensor_allocation(TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 1U});
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = Kind,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U},
+            .bounds = tensor_bounds(1U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -2216,11 +2216,13 @@ class CrossPartitionFlowFailure final : public Operator<> {
 class PartitionRunnerPeriodicProbe final : public Operator<> {
  public:
   PartitionRunnerPeriodicProbe(std::size_t partition_index, std::uint32_t operator_id,
-                               bool fail_compute = false, bool synchronize_first_compute = false)
+                               bool fail_compute = false, bool synchronize_first_compute = false,
+                               bool request_completion = false)
       : partition_index_(partition_index),
         operator_id_(operator_id),
         fail_compute_(fail_compute),
-        synchronize_first_compute_(synchronize_first_compute) {}
+        synchronize_first_compute_(synchronize_first_compute),
+        request_completion_(request_completion) {}
 
   [[nodiscard]] Contract contract() const override {
     Contract result;
@@ -2228,12 +2230,16 @@ class PartitionRunnerPeriodicProbe final : public Operator<> {
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     if (synchronize_first_compute_ && !first_compute_completed_) {
       PartitionRunnerProbeState::enter_barrier(partition_index_, operator_id_, 2U);
       first_compute_completed_ = true;
     } else {
       PartitionRunnerProbeState::enter_callback(partition_index_, operator_id_);
+    }
+    if (request_completion_ && !completion_requested_) {
+      completion_requested_ = true;
+      context.request_completion();
     }
     PartitionRunnerProbeState::leave_callback(partition_index_);
     if (fail_compute_) {
@@ -2247,7 +2253,55 @@ class PartitionRunnerPeriodicProbe final : public Operator<> {
   std::uint32_t operator_id_{};
   bool fail_compute_{};
   bool synchronize_first_compute_{};
+  bool request_completion_{};
   bool first_compute_completed_{};
+  bool completion_requested_{};
+};
+
+class PartitionRunnerCompletionSource final : public Operator<> {
+ public:
+  static void set_admission_control(
+      detail::RuntimeTerminationAdmissionTestControl* admission_control) noexcept {
+    admission_control_.store(admission_control, std::memory_order_release);
+  }
+
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto* const admission_control = admission_control_.load(std::memory_order_acquire);
+    if (admission_control == nullptr) {
+      return make_unexpected(
+          Error{ErrorCode::kFailure, "PARTITION_COMPLETION_ADMISSION_CONTROL_MISSING"});
+    }
+    PartitionRunnerProbeState::enter_callback(0U, 1U);
+    auto emitted = output.emit(InlinePartitionPod{.value = 101U});
+    if (!emitted) {
+      PartitionRunnerProbeState::leave_callback(0U);
+      return emitted;
+    }
+    const bool peer_waiting = admission_control->wait_until_arrived();
+    context.request_completion();
+    admission_control->release();
+    PartitionRunnerProbeState::leave_callback(0U);
+    if (!peer_waiting) {
+      return make_unexpected(
+          Error{ErrorCode::kFailure, "PARTITION_COMPLETION_PEER_DID_NOT_REACH_ADMISSION"});
+    }
+    return {};
+  }
+
+  Output<InlinePartitionPod> output;
+
+ private:
+  static inline std::atomic<detail::RuntimeTerminationAdmissionTestControl*> admission_control_{};
 };
 
 class PartitionControlRestartTarget final : public Operator<> {
@@ -2554,6 +2608,9 @@ template <MemoryKind Kind>
     graph.add_flow(source->output, second_relay->input, queue_options(policy));
     graph.add_flow(second_relay->output, second_sink->input, queue_options(policy));
   }
+  if (route == TensorPlanRoute::kInline) {
+    graph.partition("inline-tensor-complete-cover").include_all();
+  }
   graph.set_default_clock(graph.add_clock<RealtimeClock>("inline-clock"));
 
   CompileOptions options;
@@ -2590,6 +2647,9 @@ template <MemoryKind Kind>
     auto second_sink = graph.op<InlinePodSink>("second-sink", 5U);
     graph.add_flow(source->output, second_relay->input, queue_options(policy));
     graph.add_flow(second_relay->output, second_sink->input, queue_options(policy));
+  }
+  if (route == TensorPlanRoute::kInline) {
+    graph.partition("inline-image-complete-cover").include_all();
   }
   graph.set_default_clock(graph.add_clock<RealtimeClock>("inline-clock"));
 
@@ -2815,6 +2875,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
   auto second = graph.op<InlinePodSink>("second-sink", 3U);
   graph.add_flow(source->output, first->input, queue_options(QueuePolicy::kBlocking));
   graph.add_flow(source->output, second->input, queue_options(QueuePolicy::kBlocking));
+  graph.partition("inline-pod-fork-complete-cover").include_all();
   graph.set_default_clock(graph.add_clock<RealtimeClock>("inline-clock"));
   return compile(graph);
 }
@@ -2900,6 +2961,27 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
   const auto second = graph.op<PartitionRunnerPeriodicProbe>("second", 1U, 2U);
   graph.partition("first").add(first);
   graph.partition("second").add(second);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("partition-runner-clock"));
+  return compile(graph);
+}
+
+[[nodiscard]] ExecutionPlan make_partition_completion_plan() {
+  Graph graph{"partition-runner-completion"};
+  const auto first = graph.op<PartitionRunnerPeriodicProbe>("first", 0U, 1U, false, false, true);
+  const auto second = graph.op<PartitionRunnerPeriodicProbe>("second", 1U, 2U, false, false, true);
+  graph.partition("first").add(first);
+  graph.partition("second").add(second);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("partition-runner-clock"));
+  return compile(graph);
+}
+
+[[nodiscard]] ExecutionPlan make_partition_completion_delivery_plan() {
+  Graph graph{"partition-runner-completion-delivery"};
+  const auto source = graph.op<PartitionRunnerCompletionSource>("source");
+  const auto sink = graph.op<PartitionRunnerProbeSink>("sink", 1U, 2U);
+  graph.add_flow(source->output, sink->input, queue_options(QueuePolicy::kBlocking));
+  graph.partition("source").add(source);
+  graph.partition("sink").add(sink);
   graph.set_default_clock(graph.add_clock<RealtimeClock>("partition-runner-clock"));
   return compile(graph);
 }
@@ -4093,6 +4175,88 @@ TEST(RuntimeInlinePartitionExecution, StopBroadcastRetiresEveryPartitionOwner) {
   ASSERT_TRUE(probe.owner_seen[1]);
   EXPECT_NE(probe.owner_threads[0], probe.owner_threads[1]);
   expect_no_legacy_lane_handoffs(counters->snapshot());
+}
+
+// REQ: RUNTIME-046
+TEST(RuntimeInlinePartitionExecution,
+     CallbackCompletionClosesBeforeClaimAndDoesNotDrainQueuedDelivery) {
+  PartitionRunnerProbeState::reset();
+  auto control = std::make_shared<detail::RuntimeTerminationAdmissionTestControl>(
+      detail::RuntimeTerminationAdmissionTestControl::Point::kBeforeClaim, 1U, 1U);
+  ExecutionPlan compiled = make_partition_completion_delivery_plan();
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  const auto state = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_TRUE(state);
+  ASSERT_EQ(state->process_local_channel_services.size(), 1U);
+  EXPECT_EQ(state->process_local_channel_services.front().delivery_kind,
+            detail::ProcessLocalChannelDeliveryKind::kDirectRetained);
+  compiled =
+      detail::RuntimeTestPlanAccess::with_termination_admission_test_control(compiled, control);
+  PartitionRunnerCompletionSource::set_admission_control(control.get());
+
+  RunSession session = run_async(compiled);
+  session.wait();
+  PartitionRunnerCompletionSource::set_admission_control(nullptr);
+
+  EXPECT_EQ(control->arrival_count(), 1U);
+  EXPECT_EQ(session.termination(), RunTermination::kRequestedCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  const PartitionRunnerProbeSnapshot probe = PartitionRunnerProbeState::snapshot();
+  ASSERT_EQ(probe.callback_records.size(), 1U);
+  EXPECT_EQ(probe.callback_records.front().operator_id, 1U);
+  EXPECT_EQ(probe.callback_records.front().partition_index, 0U);
+  EXPECT_TRUE(probe.owner_seen[0]);
+  EXPECT_FALSE(probe.owner_seen[1]);
+  EXPECT_TRUE(probe.sink_values.empty());
+  EXPECT_TRUE(probe.balanced_callbacks);
+}
+
+// REQ: RUNTIME-046
+TEST(RuntimeInlinePartitionExecution,
+     CallbackCompletionAllowsAlreadyClaimedPartitionCallbacksToRetire) {
+  PartitionRunnerProbeState::reset();
+  ExecutionPlan compiled = make_partition_completion_plan();
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  auto control = std::make_shared<detail::RuntimeTerminationAdmissionTestControl>(
+      detail::RuntimeTerminationAdmissionTestControl::Point::kAfterClaim, 2U);
+  compiled =
+      detail::RuntimeTestPlanAccess::with_termination_admission_test_control(compiled, control);
+
+  RunSession session = run_async(compiled);
+  const bool arrived = control->wait_until_arrived();
+  if (!arrived) {
+    session.request_stop();
+  }
+  control->release();
+  session.wait();
+
+  ASSERT_TRUE(arrived);
+  EXPECT_EQ(control->arrival_count(), 2U);
+  EXPECT_EQ(session.termination(), RunTermination::kRequestedCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  const PartitionRunnerProbeSnapshot probe = PartitionRunnerProbeState::snapshot();
+  ASSERT_EQ(probe.callback_records.size(), 2U);
+  EXPECT_TRUE(probe.stable_owner_threads);
+  EXPECT_TRUE(probe.balanced_callbacks);
+  ASSERT_TRUE(probe.owner_seen[0]);
+  ASSERT_TRUE(probe.owner_seen[1]);
+  EXPECT_NE(probe.owner_threads[0], probe.owner_threads[1]);
+  std::array<std::uint32_t, 2U> operator_ids{
+      probe.callback_records[0].operator_id,
+      probe.callback_records[1].operator_id,
+  };
+  std::ranges::sort(operator_ids);
+  EXPECT_EQ(operator_ids, (std::array<std::uint32_t, 2U>{1U, 2U}));
+  std::array<std::size_t, 2U> partition_indices{
+      probe.callback_records[0].partition_index,
+      probe.callback_records[1].partition_index,
+  };
+  std::ranges::sort(partition_indices);
+  EXPECT_EQ(partition_indices, (std::array<std::size_t, 2U>{0U, 1U}));
+  for (const auto& callback : probe.callback_records) {
+    ASSERT_LT(callback.partition_index, probe.owner_threads.size());
+    EXPECT_EQ(callback.thread, probe.owner_threads[callback.partition_index]);
+  }
 }
 
 // REQ: RUNTIME-041

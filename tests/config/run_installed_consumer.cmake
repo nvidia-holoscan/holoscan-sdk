@@ -21,7 +21,19 @@ foreach(_required_mode IN ITEMS config full)
   endif()
 endforeach()
 
-set(_build_targets core holoscan_schema config)
+# sensor_io is built for every mode below because the prefixes that carry Core also carry the
+# holoscan-sensor-io component, and installing a component whose target was never built leaves a
+# dangling import file. It is not one of the modes: this test varies which *config* components an
+# install carries.
+#
+# holoscan::sensor_io no longer rides the shared holoscan-targets.cmake -- it has its own export
+# file, so its absence from a prefix is not an error. The consumer therefore asserts the two halves
+# of that boundary it can reach from these prefixes: an unqualified find_package in "full" mode must
+# yield holoscan::sensor_io from the separate export file, and an explicit COMPONENTS find in the
+# other Core-bearing modes must not, even though the export file is installed. The remaining half,
+# a Core-bearing prefix installed *without* holoscan-sensor-io at all, needs an install mode of its
+# own and is not covered here.
+set(_build_targets core holoscan_schema sensor_io config)
 foreach(_mode IN LISTS _available_modes)
   if(_mode STREQUAL "config_io")
     list(APPEND _build_targets config_io)
@@ -50,10 +62,11 @@ endif()
 set(_core_install_components
     holoscan
     holoscan-dependencies
-    holomq-iceoryx2-libraries
+    iceoryx2-lib
     dev
     holomq
-    holoscan-core)
+    holoscan-core
+    holoscan-sensor-io)
 
 foreach(_mode IN LISTS _available_modes)
   set(_install_prefix "${HOLOSCAN_CONSUMER_WORK_DIR}/${_mode}/install")

@@ -142,6 +142,20 @@ struct TensorDeviceBindingRecord {
   DeviceId device;  ///< Explicit nonnegative CUDA device identity.
 };
 
+/// @brief Supply deterministic target Green Context capability to compiler admission.
+struct CudaGreenContextCapabilityEvidence {
+  DeviceId device;                           ///< Process-local target ordinal.
+  std::string deployment_device_id;          ///< Stable deployment physical identity.
+  std::uint32_t total_sm_count{};            ///< Qualified total SM count.
+  std::uint32_t min_sm_partition_size{};     ///< Driver minimum structured size.
+  std::uint32_t sm_coscheduled_alignment{};  ///< Driver co-scheduling alignment.
+  /// Qualified driver-simulated maximum group count; may be below total/quantum.
+  std::uint32_t max_structured_context_count{};
+  std::string evidence_id;  ///< Versioned evidence provenance.
+  PlacementProbeStatus probe_status{
+      PlacementProbeStatus::kRuntimeRequired};  ///< Local-pass or deferred target recheck.
+};
+
 /// @brief Borrow all immutable generated evidence captured by one compilation.
 ///
 /// This source-private value is copied at compile ingress. It contains no
@@ -150,8 +164,11 @@ struct RuntimeCompileEvidenceView {
   RuntimePackageCapabilityView package_capabilities;
   std::span<const RuntimeEndpointClockHealthQualification> endpoint_clock_health;
   std::span<const TensorDeviceBindingRecord> tensor_device_bindings;
+  std::span<const CudaGreenContextCapabilityEvidence> cuda_green_context_capabilities;
   /// Source-private diagnostic seam that preserves the prior HoloMQ path for exact A/B checks.
   bool force_holomq_process_local_inline{};
+  /// Source-private diagnostic seam that preserves event attachment for exact HoloMQ A/B checks.
+  bool force_holomq_process_local_event_wake{};
 };
 
 /// @brief Return canonical package bytes with or without the digest field.
@@ -179,9 +196,9 @@ validate_runtime_package_capability_manifest(const RuntimePackageCapabilityManif
 
 /// @brief Return the build-generated package artifact used by Core compilation.
 ///
-/// EA1-017 replaces this source-local generated fixture with the exactly-one
+/// HSDK5-017 replaces this source-local generated fixture with the exactly-one
 /// embedded or fixed-install provider. The returned model and matching rules
-/// are already the provider-independent EA1-009 contract.
+/// are already the provider-independent HSDK5-009 contract.
 [[nodiscard]] const RuntimePackageCapabilityManifest& runtime_package_capability_manifest();
 
 /// @brief Return the validated immutable view injected into the compiler.

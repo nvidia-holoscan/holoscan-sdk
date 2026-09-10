@@ -93,12 +93,12 @@ void expect_error(const expected<ReadyPolicyCatalog, Error>& result, ErrorCode c
   EXPECT_EQ(result.error().message, token);
 }
 
-// The catalog is a cold constructor-injected table. EA1's built-in table contains only the
+// The catalog is a cold constructor-injected table. The baseline's built-in table contains only the
 // production deterministic-serial implementation; the future topology-aware identifier is not a
 // registration or fallback.
 // REQ: RUNTIME-002
-TEST(ReadyPolicyCatalogTest, RegistersOnlyDeterministicSerialInEA1) {
-  auto catalog = ReadyPolicyCatalog::create_ea1_builtins();
+TEST(ReadyPolicyCatalogTest, RegistersOnlyDeterministicSerial) {
+  auto catalog = ReadyPolicyCatalog::create_default_builtins();
   ASSERT_TRUE(catalog);
   EXPECT_EQ(catalog->size(), 1U);
 
@@ -118,7 +118,7 @@ TEST(ReadyPolicyCatalogTest, RegistersOnlyDeterministicSerialInEA1) {
 
 // REQ: RUNTIME-002
 TEST(ReadyPolicyCatalogTest, RejectsUnknownVersionAndMalformedRegistrationExactly) {
-  auto catalog = ReadyPolicyCatalog::create_ea1_builtins();
+  auto catalog = ReadyPolicyCatalog::create_default_builtins();
   ASSERT_TRUE(catalog);
 
   auto unknown = catalog->make(AlgorithmKey{"holoscan.ready.unknown", 1U});
@@ -280,7 +280,7 @@ TEST(ReadyPolicyLifetimeTest, SelectsOnceAndRetainsNoCompilerObjects) {
   const auto plan = valid_scheduler_plan();
   std::unique_ptr<detail::scheduling::ReadyPolicy> policy;
   {
-    auto catalog = ReadyPolicyCatalog::create_ea1_builtins();
+    auto catalog = ReadyPolicyCatalog::create_default_builtins();
     ASSERT_TRUE(catalog);
     auto created = catalog->make(plan.ready_policy);
     ASSERT_TRUE(created);

@@ -225,11 +225,46 @@ TEST(ParameterTools, PreservesTypedConfigCause) {
 }
 
 // REQ: PARAM-024
+TEST(ParameterTools, FormatsConfigCauseForHumanReadableLogs) {
+  const auto cause = config::ConfigError::make(
+      config::ConfigErrorCode::kParseError, "invalid configuration", "/camera/fps");
+  const auto error = from_config_error(cause, "PARAM_TOOL_CONFIG_INVALID");
+
+  const std::string formatted = format_error(error);
+
+  EXPECT_EQ(formatted,
+            "PARAM_TOOL_CONFIG_INVALID; caused by: CONFIG_PARSE_ERROR: invalid configuration "
+            "[path: /camera/fps]");
+}
+
+// REQ: PARAM-024
+TEST(ParameterTools, FormatsCoreCauseForHumanReadableLogs) {
+  const auto error = from_core_error(Error{ErrorCode::kTimeout, "bounded\x1b[2J\nwait"},
+                                     "PARAM_TOOL_CORE_TIMEOUT");
+
+  const std::string formatted = format_error(error);
+
+  EXPECT_EQ(formatted, "PARAM_TOOL_CORE_TIMEOUT; caused by: kTimeout: bounded [2J wait");
+}
+
+// REQ: PARAM-024
 TEST(ParameterTools, OversizedDiagnosticTokenMapsToStableBoundedToken) {
   const std::string oversized(ParamToolError::kTokenCapacity + 1U, 'X');
   const ParamToolError error{ParamToolErrorCode::kInvalidArgument, oversized};
   EXPECT_EQ(error.token(), "PARAM_TOOL_TOKEN_INVALID");
   EXPECT_LE(error.token().size(), ParamToolError::kTokenCapacity);
+}
+
+// REQ: PARAM-024
+TEST(ParameterTools, MalformedDiagnosticTokensMapToStableBoundedToken) {
+  constexpr std::array<std::string_view, 4> invalid_tokens{
+      "PARAM TOOL", "PARAM\nTOOL", "param_tool", "1_PARAM_TOOL"};
+
+  for (const std::string_view token : invalid_tokens) {
+    SCOPED_TRACE(token);
+    const ParamToolError error{ParamToolErrorCode::kInvalidArgument, token};
+    EXPECT_EQ(error.token(), "PARAM_TOOL_TOKEN_INVALID");
+  }
 }
 
 // REQ: PARAM-027

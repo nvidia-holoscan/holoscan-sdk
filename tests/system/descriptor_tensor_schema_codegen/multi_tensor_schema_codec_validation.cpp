@@ -233,8 +233,12 @@ int main() {
       *source.second,
       *source.third,
   };
-  auto assigned =
-      ops->assign_descriptor_tensors_sample(storage.data(), wire_prefix, tensors, metadata);
+  auto assigned = ops->assign_descriptor_tensors_sample(
+      storage.data(),
+      wire_prefix,
+      tensors,
+      holoscan::detail::DescriptorTensorWireMetadata{metadata},
+      holoscan::detail::DescriptorTensorSampleMetadata{metadata});
   auto* sample = reinterpret_cast<holoscan::Sample<Native>*>(storage.data());
   const bool assigned_all =
       assigned && sample->data.sequence == source.sequence && sample->data.label == source.label &&

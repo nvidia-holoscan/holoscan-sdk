@@ -19,7 +19,9 @@
 #include <holoscan/channel/endpoint_catalog.hpp>
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/execution_plan.hpp>
+#include <holoscan/core/expected.hpp>
 #include <holoscan/core/parameter_override_set.hpp>
+#include <holoscan/core/rate.hpp>
 #include <holoscan/threading/thread_placement.hpp>
 
 namespace holoscan {
@@ -45,6 +47,38 @@ struct PartitionThreadPlacementBinding {
   ThreadPlacement placement{};  ///< Requested affinity and scheduling policy.
 };
 
+/// @brief Deep-own one manual-partition Green Context placement request.
+struct PartitionCudaGreenContextBinding {
+  std::string partition_name;             ///< Exact owned manual partition name.
+  CudaGreenContextPlacement placement{};  ///< Exact target-specific CUDA placement.
+};
+
+/// @brief Report read-only CUDA Green Context partition capability for one device.
+///
+/// This value is discovery evidence only. It neither reserves SMs nor authorizes a deployment.
+struct CudaGreenContextCapability {
+  DeviceId device;                           ///< Queried process-local CUDA ordinal.
+  std::string deployment_device_id;          ///< Stable UUID/PCI deployment identity.
+  std::uint32_t total_sm_count{};            ///< Total device SM resource count.
+  std::uint32_t min_sm_partition_size{};     ///< Driver minimum structured group size.
+  std::uint32_t sm_coscheduled_alignment{};  ///< Driver co-scheduling alignment.
+  std::uint32_t structured_sm_quantum{};     ///< LCM used for exact group admission.
+  /// Maximum driver-qualified minimum-size group count; may be below total_sm_count / quantum.
+  std::uint32_t max_structured_context_count{};
+
+  /// @brief Compare all target capability evidence.
+  friend bool operator==(const CudaGreenContextCapability& lhs,
+                         const CudaGreenContextCapability& rhs) noexcept = default;
+};
+
+/// @brief Query CUDA Green Context capability without reserving resources.
+/// @param device Explicit nonnegative process-local CUDA ordinal; unresolved/negative values fail.
+/// @return Driver-reported capability, or a typed argument/driver/toolkit error.
+/// @note The result is target-specific discovery evidence, not deployment authority or a resource
+/// reservation. Exact placement remains restricted to named manual execution partitions.
+[[nodiscard]] HOLOSCAN_CORE_EXPORT expected<CudaGreenContextCapability, Error>
+query_cuda_green_context_capability(DeviceId device);
+
 /// @brief Own one exact generated endpoint-name admission pin.
 struct GeneratedEndpointNamePinRecord {
   std::string final_name;   ///< Exact admitted client lookup identity.
@@ -54,9 +88,9 @@ struct GeneratedEndpointNamePinRecord {
 
 /// @brief Place one exact Tensor or Tensor-bearing schema output on a CUDA device.
 ///
-/// The operator path is the canonical Graph vertex path used by deployment
-/// selectors (for example, `source` at the root or `/pipeline/source` in an
-/// embedded Graph). The port name identifies one operator-owned
+/// The operator path uses the canonical segment-encoded, no-leading-slash
+/// OperatorPath grammar (for example, `source` at the root or
+/// `pipeline/source` in an embedded Graph). The port name identifies one operator-owned
 /// `Output<Tensor>` or an owning generated-schema output whose payload kind is
 /// descriptor-backed. Compilation rejects unknown, unrelated payloads,
 /// duplicates, or conflicting placements rather than selecting device zero or
@@ -95,6 +129,16 @@ class HOLOSCAN_CORE_EXPORT DeploymentBinding {
   DeploymentBinding& bind_thread_placement(std::string_view partition_name,
                                            ThreadPlacement placement);
 
+  /// @brief Bind one manual execution partition to an exact CUDA Green Context placement.
+  /// @param partition_name Exact authored manual partition name copied before return.
+  /// @param placement Explicit target device and positive exact structured SM count.
+  /// @return This binding for fluent cold-path authoring.
+  /// @throws std::bad_alloc if owned storage allocation fails.
+  /// @note Invalid devices, zero counts, unknown names, and duplicate authority are preserved for
+  /// stable compile diagnostics. This call does not reserve CUDA resources.
+  DeploymentBinding& bind_cuda_green_context(std::string_view partition_name,
+                                             CudaGreenContextPlacement placement);
+
   /// @brief Allow one exact versioned generated endpoint name.
   /// @param pin Exact final name, algorithm identifier, and version.
   /// @return This binding for fluent cold-path authoring.
@@ -120,6 +164,13 @@ class HOLOSCAN_CORE_EXPORT DeploymentBinding {
     return thread_placements_;
   }
 
+  /// @brief Return owned manual-partition Green Context placements in insertion order.
+  /// @return Immutable bindings valid until this value is mutated or destroyed.
+  [[nodiscard]] std::span<const PartitionCudaGreenContextBinding> cuda_green_contexts()
+      const noexcept {
+    return cuda_green_contexts_;
+  }
+
   /// @brief Return owned generated endpoint pins in insertion order.
   /// @return Immutable pins valid until this value is mutated or destroyed.
   [[nodiscard]] std::span<const GeneratedEndpointNamePinRecord> generated_endpoint_names()
@@ -136,6 +187,7 @@ class HOLOSCAN_CORE_EXPORT DeploymentBinding {
 
  private:
   std::vector<PartitionThreadPlacementBinding> thread_placements_;
+  std::vector<PartitionCudaGreenContextBinding> cuda_green_contexts_;
   std::vector<GeneratedEndpointNamePinRecord> generated_endpoint_names_;
   std::vector<TensorOutputDevicePlacementRecord> tensor_output_devices_;
 };
@@ -186,6 +238,14 @@ struct LifecycleTransactionOptions {
   std::uint32_t max_rollback_records{};       ///< Completed-work rollback journal bound.
 };
 
+/// @brief Select deterministic compile-wide advisory queue-sizing headroom.
+///
+/// The exact multiplier applies only to the soft nominal-arrival recommendation. It is not a
+/// burst, jitter, maximum-arrival, memory-safety, or scheduling guarantee.
+struct AutomaticQueueSizingOptions {
+  RateRatio headroom_ratio{2U, 1U};  ///< Exact multiplier, required to be at least one.
+};
+
 /// @brief Own all caller-supplied inputs to one Graph compilation.
 ///
 /// Compilation snapshots this value and the Graph. No field supplies a live
@@ -199,6 +259,7 @@ struct CompileOptions {
   std::optional<ParamOverrideSet> parameter_overrides;     ///< Optional target-bound overrides.
   ParameterCompileOptions parameters;                      ///< Parameter storage/update policy.
   std::optional<LifecycleTransactionOptions> lifecycle_transactions;  ///< Active restart opt-in.
+  AutomaticQueueSizingOptions automatic_queue_sizing;  ///< Advisory rate-derived depth policy.
 };
 
 /// @brief Select the deployment artifact destination for explicit publication.

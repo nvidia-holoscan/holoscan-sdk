@@ -125,23 +125,38 @@ def read_cpu_topology(role: str, cpu: int) -> dict[str, object]:
         result["package_id"] = int(
             (topology_dir / "physical_package_id").read_text(encoding="utf-8").strip()
         )
-        result["core_id"] = int((topology_dir / "core_id").read_text(encoding="utf-8").strip())
-        result["topology_available"] = True
     except (OSError, ValueError):
-        result["topology_available"] = False
+        result["package_id"] = None
+    try:
+        result["core_id"] = int((topology_dir / "core_id").read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        result["core_id"] = None
+    try:
+        siblings = (topology_dir / "thread_siblings_list").read_text(encoding="utf-8").strip()
+        result["thread_siblings"] = siblings or None
+    except OSError:
+        result["thread_siblings"] = None
+    result["topology_available"] = result["package_id"] is not None and (
+        result["thread_siblings"] is not None or result["core_id"] is not None
+    )
     return result
 
 
 def validate_distinct_physical_cores(cpu_topology: list[dict[str, object]]) -> None:
-    physical_cores: dict[tuple[object, object], dict[str, object]] = {}
+    physical_cores: dict[tuple[object, str, object], dict[str, object]] = {}
     for placement in cpu_topology:
         if not placement.get("pinned") or not placement.get("topology_available"):
             continue
-        physical_core = (placement["package_id"], placement["core_id"])
+        siblings = placement.get("thread_siblings")
+        physical_core = (
+            placement["package_id"],
+            "siblings" if siblings else "core",
+            siblings if siblings else placement["core_id"],
+        )
         if previous := physical_cores.get(physical_core):
             raise RuntimeError(
                 f"{previous['role']} CPU {previous['cpu']} and {placement['role']} CPU "
-                f"{placement['cpu']} share package/core {physical_core}; use distinct physical "
+                f"{placement['cpu']} share physical core {physical_core}; use distinct physical "
                 "cores"
             )
         physical_cores[physical_core] = placement

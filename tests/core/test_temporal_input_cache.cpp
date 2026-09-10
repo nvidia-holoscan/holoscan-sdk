@@ -40,6 +40,98 @@ constexpr ClockId kClock{7};
           .arrival_sequence = arrival};
 }
 
+// The logical limit may never exceed the physical reservation. Direct source-private construction
+// clamps an oversized limit so push() cannot allocate beyond the cold-path reserve.
+// REQ: CONTRACT-004
+TEST(TemporalInputCache, OversizedActiveCapacityIsClampedToPhysicalCapacity) {
+  detail::TemporalInputCache cache{2U, 4U};
+  EXPECT_EQ(cache.capacity(), 2U);
+  EXPECT_EQ(cache.active_capacity(), 2U);
+  EXPECT_TRUE(cache.push(sample(10, 1, 1)));
+  EXPECT_TRUE(cache.push(sample(20, 2, 2)));
+  const auto full = cache.push(sample(30, 3, 3));
+  ASSERT_FALSE(full);
+  EXPECT_EQ(full.error().code, ErrorCode::kResourceExhausted);
+}
+
+// REQ: CONTRACT-004
+// evict() is the caller-directed counterpart to push(): it removes one exactly named record so a
+// kDropOldest edge can release a superseded candidate, while push() keeps failing closed on a full
+// cache. Nothing here is implicit -- the cache never learns a QueuePolicy.
+TEST(TemporalInputCache, EvictRemovesExactlyTheNamedRetainedRecord) {
+  detail::TemporalInputCache cache{4};
+  ASSERT_TRUE(cache.push(sample(10, 1, 1)));
+  ASSERT_TRUE(cache.push(sample(20, 2, 2)));
+  ASSERT_TRUE(cache.push(sample(30, 3, 3)));
+  ASSERT_EQ(cache.size(), 3U);
+
+  // Key assertion: the middle record is removed, not the oldest and not a positional guess.
+  ASSERT_TRUE(cache.evict(2));
+  EXPECT_EQ(cache.size(), 2U);
+  {
+    auto selected = cache.select_exact_transaction(TimePoint{20, kClock});
+    ASSERT_TRUE(selected);
+    EXPECT_EQ(selected->result().selection.state, InputState::kAbsent);
+  }
+  {
+    auto survivor = cache.select_exact_transaction(TimePoint{30, kClock});
+    ASSERT_TRUE(survivor);
+    EXPECT_EQ(survivor->result().selection.state, InputState::kSelected);
+    ASSERT_TRUE(survivor->result().sample);
+    EXPECT_EQ(survivor->result().sample->arrival_sequence, 3U);
+  }
+
+  // An identity never retained, and one already evicted, are both kNotFound.
+  EXPECT_EQ(cache.evict(99).error().code, ErrorCode::kNotFound);
+  EXPECT_EQ(cache.evict(2).error().code, ErrorCode::kNotFound);
+  EXPECT_EQ(cache.evict(0).error().code, ErrorCode::kInvalidArgument);
+}
+
+// REQ: CONTRACT-004
+// Eviction must not rewind the monotonic admission watermark: an arrival identity already admitted
+// stays rejected after its record is evicted, so a replayed sample cannot be re-admitted through
+// the eviction path.
+TEST(TemporalInputCache, EvictPreservesArrivalAdmissionWatermark) {
+  detail::TemporalInputCache cache{2};
+  ASSERT_TRUE(cache.push(sample(10, 1, 1)));
+  ASSERT_TRUE(cache.push(sample(20, 2, 2)));
+  ASSERT_TRUE(cache.evict(2));
+  EXPECT_EQ(cache.size(), 1U);
+
+  // Key assertion: arrival 2 was admitted once and stays spent even though its record is gone.
+  auto replayed = cache.push(sample(20, 2, 2));
+  ASSERT_FALSE(replayed);
+  EXPECT_EQ(replayed.error().code, ErrorCode::kInvalidArgument);
+  // A strictly newer arrival is still admitted, which is the case a superseding edge needs.
+  EXPECT_TRUE(cache.push(sample(30, 3, 3)));
+  EXPECT_EQ(cache.size(), 2U);
+}
+
+// REQ: CONTRACT-004
+// A frozen selection holds the retained set for the running activation, so eviction is refused
+// while a transaction is open rather than invalidating the record the caller is about to commit.
+TEST(TemporalInputCache, EvictIsRefusedWhileASelectionTransactionIsOpen) {
+  detail::TemporalInputCache cache{4};
+  ASSERT_TRUE(cache.push(sample(10, 1, 1)));
+  ASSERT_TRUE(cache.push(sample(20, 2, 2)));
+
+  {
+    auto selected = cache.select_latest_within_transaction(TimePoint{20, kClock}, 100ns);
+    ASSERT_TRUE(selected);
+    // Key assertion: refused, and the retained set is unchanged.
+    auto refused = cache.evict(1);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, ErrorCode::kBackpressured);
+    EXPECT_EQ(cache.size(), 2U);
+    ASSERT_TRUE(selected->commit());
+  }
+
+  // Once the transaction closes eviction is available again; the commit consumed arrival 2.
+  EXPECT_EQ(cache.size(), 1U);
+  EXPECT_TRUE(cache.evict(1));
+  EXPECT_EQ(cache.size(), 0U);
+}
+
 // REQ: CONTRACT-004
 TEST(TemporalInputCache, LatestWithinIsCausalOrderIndependentAndInclusive) {
   detail::TemporalInputCache cache{8};
@@ -64,6 +156,72 @@ TEST(TemporalInputCache, LatestWithinIsCausalOrderIndependentAndInclusive) {
   ASSERT_TRUE(boundary);
   EXPECT_EQ(boundary->result().selection.reason, SelectionReason::kTooStale);
   EXPECT_FALSE(boundary->result().sample);
+}
+
+// REQ: CONTRACT-021
+// A committed LatestWithin miss can retire one record only when a same-clock lower bound proves
+// that every future semantic reference leaves it older than the admitted window. Used by
+// TemporalInputCache.CommittedTooStaleMissRetiresOneWatermarkedRecord.
+TEST(TemporalInputCache, CommittedTooStaleMissRetiresOneWatermarkedRecord) {
+  // Key setup: three retained records precede a frozen arrival watermark, and the caller supplies
+  // the current reference as a valid lower bound for every future semantic reference.
+  detail::TemporalInputCache cache{4};
+  ASSERT_TRUE(cache.push(sample(10, 1, 1)));
+  ASSERT_TRUE(cache.push(sample(20, 2, 2)));
+  ASSERT_TRUE(cache.push(sample(30, 3, 3)));
+
+  {
+    auto cancelled = cache.select_latest_within_transaction(
+        TimePoint{100, kClock}, 10ns, 2U, TimePoint{100, kClock});
+    ASSERT_TRUE(cancelled);
+    EXPECT_EQ(cancelled->result().selection.reason, SelectionReason::kTooStale);
+  }
+  EXPECT_EQ(cache.size(), 3U);
+
+  auto first = cache.select_latest_within_transaction(
+      TimePoint{100, kClock}, 10ns, 2U, TimePoint{100, kClock});
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(first->commit());
+  ASSERT_EQ(cache.size(), 2U);
+  EXPECT_EQ(cache.records()[0].arrival_sequence, 2U);
+  EXPECT_EQ(cache.records()[1].arrival_sequence, 3U);
+
+  auto second = cache.select_latest_within_transaction(
+      TimePoint{100, kClock}, 10ns, 2U, TimePoint{100, kClock});
+  ASSERT_TRUE(second);
+  ASSERT_TRUE(second->commit());
+
+  // Key assertion: cancellation consumes nothing, while each accepted miss retires at most one
+  // watermarked record and preserves arrivals beyond the frozen cut.
+  ASSERT_EQ(cache.size(), 1U);
+  EXPECT_EQ(cache.records().front().arrival_sequence, 3U);
+}
+
+// REQ: CONTRACT-004
+// REQ: CONTRACT-021
+// An input-driven activation can expose a lower semantic reference after a higher one. Without a
+// monotonic future-reference proof, a stale miss must preserve evidence that the later activation
+// can still select. Used by TemporalInputCache.UnprovenStaleMissPreservesLateVisibleSelection.
+TEST(TemporalInputCache, UnprovenStaleMissPreservesLateVisibleSelection) {
+  // Key setup: t=90 is too stale at reference 200 but lies within the 50 ns window of a
+  // subsequently visible reference 100; neither transaction supplies a future-reference bound.
+  detail::TemporalInputCache cache{1};
+  ASSERT_TRUE(cache.push(sample(90, 1, 1)));
+
+  auto high_reference = cache.select_latest_within_transaction(TimePoint{200, kClock}, 50ns, 1U);
+  ASSERT_TRUE(high_reference);
+  EXPECT_EQ(high_reference->result().selection.reason, SelectionReason::kTooStale);
+  ASSERT_TRUE(high_reference->commit());
+  ASSERT_EQ(cache.size(), 1U);
+
+  auto late_visible = cache.select_latest_within_transaction(TimePoint{100, kClock}, 50ns, 1U);
+  ASSERT_TRUE(late_visible);
+
+  // Key assertion: committing the high-reference miss retains t=90, which is then selected by the
+  // independently accepted lower semantic reference.
+  ASSERT_TRUE(late_visible->result().sample);
+  EXPECT_EQ(late_visible->result().selection.state, InputState::kSelected);
+  EXPECT_EQ(late_visible->result().sample->capture_time.timestamp_ns, 90);
 }
 
 // REQ: CONTRACT-004
@@ -147,6 +305,7 @@ TEST(TemporalInputCache, ScalarSelectionConsumesOnlyAfterAcceptedCommit) {
 
 // REQ: CONTRACT-004
 // REQ: CONTRACT-005
+// REQ: CONTRACT-021
 TEST(TemporalInputCache, SeededModelPreservesOrderAcrossTransactionsAndOverflow) {
   // Key setup: boundary timestamps (INT64_MIN×2, -1, 0×2, 1, INT64_MAX-1, INT64_MAX)
   // stress overflow and equal-time tie-breaking before the 512-step random walk begins.
@@ -271,18 +430,35 @@ TEST(TemporalInputCache, SeededModelPreservesOrderAcrossTransactionsAndOverflow)
         }
       }
       SelectionReason reason = SelectionReason::kNeverSeen;
+      std::optional<detail::TemporalSampleRecord> stale_retirement;
       if (expected) {
         const auto age = static_cast<std::uint64_t>(reference) -
                          static_cast<std::uint64_t>(expected->capture_time.timestamp_ns);
         if (age > static_cast<std::uint64_t>(max_age.count())) {
           expected.reset();
           reason = SelectionReason::kTooStale;
+          const auto stale = std::find_if(model.begin(), model.end(), [&](const auto& candidate) {
+            if (candidate.capture_time.timestamp_ns > reference) {
+              return false;
+            }
+            const auto candidate_age =
+                static_cast<std::uint64_t>(reference) -
+                static_cast<std::uint64_t>(candidate.capture_time.timestamp_ns);
+            return candidate_age > static_cast<std::uint64_t>(max_age.count());
+          });
+          if (stale != model.end()) {
+            stale_retirement = *stale;
+          }
         } else {
           reason = SelectionReason::kNone;
         }
       }
       const bool commit = (next_random() & 1U) != 0U;
-      auto selected = cache.select_latest_within_transaction(TimePoint{reference, kClock}, max_age);
+      auto selected =
+          cache.select_latest_within_transaction(TimePoint{reference, kClock},
+                                                 max_age,
+                                                 std::numeric_limits<std::uint64_t>::max(),
+                                                 TimePoint{reference, kClock});
       ASSERT_TRUE(selected);
       EXPECT_EQ(selected->result().sample, expected);
       EXPECT_EQ(selected->result().selection.reason, reason);
@@ -290,6 +466,8 @@ TEST(TemporalInputCache, SeededModelPreservesOrderAcrossTransactionsAndOverflow)
         ASSERT_TRUE(selected->commit());
         if (expected) {
           erase_selected(*expected);
+        } else if (stale_retirement) {
+          erase_selected(*stale_retirement);
         }
         ++scalar_commits;
       } else {
@@ -921,6 +1099,58 @@ TEST(TemporalInputCache, ClockScheduleCoalescesInConstantStateAndAcceptsExactNow
   auto regression = schedule.due(TimePoint{20, kClock});
   ASSERT_FALSE(regression);
   EXPECT_EQ(regression.error().code, ErrorCode::kProtocolError);
+}
+
+// REQ: CONTRACT-008
+// A caller that must reason about a witness before it exists needs the coordinate that witness
+// will carry, and must not take the tick to learn it. peek_scheduled reports the same coordinate
+// due() would, leaves the schedule able to deliver that tick afterwards, and does not advance the
+// monotonic observation bound.
+//
+// Key assertion: peeking is repeatable and the peeked tick is still delivered by a later due().
+TEST(TemporalInputCache, ClockSchedulePeekReportsTheNextCoordinateWithoutConsumingIt) {
+  detail::CoalescingClockSchedule schedule{TimePoint{10, kClock}, 5ns};
+
+  // Nothing is due before the phase, and peeking that answer is not an observation of time.
+  auto early = schedule.peek_scheduled(TimePoint{4, kClock});
+  ASSERT_TRUE(early);
+  EXPECT_FALSE(early->has_value());
+
+  auto peeked = schedule.peek_scheduled(TimePoint{27, kClock});
+  ASSERT_TRUE(peeked);
+  ASSERT_TRUE(peeked->has_value());
+  EXPECT_EQ(**peeked, (TimePoint{25, kClock}));
+
+  // Repeatable: a peek records nothing, so the same query returns the same coordinate.
+  auto again = schedule.peek_scheduled(TimePoint{27, kClock});
+  ASSERT_TRUE(again);
+  ASSERT_TRUE(again->has_value());
+  EXPECT_EQ(**again, (TimePoint{25, kClock}));
+
+  // Key assertion: the peeked tick was not consumed. Taking it now still yields tick 3, with the
+  // same missed-tick accounting a caller that never peeked would have seen.
+  auto taken = schedule.due(TimePoint{27, kClock});
+  ASSERT_TRUE(taken);
+  ASSERT_TRUE(taken->has_value());
+  const auto tick = taken->value_or(detail::ClockTickCandidate{});
+  EXPECT_EQ(tick.index, 3U);
+  EXPECT_EQ(tick.scheduled_time, (TimePoint{25, kClock}));
+  EXPECT_EQ(tick.missed_first, 0U);
+  EXPECT_EQ(tick.missed_last, 2U);
+  EXPECT_EQ(tick.missed_count, 3U);
+
+  // Peeking earlier than the last observed reading is not a monotonicity violation, because it
+  // observes a coordinate rather than the clock. due() still rejects the same reading.
+  auto behind = schedule.peek_scheduled(TimePoint{20, kClock});
+  ASSERT_TRUE(behind);
+  const auto regression = schedule.due(TimePoint{20, kClock});
+  ASSERT_FALSE(regression);
+  EXPECT_EQ(regression.error().code, ErrorCode::kProtocolError);
+
+  // A foreign clock is refused rather than silently compared.
+  const auto foreign = schedule.peek_scheduled(TimePoint{30, ClockId{kClock.value + 1U}});
+  ASSERT_FALSE(foreign);
+  EXPECT_EQ(foreign.error().code, ErrorCode::kInvalidArgument);
 }
 
 // REQ: CONTRACT-008

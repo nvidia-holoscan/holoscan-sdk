@@ -23,6 +23,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS first_operator
-    RUNTIME DESTINATION examples/first_operator/cpp
+    RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/first_operator/cpp"
     COMPONENT holoscan-examples
 )

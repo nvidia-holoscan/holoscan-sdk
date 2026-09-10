@@ -17,58 +17,30 @@
 #include <holoscan/core/parameter_schema.hpp>
 
 #include "compile_platform.hpp"
+#include "core/canonical_text_encoding.hpp"
 #include "profile_admission.hpp"
 
 namespace holoscan::detail {
 namespace {
 
+[[nodiscard]] auto policy_key(const ProfilePolicyId& policy) noexcept {
+  return std::tuple{policy.major, policy.minor, policy.digest.value};
+}
+
+[[nodiscard]] auto offer_key(const RuntimePackageCapabilityOffer& offer) noexcept {
+  return std::tuple{std::string_view{offer.id}, offer.version};
+}
+
+[[nodiscard]] std::string_view canonical_string_key(const std::string& value) noexcept {
+  return value;
+}
+
 [[nodiscard]] bool policy_equal(const ProfilePolicyId& lhs, const ProfilePolicyId& rhs) noexcept {
-  return lhs.major == rhs.major && lhs.minor == rhs.minor && lhs.digest == rhs.digest;
+  return policy_key(lhs) == policy_key(rhs);
 }
 
 [[nodiscard]] bool policy_less(const ProfilePolicyId& lhs, const ProfilePolicyId& rhs) noexcept {
-  return std::tuple{lhs.major, lhs.minor, lhs.digest.value} <
-         std::tuple{rhs.major, rhs.minor, rhs.digest.value};
-}
-
-void append_json_string(std::string& output, std::string_view value) {
-  constexpr std::string_view kHex = "0123456789abcdef";
-  output.push_back('"');
-  for (const unsigned char byte : value) {
-    switch (byte) {
-      case '"':
-        output += "\\\"";
-        break;
-      case '\\':
-        output += "\\\\";
-        break;
-      case '\b':
-        output += "\\b";
-        break;
-      case '\f':
-        output += "\\f";
-        break;
-      case '\n':
-        output += "\\n";
-        break;
-      case '\r':
-        output += "\\r";
-        break;
-      case '\t':
-        output += "\\t";
-        break;
-      default:
-        if (byte < 0x20U) {
-          output += "\\u00";
-          output.push_back(kHex[(byte >> 4U) & 0x0FU]);
-          output.push_back(kHex[byte & 0x0FU]);
-        } else {
-          output.push_back(static_cast<char>(byte));
-        }
-        break;
-    }
-  }
-  output.push_back('"');
+  return policy_key(lhs) < policy_key(rhs);
 }
 
 template <typename Values, typename Append>
@@ -85,20 +57,8 @@ void append_array(std::string& output, const Values& values, Append append) {
   output.push_back(']');
 }
 
-[[nodiscard]] std::string digest_text(const ParamSchemaHash& digest) {
-  constexpr std::string_view kHex = "0123456789abcdef";
-  std::string result{"sha256:"};
-  result.reserve(71U);
-  for (const std::byte byte : digest.value) {
-    const auto value = std::to_integer<std::uint8_t>(byte);
-    result.push_back(kHex[(value >> 4U) & 0x0FU]);
-    result.push_back(kHex[value & 0x0FU]);
-  }
-  return result;
-}
-
 [[nodiscard]] std::string policy_digest_text(const ProfilePolicyId& policy) {
-  return digest_text(ParamSchemaHash{.value = policy.digest.value});
+  return lowercase_hex_text(policy.digest.value, HexPrefix::kSha256);
 }
 
 [[nodiscard]] std::string hash_text(std::string_view bytes) {
@@ -106,12 +66,29 @@ void append_array(std::string& output, const Values& values, Append append) {
   for (const unsigned char byte : bytes) {
     hash.add_byte(byte);
   }
-  return digest_text(hash.finish());
+  return lowercase_hex_text(hash.finish().value, HexPrefix::kSha256);
 }
 
-template <typename Values, typename Equal>
-[[nodiscard]] bool has_duplicate(const Values& values, Equal equal) {
-  return std::adjacent_find(values.begin(), values.end(), equal) != values.end();
+template <typename Values, typename Key>
+void sort_by_key(Values& values, Key key) {
+  std::sort(values.begin(), values.end(), [&](const auto& lhs, const auto& rhs) {
+    return key(lhs) < key(rhs);
+  });
+}
+
+template <typename Values, typename Key>
+[[nodiscard]] bool has_duplicate_key(const Values& values, Key key) {
+  return std::adjacent_find(values.begin(), values.end(), [&](const auto& lhs, const auto& rhs) {
+           return key(lhs) == key(rhs);
+         }) != values.end();
+}
+
+void canonicalize_runtime_package_collections(RuntimePackageCapabilityManifest& manifest) {
+  sort_by_key(manifest.supported_plan_schemas, canonical_string_key);
+  sort_by_key(manifest.profile_policies, policy_key);
+  sort_by_key(manifest.runtime_abi_versions, canonical_string_key);
+  sort_by_key(manifest.target_triples, canonical_string_key);
+  sort_by_key(manifest.offers, offer_key);
 }
 
 [[nodiscard]] Error malformed_error() {
@@ -129,7 +106,7 @@ template <typename Values, typename Equal>
   RuntimePackageCapabilityManifest manifest;
   manifest.package_id = "holoscan-core";
   manifest.build_id = "holoscan-core-5.0";
-  manifest.supported_plan_schemas = {"holoscan.execution_plan.private.v1"};
+  manifest.supported_plan_schemas = {"holoscan.execution_plan.private.v4"};
   manifest.profile_policies = {profile_policy_id_v1()};
   manifest.runtime_abi_versions = {"holoscan.runtime_abi.v1"};
   manifest.target_triples = {std::string{compile_target_triple()}};
@@ -160,9 +137,12 @@ template <typename Values, typename Equal>
        "holoscan.compile.scheduler.ready_policy/v1"},
       {"holoscan.runtime.temporal_contracts", 1U, "holoscan.compile.temporal_plan/v1"},
       {"holoscan.runtime.target.current", 1U, "holoscan.runtime.target.current/v1"},
-      {"holoscan.runtime.tensor_device_stream_materialization",
+      {"holoscan.runtime.cuda_compute_stream_materialization",
        1U,
-       "holoscan.compile.tensor_device_resource_plan/v1"},
+       "holoscan.compile.cuda_compute_stream_plan/v1"},
+      {"holoscan.runtime.cuda_green_context_materialization",
+       1U,
+       "holoscan.compile.cuda_green_context_plan/v1"},
       {std::string{kTensorInlineRecordCapabilityId},
        kTensorInlineRecordCapabilityVersion,
        "holoscan.runtime.tensor_inline_record/generated/v1"},
@@ -257,23 +237,13 @@ std::string runtime_predicate_capability_id(std::string_view qualified_key,
 
 std::string runtime_package_capability_canonical_json_v1(
     const RuntimePackageCapabilityManifest& manifest, bool include_digest) {
-  auto plan_schemas = manifest.supported_plan_schemas;
-  auto policies = manifest.profile_policies;
-  auto runtime_abis = manifest.runtime_abi_versions;
-  auto targets = manifest.target_triples;
-  auto offers = manifest.offers;
-  std::sort(plan_schemas.begin(), plan_schemas.end());
-  std::sort(policies.begin(), policies.end(), policy_less);
-  std::sort(runtime_abis.begin(), runtime_abis.end());
-  std::sort(targets.begin(), targets.end());
-  std::sort(offers.begin(), offers.end(), [](const auto& lhs, const auto& rhs) {
-    return std::pair{lhs.id, lhs.version} < std::pair{rhs.id, rhs.version};
-  });
+  RuntimePackageCapabilityManifest canonical = manifest;
+  canonicalize_runtime_package_collections(canonical);
 
   std::string output{"{\"build_id\":"};
   append_json_string(output, manifest.build_id);
   output += ",\"capability_offers\":";
-  append_array(output, offers, [](std::string& destination, const auto& offer) {
+  append_array(output, canonical.offers, [](std::string& destination, const auto& offer) {
     destination += "{\"evidence_id\":";
     append_json_string(destination, offer.evidence_id);
     destination += ",\"id\":";
@@ -287,25 +257,28 @@ std::string runtime_package_capability_canonical_json_v1(
   output += ",\"package_id\":";
   append_json_string(output, manifest.package_id);
   output += ",\"profile_policies\":";
-  append_array(output, policies, [](std::string& destination, const auto& policy) {
-    destination += "{\"digest\":";
-    append_json_string(destination, policy_digest_text(policy));
-    destination += ",\"major\":" + std::to_string(policy.major) +
-                   ",\"minor\":" + std::to_string(policy.minor) + "}";
-  });
+  append_array(
+      output, canonical.profile_policies, [](std::string& destination, const auto& policy) {
+        destination += "{\"digest\":";
+        append_json_string(destination, policy_digest_text(policy));
+        destination += ",\"major\":" + std::to_string(policy.major) +
+                       ",\"minor\":" + std::to_string(policy.minor) + "}";
+      });
   output += ",\"runtime_abi_versions\":";
-  append_array(output, runtime_abis, [](std::string& destination, const auto& value) {
-    append_json_string(destination, value);
-  });
+  append_array(
+      output, canonical.runtime_abi_versions, [](std::string& destination, const auto& value) {
+        append_json_string(destination, value);
+      });
   output += ",\"schema\":";
   append_json_string(output, manifest.schema);
   output += ",\"schema_version\":" + std::to_string(manifest.schema_version);
   output += ",\"supported_plan_schemas\":";
-  append_array(output, plan_schemas, [](std::string& destination, const auto& value) {
-    append_json_string(destination, value);
-  });
+  append_array(
+      output, canonical.supported_plan_schemas, [](std::string& destination, const auto& value) {
+        append_json_string(destination, value);
+      });
   output += ",\"target_triples\":";
-  append_array(output, targets, [](std::string& destination, const auto& value) {
+  append_array(output, canonical.target_triples, [](std::string& destination, const auto& value) {
     append_json_string(destination, value);
   });
   output += ",\"tensor_inline_record_capability\":";
@@ -346,25 +319,16 @@ std::string runtime_package_capability_canonical_json_v1(
 
 expected<void, Error> seal_runtime_package_capability_manifest(
     RuntimePackageCapabilityManifest& manifest) {
-  std::sort(manifest.supported_plan_schemas.begin(), manifest.supported_plan_schemas.end());
-  std::sort(manifest.profile_policies.begin(), manifest.profile_policies.end(), policy_less);
-  std::sort(manifest.runtime_abi_versions.begin(), manifest.runtime_abi_versions.end());
-  std::sort(manifest.target_triples.begin(), manifest.target_triples.end());
-  std::sort(manifest.offers.begin(), manifest.offers.end(), [](const auto& lhs, const auto& rhs) {
-    return std::pair{lhs.id, lhs.version} < std::pair{rhs.id, rhs.version};
-  });
+  canonicalize_runtime_package_collections(manifest);
   if (manifest.schema != kRuntimePackageCapabilityCodecV1 || manifest.schema_version != 1U ||
       manifest.package_id.empty() || manifest.build_id.empty() ||
       manifest.supported_plan_schemas.empty() || manifest.profile_policies.empty() ||
       manifest.runtime_abi_versions.empty() || manifest.target_triples.empty() ||
-      has_duplicate(manifest.supported_plan_schemas, std::equal_to<>{}) ||
-      has_duplicate(manifest.profile_policies, policy_equal) ||
-      has_duplicate(manifest.runtime_abi_versions, std::equal_to<>{}) ||
-      has_duplicate(manifest.target_triples, std::equal_to<>{}) ||
-      has_duplicate(manifest.offers,
-                    [](const auto& lhs, const auto& rhs) {
-                      return lhs.id == rhs.id && lhs.version == rhs.version;
-                    }) ||
+      has_duplicate_key(manifest.supported_plan_schemas, canonical_string_key) ||
+      has_duplicate_key(manifest.profile_policies, policy_key) ||
+      has_duplicate_key(manifest.runtime_abi_versions, canonical_string_key) ||
+      has_duplicate_key(manifest.target_triples, canonical_string_key) ||
+      has_duplicate_key(manifest.offers, offer_key) ||
       std::any_of(manifest.offers.begin(), manifest.offers.end(), [](const auto& offer) {
         return offer.id.empty() || offer.version == 0U || offer.evidence_id.empty();
       })) {
@@ -455,13 +419,14 @@ RuntimePackageCapabilityView runtime_package_capability_view() {
 }
 
 RuntimeCompileEvidenceView runtime_compile_evidence_view() {
-  // EA1-017 replaces this empty generated qualification set with the selected
+  // HSDK5-017 replaces this empty generated qualification set with the selected
   // package's sealed deployment evidence. Keeping it in the captured view now
   // prevents compiler passes from consulting a mutable provider independently.
   return RuntimeCompileEvidenceView{
       .package_capabilities = runtime_package_capability_view(),
       .endpoint_clock_health = {},
       .tensor_device_bindings = {},
+      .cuda_green_context_capabilities = {},
   };
 }
 

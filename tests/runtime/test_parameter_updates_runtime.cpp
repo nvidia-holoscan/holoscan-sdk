@@ -206,6 +206,17 @@ TEST(ParameterRuntimeIntegrationTest, GenerationZeroOnlyLegacyLifecycleUsesOpera
   EXPECT_EQ(test::RuntimeParamProbeState::stop_observed_value.load(std::memory_order_acquire), 7);
   EXPECT_TRUE(test::RuntimeParamProbeState::stop_observed_params.load(std::memory_order_acquire));
   EXPECT_EQ(test::RuntimeProbeState::snapshot(), (std::vector<std::int32_t>{901, 902, 903}));
+
+  // Key assertion: terminal capture reads the coordinator-owned generation-zero value after the
+  // reconstructed Operator has been destroyed by end-of-run resource teardown.
+  const auto terminal_snapshot = session.capture_params();
+  ASSERT_TRUE(terminal_snapshot);
+  ASSERT_EQ(terminal_snapshot->operators().size(), 1U);
+  ASSERT_EQ(terminal_snapshot->operators().front().fields.size(), 1U);
+  const auto terminal_value =
+      checked_value(terminal_snapshot->operators().front().fields.front().value).as<std::int32_t>();
+  ASSERT_TRUE(terminal_value);
+  EXPECT_EQ(checked_value(terminal_value), 7);
 }
 
 // REQ: PARAM-017
@@ -843,6 +854,103 @@ TEST(ParameterUpdateTest, GenerationRemainsPinnedAcrossConcurrentAcceptedUpdate)
   EXPECT_EQ(test::RuntimeParamProbeState::stop_observed_value.load(std::memory_order_relaxed), 42);
 }
 
+// REQ: PARAM-023
+// REQ: RUNTIME-046
+TEST(ParameterUpdateTest, RunClosureBeforeCallbackAdmissionLeavesPublishedUpdateUnobserved) {
+  test::RuntimeProbeState::reset();
+  test::RuntimeParamProbeState::reset(true);
+  auto control = std::make_shared<detail::RuntimeTerminationAdmissionTestControl>(
+      detail::RuntimeTerminationAdmissionTestControl::Point::kBeforeClaim, 1U, 1U);
+  const ExecutionPlan raw_plan = test::make_runtime_param_test_plan();
+  ASSERT_TRUE(raw_plan.ok());
+  const ParameterFieldPlanRecord field = runtime_value_field(raw_plan);
+  const ExecutionPlan counted_plan =
+      detail::RuntimeTestPlanAccess::enable_direct_count(raw_plan, 2U);
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_termination_admission_test_control(counted_plan, control);
+
+  RunSession session = run_async(plan);
+  FirstCallbackRelease first_release;
+  ASSERT_TRUE(test::RuntimeParamProbeState::wait_until_callback_enters(1U));
+
+  const auto owner = session.operator_ref(field.owner);
+  ASSERT_TRUE(owner);
+  auto handle_result = session.parameter_control(full_local_parameter_policy());
+  ASSERT_TRUE(handle_result);
+  ParamControlHandle handle = std::move(*handle_result);
+  auto cursor_result = handle.open_event_cursor();
+  ASSERT_TRUE(cursor_result);
+  ParamEventCursor cursor = std::move(*cursor_result);
+  const ParamAddress address{.operator_instance = *owner, .field = field.field};
+  const std::array patch{
+      ParamPatch{.target = address, .value = ParamValue::from(std::int32_t{42})},
+  };
+  const ParamBatchUpdateResult accepted = handle.submit(patch);
+  ASSERT_TRUE(accepted.committed);
+  EXPECT_EQ(accepted.target_generation, 1U);
+
+  first_release.release();
+  const bool arrived_before_claim = control->wait_until_arrived();
+  if (!arrived_before_claim) {
+    session.request_stop();
+    control->release();
+    session.wait();
+  }
+  ASSERT_TRUE(arrived_before_claim);
+  session.request_stop();
+  control->release();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_EQ(test::RuntimeParamProbeState::snapshot().size(), 1U);
+  const auto result = handle.await(accepted.update_sequence, 0ns);
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result->state, ParamUpdateState::kPublished);
+
+  std::array<ParamEvent, 8U> events{};
+  const auto drained = cursor.drain(events);
+  ASSERT_TRUE(drained);
+  const auto relevant_events = std::span{events}.first(*drained);
+  EXPECT_TRUE(std::any_of(relevant_events.begin(), relevant_events.end(), [&](const auto& event) {
+    return event.update_sequence == accepted.update_sequence &&
+           event.state == ParamUpdateState::kPublished;
+  }));
+  EXPECT_FALSE(std::any_of(relevant_events.begin(), relevant_events.end(), [&](const auto& event) {
+    return event.update_sequence == accepted.update_sequence &&
+           event.state == ParamUpdateState::kObserved;
+  }));
+}
+
+// REQ: PARAM-023
+// REQ: RUNTIME-046
+TEST(ParameterUpdateTest, ParameterObservationFailureReleasesFinalCallbackClaim) {
+  test::RuntimeProbeState::reset();
+  test::RuntimeParamProbeState::reset();
+  auto control = std::make_shared<detail::RuntimeTerminationAdmissionTestControl>(
+      detail::RuntimeTerminationAdmissionTestControl::Point::kAfterClaim, 0U);
+  control->fail_next_parameter_observation();
+
+  // Graph: [parameterized]
+  //   The direct-once binding reaches callback admission, where the source-tree fault rejects
+  //   parameter observation after the final callback claim has been acquired.
+  const ExecutionPlan raw_plan = test::make_runtime_param_test_plan();
+  ASSERT_TRUE(raw_plan.ok()) << raw_plan.json();
+  const ExecutionPlan counted_plan = detail::RuntimeTestPlanAccess::enable_direct_once(raw_plan);
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_termination_admission_test_control(counted_plan, control);
+
+  // Key setup: run one activation with the observation fault armed after callback admission.
+  RunSession session = run_async(plan);
+  session.wait();
+
+  // Key assertion: the run fails before compute and freezes exactly the observation diagnostic;
+  // a leaked callback claim would append termination_admission_claims_not_retired as a second row.
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_TRUE(test::RuntimeParamProbeState::snapshot().empty());
+  ASSERT_EQ(session.diagnostics().size(), 1U);
+  EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_PARAMETER_BINDING_UNAVAILABLE");
+}
+
 // REQ: PARAM-019
 // REQ: PARAM-023
 TEST(ParameterUpdateTest, AcceptedBurstAdvancesOneObservableGenerationPerActivation) {
@@ -1291,16 +1399,20 @@ TEST(ParameterRuntimeIntegrationTest,
   EXPECT_EQ(terminal[1].coalesced_into_transaction, terminal[0].lifecycle_transaction_id);
 
   const auto compute = test::LifecycleParamProbeState::compute_snapshot();
-  ASSERT_EQ(compute.size(), 2U);
-  std::array<bool, 2> observed{};
+  // Key assertion: restarting the finite direct source publishes one successor witness per owner.
+  ASSERT_EQ(compute.size(), 4U);
+  std::array<std::array<bool, 2U>, 2U> observed{};
   for (const auto& observation : compute) {
     ASSERT_GE(observation.operator_identity, 1);
     ASSERT_LE(observation.operator_identity, 2);
-    observed[static_cast<std::size_t>(observation.operator_identity - 1)] = true;
-    EXPECT_EQ(observation.value, 7);
-    EXPECT_EQ(observation.generation, 0U);
+    ASSERT_LE(observation.generation, 1U);
+    const std::size_t owner_index = static_cast<std::size_t>(observation.operator_identity - 1);
+    observed[owner_index][observation.generation] = true;
+    EXPECT_EQ(observation.value, observation.generation == 0U ? 7 : values[owner_index]);
   }
-  EXPECT_TRUE(std::ranges::all_of(observed, [](bool value) { return value; }));
+  EXPECT_TRUE(std::ranges::all_of(observed, [](const auto& generations) {
+    return std::ranges::all_of(generations, [](bool value) { return value; });
+  }));
 
   const auto lifecycle = test::LifecycleParamProbeState::lifecycle_snapshot();
   for (std::size_t index = 0U; index < values.size(); ++index) {

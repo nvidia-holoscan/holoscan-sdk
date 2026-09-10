@@ -110,7 +110,7 @@ template <CatalogChannelPayload T>
   return result;
 }
 
-/// @brief Validate one catalog schema endpoint against its exact installed native package.
+/// @brief Validate one catalog schema endpoint against its installed native package.
 /// @tparam T Owning generated-schema type.
 /// @param endpoint Catalog endpoint view valid for this call.
 /// @return Empty success or a typed absent, identity, artifact, or package-evidence error.
@@ -136,9 +136,9 @@ template <CatalogChannelSchema T>
         Error{ErrorCode::kInvalidArgument, "generated schema package capacity evidence mismatch"});
   }
   const auto catalog_capacity = endpoint.schema_max_serialized_size();
-  if (!catalog_capacity || *catalog_capacity != package.max_serialized_size()) {
+  if (!catalog_capacity) {
     return make_unexpected(
-        Error{ErrorCode::kIncompatible, "catalog schema serialized capacity mismatch"});
+        Error{ErrorCode::kIncompatible, "catalog schema serialized capacity is absent"});
   }
   return validate_schema_package_for_attach(expected, package);
 }
@@ -340,6 +340,27 @@ class ChannelRuntime {
   [[nodiscard]] expected<ChannelTensorSchemaPublisher<Payload>, Error>
   create_tensor_schema_publisher(std::string_view channel_name, const ChannelOptions& options = {});
 
+  /** @brief Attach a descriptor-backed Tensor schema publisher to one catalog import endpoint.
+   * @tparam Payload Fixed descriptor envelope for the exact generated schema root.
+   * @param catalog Immutable catalog that owns the named endpoint.
+   * @param endpoint_name Exact stable endpoint name.
+   * @param options Caller-local timeout that may only shorten the catalog bound.
+   * @return Publisher or a checked role, schema, field-contract, timeout, or setup error. */
+  template <ChannelDescriptorFlatBufferPayload Payload>
+  [[nodiscard]] expected<ChannelTensorSchemaPublisher<Payload>, Error>
+  create_tensor_schema_publisher(const ChannelEndpointCatalog& catalog,
+                                 std::string_view endpoint_name, ChannelAttachOptions options = {});
+
+  /** @brief Attach a descriptor-backed Tensor schema publisher through a catalog endpoint view.
+   * @tparam Payload Fixed descriptor envelope for the exact generated schema root.
+   * @param endpoint Catalog-owned import endpoint view valid for this call.
+   * @param options Caller-local timeout that may only shorten the catalog bound.
+   * @return Publisher or a checked role, schema, field-contract, timeout, or setup error. */
+  template <ChannelDescriptorFlatBufferPayload Payload>
+  [[nodiscard]] expected<ChannelTensorSchemaPublisher<Payload>, Error>
+  create_tensor_schema_publisher(ChannelEndpointCatalog::EndpointView endpoint,
+                                 ChannelAttachOptions options = {});
+
   /** @brief Create a descriptor-backed Tensor schema subscriber.
    * @tparam Payload Descriptor-backed FlatBuffer payload type.
    * @param channel_name Logical channel name.
@@ -349,6 +370,28 @@ class ChannelRuntime {
   [[nodiscard]] expected<ChannelTensorSchemaSubscriber<Payload>, Error>
   create_tensor_schema_subscriber(std::string_view channel_name,
                                   const ChannelOptions& options = {});
+
+  /** @brief Attach a descriptor-backed Tensor schema subscriber to one catalog export endpoint.
+   * @tparam Payload Fixed descriptor envelope for the exact generated schema root.
+   * @param catalog Immutable catalog that owns the named endpoint.
+   * @param endpoint_name Exact stable endpoint name.
+   * @param options Caller-local timeout that may only shorten the catalog bound.
+   * @return Subscriber or a checked role, schema, field-contract, timeout, or setup error. */
+  template <ChannelDescriptorFlatBufferPayload Payload>
+  [[nodiscard]] expected<ChannelTensorSchemaSubscriber<Payload>, Error>
+  create_tensor_schema_subscriber(const ChannelEndpointCatalog& catalog,
+                                  std::string_view endpoint_name,
+                                  ChannelAttachOptions options = {});
+
+  /** @brief Attach a descriptor-backed Tensor schema subscriber through a catalog endpoint view.
+   * @tparam Payload Fixed descriptor envelope for the exact generated schema root.
+   * @param endpoint Catalog-owned export endpoint view valid for this call.
+   * @param options Caller-local timeout that may only shorten the catalog bound.
+   * @return Subscriber or a checked role, schema, field-contract, timeout, or setup error. */
+  template <ChannelDescriptorFlatBufferPayload Payload>
+  [[nodiscard]] expected<ChannelTensorSchemaSubscriber<Payload>, Error>
+  create_tensor_schema_subscriber(ChannelEndpointCatalog::EndpointView endpoint,
+                                  ChannelAttachOptions options = {});
 
   /// Mint authority for one manual compatibility endpoint.
   ///
@@ -376,8 +419,10 @@ class ChannelRuntime {
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<ChannelSubscriber<Tensor>, Error>
   create_tensor_subscriber(
       std::string_view channel_name, const ChannelOptions& options,
-      std::optional<LogicalTensorRequirementsRecord> receive_contract = std::nullopt,
-      std::uint32_t receive_control_capacity = 0U);
+      std::optional<TensorBoundaryContractRecord> receive_contract = std::nullopt,
+      std::uint32_t receive_control_capacity = 0U,
+      std::unique_ptr<channel_internal::InlinePayloadSubscriber> health_subscriber = nullptr,
+      std::uint64_t catalog_clock_count = 0U);
 
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<ChannelPublisher<Tensor>, Error>
   create_catalog_tensor_publisher(ChannelEndpointCatalog::EndpointView endpoint,
@@ -397,7 +442,16 @@ class ChannelRuntime {
 
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<ChannelSubscriber<Tensor>, Error>
   create_catalog_tensor_subscriber(ChannelEndpointCatalog::EndpointView endpoint,
-                                   ChannelAttachOptions options);
+                                   ChannelAttachOptions options,
+                                   TopicDirection subscriber_direction = TopicDirection::kExport,
+                                   bool enforce_peer_requirement = true);
+
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<ChannelSubscriber<Tensor>, Error>
+  create_catalog_tensor_subscriber(ChannelEndpointCatalog::EndpointView endpoint,
+                                   ChannelAttachOptions options,
+                                   TopicDirection subscriber_direction,
+                                   bool enforce_peer_requirement,
+                                   std::uint32_t receive_control_capacity);
 
   [[nodiscard]] HOLOSCAN_CORE_EXPORT
       expected<std::unique_ptr<channel_internal::InlinePayloadPublisher>, Error>
@@ -468,18 +522,57 @@ class ChannelRuntime {
 
   [[nodiscard]] HOLOSCAN_CORE_EXPORT
       expected<std::unique_ptr<channel_internal::TensorSchemaPayloadPublisher>, Error>
+      create_tensor_schema_payload_publisher(std::string_view channel_name,
+                                             std::size_t payload_size,
+                                             std::span<const std::size_t> descriptor_offsets,
+                                             const ChannelOptions& options);
+
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT
+      expected<std::unique_ptr<channel_internal::TensorSchemaPayloadPublisher>, Error>
       create_tensor_schema_payload_publisher(
           std::string_view channel_name, std::size_t payload_size,
           std::span<const std::size_t> descriptor_offsets, const ChannelOptions& options,
           const channel_internal::PublisherPressureOptions& pressure,
-          std::span<const channel_internal::TensorSchemaStagingOptions> staging);
+          std::span<const channel_internal::TensorSchemaStagingOptions> staging,
+          cudaStream_t staging_stream = nullptr, ClockId capture_clock = {},
+          std::unique_ptr<channel_internal::InlinePayloadPublisher> health_publisher = nullptr,
+          bool catalog_control = false);
 
   [[nodiscard]] HOLOSCAN_CORE_EXPORT
       expected<std::unique_ptr<channel_internal::TensorSchemaPayloadSubscriber>, Error>
-      create_tensor_schema_payload_subscriber(std::string_view channel_name,
-                                              std::size_t payload_size,
-                                              std::uint32_t tensor_field_count,
-                                              const ChannelOptions& options);
+      create_tensor_schema_payload_subscriber(
+          std::string_view channel_name, std::size_t payload_size, std::uint32_t tensor_field_count,
+          const ChannelOptions& options,
+          std::unique_ptr<channel_internal::InlinePayloadSubscriber> health_subscriber = nullptr,
+          bool catalog_control = false,
+          std::span<const channel_internal::TensorSchemaStagingOptions> field_contracts = {},
+          std::uint64_t catalog_clock_count = 0U);
+
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT
+      expected<std::unique_ptr<channel_internal::TensorSchemaPayloadPublisher>, Error>
+      create_catalog_tensor_schema_payload_publisher(
+          ChannelEndpointCatalog::EndpointView endpoint, SchemaIdentity expected_schema,
+          std::size_t payload_size, std::span<const std::size_t> descriptor_offsets,
+          ChannelAttachOptions options);
+
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT
+      expected<std::unique_ptr<channel_internal::TensorSchemaPayloadPublisher>, Error>
+      create_catalog_tensor_schema_payload_publisher(
+          ChannelEndpointCatalog::EndpointView endpoint, SchemaIdentity expected_schema,
+          std::size_t payload_size, std::span<const std::size_t> descriptor_offsets,
+          ChannelAttachOptions options,
+          std::span<const channel_internal::TensorSchemaStagingOptions> staging,
+          cudaStream_t staging_stream, const channel_internal::PublisherPressureOptions& pressure,
+          TopicDirection publisher_direction = TopicDirection::kImport,
+          bool enforce_peer_requirement = true);
+
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT
+      expected<std::unique_ptr<channel_internal::TensorSchemaPayloadSubscriber>, Error>
+      create_catalog_tensor_schema_payload_subscriber(
+          ChannelEndpointCatalog::EndpointView endpoint, SchemaIdentity expected_schema,
+          std::size_t payload_size, std::uint32_t tensor_field_count, ChannelAttachOptions options,
+          TopicDirection subscriber_direction = TopicDirection::kExport,
+          bool enforce_peer_requirement = true);
 
   std::shared_ptr<Impl> impl_;
 
@@ -641,18 +734,61 @@ template <ChannelDescriptorFlatBufferPayload Payload>
 expected<ChannelTensorSchemaPublisher<Payload>, Error>
 ChannelRuntime::create_tensor_schema_publisher(std::string_view channel_name,
                                                const ChannelOptions& options) {
-  static_assert(Payload::max_tensors == 1U,
-                "the direct Channel Tensor schema endpoint currently admits one Tensor");
   constexpr std::size_t kPayloadSize = sizeof(Payload);
-  constexpr std::size_t kDescriptorOffset =
-      offsetof(Payload, descriptor) +
-      offsetof(typename Payload::descriptor_carriage_type, descriptors);
+  constexpr std::array<std::size_t, Payload::max_tensors> kDescriptorOffsets = [] {
+    std::array<std::size_t, Payload::max_tensors> result{};
+    constexpr std::size_t kFirstDescriptorOffset =
+        offsetof(Payload, descriptor) +
+        offsetof(typename Payload::descriptor_carriage_type, descriptors);
+    for (std::size_t index = 0U; index < result.size(); ++index) {
+      result[index] = kFirstDescriptorOffset + index * sizeof(PayloadDescriptor);
+    }
+    return result;
+  }();
   auto publisher = create_tensor_schema_payload_publisher(
-      channel_name, kPayloadSize, kDescriptorOffset, options);
+      channel_name, kPayloadSize, kDescriptorOffsets, options);
   if (!publisher) {
     return make_unexpected(std::move(publisher).error());
   }
   return ChannelTensorSchemaPublisher<Payload>(std::move(publisher).value());
+}
+
+template <ChannelDescriptorFlatBufferPayload Payload>
+expected<ChannelTensorSchemaPublisher<Payload>, Error>
+ChannelRuntime::create_tensor_schema_publisher(const ChannelEndpointCatalog& catalog,
+                                               std::string_view endpoint_name,
+                                               ChannelAttachOptions options) {
+  auto endpoint = catalog.endpoint(endpoint_name);
+  if (!endpoint) {
+    return make_unexpected(std::move(endpoint).error());
+  }
+  return create_tensor_schema_publisher<Payload>(*endpoint, std::move(options));
+}
+
+template <ChannelDescriptorFlatBufferPayload Payload>
+expected<ChannelTensorSchemaPublisher<Payload>, Error>
+ChannelRuntime::create_tensor_schema_publisher(ChannelEndpointCatalog::EndpointView endpoint,
+                                               ChannelAttachOptions options) {
+  using Envelope = channel_internal::TensorSchemaRuntimeEnvelope<Payload>;
+  constexpr std::array<std::size_t, Payload::max_tensors> kDescriptorOffsets = [] {
+    std::array<std::size_t, Payload::max_tensors> result{};
+    constexpr std::size_t kFirstDescriptorOffset =
+        offsetof(Envelope, payload) + offsetof(Payload, descriptor) +
+        offsetof(typename Payload::descriptor_carriage_type, descriptors);
+    for (std::size_t index = 0U; index < result.size(); ++index) {
+      result[index] = kFirstDescriptorOffset + index * sizeof(PayloadDescriptor);
+    }
+    return result;
+  }();
+  auto publisher = create_catalog_tensor_schema_payload_publisher(endpoint,
+                                                                  Payload::expected_schema_identity,
+                                                                  sizeof(Envelope),
+                                                                  kDescriptorOffsets,
+                                                                  std::move(options));
+  if (!publisher) {
+    return make_unexpected(std::move(publisher).error());
+  }
+  return ChannelTensorSchemaPublisher<Payload>(std::move(*publisher), true);
 }
 
 template <ChannelDescriptorFlatBufferPayload Payload>
@@ -665,6 +801,35 @@ ChannelRuntime::create_tensor_schema_subscriber(std::string_view channel_name,
     return make_unexpected(std::move(subscriber).error());
   }
   return ChannelTensorSchemaSubscriber<Payload>(std::move(subscriber).value());
+}
+
+template <ChannelDescriptorFlatBufferPayload Payload>
+expected<ChannelTensorSchemaSubscriber<Payload>, Error>
+ChannelRuntime::create_tensor_schema_subscriber(const ChannelEndpointCatalog& catalog,
+                                                std::string_view endpoint_name,
+                                                ChannelAttachOptions options) {
+  auto endpoint = catalog.endpoint(endpoint_name);
+  if (!endpoint) {
+    return make_unexpected(std::move(endpoint).error());
+  }
+  return create_tensor_schema_subscriber<Payload>(*endpoint, std::move(options));
+}
+
+template <ChannelDescriptorFlatBufferPayload Payload>
+expected<ChannelTensorSchemaSubscriber<Payload>, Error>
+ChannelRuntime::create_tensor_schema_subscriber(ChannelEndpointCatalog::EndpointView endpoint,
+                                                ChannelAttachOptions options) {
+  using Envelope = channel_internal::TensorSchemaRuntimeEnvelope<Payload>;
+  auto subscriber =
+      create_catalog_tensor_schema_payload_subscriber(endpoint,
+                                                      Payload::expected_schema_identity,
+                                                      sizeof(Envelope),
+                                                      Payload::max_tensors,
+                                                      std::move(options));
+  if (!subscriber) {
+    return make_unexpected(std::move(subscriber).error());
+  }
+  return ChannelTensorSchemaSubscriber<Payload>(std::move(*subscriber), true);
 }
 
 }  // namespace holoscan

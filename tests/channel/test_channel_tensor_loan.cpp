@@ -41,6 +41,7 @@
 
 #include "../common/allocation_counter.hpp"
 #include "../common/cuda_test_utils.hpp"
+#include "channel/channel_common.hpp"
 #include "channel/channel_tensor_loan_internal.hpp"
 #include "channel/channel_tensor_test_access.hpp"
 #include "channel/channel_tensor_transport_payload.hpp"
@@ -48,6 +49,7 @@
 #include "channel/holomq_tensor.hpp"
 #include "channel_test_support.hpp"
 #include "core/domain/tensor_access.hpp"
+#include "runtime/channel_runtime_binding_access.hpp"
 
 namespace holoscan {
 namespace {
@@ -141,6 +143,35 @@ concept HasCatalogTensorSubscriberFactory =
       } -> std::same_as<expected<ChannelSubscriber<Tensor>, Error>>;
     };
 
+// Retains device backing while deliberately providing no producer-readiness contract, matching
+// the stream semantics of an imported DLPack ownership wrapper. Representative tests:
+// EmitCopyStagesDeviceSourceIntoDeviceCatalogPool and DeviceStagingUsesSeparateOrderedCopyStream.
+class ContractlessDeviceTensorStorage final : public TensorMemoryReference {
+ public:
+  explicit ContractlessDeviceTensorStorage(Tensor backing) : backing_(std::move(backing)) {}
+
+ private:
+  Tensor backing_;
+};
+
+[[nodiscard]] Tensor make_contractless_device_tensor(const Tensor& backing) {
+  auto context = std::make_shared<DLManagedTensorContext>();
+  context->memory_reference = std::make_shared<ContractlessDeviceTensorStorage>(backing);
+  context->dl_shape.assign(backing.shape_span().begin(), backing.shape_span().end());
+  context->dl_strides.assign(backing.dlpack_strides_span().begin(),
+                             backing.dlpack_strides_span().end());
+  context->tensor.dl_tensor = DLTensor{
+      .data = const_cast<void*>(backing.data()),
+      .device = backing.device(),
+      .ndim = static_cast<std::int32_t>(context->dl_shape.size()),
+      .dtype = backing.dtype(),
+      .shape = context->dl_shape.data(),
+      .strides = context->dl_strides.empty() ? nullptr : context->dl_strides.data(),
+      .byte_offset = 0U,
+  };
+  return Tensor{std::move(context)};
+}
+
 // TA-T01/TA-T02/TA-T45/TA-T46: the external and manual Tensor domains remain mechanically
 // distinct, transport opaque, and constrained to their accepted verb sets.
 static_assert(std::is_move_constructible_v<TensorPublishLoan>);
@@ -161,6 +192,8 @@ static_assert(std::is_move_constructible_v<ChannelPublisher<Tensor>>);
 static_assert(!std::is_copy_constructible_v<ChannelPublisher<Tensor>>);
 static_assert(!std::is_move_assignable_v<ChannelPublisher<Tensor>>);
 static_assert(!std::is_default_constructible_v<ChannelPublisher<Tensor>>);
+static_assert(noexcept(std::declval<ChannelPublisher<Tensor>&>().update_connections()));
+static_assert(noexcept(std::declval<ManualTensorPublisher&>().update_connections()));
 
 // REQ: OPERATOR-026
 static_assert(HasLoanTensor<ChannelPublisher<Tensor>>);
@@ -395,13 +428,17 @@ TEST(ExternalTensorLoanSurface, DestructionRoutesLiveAuthorityThroughPrivateOpsO
           },
       .clock_health = clock_health,
       .tensor =
-          LogicalTensorRequirementsRecord{
+          TensorBoundaryContractRecord{
               .memory_kind = memory_kind,
               .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
               .max_rank = 2U,
               .max_byte_span = 16U,
               .strides = TensorStridePolicy::kContiguousOnly,
               .foreign_emit_policy = foreign_emit_policy,
+              .max_staging_byte_span =
+                  foreign_emit_policy == InterfaceTensorEmitPolicy::kRequireExportable
+                      ? std::nullopt
+                      : std::optional<std::uint64_t>{16U},
           },
       .bounds = EndpointBounds{.publisher = PublisherEndpointBounds{.max_loaned_samples =
                                                                         max_loaned_samples}},
@@ -427,7 +464,7 @@ TEST(ExternalTensorLoanSurface, DestructionRoutesLiveAuthorityThroughPrivateOpsO
               .payload_kind = PayloadKind::kDescriptorBacked,
           },
       .tensor =
-          LogicalTensorRequirementsRecord{
+          TensorBoundaryContractRecord{
               .memory_kind = MemoryKind::kHost,
               .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
               .max_rank = 2U,
@@ -436,6 +473,7 @@ TEST(ExternalTensorLoanSurface, DestructionRoutesLiveAuthorityThroughPrivateOpsO
                        {.max_extent = 16U, .max_abs_stride_bytes = 16U}},
               .strides = TensorStridePolicy::kBoundedStrided,
               .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              .max_staging_byte_span = 16U,
           },
       .bounds = EndpointBounds{.publisher = PublisherEndpointBounds{.max_loaned_samples = 1U}},
   };
@@ -494,13 +532,14 @@ TEST(ExternalTensorLoanRuntime, CatalogSubscriberRejectsMissingOrZeroLoanBound) 
           },
       .attach = attach,
       .tensor =
-          LogicalTensorRequirementsRecord{
+          TensorBoundaryContractRecord{
               .memory_kind = memory_kind,
               .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
               .max_rank = 2U,
               .max_byte_span = 16U,
               .strides = TensorStridePolicy::kContiguousOnly,
               .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              .max_staging_byte_span = 16U,
           },
       .bounds =
           EndpointBounds{.subscriber =
@@ -576,7 +615,7 @@ struct TensorClockHealthOperation {
         return make_unexpected(Error{ErrorCode::kProtocolError});
       }
       return TensorClockHealthOperation{
-          .metadata = *received,
+          .metadata = received->metadata,
           .producer_epoch = load_little<std::uint64_t>(wire, 8U),
           .operation_sequence = load_little<std::uint64_t>(wire, 16U),
           .report_sequence = load_little<std::uint64_t>(wire, 24U),
@@ -662,6 +701,86 @@ struct TensorClockHealthOperation {
     std::this_thread::sleep_for(1ms);
   }
   return false;
+}
+
+// Catalog sequencing must arbitrate a final data record ahead of protected EOS even when the
+// terminal becomes visible after the receiver's first empty data probe.
+// REQ: CHAN-136
+TEST(ExternalTensorLoanRuntime, CatalogProtectedTerminalRechecksFinalDataAfterInitialProbe) {
+  const std::string endpoint_name = channel_test::make_unique_channel_name();
+  auto import_catalog = make_tensor_import_catalog(endpoint_name,
+                                                   1U,
+                                                   InterfaceTensorEmitPolicy::kCopyIfNeeded,
+                                                   {},
+                                                   1U,
+                                                   1U,
+                                                   MemoryKind::kHost,
+                                                   QueuePolicy::kDropOldest);
+  auto export_catalog = make_tensor_export_catalog(
+      endpoint_name, 1U, MemoryKind::kHost, {}, 1U, QueuePolicy::kDropOldest);
+  ASSERT_TRUE(import_catalog) << runtime_error_message(import_catalog.error());
+  ASSERT_TRUE(export_catalog) << runtime_error_message(export_catalog.error());
+  auto publisher_endpoint = import_catalog->endpoint(endpoint_name);
+  auto subscriber_endpoint = export_catalog->endpoint(endpoint_name);
+  ASSERT_TRUE(publisher_endpoint) << runtime_error_message(publisher_endpoint.error());
+  ASSERT_TRUE(subscriber_endpoint) << runtime_error_message(subscriber_endpoint.error());
+
+  auto publisher_runtime = ChannelRuntime::create();
+  auto subscriber_runtime = ChannelRuntime::create();
+  ASSERT_TRUE(publisher_runtime) << runtime_error_message(publisher_runtime.error());
+  ASSERT_TRUE(subscriber_runtime) << runtime_error_message(subscriber_runtime.error());
+  channel_internal::TensorPublisherTestAccess::ReceiveProbeBarrier barrier;
+  channel_internal::TensorPublisherTestAccess::
+      attach_receive_probe_barrier_to_next_subscriber_for_test(barrier);
+  auto subscriber = subscriber_runtime->create_subscriber<Tensor>(*subscriber_endpoint);
+  auto publisher = publisher_runtime->create_publisher<Tensor>(*publisher_endpoint);
+  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+  ASSERT_TRUE(publisher) << runtime_error_message(publisher.error());
+  ASSERT_TRUE(wait_for_tensor_subscriber(*publisher, *subscriber));
+
+  auto receive_future = std::async(std::launch::async, [&subscriber] {
+    return detail::RuntimeChannelBindingAccess::receive_catalog_tensor_operation(*subscriber, true);
+  });
+  const bool first_data_probe_completed = barrier.reached.try_acquire_for(std::chrono::seconds(2));
+  std::optional<expected<std::uint32_t, Error>> emitted;
+  std::optional<expected<void, Error>> closed;
+  if (first_data_probe_completed) {
+    const std::array<std::int64_t, 1U> shape{8};
+    auto loan = publisher->loan_tensor(TensorLoanRequest{
+        .shape = shape,
+        .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+    });
+    if (loan) {
+      auto writer = loan->write_host();
+      if (writer) {
+        std::memset(writer->data(), 0x39, writer->byte_size());
+        auto committed = std::move(*writer).commit();
+        if (committed) {
+          emitted.emplace(publisher->emit(std::move(*loan)));
+        }
+      }
+    }
+    closed.emplace(publisher->close());
+  }
+  barrier.resume.release();
+
+  auto data = receive_future.get();
+  ASSERT_TRUE(first_data_probe_completed);
+  ASSERT_TRUE(emitted.has_value());
+  ASSERT_TRUE(*emitted) << runtime_error_message(emitted->error());
+  EXPECT_EQ(**emitted, 1U);
+  ASSERT_TRUE(closed.has_value());
+  ASSERT_TRUE(*closed) << runtime_error_message(closed->error());
+  ASSERT_TRUE(data) << runtime_error_message(data.error());
+  ASSERT_EQ(data->kind, channel_internal::CatalogReceivedOperationKind::kData);
+  EXPECT_EQ(data->metadata.sequence, 1U);
+  data->tensor_sample.reset();
+
+  auto terminal =
+      detail::RuntimeChannelBindingAccess::receive_catalog_tensor_operation(*subscriber, true);
+  ASSERT_TRUE(terminal) << runtime_error_message(terminal.error());
+  EXPECT_EQ(terminal->kind, channel_internal::CatalogReceivedOperationKind::kEndOfStream);
+  EXPECT_EQ(terminal->metadata.sequence, 2U);
 }
 
 // REQ: CHAN-069
@@ -870,6 +989,61 @@ TEST(ExternalTensorLoanRuntime, MonitoredHealthSharesOrderWithoutMutatingTensorL
   ASSERT_TRUE(std::move(*recycled).cancel());
 }
 
+// An indeterminate health submit consumes the shared operation authority, so neither data nor EOS
+// may continue from a health state that cannot be known to match the subscriber.
+// REQ: CHAN-111
+TEST(ExternalTensorLoanRuntime, IndeterminateHealthPublicationClosesCatalogPublisher) {
+  const std::string endpoint_name = "tensor-health-indeterminate-" + std::to_string(::getpid());
+  const ClockHealthOptions monitored{
+      .capability = ClockHealthCapability::kStatusReports,
+      .requirement = ClockHealthRequirement::kFreshHealthyReport,
+      .max_report_age = std::chrono::seconds{1},
+  };
+  auto catalog = make_tensor_import_catalog(
+      endpoint_name, 1U, InterfaceTensorEmitPolicy::kCopyIfNeeded, monitored);
+  ASSERT_TRUE(catalog) << runtime_error_message(catalog.error());
+  auto endpoint = catalog->endpoint(endpoint_name);
+  ASSERT_TRUE(endpoint) << runtime_error_message(endpoint.error());
+
+  auto runtime = ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << runtime_error_message(runtime.error());
+  auto data_subscriber =
+      channel_internal::TensorPublisherTestAccess::create_catalog_subscriber(*runtime, *endpoint);
+  auto health_subscriber =
+      channel_internal::TensorPublisherTestAccess::create_catalog_clock_health_subscriber(
+          *runtime, *endpoint);
+  auto publisher = runtime->create_publisher<Tensor>(*endpoint);
+  ASSERT_TRUE(data_subscriber) << runtime_error_message(data_subscriber.error());
+  ASSERT_TRUE(health_subscriber) << runtime_error_message(health_subscriber.error());
+  ASSERT_TRUE(publisher) << runtime_error_message(publisher.error());
+  ASSERT_TRUE(
+      wait_for_tensor_catalog_subscribers(*publisher, *data_subscriber, **health_subscriber));
+
+  // Key setup: inject an indeterminate result after the health operation has been submitted, so
+  // the publisher cannot know whether its shared operation authority was consumed.
+  ASSERT_TRUE(channel_internal::TensorPublishLoanAccess::fail_next_catalog_post_submit_for_test(
+      *publisher, ErrorCode::kPublicationIndeterminate));
+  const auto health = publisher->report_clock_health(ClockHealthReport::healthy());
+  ASSERT_FALSE(health);
+  EXPECT_EQ(health.error().code, ErrorCode::kPublicationIndeterminate);
+
+  // Key assertion: the uncertain submit closes every authority-bearing API rather than allowing
+  // health, data, or EOS to continue from an unknowable sequence state.
+  const auto later_health = publisher->report_clock_health(ClockHealthReport::healthy());
+  ASSERT_FALSE(later_health);
+  EXPECT_EQ(later_health.error().code, ErrorCode::kClosed);
+  constexpr std::array<std::int64_t, 1U> kShape{8};
+  const auto later_loan = publisher->loan_tensor(TensorLoanRequest{
+      .shape = kShape,
+      .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+  });
+  ASSERT_FALSE(later_loan);
+  EXPECT_EQ(later_loan.error().code, ErrorCode::kClosed);
+  const auto terminal = publisher->close();
+  ASSERT_FALSE(terminal);
+  EXPECT_EQ(terminal.error().code, ErrorCode::kClosed);
+}
+
 // TA-T03/TA-T06/TA-T07/TA-T43: a catalog endpoint owns a finite fixed pool and copies every
 // request view before returning the loan.
 // REQ: CHAN-081
@@ -1067,7 +1241,7 @@ TEST(ExternalTensorLoanRuntime, RankZeroAndZeroExtentEachConsumeOneFiniteSlot) {
 
 // TA-T33: after cold pool materialization, repeated host loan/write/commit/cancel cycles use only
 // the endpoint's fixed slot and control records. The test deliberately excludes transport submit,
-// whose queue and cross-process realization are owned by EA1-015.
+// whose queue and cross-process realization are owned by HSDK5-015.
 // REQ: CHAN-081
 TEST(ExternalTensorLoanRuntime, WarmedLoanWriteCommitCancelUsesNoHostHeapAllocation) {
   auto catalog = make_tensor_import_catalog("tensor-warm-allocation", 1U);
@@ -1584,7 +1758,7 @@ TEST(ExternalTensorLoanRuntime, CatalogSubscriberRejectsPayloadOutsideFrozenTens
   ASSERT_EQ(cudaFree(nullptr), cudaSuccess);
   auto publisher_context = holomq::ContextBuilder().with_vmm_fd_export(true).create();
   ASSERT_TRUE(publisher_context) << publisher_context.error().message;
-  auto pool = publisher_context->create_host_buffer_pool(16U, 1U);
+  auto pool = publisher_context->create_host_buffer_pool(16U, 2U);
   ASSERT_TRUE(pool) << pool.error().message;
 
   const holomq::PubSubServiceOptions service_options{
@@ -1657,12 +1831,182 @@ TEST(ExternalTensorLoanRuntime, CatalogSubscriberRejectsPayloadOutsideFrozenTens
   }
   ASSERT_FALSE(rejected);
   EXPECT_EQ(rejected.error().code, ErrorCode::kProtocolError);
+
+  auto zero_generation_buffer = pool->acquire();
+  ASSERT_TRUE(zero_generation_buffer) << zero_generation_buffer.error().message;
+  auto zero_generation_handle = zero_generation_buffer->export_handle_unsynchronized();
+  ASSERT_TRUE(zero_generation_handle) << zero_generation_handle.error().message;
+  const std::array<std::int64_t, 1U> valid_shape{8};
+  auto valid_descriptor = channel_internal::make_holomq_tensor_descriptor(
+      valid_shape,
+      DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+      std::nullopt,
+      8U,
+      *zero_generation_handle,
+      /*read_only=*/true);
+  ASSERT_TRUE(valid_descriptor) << runtime_error_message(valid_descriptor.error());
+
+  auto zero_generation_message = publisher->loan();
+  ASSERT_TRUE(zero_generation_message) << zero_generation_message.error().message;
+  zero_generation_message->payload() = channel_internal::TensorTransportPayload{
+      .metadata =
+          SampleMetadata{
+              .sequence = 2U,
+              .byte_size = 8U,
+              .payload_kind = PayloadKind::kDescriptorBacked,
+          },
+      .producer_generation = 0U,
+      .payload_kind = ChannelPayloadKind::kBufferHandle,
+      .reference = channel_internal::TensorTransportReference{.holomq = *valid_descriptor},
+  };
+  auto zero_generation_sent = publisher->send(
+      std::move(*zero_generation_message),
+      [retained = std::move(*zero_generation_buffer)]() noexcept { (void)retained; });
+  ASSERT_TRUE(zero_generation_sent) << zero_generation_sent.error().message;
+  EXPECT_EQ(*zero_generation_sent, 1);
+
+  expected<Sample<Tensor>, Error> zero_generation_rejected =
+      make_unexpected(Error{ErrorCode::kNotReady});
+  const auto zero_generation_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  while (!zero_generation_rejected &&
+         zero_generation_rejected.error().code == ErrorCode::kNotReady &&
+         std::chrono::steady_clock::now() < zero_generation_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    zero_generation_rejected = subscriber->receive_sample();
+  }
+  ASSERT_FALSE(zero_generation_rejected);
+  EXPECT_EQ(zero_generation_rejected.error().code, ErrorCode::kProtocolError);
+}
+
+// Data and terminal records share one publisher operation sequence. Equal sequence heads are
+// therefore ambiguous and must fail before either lane can expose a value.
+// REQ: EXTERNAL-004
+TEST(ExternalTensorLoanRuntime, CatalogSubscriberRejectsDataTerminalSequenceTie) {
+  const std::string endpoint_name = "tensor-data-terminal-tie-" + std::to_string(::getpid());
+  auto export_catalog = make_tensor_export_catalog(endpoint_name,
+                                                   1U,
+                                                   MemoryKind::kHost,
+                                                   TopicAttachPolicy{},
+                                                   std::nullopt,
+                                                   QueuePolicy::kDropOldest);
+  ASSERT_TRUE(export_catalog) << runtime_error_message(export_catalog.error());
+  auto endpoint = export_catalog->endpoint(endpoint_name);
+  ASSERT_TRUE(endpoint) << runtime_error_message(endpoint.error());
+  const auto* const record = detail::ChannelEndpointCatalogAccess::record(*endpoint);
+  ASSERT_NE(record, nullptr);
+
+  auto subscriber_runtime = ChannelRuntime::create();
+  ASSERT_TRUE(subscriber_runtime) << runtime_error_message(subscriber_runtime.error());
+  auto subscriber = subscriber_runtime->create_subscriber<Tensor>(*endpoint);
+  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+
+  ASSERT_EQ(cudaFree(nullptr), cudaSuccess);
+  auto publisher_context = holomq::ContextBuilder().with_vmm_fd_export(true).create();
+  ASSERT_TRUE(publisher_context) << publisher_context.error().message;
+  auto pool = publisher_context->create_host_buffer_pool(16U, 2U);
+  ASSERT_TRUE(pool) << pool.error().message;
+
+  ChannelOptions wire_options{};
+  wire_options.queue_policy = ChannelQueuePolicy::kDropOldest;
+  wire_options.max_subscriber_queue_depth = record->service_static.max_subscriber_depth;
+  wire_options.subscriber_queue_depth = record->service_static.max_subscriber_depth;
+  wire_options.max_subscriber_borrowed_samples = record->service_static.max_subscriber_borrowed;
+  wire_options.max_borrowed_samples = record->service_static.max_subscriber_borrowed;
+  wire_options.publisher_history_depth = record->service_static.publisher_history_depth;
+  wire_options.expected_recipient_count = 1U;
+  wire_options.enable_event_wake = record->service_static.event_wake;
+  wire_options.tensor_transfer_mode = ChannelTensorTransferMode::kBufferHandle;
+  auto data_publisher =
+      publisher_context
+          ->publisher_builder(
+              detail::ChannelEndpointCatalogAccess::backend_service_binding(*endpoint))
+          .service_options(channel_internal::to_holomq_service_options(wire_options))
+          .publisher_options(holomq::PublisherPubSubOptions{.max_loaned_samples = 1U})
+          .payload_type<channel_internal::TensorTransportPayload>()
+          .create();
+  ASSERT_TRUE(data_publisher) << data_publisher.error().message;
+  auto terminal_publisher =
+      publisher_context
+          ->publisher_builder(channel_internal::ordered_terminal_service_id(
+              detail::ChannelEndpointCatalogAccess::backend_service_binding(*endpoint)))
+          .service_options(channel_internal::ordered_terminal_service_options(wire_options))
+          .publisher_options(channel_internal::ordered_terminal_publisher_options(wire_options))
+          .payload_type<channel_internal::TensorTransportPayload>()
+          .create();
+  ASSERT_TRUE(terminal_publisher) << terminal_publisher.error().message;
+
+  const auto connection_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  bool connected = false;
+  while (!connected && std::chrono::steady_clock::now() < connection_deadline) {
+    ASSERT_TRUE(subscriber->has_samples());
+    ASSERT_TRUE(data_publisher->update_connections());
+    ASSERT_TRUE(terminal_publisher->update_connections());
+    connected = data_publisher->has_subscribers() && terminal_publisher->has_subscribers();
+    if (!connected) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+  }
+  ASSERT_TRUE(connected);
+
+  auto buffer = pool->acquire();
+  ASSERT_TRUE(buffer) << buffer.error().message;
+  auto handle = buffer->export_handle_unsynchronized();
+  ASSERT_TRUE(handle) << handle.error().message;
+  const std::array<std::int64_t, 1U> shape{8};
+  auto descriptor = channel_internal::make_holomq_tensor_descriptor(
+      shape,
+      DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+      std::nullopt,
+      8U,
+      *handle,
+      /*read_only=*/true);
+  ASSERT_TRUE(descriptor) << runtime_error_message(descriptor.error());
+
+  // Key setup: queue valid data and EOS heads carrying the same generation and operation sequence.
+  auto data = data_publisher->loan();
+  ASSERT_TRUE(data) << data.error().message;
+  data->payload() = channel_internal::TensorTransportPayload{
+      .metadata =
+          SampleMetadata{
+              .sequence = 1U,
+              .byte_size = 8U,
+              .payload_kind = PayloadKind::kDescriptorBacked,
+          },
+      .producer_generation = 1U,
+      .operation_kind = channel_internal::TensorTransportOperationKind::kData,
+      .payload_kind = ChannelPayloadKind::kBufferHandle,
+      .reference = channel_internal::TensorTransportReference{.holomq = *descriptor},
+  };
+  auto data_sent = data_publisher->send(
+      std::move(*data), [retained = std::move(*buffer)]() noexcept { (void)retained; });
+  ASSERT_TRUE(data_sent) << data_sent.error().message;
+
+  auto terminal = terminal_publisher->loan();
+  ASSERT_TRUE(terminal) << terminal.error().message;
+  terminal->payload() = channel_internal::TensorTransportPayload{
+      .metadata =
+          SampleMetadata{
+              .sequence = 1U,
+              .payload_kind = PayloadKind::kDescriptorBacked,
+          },
+      .producer_generation = 1U,
+      .operation_kind = channel_internal::TensorTransportOperationKind::kEndOfStream,
+  };
+  auto terminal_sent = terminal_publisher->send(std::move(*terminal));
+  ASSERT_TRUE(terminal_sent) << terminal_sent.error().message;
+
+  auto received = subscriber->receive_sample();
+
+  // Key assertion: the subscriber rejects the tie without leaking the data-lane sample first.
+  ASSERT_FALSE(received);
+  EXPECT_EQ(received.error().code, ErrorCode::kProtocolError);
 }
 
 // A catalog Tensor subscriber latches the first producer incarnation independently of the public
 // sample sequence. Recreating the publisher resets that sequence but must not make the replacement
 // producer's data look like a continuation of the retired endpoint.
 // REQ: EXTERNAL-004
+// REQ: CHAN-142
 TEST(ExternalTensorLoanRuntime, CatalogSubscriberFencesARecreatedProducerIncarnation) {
   //   first_publisher  --> subscriber  [epoch A, sequence 1]
   //   first_publisher destroyed, second_publisher created
@@ -2015,6 +2359,60 @@ TEST(ExternalTensorLoanRuntime, RequiredSubscriberObservesPublisherCreatedDuring
   ASSERT_TRUE(received) << runtime_error_message(received.error());
   ASSERT_NE(received->data.data(), nullptr);
   EXPECT_EQ(*static_cast<const std::byte*>(received->data.data()), std::byte{0x2A});
+}
+
+// A queued EOS is usable peer evidence even if the short-lived publisher retires before the
+// required subscriber's connection loop observes a live publisher snapshot.
+// REQ: CHAN-136
+TEST(ExternalTensorLoanRuntime, RequiredSubscriberAcceptsRetainedEosAfterPublisherRetires) {
+  const std::string endpoint_name = "tensor-required-retained-eos-" + std::to_string(::getpid());
+  auto import_catalog = make_tensor_import_catalog(endpoint_name, 1U);
+  auto export_catalog = make_tensor_export_catalog(endpoint_name,
+                                                   1U,
+                                                   MemoryKind::kHost,
+                                                   TopicAttachPolicy{
+                                                       .peer = PeerRequirement::kRequired,
+                                                       .max_wait = std::chrono::seconds{3},
+                                                   });
+  ASSERT_TRUE(import_catalog) << runtime_error_message(import_catalog.error());
+  ASSERT_TRUE(export_catalog) << runtime_error_message(export_catalog.error());
+
+  auto publisher_runtime = ChannelRuntime::create();
+  auto subscriber_runtime = ChannelRuntime::create();
+  ASSERT_TRUE(publisher_runtime) << runtime_error_message(publisher_runtime.error());
+  ASSERT_TRUE(subscriber_runtime) << runtime_error_message(subscriber_runtime.error());
+
+  channel_internal::TensorPublisherTestAccess::RequiredPublisherWaitBarrier barrier;
+  barrier.pause_after_refresh = true;
+  channel_internal::TensorPublisherTestAccess::pause_next_required_publisher_wait_for_test(barrier);
+  auto subscriber_future = std::async(std::launch::async, [&] {
+    return subscriber_runtime->create_subscriber<Tensor>(*export_catalog, endpoint_name);
+  });
+  const bool subscriber_waiting = barrier.reached.try_acquire_for(std::chrono::seconds{2});
+
+  auto publisher = publisher_runtime->create_publisher<Tensor>(*import_catalog, endpoint_name);
+  barrier.resume.release();
+  const bool subscriber_refreshed = barrier.refreshed.try_acquire_for(std::chrono::seconds{2});
+  expected<void, Error> closed =
+      publisher ? publisher->close() : make_unexpected(Error{ErrorCode::kFailure});
+  barrier.resume_after_refresh.release();
+
+  auto subscriber = subscriber_future.get();
+  ASSERT_TRUE(subscriber_waiting);
+  ASSERT_TRUE(subscriber_refreshed);
+  ASSERT_TRUE(publisher) << runtime_error_message(publisher.error());
+  ASSERT_TRUE(closed) << runtime_error_message(closed.error());
+  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+  auto terminal = subscriber->receive_sample();
+  ASSERT_FALSE(terminal);
+  EXPECT_EQ(terminal.error().code, ErrorCode::kClosed);
+  EXPECT_EQ(
+      detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber), 1U);
+  auto repeated = subscriber->receive_sample();
+  ASSERT_FALSE(repeated);
+  EXPECT_EQ(repeated.error().code, ErrorCode::kClosed);
+  EXPECT_EQ(
+      detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber), 1U);
 }
 
 // Catalog Tensor attachment fails before transport setup when the endpoint role, storage family,
@@ -2612,6 +3010,8 @@ TEST(ExternalTensorLoanRuntime, EmitCopyStagesDeviceSourceIntoDeviceCatalogPool)
   //   Source pool is released before producer_stream completes; emit_copy must retain backing.
   test::skip_without_cuda_device();
 
+  // Key setup: wrap a device allocation in an imported-DLPack-like owner with no readiness
+  // contract, while supplying the authoritative producer stream explicitly to emit_copy().
   const std::string endpoint_name = "tensor-copy-device-pool";
   auto import_catalog = make_tensor_import_catalog(endpoint_name,
                                                    1U,
@@ -2672,10 +3072,14 @@ TEST(ExternalTensorLoanRuntime, EmitCopyStagesDeviceSourceIntoDeviceCatalogPool)
                               producer_stream.get()),
               cudaSuccess);
 
-    auto missing_stream = publisher->emit_copy(*source, ::cuda::stream_ref{cudaStream_t{nullptr}});
+    const Tensor imported_source = make_contractless_device_tensor(*source);
+    ASSERT_FALSE(imported_source.has_readiness_stream_contract());
+    auto missing_stream =
+        publisher->emit_copy(imported_source, ::cuda::stream_ref{cudaStream_t{nullptr}});
     ASSERT_FALSE(missing_stream);
     EXPECT_EQ(missing_stream.error().code, ErrorCode::kNotSupported);
-    auto published = publisher->emit_copy(*source, ::cuda::stream_ref{producer_stream.get()});
+    auto published =
+        publisher->emit_copy(imported_source, ::cuda::stream_ref{producer_stream.get()});
     ASSERT_TRUE(published) << runtime_error_message(published.error());
     // Destruction before producer-stream completion proves emit_copy retains or orders the source
     // backing rather than transferring that lifetime obligation to the caller.
@@ -2702,6 +3106,8 @@ TEST(ExternalTensorLoanRuntime, EmitCopyStagesDeviceSourceIntoDeviceCatalogPool)
     ASSERT_TRUE(received->data.set_deallocation_stream(consumer_stream.get()));
     ASSERT_EQ(cudaStreamSynchronize(consumer_stream.get()), cudaSuccess);
   }
+  // Key assertion: explicit stream authority orders the copy without requiring a readiness-aware
+  // Tensor memory reference, and the source backing remains alive until that copy completes.
   EXPECT_EQ(actual, expected);
   // Imported-buffer destruction defers its HoloMQ ref release on consumer_stream. Wait for that
   // bounded backpressure to clear so no CUDA host callback escapes into the following test.
@@ -2776,9 +3182,9 @@ TEST(ExternalTensorLoanRuntime, PinnedCatalogSupportsHostWritesAndOrderedDeviceC
     EXPECT_EQ(std::memcmp(received->data.data(), host_expected.data(), host_expected.size()), 0);
   }
 
-  // The capacity-one pool remains backpressured until the imported host-readiness stream executes
-  // its deferred HoloMQ ref release. Do not make the next publication depend on callback timing.
-  auto recycled = wait_for_recycled_tensor_loan(*publisher, request);
+  // A host-written lease carries no producer readiness fence, so host synchronization does not
+  // arm deferred CUDA release and the capacity-one pool recycles synchronously.
+  auto recycled = publisher->loan_tensor(request);
   ASSERT_TRUE(recycled) << runtime_error_message(recycled.error());
   ASSERT_TRUE(std::move(*recycled).cancel());
 
@@ -2827,6 +3233,69 @@ TEST(ExternalTensorLoanRuntime, PinnedCatalogSupportsHostWritesAndOrderedDeviceC
   ASSERT_TRUE(final_recycled) << runtime_error_message(final_recycled.error());
   ASSERT_TRUE(std::move(*final_recycled).cancel());
   ASSERT_TRUE(publisher->close());
+}
+
+// A pinned-host source is copied synchronously on the CPU even when Runtime supplies a separate
+// staging stream. The destination must not inherit a readiness fence for that unused stream.
+// REQ: CHAN-095
+TEST(ExternalTensorLoanRuntime, PinnedHostStagingDoesNotFenceSynchronousCopy) {
+  //   foreign pinned source --[synchronous memcpy]--> pinned catalog staging slot
+  //   blocked copy_stream --------------------------> (no work enqueued)
+  test::skip_without_cuda_device();
+
+  auto catalog = make_tensor_import_catalog("tensor-pinned-host-staging",
+                                            1U,
+                                            InterfaceTensorEmitPolicy::kCopyIfNeeded,
+                                            {},
+                                            1U,
+                                            1U,
+                                            MemoryKind::kPinnedHost);
+  ASSERT_TRUE(catalog) << runtime_error_message(catalog.error());
+  auto runtime = ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << runtime_error_message(runtime.error());
+  auto publisher = runtime->create_publisher<Tensor>(*catalog, "tensor-pinned-host-staging");
+  ASSERT_TRUE(publisher) << runtime_error_message(publisher.error());
+
+  constexpr std::size_t kByteCount = 8U;
+  const std::array<std::int64_t, 1U> shape{static_cast<std::int64_t>(kByteCount)};
+  const TensorLoanRequest request{
+      .shape = shape,
+      .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+  };
+  auto source_pool = std::make_shared<BlockMemoryPool>(MemoryStorageType::kHost, kByteCount, 1U);
+  ASSERT_TRUE(source_pool->initialize_pool());
+  auto source =
+      make_tensor(shape, request.dtype, std::nullopt, MemoryStorageType::kHost, source_pool);
+  ASSERT_TRUE(source) << runtime_error_message(source.error());
+  auto source_data = source->mutable_data();
+  ASSERT_TRUE(source_data) << runtime_error_message(source_data.error());
+  std::memset(*source_data, 0x5A, kByteCount);
+
+  test::UniqueCudaStream copy_stream;
+  ASSERT_EQ(test::create_non_blocking_cuda_stream(copy_stream), cudaSuccess);
+  test::BlockingHostState blocked_copy;
+  test::BlockingHostReleaseGuard release_guard{blocked_copy};
+  ASSERT_EQ(cudaLaunchHostFunc(copy_stream.get(), test::blocking_host_callback, &blocked_copy),
+            cudaSuccess);
+  ASSERT_TRUE(test::wait_until_started(blocked_copy));
+
+  // Key setup: offer a blocked staging stream even though pinned-to-pinned copy_to_host() performs
+  // a completed CPU memcpy and enqueues no work on that stream.
+  {
+    auto staged = channel_internal::TensorPublishLoanAccess::stage_foreign_tensor(
+        *publisher, *source, nullptr, copy_stream.get());
+    ASSERT_TRUE(staged) << runtime_error_message(staged.error());
+    EXPECT_EQ(std::memcmp(staged->tensor.data(), *source_data, kByteCount), 0);
+  }
+
+  // Key assertion: dropping the staged Tensor recycles the capacity-one slot while copy_stream is
+  // still blocked because the completed host copy has no CUDA producer work to fence.
+  auto recycled = publisher->loan_tensor(request);
+  ASSERT_TRUE(recycled) << runtime_error_message(recycled.error());
+  ASSERT_TRUE(std::move(*recycled).cancel());
+  test::release_blocking_host(blocked_copy);
+  release_guard.dismiss();
+  ASSERT_EQ(cudaStreamSynchronize(copy_stream.get()), cudaSuccess);
 }
 
 // A staged fanout copy owns one published pool claim independently of any particular endpoint
@@ -3120,6 +3589,79 @@ TEST(ExternalTensorLoanRuntime,
   auto recycled = provider->loan_tensor(request);
   ASSERT_TRUE(recycled) << runtime_error_message(recycled.error());
   ASSERT_TRUE(std::move(*recycled).cancel());
+}
+
+// REQ: CHAN-134
+TEST(ExternalTensorLoanRuntime, DeviceStagingUsesSeparateOrderedCopyStream) {
+  test::skip_without_cuda_device();
+
+  // Key setup: block a producer stream after writing device memory, then stage the Tensor on a
+  // separate copy stream that must wait for producer readiness.
+  constexpr std::string_view kEndpointName = "tensor-device-service-stream-staging";
+  auto catalog = make_tensor_import_catalog(std::string{kEndpointName},
+                                            1U,
+                                            InterfaceTensorEmitPolicy::kCopyIfNeeded,
+                                            {},
+                                            1U,
+                                            1U,
+                                            MemoryKind::kCudaDevice);
+  ASSERT_TRUE(catalog) << runtime_error_message(catalog.error());
+  auto runtime = ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << runtime_error_message(runtime.error());
+  auto publisher = runtime->create_publisher<Tensor>(*catalog, kEndpointName);
+  ASSERT_TRUE(publisher) << runtime_error_message(publisher.error());
+  const std::size_t preallocated_event_count =
+      channel_internal::TensorPublishLoanAccess::preallocated_copy_event_count_for_test(*publisher);
+  EXPECT_GT(preallocated_event_count, 0U);
+
+  int device_ordinal = -1;
+  ASSERT_EQ(cudaGetDevice(&device_ordinal), cudaSuccess);
+  constexpr std::size_t kByteCount = 8U;
+  const std::array<std::int64_t, 1U> shape{static_cast<std::int64_t>(kByteCount)};
+  const DLDataType dtype{.code = kDLUInt, .bits = 8U, .lanes = 1U};
+  auto source_pool =
+      std::make_shared<BlockMemoryPool>(MemoryStorageType::kDevice, kByteCount, 1U, device_ordinal);
+  ASSERT_TRUE(source_pool->initialize_pool());
+  test::UniqueCudaStream producer_stream;
+  test::UniqueCudaStream copy_stream;
+  ASSERT_EQ(test::create_non_blocking_cuda_stream(producer_stream), cudaSuccess);
+  ASSERT_EQ(test::create_non_blocking_cuda_stream(copy_stream), cudaSuccess);
+  auto source = make_tensor(shape,
+                            dtype,
+                            std::nullopt,
+                            MemoryStorageType::kDevice,
+                            source_pool,
+                            ::cuda::stream_ref{producer_stream.get()});
+  ASSERT_TRUE(source) << runtime_error_message(source.error());
+  auto source_data = source->mutable_data();
+  ASSERT_TRUE(source_data) << runtime_error_message(source_data.error());
+  ASSERT_EQ(cudaMemsetAsync(*source_data, 0x6B, kByteCount, producer_stream.get()), cudaSuccess);
+
+  test::BlockingHostState blocked_producer;
+  test::BlockingHostReleaseGuard release_guard{blocked_producer};
+  ASSERT_EQ(
+      cudaLaunchHostFunc(producer_stream.get(), test::blocking_host_callback, &blocked_producer),
+      cudaSuccess);
+  ASSERT_TRUE(test::wait_until_started(blocked_producer));
+  const Tensor contractless_source = make_contractless_device_tensor(*source);
+  ASSERT_FALSE(contractless_source.has_readiness_stream_contract());
+
+  auto staged = channel_internal::TensorPublishLoanAccess::stage_foreign_tensor(
+      *publisher, contractless_source, producer_stream.get(), copy_stream.get());
+  ASSERT_TRUE(staged) << runtime_error_message(staged.error());
+  EXPECT_EQ(
+      channel_internal::TensorPublishLoanAccess::preallocated_copy_event_count_for_test(*publisher),
+      preallocated_event_count);
+  EXPECT_EQ(cudaStreamQuery(copy_stream.get()), cudaErrorNotReady);
+
+  // Key assertion: releasing the producer lets the copy stream finish with the exact byte pattern.
+  test::release_blocking_host(blocked_producer);
+  release_guard.dismiss();
+  ASSERT_EQ(cudaStreamSynchronize(copy_stream.get()), cudaSuccess);
+  std::array<std::byte, kByteCount> observed{};
+  ASSERT_TRUE(staged->tensor.copy_to_host(observed.data(), observed.size(), copy_stream.get()));
+  EXPECT_TRUE(
+      std::ranges::all_of(observed, [](std::byte value) { return value == std::byte{0x6B}; }));
 }
 
 // TA-T12/TA-T15/TA-T24: consuming a loan while its writer is live invalidates publication, and the

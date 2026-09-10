@@ -22,7 +22,7 @@ the same.
 From an installed SDK prefix:
 
 ```sh
-cmake -S cpp -B build -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -S cpp -B build
 cmake --build build
 ./build/retained_tensor_compositor
 ```

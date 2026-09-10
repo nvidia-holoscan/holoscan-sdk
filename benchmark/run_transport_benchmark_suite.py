@@ -13,7 +13,9 @@ import shlex
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +23,7 @@ from transport_benchmark_identity import scenario_identity_contract
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = BENCHMARK_DIR.parent
-HOLOMQ_RUNNER = PUBLIC_DIR / "modules/holomq/benchmarks/run_holomq_benchmark.py"
+HOLOMQ_RUNNER = PUBLIC_DIR / "benchmark/holomq/run_holomq_benchmark.py"
 CHANNEL_MATRIX_RUNNER = BENCHMARK_DIR / "channel_interprocess/run_channel_benchmark_matrix.py"
 GRAPH_RUNNER = BENCHMARK_DIR / "runtime/run_runtime_graph_benchmark.py"
 GRAPH_INTERPROCESS_RUNNER = BENCHMARK_DIR / "runtime/run_runtime_graph_interprocess_benchmark.py"
@@ -161,6 +163,8 @@ class BenchmarkCase:
     optional: bool = False
     status: str = "planned"
     returncode: int | None = None
+    required_cpus: int | None = None
+    skip_reason: str | None = None
 
     def manifest_record(self, root: Path) -> dict[str, Any]:
         record = asdict(self)
@@ -173,9 +177,7 @@ def parse_cpu_list(text: str) -> list[int]:
         cpus = [int(item.strip()) for item in text.split(",") if item.strip()]
     except ValueError as error:
         raise argparse.ArgumentTypeError("--cpus must contain integer ordinals") from error
-    if len(cpus) < 8:
-        raise argparse.ArgumentTypeError("--cpus requires at least eight logical CPU ordinals")
-    if any(cpu < 0 for cpu in cpus) or len(cpus) != len(set(cpus)):
+    if not cpus or any(cpu < 0 for cpu in cpus) or len(cpus) != len(set(cpus)):
         raise argparse.ArgumentTypeError("--cpus must contain unique nonnegative ordinals")
     return cpus
 
@@ -185,7 +187,7 @@ def validate_distinct_physical_cpus(
     sysfs_root: Path | None = None,
 ) -> None:
     root = sysfs_root or Path(os.environ.get("HOLOSCAN_CPU_SYSFS_ROOT", "/sys/devices/system/cpu"))
-    selected_cores: dict[tuple[int, int], int] = {}
+    selected_cores: dict[tuple[int, str], int] = {}
     for cpu in cpus:
         cpu_dir = root / f"cpu{cpu}"
         if not cpu_dir.is_dir():
@@ -195,16 +197,18 @@ def validate_distinct_physical_cpus(
             raise ValueError(f"CPU {cpu} is offline")
         package_path = cpu_dir / "topology/physical_package_id"
         core_path = cpu_dir / "topology/core_id"
+        siblings_path = cpu_dir / "topology/thread_siblings_list"
         package = (
             int(package_path.read_text(encoding="utf-8").strip()) if package_path.is_file() else 0
         )
         core = int(core_path.read_text(encoding="utf-8").strip()) if core_path.is_file() else cpu
-        physical_core = (package, core)
+        siblings = (
+            siblings_path.read_text(encoding="utf-8").strip() if siblings_path.is_file() else ""
+        )
+        physical_core = (package, f"siblings:{siblings}" if siblings else f"core:{core}")
         sibling = selected_cores.get(physical_core)
         if sibling is not None:
-            raise ValueError(
-                f"CPUs {sibling} and {cpu} are sibling threads on socket {package}, core {core}"
-            )
+            raise ValueError(f"CPUs {sibling} and {cpu} are sibling threads on socket {package}")
         selected_cores[physical_core] = cpu
 
 
@@ -229,7 +233,8 @@ def parse_args() -> argparse.Namespace:
         "--cpus",
         type=parse_cpu_list,
         help=(
-            "At least eight comma-separated CPUs on distinct physical cores. "
+            "Comma-separated CPUs on distinct physical cores. Most presets require eight; "
+            "docs-core-runtime accepts four or more and skips rows that need additional cores. "
             "Omit to retain unpinned developer measurements."
         ),
     )
@@ -240,7 +245,7 @@ def parse_args() -> argparse.Namespace:
         "--skip-gpu",
         action="store_true",
         help=(
-            "Skip standalone HoloMQ and Graph device rows. The existing Channel "
+            "Skip direct HoloMQ and Graph device rows. The existing Channel "
             "matrix still includes its maintained device-storage cases."
         ),
     )
@@ -286,6 +291,11 @@ def parse_args() -> argparse.Namespace:
     if args.repetitions <= 0:
         parser.error("--repetitions must be positive")
     if args.cpus is not None:
+        minimum_cpus = 4 if args.preset == DOCS_CORE_RUNTIME_PRESET else 8
+        if len(args.cpus) < minimum_cpus:
+            parser.error(
+                f"--preset {args.preset} requires at least {minimum_cpus} distinct physical CPUs"
+            )
         try:
             validate_distinct_physical_cpus(args.cpus)
         except (OSError, ValueError) as error:
@@ -295,6 +305,28 @@ def parse_args() -> argparse.Namespace:
 
 def cpu(args: argparse.Namespace, index: int) -> int:
     return args.cpus[index] if args.cpus is not None else -1
+
+
+def docs_intraprocess_required_cpus(
+    workload: str,
+    scenario: str,
+    fanout: int,
+    fanout_operator_lanes: str | None,
+) -> int:
+    """Return the distinct CPU roles needed by one docs intraprocess row."""
+    notification_driver = 1 if workload == "throughput" else 0
+    if scenario == "sample_forward":
+        return 4 + notification_driver
+    if fanout > 1 and fanout_operator_lanes == "shared":
+        return 2 + notification_driver
+    if fanout > 1:
+        return fanout + 3 + notification_driver
+    return 3 + notification_driver
+
+
+def docs_interprocess_required_cpus(topology: str, fanout: int) -> int:
+    """Return the distinct process-lane and support-thread roles for a docs row."""
+    return 8 if topology == "chain" or fanout > 1 else 5
 
 
 def preset_counts(
@@ -321,8 +353,8 @@ def child_preset(args: argparse.Namespace) -> str:
 
 def binary_paths(build_dir: Path) -> dict[str, Path]:
     return {
-        "holomq_intraprocess": (build_dir / "modules/holomq/benchmarks/holomq_pubsub_benchmarks"),
-        "holomq_interprocess": (build_dir / "modules/holomq/benchmarks/holomq_transport_benchmark"),
+        "holomq_intraprocess": (build_dir / "benchmark/holomq/holomq_pubsub_benchmarks"),
+        "holomq_interprocess": (build_dir / "benchmark/holomq/holomq_transport_benchmark"),
         "channel": (build_dir / "benchmark/channel_interprocess/channel_interprocess_benchmark"),
         "graph_intraprocess": (build_dir / "benchmark/runtime/runtime_graph_benchmark"),
         "graph_interprocess": (
@@ -783,7 +815,18 @@ def graph_intraprocess_command(
             ]
         )
     if args.cpus is not None:
-        controller_cpu_index = 1 if shared_fanout else (fanout + 1 if fanout > 1 else 3)
+        compact_docs_1to1 = (
+            args.preset == DOCS_CORE_RUNTIME_PRESET
+            and len(args.cpus) < 8
+            and fanout == 1
+            and scenario != "sample_forward"
+        )
+        if shared_fanout:
+            controller_cpu_index = 1
+        elif fanout > 1:
+            controller_cpu_index = fanout + 1
+        else:
+            controller_cpu_index = 2 if compact_docs_1to1 else 3
         command.extend(
             [
                 "--source-cpu",
@@ -793,9 +836,12 @@ def graph_intraprocess_command(
             ]
         )
         if workload == "throughput":
-            notification_driver_cpu_index = (
-                3 if shared_fanout else (fanout + 3 if fanout > 1 else 4)
-            )
+            if shared_fanout:
+                notification_driver_cpu_index = 2
+            elif fanout > 1:
+                notification_driver_cpu_index = fanout + 3
+            else:
+                notification_driver_cpu_index = 3 if compact_docs_1to1 else 4
             command.extend(
                 ["--notification-driver-cpu", str(cpu(args, notification_driver_cpu_index))]
             )
@@ -819,22 +865,19 @@ def graph_intraprocess_command(
                 effective_fanout_operator_lanes,
             ]
         )
-        if args.cpus is not None:
-            if shared_fanout:
-                command.extend(["--channel-pump-cpu", str(cpu(args, 2))])
-            else:
-                sink_cpus = ",".join(str(cpu(args, index)) for index in range(1, fanout + 1))
-                command.extend(
-                    [
-                        "--sink-cpus",
-                        sink_cpus,
-                        "--channel-pump-cpu",
-                        str(cpu(args, fanout + 2)),
-                    ]
-                )
+        if args.cpus is not None and not shared_fanout:
+            sink_cpus = ",".join(str(cpu(args, index)) for index in range(1, fanout + 1))
+            command.extend(
+                [
+                    "--sink-cpus",
+                    sink_cpus,
+                    "--channel-pump-cpu",
+                    str(cpu(args, fanout + 2)),
+                ]
+            )
     elif scenario != "source_only" and args.cpus is not None:
         command.extend(["--sink-cpu", str(cpu(args, 1))])
-    if scenario in {"tensor", "multi_tensor"}:
+    if scenario in {"tensor", "image", "multi_tensor"}:
         command.extend(
             [
                 "--tensor-storage",
@@ -1136,6 +1179,42 @@ def graph_interprocess_command(
     return command
 
 
+def docs_benchmark_case(
+    args: argparse.Namespace,
+    *,
+    case_id: str,
+    domain: str,
+    workload: str,
+    result_kind: str,
+    output: Path,
+    required_cpus: int,
+    command_factory: Callable[[], list[str]],
+) -> BenchmarkCase:
+    """Build a docs case or record a topology-based omission before indexing CPU roles."""
+    selected_cpus = len(args.cpus) if args.cpus is not None else 0
+    supported = selected_cpus >= required_cpus
+    return BenchmarkCase(
+        case_id=case_id,
+        layer="graph",
+        domain=domain,
+        workload=workload,
+        result_kind=result_kind,
+        output=output,
+        command=command_factory() if supported else [],
+        status="planned" if supported else "skipped",
+        returncode=None if supported else 77,
+        required_cpus=required_cpus,
+        skip_reason=(
+            None
+            if supported
+            else (
+                f"topology requires {required_cpus} distinct physical CPUs; "
+                f"only {selected_cpus} selected"
+            )
+        ),
+    )
+
+
 def add_docs_core_runtime_cases(
     cases: list[BenchmarkCase],
     args: argparse.Namespace,
@@ -1163,7 +1242,15 @@ def add_docs_core_runtime_cases(
             1,
             None,
         ),
-        ("image_pageable_host_1to1", "image", "pageable_host", "full_write", 1, 1, None),
+        (
+            "image_pageable_host_1to1",
+            "image",
+            "pageable_host",
+            "descriptor_only",
+            1,
+            1,
+            None,
+        ),
         ("pod_1to2", "pod", "pageable_host", "full_write", 2, 1, "shared"),
         ("pod_1to2_per_sink", "pod", "pageable_host", "full_write", 2, 1, "per_sink"),
         ("pod_1to4", "pod", "pageable_host", "full_write", 4, 1, "shared"),
@@ -1183,14 +1270,18 @@ def add_docs_core_runtime_cases(
             case_id = f"graph_intraprocess_docs_{name}_{workload}"
             output = output_dir / f"graph/intraprocess/{case_id}"
             cases.append(
-                BenchmarkCase(
-                    case_id,
-                    "graph",
-                    "intraprocess",
-                    workload,
-                    "graph_intraprocess",
-                    output / "summary.json",
-                    graph_intraprocess_command(
+                docs_benchmark_case(
+                    args,
+                    case_id=case_id,
+                    domain="intraprocess",
+                    workload=workload,
+                    result_kind="graph_intraprocess",
+                    output=output / "summary.json",
+                    required_cpus=docs_intraprocess_required_cpus(
+                        workload, scenario, fanout, fanout_operator_lanes
+                    ),
+                    command_factory=partial(
+                        graph_intraprocess_command,
                         args,
                         intraprocess_binary,
                         output,
@@ -1211,6 +1302,7 @@ def add_docs_core_runtime_cases(
         ("schema_1to1", "fanout", 1, "schema", "pageable_host"),
         ("tensor_pinned_host_1to1", "fanout", 1, "tensor", "pinned_host"),
         ("tensor_device_1to1", "fanout", 1, "tensor", "device"),
+        ("image_pageable_host_1to1", "fanout", 1, "image", "pageable_host"),
         ("image_pinned_host_1to1", "fanout", 1, "image", "pinned_host"),
         ("image_device_1to1", "fanout", 1, "image", "device"),
         (
@@ -1228,14 +1320,16 @@ def add_docs_core_runtime_cases(
             case_id = f"graph_interprocess_docs_{name}_{workload}"
             output = output_dir / f"graph/interprocess/{case_id}"
             cases.append(
-                BenchmarkCase(
-                    case_id,
-                    "graph",
-                    "interprocess",
-                    workload,
-                    "graph_interprocess",
-                    output / "summary.json",
-                    graph_interprocess_command(
+                docs_benchmark_case(
+                    args,
+                    case_id=case_id,
+                    domain="interprocess",
+                    workload=workload,
+                    result_kind="graph_interprocess",
+                    output=output / "summary.json",
+                    required_cpus=docs_interprocess_required_cpus(topology, fanout),
+                    command_factory=partial(
+                        graph_interprocess_command,
                         args,
                         interprocess_binary,
                         output,
@@ -1410,6 +1504,7 @@ def write_manifest(
     cases: list[BenchmarkCase],
     output_dir: Path,
     build_command: list[str] | None,
+    summarizer_returncode: int | None = None,
 ) -> None:
     manifest = {
         "schema": SUITE_SCHEMA,
@@ -1425,11 +1520,58 @@ def write_manifest(
         "cpus": args.cpus,
         "build_dir": str(args.build_dir.resolve()),
         "build_command": build_command,
+        "result_summary": suite_result_summary(cases, summarizer_returncode),
         "cases": [case.manifest_record(output_dir) for case in cases],
     }
     temporary = output_dir / "suite_manifest.json.tmp"
     temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(output_dir / "suite_manifest.json")
+
+
+def suite_result_summary(
+    cases: list[BenchmarkCase], summarizer_returncode: int | None = None
+) -> dict[str, Any]:
+    """Summarize progress and preserve actionable terminal-case evidence."""
+    status_counts = {
+        status: sum(case.status == status for case in cases)
+        for status in ("planned", "passed", "failed", "skipped")
+    }
+    if status_counts["failed"] or summarizer_returncode not in (None, 0):
+        outcome = "failed"
+    elif status_counts["planned"] or summarizer_returncode is None:
+        outcome = "incomplete"
+    else:
+        outcome = "passed"
+    return {
+        "outcome": outcome,
+        "status_counts": status_counts,
+        "summarizer_returncode": summarizer_returncode,
+        "failed_cases": [
+            {
+                "case_id": case.case_id,
+                "returncode": case.returncode,
+                "stdout_log": f"logs/{case.case_id}.stdout.log",
+                "stderr_log": f"logs/{case.case_id}.stderr.log",
+            }
+            for case in cases
+            if case.status == "failed"
+        ],
+        "skipped_cases": [
+            {
+                "case_id": case.case_id,
+                "returncode": case.returncode,
+                "required_cpus": case.required_cpus,
+                "reason": case.skip_reason,
+            }
+            for case in cases
+            if case.status == "skipped"
+        ],
+    }
+
+
+def failure_message(case: BenchmarkCase, output_dir: Path) -> str:
+    stderr_path = output_dir / "logs" / f"{case.case_id}.stderr.log"
+    return f"{case.case_id}: exit code {case.returncode}; stderr: {stderr_path}"
 
 
 def restore_completed_cases(
@@ -1547,6 +1689,13 @@ def main() -> int:
     for case in pending_cases:
         append_command(commands_path, case.command)
     write_manifest(args, cases, output_dir, build_command)
+    omitted_cases = [case for case in cases if case.status == "skipped" and case.skip_reason]
+    if omitted_cases:
+        print(
+            f"omitting {len(omitted_cases)} of {len(cases)} docs rows that exceed "
+            f"the {len(args.cpus)} selected physical CPUs",
+            flush=True,
+        )
     if args.dry_run:
         print(f"planned {len(pending_cases)} cases in {output_dir}")
         return 0
@@ -1581,18 +1730,26 @@ def main() -> int:
             case.status = "failed"
         write_manifest(args, cases, output_dir, build_command)
         if case.status == "failed" and not args.keep_going:
-            raise RuntimeError(
-                f"{case.case_id} failed with exit code {completed.returncode}; see {stderr_path}"
-            )
+            raise RuntimeError(failure_message(case, output_dir))
+        if case.status == "failed":
+            print(f"FAILED: {failure_message(case, output_dir)}", file=sys.stderr, flush=True)
 
     summary_command = [sys.executable, str(SUMMARIZER), str(output_dir)]
     append_command(commands_path, summary_command)
     completed = subprocess.run(summary_command, check=False)
-    if completed.returncode != 0:
-        return completed.returncode
-    failed = [case.case_id for case in cases if case.status == "failed"]
+    write_manifest(args, cases, output_dir, build_command, completed.returncode)
+    failed = [case for case in cases if case.status == "failed"]
     if failed:
-        print(f"suite completed with {len(failed)} failed case(s)", file=sys.stderr)
+        print(f"suite completed with {len(failed)} failed case(s):", file=sys.stderr)
+        for case in failed:
+            print(f"  - {failure_message(case, output_dir)}", file=sys.stderr)
+    if completed.returncode != 0:
+        print(
+            f"suite summarizer failed with exit code {completed.returncode}",
+            file=sys.stderr,
+        )
+        return completed.returncode
+    if failed:
         return 1
     print(f"suite results: {output_dir}")
     return 0

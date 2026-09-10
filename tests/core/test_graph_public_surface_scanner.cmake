@@ -75,6 +75,30 @@ if(partition_selector_rejected_result EQUAL 0)
 endif()
 file(REMOVE "${fixture_graph_header}")
 
+# REQ: COMPILE-068
+file(WRITE "${fixture_header}"
+    "struct AlgorithmKey {};\n"
+    "struct ExecutionPlanRecord { AlgorithmKey ready_policy{}; };\n"
+    "struct ExecutionPlan { void partition_of(); };\n"
+)
+execute_process(
+    COMMAND ${CMAKE_COMMAND}
+        -DHOLOSCAN_PUBLIC_INCLUDE_DIR=${fixture_include}
+        -P ${HOLOSCAN_GRAPH_SURFACE_SCANNER}
+    RESULT_VARIABLE partition_lookup_rejected_result
+    OUTPUT_VARIABLE partition_lookup_rejected_output
+    ERROR_VARIABLE partition_lookup_rejected_error
+)
+if(partition_lookup_rejected_result EQUAL 0)
+    message(FATAL_ERROR
+        "A forbidden public ExecutionPlan::partition_of member escaped the scanner"
+    )
+endif()
+file(WRITE "${fixture_header}"
+    "struct AlgorithmKey {};\n"
+    "struct ExecutionPlanRecord { AlgorithmKey ready_policy{}; };\n"
+)
+
 file(APPEND "${fixture_header}"
     "struct ForbiddenExtension { AlgorithmKey ready_policy_extra{}; };\n"
 )

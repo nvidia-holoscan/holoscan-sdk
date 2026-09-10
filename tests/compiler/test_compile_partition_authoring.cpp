@@ -8,7 +8,12 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <memory>
 #include <optional>
+#include <ranges>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -18,11 +23,17 @@
 
 #include <holoscan/core/compile.hpp>
 
+#include "artifact_test_support.hpp"
 #include "compile_test_graph.hpp"
 #include "compiler/closed_island_activation_plan.hpp"
 #include "compiler/compile_internal.hpp"
+#include "compiler/cuda_execution_plan_validation.hpp"
 #include "compiler/execution_plan_state.hpp"
+#include "compiler/plan_artifact_serialization.hpp"
+#include "compiler/plan_generation.hpp"
 #include "compiler/process_placement_internal.hpp"
+#include "core/diagnostic_registry.hpp"
+#include "core/graph_compiler_access.hpp"
 
 namespace holoscan {
 
@@ -69,9 +80,24 @@ class ClosedIslandSourceOperator final : public Operator<> {
     return result;
   }
 
-  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+  expected<void, Error> compute([[maybe_unused]] ExecutionContext& context) override { return {}; }
 
   Output<ClosedIslandPartitionPod> output;
+};
+
+class ScalarClockSourceOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = std::chrono::milliseconds{1}});
+    return result;
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<std::uint32_t> output;
 };
 
 class ClosedIslandSinkOperator final : public Operator<> {
@@ -89,6 +115,191 @@ class ClosedIslandSinkOperator final : public Operator<> {
   Input<ClosedIslandPartitionPod> input;
 };
 
+class IncludeAllEmbeddedGraph final : public Graph {
+ protected:
+  void compose() override { (void)op<test::CompileTestOperator>("nested"); }
+};
+
+// Declares an isolated CUDA-device Tensor producer so compiler tests can require compute streams
+// without running an operator. Used by
+// CompilePartitionAuthoring.GreenContextRecordsStructuredResidualAndIrregularTail.
+class PartitionTensorSourceOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U}},
+            .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 16U},
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = std::chrono::milliseconds{1}});
+    return result;
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<Tensor> output;
+};
+
+// Two explicitly placed CUDA-device Tensor outputs exercise the planner's exact, canonical
+// multi-device obligation set without requiring Runtime execution.
+class PartitionMultiDeviceTensorSourceOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    const TensorOutputSpec tensor{
+        .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                           .dtype = DLDataType{kDLUInt, 8U, 1U}},
+        .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 16U},
+        .storage = TensorOutputStorage::kRuntimePool,
+    };
+    spec.output(first, "first").max_emits_per_compute(1U).produces_tensor(tensor);
+    spec.output(second, "second").max_emits_per_compute(1U).produces_tensor(tensor);
+  }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = std::chrono::milliseconds{1}});
+    return result;
+  }
+
+  expected<void, Error> compute([[maybe_unused]] ExecutionContext&) override { return {}; }
+
+  Output<Tensor> first;
+  Output<Tensor> second;
+};
+
+// Keeps the only graph edge scalar while two disconnected Tensor outputs contribute an exact
+// intrinsic multi-device conflict to the source vertex.
+class PartitionMultiDeviceScalarSourceOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    const TensorOutputSpec tensor{
+        .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                           .dtype = DLDataType{kDLUInt, 8U, 1U}},
+        .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 16U},
+        .storage = TensorOutputStorage::kRuntimePool,
+    };
+    spec.output(first, "first").max_emits_per_compute(1U).produces_tensor(tensor);
+    spec.output(second, "second").max_emits_per_compute(1U).produces_tensor(tensor);
+    spec.output(scalar, "scalar").max_emits_per_compute(1U);
+  }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = std::chrono::milliseconds{1}});
+    return result;
+  }
+
+  expected<void, Error> compute([[maybe_unused]] ExecutionContext&) override { return {}; }
+
+  Output<Tensor> first;
+  Output<Tensor> second;
+  Output<std::uint32_t> scalar;
+};
+
+[[nodiscard]] ExecutionPlan compile_zero_binding_tensor_graph() {
+  Graph graph{"ordinary-tensor-stream"};
+  test::add_compile_test_default_clock(graph);
+  graph.op<PartitionTensorSourceOperator>("source");
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  if (!snapshot) {
+    return {};
+  }
+  const auto output =
+      std::find_if(snapshot->ports.begin(), snapshot->ports.end(), [](const auto& port) {
+        return port.direction == PortDirection::kOutput;
+      });
+  if (output == snapshot->ports.end()) {
+    return {};
+  }
+  const std::array devices{detail::TensorDeviceBindingRecord{
+      .port = PortId{output->id.value},
+      .device = DeviceId{0},
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  return detail::compile_with_runtime_evidence(graph, {}, evidence);
+}
+
+// Declares a CUDA-device Tensor consumer used to exercise stream planning across a partition edge.
+// Used by CompilePartitionAuthoring.GreenContextSeparatesResidualPartitionAndServiceStreams.
+class PartitionTensorSinkOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U}},
+        });
+  }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<Tensor> input;
+};
+
+class PartitionTensorSinkGraph final : public Graph {
+ public:
+  [[nodiscard]] ClockKey clock_import() const noexcept { return clock_import_; }
+
+  Input<Tensor> input{"input"};
+
+ protected:
+  void compose() override {
+    clock_import_ = import_clock("timeline");
+    set_default_clock(clock_import_);
+    const auto sink = op<PartitionTensorSinkOperator>("sink");
+    export_input(input, sink->input);
+  }
+
+ private:
+  ClockKey clock_import_;
+};
+
+class PartitionTensorTransformOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U}},
+        });
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U}},
+            .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 16U},
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  expected<void, Error> compute([[maybe_unused]] ExecutionContext&) override { return {}; }
+
+  Input<Tensor> input;
+  Output<Tensor> output;
+};
+
 [[nodiscard]] detail::ProcessPlacementBinding process_placement(std::string_view source_group,
                                                                 std::string_view target_group) {
   constexpr std::array source{detail::GraphObjectSelector{.graph_path = "source"}};
@@ -99,6 +310,21 @@ class ClosedIslandSinkOperator final : public Operator<> {
                          detail::ProcessPlacement{.members = source, .launch_group = source_group})
       .bind_process_role("target",
                          detail::ProcessPlacement{.members = target, .launch_group = target_group});
+  return placement;
+}
+
+[[nodiscard]] detail::ProcessPlacementBinding external_process_placement(
+    std::string_view endpoint) {
+  const std::array external{
+      detail::GraphObjectSelector{.external_topic = endpoint},
+  };
+  detail::ProcessPlacementBinding placement;
+  placement.bind_process_role("external-endpoint",
+                              detail::ProcessPlacement{
+                                  .isolation = detail::ProcessIsolation::kExternalProcess,
+                                  .members = external,
+                                  .launch_group = "external-endpoint",
+                              });
   return placement;
 }
 
@@ -220,6 +446,338 @@ struct CanonicalPartitionEvidence {
   return compile(graph);
 }
 
+// Graph topology (each node is in the named execution partition):
+//   source(alpha) --> target(beta)
+[[nodiscard]] ExecutionPlan compile_green_context_partitions(
+    bool reverse_bindings, std::uint32_t alpha_sms = 16U, std::uint32_t beta_sms = 24U,
+    PlacementProbeStatus probe_status = PlacementProbeStatus::kPassed,
+    Profile profile = Profile::kStandard, std::uint32_t device_sms = 80U) {
+  Graph graph{"manual-green-context-partitions"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto target = graph.op<test::CompileTestOperator>("target");
+  graph.add_flow(source->output, target->input);
+  graph.partition("alpha").add(source);
+  graph.partition("beta").add(target);
+
+  CompileOptions options;
+  options.profile = profile;
+  if (reverse_bindings) {
+    options.deployment
+        .bind_cuda_green_context("beta", {.device = DeviceId{0}, .sm_count = beta_sms})
+        .bind_cuda_green_context("alpha", {.device = DeviceId{0}, .sm_count = alpha_sms});
+  } else {
+    options.deployment
+        .bind_cuda_green_context("alpha", {.device = DeviceId{0}, .sm_count = alpha_sms})
+        .bind_cuda_green_context("beta", {.device = DeviceId{0}, .sm_count = beta_sms});
+  }
+  const std::array capabilities{detail::CudaGreenContextCapabilityEvidence{
+      .device = DeviceId{0},
+      .deployment_device_id = "gpu.test.uuid.0",
+      .total_sm_count = device_sms,
+      .min_sm_partition_size = 8U,
+      .sm_coscheduled_alignment = 8U,
+      .max_structured_context_count = 10U,
+      .evidence_id = "test.cuda.green_context.capability/v1",
+      .probe_status = probe_status,
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.cuda_green_context_capabilities = capabilities;
+  std::optional<detail::RuntimePackageCapabilityManifest> profile_package;
+  if (profile == Profile::kRealTime) {
+    profile_package.emplace(detail::runtime_package_capability_manifest());
+    profile_package->offers.push_back(detail::RuntimePackageCapabilityOffer{
+        .id = "holoscan.profile.real_time.bounded_hot_path",
+        .version = 1U,
+        .evidence_id = "holoscan.profile.real_time.bounded_hot_path/v1",
+    });
+    const auto sealed = detail::seal_runtime_package_capability_manifest(*profile_package);
+    EXPECT_TRUE(sealed) << (sealed ? std::string{} : runtime_error_message(sealed.error()));
+    const auto package_view =
+        detail::validate_runtime_package_capability_manifest(*profile_package);
+    EXPECT_TRUE(package_view) << (package_view ? std::string{}
+                                               : runtime_error_message(package_view.error()));
+    if (package_view) {
+      evidence.package_capabilities = *package_view;
+    }
+  }
+  return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+}
+
+// Graph topology (each isolated partition is assigned to a distinct physical device):
+//   device-zero   device-one
+[[nodiscard]] ExecutionPlan compile_green_context_partitions_on_two_devices() {
+  Graph graph{"manual-green-context-two-devices"};
+  test::add_compile_test_default_clock(graph);
+  const auto device_zero = graph.op<test::CompileTestOperator>("device-zero");
+  const auto device_one = graph.op<test::CompileTestOperator>("device-one");
+  graph.partition("device-zero").add(device_zero);
+  graph.partition("device-one").add(device_one);
+
+  CompileOptions options;
+  options.deployment
+      .bind_cuda_green_context("device-zero", {.device = DeviceId{0}, .sm_count = 80U})
+      .bind_cuda_green_context("device-one", {.device = DeviceId{1}, .sm_count = 80U});
+  const std::array capabilities{
+      detail::CudaGreenContextCapabilityEvidence{
+          .device = DeviceId{0},
+          .deployment_device_id = "gpu.test.uuid.0",
+          .total_sm_count = 80U,
+          .min_sm_partition_size = 8U,
+          .sm_coscheduled_alignment = 8U,
+          .max_structured_context_count = 10U,
+          .evidence_id = "test.cuda.green_context.capability.device-0/v1",
+          .probe_status = PlacementProbeStatus::kPassed,
+      },
+      detail::CudaGreenContextCapabilityEvidence{
+          .device = DeviceId{1},
+          .deployment_device_id = "gpu.test.uuid.1",
+          .total_sm_count = 80U,
+          .min_sm_partition_size = 8U,
+          .sm_coscheduled_alignment = 8U,
+          .max_structured_context_count = 10U,
+          .evidence_id = "test.cuda.green_context.capability.device-1/v1",
+          .probe_status = PlacementProbeStatus::kPassed,
+      },
+  };
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.cuda_green_context_capabilities = capabilities;
+  return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+}
+
+// Graph topology (all operators are isolated CUDA Tensor sources):
+//   alpha   beta   [residual-a]   [residual-b]
+[[nodiscard]] ExecutionPlan compile_green_context_residual_partitions(
+    std::uint32_t residual_partition_count) {
+  Graph graph{"green-context-residual-partitions"};
+  test::add_compile_test_default_clock(graph);
+  const auto alpha = graph.op<PartitionTensorSourceOperator>("alpha");
+  const auto beta = graph.op<PartitionTensorSourceOperator>("beta");
+  graph.partition("alpha").add(alpha);
+  graph.partition("beta").add(beta);
+  if (residual_partition_count >= 1U) {
+    const auto residual_a = graph.op<PartitionTensorSourceOperator>("residual-a");
+    graph.partition("residual-a").add(residual_a);
+  }
+  if (residual_partition_count >= 2U) {
+    const auto residual_b = graph.op<PartitionTensorSourceOperator>("residual-b");
+    graph.partition("residual-b").add(residual_b);
+  }
+
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  if (!snapshot) {
+    throw RuntimeError{Error{ErrorCode::kFailure, "canonical test snapshot unavailable"}};
+  }
+  std::vector<detail::TensorDeviceBindingRecord> devices;
+  for (const auto& port : snapshot->ports) {
+    if (port.direction == PortDirection::kOutput) {
+      devices.push_back(detail::TensorDeviceBindingRecord{
+          .port = PortId{port.id.value},
+          .device = DeviceId{0},
+      });
+    }
+  }
+  const std::array capabilities{detail::CudaGreenContextCapabilityEvidence{
+      .device = DeviceId{0},
+      .deployment_device_id = "gpu.test.uuid.irregular",
+      .total_sm_count = 82U,
+      .min_sm_partition_size = 8U,
+      .sm_coscheduled_alignment = 8U,
+      .max_structured_context_count = 10U,
+      .evidence_id = "test.cuda.green_context.capability/v1",
+      .probe_status = PlacementProbeStatus::kPassed,
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  evidence.cuda_green_context_capabilities = capabilities;
+  CompileOptions options;
+  options.deployment.bind_cuda_green_context("alpha", {.device = DeviceId{0}, .sm_count = 16U})
+      .bind_cuda_green_context("beta", {.device = DeviceId{0}, .sm_count = 24U});
+  return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+}
+
+// Graph topology (all operators are isolated):
+//   dedicated   [residual CUDA Tensor source]
+[[nodiscard]] ExecutionPlan compile_single_green_context(
+    std::uint32_t exact_sm_count, std::uint32_t total_sm_count, bool add_unbound_cuda_partition,
+    DeviceId device = DeviceId{0}, std::string_view bound_partition = "dedicated",
+    bool duplicate_binding = false, std::optional<std::uint32_t> max_context_count = std::nullopt,
+    std::optional<Profile> residual_profile = std::nullopt) {
+  Graph graph{"single-green-context"};
+  test::add_compile_test_default_clock(graph);
+  const auto dedicated = graph.op<test::CompileTestOperator>("dedicated");
+  graph.partition("dedicated").add(dedicated);
+  if (add_unbound_cuda_partition) {
+    const auto residual = graph.op<PartitionTensorSourceOperator>("residual");
+    graph.partition("residual").add(residual);
+    if (residual_profile) {
+      graph.region("residual-profile").add(residual).profile(*residual_profile);
+    }
+  }
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  if (!snapshot) {
+    throw RuntimeError{Error{ErrorCode::kFailure, "canonical test snapshot unavailable"}};
+  }
+  std::vector<detail::TensorDeviceBindingRecord> devices;
+  for (const auto& port : snapshot->ports) {
+    if (port.direction == PortDirection::kOutput && port.setup.tensor_layout) {
+      devices.push_back(detail::TensorDeviceBindingRecord{
+          .port = PortId{port.id.value},
+          .device = device,
+      });
+    }
+  }
+  const std::array capabilities{detail::CudaGreenContextCapabilityEvidence{
+      .device = device,
+      .deployment_device_id = "gpu.test.uuid.single",
+      .total_sm_count = total_sm_count,
+      .min_sm_partition_size = 8U,
+      .sm_coscheduled_alignment = 8U,
+      .max_structured_context_count = max_context_count.value_or(total_sm_count / 8U),
+      .evidence_id = "test.cuda.green_context.capability/v1",
+      .probe_status = PlacementProbeStatus::kPassed,
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  evidence.cuda_green_context_capabilities = capabilities;
+  CompileOptions options;
+  options.deployment.bind_cuda_green_context(bound_partition,
+                                             {.device = device, .sm_count = exact_sm_count});
+  if (duplicate_binding) {
+    options.deployment.bind_cuda_green_context(bound_partition,
+                                               {.device = device, .sm_count = exact_sm_count});
+  }
+  return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+}
+
+// Graph topology (both operators are isolated):
+//   dedicated (exact Green Context anchor)
+//   residual  (automatic CUDA Tensor remainder)
+[[nodiscard]] ExecutionPlan compile_hybrid_green_context_remainder() {
+  Graph graph{"hybrid-green-context-remainder"};
+  test::add_compile_test_default_clock(graph);
+  const auto dedicated = graph.op<test::CompileTestOperator>("dedicated");
+  (void)graph.op<PartitionTensorSourceOperator>("residual");
+  graph.partition("dedicated").add(dedicated);
+  graph.auto_partition_remaining();
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  if (!snapshot) {
+    throw RuntimeError{Error{ErrorCode::kFailure, "canonical test snapshot unavailable"}};
+  }
+  std::vector<detail::TensorDeviceBindingRecord> devices;
+  for (const auto& port : snapshot->ports) {
+    if (port.direction == PortDirection::kOutput && port.setup.tensor_layout) {
+      devices.push_back(detail::TensorDeviceBindingRecord{
+          .port = PortId{port.id.value},
+          .device = DeviceId{0},
+      });
+    }
+  }
+  const std::array capabilities{detail::CudaGreenContextCapabilityEvidence{
+      .device = DeviceId{0},
+      .deployment_device_id = "gpu.test.uuid.hybrid",
+      .total_sm_count = 80U,
+      .min_sm_partition_size = 8U,
+      .sm_coscheduled_alignment = 8U,
+      .max_structured_context_count = 10U,
+      .evidence_id = "test.cuda.green_context.capability/v1",
+      .probe_status = PlacementProbeStatus::kPassed,
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  evidence.cuda_green_context_capabilities = capabilities;
+  CompileOptions options;
+  options.deployment.bind_thread_placement("dedicated",
+                                           ThreadPlacement{.wake_mode = WakeMode::kBusyPoll});
+  options.deployment.bind_cuda_green_context("dedicated", {.device = DeviceId{0}, .sm_count = 16U});
+  return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+}
+
+// Graph topology (source and sink are in separate execution partitions):
+//   source --> sink
+[[nodiscard]] ExecutionPlan compile_green_context_tensor_service() {
+  Graph graph{"green-context-tensor-service"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionTensorSourceOperator>("source");
+  const auto sink = graph.op<PartitionTensorSinkOperator>("sink");
+  graph.add_flow(source->output, sink->input);
+  graph.partition("source").add(source);
+  graph.partition("sink").add(sink);
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  if (!snapshot) {
+    throw RuntimeError{Error{ErrorCode::kFailure, "canonical test snapshot unavailable"}};
+  }
+  const auto output =
+      std::find_if(snapshot->ports.begin(), snapshot->ports.end(), [](const auto& port) {
+        return port.direction == PortDirection::kOutput;
+      });
+  if (output == snapshot->ports.end()) {
+    throw RuntimeError{Error{ErrorCode::kFailure, "canonical Tensor output unavailable"}};
+  }
+  const std::array devices{detail::TensorDeviceBindingRecord{
+      .port = PortId{output->id.value},
+      .device = DeviceId{0},
+  }};
+  const std::array capabilities{detail::CudaGreenContextCapabilityEvidence{
+      .device = DeviceId{0},
+      .deployment_device_id = "gpu.test.uuid.service",
+      .total_sm_count = 82U,
+      .min_sm_partition_size = 8U,
+      .sm_coscheduled_alignment = 8U,
+      .max_structured_context_count = 10U,
+      .evidence_id = "test.cuda.green_context.capability/v1",
+      .probe_status = PlacementProbeStatus::kPassed,
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  evidence.cuda_green_context_capabilities = capabilities;
+  CompileOptions options;
+  options.deployment.bind_cuda_green_context("source", {.device = DeviceId{0}, .sm_count = 16U});
+  return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+}
+
+// Graph topology (both operators are fused into one execution partition):
+//   source --> sink
+[[nodiscard]] ExecutionPlan compile_green_context_fused_tensor_partition() {
+  Graph graph{"green-context-fused-tensor-partition"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionTensorSourceOperator>("source");
+  const auto sink = graph.op<PartitionTensorSinkOperator>("sink");
+  graph.add_flow(source->output, sink->input);
+  graph.partition("fused").add(source).add(sink);
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  if (!snapshot) {
+    throw RuntimeError{Error{ErrorCode::kFailure, "canonical test snapshot unavailable"}};
+  }
+  const auto output =
+      std::find_if(snapshot->ports.begin(), snapshot->ports.end(), [](const auto& port) {
+        return port.direction == PortDirection::kOutput && port.setup.tensor_layout;
+      });
+  if (output == snapshot->ports.end()) {
+    throw RuntimeError{Error{ErrorCode::kFailure, "canonical Tensor output unavailable"}};
+  }
+  const std::array devices{detail::TensorDeviceBindingRecord{
+      .port = PortId{output->id.value},
+      .device = DeviceId{0},
+  }};
+  const std::array capabilities{detail::CudaGreenContextCapabilityEvidence{
+      .device = DeviceId{0},
+      .deployment_device_id = "gpu.test.uuid.fused",
+      .total_sm_count = 80U,
+      .min_sm_partition_size = 8U,
+      .sm_coscheduled_alignment = 8U,
+      .max_structured_context_count = 10U,
+      .evidence_id = "test.cuda.green_context.capability/v1",
+      .probe_status = PlacementProbeStatus::kPassed,
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  evidence.cuda_green_context_capabilities = capabilities;
+  CompileOptions options;
+  options.deployment.bind_cuda_green_context("fused", {.device = DeviceId{0}, .sm_count = 16U});
+  return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+}
+
 [[nodiscard]] std::vector<std::string> profile_capacity_evidence(const ExecutionPlan& plan) {
   std::vector<std::string> result;
   for (const auto& capacity : plan.profile_manifest().derived_capacities) {
@@ -230,6 +788,987 @@ struct CanonicalPartitionEvidence {
 }
 
 // REQ: COMPILE-058
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextBindingsAdmitCanonicalCpuOnlyPartitions) {
+  // Key setup: compile two CPU-only partitions with 16-SM and 24-SM Green Context bindings.
+  const ExecutionPlan plan = compile_green_context_partitions(false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  // Key assertion: lowering emits two dedicated assignments, one structured residual, and two
+  // partition streams while preserving the capability evidence.
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 2U);
+  ASSERT_EQ(plan.cuda_green_context_assignments().size(), 2U);
+  ASSERT_EQ(plan.cuda_green_context_pools().size(), 1U);
+  ASSERT_EQ(plan.cuda_green_context_resources().size(), 3U);
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 2U);
+  EXPECT_EQ(plan.cuda_green_context_requests()[0].authored_name, "alpha");
+  EXPECT_EQ(plan.cuda_green_context_requests()[0].requested.sm_count, 16U);
+  const std::optional<CudaGreenContextPlacement> accepted_alpha{
+      {.device = DeviceId{0}, .sm_count = 16U}};
+  EXPECT_EQ(plan.cuda_green_context_requests()[0].accepted, accepted_alpha);
+  EXPECT_EQ(plan.cuda_green_context_requests()[0].disposition, PlanDisposition::kAccepted);
+  EXPECT_EQ(plan.cuda_green_context_requests()[1].authored_name, "beta");
+  EXPECT_EQ(plan.cuda_green_context_assignments()[0].partition, ExecutionPartitionId{1U});
+  EXPECT_EQ(plan.cuda_green_context_assignments()[1].partition, ExecutionPartitionId{2U});
+  const auto& pool = plan.cuda_green_context_pools().front();
+  EXPECT_EQ(pool.deployment_device_id, "gpu.test.uuid.0");
+  EXPECT_EQ(pool.device_sm_count, 80U);
+  EXPECT_EQ(pool.min_sm_partition_size, 8U);
+  EXPECT_EQ(pool.sm_coscheduled_alignment, 8U);
+  EXPECT_EQ(pool.structured_sm_quantum, 8U);
+  EXPECT_EQ(pool.max_structured_context_count, 10U);
+  EXPECT_EQ(pool.unprovisioned_sm_count, 0U);
+  EXPECT_TRUE(pool.fallback_rejected);
+  EXPECT_EQ(plan.cuda_green_context_resources()[0].accepted_sm_count, 16U);
+  EXPECT_EQ(plan.cuda_green_context_resources()[0].role,
+            CudaGreenContextResourceRole::kDedicatedPartition);
+  EXPECT_EQ(plan.cuda_green_context_resources()[1].accepted_sm_count, 24U);
+  EXPECT_EQ(plan.cuda_green_context_resources()[1].role,
+            CudaGreenContextResourceRole::kDedicatedPartition);
+  EXPECT_EQ(plan.cuda_green_context_resources()[2].accepted_sm_count, 40U);
+  EXPECT_EQ(plan.cuda_green_context_resources()[2].role,
+            CudaGreenContextResourceRole::kReservedResidual);
+  EXPECT_EQ(plan.cuda_compute_streams()[0].partition, ExecutionPartitionId{1U});
+  EXPECT_EQ(plan.cuda_compute_streams()[1].partition, ExecutionPartitionId{2U});
+  EXPECT_TRUE(plan.tensor_device_resources().empty());
+  EXPECT_TRUE(std::all_of(
+      plan.placement_probes().begin(), plan.placement_probes().end(), [](const auto& probe) {
+        return probe.probe_id != "cuda.green_context.split" ||
+               (probe.status == PlacementProbeStatus::kPassed &&
+                probe.evidence_id == "test.cuda.green_context.capability/v1");
+      }));
+  EXPECT_EQ(std::count_if(plan.diagnostics().begin(),
+                          plan.diagnostics().end(),
+                          [](const auto& diagnostic) {
+                            return diagnostic.id ==
+                                   detail::diagnostic_id("CUDA_GREEN_CONTEXT_INACTIVE_RESERVATION");
+                          }),
+            2);
+  const auto materializations = plan.profile_manifest().materialization_obligations;
+  EXPECT_EQ(std::count_if(materializations.begin(),
+                          materializations.end(),
+                          [](const auto& obligation) {
+                            return obligation.strategy_id ==
+                                   "holoscan.runtime.cuda_green_context_pool/v1";
+                          }),
+            plan.cuda_green_context_pools().size());
+  EXPECT_EQ(std::count_if(materializations.begin(),
+                          materializations.end(),
+                          [](const auto& obligation) {
+                            return obligation.strategy_id ==
+                                   "holoscan.runtime.cuda_green_context/v1";
+                          }),
+            plan.cuda_green_context_resources().size());
+}
+
+// REQ: COMPILE-063
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, HybridGreenContextAnchorKeepsCompleteFinalOwnerJoins) {
+  const ExecutionPlan plan = compile_hybrid_green_context_remainder();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  EXPECT_EQ(plan.partitioning_plan().mode, PartitioningMode::kConstrainedAutomatic);
+  EXPECT_EQ(plan.partitioning_plan().authored_partition_count, 1U);
+  EXPECT_EQ(plan.partitioning_plan().automatic_partition_count, 1U);
+  const auto anchor =
+      std::find_if(plan.execution_partitions().begin(),
+                   plan.execution_partitions().end(),
+                   [](const auto& partition) { return partition.authored_name == "dedicated"; });
+  ASSERT_NE(anchor, plan.execution_partitions().end());
+  const auto automatic =
+      std::find_if(plan.execution_partitions().begin(),
+                   plan.execution_partitions().end(),
+                   [](const auto& partition) { return !partition.authored_name.has_value(); });
+  ASSERT_NE(automatic, plan.execution_partitions().end());
+  ASSERT_EQ(plan.partition_placements().size(), 1U);
+  const auto& thread_placement = plan.partition_placements().front();
+  EXPECT_EQ(thread_placement.partition, anchor->id);
+  EXPECT_EQ(thread_placement.authored_name, "dedicated");
+  EXPECT_EQ(thread_placement.execution_lane, anchor->execution_lane);
+  EXPECT_EQ(thread_placement.requested.wake_mode, WakeMode::kBusyPoll);
+  ASSERT_TRUE(thread_placement.accepted.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+  EXPECT_EQ(thread_placement.accepted->wake_mode, WakeMode::kBusyPoll);
+  EXPECT_EQ(thread_placement.disposition, PlanDisposition::kAccepted);
+  const auto anchor_lane = std::ranges::find(
+      plan.execution_lanes(), anchor->execution_lane, &ExecutionLanePlanRecord::execution_lane);
+  const auto automatic_lane = std::ranges::find(
+      plan.execution_lanes(), automatic->execution_lane, &ExecutionLanePlanRecord::execution_lane);
+  ASSERT_NE(anchor_lane, plan.execution_lanes().end());
+  ASSERT_NE(automatic_lane, plan.execution_lanes().end());
+  EXPECT_EQ(anchor_lane->partition, anchor->id);
+  EXPECT_EQ(anchor_lane->accepted_placement.wake_mode, WakeMode::kBusyPoll);
+  EXPECT_EQ(automatic_lane->partition, automatic->id);
+  EXPECT_EQ(automatic_lane->accepted_placement.wake_mode, WakeMode::kSleepingWaitset);
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 1U);
+  ASSERT_EQ(plan.cuda_green_context_assignments().size(), 1U);
+  ASSERT_EQ(plan.cuda_green_context_pools().size(), 1U);
+  ASSERT_EQ(plan.cuda_green_context_resources().size(), 2U);
+  const auto& request = plan.cuda_green_context_requests().front();
+  const auto& assignment = plan.cuda_green_context_assignments().front();
+  const auto& pool = plan.cuda_green_context_pools().front();
+  EXPECT_EQ(request.partition, anchor->id);
+  EXPECT_EQ(request.execution_lane, anchor->execution_lane);
+  EXPECT_EQ(assignment.partition, anchor->id);
+  EXPECT_EQ(assignment.execution_lane, anchor->execution_lane);
+  EXPECT_EQ(assignment.pool_id, pool.pool_id);
+  const auto dedicated =
+      std::find_if(plan.cuda_green_context_resources().begin(),
+                   plan.cuda_green_context_resources().end(),
+                   [&](const auto& resource) {
+                     return resource.green_context_id == assignment.green_context_id;
+                   });
+  ASSERT_NE(dedicated, plan.cuda_green_context_resources().end());
+  EXPECT_EQ(dedicated->pool_id, pool.pool_id);
+  EXPECT_EQ(dedicated->process_group, assignment.process_group);
+  EXPECT_EQ(dedicated->device, assignment.device);
+  EXPECT_EQ(dedicated->role, CudaGreenContextResourceRole::kDedicatedPartition);
+  const auto residual = std::ranges::find(plan.cuda_green_context_resources(),
+                                          CudaGreenContextResourceRole::kSharedServiceResidual,
+                                          &CudaGreenContextResourcePlanRecord::role);
+  ASSERT_NE(residual, plan.cuda_green_context_resources().end());
+  EXPECT_EQ(std::count_if(plan.cuda_green_context_resources().begin(),
+                          plan.cuda_green_context_resources().end(),
+                          [](const auto& resource) {
+                            return resource.role ==
+                                   CudaGreenContextResourceRole::kSharedServiceResidual;
+                          }),
+            1);
+  EXPECT_EQ(residual->pool_id, pool.pool_id);
+  EXPECT_EQ(residual->process_group, pool.process_group);
+  EXPECT_EQ(residual->device, pool.device);
+  EXPECT_NE(residual->green_context_id, assignment.green_context_id);
+  const auto anchor_stream =
+      std::find_if(plan.cuda_compute_streams().begin(),
+                   plan.cuda_compute_streams().end(),
+                   [&](const auto& stream) { return stream.partition == anchor->id; });
+  ASSERT_NE(anchor_stream, plan.cuda_compute_streams().end());
+  EXPECT_EQ(anchor_stream->process_group, assignment.process_group);
+  EXPECT_EQ(anchor_stream->device, assignment.device);
+  EXPECT_EQ(anchor_stream->green_context_id, assignment.green_context_id);
+  const auto automatic_stream =
+      std::find_if(plan.cuda_compute_streams().begin(),
+                   plan.cuda_compute_streams().end(),
+                   [&](const auto& stream) { return stream.partition == automatic->id; });
+  ASSERT_NE(automatic_stream, plan.cuda_compute_streams().end());
+  EXPECT_EQ(std::count_if(plan.cuda_compute_streams().begin(),
+                          plan.cuda_compute_streams().end(),
+                          [&](const auto& stream) { return stream.partition == automatic->id; }),
+            1);
+  EXPECT_EQ(automatic_stream->process_group, residual->process_group);
+  EXPECT_EQ(automatic_stream->device, residual->device);
+  ASSERT_TRUE(automatic_stream->green_context_id.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+  EXPECT_EQ(*automatic_stream->green_context_id, residual->green_context_id);
+  EXPECT_NE(automatic_stream->green_context_id, anchor_stream->green_context_id);
+  EXPECT_TRUE(std::ranges::none_of(plan.cuda_green_context_assignments(), [&](const auto& row) {
+    return row.partition == automatic->id;
+  }));
+  ASSERT_EQ(plan.tensor_device_resources().size(), 1U);
+  EXPECT_EQ(plan.tensor_device_resources().front().process_group, pool.process_group);
+  EXPECT_EQ(plan.tensor_device_resources().front().device, pool.device);
+  ASSERT_EQ(plan.tensor_allocations().size(), 1U);
+  EXPECT_EQ(plan.tensor_allocations().front().allocator_root_id,
+            plan.tensor_device_resources().front().allocator_root_id);
+  EXPECT_EQ(plan.tensor_allocations().front().allocator_process_group,
+            automatic_stream->process_group);
+  EXPECT_EQ(plan.tensor_allocations().front().device, automatic_stream->device);
+  const auto output = std::ranges::find(
+      plan.ports(), plan.tensor_allocations().front().output, &PortPlanRecord::id);
+  ASSERT_NE(output, plan.ports().end());
+  EXPECT_NE(std::ranges::find(automatic->members, output->owner), automatic->members.end());
+  EXPECT_EQ(std::ranges::find(anchor->members, output->owner), anchor->members.end());
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextBindingsAreOrderIndependent) {
+  // Key setup: compile the same two bindings in forward and reverse authoring order.
+  const ExecutionPlan forward = compile_green_context_partitions(false);
+  const ExecutionPlan reverse = compile_green_context_partitions(true);
+  ASSERT_TRUE(forward.ok()) << forward.json();
+  ASSERT_TRUE(reverse.ok()) << reverse.json();
+  // Key assertion: canonical records, digest, and serialized plan are byte-for-byte identical.
+  EXPECT_TRUE(std::ranges::equal(forward.cuda_green_context_requests(),
+                                 reverse.cuda_green_context_requests()));
+  EXPECT_TRUE(std::ranges::equal(forward.cuda_green_context_assignments(),
+                                 reverse.cuda_green_context_assignments()));
+  EXPECT_EQ(forward.digest(), reverse.digest());
+  EXPECT_EQ(forward.json(), reverse.json());
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextSeparatesTwoPhysicalDevicePools) {
+  // Key setup: bind two isolated CPU-only partitions to exact full-device groups on devices 0
+  // and 1 with distinct stable physical identities.
+  const ExecutionPlan plan = compile_green_context_partitions_on_two_devices();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 2U);
+  ASSERT_EQ(plan.cuda_green_context_assignments().size(), 2U);
+  ASSERT_EQ(plan.cuda_green_context_pools().size(), 2U);
+  ASSERT_EQ(plan.cuda_green_context_resources().size(), 2U);
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 2U);
+
+  // Key assertion: each physical device owns an independent pool, context, assignment, and
+  // partition stream; no cross-device residual or shared owner is fabricated.
+  EXPECT_EQ(plan.cuda_green_context_pools()[0].device, DeviceId{0});
+  EXPECT_EQ(plan.cuda_green_context_pools()[0].deployment_device_id, "gpu.test.uuid.0");
+  EXPECT_EQ(plan.cuda_green_context_pools()[1].device, DeviceId{1});
+  EXPECT_EQ(plan.cuda_green_context_pools()[1].deployment_device_id, "gpu.test.uuid.1");
+  EXPECT_NE(plan.cuda_green_context_pools()[0].pool_id, plan.cuda_green_context_pools()[1].pool_id);
+  EXPECT_NE(plan.cuda_green_context_resources()[0].green_context_id,
+            plan.cuda_green_context_resources()[1].green_context_id);
+  EXPECT_NE(plan.cuda_compute_streams()[0].stream_id, plan.cuda_compute_streams()[1].stream_id);
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextArtifactExposesCompleteStableLineage) {
+  // Key setup: serialize a two-request plan with dedicated contexts and a structured residual.
+  const ExecutionPlan plan = compile_green_context_partitions(false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const std::string_view json = plan.json();
+  constexpr std::array<std::string_view, 18U> kRequiredEvidence{
+      "\"requested\"",
+      "\"accepted\"",
+      "\"source\":\"developer_binding\"",
+      "\"disposition\"",
+      "\"reason\"",
+      "\"deployment_device_id\":\"gpu.test.uuid.0\"",
+      "\"pool_id\"",
+      "\"green_context_id\"",
+      "\"stream_id\"",
+      "\"owner_id\"",
+      "\"accepted_sm_count\"",
+      "\"role\":\"reserved_residual\"",
+      "\"unprovisioned_sm_count\"",
+      "\"structured_sm_quantum\":8",
+      "\"sm_coscheduled_alignment\":8",
+      "\"sm_set_guarantee\":\"driver_documented\"",
+      "\"workqueue_scope\":\"device_context\"",
+      "\"materialize_before\":4",
+  };
+  // Key assertion: the replayable artifact explains request, split, owner, guarantee, and
+  // lifecycle lineage using only stable plan/deployment identities and no native CUDA handles.
+  for (const std::string_view evidence : kRequiredEvidence) {
+    EXPECT_NE(json.find(evidence), std::string_view::npos) << evidence;
+  }
+  EXPECT_EQ(json.find("CUgreenCtx"), std::string_view::npos);
+  EXPECT_EQ(json.find("CUcontext"), std::string_view::npos);
+  EXPECT_EQ(json.find("CUstream"), std::string_view::npos);
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextOvercommitRejectsEveryCompetingRequest) {
+  // Key setup: request 48 SMs and 40 SMs from one 80-SM device.
+  const ExecutionPlan plan = compile_green_context_partitions(false, 48U, 40U);
+  ASSERT_FALSE(plan.ok());
+  // Key assertion: both competing requests are rejected without partial resource assignment.
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 2U);
+  EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+  EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+  EXPECT_TRUE(plan.cuda_green_context_resources().empty());
+  const DiagnosticId expected = detail::diagnostic_id("CUDA_GREEN_CONTEXT_SPLIT_OVERCOMMITTED");
+  EXPECT_EQ(plan.cuda_green_context_requests()[0].reason, expected);
+  EXPECT_EQ(plan.cuda_green_context_requests()[1].reason, expected);
+  EXPECT_EQ(std::count_if(plan.diagnostics().begin(),
+                          plan.diagnostics().end(),
+                          [&](const auto& diagnostic) { return diagnostic.id == expected; }),
+            2);
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextPartialRejectionPublishesOneCompleteAcceptedGroup) {
+  // Graph topology (each node is in the named execution partition):
+  //   source(alpha) --> target(beta)
+  // Key setup: combine one valid 16-SM request with one below-granularity four-SM request.
+  const ExecutionPlan plan = compile_green_context_partitions(false, 16U, 4U);
+  ASSERT_FALSE(plan.ok());
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 2U);
+
+  // Key assertion: the rejected beta request publishes no partial descendants while the accepted
+  // alpha transaction publishes one complete assignment, pool, dedicated context, and residual.
+  EXPECT_EQ(plan.cuda_green_context_requests()[0].disposition, PlanDisposition::kAccepted);
+  EXPECT_EQ(plan.cuda_green_context_requests()[1].disposition, PlanDisposition::kRejected);
+  EXPECT_EQ(plan.cuda_green_context_requests()[1].reason,
+            detail::diagnostic_id("CUDA_GREEN_CONTEXT_SPLIT_GRANULARITY"));
+  ASSERT_EQ(plan.cuda_green_context_assignments().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_assignments().front().partition, ExecutionPartitionId{1U});
+  ASSERT_EQ(plan.cuda_green_context_pools().size(), 1U);
+  ASSERT_EQ(plan.cuda_green_context_resources().size(), 2U);
+  EXPECT_EQ(plan.cuda_green_context_resources()[0].role,
+            CudaGreenContextResourceRole::kDedicatedPartition);
+  EXPECT_EQ(plan.cuda_green_context_resources()[1].role,
+            CudaGreenContextResourceRole::kReservedResidual);
+}
+
+// REQ: MEM-GREENCTX-014
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextRejectsInvalidRequestVocabulary) {
+  struct InvalidRequest {
+    DeviceId device;
+    std::uint32_t sm_count;
+    DiagnosticId reason;
+  };
+  const std::array invalid_requests{
+      InvalidRequest{
+          DeviceId{}, 16U, detail::diagnostic_id("CUDA_GREEN_CONTEXT_INVALID_PLACEMENT")},
+      InvalidRequest{
+          DeviceId{-2}, 16U, detail::diagnostic_id("CUDA_GREEN_CONTEXT_INVALID_PLACEMENT")},
+      InvalidRequest{
+          DeviceId{0}, 0U, detail::diagnostic_id("CUDA_GREEN_CONTEXT_INVALID_PLACEMENT")},
+      InvalidRequest{
+          DeviceId{0}, 4U, detail::diagnostic_id("CUDA_GREEN_CONTEXT_SPLIT_GRANULARITY")},
+      InvalidRequest{
+          DeviceId{0}, 12U, detail::diagnostic_id("CUDA_GREEN_CONTEXT_SPLIT_GRANULARITY")},
+      InvalidRequest{
+          DeviceId{0}, 88U, detail::diagnostic_id("CUDA_GREEN_CONTEXT_SPLIT_OVERCOMMITTED")},
+  };
+
+  // Key setup: compile unresolved, negative, zero, below-minimum, misaligned, and over-device
+  // exact requests against the same qualified 80-SM capability.
+  for (const auto& invalid : invalid_requests) {
+    const ExecutionPlan plan =
+        compile_single_green_context(invalid.sm_count, 80U, false, invalid.device);
+    ASSERT_FALSE(plan.ok());
+    ASSERT_EQ(plan.cuda_green_context_requests().size(), 1U);
+    // Key assertion: each invalid value fails closed at its owning admission boundary without
+    // producing an assignment, pool, or native-materialization obligation.
+    EXPECT_EQ(plan.cuda_green_context_requests().front().reason, invalid.reason);
+    EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+    EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+  }
+}
+
+// REQ: MEM-GREENCTX-014
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextRejectsUnknownEmptyAndDuplicatePartitions) {
+  // Key setup: compile bindings for an empty name, an unknown name, and the known partition twice.
+  const std::array plans{
+      compile_single_green_context(16U, 80U, false, DeviceId{0}, ""),
+      compile_single_green_context(16U, 80U, false, DeviceId{0}, "unknown"),
+      compile_single_green_context(16U, 80U, false, DeviceId{0}, "dedicated", true),
+  };
+
+  // Key assertion: every authored row receives the stable unknown-or-duplicate reason and no
+  // request can partially materialize a resource topology.
+  const DiagnosticId expected = detail::diagnostic_id("CUDA_GREEN_CONTEXT_UNKNOWN_OR_DUPLICATE");
+  for (const auto& plan : plans) {
+    ASSERT_FALSE(plan.ok());
+    ASSERT_FALSE(plan.cuda_green_context_requests().empty());
+    EXPECT_TRUE(std::ranges::all_of(plan.cuda_green_context_requests(), [&](const auto& request) {
+      return request.reason == expected && request.disposition == PlanDisposition::kRejected;
+    }));
+    EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+    EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+  }
+}
+
+// REQ: MEM-GREENCTX-014
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextRejectsTensorPlacementDeviceConflict) {
+  // Graph topology:
+  //   source   (isolated CUDA Tensor producer in dedicated partition)
+  // Key setup: place the Tensor output on device 0 but request the partition's Green Context on
+  // device 1.
+  Graph graph{"green-context-tensor-device-conflict"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionTensorSourceOperator>("source");
+  graph.partition("dedicated").add(source);
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  ASSERT_TRUE(snapshot);
+  const auto output =
+      std::find_if(snapshot->ports.begin(), snapshot->ports.end(), [](const auto& port) {
+        return port.direction == PortDirection::kOutput;
+      });
+  ASSERT_NE(output, snapshot->ports.end());
+  const std::array devices{detail::TensorDeviceBindingRecord{
+      .port = PortId{output->id.value},
+      .device = DeviceId{0},
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  CompileOptions options;
+  options.deployment.bind_cuda_green_context(
+      "dedicated", CudaGreenContextPlacement{.device = DeviceId{1}, .sm_count = 16U});
+  const ExecutionPlan plan =
+      detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+
+  // Key assertion: the explicit Tensor compute authority wins and admission emits no assignment
+  // or native resource obligation for the conflicting Green Context request.
+  ASSERT_FALSE(plan.ok());
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_requests().front().reason,
+            detail::diagnostic_id("CUDA_GREEN_CONTEXT_DEVICE_CONFLICT"));
+  EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+  EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextExactGroupMayConsumeFullDeviceWithoutResidualWork) {
+  // Key setup: assign one exact 80-SM group on an 80-SM device with no other CUDA work.
+  const ExecutionPlan plan = compile_single_green_context(80U, 80U, false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  // Key assertion: the single dedicated group owns all SMs and no residual or tail is recorded.
+  ASSERT_EQ(plan.cuda_green_context_resources().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_resources().front().accepted_sm_count, 80U);
+  EXPECT_EQ(plan.cuda_green_context_resources().front().role,
+            CudaGreenContextResourceRole::kDedicatedPartition);
+  ASSERT_EQ(plan.cuda_green_context_pools().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_pools().front().unprovisioned_sm_count, 0U);
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 1U);
+  EXPECT_EQ(plan.cuda_compute_streams().front().partition, ExecutionPartitionId{1U});
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextWholeDeviceMayBypassStructuredQuantum) {
+  // Key setup: request one whole-device Green Context on an 82-SM device with an 8-SM quantum.
+  const ExecutionPlan plan = compile_single_green_context(82U, 82U, false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  // Key assertion: compiler admission matches the native pool's one-group whole-device exception.
+  ASSERT_EQ(plan.cuda_green_context_resources().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_resources().front().accepted_sm_count, 82U);
+  ASSERT_EQ(plan.cuda_green_context_pools().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_pools().front().structured_sm_quantum, 8U);
+  EXPECT_EQ(plan.cuda_green_context_pools().front().unprovisioned_sm_count, 0U);
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextWholeDeviceWaiverRequiresOneCompleteGroup) {
+  // Key setup: combine an irregular 82-SM request with a second structured request on an 82-SM
+  // device, so the first request is not the native single-partition whole-device case.
+  const ExecutionPlan plan = compile_green_context_partitions(
+      false, 82U, 8U, PlacementProbeStatus::kPassed, Profile::kStandard, 82U);
+  ASSERT_FALSE(plan.ok());
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 2U);
+
+  // Key assertion: the irregular request fails its own structured-granularity contract rather
+  // than borrowing the whole-device waiver and being diagnosed only as aggregate overcommit.
+  EXPECT_EQ(plan.cuda_green_context_requests().front().reason,
+            detail::diagnostic_id("CUDA_GREEN_CONTEXT_SPLIT_GRANULARITY"));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextRecordsStructuredResidualAndIrregularTail) {
+  // Key setup: lower two dedicated requests plus two unbound CUDA partitions on an 82-SM device.
+  const ExecutionPlan plan = compile_green_context_residual_partitions(2U);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  // Key assertion: a 40-SM structured residual serves both partitions while the 2-SM tail remains
+  // unprovisioned.
+  ASSERT_EQ(plan.cuda_green_context_resources().size(), 3U);
+  EXPECT_EQ(plan.cuda_green_context_resources()[0].accepted_sm_count, 16U);
+  EXPECT_EQ(plan.cuda_green_context_resources()[1].accepted_sm_count, 24U);
+  EXPECT_EQ(plan.cuda_green_context_resources()[2].accepted_sm_count, 40U);
+  EXPECT_EQ(plan.cuda_green_context_resources()[2].role,
+            CudaGreenContextResourceRole::kSharedServiceResidual);
+  ASSERT_EQ(plan.cuda_green_context_pools().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_pools().front().unprovisioned_sm_count, 2U);
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 4U);
+  EXPECT_EQ(
+      std::count_if(plan.cuda_compute_streams().begin(),
+                    plan.cuda_compute_streams().end(),
+                    [](const auto& stream) { return stream.green_context_id && stream.partition; }),
+      4);
+  EXPECT_TRUE(std::all_of(plan.cuda_compute_streams().begin(),
+                          plan.cuda_compute_streams().end(),
+                          [](const auto& stream) { return stream.fused_linear_edges.empty(); }));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextHonorsDriverQualifiedStructuredCapacity) {
+  // Key setup: model Thor's 132 SMs, 8-SM quantum, and driver-qualified limit of fifteen units.
+  const ExecutionPlan plan =
+      compile_single_green_context(120U, 132U, false, DeviceId{0}, "dedicated", false, 15U);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  // Key assertion: the exact 120-SM group is admitted and all 12 unavailable SMs remain outside
+  // HSDK work instead of fabricating a sixteenth structured unit.
+  ASSERT_EQ(plan.cuda_green_context_resources().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_resources().front().accepted_sm_count, 120U);
+  ASSERT_EQ(plan.cuda_green_context_pools().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_pools().front().unprovisioned_sm_count, 12U);
+
+  const ExecutionPlan overcommitted =
+      compile_single_green_context(128U, 132U, false, DeviceId{0}, "dedicated", false, 15U);
+  ASSERT_FALSE(overcommitted.ok());
+  ASSERT_EQ(overcommitted.cuda_green_context_requests().size(), 1U);
+  EXPECT_EQ(overcommitted.cuda_green_context_requests().front().reason,
+            detail::diagnostic_id("CUDA_GREEN_CONTEXT_SPLIT_OVERCOMMITTED"));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextAllowsUnstructuredTailOnlyWhenItOwnsNoCudaWork) {
+  // Key setup: compare an unused 2-SM tail with the same tail required by an unbound CUDA source.
+  const ExecutionPlan unused_tail = compile_single_green_context(80U, 82U, false);
+  // Key assertion: the unused tail is admitted, but assigning CUDA work to it rejects the plan.
+  ASSERT_TRUE(unused_tail.ok()) << unused_tail.json();
+  ASSERT_EQ(unused_tail.cuda_green_context_resources().size(), 1U);
+  EXPECT_EQ(unused_tail.cuda_green_context_pools().front().unprovisioned_sm_count, 2U);
+
+  const ExecutionPlan required_residual = compile_single_green_context(80U, 82U, true);
+  ASSERT_FALSE(required_residual.ok());
+  ASSERT_EQ(required_residual.cuda_green_context_requests().size(), 1U);
+  EXPECT_EQ(required_residual.cuda_green_context_requests().front().reason,
+            detail::diagnostic_id("CUDA_GREEN_CONTEXT_SPLIT_OVERCOMMITTED"));
+  EXPECT_TRUE(required_residual.cuda_green_context_resources().empty());
+  EXPECT_TRUE(std::none_of(required_residual.cuda_compute_streams().begin(),
+                           required_residual.cuda_compute_streams().end(),
+                           [](const auto& stream) { return stream.green_context_id.has_value(); }));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextRejectsUnqualifiedResidualParticipant) {
+  // Graph topology (isolated partitions):
+  //   dedicated(Standard)   residual(Robotics, CUDA Tensor source)
+  // Key setup: opt only the Standard partition into Green Context execution while an unbound
+  // Robotics partition requires CUDA work on the same device.
+  const ExecutionPlan plan = compile_single_green_context(
+      16U, 80U, true, DeviceId{0}, "dedicated", false, std::nullopt, Profile::kRobotics);
+
+  // Key assertion: admission validates the complete residual closure and rejects the authored
+  // request instead of silently assigning the Robotics partition to the residual context.
+  ASSERT_FALSE(plan.ok());
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_requests().front().reason,
+            detail::diagnostic_id("CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED"));
+  EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+  EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextRejectsMultiDeviceResidualParticipant) {
+  // Graph topology (isolated partitions):
+  //   dedicated   residual-a(device 0)  residual-b(device 1)
+  //               \____________________/
+  //                   residual partition
+  // Key setup: opt the inactive dedicated partition into device zero while one unbound partition
+  // owns CUDA Tensor obligations on devices zero and one.
+  Graph graph{"green-context-multi-device-residual"};
+  test::add_compile_test_default_clock(graph);
+  const auto dedicated = graph.op<test::CompileTestOperator>("dedicated");
+  const auto residual_a = graph.op<PartitionTensorSourceOperator>("residual-a");
+  const auto residual_b = graph.op<PartitionTensorSourceOperator>("residual-b");
+  graph.partition("dedicated").add(dedicated);
+  graph.partition("residual").add(residual_a).add(residual_b);
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  ASSERT_TRUE(snapshot);
+  std::vector<detail::TensorDeviceBindingRecord> devices;
+  for (const auto& port : snapshot->ports) {
+    if (port.direction == PortDirection::kOutput && port.setup.tensor_layout) {
+      devices.push_back(detail::TensorDeviceBindingRecord{
+          .port = PortId{port.id.value},
+          .device = DeviceId{static_cast<std::int32_t>(devices.size())},
+      });
+    }
+  }
+  ASSERT_EQ(devices.size(), 2U);
+  const std::array capabilities{detail::CudaGreenContextCapabilityEvidence{
+      .device = DeviceId{0},
+      .deployment_device_id = "gpu.test.uuid.multi-device-residual",
+      .total_sm_count = 80U,
+      .min_sm_partition_size = 8U,
+      .sm_coscheduled_alignment = 8U,
+      .max_structured_context_count = 10U,
+      .evidence_id = "test.cuda.green_context.capability/v1",
+      .probe_status = PlacementProbeStatus::kPassed,
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  evidence.cuda_green_context_capabilities = capabilities;
+  CompileOptions options;
+  options.deployment.bind_cuda_green_context(
+      "dedicated", CudaGreenContextPlacement{.device = DeviceId{0}, .sm_count = 16U});
+  const ExecutionPlan plan =
+      detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+
+  // Key assertion: the residual participant is rejected before streams or pools are published.
+  ASSERT_FALSE(plan.ok());
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_requests().front().reason,
+            detail::diagnostic_id("CUDA_GREEN_CONTEXT_PARTITION_MULTI_DEVICE"));
+  EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+  EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextCountsReservedResidualAgainstContextBudget) {
+  // Key setup: request 72 of 80 SMs when capability evidence permits only one structured context.
+  const ExecutionPlan plan =
+      compile_single_green_context(72U, 80U, false, DeviceId{0}, "dedicated", false, 1U);
+  ASSERT_FALSE(plan.ok());
+  // Key assertion: the eight-SM reserved residual counts as a second context and admission fails
+  // before publishing a pool that exceeds the qualified context budget.
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_requests().front().reason,
+            detail::diagnostic_id("CUDA_GREEN_CONTEXT_SPLIT_OVERCOMMITTED"));
+  EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+  EXPECT_TRUE(plan.cuda_green_context_resources().empty());
+}
+
+// REQ: COMPILE-063
+// REQ: CHAN-134
+TEST(CompilePartitionAuthoring, GreenContextOmitsProcessLocalNoCopyServiceStream) {
+  // Key setup: bind only the Tensor source, leaving the sink on the residual while the
+  // process-local Tensor service retains backing without compiler-owned staging or copy work.
+  const ExecutionPlan plan = compile_green_context_tensor_service();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  // Key assertion: source and sink receive distinct partition streams, but no unused service
+  // stream is planned for the process-local no-copy transport.
+  ASSERT_EQ(plan.cuda_green_context_resources().size(), 2U);
+  EXPECT_EQ(plan.cuda_green_context_resources()[1].role,
+            CudaGreenContextResourceRole::kSharedServiceResidual);
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 2U);
+  const auto source =
+      std::find_if(plan.cuda_compute_streams().begin(),
+                   plan.cuda_compute_streams().end(),
+                   [](const auto& stream) { return stream.partition == ExecutionPartitionId{2U}; });
+  const auto sink =
+      std::find_if(plan.cuda_compute_streams().begin(),
+                   plan.cuda_compute_streams().end(),
+                   [](const auto& stream) { return stream.partition == ExecutionPartitionId{1U}; });
+  ASSERT_NE(source, plan.cuda_compute_streams().end());
+  ASSERT_NE(sink, plan.cuda_compute_streams().end());
+  EXPECT_NE(source->stream_id, sink->stream_id);
+  EXPECT_TRUE(std::ranges::none_of(plan.cuda_compute_streams(),
+                                   [](const auto& stream) { return !stream.partition; }));
+  EXPECT_TRUE(source->fused_linear_edges.empty());
+  EXPECT_TRUE(sink->fused_linear_edges.empty());
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextReplacementStreamRetainsFusedEdgeOwnership) {
+  // Graph topology (both operators are fused into one execution partition):
+  //   source --> sink
+  // Key setup: lower a process/device ordinary stream that owns one fused Tensor edge, then bind
+  // that partition to a dedicated Green Context.
+  const ExecutionPlan plan = compile_green_context_fused_tensor_partition();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto partition_stream =
+      std::find_if(plan.cuda_compute_streams().begin(),
+                   plan.cuda_compute_streams().end(),
+                   [](const auto& stream) { return stream.partition.has_value(); });
+  ASSERT_NE(partition_stream, plan.cuda_compute_streams().end());
+
+  // Key assertion: stream replacement preserves the exact fused edge on the dedicated stream
+  // instead of dropping it with the ordinary stream or transferring it to a residual owner.
+  ASSERT_TRUE(partition_stream->green_context_id);
+  ASSERT_EQ(partition_stream->fused_linear_edges.size(), 1U);
+  EXPECT_EQ(partition_stream->fused_linear_edges.front(), EdgeId{1U});
+  EXPECT_TRUE(std::none_of(plan.cuda_compute_streams().begin(),
+                           plan.cuda_compute_streams().end(),
+                           [&](const auto& stream) {
+                             return &stream != &*partition_stream &&
+                                    !stream.fused_linear_edges.empty();
+                           }));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, ZeroBindingTensorGraphKeepsOneOrdinaryStream) {
+  // Graph topology:
+  //   source   (isolated CUDA Tensor producer)
+  // Key setup: compile one device-backed Tensor source without a Green Context binding.
+  const ExecutionPlan plan = compile_zero_binding_tensor_graph();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  // Key assertion: lowering emits one ordinary service stream and no Green Context records.
+  EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+  EXPECT_TRUE(plan.cuda_green_context_resources().empty());
+  EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 1U);
+  EXPECT_FALSE(plan.cuda_compute_streams().front().green_context_id);
+  EXPECT_FALSE(plan.cuda_compute_streams().front().partition);
+  EXPECT_EQ(plan.cuda_compute_streams().front().owner_id,
+            plan.tensor_device_resources().front().allocator_root_id);
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, ZeroBindingArtifactMatchesNormalizedBaseline) {
+  // Graph topology:
+  //   source   (isolated CUDA Tensor producer)
+  // Key setup: compile the no-binding graph, replace its environment-derived identities with
+  // fixed values, and regenerate the complete canonical artifact before comparing it.
+  const ExecutionPlan plan = compile_zero_binding_tensor_graph();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto accepted = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(accepted);
+  auto normalized = std::make_shared<detail::ExecutionPlanState>(*accepted);
+  detail::rebind_plan_generation(*normalized, PlanGenerationId{1U});
+  normalized->profile_manifest.target_triple = "normalized-target-triple";
+  const auto finalized = detail::finalize_plan_artifact(*normalized);
+  ASSERT_TRUE(finalized) << runtime_error_message(finalized.error());
+  const ExecutionPlan normalized_plan = detail::ExecutionPlanAccess::make(std::move(normalized));
+
+  const std::string golden_path = std::string(HOLOSCAN_COMPILER_TEST_DATA_DIR) +
+                                  "/zero_binding_tensor_graph.v4.normalized.json";
+  std::ifstream golden_stream{golden_path, std::ios::binary};
+  ASSERT_TRUE(golden_stream.is_open()) << golden_path;
+  const std::string golden{std::istreambuf_iterator<char>{golden_stream},
+                           std::istreambuf_iterator<char>{}};
+  ASSERT_TRUE(golden_stream.good() || golden_stream.eof()) << golden_path;
+
+  // Key assertion: every retained canonical artifact byte, not only selected stream-shape fields,
+  // matches the checked-in, versioned no-binding baseline after the intentional normalizations.
+  // Inspect the complete diff before updating this golden. A schema bump requires a new versioned
+  // filename; never replace this readable evidence by pasting a new opaque digest.
+  EXPECT_EQ(detail::artifact_test::normalized_artifact_json(normalized_plan.json()), golden)
+      << "review the artifact diff before updating " << golden_path;
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextArtifactMatchesFeatureRichNormalizedBaseline) {
+  // Graph topology (each node is in the named execution partition):
+  //   source(alpha) --> target(beta)
+  // Key setup: compile accepted dedicated and residual Green Context records, replace its
+  // environment-derived identities with fixed values, and regenerate the complete schema-v4
+  // artifact.
+  const ExecutionPlan plan = compile_green_context_partitions(false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto accepted = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(accepted);
+  auto normalized = std::make_shared<detail::ExecutionPlanState>(*accepted);
+  detail::rebind_plan_generation(*normalized, PlanGenerationId{1U});
+  normalized->profile_manifest.target_triple = "normalized-target-triple";
+  const auto finalized = detail::finalize_plan_artifact(*normalized);
+  ASSERT_TRUE(finalized) << runtime_error_message(finalized.error());
+  const ExecutionPlan normalized_plan = detail::ExecutionPlanAccess::make(std::move(normalized));
+
+  const std::string golden_path =
+      std::string(HOLOSCAN_COMPILER_TEST_DATA_DIR) + "/green_context_partitions.v4.normalized.json";
+  std::ifstream golden_stream{golden_path, std::ios::binary};
+  ASSERT_TRUE(golden_stream.is_open()) << golden_path;
+  const std::string golden{std::istreambuf_iterator<char>{golden_stream},
+                           std::istreambuf_iterator<char>{}};
+  ASSERT_TRUE(golden_stream.good() || golden_stream.eof()) << golden_path;
+
+  // Key assertion: nested placement optionals and cross-family pool/resource/request/assignment
+  // joins retain readable byte-level coverage. Inspect the complete diff before updating this
+  // golden. A schema bump requires a new versioned filename; never paste a new opaque digest.
+  EXPECT_EQ(detail::artifact_test::normalized_artifact_json(normalized_plan.json()), golden)
+      << "review the artifact diff before updating " << golden_path;
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextPlacementChangesSemanticIdentityCoherently) {
+  // Key setup: compile two valid versions of the same partition cover with one accepted nested
+  // placement changed from 16 to 8 SMs. Lowering updates the request, resource, and residual joins.
+  const ExecutionPlan baseline = compile_green_context_partitions(false, 16U, 24U);
+  const ExecutionPlan changed = compile_green_context_partitions(false, 8U, 24U);
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  ASSERT_TRUE(changed.ok()) << changed.json();
+  ASSERT_TRUE(baseline.cuda_green_context_requests().front().accepted);
+  ASSERT_TRUE(changed.cuda_green_context_requests().front().accepted);
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+  EXPECT_EQ(baseline.cuda_green_context_requests().front().accepted->sm_count, 16U);
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+  EXPECT_EQ(changed.cuda_green_context_requests().front().accepted->sm_count, 8U);
+  ASSERT_EQ(baseline.cuda_green_context_resources().size(), 3U);
+  ASSERT_EQ(changed.cuda_green_context_resources().size(), 3U);
+  EXPECT_FALSE(std::ranges::equal(baseline.cuda_green_context_resources(),
+                                  changed.cuda_green_context_resources()));
+
+  // Key assertion: the coherent nested optional and cross-family resource changes perturb both
+  // canonical bytes and semantic identity.
+  EXPECT_NE(baseline.json(), changed.json());
+  EXPECT_NE(baseline.digest(), changed.digest());
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextTargetEvidenceRequiresRuntimeRecheck) {
+  // Key setup: compile valid bindings whose capability probe remains runtime-required.
+  const ExecutionPlan plan =
+      compile_green_context_partitions(false, 16U, 24U, PlacementProbeStatus::kRuntimeRequired);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  // Key assertion: both split probes preserve the runtime-recheck status and evidence identity.
+  EXPECT_EQ(std::count_if(plan.placement_probes().begin(),
+                          plan.placement_probes().end(),
+                          [](const auto& probe) {
+                            return probe.probe_id == "cuda.green_context.split" &&
+                                   probe.status == PlacementProbeStatus::kRuntimeRequired &&
+                                   probe.evidence_id == "test.cuda.green_context.capability/v1";
+                          }),
+            2);
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextRejectsUnqualifiedProfiles) {
+  // Key setup: compile the same bindings under profiles without qualified Green Context policy.
+  // Key assertion: Robotics and Regulated both reject every authored request.
+  for (const Profile profile : {Profile::kRobotics, Profile::kRegulated}) {
+    const ExecutionPlan plan =
+        compile_green_context_partitions(false, 16U, 24U, PlacementProbeStatus::kPassed, profile);
+    ASSERT_FALSE(plan.ok());
+    ASSERT_EQ(plan.cuda_green_context_requests().size(), 2U);
+    EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+    EXPECT_TRUE(std::all_of(
+        plan.cuda_green_context_requests().begin(),
+        plan.cuda_green_context_requests().end(),
+        [](const auto& request) {
+          return request.disposition == PlanDisposition::kRejected && !request.accepted &&
+                 request.reason ==
+                     detail::diagnostic_id("CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED");
+        }));
+  }
+}
+
+// REQ: COMPILE-063
+// REQ: LIFECYCLE-010
+TEST(CompilePartitionAuthoring, GreenContextAdmitsStandardResearchAndRealTimeHotPathPolicy) {
+  // Key setup: compile identical exact bindings under each profile with qualified hot-path policy.
+  for (const Profile profile : {Profile::kStandard, Profile::kResearch, Profile::kRealTime}) {
+    const ExecutionPlan plan =
+        compile_green_context_partitions(false, 16U, 24U, PlacementProbeStatus::kPassed, profile);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.cuda_green_context_pools().size(), 1U);
+    // Key assertion: every admitted profile retains the CUDA driver-documented guarantee,
+    // device-context workqueues, zero concurrency override, and exact structured quantum.
+    const auto& pool = plan.cuda_green_context_pools().front();
+    EXPECT_EQ(pool.sm_set_guarantee, CudaGreenContextSmSetGuarantee::kDriverDocumented);
+    EXPECT_EQ(pool.workqueue_scope, CudaGreenContextWorkqueueScope::kDeviceContext);
+    EXPECT_EQ(pool.workqueue_concurrency_limit, 0U);
+    EXPECT_EQ(pool.structured_sm_quantum, 8U);
+    const auto& features = plan.profile_manifest().feature_dispositions;
+    const auto green_context_feature =
+        std::find_if(features.begin(), features.end(), [](const auto& feature) {
+          return feature.feature_id == "cuda.green_context";
+        });
+    ASSERT_NE(green_context_feature, features.end());
+    EXPECT_EQ(green_context_feature->rule_id, "holoscan.profile.cuda_green_context.hot_path/v1");
+  }
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextRejectsUnavailableTargetEvidence) {
+  // Key setup: supply a target capability row whose split probe is explicitly rejected.
+  const ExecutionPlan plan =
+      compile_green_context_partitions(false, 16U, 24U, PlacementProbeStatus::kRejected);
+  // Key assertion: target evidence that is neither passed nor runtime-required rejects every
+  // request without emitting a pool, assignment, or runtime materialization obligation.
+  ASSERT_FALSE(plan.ok());
+  EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+  EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 2U);
+  EXPECT_TRUE(std::ranges::all_of(plan.cuda_green_context_requests(), [](const auto& request) {
+    return request.disposition == PlanDisposition::kRejected && !request.accepted &&
+           request.reason == detail::diagnostic_id("CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED");
+  }));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextReservedPoliciesRemainUnselectable) {
+  // Key setup: mutate an accepted phase-1 pool independently to each parseable future policy.
+  const ExecutionPlan plan = compile_green_context_partitions(false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto baseline = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(baseline);
+  ASSERT_TRUE(detail::validate_cuda_execution_plan_records(*baseline));
+  using Mutation = void (*)(CudaGreenContextPoolPlanRecord&);
+  const std::array<Mutation, 4U> mutations{
+      [](auto& pool) { pool.co_scheduling = CudaGreenContextCoScheduling::kRelaxed; },
+      [](auto& pool) {
+        pool.workqueue_scope = CudaGreenContextWorkqueueScope::kGreenContextBalanced;
+      },
+      [](auto& pool) { pool.workqueue_concurrency_limit = 1U; },
+      [](auto& pool) {
+        pool.sm_set_guarantee = CudaGreenContextSmSetGuarantee::kStrictNoKnownSuperset;
+      },
+  };
+
+  // Key assertion: reserved enum values remain source-compatible but fail phase-1 plan validation
+  // instead of silently selecting unqualified co-scheduling, workqueue, or isolation behavior.
+  for (const auto mutate : mutations) {
+    auto candidate = *baseline;
+    mutate(candidate.cuda_green_context_pools.front());
+    EXPECT_FALSE(detail::validate_cuda_execution_plan_records(candidate));
+  }
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextValidationRejectsResourceCountAboveBudget) {
+  // Key setup: lower a valid two-dedicated-plus-residual pool, then corrupt its retained context
+  // budget below the published resource count.
+  const ExecutionPlan plan = compile_green_context_partitions(false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto baseline = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(baseline);
+  auto candidate = *baseline;
+  ASSERT_EQ(candidate.cuda_green_context_resources.size(), 3U);
+  candidate.cuda_green_context_pools.front().max_structured_context_count = 2U;
+  // Key assertion: plan validation rejects a full pool that exceeds qualified device evidence.
+  EXPECT_FALSE(detail::validate_cuda_execution_plan_records(candidate));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextValidationRejectsOrdinaryStreamOnOwnedDevice) {
+  // Key setup: remove Green Context ownership from one otherwise valid partition stream while its
+  // process/device pair remains owned by the published pool.
+  const ExecutionPlan plan = compile_green_context_partitions(false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto baseline = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(baseline);
+  auto candidate = *baseline;
+  ASSERT_FALSE(candidate.cuda_compute_streams.empty());
+  candidate.cuda_compute_streams.front().green_context_id.reset();
+
+  // Key assertion: plan validation fails closed instead of materializing a primary-context stream
+  // beside the structured Green Context family.
+  EXPECT_FALSE(detail::validate_cuda_execution_plan_records(candidate));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextRejectsOrdinaryCudaWorkInAnotherProcess) {
+  // Graph topology (isolated CUDA Tensor producers in separate process groups):
+  //   source(green-worker)   target(ordinary-worker)
+  // Key setup: bind source to a Green Context while target uses an ordinary context on the same
+  // physical GPU from another process group.
+  Graph graph{"green-context-cross-process-owner"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionTensorSourceOperator>("source");
+  const auto target = graph.op<PartitionTensorSourceOperator>("target");
+  graph.partition("green-source").add(source);
+  graph.partition("ordinary-target").add(target);
+
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  ASSERT_TRUE(snapshot);
+  std::vector<detail::TensorDeviceBindingRecord> devices;
+  for (const auto& port : snapshot->ports) {
+    if (port.direction == PortDirection::kOutput) {
+      devices.push_back(detail::TensorDeviceBindingRecord{
+          .port = PortId{port.id.value},
+          .device = DeviceId{0},
+      });
+    }
+  }
+  ASSERT_EQ(devices.size(), 2U);
+  const std::array capabilities{detail::CudaGreenContextCapabilityEvidence{
+      .device = DeviceId{0},
+      .deployment_device_id = "gpu.test.uuid.0",
+      .total_sm_count = 80U,
+      .min_sm_partition_size = 8U,
+      .sm_coscheduled_alignment = 8U,
+      .max_structured_context_count = 10U,
+      .evidence_id = "test.cuda.green_context.capability/v1",
+      .probe_status = PlacementProbeStatus::kPassed,
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  evidence.cuda_green_context_capabilities = capabilities;
+  CompileOptions options;
+  options.deployment.bind_cuda_green_context(
+      "green-source", CudaGreenContextPlacement{.device = DeviceId{0}, .sm_count = 16U});
+
+  const ExecutionPlan plan = detail::compile_with_runtime_evidence_and_process_placement(
+      graph, std::move(options), evidence, process_placement("green-worker", "ordinary-worker"));
+  // Key assertion: admission rejects the unproven process-wide device ownership arrangement.
+  ASSERT_FALSE(plan.ok());
+  ASSERT_EQ(plan.cuda_green_context_requests().size(), 1U);
+  EXPECT_EQ(plan.cuda_green_context_requests().front().reason,
+            detail::diagnostic_id("CUDA_GREEN_CONTEXT_DEVICE_OWNERSHIP_UNPROVEN"));
+  EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+  const auto diagnostic =
+      std::find_if(plan.diagnostics().begin(), plan.diagnostics().end(), [](const auto& row) {
+        return row.id == detail::diagnostic_id("CUDA_GREEN_CONTEXT_DEVICE_OWNERSHIP_UNPROVEN");
+      });
+  ASSERT_NE(diagnostic, plan.diagnostics().end());
+  EXPECT_NE(diagnostic->required.find("gpu.test.uuid.0"), std::string::npos);
+  EXPECT_NE(diagnostic->provided.find("process_group="), std::string::npos);
+  EXPECT_NE(diagnostic->provided.find("local_device=0"), std::string::npos);
+}
+
 TEST(CompilePartitionAuthoring, RejectsManualPartitionAcrossPhysicalProcessGroups) {
   const ExecutionPlan split = compile_manual_process_partition("source-process", "target-process");
   EXPECT_FALSE(split.ok());
@@ -244,6 +1783,799 @@ TEST(CompilePartitionAuthoring, RejectsManualPartitionAcrossPhysicalProcessGroup
       detail::ProcessPlacementPlanAccess::vertex_process_placements(colocated);
   ASSERT_EQ(process_placements.size(), 2U);
   EXPECT_EQ(process_placements[0].process_group, process_placements[1].process_group);
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, AutomaticSourceChainIsTheProductionDefault) {
+  Graph graph{"automatic-source-chain-default"};
+  test::add_compile_test_default_clock(graph);
+  (void)graph.op<ClosedIslandSourceOperator>("first");
+  (void)graph.op<ClosedIslandSourceOperator>("second");
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+  EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, "holoscan.partition.source_chain");
+  EXPECT_EQ(plan.partitioning_plan().maturity, AlgorithmMaturity::kProduction);
+  EXPECT_EQ(plan.partitioning_plan().selection_source, PlanSelectionSource::kCoreDefault);
+  EXPECT_EQ(plan.execution_partitions().size(), 2U);
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, AutomaticAndHybridCoversQualifyAllFiveProfilesWithoutFallback) {
+  struct Expectation {
+    Profile profile;
+    bool accepted;
+    std::string_view diagnostic;
+  };
+  constexpr std::array expectations{
+      Expectation{Profile::kStandard, true, {}},
+      Expectation{Profile::kRobotics, true, {}},
+      Expectation{Profile::kRealTime, false, "PROFILE_CAPABILITY_UNSATISFIED"},
+      Expectation{Profile::kRegulated, false, "PROFILE_EVIDENCE_UNSATISFIED"},
+      Expectation{Profile::kResearch, true, {}},
+  };
+
+  for (const auto& expectation : expectations) {
+    for (const bool hybrid : {false, true}) {
+      SCOPED_TRACE(static_cast<std::uint32_t>(expectation.profile));
+      SCOPED_TRACE(hybrid);
+      Graph graph{hybrid ? "five-profile-hybrid" : "five-profile-automatic"};
+      test::add_compile_test_default_clock(graph);
+      const auto first = graph.op<ClosedIslandSourceOperator>("first");
+      (void)graph.op<ClosedIslandSourceOperator>("second");
+      if (hybrid) {
+        graph.partition("anchor").add(first);
+        graph.auto_partition_remaining();
+      }
+      CompileOptions options;
+      options.profile = expectation.profile;
+      const ExecutionPlan plan = compile(graph, std::move(options));
+
+      EXPECT_EQ(plan.ok(), expectation.accepted);
+      ASSERT_TRUE(plan.partitioning_plan().requested_algorithm.has_value());
+      // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+      EXPECT_EQ(plan.partitioning_plan().requested_algorithm->id,
+                "holoscan.partition.source_chain");
+      ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
+      // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+      EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, "holoscan.partition.source_chain");
+      EXPECT_EQ(plan.partitioning_plan().mode,
+                hybrid ? PartitioningMode::kConstrainedAutomatic : PartitioningMode::kAutomatic);
+      EXPECT_EQ(plan.execution_partitions().size(), 2U);
+      // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+      EXPECT_NE(plan.partitioning_plan().accepted_algorithm->id,
+                "holoscan.partition.serial_baseline");
+      if (!expectation.diagnostic.empty()) {
+        EXPECT_TRUE(test::has_diagnostic(plan, expectation.diagnostic));
+      }
+    }
+  }
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, AutomaticSourceChainSplitsDifferentTensorDevices) {
+  Graph graph{"automatic-device-transfer"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionTensorSourceOperator>("source");
+  const auto transform = graph.op<PartitionTensorTransformOperator>("transform");
+  graph.add_flow(source->output, transform->input);
+
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  ASSERT_TRUE(snapshot);
+  std::vector<const PortRecord*> outputs;
+  for (const auto& port : snapshot->ports) {
+    if (port.direction == PortDirection::kOutput) {
+      outputs.push_back(&port);
+    }
+  }
+  ASSERT_EQ(outputs.size(), 2U);
+  const std::array devices{
+      detail::TensorDeviceBindingRecord{.port = PortId{outputs[0]->id.value},
+                                        .device = DeviceId{0}},
+      detail::TensorDeviceBindingRecord{.port = PortId{outputs[1]->id.value},
+                                        .device = DeviceId{1}},
+  };
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+
+  const ExecutionPlan plan = detail::compile_with_runtime_evidence(graph, {}, evidence);
+
+  // The physical phase separately rejects the transform's conflicting input/output device
+  // obligations. Cover planning still consumes the frozen per-output facts and must preserve the
+  // transfer boundary instead of collapsing it before that later diagnostic is published.
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "PHYSICAL_TENSOR_DEVICE_BINDING_INVALID"));
+  ASSERT_EQ(plan.execution_partitions().size(), 2U);
+  EXPECT_TRUE(std::any_of(plan.partition_decisions().begin(),
+                          plan.partition_decisions().end(),
+                          [](const auto& decision) {
+                            return std::find(
+                                       decision.reasons.begin(),
+                                       decision.reasons.end(),
+                                       PartitionDecisionReason::kDeviceTransferIncompatibility) !=
+                                   decision.reasons.end();
+                          }));
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, TensorOutputDevicePropagatesToUnboundConsumerWithoutSpuriousSplit) {
+  Graph graph{"automatic-same-device-propagation"};
+  const ClockKey root_clock = test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionTensorSourceOperator>("source");
+  const auto consumer = graph.embed<PartitionTensorSinkGraph>("consumer");
+  graph.bind_clock(consumer, consumer->clock_import(), root_clock);
+  graph.add_flow(source->output, consumer->input);
+
+  CompileOptions options;
+  options.deployment.bind_tensor_output_device(TensorOutputDevicePlacement{
+      .operator_path = "source", .output_port = "output", .device = DeviceId{1}});
+  const ExecutionPlan plan = compile(graph, std::move(options));
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 1U);
+  ASSERT_EQ(plan.partition_decisions().size(), 2U);
+  const auto sink_decision = std::find_if(
+      plan.partition_decisions().begin(), plan.partition_decisions().end(), [](const auto& row) {
+        return row.decision == PartitionDecisionKind::kJoin;
+      });
+  ASSERT_NE(sink_decision, plan.partition_decisions().end());
+  EXPECT_EQ(sink_decision->decision, PartitionDecisionKind::kJoin);
+  EXPECT_EQ(sink_decision->reasons, std::vector{PartitionDecisionReason::kLinearChainJoin});
+  EXPECT_TRUE(std::none_of(
+      plan.partition_decisions().begin(),
+      plan.partition_decisions().end(),
+      [](const auto& decision) {
+        return std::find(decision.reasons.begin(),
+                         decision.reasons.end(),
+                         PartitionDecisionReason::kDeviceTransferIncompatibility) !=
+                   decision.reasons.end() ||
+               std::find(decision.reasons.begin(),
+                         decision.reasons.end(),
+                         PartitionDecisionReason::kCollapseRejected) != decision.reasons.end();
+      }));
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, MultiOutputDeviceFactsSplitCanonicallyWithConcreteDeviceReasons) {
+  Graph graph{"automatic-multi-output-device-facts"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionMultiDeviceTensorSourceOperator>("source");
+  const auto first_sink = graph.op<PartitionTensorSinkOperator>("first-sink");
+  const auto second_sink = graph.op<PartitionTensorSinkOperator>("second-sink");
+  graph.add_flow(source->first, first_sink->input);
+  graph.add_flow(source->second, second_sink->input);
+
+  const auto compile_order = [&](bool reverse) {
+    CompileOptions options;
+    if (reverse) {
+      options.deployment
+          .bind_tensor_output_device(TensorOutputDevicePlacement{
+              .operator_path = "source", .output_port = "second", .device = DeviceId{1}})
+          .bind_tensor_output_device(TensorOutputDevicePlacement{
+              .operator_path = "source", .output_port = "first", .device = DeviceId{0}});
+    } else {
+      options.deployment
+          .bind_tensor_output_device(TensorOutputDevicePlacement{
+              .operator_path = "source", .output_port = "first", .device = DeviceId{0}})
+          .bind_tensor_output_device(TensorOutputDevicePlacement{
+              .operator_path = "source", .output_port = "second", .device = DeviceId{1}});
+    }
+    return compile(graph, std::move(options));
+  };
+
+  const ExecutionPlan forward = compile_order(false);
+  const ExecutionPlan reverse = compile_order(true);
+
+  EXPECT_FALSE(forward.ok());
+  EXPECT_FALSE(reverse.ok());
+  EXPECT_TRUE(test::has_diagnostic(forward, "PHYSICAL_TENSOR_DEVICE_BINDING_INVALID"));
+  EXPECT_TRUE(test::has_diagnostic(reverse, "PHYSICAL_TENSOR_DEVICE_BINDING_INVALID"));
+  ASSERT_EQ(forward.execution_partitions().size(), 3U);
+  ASSERT_EQ(reverse.execution_partitions().size(), 3U);
+  EXPECT_EQ(partition_evidence(forward), partition_evidence(reverse));
+  EXPECT_EQ(forward.digest(), reverse.digest());
+  EXPECT_EQ(forward.json(), reverse.json());
+  EXPECT_EQ(std::count_if(forward.partition_decisions().begin(),
+                          forward.partition_decisions().end(),
+                          [](const auto& decision) {
+                            return std::find(
+                                       decision.reasons.begin(),
+                                       decision.reasons.end(),
+                                       PartitionDecisionReason::kDeviceTransferIncompatibility) !=
+                                   decision.reasons.end();
+                          }),
+            2);
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, IntrinsicMultiDeviceConflictSplitsUnconstrainedScalarEdge) {
+  Graph graph{"automatic-intrinsic-multi-device-scalar-edge"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionMultiDeviceScalarSourceOperator>("source");
+  const auto sink = graph.op<test::CompileTestOperator>("sink");
+  graph.add_flow(source->scalar, sink->input);
+
+  CompileOptions options;
+  options.deployment
+      .bind_tensor_output_device(TensorOutputDevicePlacement{
+          .operator_path = "source", .output_port = "first", .device = DeviceId{0}})
+      .bind_tensor_output_device(TensorOutputDevicePlacement{
+          .operator_path = "source", .output_port = "second", .device = DeviceId{1}});
+  const ExecutionPlan plan = compile(graph, std::move(options));
+
+  // The later physical phase rejects the source's conflicting Tensor output obligations. The
+  // automatic cover must nevertheless retain the intrinsic conflict at its scalar-only edge to
+  // the otherwise unconstrained sink instead of collapsing both operators into one partition.
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "PHYSICAL_TENSOR_DEVICE_BINDING_INVALID"));
+  ASSERT_EQ(plan.execution_partitions().size(), 2U);
+  ASSERT_EQ(plan.schedule_edges().size(), 1U);
+  const auto sink_decision = std::ranges::find(plan.partition_decisions(),
+                                               plan.schedule_edges().front().destination,
+                                               &PartitionDecisionRecord::partition);
+  ASSERT_NE(sink_decision, plan.partition_decisions().end());
+  EXPECT_EQ(sink_decision->decision, PartitionDecisionKind::kBoundarySplit);
+  EXPECT_NE(std::ranges::find(sink_decision->reasons,
+                              PartitionDecisionReason::kDeviceTransferIncompatibility),
+            sink_decision->reasons.end());
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, ExactAnchorRejectsConflictingMultiOutputDeviceFacts) {
+  Graph graph{"automatic-remainder-multi-output-device-anchor"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionMultiDeviceTensorSourceOperator>("source");
+  const auto first_sink = graph.op<PartitionTensorSinkOperator>("first-sink");
+  const auto second_sink = graph.op<PartitionTensorSinkOperator>("second-sink");
+  graph.add_flow(source->first, first_sink->input);
+  graph.add_flow(source->second, second_sink->input);
+  graph.partition("anchor").add(source);
+  graph.auto_partition_remaining();
+
+  CompileOptions options;
+  options.deployment
+      .bind_tensor_output_device(TensorOutputDevicePlacement{
+          .operator_path = "source", .output_port = "first", .device = DeviceId{0}})
+      .bind_tensor_output_device(TensorOutputDevicePlacement{
+          .operator_path = "source", .output_port = "second", .device = DeviceId{1}});
+  const ExecutionPlan plan = compile(graph, std::move(options));
+
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE"));
+  EXPECT_FALSE(plan.partitioning_plan().accepted_algorithm.has_value());
+  EXPECT_TRUE(plan.execution_partitions().empty());
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, ExactAnchorRejectsTensorAndGreenContextDeviceMismatchCanonically) {
+  Graph graph{"automatic-remainder-tensor-green-context-device-anchor"};
+  test::add_compile_test_default_clock(graph);
+  const auto conflict = graph.op<PartitionTensorSourceOperator>("conflict");
+  const auto stable = graph.op<PartitionTensorSourceOperator>("stable");
+  (void)graph.op<test::CompileTestOperator>("remainder");
+  graph.partition("conflict").add(conflict);
+  graph.partition("stable").add(stable);
+  graph.auto_partition_remaining();
+
+  const std::array capabilities{
+      detail::CudaGreenContextCapabilityEvidence{
+          .device = DeviceId{0},
+          .deployment_device_id = "gpu.test.uuid.anchor.0",
+          .total_sm_count = 80U,
+          .min_sm_partition_size = 8U,
+          .sm_coscheduled_alignment = 8U,
+          .max_structured_context_count = 10U,
+          .evidence_id = "test.cuda.green_context.capability.anchor.0/v1",
+          .probe_status = PlacementProbeStatus::kPassed,
+      },
+      detail::CudaGreenContextCapabilityEvidence{
+          .device = DeviceId{1},
+          .deployment_device_id = "gpu.test.uuid.anchor.1",
+          .total_sm_count = 80U,
+          .min_sm_partition_size = 8U,
+          .sm_coscheduled_alignment = 8U,
+          .max_structured_context_count = 10U,
+          .evidence_id = "test.cuda.green_context.capability.anchor.1/v1",
+          .probe_status = PlacementProbeStatus::kPassed,
+      },
+  };
+  const auto compile_order = [&](bool reverse) {
+    CompileOptions options;
+    if (reverse) {
+      options.deployment
+          .bind_tensor_output_device(TensorOutputDevicePlacement{
+              .operator_path = "stable", .output_port = "output", .device = DeviceId{1}})
+          .bind_tensor_output_device(TensorOutputDevicePlacement{
+              .operator_path = "conflict", .output_port = "output", .device = DeviceId{0}})
+          .bind_cuda_green_context("stable", {.device = DeviceId{1}, .sm_count = 16U})
+          .bind_cuda_green_context("conflict", {.device = DeviceId{1}, .sm_count = 16U});
+    } else {
+      options.deployment
+          .bind_tensor_output_device(TensorOutputDevicePlacement{
+              .operator_path = "conflict", .output_port = "output", .device = DeviceId{0}})
+          .bind_tensor_output_device(TensorOutputDevicePlacement{
+              .operator_path = "stable", .output_port = "output", .device = DeviceId{1}})
+          .bind_cuda_green_context("conflict", {.device = DeviceId{1}, .sm_count = 16U})
+          .bind_cuda_green_context("stable", {.device = DeviceId{1}, .sm_count = 16U});
+    }
+    auto evidence = detail::runtime_compile_evidence_view();
+    evidence.cuda_green_context_capabilities = capabilities;
+    return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+  };
+
+  const ExecutionPlan forward = compile_order(false);
+  const ExecutionPlan reverse = compile_order(true);
+
+  EXPECT_FALSE(forward.ok());
+  EXPECT_FALSE(reverse.ok());
+  EXPECT_TRUE(test::has_diagnostic(forward, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE"));
+  EXPECT_TRUE(test::has_diagnostic(reverse, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE"));
+  EXPECT_EQ(forward.partitioning_plan().reason,
+            detail::diagnostic_id("PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE"));
+  EXPECT_EQ(forward.partitioning_plan().reason, reverse.partitioning_plan().reason);
+  EXPECT_EQ(forward.digest(), reverse.digest());
+  EXPECT_EQ(forward.json(), reverse.json());
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, ExactNamedAnchorKeepsOnlyItsAuthoredMembers) {
+  Graph graph{"automatic-remainder-anchor"};
+  test::add_compile_test_default_clock(graph);
+  const auto first = graph.op<test::CompileTestOperator>("first");
+  const auto second = graph.op<test::CompileTestOperator>("second");
+  const auto third = graph.op<test::CompileTestOperator>("third");
+  const auto fourth = graph.op<test::CompileTestOperator>("fourth");
+  graph.add_flow(first->output, second->input);
+  graph.add_flow(second->output, third->input);
+  graph.add_flow(third->output, fourth->input);
+  graph.partition("anchor").add(second, third);
+  graph.auto_partition_remaining();
+
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  ASSERT_TRUE(snapshot);
+  const auto canonical_id = [&](std::string_view name) {
+    const auto found =
+        std::find_if(snapshot->vertices.begin(), snapshot->vertices.end(), [&](const auto& vertex) {
+          return vertex.kind == VertexKind::kOperator && vertex.name == name;
+        });
+    return found == snapshot->vertices.end() ? VertexId{} : found->id;
+  };
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_TRUE(plan.partitioning_plan().accepted_algorithm.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
+  EXPECT_EQ(plan.partitioning_plan().accepted_algorithm->id, "holoscan.partition.source_chain");
+  const auto anchor =
+      std::find_if(plan.execution_partitions().begin(),
+                   plan.execution_partitions().end(),
+                   [](const auto& partition) { return partition.authored_name == "anchor"; });
+  ASSERT_NE(anchor, plan.execution_partitions().end());
+  EXPECT_EQ(anchor->members,
+            std::vector<VertexId>({canonical_id("second"), canonical_id("third")}));
+  EXPECT_EQ(plan.execution_partitions().size(), 3U);
+  const auto partitions = plan.partitions();
+  EXPECT_EQ(partitions.mode(), PartitioningMode::kConstrainedAutomatic);
+  EXPECT_EQ(partitions.authored_count(), 1U);
+  EXPECT_EQ(partitions.automatic_count(), 2U);
+  const auto named = partitions.lookup_named("anchor");
+  ASSERT_TRUE(named);
+  EXPECT_EQ(named->origin(), ExecutionPartitionOrigin::kAuthored);
+  EXPECT_TRUE(std::ranges::equal(named->operator_paths(), anchor->operator_paths));
+  const auto automatic = partitions.lookup_for_path("first");
+  ASSERT_TRUE(automatic);
+  EXPECT_EQ(automatic->origin(), ExecutionPartitionOrigin::kAutomatic);
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, AutomaticRemainderCannotBeBoundByInventedNames) {
+  const auto compile_with_binding = [](bool green_context) {
+    Graph graph{"automatic-remainder-invented-placement"};
+    test::add_compile_test_default_clock(graph);
+    const auto first = graph.op<test::CompileTestOperator>("first");
+    (void)graph.op<ClosedIslandSourceOperator>("second");
+    graph.partition("anchor").add(first);
+    graph.auto_partition_remaining();
+    CompileOptions options;
+    if (green_context) {
+      options.deployment.bind_cuda_green_context("automatic#1",
+                                                 {.device = DeviceId{0}, .sm_count = 16U});
+    } else {
+      options.deployment.bind_thread_placement("automatic#1", ThreadPlacement{});
+    }
+    return compile(graph, std::move(options));
+  };
+
+  const ExecutionPlan thread = compile_with_binding(false);
+  EXPECT_FALSE(thread.ok());
+  EXPECT_TRUE(test::has_diagnostic(thread, "PARTITION_PLACEMENT_UNKNOWN_OR_DUPLICATE"));
+  const ExecutionPlan green_context = compile_with_binding(true);
+  EXPECT_FALSE(green_context.ok());
+  EXPECT_TRUE(test::has_diagnostic(green_context, "CUDA_GREEN_CONTEXT_UNKNOWN_OR_DUPLICATE"));
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, ConstrainedAnchorOwnsOnlyUnambiguousSyntheticEndpoint) {
+  Graph graph{"automatic-remainder-synthetic-anchor"};
+  test::add_compile_test_default_clock(graph);
+  auto imported = graph.import_topic<std::uint32_t>("holomq://automatic-anchor-input");
+  const auto sink = graph.op<test::CompileTestOperator>("sink");
+  (void)graph.op<ClosedIslandSourceOperator>("automatic-root");
+  graph.add_flow(imported.output(), sink->input);
+  graph.partition("anchor").add(sink);
+  graph.auto_partition_remaining();
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 2U);
+  const auto anchor =
+      std::find_if(plan.execution_partitions().begin(),
+                   plan.execution_partitions().end(),
+                   [](const auto& partition) { return partition.authored_name == "anchor"; });
+  ASSERT_NE(anchor, plan.execution_partitions().end());
+  EXPECT_EQ(anchor->members.size(), 2U);
+  EXPECT_EQ(std::count_if(anchor->members.begin(),
+                          anchor->members.end(),
+                          [&](VertexId member) {
+                            const auto found = std::find_if(
+                                plan.graph().vertices().begin(),
+                                plan.graph().vertices().end(),
+                                [&](const auto& vertex) { return vertex.id == member; });
+                            return found != plan.graph().vertices().end() &&
+                                   found->kind == VertexKind::kImportedTopic;
+                          }),
+            1);
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, ConstrainedAnchorOwnsUnambiguousExportedEndpoint) {
+  Graph graph{"automatic-remainder-synthetic-export-anchor"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<ScalarClockSourceOperator>("source");
+  auto exported = graph.export_topic<std::uint32_t>("holomq://automatic-anchor-output");
+  (void)graph.op<ClosedIslandSourceOperator>("automatic-root");
+  graph.add_flow(source->output, exported.input());
+  graph.partition("anchor").add(source);
+  graph.auto_partition_remaining();
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 2U);
+  const auto anchor =
+      std::find_if(plan.execution_partitions().begin(),
+                   plan.execution_partitions().end(),
+                   [](const auto& partition) { return partition.authored_name == "anchor"; });
+  ASSERT_NE(anchor, plan.execution_partitions().end());
+  EXPECT_EQ(anchor->members.size(), 2U);
+  EXPECT_EQ(std::count_if(anchor->members.begin(),
+                          anchor->members.end(),
+                          [&](VertexId member) {
+                            const auto found = std::find_if(
+                                plan.graph().vertices().begin(),
+                                plan.graph().vertices().end(),
+                                [&](const auto& vertex) { return vertex.id == member; });
+                            return found != plan.graph().vertices().end() &&
+                                   found->kind == VertexKind::kExportedTopic;
+                          }),
+            1);
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, CrossProcessSyntheticEndpointsRemainSeparateFromExactAnchors) {
+  const auto verify = [](const ExecutionPlan& plan, VertexKind endpoint_kind) {
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.execution_partitions().size(), 3U);
+    ASSERT_EQ(plan.schedule_edges().size(), 1U);
+    const auto endpoint_vertex = std::find_if(
+        plan.graph().vertices().begin(), plan.graph().vertices().end(), [&](const auto& vertex) {
+          return vertex.kind == endpoint_kind;
+        });
+    ASSERT_NE(endpoint_vertex, plan.graph().vertices().end());
+    const auto endpoint_partition =
+        std::find_if(plan.execution_partitions().begin(),
+                     plan.execution_partitions().end(),
+                     [&](const auto& partition) {
+                       return partition.members == std::vector<VertexId>{endpoint_vertex->id};
+                     });
+    ASSERT_NE(endpoint_partition, plan.execution_partitions().end());
+    EXPECT_FALSE(endpoint_partition->authored_name.has_value());
+    EXPECT_TRUE(endpoint_partition->operator_paths.empty());
+    const auto anchor = std::find_if(plan.execution_partitions().begin(),
+                                     plan.execution_partitions().end(),
+                                     [](const auto& row) { return row.authored_name == "anchor"; });
+    ASSERT_NE(anchor, plan.execution_partitions().end());
+    EXPECT_NE(anchor->id, endpoint_partition->id);
+    EXPECT_TRUE((plan.schedule_edges().front().source == endpoint_partition->id &&
+                 plan.schedule_edges().front().destination == anchor->id) ||
+                (plan.schedule_edges().front().source == anchor->id &&
+                 plan.schedule_edges().front().destination == endpoint_partition->id));
+    const auto placements = detail::ProcessPlacementPlanAccess::vertex_process_placements(plan);
+    const auto endpoint_placement =
+        std::find_if(placements.begin(), placements.end(), [&](const auto& row) {
+          return row.vertex == endpoint_vertex->id;
+        });
+    const auto anchor_placement =
+        std::find_if(placements.begin(), placements.end(), [&](const auto& row) {
+          return std::find(anchor->members.begin(), anchor->members.end(), row.vertex) !=
+                 anchor->members.end();
+        });
+    ASSERT_NE(endpoint_placement, placements.end());
+    ASSERT_NE(anchor_placement, placements.end());
+    EXPECT_NE(endpoint_placement->process_group, anchor_placement->process_group);
+    const auto endpoint_decision = std::ranges::find(
+        plan.partition_decisions(), endpoint_vertex->id, &PartitionDecisionRecord::vertex);
+    ASSERT_NE(endpoint_decision, plan.partition_decisions().end());
+    EXPECT_EQ(endpoint_decision->decision, PartitionDecisionKind::kBoundarySplit);
+    EXPECT_NE(
+        std::ranges::find(endpoint_decision->reasons, PartitionDecisionReason::kProcessBoundary),
+        endpoint_decision->reasons.end());
+    EXPECT_NE(std::ranges::find(endpoint_decision->reasons,
+                                PartitionDecisionReason::kExternalEndpointBoundary),
+              endpoint_decision->reasons.end());
+    EXPECT_FALSE(test::has_diagnostic(plan, "PARTITION_RESOURCE_REALIZATION_FAILED"));
+  };
+
+  {
+    constexpr std::string_view kEndpoint{"holomq://automatic-cross-process-import"};
+    Graph graph{"automatic-remainder-cross-process-import"};
+    test::add_compile_test_default_clock(graph);
+    auto imported = graph.import_topic<std::uint32_t>(std::string{kEndpoint});
+    const auto sink = graph.op<test::CompileTestOperator>("sink");
+    (void)graph.op<ClosedIslandSourceOperator>("automatic-root");
+    graph.add_flow(imported.output(), sink->input);
+    graph.partition("anchor").add(sink);
+    graph.auto_partition_remaining();
+    verify(detail::compile_with_process_placement(
+               graph, CompileOptions{}, external_process_placement(kEndpoint)),
+           VertexKind::kImportedTopic);
+  }
+  {
+    constexpr std::string_view kEndpoint{"holomq://automatic-cross-process-export"};
+    Graph graph{"automatic-remainder-cross-process-export"};
+    test::add_compile_test_default_clock(graph);
+    const auto source = graph.op<ScalarClockSourceOperator>("source");
+    auto exported = graph.export_topic<std::uint32_t>(std::string{kEndpoint});
+    (void)graph.op<ClosedIslandSourceOperator>("automatic-root");
+    graph.add_flow(source->output, exported.input());
+    graph.partition("anchor").add(source);
+    graph.auto_partition_remaining();
+    verify(detail::compile_with_process_placement(
+               graph, CompileOptions{}, external_process_placement(kEndpoint)),
+           VertexKind::kExportedTopic);
+  }
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring,
+     ConstrainedSyntheticEndpointWithMixedAdjacencyKeepsExternalBoundary) {
+  Graph graph{"automatic-remainder-ambiguous-synthetic-anchor"};
+  test::add_compile_test_default_clock(graph);
+  auto imported = graph.import_topic<std::uint32_t>("holomq://automatic-mixed-input");
+  const auto anchored = graph.op<test::CompileTestOperator>("anchored");
+  const auto automatic = graph.op<test::CompileTestOperator>("automatic");
+  graph.add_flow(imported.output(), anchored->input);
+  graph.add_flow(imported.output(), automatic->input);
+  graph.partition("anchor").add(anchored);
+  graph.auto_partition_remaining();
+
+  const ExecutionPlan plan = compile(graph);
+
+  // The inherited external-channel contract admits one boundary-to-Operator relation only, so
+  // imported-topic fan-out remains non-runnable. Partition planning must nevertheless retain the
+  // ambiguous endpoint boundary and its complete crossing-edge evidence in the rejected plan.
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "EXTERNAL_CHANNEL_PLAN_INVALID"));
+  EXPECT_EQ(plan.partitioning_plan().disposition, PlanDisposition::kAccepted);
+  ASSERT_EQ(plan.execution_partitions().size(), 3U);
+  const auto anchor =
+      std::find_if(plan.execution_partitions().begin(),
+                   plan.execution_partitions().end(),
+                   [](const auto& partition) { return partition.authored_name == "anchor"; });
+  ASSERT_NE(anchor, plan.execution_partitions().end());
+  EXPECT_EQ(anchor->operator_paths, std::vector<std::string>{"anchored"});
+  EXPECT_EQ(anchor->members.size(), 1U);
+  const auto endpoint_partition = std::find_if(plan.execution_partitions().begin(),
+                                               plan.execution_partitions().end(),
+                                               [](const auto& partition) {
+                                                 return !partition.authored_name.has_value() &&
+                                                        partition.operator_paths.empty();
+                                               });
+  ASSERT_NE(endpoint_partition, plan.execution_partitions().end());
+  ASSERT_EQ(endpoint_partition->members.size(), 1U);
+  const auto endpoint_vertex = std::find_if(
+      plan.graph().vertices().begin(), plan.graph().vertices().end(), [&](const auto& vertex) {
+        return vertex.id == endpoint_partition->members.front();
+      });
+  ASSERT_NE(endpoint_vertex, plan.graph().vertices().end());
+  EXPECT_EQ(endpoint_vertex->kind, VertexKind::kImportedTopic);
+  ASSERT_EQ(plan.schedule_edges().size(), 2U);
+  EXPECT_EQ(plan.schedule_edges()[0].edge, plan.graph().edges()[0].id);
+  EXPECT_EQ(plan.schedule_edges()[1].edge, plan.graph().edges()[1].id);
+  try {
+    (void)plan.partitions();
+    FAIL() << "rejected plan unexpectedly published a partition view";
+  } catch (const RuntimeError& error) {
+    EXPECT_EQ(error.code(), ErrorCode::kInvalidArgument);
+  }
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, RootIncludeAllExpandsAcrossEmbeddedDescendants) {
+  Graph graph{"include-all-composed-root"};
+  test::add_compile_test_default_clock(graph);
+  (void)graph.op<test::CompileTestOperator>("root");
+  (void)graph.embed<IncludeAllEmbeddedGraph>("child");
+  graph.partition("application").include_all();
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 1U);
+  EXPECT_EQ(plan.execution_partitions().front().authored_name,
+            std::optional<std::string>{"application"});
+  EXPECT_EQ(plan.execution_partitions().front().members.size(), 2U);
+  EXPECT_TRUE(plan.schedule_edges().empty());
+}
+
+// REQ: COMPILE-068
+// REQ: GRAPH-032
+TEST(CompilePartitionAuthoring, IncludeAllOwnsDisconnectedExecutableEndpoints) {
+  const auto verify_endpoint_only = [](bool imported) {
+    Graph graph{imported ? "include-all-standalone-import" : "include-all-standalone-export"};
+    if (imported) {
+      (void)graph.import_topic<std::uint32_t>("holomq://include-all-standalone-import");
+    } else {
+      (void)graph.export_topic<std::uint32_t>("holomq://include-all-standalone-export");
+    }
+    graph.partition("application").include_all();
+    const ExecutionPlan plan = compile(graph);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.execution_partitions().size(), 1U);
+    EXPECT_EQ(plan.partitioning_plan().mode, PartitioningMode::kManual);
+    EXPECT_EQ(plan.execution_partitions().front().authored_name,
+              std::optional<std::string>{"application"});
+    ASSERT_EQ(plan.execution_partitions().front().members.size(), 1U);
+    EXPECT_TRUE(plan.execution_partitions().front().operator_paths.empty());
+    EXPECT_TRUE(plan.schedule_edges().empty());
+  };
+  verify_endpoint_only(true);
+  verify_endpoint_only(false);
+
+  Graph graph{"include-all-disconnected-mixed"};
+  test::add_compile_test_default_clock(graph);
+  (void)graph.op<ClosedIslandSourceOperator>("operator");
+  (void)graph.import_topic<std::uint32_t>("holomq://include-all-disconnected-mixed");
+  graph.partition("application").include_all();
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 1U);
+  EXPECT_EQ(plan.execution_partitions().front().members.size(), 2U);
+  EXPECT_EQ(plan.execution_partitions().front().operator_paths,
+            std::vector<std::string>{"operator"});
+}
+
+// REQ: COMPILE-068
+// REQ: GRAPH-032
+TEST(CompilePartitionAuthoring, IncludeAllRejectsCrossProcessExecutableEndpoints) {
+  constexpr std::string_view kEndpoint{"holomq://include-all-cross-process"};
+  Graph graph{"include-all-cross-process"};
+  test::add_compile_test_default_clock(graph);
+  (void)graph.op<ClosedIslandSourceOperator>("operator");
+  (void)graph.import_topic<std::uint32_t>(std::string{kEndpoint});
+  graph.partition("application").include_all();
+
+  const ExecutionPlan plan = detail::compile_with_process_placement(
+      graph, CompileOptions{}, external_process_placement(kEndpoint));
+
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_COVER_INVALID"));
+  EXPECT_FALSE(test::has_diagnostic(plan, "PARTITION_RESOURCE_REALIZATION_FAILED"));
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, AutomaticRemainderRequiresOneNonemptyExactAnchor) {
+  Graph graph{"automatic-remainder-empty"};
+  test::add_compile_test_default_clock(graph);
+  (void)graph.op<test::CompileTestOperator>("operator");
+  graph.auto_partition_remaining();
+
+  const ExecutionPlan plan = compile(graph);
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "GRAPH_PARTITION_AUTOMATIC_REMAINDER_EMPTY"));
+  EXPECT_FALSE(plan.partitioning_plan().accepted_algorithm.has_value());
+}
+
+// A request with exact authored intent remains constrained automatic even when that anchor covers
+// every logical Operator. The zero automatic count is intentional evidence, not a missing cover.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, CompleteExactAnchorPreservesConstrainedAutomaticIntent) {
+  Graph graph{"automatic-remainder-complete-anchor"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto sink = graph.op<test::CompileTestOperator>("sink");
+  graph.add_flow(source->output, sink->input);
+  graph.partition("anchor").add(source, sink);
+  graph.auto_partition_remaining();
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  EXPECT_EQ(plan.partitioning_plan().mode, PartitioningMode::kConstrainedAutomatic);
+  EXPECT_EQ(plan.partitioning_plan().authored_partition_count, 1U);
+  EXPECT_EQ(plan.partitioning_plan().automatic_partition_count, 0U);
+  ASSERT_EQ(plan.execution_partitions().size(), 1U);
+  EXPECT_EQ(plan.execution_partitions().front().authored_name,
+            std::optional<std::string>{"anchor"});
+}
+
+// Exact anchors retain the landed one-independent-root legality rule even when an automatic
+// remainder exists. Automatic planning may not make an illegal authored serial owner acceptable.
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, ConstrainedAutomaticRejectsMultiRootExactAnchor) {
+  Graph graph{"automatic-remainder-multi-root-anchor"};
+  test::add_compile_test_default_clock(graph);
+  const auto first = graph.op<test::CompileTestOperator>("first");
+  const auto second = graph.op<test::CompileTestOperator>("second");
+  (void)graph.op<ClosedIslandSourceOperator>("automatic-root");
+  graph.partition("invalid-anchor").add(first, second);
+  graph.auto_partition_remaining();
+
+  const ExecutionPlan plan = compile(graph);
+
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_COVER_INVALID"));
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, IncompleteManualCoverStillRequiresExplicitAutomaticRemainder) {
+  Graph graph{"incomplete-manual-cover"};
+  test::add_compile_test_default_clock(graph);
+  const auto first = graph.op<test::CompileTestOperator>("first");
+  (void)graph.op<test::CompileTestOperator>("second");
+  graph.partition("only-first").add(first);
+
+  const ExecutionPlan plan = compile(graph);
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_COVER_INVALID"));
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, RejectsNonConvexExactAnchor) {
+  Graph graph{"non-convex-anchor"};
+  test::add_compile_test_default_clock(graph);
+  const auto first = graph.op<test::CompileTestOperator>("first");
+  const auto middle = graph.op<test::CompileTestOperator>("middle");
+  const auto last = graph.op<test::CompileTestOperator>("last");
+  graph.add_flow(first->output, middle->input);
+  graph.add_flow(middle->output, last->input);
+  graph.partition("leave-and-reenter").add(first, last);
+  graph.auto_partition_remaining();
+
+  const ExecutionPlan plan = compile(graph);
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_ANCHOR_NON_CONVEX"));
+}
+
+// REQ: COMPILE-068
+TEST(CompilePartitionAuthoring, RejectsExactAnchorAcrossProcessDomains) {
+  Graph graph{"cross-process-anchor"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<test::CompileTestOperator>("source");
+  const auto target = graph.op<test::CompileTestOperator>("target");
+  graph.add_flow(source->output, target->input);
+  graph.partition("cross-process").add(source, target);
+  graph.auto_partition_remaining();
+
+  const ExecutionPlan plan = detail::compile_with_process_placement(
+      graph, CompileOptions{}, process_placement("source-process", "target-process"));
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE"));
 }
 
 // REQ: COMPILE-058

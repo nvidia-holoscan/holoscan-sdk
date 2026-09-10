@@ -10,7 +10,7 @@
 > publishes through a **lifecycle restart transaction**; and runtime mutation
 > is admitted only under the **Standard** and **Research** profiles. Atomic
 > batches are limited to a single operator — there is no graph-wide atomic
-> update. The `examples/experimental/` directory is an EA1 example-catalog
+> update. The `examples/experimental/` directory is an experimental example-catalog
 > location, not the API's stability stage.
 >
 > **User guide:** [Runtime Parameter Updates](https://docs.nvidia.com/holoscan/sdk-user-guide/advanced/runtime-parameter-updates) —
@@ -73,7 +73,7 @@ From this `cpp/` folder, `CMakeLists.txt` is the standalone `cmake -S .`
 entry point and forwards that mode to `CMakeLists.min.txt`:
 
 ```bash
-cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake -B build -S .
 cmake --build build
 ```
 

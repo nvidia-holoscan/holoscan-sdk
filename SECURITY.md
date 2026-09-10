@@ -52,7 +52,7 @@ The following scenarios reflect the main security concerns for this codebase, in
 
 3. **Malicious or untrusted application configuration (YAML):** Loading attacker-controlled YAML via `YAML::LoadAllFromFile` and related paths in `core/config.cpp`, operator configuration (e.g., Holoviz YAML parsing), or tests’ `YAML::LoadFile` can lead to denial of service, unexpected operator wiring, or unsafe parameters if the deployer does not restrict who can write configuration files.
 
-4. **Untrusted ONNX or Torch models and inference inputs:** Loading models from paths handled in Holoinfer’s ONNX stack (`modules/holoinfer/src/infer/onnx/core.cpp` and related code) can trigger vulnerabilities in the inference runtime or unsafe custom operators if model provenance is not controlled. Attackers with write access to model directories can replace models or engine caches.
+4. **Untrusted ONNX or Torch models and inference inputs:** Loading models from paths handled in Holoinfer’s ONNX stack (`modules/inference/src/infer/onnx/core.cpp` and related code) can trigger vulnerabilities in the inference runtime or unsafe custom operators if model provenance is not controlled. Attackers with write access to model directories can replace models or engine caches.
 
 5. **Supply chain and build-time behavior:** CMake options that download datasets or dependencies, third-party vendored or fetched components under `cmake/`, `swipat/`, and container build contexts increase exposure to compromised mirrors or tampered archives if builds are not pinned, verified, and run in trusted environments.
 
@@ -70,7 +70,7 @@ The following scenarios reflect the main security concerns for this codebase, in
 
 - **Correct and patched platform stack:** The SDK assumes a patched OS, NVIDIA GPU drivers, CUDA, Vulkan loader/validation layers (as appropriate), and third-party runtimes (ONNX Runtime, gRPC, Fast DDS, etc.) as supplied by the platform or container image maintainer.
 
-- **Host OS enforcement:** Process isolation and file permissions are assumed to be set correctly so that non-privileged users cannot modify binaries, models, or configs used by production pipelines. (`HOLOSCAN_ALLOW_SYSTEM_INSTALL` is a CMake build-time packaging option that affects installation paths, not a runtime security control.)
+- **Host OS enforcement:** Process isolation and file permissions are assumed to be set correctly so that non-privileged users cannot modify binaries, models, or configs used by production pipelines.
 
 - **Physical and administrative security:** Devices running Holoscan in embedded or edge scenarios are assumed to be physically secured and administratively controlled where loss of the device would imply compromise of local data regardless of SDK behavior.
 

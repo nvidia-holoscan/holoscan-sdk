@@ -859,7 +859,9 @@ def graph_intraprocess_row(path: Path, case_id: str) -> dict[str, Any]:
     placement = result.get("placement")
     if not isinstance(placement, dict):
         raise RuntimeError(f"{path} is missing Runtime Graph placement evidence")
-    lane_mode = str(placement.get("operator_lanes"))
+    lane_mode = placement.get("requested_operator_lanes")
+    if not isinstance(lane_mode, str):
+        raise RuntimeError(f"{path} is missing valid requested_operator_lanes placement evidence")
     execution_model = {
         "shared": "shared_lane",
         "separate": "separate_lane",

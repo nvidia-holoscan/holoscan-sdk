@@ -78,13 +78,16 @@ make_catalog_tensor_benchmark(const std::string& endpoint_name, const std::uint3
               .payload_kind = holoscan::PayloadKind::kDescriptorBacked,
           },
       .tensor =
-          holoscan::LogicalTensorRequirementsRecord{
+          holoscan::TensorBoundaryContractRecord{
               .memory_kind = holoscan::MemoryKind::kHost,
               .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
               .max_rank = 1U,
               .max_byte_span = kTensorBytes,
               .strides = holoscan::TensorStridePolicy::kContiguousOnly,
               .foreign_emit_policy = holoscan::InterfaceTensorEmitPolicy::kCopyIfNeeded,
+              // Any policy other than kRequireExportable admits copying, and
+              // valid_catalog_tensor_contract() then requires a positive staging cap.
+              .max_staging_byte_span = kTensorBytes,
           },
       .bounds =
           holoscan::EndpointBounds{

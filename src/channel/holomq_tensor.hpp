@@ -143,6 +143,20 @@ struct HoloMQTensorDescriptor {
 
 static_assert(std::is_standard_layout_v<HoloMQTensorDescriptor>);
 static_assert(std::is_trivially_copyable_v<HoloMQTensorDescriptor>);
+static_assert(sizeof(HoloMQTensorDescriptor) == 368U);
+static_assert(alignof(HoloMQTensorDescriptor) == 8U);
+static_assert(offsetof(HoloMQTensorDescriptor, magic) == 0U);
+static_assert(offsetof(HoloMQTensorDescriptor, abi_version) == 4U);
+static_assert(offsetof(HoloMQTensorDescriptor, header_size) == 6U);
+static_assert(offsetof(HoloMQTensorDescriptor, flags) == 8U);
+static_assert(offsetof(HoloMQTensorDescriptor, rank) == 12U);
+static_assert(offsetof(HoloMQTensorDescriptor, dtype) == 16U);
+static_assert(offsetof(HoloMQTensorDescriptor, memory_kind) == 20U);
+static_assert(offsetof(HoloMQTensorDescriptor, cuda_device_ordinal) == 24U);
+static_assert(offsetof(HoloMQTensorDescriptor, byte_size) == 32U);
+static_assert(offsetof(HoloMQTensorDescriptor, shape) == 40U);
+static_assert(offsetof(HoloMQTensorDescriptor, byte_strides) == 104U);
+static_assert(offsetof(HoloMQTensorDescriptor, buffer_handle) == 168U);
 
 /// Source-private Tensor backing contract for storage that can produce one HoloMQ handle.
 ///
@@ -154,11 +168,20 @@ class HoloMQExportableTensorMemoryReference : public TensorMemoryReference {
   [[nodiscard]] virtual expected<holomq::BufferHandle, Error> export_handle() noexcept = 0;
 };
 
+/// Resolve the source-private exportable backing once for a Tensor direct-export transaction.
+[[nodiscard]] HOLOSCAN_CORE_EXPORT HoloMQExportableTensorMemoryReference*
+holomq_exportable_tensor_memory_reference(const Tensor& tensor) noexcept;
+
 [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<HoloMQTensorDescriptor, Error>
 make_holomq_tensor_descriptor(const Tensor& tensor, const holomq::BufferHandle& buffer_handle);
 
 [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<HoloMQTensorDescriptor, Error>
 export_holomq_tensor_descriptor(const Tensor& tensor);
+
+/// Export one descriptor using a backing reference already resolved for the supplied Tensor.
+[[nodiscard]] HOLOSCAN_CORE_EXPORT expected<HoloMQTensorDescriptor, Error>
+export_holomq_tensor_descriptor(const Tensor& tensor,
+                                HoloMQExportableTensorMemoryReference& memory);
 
 [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<HoloMQTensorDescriptor, Error>
 make_holomq_tensor_descriptor(TensorShapeView shape, DLDataType dtype,

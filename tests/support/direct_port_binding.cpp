@@ -41,6 +41,13 @@ expected<std::size_t, Error> DirectPortBinding::drain(
   return count;
 }
 
+void DirectPortBinding::cancel() noexcept {
+  head_ = 0U;
+  tail_ = 0U;
+  size_ = 0U;
+  closed_ = true;
+}
+
 expected<std::uint64_t, Error> DirectPortBinding::advance_source_generation() noexcept {
   if (!closed_ || size_ != 0U || !restart_event_.source) {
     return make_unexpected(Error{ErrorCode::kBackpressured});

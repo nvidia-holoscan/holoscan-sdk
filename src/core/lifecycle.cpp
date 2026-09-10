@@ -63,4 +63,28 @@ expected<OperatorRef, Error> LifecycleContext::restart_target(
   return state_->restart_path(state_->service_state, path);
 }
 
+expected<void, Error> LifecycleContext::bind_nominal_rate_port(const void* output,
+                                                               Rate value) noexcept {
+  if (state_ == nullptr || state_->bind_nominal_rate == nullptr) {
+    return make_unexpected(
+        Error{ErrorCode::kLifecycleInvalidCallingContext, "PORT_RATE_BIND_NOT_AUTHORIZED"});
+  }
+  if (output == nullptr) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument, "PORT_RATE_BIND_NOT_AUTHORIZED"});
+  }
+  return state_->bind_nominal_rate(state_->rate_state, output, value);
+}
+
+expected<PortRateView, Error> LifecycleContext::rate_port(const void* declaration,
+                                                          bool output) const noexcept {
+  if (state_ == nullptr || state_->resolve_rate == nullptr) {
+    return make_unexpected(
+        Error{ErrorCode::kLifecycleInvalidCallingContext, "PORT_RATE_VIEW_INVALID"});
+  }
+  if (declaration == nullptr) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument, "PORT_RATE_VIEW_INVALID"});
+  }
+  return state_->resolve_rate(state_->rate_state, declaration, output);
+}
+
 }  // namespace holoscan

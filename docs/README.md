@@ -25,27 +25,59 @@ Paths in this README use the public repository layout (`docs/`). The
    `#anchor`. Fern publishes any other relative path unchanged, which resolves against the
    current page's directory and silently lands on the docs homepage. Page-file paths
    (`sdk_installation.mdx`) are rewritten by the current CLI but are documented as
-   unsupported, so the link check rejects them too. Run
-   `python3 docs/scripts/check_doc_links.py` to verify links, anchors, and images;
-   `fern check` does not resolve link targets.
-4. Build and validate docs (default: Docker, then `check_doc_links.py` and `fern check --local`):
+   unsupported, so the link check rejects them too. Run:
 
    ```bash
-   python3 docs/scripts/build_holoscan_docs.py
+   python3 docs/scripts/render_source_links.py --docs-root docs --write
+   python3 docs/scripts/check_doc_links.py
+   python3 docs/scripts/check_doc_links.py --local-files-only
+   ```
+
+   The first command normalizes SDK source links to the public GitHub repository
+   at `main`; the second verifies Fern links, anchors, and images; and the third checks
+   local file targets across the public Markdown tree. `fern check` does not resolve
+   link targets. These checks run through pre-commit. The local-file check also runs
+   when any public target changes, so moving or deleting a linked file is covered.
+   The source-link hook passes only changed files and uses
+   `--write` to normalize GitHub refs and `blob`/`tree` routes; `pre-commit run
+   --all-files` checks and normalizes the complete authored documentation tree.
+4. From the public repository root, build and validate docs (default: Docker,
+   then `check_doc_links.py` and `fern check --local`):
+
+   ```bash
+   ./run build_docs
    ```
 
 5. Preview locally with a dev server:
 
    ```bash
-   python3 docs/scripts/build_holoscan_docs.py --preview
+   ./run live_docs
    ```
 
-Use `--no-docker` to run on the host instead of the docs container.
-C++ API pages are generated automatically when `fern login` credentials or `FERN_TOKEN`
-are available; pass `--skip-library-mdx` to reuse an existing local generated tree.
-The tree is still post-processed and included in validation, preview, or publication.
-Pass `--skip-fern-check` to run the pipeline only (no Fern validation), or
-`--skip-link-check` to bypass internal link validation.
+The wrapper commands resolve the helper relative to the checkout. In the
+internal source layout, run the same commands as `./public/run build_docs` and
+`./public/run live_docs` from the repository root.
+
+For these zero-argument commands, a nonempty `FERN_TOKEN` opts in to automatic
+C++ API generation. When the variable is empty or unset, the wrapper selects
+`--skip-library-mdx`: an existing generated tree is still post-processed and
+included, while a clean checkout temporarily omits both the C++ library and
+API-reference navigation blocks for the local validation or preview. The
+checked-in Fern configuration is never changed, and the temporary project is
+removed when the command exits or is interrupted.
+
+Any explicit option suppresses that wrapper default and is forwarded unchanged.
+Use `--with-library-mdx` to explicitly generate the API reference with either
+`FERN_TOKEN` or host `fern login` credentials, or `--skip-library-mdx` to reuse
+a prepared local tree. Use `--no-docker` to run on the host instead of the docs
+container. Pass `--skip-fern-check` to run the pipeline only (no Fern
+validation), or `--skip-link-check` to bypass internal link validation. Remote
+preview and production publication retain their authentication and generated-
+content requirements; they never use the tokenless local fallback.
+
+C++ API generation uses Fern's local parser and requires a running Docker
+daemon. On macOS with Colima, keep the selected checkout and publishing
+`--work-dir` under the home directory, which Colima shares by default.
 
 In Docker mode the helper reuses your host Fern authentication: if `FERN_TOKEN` is set
 it is passed into the container, otherwise only the host `~/.fern/token` and `~/.fern/id`
@@ -69,17 +101,13 @@ the C++ API MDX, and asks Fern to publish the preview. Set `FERN_TOKEN` in Jenki
 authenticate.
 
 The preview ID names the Fern deployment; it does not select a Git revision for the
-C++ library input. The current `fern/docs.yml` tells `fern docs md generate` to have
-Fern parse `https://github.com/nvidia-holoscan/holoscan-sdk`, under
-`include/holoscan`, on Fern's servers. In MR CI, the helper script removes any
-previous generated tree and invokes generation. The Fern CLI writes the raw MDX
-returned by the service into the MR checkout's local
-`fern/generated/api-reference/cpp` directory; the helper script then runs
-`docs/scripts/fix_generated_library_mdx.py` on that local tree and includes
-the post-processed files in the preview publication. The post-processor output is
-therefore not ignored. However, C++ header changes that exist only in the MR checkout
-are not reflected in the generated API pages because Fern reads the headers from the
-configured public repository. This is a limitation of the current implementation.
+C++ library input. The current `fern/docs.yml` instead points at the selected
+checkout's local `include/holoscan` directory. The helper removes any previous
+generated tree and invokes `fern docs md generate --local`, then runs
+`docs/scripts/fix_generated_library_mdx.py` on the resulting
+`fern/generated/api-reference/cpp` tree. User-guide and C++ API pages therefore come
+from the same checkout, including MR changes and internal release tags that are not
+yet available from the public GitHub repository.
 See Fern's
 [library reference documentation](https://buildwithfern.com/learn/docs/api-references/library-reference).
 
@@ -98,6 +126,9 @@ build_holoscan_docs.py --no-docker
 The docs Docker image is expected to supply the pinned Fern CLI and its supporting
 tools. In Docker mode, the helper script builds that image from
 `docs/Dockerfile` before each run; Docker may reuse its build cache.
+Fresh C++ API generation also forwards the active Unix Docker socket into the
+docs container so Fern can run its local parser as a sibling container. The
+socket is not forwarded when the generated API tree is reused.
 `--container-name` controls only the transient runtime container name (`docs` by
 default), not the image. Using the image avoids dependence on host-installed tool
 versions and matches the CI environment. `--no-docker` is useful when equivalent
@@ -133,13 +164,73 @@ response, and records the resolved URL. This confirms that the reviewed routes a
 publicly reachable; the release reviewer confirms that the planned and resolved
 routes are the expected release pages.
 
+### Validate rendered links after hydration
+
+In web development, **hydration** is the process of taking static,
+server-rendered HTML and attaching JavaScript behavior and event listeners to
+make the page interactive. React may reconcile and update the document during
+this process. As a result, the initial response returned by `curl` or shown by
+**View Page Source** can differ from the live DOM shown in the browser's
+**Elements** inspector after Fern's JavaScript runs.
+
+Validate interactive Fern behavior against the hydrated DOM. In particular,
+do not classify a generated `CodeBlock` token as linked or unlinked solely from
+the initial HTTP response. For each representative change:
+
+1. Open the same API page and signature in the baseline and branch previews.
+2. Inspect the token in the browser's **Elements** panel after the page finishes
+   loading.
+3. For a positive link, confirm that the token is inside an
+   `<a class="fern-code-link">` element with the expected `href`, then follow the
+   link and verify the destination page or anchor.
+4. For a removed link, confirm that the syntax-colored token remains visible
+   but is not inside an anchor.
+
+For example, a successfully hydrated generated-type link has this form:
+
+```html
+<a href="../enums/memorystoragetype" class="fern-code-link">
+  <span>MemoryStorageType</span>
+</a>
+```
+
+A headless browser that waits for JavaScript execution can automate this check.
+Fetching the page with `curl` alone validates only the initial server response,
+not the final interactive DOM used by readers.
+
 ## Fern CLI
 
 Install the pinned CLI version (matches `fern/fern.config.json`):
 
 ```bash
-npm install -g fern-api@5.82.0
+npm install -g fern-api@5.89.3
 ```
+
+Keep this Fern pin aligned with `fern/fern.config.json`, the docs Dockerfile,
+and `docs/scripts/build_holoscan_docs.py`. Committed SDK source links use the public
+GitHub repository and `main`, so they work directly in raw Markdown/MDX. The release
+publishing wrapper copies the documentation to an isolated staging directory and
+uses `docs/scripts/render_source_links.py` to render every source link with one
+validated release repository and tag before invoking Fern. The link check rejects
+mixed repositories or refs.
+
+### Tooling-owned `docs.yml` configuration
+
+Paired `begin` and `end` comments in `fern/docs.yml` delimit configuration owned by
+documentation tooling. Keep every pair unique, ordered, and intact; edit content
+inside a pair only according to the ownership described by its surrounding comment
+or publishing workflow.
+
+The release publisher copies the complete publishing-owned configuration block from
+the active publishing branch into the staged release configuration. This lets a site
+republish use current site-wide configuration while pages and release-specific
+settings still come from the immutable release tag. Only that explicitly delimited
+block is synchronized: other marked regions and unmarked settings retain their
+existing behavior. The synchronization affects assembled site staging only and does
+not rebuild or modify documentation archive snapshots.
+
+`docs.yml` sets `substitute-env-vars: false`, so Fern leaves environment expressions
+in documentation and code examples untouched.
 
 Run Fern commands from **`docs`**. The CLI discovers the configuration under
 `fern/` and selects the version pinned by `fern/fern.config.json`:

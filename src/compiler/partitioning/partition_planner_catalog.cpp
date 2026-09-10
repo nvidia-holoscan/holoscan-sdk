@@ -85,7 +85,7 @@ expected<PartitionPlannerCatalog, Error> PartitionPlannerCatalog::create(
   return PartitionPlannerCatalog{std::move(entries)};
 }
 
-expected<PartitionPlannerCatalog, Error> PartitionPlannerCatalog::create_ea1_builtins() {
+expected<PartitionPlannerCatalog, Error> PartitionPlannerCatalog::create_default_builtins() {
   const std::array registrations{
       PartitionPlannerRegistration{SerialBaselinePartitionPlanner{}.descriptor(),
                                    &make_serial_baseline_partition_planner},

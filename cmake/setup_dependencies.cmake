@@ -5,6 +5,7 @@
 # which dependency modules to load and which temporary CMake state to adjust.
 
 include(GNUInstallDirs)
+include(HoloscanApplyPatches)
 function(holoscan_add_dependency module_name)
     cmake_parse_arguments(PARSE_ARGV 1 _HOLOSCAN_ADD_DEPENDENCY "" "COMPONENT;EXPORT_SET" "")
     if(NOT "${_HOLOSCAN_ADD_DEPENDENCY_UNPARSED_ARGUMENTS}" STREQUAL "")

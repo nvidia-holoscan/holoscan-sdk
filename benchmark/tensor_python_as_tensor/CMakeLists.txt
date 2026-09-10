@@ -7,13 +7,14 @@ add_custom_target(tensor_python_as_tensor_benchmark
     SOURCES
         tensor_as_tensor_fastpath_benchmark.py
 )
+add_dependencies(tensor_python_as_tensor_benchmark holoscan-python)
 add_dependencies(holoscan-python-benchmark-targets tensor_python_as_tensor_benchmark)
 
 if(BUILD_TESTING)
     add_test(
         NAME BENCHMARK_TENSOR_PYTHON_AS_TENSOR
         COMMAND ${CMAKE_COMMAND} -E env
-                "PYTHONPATH=${CMAKE_BINARY_DIR}/python/lib"
+                "PYTHONPATH=${holoscan_BINARY_DIR}/python/lib"
                 ${Python3_EXECUTABLE}
                 "${CMAKE_CURRENT_SOURCE_DIR}/tensor_as_tensor_fastpath_benchmark.py"
                 --iterations 2000

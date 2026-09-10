@@ -33,6 +33,12 @@ enum class ParamRebindMode : std::uint8_t {
   kCompleteObject = 1,       ///< Begin with type defaults and require complete eligible input.
 };
 
+/// @brief Classify how compilation validates an override set's admission context.
+enum class ParamOverrideContextBinding : std::uint8_t {
+  kExact = 0,    ///< Require the exact context captured when the set was produced.
+  kCompile = 1,  ///< Validate configuration-produced values in the compiler's actual context.
+};
+
 /// @brief Classify the exact destination authority captured for snapshot rebinding.
 enum class ParamRebindTargetScopeKind : std::uint8_t {
   kWholeGraph = 0,   ///< Strictly address every Operator in the destination Graph.
@@ -160,9 +166,10 @@ struct ParamRebindProvenance {
   ParamSnapshotScopeKind source_scope_kind{};         ///< Source snapshot scope category.
   std::string source_scope_path;                      ///< Canonical source scope path, if any.
   ParamRebindMode mode{ParamRebindMode::kSparseContributions};  ///< Applied reconstruction mode.
-  GraphAuthoringIdentity target{};             ///< Exact target authoring identity.
-  Profile target_profile{Profile::kStandard};  ///< Captured target admission profile.
-  ParamSchemaHash admission_context_digest{};  ///< Exact immutable target context identity.
+  GraphAuthoringIdentity target{};  ///< Exact target authoring identity.
+  /// Profile used while capturing the target.
+  Profile target_profile{Profile::kStandard};
+  ParamSchemaHash admission_context_digest{};  ///< Exact context for kExact; empty for kCompile.
   ParamRebindTargetScopeKind target_scope_kind{
       ParamRebindTargetScopeKind::kWholeGraph};  ///< Explicit destination authority category.
   std::vector<std::string>
@@ -175,18 +182,20 @@ struct ParamRebindProvenance {
   std::vector<ParamRebindFieldAliasProvenance> field_aliases;        ///< Applied field aliases.
   std::vector<ParamRebindFieldProvenance> fields;         ///< Ordered archive field outcomes.
   std::vector<ParamConfigFieldProvenance> config_fields;  ///< Ordered configuration inputs.
+  ParamOverrideContextBinding context_binding{
+      ParamOverrideContextBinding::kExact};  ///< Captured or compile-time context validation.
 };
 
 /// @brief Own one immutable target-bound parameter override set.
 ///
 /// The public Core value is intentionally opaque. It is copyable and movable so a later
 /// `CompileOptions` value can own it, but it is not publicly default-constructible and exposes no
-/// mutation, persistence, rebinding, Graph, or Runtime authority. EA1-009 accepts only the private
-/// complete representation produced after target, schema, baseline, contribution, alias, and
-/// aggregate validation; the future EA1-018 document front end will construct that representation.
-/// Compilation revalidates its exact Graph and baseline binding before cloning resolved aggregates
-/// into isolated executable factories. No hidden state borrows a caller span, string view,
-/// callable, catalog entry, Graph, or authoring object.
+/// mutation, persistence, rebinding, Graph, or Runtime authority. HSDK5-009 accepts only the
+/// private complete representation produced after target, schema, baseline, contribution, alias,
+/// and aggregate validation; the future HSDK5-018 document front end will construct that
+/// representation. Compilation revalidates its exact Graph and baseline binding before cloning
+/// resolved aggregates into isolated executable factories. No hidden state borrows a caller span,
+/// string view, callable, catalog entry, Graph, or authoring object.
 class HOLOSCAN_CORE_EXPORT ParamOverrideSet {
  public:
   /// @brief Copy an immutable override set while sharing its owned immutable state.

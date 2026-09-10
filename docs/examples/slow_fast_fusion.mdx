@@ -1,11 +1,11 @@
 Real pipelines rarely run at one rate. A camera produces frames at 60 Hz while
 an IMU streams at hundreds of hertz; a control loop ticks faster than the
-perception stage feeding it. The `ea1_slow_fast_fusion` example distills this
+perception stage feeding it. The `slow_fast_fusion` example distills this
 multi-rate pattern to its essentials: a **fast** source drives every
 activation of a fusion operator, while a **slow** source contributes its most
 recent sample — but only while that sample is still fresh enough to trust.
 
-The runnable source lives at `public/examples/ea1_slow_fast_fusion/` in the
+The runnable source lives at `public/examples/slow_fast_fusion/` in the
 SDK tree.
 
 The entire policy lives in one temporal contract built from three value
@@ -43,8 +43,8 @@ fast (OnClock,  2 ms) ──► fuse.fast ─┴─ (OnEach anchor) ──► si
   value scales so you can tell their contributions apart in the output.
 - **`fuse`** (`FuseLatest`) activates once per fast sample, adds the newest
   fresh slow value to it, and emits the result.
-- **`sink`** (`BoundedSink`) records each fused value; the main routine stops
-  the run after a bounded number of observations.
+- **`sink`** (`BoundedSink`) records each fused value and requests immediate
+  whole-run success after the sixth sample.
 
 The example is deliberately host-only and numeric — no tensors, no devices —
 so every line of it is about temporal behavior.
@@ -173,7 +173,7 @@ The application root is the ordinary three-phase sequence — no wrapper class,
 just a `Graph`, free `compile()`, and `run_async()`:
 
 ```cpp
-holoscan::Graph graph{"ea1-slow-fast-fusion"};
+holoscan::Graph graph{"holoscan-slow-fast-fusion"};
 // ... graph.op<...>(...) for slow, fast, fuse, sink ...
 graph.add_flow(slow->output, fuse->slow, holoscan::ConnectionOptions{.queue_depth = 8U});
 graph.add_flow(fast->output, fuse->fast, holoscan::ConnectionOptions{.queue_depth = 16U});
@@ -187,9 +187,10 @@ if (!plan.ok()) {
 }
 
 holoscan::RunSession session = holoscan::run_async(plan);
-// ... wait for a bounded number of fused samples ...
-session.request_stop();
 session.wait();
+if (session.termination() != holoscan::RunTermination::kRequestedCompleted) {
+  return 1;
+}
 ```
 
 The connections carry explicit `queue_depth` bounds — the fast edge gets the
@@ -197,8 +198,12 @@ deeper queue (16) because it carries an order of magnitude more traffic. The
 graph registers a `RealtimeClock` as its default, which both `OnClock`
 triggers and the `LatestWithin` age comparison read from. `compile()` either
 returns a plan that is `ok()` or a rejected plan whose `json()` explains why;
-the run itself is started asynchronously and stopped cooperatively with
-`request_stop()` once the sink has seen enough samples. These mechanics are
+the run itself is started asynchronously, and the sink calls
+`request_completion()` after its sixth sample. The accepted request closes
+new callback admission for the whole session and reports
+`kRequestedCompleted`. It is immediate whole-run success, not EOS: it does not
+guarantee source closure, downstream drain, or delivery of queued samples.
+These mechanics are
 covered in [composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph)
 and [running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
 
@@ -212,7 +217,7 @@ plan publication.
 From the SDK examples build, the binary takes no arguments for a live run:
 
 ```bash
-./ea1_slow_fast_fusion
+./slow_fast_fusion
 ```
 
 A successful run ends with a line like:
@@ -232,7 +237,7 @@ What to look for:
   fusion operator's age-gated slow input alongside its anchor. Queried via
   `plan.temporal_triggers()` and `plan.input_selections()`.
 - **`fused_samples`** — the count of fused values the sink observed before
-  the program requested a stop (it waits for at least 6). Each one is proof
+  it requested completion at sample 6. Each one is proof
   that a fast activation found a fresh-enough slow sample.
 - **`last_value`** — the most recent fused value. Because the slow source
   scales by 100 and the fast source by 1, you can decompose any fused value
@@ -242,9 +247,9 @@ What to look for:
   `LatestWithin` reusing the newest admitted slow sample until a newer one
   arrives.
 
-The program exits nonzero if the run terminates for any reason other than the
-requested stop, or if any diagnostics were recorded — a compact illustration
-of the fail-closed run posture.
+The program exits nonzero unless the run reports `kRequestedCompleted` with no
+diagnostics — a compact illustration of explicit success and the fail-closed
+run posture.
 
 ## Recap
 
@@ -256,6 +261,8 @@ of the fail-closed run posture.
   decision before it ran.
 - Emitting the moved anchor sample forwards its whole `SampleMetadata` —
   capture time and clock identity survive fusion.
+- The sink requests immediate whole-run success after sample 6; that boundary
+  deliberately provides no EOS or downstream-drain guarantee.
 - The compiled plan exposes the lowered contract as data
   (`temporal_triggers()`, `input_selections()`), which the program prints.
 
