@@ -303,6 +303,103 @@ fails before retaining the sample and reports
 result.on_missing(imu, holoscan::ReuseLast{.max_age = 20ms});
 ```
 
+### Optional unwired inputs
+
+Inputs are required by default. An operator permits intentional absence with
+`holoscan::InputSpecBuilder::optional()` in `setup()`, then chooses the single-sample
+`Exact{}` selector and explicit `SafeDefault{}` in its contract. Calling `.optional()`
+again is harmless. A graph cannot grant this permission on the operator's behalf.
+“Single-sample” describes selector cardinality, not payload type: scalar values,
+generated schemas, `Tensor`, descriptor-backed schemas, and admitted raw POD
+payloads use the same absence contract.
+
+The annotation is validated even when the input is wired. It cannot mark a
+trigger driver, an aligned member, a window selector or anchor, or an input
+used by a predicate evaluator. Ordinary compute-only side inputs under
+`OnWindow` and `OnPredicate` are eligible. They preserve the existing phase
+order: a false predicate does not fire, and a selector that has not been reached
+remains `kNotSelected`.
+
+This `holoscan.core` operator owns its fallback value. The surrounding graph
+must select a default clock for its periodic trigger.
+
+```cpp
+class OptionalSensor final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(sensor, "sensor").optional();
+    spec.output(value, "value");
+  }
+
+  holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnClock{.period = std::chrono::milliseconds{20}})
+        .input(sensor, holoscan::Exact{})
+        .on_missing(sensor, holoscan::SafeDefault{});
+    return result;
+  }
+
+  holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    auto sample = sensor.receive();
+    if (!sample && sample.error().code != holoscan::ErrorCode::kInputEmpty) {
+      return holoscan::make_unexpected(sample.error());
+    }
+    return value.emit(sample ? sample->data : 1.0F);
+  }
+
+  holoscan::Input<float> sensor;
+  holoscan::Output<float> value;
+};
+```
+
+For `OnAligned`, list only the inputs that must form the aligned tuple. Other
+inputs declared with `.optional()` in `setup()` can be optional side inputs:
+
+```cpp
+holoscan::Contract result;
+result
+    .trigger(holoscan::OnAligned{
+        .ports = holoscan::ports(camera, imu),
+        .window = 2ms,
+    })
+    .input(camera, holoscan::Exact{})
+    .input(imu, holoscan::Exact{})
+    .input(optional_sensor, holoscan::Exact{})
+    .on_missing(optional_sensor, holoscan::SafeDefault{});
+return result;
+```
+
+Here, `camera` and `imu` remain required aligned members and provide all
+activation authority. `optional_sensor` is evaluated at the aligned tuple's
+semantic time but does not cause activation. Adding it to `OnAligned::ports`
+conflicts with its optional declaration and is rejected even when it is wired.
+
+`compile()` admits this graph and emits
+`TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT` as a port-scoped warning. The warning
+has no suppression API: connect the input if it is required, or retain the
+warning as review-visible evidence that the degraded topology is intentional.
+Omitting `.optional()` keeps the input required: a valid unwired contract fails
+with `TEMPORAL_INPUT_UNCONNECTED`. An invalid explicit optional declaration reports
+`TEMPORAL_INPUT_OPTIONAL_INVALID` whether wired or unwired. The diagnostic names
+the operator and port and explains the incompatible selector, missing policy,
+or trigger role. Correct the contract or remove `.optional()` and wire the input.
+Independently malformed contracts keep their
+existing validation errors.
+
+At runtime, compute executes the degraded path without a fabricated sample or
+transport subscriber. `optional_sensor.selection()` returns
+`InputState::kSafeDefault` with `SelectionReason::kNotConnected`. The single-sample
+`receive()` and `receive_data()` accessors return `ErrorCode::kInputEmpty`.
+Calling `selected_batch()` on this single-sample selector returns
+`ErrorCode::kInputSelectionCardinalityMismatch`, just as it does when connected. A connected
+`Exact{} + SafeDefault{}` input reports `SelectionReason::kNeverSeen` before
+observing a sample or source closure. Other missing selections retain their
+ordinary reasons, such as `kCaptureTimeAbsent` or `kEndOfStream`.
+
+An unwired side input has no producer and therefore does not delay natural
+completion while the runtime waits for end of stream from connected inputs.
+
 The two `max_age` fields compose naturally: `LatestWithin{.max_age = 5ms}`
 bounds how stale a *fresh* selection may be, while `ReuseLast{.max_age = 20ms}`
 bounds how long a *previously admitted* sample may stand in when no fresh one

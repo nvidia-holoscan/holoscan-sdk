@@ -6,7 +6,6 @@
 #include "channel_inline_payload.hpp"
 
 #include <holomq/delivery_attribution.hpp>
-#include <holomq/detail/wait_set_runtime_access.hpp>
 #include <holomq/inbound_message.hpp>
 #include <holomq/outbound_message.hpp>
 #include <holomq/publisher.hpp>
@@ -628,10 +627,27 @@ class InlinePayloadWaitSetImpl final : public InlinePayloadWaitSet {
         .spin_duration = std::chrono::nanoseconds{0},
         .timeout = timeout,
     };
-    // The Runtime pump drains every attached endpoint to its finite capacity after each wait,
-    // including timeouts. A publication racing the next block posts a kernel notification, so the
-    // public WaitSet precheck would only repeat the pump's just-completed O(N) readiness scan.
-    auto waited = holomq::detail::WaitSetRuntimeAccess::wait_assuming_no_ready(wait_set_, strategy);
+    // Use the checked wait. The unchecked entry point assumed the pump's preceding drain left
+    // nothing ready, so the pre-block readiness scan would be redundant. That does not hold: an
+    // endpoint can become ready between the drain and the block, and the pump then commits to
+    // blocking on a sample it already owns, waiting for the next publisher notification to release
+    // it. Measured on graph_intraprocess_docs_pod_1to2_per_sink_latency, that cost 41 blocks per
+    // 60k samples in a 0.9-1.2 ms band -- every one of them ended in a notification, not a timeout
+    // -- and moved end-to-end p999 from ~35 us to ~1.07 ms.
+    //
+    // The scan is not a cost on this path: it retires roughly a quarter of the blocks outright
+    // (84.4k -> 63.3k per run) because it finds the sample already queued, so this trades a
+    // blocking syscall for an O(N) shared-memory probe. The median is unchanged or slightly better.
+    //
+    // Known cost: while a subscriber's typed slot is still occupied and its raw queue holds a
+    // further sample, the scan reports ready on every iteration, so the pump re-probes that
+    // subscriber (a failed reservation under its input cache mutex) instead of blocking until the
+    // slot frees. That window is bounded by the consumer's per-sample occupancy, not by the whole
+    // backpressure interval; measured at roughly 15-20 % more pump CPU on the paced, saturated, and
+    // slow-sink rows of the same benchmark, never a full core. Excluding a subscriber with a
+    // retained head from the pre-block scan is the follow-up; skipping the scan for the pump again
+    // is not, that was this defect.
+    auto waited = wait_set_.wait(strategy);
     if (!waited) {
       return make_unexpected(from_holomq_error(std::move(waited).error()));
     }

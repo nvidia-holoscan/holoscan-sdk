@@ -7,10 +7,19 @@ project(holoscan_inference_installed_consumer LANGUAGES CXX)
 
 set(CMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY TRUE)
 set(CMAKE_FIND_PACKAGE_NO_SYSTEM_PACKAGE_REGISTRY TRUE)
-find_package(holoscan REQUIRED CONFIG COMPONENTS inference
-    PATHS "${CMAKE_PREFIX_PATH}"
-    NO_DEFAULT_PATH
-)
+set(CMAKE_DISABLE_FIND_PACKAGE_yaml-cpp TRUE)
+if(HOLOSCAN_PACKAGE_FIND_MODE STREQUAL "module")
+    if(NOT DEFINED HOLOSCAN_MODULE_PACKAGE_DIR OR HOLOSCAN_MODULE_PACKAGE_DIR STREQUAL "")
+        message(FATAL_ERROR "HOLOSCAN_MODULE_PACKAGE_DIR is required for module package discovery")
+    endif()
+    set(holoscan-inference_DIR "${HOLOSCAN_MODULE_PACKAGE_DIR}")
+    find_package(holoscan-inference CONFIG REQUIRED)
+else()
+    find_package(holoscan COMPONENTS inference REQUIRED
+        PATHS "${CMAKE_PREFIX_PATH}"
+        NO_DEFAULT_PATH
+    )
+endif()
 
 if(NOT TARGET holoscan::infer OR NOT TARGET holoscan::op_inference)
     message(FATAL_ERROR "Installed package did not define the inference targets")
@@ -30,7 +39,11 @@ target_link_libraries(holoscan_inference_installed_consumer
 
 include(CTest)
 if(BUILD_TESTING)
-    get_filename_component(_inference_install_prefix "${holoscan_DIR}/../../.." ABSOLUTE)
+    if(HOLOSCAN_PACKAGE_FIND_MODE STREQUAL "module")
+        get_filename_component(_inference_install_prefix "${holoscan-inference_DIR}/../../.." ABSOLUTE)
+    else()
+        get_filename_component(_inference_install_prefix "${holoscan_DIR}/../../.." ABSOLUTE)
+    endif()
     add_test(NAME holoscan_inference_installed_consumer.run
         COMMAND holoscan_inference_installed_consumer
     )

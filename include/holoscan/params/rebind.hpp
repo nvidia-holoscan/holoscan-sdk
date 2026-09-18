@@ -8,7 +8,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <span>
 #include <string>
 #include <utility>
@@ -16,17 +15,11 @@
 
 #include <holoscan/holoscan_params_export.h>
 #include <holoscan/core/graph.hpp>
-#include <holoscan/core/parameter_override_set.hpp>
+#include <holoscan/core/parameter_provenance.hpp>
 #include <holoscan/core/parameter_snapshot.hpp>
-#include <holoscan/core/profile.hpp>
 #include <holoscan/params/error.hpp>
 
 namespace holoscan::params {
-
-namespace detail {
-struct ParamAdmissionContextState;
-struct ParamRebindTargetState;
-}  // namespace detail
 
 using ::holoscan::ParamFieldRebindDisposition;
 using ::holoscan::ParamFieldRebindOrigin;
@@ -189,8 +182,8 @@ struct ParamSchemaIdentity {
 };
 
 /// @brief Carry one qualified directed schema migration request.
-/// @note baseline rejects a nonempty chain unless the installed admission context can resolve every
-/// evidence ID to an immutable qualified migration implementation.
+/// @note The current implementation rejects nonempty migration chains because no migration
+/// implementation catalog is installed yet.
 struct ParamMigrationStep {
   ParamSchemaHash evidence_id{};             ///< Qualified immutable migration evidence ID.
   ParamSchemaIdentity from_schema_identity;  ///< Exact directed source endpoint.
@@ -268,125 +261,30 @@ class ParamRebindTargetScope {
 struct ParamRebindOptions {
   /// Coverage construction mode.
   ParamRebindMode mode{ParamRebindMode::kSparseContributions};
-  /// Borrowed directed Operator aliases consumed synchronously by to_overrides().
+  /// Borrowed directed Operator aliases consumed synchronously by set_params().
   std::span<const ParamOperatorAlias> operator_aliases{};
-  /// Borrowed directed field aliases consumed synchronously by to_overrides().
+  /// Borrowed directed field aliases consumed synchronously by set_params().
   std::span<const ParamFieldAlias> field_aliases{};
-  /// Borrowed ordered migration chain consumed synchronously by to_overrides().
+  /// Borrowed ordered migration chain consumed synchronously by set_params().
   std::span<const ParamMigrationStep> migration_chain{};
 };
 
-/// @brief Own immutable profile and package policy used while capturing a target.
-///
-/// The context is cheap to copy and owns its policy state. Concurrent const access
-/// is safe. The baseline exposes only standard(); future named admission contexts require
-/// separate qualified package evidence.
-class HOLOSCAN_PARAMS_EXPORT ParamAdmissionContext {
- public:
-  /// @brief Return the standard local authoring context.
-  /// @return Owning standard-profile context, or a typed failure if unavailable.
-  /// @note This cold operation may allocate and does not mutate a Graph.
-  [[nodiscard]] static ParamRebindResult<ParamAdmissionContext> standard();
-
-  /// @brief Return the requested profile.
-  [[nodiscard]] Profile profile() const noexcept;
-
- private:
-  explicit ParamAdmissionContext(std::shared_ptr<const detail::ParamAdmissionContextState> state)
-      : state_(std::move(state)) {}
-  std::shared_ptr<const detail::ParamAdmissionContextState> state_;
-  friend ParamRebindResult<class ParamRebindTarget> make_param_rebind_target(
-      Graph&, const ParamAdmissionContext&, const ParamRebindTargetScope&);
-};
-
-/// @brief Own one compose-once immutable target Graph snapshot and local factory inventory.
-///
-/// The target is process-local, cheap to copy, and retains the materialization
-/// operations required to construct typed override aggregates. It owns no Graph
-/// reference or runtime authority. Concurrent const use is safe after capture.
-class HOLOSCAN_PARAMS_EXPORT ParamRebindTarget {
- public:
-  /// @brief Copy one immutable shared target view.
-  ParamRebindTarget(const ParamRebindTarget&) noexcept = default;
-  /// @brief Move one immutable shared target view.
-  ParamRebindTarget(ParamRebindTarget&&) noexcept = default;
-  /// @brief Replace this view with a copy of another immutable target.
-  ParamRebindTarget& operator=(const ParamRebindTarget&) noexcept = default;
-  /// @brief Replace this view by moving another immutable target.
-  ParamRebindTarget& operator=(ParamRebindTarget&&) noexcept = default;
-  /// @brief Release this view and its process-local target state when last-owned.
-  ~ParamRebindTarget();
-
-  /// @brief Return the exact captured Graph authoring identity.
-  /// @note Safe for concurrent reads.
-  [[nodiscard]] GraphAuthoringIdentity identity() const noexcept;
-
-  /// @brief Return the exact destination authority category captured by this target.
-  [[nodiscard]] ParamRebindTargetScopeKind scope_kind() const noexcept;
-
-  /// @brief Return canonical exact paths defining this target scope.
-  /// @return Empty for whole-Graph scope, one path for Graph/Operator scope, or a sorted set.
-  /// @note The view remains valid while this target owns its current state.
-  [[nodiscard]] std::span<const std::string> scope_paths() const noexcept;
-
-  /// @brief Return the domain-separated identity of the selected target schemas.
-  /// @return Digest over scope kind, canonical scope paths, and exact selected schemas.
-  [[nodiscard]] ParamSchemaHash selection_digest() const noexcept;
-
- private:
-  explicit ParamRebindTarget(std::shared_ptr<const detail::ParamRebindTargetState> state)
-      : state_(std::move(state)) {}
-  std::shared_ptr<const detail::ParamRebindTargetState> state_;
-  friend ParamRebindResult<ParamRebindTarget> make_param_rebind_target(
-      Graph&, const ParamAdmissionContext&, const ParamRebindTargetScope&);
-  friend ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot&,
-                                                          const ParamRebindTarget&,
-                                                          ParamRebindOptions);
-};
-
-/// @brief Capture one immutable target Graph under an explicit admission context.
-/// @param graph Draft Graph to inspect synchronously; no reference is retained.
-/// @param context Immutable admission policy to apply.
-/// @param scope Owning exact destination authority; defaults to strict whole-Graph capture.
-/// @return Owning immutable target or a typed capture/admission failure.
-/// @note This cold operation may allocate. Do not mutate graph concurrently.
-[[nodiscard]] HOLOSCAN_PARAMS_EXPORT ParamRebindResult<ParamRebindTarget> make_param_rebind_target(
-    Graph& graph, const ParamAdmissionContext& context,
-    const ParamRebindTargetScope& scope = ParamRebindTargetScope::whole_graph());
-
-/// @brief Convert one owning snapshot into target-bound scalar override contributions.
-/// @param snapshot Owning source snapshot; values are copied into the result.
-/// @param target Immutable target captured from the destination Graph.
+/// @brief Stage one snapshot as an all-or-nothing graph-owned parameter input.
+/// @param graph Destination Graph that owns the pending transaction.
+/// @param snapshot Owning reusable source snapshot.
+/// @param target_scope Exact destination authority, resolved without capturing the Graph.
 /// @param options Coverage mode and borrowed directed conversion tables.
-/// @return Complete immutable override set or one typed all-or-nothing failure.
-/// @note This cold operation may allocate and performs no Graph mutation. The baseline executes
-/// exact direct and alias resolution. A nonempty migration chain fails closed until qualified
-/// package migration implementations are installed; no heuristic name conversion is performed.
-[[nodiscard]] HOLOSCAN_PARAMS_EXPORT ParamRebindResult<ParamOverrideSet> to_overrides(
-    const ParamSnapshot& snapshot, const ParamRebindTarget& target,
-    ParamRebindOptions options = {});
-
-/// @brief Convert one snapshot using the standard local target context.
-/// @param snapshot Owning source snapshot; values are copied into the result.
-/// @param graph Draft Graph captured synchronously under the standard context.
-/// @param options Coverage mode and borrowed directed conversion tables.
-/// @return Complete immutable override set or one typed capture/conversion failure.
-/// @note This cold convenience may allocate and does not mutate graph. Do not mutate graph
-/// concurrently.
-[[nodiscard]] HOLOSCAN_PARAMS_EXPORT ParamRebindResult<ParamOverrideSet> to_overrides(
-    const ParamSnapshot& snapshot, Graph& graph, ParamRebindOptions options = {});
-
-/// @brief Convert one snapshot into an explicitly scoped standard local target.
-/// @param snapshot Owning source snapshot; every source record must map into target_scope.
-/// @param graph Draft Graph captured synchronously under the standard context.
-/// @param target_scope Owning exact destination authority, independent of snapshot scope.
-/// @param options Coverage mode and borrowed directed conversion tables.
-/// @return Complete immutable override set or one typed capture/conversion failure.
-/// @note This cold convenience may allocate and does not mutate graph. Sparse mode may omit
-/// selected destination Operators, but neither sparse nor complete mode ignores an out-of-scope
-/// source record. Do not mutate graph concurrently.
-[[nodiscard]] HOLOSCAN_PARAMS_EXPORT ParamRebindResult<ParamOverrideSet> to_overrides(
-    const ParamSnapshot& snapshot, Graph& graph, const ParamRebindTargetScope& target_scope,
+/// @return Owning conversion provenance or one typed attachment failure.
+/// @note Compilation resolves final paths, profiles, schemas, and parameter baselines. This call
+/// does not capture a Graph snapshot or retain the destination Graph in the parameter input.
+/// @note This call mutates Graph authoring state and must not run concurrently with Graph mutation.
+/// Configuration and snapshot attachment share one transaction slot, including across embedded
+/// Graphs. A second transaction fails instead of replacing the first.
+/// @note Attachment is not a non-mutating compatibility preflight. Compile a disposable Graph when
+/// validation must not alter the intended destination.
+[[nodiscard]] HOLOSCAN_PARAMS_EXPORT ParamRebindResult<ParamRebindProvenance> set_params(
+    Graph& graph, const ParamSnapshot& snapshot,
+    const ParamRebindTargetScope& target_scope = ParamRebindTargetScope::whole_graph(),
     ParamRebindOptions options = {});
 
 }  // namespace holoscan::params

@@ -174,21 +174,25 @@ auto Iox2WaitSetBackend::wait_kernel(const WaitStrategy& strategy,
     -> holomq::expected<WaitResult, holomq::ErrorCode> {
   const auto spin_until = std::chrono::steady_clock::now() + strategy.spin_duration;
 
-  // Public waits poll readiness at least once before blocking. That protects an unbounded caller
-  // when a queued sample has no corresponding notification. The Runtime uses the unchecked entry
-  // point only after its pump has exhaustively drained every endpoint, so its zero-spin hot path
-  // can skip this repeated O(N) scan.
+  // Every kernel wait polls readiness at least once before blocking. That protects a caller when a
+  // queued sample has no corresponding notification, and it closes the drain-to-block race: an
+  // endpoint can become ready after a caller's drain and before its block, and blocking then waits
+  // for the next publisher notification to release a sample the caller already owns. The Runtime
+  // channel pump used to skip this scan through the unchecked entry point on the assumption that
+  // its preceding drain left nothing ready; measured on
+  // graph_intraprocess_docs_pod_1to2_per_sink_latency, that assumption cost 41 blocks per 60k
+  // samples in a 0.9-1.2 ms band. No caller skips the scan any more: precheck_ready is always true
+  // today and is retained only as the seam for a narrowly gated unchecked wait, should one ever be
+  // justified.
   //
   // A checked wait yields once even at spin_duration zero, and that is deliberate: it is
-  // load-bearing when a caller has not established the Runtime pump's exhaustive-drain invariant.
-  // A single-slot receive and notification pair can otherwise fall into lockstep when the caller
-  // blocks straight out of a not-ready poll: the publisher's notify is rejected because the slot
-  // is still full, and progress reverts to the wait timeout instead of a wake.
+  // load-bearing for a caller that blocks straight out of a not-ready poll. A single-slot receive
+  // and notification pair can otherwise fall into lockstep: the publisher's notify is rejected
+  // because the slot is still full, and progress reverts to the wait timeout instead of a wake.
   // Measured on the graph interprocess POD 1:1 saturated benchmark, dropping this yield cost
   // 175,919 -> 8,769 msg/s, moved end-to-end p99 from 9.9 us to 3.7 ms, and drove publisher
   // notification attempts per accepted notification from 9.5 to 300.8. The median is untouched
-  // either way, so a latency-percentile or unit test will not catch its removal. The private
-  // Runtime entry skips both this check and yield only after its preceding endpoint drain.
+  // either way, so a latency-percentile or unit test will not catch its removal.
   if (precheck_ready || strategy.spin_duration > std::chrono::nanoseconds::zero()) {
     do {
       auto ready = collect_ready_handles();

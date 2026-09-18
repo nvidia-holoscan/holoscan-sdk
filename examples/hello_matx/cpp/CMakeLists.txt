@@ -30,5 +30,5 @@ endif()
 
 install(TARGETS hello_matx
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/hello_matx/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

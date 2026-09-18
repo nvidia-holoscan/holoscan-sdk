@@ -9,6 +9,7 @@
 
 #include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
 #include <holoscan/schema/inline_flatbuffer_payload.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/image_metadata.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 
@@ -32,7 +33,6 @@ namespace channel_schema_test {
 using StringPayload = schema::InlineFlatBufferPayloadFor<schema::String>;
 using TimePayload = schema::InlineFlatBufferPayloadFor<schema::Time>;
 using ImuPayload = schema::InlineFlatBufferPayloadFor<schema::Imu>;
-using ImagePayload = schema::InlineFlatBufferPayloadFor<schema::Image>;
 using DescriptorBackedImagePayload = schema::DescriptorFlatBufferPayloadFor<schema::Image>;
 using MultiTensorStagingPayload = schema::DescriptorFlatBufferPayload<schema::Image, 512U, 3U>;
 using ResolvedImageMetadata = ChannelTensorSchemaMetadata<DescriptorBackedImagePayload>;

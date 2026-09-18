@@ -34,3 +34,13 @@ once the application is running.
     <img src="images/gsync_opengl_settings.png" alt="Enable Visual Indicator for the current display" />
     <figcaption style="margin-top: 0.5em;">Enable Visual Indicator for the current display</figcaption>
     </figure>
+
+4. On an X11 desktop the driver only engages G-SYNC for a fullscreen window it can flip
+rather than composite, so the indicator in the top-left corner has to read `FLIP` (not `BLIT`).
+On Ubuntu GNOME the AppIndicator extension's legacy tray keeps every window composited; turn it
+off with `gsettings set org.gnome.shell.extensions.appindicator legacy-tray-enabled false`. The
+G-SYNC panel also has to be the only active output on the X screen, and the application's frame
+rate has to stay inside the panel's variable-refresh range. When the target panel is not the
+primary output, export `__GL_SYNC_DISPLAY_DEVICE=<output>` before launching the application (the
+driver reads it once, when Vulkan first loads; Holoscan operators do not set it). The Holoscan
+visualization module README ("Fullscreen windows and G-Sync/VRR") lists the full set of conditions.

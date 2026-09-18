@@ -32,6 +32,7 @@
 #include <holoscan/core/parameter_catalog.hpp>
 #include <holoscan/core/run.hpp>
 #include <holoscan/time/clock.hpp>
+#include <holoscan/time/realtime_clock.hpp>
 
 #include "common/allocation_counter.hpp"
 #include "runtime/lifecycle_control_state.hpp"
@@ -484,7 +485,8 @@ class LifecycleControlProbeOperator final : public Operator<> {
     LifecycleControlProbeState::record(
         {.kind = ProbeEventKind::kComputeReturned, .identity = identity_, .tag = context.tag()});
     if (action_ == ProbeAction::kRequestSelfThenFail) {
-      return make_unexpected(Error{ErrorCode::kFailure});
+      return make_unexpected(
+          Error{ErrorCode::kFailure, "compute failure after queued self restart"});
     }
     return {};
   }
@@ -566,7 +568,10 @@ class LifecycleClockRestartProbeOperator final : public Operator<> {
   [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     LifecycleControlProbeState::record(
         {.kind = ProbeEventKind::kComputeEntered, .identity = identity_, .tag = context.tag()});
-    if (action_ == ProbeAction::kRequestCross) {
+    if (action_ == ProbeAction::kRequestSelf) {
+      LifecycleControlProbeState::save_request(context.request_restart(), identity_);
+      LifecycleControlProbeState::wait_until_released();
+    } else if (action_ == ProbeAction::kRequestCross) {
       const OperatorRef target = LifecycleControlProbeState::wait_for_cross_target();
       LifecycleControlProbeState::save_request(context.request_restart(target), identity_);
       LifecycleControlProbeState::wait_until_released();
@@ -585,6 +590,19 @@ class LifecycleClockRestartProbeOperator final : public Operator<> {
         .params_generation = context.params_generation(),
         .callback_identity = detail::runtime_callback_identity(),
     });
+    if (LifecycleControlProbeState::consume_lifecycle_failure(
+            identity_, stage, context.transition_phase())) {
+      const auto phase = context.transition_phase();
+      context.report_error(phase == LifecycleTransitionPhase::kRestartForward
+                               ? ErrorCode::kInvalidArgument
+                               : ErrorCode::kFailure,
+                           phase == LifecycleTransitionPhase::kRestartForward
+                               ? "candidate warm-up failure"
+                               : (phase == LifecycleTransitionPhase::kForwardRollback
+                                      ? "candidate rollback failure"
+                                      : "previous lifecycle restoration failure"));
+      return LifecycleStatus::kFatalFailure;
+    }
     return LifecycleStatus::kOk;
   }
 
@@ -779,6 +797,58 @@ class PreDispatchReleaseGuard {
       .max_quiesce_records = 256U,
       .max_rollback_records = 256U,
   };
+}
+
+class AdvisoryRestartProbe final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.lifecycle().stage(LifecycleStage::kConfigure, &AdvisoryRestartProbe::configure);
+  }
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+  expected<void, Error> compute(ExecutionContext& context) override {
+    if (requests_++ == 15U) {
+      context.request_completion();
+      return {};
+    }
+    auto requested = context.request_restart();
+    if (!requested) {
+      return make_unexpected(std::move(requested.error()));
+    }
+    return {};
+  }
+  LifecycleStatus configure(LifecycleContext& context) noexcept {
+    if (context.transition_phase() != LifecycleTransitionPhase::kRestartForward) {
+      return LifecycleStatus::kOk;
+    }
+    context.report_error(ErrorCode::kInvalidArgument, "recoverable restart failure");
+    return LifecycleStatus::kFatalFailure;
+  }
+
+ private:
+  std::size_t requests_{};
+};
+
+TEST(LifecycleControl, RecoveredRestartOverflowRemainsASuccessfulAdvisoryReport) {
+  Graph graph{"advisory-restart-overflow"};
+  const auto probe = graph.op<AdvisoryRestartProbe>("probe");
+  graph.lifecycle().allow_self_restart(probe);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("clock"));
+  CompileOptions options;
+  options.lifecycle_transactions = ample_lifecycle_capacity();
+  const auto plan = compile(graph, options);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto session = run_async(plan);
+  session.wait();
+  EXPECT_EQ(session.termination(), RunTermination::kRequestedCompleted);
+  ASSERT_EQ(session.diagnostics().size(), 15U);
+  EXPECT_EQ(session.diagnostics().back().token, "RUNTIME_DIAGNOSTIC_CAPACITY_EXHAUSTED");
+  for (const auto& diagnostic : session.diagnostics()) {
+    EXPECT_EQ(diagnostic.severity, DiagnosticSeverity::kWarning);
+  }
 }
 
 [[nodiscard]] LifecycleTransactionOptions exact_active_successor_capacity() {
@@ -1006,6 +1076,26 @@ void expect_lifecycle_failure(const detail::LifecycleExecutionFailure& failure,
 
 void expect_no_lifecycle_failure(const detail::LifecycleExecutionFailure& failure) {
   EXPECT_FALSE(failure.present);
+}
+
+void expect_public_lifecycle_cause(const RunSession& session, LifecycleTransactionId transaction,
+                                   LifecycleStage stage, LifecycleTransitionPhase phase,
+                                   DiagnosticFailureRole role) {
+  const auto diagnostics = session.diagnostics();
+  const auto found = std::find_if(diagnostics.begin(), diagnostics.end(), [&](const auto& row) {
+    return row.detail && row.detail->stage == stage && row.detail->phase == phase;
+  });
+  ASSERT_NE(found, diagnostics.end());
+  const auto& found_detail = found->detail;
+  if (!found_detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(found_detail->transaction_id, transaction);
+  EXPECT_EQ(found_detail->role, role);
+  EXPECT_FALSE(found_detail->operator_path.empty());
+  EXPECT_EQ(found_detail->error.code, ErrorCode::kLifecycleStageFailed);
+  EXPECT_FALSE(found_detail->error.message.empty());
+  EXPECT_EQ(found_detail->primary_diagnostic_index, 0U);
 }
 
 // REQ: RUNTIME-008
@@ -2169,6 +2259,7 @@ TEST(LifecycleControl, SelfRequestWaitsForCurrentComputeRetirementAndDefaultsToC
 }
 
 // REQ: RUNTIME-008
+// REQ: RUNTIME-054
 TEST(LifecycleControl, RestartForwardFailureRollsBackAndRestoresThePublishedLifecycle) {
   LifecycleControlProbeState::reset();
   LifecycleControlProbeState::fail_lifecycle_once(
@@ -2199,6 +2290,20 @@ TEST(LifecycleControl, RestartForwardFailureRollsBackAndRestoresThePublishedLife
   EXPECT_EQ(completed->state, LifecycleTransactionState::kRolledBack);
   session.wait();
   ASSERT_EQ(session.termination(), RunTermination::kCompleted) << diagnostic_tokens(session);
+  const auto failure = std::find_if(
+      session.diagnostics().begin(), session.diagnostics().end(), [](const Diagnostic& diagnostic) {
+        return diagnostic.detail && diagnostic.detail->stage == LifecycleStage::kWarmUp &&
+               diagnostic.detail->phase == LifecycleTransitionPhase::kRestartForward;
+      });
+  ASSERT_NE(failure, session.diagnostics().end());
+  const auto& failure_detail = failure->detail;
+  if (!failure_detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(failure->severity, DiagnosticSeverity::kWarning);
+  EXPECT_EQ(failure_detail->transaction_id, completed->transaction_id);
+  EXPECT_FALSE(failure_detail->operator_path.empty());
+  EXPECT_TRUE(failure->source.vertex);
 
   const std::vector events = LifecycleControlProbeState::snapshot();
   EXPECT_NE(first_phase_index(events, 1, LifecycleTransitionPhase::kStartupForward), events.size());
@@ -2286,6 +2391,11 @@ TEST(LifecycleControl, RestartRollbackFailurePreservesTheCandidateFailureSeparat
                            LifecycleTransitionPhase::kForwardRollback);
   expect_no_lifecycle_failure(receipt_diagnostics.front().restoration_failure);
   expect_no_lifecycle_failure(receipt_diagnostics.front().restoration_rollback_failure);
+  expect_public_lifecycle_cause(session,
+                                completed->transaction_id,
+                                LifecycleStage::kRelease,
+                                LifecycleTransitionPhase::kForwardRollback,
+                                DiagnosticFailureRole::kRollback);
 }
 
 // REQ: RUNTIME-008
@@ -2346,6 +2456,11 @@ TEST(LifecycleControl, RestartRestorationFailureStopsTheRunAndMarksTheReceiptFai
                            LifecycleStage::kConfigure,
                            LifecycleTransitionPhase::kRestoreOld);
   expect_no_lifecycle_failure(receipt_diagnostics.front().restoration_rollback_failure);
+  expect_public_lifecycle_cause(session,
+                                completed->transaction_id,
+                                LifecycleStage::kConfigure,
+                                LifecycleTransitionPhase::kRestoreOld,
+                                DiagnosticFailureRole::kRestoration);
 }
 
 // REQ: RUNTIME-008
@@ -2401,6 +2516,16 @@ TEST(LifecycleControl, RestorationRollbackFailurePreservesEveryFailureStageSepar
                            1U,
                            LifecycleStage::kRelease,
                            LifecycleTransitionPhase::kForwardRollback);
+  expect_public_lifecycle_cause(session,
+                                completed->transaction_id,
+                                LifecycleStage::kWarmUp,
+                                LifecycleTransitionPhase::kRestoreOld,
+                                DiagnosticFailureRole::kRestoration);
+  expect_public_lifecycle_cause(session,
+                                completed->transaction_id,
+                                LifecycleStage::kRelease,
+                                LifecycleTransitionPhase::kForwardRollback,
+                                DiagnosticFailureRole::kRollback);
 }
 
 // REQ: RUNTIME-008
@@ -2623,12 +2748,144 @@ TEST(LifecycleControl, StopAndRestartFencesSuppressQueuedCandidateDeadlineGate) 
   }
 }
 
+// REQ: RUNTIME-054
+// REQ: LIFECYCLE-013
+TEST(LifecycleControl, SingleOwnerFatalRestartPreservesPrimaryAndRecoveryContext) {
+  struct RecoveryCase {
+    LifecycleStage stage;
+    LifecycleTransitionPhase phase;
+    DiagnosticFailureRole role;
+    const char* message;
+  };
+  constexpr std::array recoveries{
+      RecoveryCase{LifecycleStage::kRelease,
+                   LifecycleTransitionPhase::kForwardRollback,
+                   DiagnosticFailureRole::kRollback,
+                   "candidate rollback failure"},
+      RecoveryCase{LifecycleStage::kConfigure,
+                   LifecycleTransitionPhase::kRestoreOld,
+                   DiagnosticFailureRole::kRestoration,
+                   "previous lifecycle restoration failure"},
+  };
+  for (const bool cross_target : {false, true}) {
+    for (const auto& recovery : recoveries) {
+      SCOPED_TRACE(cross_target ? "cross target" : "self target");
+      SCOPED_TRACE(recovery.message);
+      LifecycleControlProbeState::reset();
+      const std::int32_t target_identity = cross_target ? 2 : 1;
+      LifecycleControlProbeState::fail_lifecycle_once(
+          target_identity, LifecycleStage::kWarmUp, LifecycleTransitionPhase::kRestartForward);
+      LifecycleControlProbeState::fail_lifecycle_once(
+          target_identity, recovery.stage, recovery.phase);
+      Graph graph{"single-owner-fatal-restart"};
+      const auto first = graph.op<LifecycleClockRestartProbeOperator>(
+          "first", 1, cross_target ? ProbeAction::kRequestCross : ProbeAction::kRequestSelf);
+      const auto second =
+          graph.op<LifecycleClockRestartProbeOperator>("second", 2, ProbeAction::kNone);
+      graph.partition("shared-clock-worker").include_all();
+      graph.lifecycle()
+          .allow_self_restart(first)
+          .allow_external_restart(first)
+          .allow_external_restart(second)
+          .allow_restart_request(first, second);
+      graph.set_default_clock(graph.add_clock<LifecycleControlProbeClock>("control-clock"));
+      CompileOptions options;
+      options.deployment.bind_thread_placement("shared-clock-worker",
+                                               ThreadPlacement{.wake_mode = WakeMode::kBusyPoll});
+      options.lifecycle_transactions = ample_lifecycle_capacity();
+      const auto sink = std::make_shared<RecordingLifecycleDiagnosticSink>();
+      const ExecutionPlan plan =
+          detail::RuntimeTestPlanAccess::with_diagnostic_sink(compile(graph, options), sink);
+      ASSERT_TRUE(plan.ok()) << plan.json();
+      ASSERT_EQ(plan.execution_partitions().size(), 1U);
+      ASSERT_EQ(plan.execution_lanes().size(), 1U);
+      RunSession session = run_async(plan);
+      const ComputeReleaseGuard release_guard;
+      ASSERT_TRUE(LifecycleControlProbeState::wait_for_event(ProbeEventKind::kComputeEntered, 1));
+      const auto target = session.operator_ref(plan_target(plan, cross_target ? 1U : 0U));
+      ASSERT_TRUE(target);
+      if (cross_target) {
+        LifecycleControlProbeState::set_cross_target(*target);
+      }
+      ASSERT_TRUE(LifecycleControlProbeState::wait_for_request());
+      ASSERT_TRUE(LifecycleControlProbeState::accepted());
+      const std::array targets{*target};
+      auto control = session.lifecycle_control({
+          .allowed_targets = targets,
+          .allowed_from_stages = kForwardStages,
+      });
+      ASSERT_TRUE(control);
+      const auto receipt = LifecycleControlProbeState::receipt();
+      LifecycleControlProbeState::allow_compute_return();
+      const auto completed = control->await(receipt, 5s);
+      ASSERT_TRUE(completed);
+      EXPECT_EQ(completed->state, LifecycleTransactionState::kFailedStopped);
+      EXPECT_NE(completed->transaction_id, 0U);
+      session.wait();
+      EXPECT_EQ(session.termination(), RunTermination::kFailed);
+
+      // Inspect after shutdown so borrowed executor captures cannot satisfy these checks.
+      const auto diagnostics = session.diagnostics();
+      const auto primary =
+          std::find_if(diagnostics.begin(), diagnostics.end(), [](const auto& row) {
+            return row.detail && row.detail->stage == LifecycleStage::kWarmUp &&
+                   row.detail->phase == LifecycleTransitionPhase::kRestartForward;
+          });
+      const auto secondary =
+          std::find_if(diagnostics.begin(), diagnostics.end(), [&](const auto& row) {
+            return row.detail && row.detail->stage == recovery.stage &&
+                   row.detail->phase == recovery.phase;
+          });
+      ASSERT_NE(primary, diagnostics.end());
+      ASSERT_NE(secondary, diagnostics.end());
+      EXPECT_NE(primary, secondary);
+      for (const auto* record : {&*primary, &*secondary}) {
+        const auto& record_detail = record->detail;
+        if (!record_detail.has_value()) {
+          FAIL() << "Expected diagnostic detail";
+        }
+        EXPECT_EQ(record->token, "RUNTIME_LIFECYCLE_CALLBACK_FAILED");
+        EXPECT_EQ(record_detail->operation, DiagnosticOperation::kLifecycle);
+        EXPECT_EQ(record_detail->operator_path, cross_target ? "second" : "first");
+        EXPECT_EQ(record_detail->transaction_id, completed->transaction_id);
+      }
+      const auto& primary_detail = primary->detail;
+      if (!primary_detail.has_value()) {
+        FAIL() << "Expected diagnostic detail";
+      }
+      const auto& secondary_detail = secondary->detail;
+      if (!secondary_detail.has_value()) {
+        FAIL() << "Expected diagnostic detail";
+      }
+      EXPECT_EQ(primary_detail->error.code, ErrorCode::kInvalidArgument);
+      EXPECT_EQ(primary_detail->error.message, "candidate warm-up failure");
+      EXPECT_EQ(primary_detail->role, DiagnosticFailureRole::kPrimary);
+      EXPECT_FALSE(primary_detail->primary_diagnostic_index);
+      EXPECT_EQ(secondary_detail->error.code, ErrorCode::kFailure);
+      EXPECT_EQ(secondary_detail->error.message, recovery.message);
+      EXPECT_EQ(secondary_detail->role, recovery.role);
+      EXPECT_EQ(secondary_detail->primary_diagnostic_index,
+                static_cast<std::uint32_t>(std::distance(diagnostics.begin(), primary)));
+      const auto receipts = sink->snapshot();
+      ASSERT_EQ(receipts.size(), 1U);
+      EXPECT_EQ(receipts.front().transaction_id, completed->transaction_id);
+      EXPECT_EQ(receipts.front().state, LifecycleTransactionState::kFailedStopped);
+      EXPECT_EQ(receipts.front().recovery,
+                detail::RuntimeLifecycleRecoveryDisposition::kFailedStopped);
+      EXPECT_EQ(receipts.front().effective_epoch, 0U);
+    }
+  }
+}
+
 // REQ: RUNTIME-008
+// REQ: RUNTIME-054
 TEST(LifecycleControl, ComputeFailureCancelsItsQueuedSelfRestartBeforeLifecycleEntry) {
   LifecycleControlProbeState::reset();
   const ExecutionPlan plan =
       make_lifecycle_control_plan({.first_action = ProbeAction::kRequestSelfThenFail});
   ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 2U);
+  ASSERT_EQ(plan.execution_lanes().size(), 2U);
   const OperatorRef first = plan_target(plan, 0U);
 
   RunSession session = run_async(plan);
@@ -2648,6 +2905,21 @@ TEST(LifecycleControl, ComputeFailureCancelsItsQueuedSelfRestartBeforeLifecycleE
   LifecycleControlProbeState::allow_compute_return();
   session.wait();
   EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_EQ(diagnostic_tokens(session).find("RUNTIME_EXECUTION_LANE_PLAN_INVALID"),
+            std::string::npos);
+  const auto diagnostics = session.diagnostics();
+  const auto failure = std::find_if(diagnostics.begin(), diagnostics.end(), [](const auto& row) {
+    return row.token == "RUNTIME_OPERATOR_CALLBACK_FAILED";
+  });
+  ASSERT_NE(failure, diagnostics.end());
+  const auto& failure_detail = failure->detail;
+  if (!failure_detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(failure_detail->operation, DiagnosticOperation::kCompute);
+  EXPECT_EQ(failure_detail->operator_path, "first");
+  EXPECT_EQ(failure_detail->error.code, ErrorCode::kFailure);
+  EXPECT_EQ(failure_detail->error.message, "compute failure after queued self restart");
   const auto canceled = control->inspect(receipt);
   ASSERT_TRUE(canceled);
   EXPECT_EQ(canceled->state, LifecycleTransactionState::kCanceled);

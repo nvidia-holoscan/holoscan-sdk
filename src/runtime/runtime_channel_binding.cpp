@@ -65,6 +65,7 @@ void RuntimeChannelSession::Impl::reset_sample_slot(SampleSlot& slot) noexcept {
   // occupant's fate to a claim that was released for a record no longer here.
   slot.owed_to_released_claim = false;
   slot.refill_reserved = false;
+  slot.refill_prefix_reserved = false;
   slot.temporal = {};
 }
 

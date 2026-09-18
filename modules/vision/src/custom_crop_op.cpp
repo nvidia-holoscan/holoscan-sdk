@@ -25,6 +25,12 @@ constexpr TensorRepresentation kCudaTensorRepresentation{
     .memory_kind = MemoryKind::kCudaDevice,
 };
 
+[[nodiscard]] expected<std::uint64_t, Error> crop_output_byte_span(
+    const CustomCropOpParams& params) noexcept {
+  return detail::projected_image_output_byte_span(
+      params.width, params.height, params.max_batch_size, sizeof(double));
+}
+
 [[nodiscard]] auto failure(ErrorCode code, std::string message) {
   return make_unexpected(Error{code, std::move(message)});
 }
@@ -36,22 +42,21 @@ class CustomCropOp::Impl {
   std::unique_ptr<cvcuda::CustomCrop> operation;
 };
 
-CustomCropOp::CustomCropOp(VisionImageCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+CustomCropOp::CustomCropOp() : impl_(std::make_unique<Impl>()) {}
 
 CustomCropOp::~CustomCropOp() = default;
 
 void CustomCropOp::setup(OperatorSpec& spec) {
-  const CustomCropOpParams& configuration = params();
-  if (configuration.width > capacity_.max_width || configuration.height > capacity_.max_height) {
-    throw RuntimeError(ErrorCode::kInvalidArgument,
-                       "CustomCropOp parameters exceed the authored output-pool capacity");
+  const auto projected_capacity = crop_output_byte_span(params());
+  if (!projected_capacity) {
+    throw RuntimeError(projected_capacity.error().code,
+                       "CustomCropOp output capacity exceeds CV-CUDA's 32-bit tensor limit");
   }
-  auto byte_span = detail::maximum_output_byte_span(
-      capacity_.max_width, capacity_.max_height, capacity_.max_batch_size, sizeof(double));
-  if (!byte_span) {
-    throw RuntimeError(byte_span.error());
-  }
+  const auto capacity = parameter_projected_byte_span<&crop_output_byte_span>(
+      "holoscan.vision.CustomCropOp.output-max-byte-span.v1",
+      param_ref<&CustomCropOpParams::width>(),
+      param_ref<&CustomCropOpParams::height>(),
+      param_ref<&CustomCropOpParams::max_batch_size>());
 
   spec.input(input, "input")
       .queue_depth(1U)
@@ -60,16 +65,14 @@ void CustomCropOp::setup(OperatorSpec& spec) {
           .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
       });
   spec.output(output, "output")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = detail::ImageTensorView::kMaxRank,
-                  .max_byte_span = *byte_span,
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          capacity);
 }
 
 Contract CustomCropOp::contract() const {
@@ -97,16 +100,6 @@ void CustomCropOp::stop() {
 
 expected<void, Error> CustomCropOp::compute(ExecutionContext& context) {
   const CustomCropOpParams& configuration = context.params<CustomCropOpParams>();
-  auto valid_width = detail::validate_authored_capacity(
-      "CustomCropOp", "width", configuration.width, capacity_.max_width);
-  if (!valid_width) {
-    return make_unexpected(std::move(valid_width).error());
-  }
-  auto valid_height = detail::validate_authored_capacity(
-      "CustomCropOp", "height", configuration.height, capacity_.max_height);
-  if (!valid_height) {
-    return make_unexpected(std::move(valid_height).error());
-  }
   if (!impl_->operation) {
     return failure(ErrorCode::kNotReady, "CustomCropOp CV-CUDA resource is not initialized");
   }
@@ -120,7 +113,7 @@ expected<void, Error> CustomCropOp::compute(ExecutionContext& context) {
     return make_unexpected(std::move(sample).error());
   }
   auto input_view = detail::describe_image_tensor(
-      sample->data, detail::TensorOperation::kCustomCrop, capacity_.max_batch_size);
+      sample->data, detail::TensorOperation::kCustomCrop, configuration.max_batch_size);
   if (!input_view) {
     return make_unexpected(std::move(input_view).error());
   }
@@ -168,7 +161,7 @@ expected<void, Error> CustomCropOp::compute(ExecutionContext& context) {
                                                    input_view->dtype,
                                                    DLDevice{kDLCUDA, loan->device_id().value},
                                                    detail::TensorOperation::kCustomCrop,
-                                                   capacity_.max_batch_size);
+                                                   configuration.max_batch_size);
   if (!output_view) {
     return make_unexpected(std::move(output_view).error());
   }

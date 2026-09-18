@@ -49,6 +49,23 @@ a context where you do not want source-location capture): `holoscan::log_trace`,
 `log_debug`, `log_info`, `log_warn`, `log_error`, and `log_critical` take the
 same fmt format string and arguments but do not record file/line/function.
 
+## SDK failure reports
+
+A failed run attempts one bounded ERROR report after cleanup and terminal-state
+publication. It renders the same owning evidence returned by
+`session.diagnostics()`: stable diagnostic tokens, qualified operator/port names,
+callback stage and phase, and the original failure explanation when available.
+Secondary cleanup failures do not replace the initiating cause. Applications
+that explicitly format diagnostics may print the same information again.
+
+The report respects normal logger filtering, including `OFF`. It does not add
+formatting or log calls to successful compute paths. Report formatting and sink
+exceptions cannot change cleanup or the failed run result. Cause/report
+truncation is explicit, and terminal control characters in captured text are
+escaped. Do not place secrets in error messages. See
+[Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures)
+for the public detail fields and storage bounds.
+
 ## Setting the log level
 
 `holoscan::LogLevel` defines seven levels, in increasing severity: `TRACE`,

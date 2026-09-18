@@ -13,11 +13,17 @@ thread_local RuntimeCallbackIdentity runtime_callback_identity_state{};
 }  // namespace
 
 RuntimeCallbackContextScope::RuntimeCallbackContextScope(RuntimeCallbackContext context) noexcept
-    : RuntimeCallbackContextScope(RuntimeCallbackIdentity{.context = context}) {}
+    : previous_(runtime_callback_identity_state) {
+  runtime_callback_identity_state = RuntimeCallbackIdentity{.context = context};
+}
 
-RuntimeCallbackContextScope::RuntimeCallbackContextScope(RuntimeCallbackIdentity identity) noexcept
+RuntimeCallbackContextScope::RuntimeCallbackContextScope(const RuntimeCallbackIdentity& identity,
+                                                         RuntimeCallbackContext fallback) noexcept
     : previous_(runtime_callback_identity_state) {
   runtime_callback_identity_state = identity;
+  if (runtime_callback_identity_state.context == RuntimeCallbackContext::kNone) {
+    runtime_callback_identity_state.context = fallback;
+  }
 }
 
 RuntimeCallbackContextScope::~RuntimeCallbackContextScope() noexcept {

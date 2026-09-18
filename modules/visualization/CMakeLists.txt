@@ -1,172 +1,141 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.30.4)
+# In this directory:
+# - Holoscan Visualization: Top-level project bundling HolovizOp and Holoviz
+# - Holoviz: Backend library for real-time GPU visualization, agnostic of Holoscan SDK APIs
+# - HolovizOp: Holoscan SDK operator wrapping Holoviz for pipeline integration
+#
+# To build:
+# - Default: Build the top-level Holoscan SDK with "-DHOLOSCAN_BUILD_VISUALIZATION=ON"
+# - (Alternative) standalone: Build from this source and provide a standalone Holoscan SDK installation
+#
+# To consume: find_package(holoscan COMPONENTS visualization) imports
+# holoscan::visualization::holoviz (the rendering library) and holoscan::visualization::op_holoviz
+# (HolovizOp). Every target the module ships lives in the holoscan::visualization:: namespace.
+# Both ship in the module's own export set (holoscan-visualization-exports ->
+# holoscan-visualization-targets.cmake), reachable either through that component or directly via
+# find_package(holoscan-visualization).
 
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" HOLOVIZ_PROJECT_VERSION)
+cmake_minimum_required(VERSION 4.0)
 
+if(NOT holoscan_VERSION)
+    set(holoscan_VERSION 5.0.0)
+endif()
 project(holoscan_visualization
-    VERSION ${HOLOVIZ_PROJECT_VERSION}
+    VERSION ${holoscan_VERSION}
     DESCRIPTION "Holoscan Visualization module"
     LANGUAGES CXX
 )
 
 include(GenerateExportHeader)
+include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
-
-# Holoviz links statically into the Holoscan Visualization module, tests, and examples by default.
-# The shared build supports a module-owned runtime library and is deliberately independent of
-# the global BUILD_SHARED_LIBS, so an SDK build with shared core still absorbs holoviz statically.
-option(HOLOVIZ_BUILD_SHARED "Build HoloViz as a shared library" OFF)
-
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# A top-level Holoscan Visualization build is against an installed SDK. The backend is otherwise
-# built with the SDK and is not supported as an independent project.
-if(holoscan_visualization_IS_TOP_LEVEL)
-    set(HOLOSCAN_VISUALIZATION_INSTALL_COMPONENT holoscan-visualization)
-    if(NOT DEFINED HOLOSCAN_BUILD_EXAMPLES)
-        option(HOLOSCAN_BUILD_EXAMPLES "Build HoloViz examples" OFF)
-    endif()
-    if(NOT DEFINED HOLOSCAN_BUILD_TESTS)
-        option(HOLOSCAN_BUILD_TESTS "Build HoloViz tests" ON)
-    endif()
-    find_package(holoscan CONFIG QUIET)
-    if(NOT holoscan_FOUND)
-        message(FATAL_ERROR
-            "Top-level Holoscan Visualization builds require an installed Holoscan SDK. Set holoscan_ROOT "
-            "to its install prefix or holoscan_DIR to its package-config directory."
-        )
-    endif()
+set(HOLOSCAN_VISUALIZATION_INSTALL_COMPONENT holoscan-visualization)
+set(HOLOSCAN_VISUALIZATION_EXAMPLES_INSTALL_COMPONENT holoscan-visualization-examples)
 
-    # RAPIDS CMake is build infrastructure rather than part of the installed Holoscan package.
-    # Initialize it from the surrounding SDK source tree so every dependency uses the same
-    # central SDK recipe in SDK and module builds.
-    include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/modules/SetupRapidsCMake.cmake")
-    include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/setup_dependencies.cmake")
-else()
-    set(HOLOSCAN_VISUALIZATION_INSTALL_COMPONENT holoscan-core)
+if(holoscan_visualization_IS_TOP_LEVEL)
+    # Allow building Holoscan Visualization as a standalone project against a pre-existing Holoscan SDK core
+    option(HOLOSCAN_BUILD_EXAMPLES "Build HoloViz examples" OFF)
+    option(HOLOSCAN_BUILD_TESTS "Build HoloViz tests" ON)
+
+    # Request Core explicitly: an unqualified find_package(holoscan) also imports every optional
+    # component the SDK prefix carries, and an SDK installed with the visualization module would
+    # then define the very holoscan::visualization::holoviz / holoscan::visualization::op_holoviz
+    # targets this project builds.
+    find_package(holoscan 5 REQUIRED COMPONENTS core)
+
+    include(SetupRapidsCMake OPTIONAL)
+    include(setup_dependencies OPTIONAL)
+    # Shared-library hardening helper from the SDK source tree; absent from the installed package.
+    include(HoloscanTargetConfiguration OPTIONAL)
+
+    # Check for Holoscan CMake modules existence
+    if(NOT COMMAND rapids_cpm_find OR NOT COMMAND holoscan_add_dependency)
+        message(FATAL_ERROR "Failed to load Holoscan CMake dependency functions. Please add to CMAKE_MODULE_PATH and try again.")
+    endif()
+    if(HOLOSCAN_BUILD_EXAMPLES)
+        # The example helpers ship with the installed SDK next to holoscan-config.cmake and also
+        # live in the SDK source tree under public/examples/cmake.
+        include(HoloscanExampleInstall OPTIONAL)
+        if(NOT COMMAND holoscan_configure_example_install
+           AND EXISTS "${holoscan_DIR}/HoloscanExampleInstall.cmake")
+            include("${holoscan_DIR}/HoloscanExampleInstall.cmake")
+        endif()
+        if(NOT COMMAND holoscan_configure_example_install)
+            message(FATAL_ERROR "Failed to load Holoscan CMake example functions (HoloscanExampleInstall.cmake). Please add to CMAKE_MODULE_PATH and try again.")
+        endif()
+    endif()
 endif()
+
+include(CTest)
 
 include(holoviz_dependencies)
 
-if(HOLOVIZ_BUILD_SHARED)
-    add_library(holoviz SHARED)
-else()
-    add_library(holoviz STATIC)
-endif()
-add_library(holoviz::holoviz ALIAS holoviz)
-holoviz_configure_runtime_search_path(holoviz)
-
-# Everything is hidden unless a declaration opts in with HOLOVIZ_EXPORT, so the DSO exports
-# only the module's own API and never a dependency's symbols.
-generate_export_header(holoviz
-    BASE_NAME HOLOVIZ
-    EXPORT_MACRO_NAME HOLOVIZ_EXPORT
-    NO_EXPORT_MACRO_NAME HOLOVIZ_NO_EXPORT
-    DEPRECATED_MACRO_NAME HOLOVIZ_DEPRECATED
-    STATIC_DEFINE HOLOVIZ_STATIC_DEFINE
-    INCLUDE_GUARD_NAME HOLOVIZ_EXPORT_H_GENERATED
-    EXPORT_FILE_NAME "${holoscan_visualization_BINARY_DIR}/include/holoviz/holoviz_export.h"
-)
-
-target_include_directories(holoviz
-    PUBLIC
-        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-        "$<BUILD_INTERFACE:${holoscan_visualization_BINARY_DIR}/include>"
-)
-
-# A static build has no import/export attributes to apply; the generated header keys off this.
-target_compile_definitions(holoviz
-    PUBLIC
-        $<$<NOT:$<BOOL:${HOLOVIZ_BUILD_SHARED}>>:HOLOVIZ_STATIC_DEFINE>
-        $<$<PLATFORM_ID:Windows>:VK_USE_PLATFORM_WIN32_KHR>
-        $<$<PLATFORM_ID:Windows>:NOMINMAX>
-        $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN>
-)
-
-target_compile_features(holoviz PUBLIC cxx_std_20)
-
-# MSVC defaults to its traditional (non-conformant) preprocessor, which lacks C++20 __VA_OPT__
-# as used by the VIZ_VK_DEVICE_FUNC macros in the Vulkan RHI.
-target_compile_options(holoviz PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
-
-# Bundled Dear ImGui headers for the text module's debug UI-callback mode. They are reachable
-# only through <holoviz/text/imgui_ui.hpp>; the rest of the text API forward-declares ImGui.
-# Copy them into the generated include tree so every build-tree consumer resolves the exact
-# headers this library was compiled with.
-get_property(_holoviz_imgui_source_dir GLOBAL PROPERTY HOLOVIZ_IMGUI_SOURCE_DIR)
-if(NOT _holoviz_imgui_source_dir)
-    message(FATAL_ERROR
-        "Holoscan Visualization: the imgui dependency did not record HOLOVIZ_IMGUI_SOURCE_DIR")
-endif()
-file(COPY
-    "${_holoviz_imgui_source_dir}/imgui.h"
-    "${_holoviz_imgui_source_dir}/imconfig.h"
-    DESTINATION "${holoscan_visualization_BINARY_DIR}/include/holoviz/imgui"
-)
-unset(_holoviz_imgui_source_dir)
-
-# Top-level module packages ship the canonical SDK license and their notice at the package root.
-# When built as part of the Holoscan SDK, the SDK installs these files centrally.
-if(holoscan_visualization_IS_TOP_LEVEL)
-    install(FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSE.txt"
-        NOTICE.txt
-        DESTINATION .
-        COMPONENT ${HOLOSCAN_VISUALIZATION_INSTALL_COMPONENT}
-    )
-endif()
-
+##########################################################
+# Holoviz backend library
+##########################################################
 add_subdirectory(src)
 
-# HolovizOp is the Holoscan-facing part of this module. Keep its implementation and installation
-# rules beside the backend it consumes so disabling HoloViz removes the complete feature.
+##########################################################
+# HolovizOp
+##########################################################
 add_subdirectory(operators)
 
+##########################################################
+# Holoscan Visualization
+##########################################################
 if(HOLOSCAN_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-if(NOT holoscan_visualization_IS_TOP_LEVEL)
-    set(HOLOSCAN_INSTALL_TARGETS "${HOLOSCAN_INSTALL_TARGETS}" PARENT_SCOPE)
+if(HOLOSCAN_BUILD_TESTS AND BUILD_TESTING)
+    add_subdirectory(tests)
 endif()
 
-if(HOLOSCAN_BUILD_TESTS)
-    include(CTest)
-    enable_testing()
-    if(BUILD_TESTING)
-        function(holoviz_add_dependency_dispatch_test build_mode slang_mode)
-            set(_holoviz_dependency_test_name
-                "CMAKE_HOLOVIZ_DEPENDENCIES.${build_mode}.${slang_mode}")
-            set(_holoviz_dependency_test_args
-                -DHOLOVIZ_CMAKE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cmake
-                -DHOLOSCAN_CMAKE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../../cmake
-                -DHOLOVIZ_TEST_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/cmake-tests/cache-${build_mode}-${slang_mode}
-                -DHOLOVIZ_TEST_MODE=${build_mode}
-                -DHOLOVIZ_TEST_SLANG_MODE=${slang_mode}
-            )
-            add_test(NAME ${_holoviz_dependency_test_name}
-                COMMAND ${CMAKE_COMMAND}
-                    -S "${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests/dependency_dispatch"
-                    -B "${CMAKE_CURRENT_BINARY_DIR}/cmake-tests/dependency-${build_mode}-${slang_mode}"
-                    ${_holoviz_dependency_test_args}
-            )
-            unset(_holoviz_dependency_test_args)
-            unset(_holoviz_dependency_test_name)
-        endfunction()
+##########################################################
+# Installation (based on project config)
+##########################################################
+set(_holoscan_visualization_package_dir
+    "${CMAKE_CURRENT_BINARY_DIR}/holoscan-visualization-package")
+set(_holoscan_visualization_cmake_install_dir
+    "${CMAKE_INSTALL_LIBDIR}/cmake/holoscan")
+file(MAKE_DIRECTORY "${_holoscan_visualization_package_dir}")
 
-        holoviz_add_dependency_dispatch_test(embedded source)
-        holoviz_add_dependency_dispatch_test(holoscan_module source)
-        holoviz_add_dependency_dispatch_test(holoscan_module auto)
-        if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows") AND
-            CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64|x86_64|AMD64)$")
-            holoviz_add_dependency_dispatch_test(holoscan_module prebuilt)
-        endif()
-        holoviz_add_dependency_dispatch_test(holoscan_module external_root)
-        holoviz_add_dependency_dispatch_test(holoscan_module external_dir)
-        holoviz_add_dependency_dispatch_test(holoscan_module external_system)
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Config.cmake.in"
+    "${_holoscan_visualization_package_dir}/holoscan-visualization-config.cmake"
+    INSTALL_DESTINATION "${_holoscan_visualization_cmake_install_dir}"
+)
+write_basic_package_version_file(
+    "${_holoscan_visualization_package_dir}/holoscan-visualization-config-version.cmake"
+    COMPATIBILITY SameMajorVersion
+)
 
-        add_subdirectory(tests)
-    endif()
+install(EXPORT holoscan-visualization-exports
+    FILE holoscan-visualization-targets.cmake
+    NAMESPACE holoscan::
+    DESTINATION "${_holoscan_visualization_cmake_install_dir}"
+    COMPONENT ${HOLOSCAN_VISUALIZATION_INSTALL_COMPONENT}
+)
+install(FILES
+    "${_holoscan_visualization_package_dir}/holoscan-visualization-config.cmake"
+    "${_holoscan_visualization_package_dir}/holoscan-visualization-config-version.cmake"
+    DESTINATION "${_holoscan_visualization_cmake_install_dir}"
+    COMPONENT ${HOLOSCAN_VISUALIZATION_INSTALL_COMPONENT}
+)
+if(holoscan_visualization_IS_TOP_LEVEL)
+    # Top-level module packages ship the canonical SDK license and their notice at the package root.
+    # When built as part of the Holoscan SDK, the SDK installs these files centrally.
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSE.txt"
+        NOTICE.txt
+        DESTINATION "${CMAKE_INSTALL_DOCDIR}"
+        COMPONENT ${HOLOSCAN_VISUALIZATION_INSTALL_COMPONENT}
+    )
 endif()
+
+unset(_holoscan_visualization_cmake_install_dir)
+unset(_holoscan_visualization_package_dir)

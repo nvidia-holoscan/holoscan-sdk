@@ -38,7 +38,7 @@ if(TARGET holoscan::experimental_params_web_tuner)
 
     install(TARGETS web_tuner
         RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/web_tuner/cpp"
-        COMPONENT holoscan-examples
+        COMPONENT holoscan-core-examples
     )
 else()
     message(STATUS

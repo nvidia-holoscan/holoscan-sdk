@@ -60,7 +60,7 @@ set(_holoviz_dependencies
     vma
     imgui)
 if(HOLOSCAN_BUILD_EXAMPLES)
-  # stb is only consumed by the RHI examples; skip acquisition otherwise.
+  # stb is only consumed by the core examples; skip acquisition otherwise.
   list(APPEND _holoviz_dependencies stb)
 endif()
 foreach(_holoviz_dependency IN LISTS _holoviz_dependencies)

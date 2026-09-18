@@ -80,6 +80,8 @@ enum class ErrorCode : std::uint32_t {
   kRateBindingAboveMaximum = 38,
   /// A lifecycle callback repeated one binding with a semantically different nominal rate.
   kRateBindingConflict = 39,
+  /// Checked arithmetic could not represent its result in the required finite value domain.
+  kArithmeticOverflow = 40,
 };
 
 /**

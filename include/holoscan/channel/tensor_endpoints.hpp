@@ -192,6 +192,16 @@ class ChannelSubscriber<Tensor> {
   ChannelSubscriber(const ChannelSubscriber&) = delete;
   ChannelSubscriber& operator=(const ChannelSubscriber&) = delete;
 
+  /// @brief Retire this process's local Tensor subscriber endpoint.
+  /// @return Success on the first live close, or a code-only cleanup error. Repeated close and
+  /// close on a moved-from facade return @ref ErrorCode::kClosed.
+  /// @note This externally serialized, consuming operation publishes no producer end-of-stream
+  /// record and supplies no graph-completion evidence. Cancel and join any active waiter before
+  /// closing. Already returned Tensors and derived views retain their ordinary owning lifetime;
+  /// unread local data may be discarded. A cleanup failure still consumes the endpoint; later
+  /// checked operations return @ref ErrorCode::kClosed.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> close() noexcept;
+
   /// Return whether the transport reports a pending Tensor descriptor without consuming it.
   ///
   /// @return The readiness state, or an error when the backend cannot query it.
@@ -220,8 +230,9 @@ class ChannelSubscriber<Tensor> {
   /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
   /// @return The sample on success, or the first checked error.
   /// @retval ErrorCode::kTimeout \p deadline elapsed. Retryable; endpoint state is unchanged.
-  /// @retval ErrorCode::kClosed The producer published end of stream, or this facade was moved
-  /// from. The end-of-stream state is latched, so every later call reports it.
+  /// @retval ErrorCode::kClosed The producer published end of stream, this facade was locally
+  /// closed, or this facade was moved from. The end-of-stream state is latched, so every later
+  /// call reports it.
   /// @retval ErrorCode::kStaleEndpoint The producer incarnation changed; rebuild the subscriber.
   /// @retval ErrorCode::kNotSupported This endpoint was created with
   /// \c ChannelOptions::enable_event_wake disabled, so it has no kernel event lane. Reported only
@@ -263,7 +274,8 @@ class ChannelSubscriber<Tensor> {
   /// @return Empty success when a sample may be available, or a checked wait error.
   /// @retval ErrorCode::kTimeout \p deadline elapsed with no readiness.
   /// @retval ErrorCode::kInterrupted \p token requested a stop.
-  /// @retval ErrorCode::kClosed End of stream was already consumed, or this facade was moved from.
+  /// @retval ErrorCode::kClosed End of stream was already consumed, or this facade was locally
+  /// closed or moved from.
   /// @retval ErrorCode::kNotSupported This endpoint was created with
   /// \c ChannelOptions::enable_event_wake disabled and has no queued sample.
   /// @retval ErrorCode::kInvalidArgument This subscriber's readiness is already owned by another

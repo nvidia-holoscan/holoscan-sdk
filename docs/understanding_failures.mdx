@@ -170,12 +170,80 @@ if (session.termination() == holoscan::RunTermination::kFailed) {
 }
 ```
 
-`format_diagnostic()` resolves a nonzero source vertex against the immutable
-compiled graph and includes the diagnostic's populated public fields. Passing
-the compiled graph view prevents mixing its canonical IDs with source graph
-IDs. Use the rendered text for people, not program decisions: branch, grep, and
-assert on the structured token and fields rather than parsing the rendered
-line.
+`format_diagnostic()` resolves primary and related endpoint identities against
+the immutable compiled graph and includes the diagnostic's populated public
+fields. Pass the compiled graph from the diagnostic's plan: its canonical IDs
+are distinct from source graph IDs. With an empty compiled graph view, numeric
+identities and owned names remain available. Related identities use
+`related_graph_generation`, `related_graph`, `related_vertex_id`, and
+`related_port_id`; related names prefer owned detail over graph lookup.
+
+A primary port name copied into the detail appears once when it matches the
+compiled name. If the two nonempty names differ, the output preserves the
+compiled `port_name` and the owned `captured_port_name`. Use the rendered text
+for people, not program decisions: branch, grep, and assert on the structured
+token and fields rather than parsing the rendered line.
+
+### Original causes and operator locations
+
+Callback failures include optional owning `Diagnostic::detail` evidence: the
+qualified operator path, operation, lifecycle stage and phase, original error
+code/message, and available nested causes. The normal failed-session ERROR
+report renders the same evidence; DEBUG logging is not required. Names and
+messages survive operator cleanup and destruction of the source graph.
+
+For example, a `start()` exception explaining an unsupported image format is
+reported against the responsible operator's `kStart` stage, rather than only a
+numeric lifecycle node. Tensor connection errors identify both ports and the
+incompatible fields with provided and required values. Core preserves the
+module's explanation; it does not infer image-format semantics itself.
+
+Concrete Tensor output is validated again when it is emitted. If an output is
+declared as `cuda_device` but compute emits a host Tensor and propagates that
+rejection, the callback diagnostic names the output and records `memory_kind`,
+provided `host`, and required `cuda_device`. The first rejected output in the
+callback supplies this supplemental context. Handling the rejection and returning
+success does not emit a failure report; a later activation starts with fresh
+context. If that same callback returns a different Error, its original code and
+message remain the primary error.
+
+A valid partition's callback failure is reported as an operator failure.
+`RUNTIME_COMPUTE_DISPATCH_FAILED` instead identifies a dispatch rejection before
+callback entry and retains its original Error. `RUNTIME_COMPUTE_CUDA_DEVICE_RESTORE_FAILED`
+identifies failed device restoration after a callback: it is a separate runtime
+record, linked to that operator's failed callback when present. If compute
+succeeded, restoration is the primary failure. Genuine nested exceptions stay
+in `detail.causes`; cleanup failures are separate records.
+
+
+Rollback, restoration, and teardown errors have distinct roles. When a later
+failure refers to an earlier retained primary record,
+`detail.primary_diagnostic_index` is a zero-based index in that report, not a
+registry `DiagnosticId`. Restart failures also retain `detail.transaction_id`,
+which can be correlated with lifecycle receipts. A failed restart that restores
+the previous generation remains warning evidence rather than a terminal run
+failure. Report formatting puts errors before warnings while retaining their
+relative order; causal indices still refer to the original diagnostic sequence.
+Runtime resource cleanup, including CUDA quiesce and shutdown, uses the teardown
+role even when it is not a lifecycle callback. A cleanup failure with no earlier
+retained terminal failure has no primary diagnostic index.
+
+Cause capture is bounded to 4096 bytes and four cause entries. Truncation or
+unavailable optional detail is explicit. Session diagnostics retain at most
+sixteen records, reserving space for the first terminal failure and an overflow
+marker; overflow from advisory records may become visible only at finalization.
+The overflow marker is a warning when only warnings were lost, even if a separate
+terminal error was retained. Losing an error record produces an error-severity
+marker. Advisory overflow alone does not fail a run.
+`format_diagnostics(records, graph)` renders a report capped at 16384 bytes.
+Terminal control characters in messages are escaped. Do not include secrets in
+exception or error messages.
+
+Supplemental detail is available through the in-memory APIs and formatters; it
+is not serialized in canonical execution-plan JSON and does not affect the plan
+digest. Stable tokens and existing structural fields remain the machine-readable
+classification. Adding the public detail field requires consumers to rebuild
+against the updated SDK, without changing operator callback signatures.
 
 Runtime tokens you are likely to meet:
 

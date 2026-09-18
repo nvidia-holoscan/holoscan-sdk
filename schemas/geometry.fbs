@@ -25,6 +25,16 @@ struct Quaternionf {
   w: float;
 }
 
+// Double-precision counterpart of Quaternionf, same (x, y, z, w) wire order and the same
+// positional-constructor contract. Use it where single-precision rounding would accumulate
+// visibly, for example long-running orientation integration.
+struct Quaterniond {
+  x: double;
+  y: double;
+  z: double;
+  w: double;
+}
+
 // Three-component vector in (x, y, z) order. Units are the containing field's concern: a
 // Vector3f is a triple of floats and asserts nothing about whether it holds metres, radians per
 // second, or metres per second squared.
@@ -34,9 +44,22 @@ struct Vector3f {
   z: float;
 }
 
+// Double-precision counterpart of Vector3f, for example a globally-referenced position where
+// single precision would lose sub-metre resolution far from the origin.
+struct Vector3d {
+  x: double;
+  y: double;
+  z: double;
+}
+
 // Row-major 3x3 matrix, used for covariance. Present only when the producer actually estimates
 // it; an absent matrix means "unknown", which is not the same as a zero matrix meaning
 // "perfectly certain".
 struct Matrix3f {
   m: [float:9];
+}
+
+// Double-precision counterpart of Matrix3f.
+struct Matrix3d {
+  m: [double:9];
 }

@@ -169,10 +169,27 @@ staged with `copy_to_host_async` on a private non-blocking stream, and the
 tensor's `set_deallocation_stream(private_stream)` registers that stream for
 release tracking — fanout release behavior made visible: the slot returns to
 the pool only after *every* consumer's release work, including this pending
-copy, completes. The single `cudaStreamSynchronize` in the whole program runs
-once, after the last staged copy, at the edge — host access is the entire
-blocking surface of the tensor data path, and it is budgeted off the
-steady-state path.
+copy, completes. On the normal path, `cudaStreamSynchronize` runs once, after
+the last staged copy, at the edge. Host inspection stays off the steady-state
+path.
+
+Release-stream registration borrows the stream. `InspectionResources` in
+`main()` owns the private stream and staging buffers until after session
+cleanup has released Tensor handles and enqueued deferred deallocation.
+Destroying the stream in the operator destructor would be too early. If the
+run ends before the final inspection synchronization, the resource owner
+synchronizes during cleanup before releasing the buffers and stream.
+
+### Retry transient capacity refusals without blocking
+
+The blocking device edge preserves accepted samples; `emit()` still refuses
+immediately with `kBackpressured` when its queue is full. During streaming,
+the producer retries the same logical frame on a later clock tick after
+`kBackpressured` or an allocation's `kResourceExhausted`. A Tensor loan is
+consumed by every terminal emit attempt, so each retry allocates and writes a
+fresh loan using the current activation's stream. The frame sequence advances
+only after successful publication. Other errors, including partial or uncertain
+publication, remain fatal.
 
 ### Why exhaustion drops instead of waiting
 

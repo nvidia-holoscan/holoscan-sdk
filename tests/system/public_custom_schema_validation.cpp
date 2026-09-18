@@ -186,9 +186,9 @@ class Sink final : public holoscan::Operator<> {
     return false;
   }
   const holoscan::SchemaEnvelopeHeader header{
-      .schema_id = identity.id,
-      .schema_version = identity.version,
+      .schema_family_id = identity.family_id,
       .payload_size = static_cast<std::uint32_t>(*encoded),
+      .transport_profile_tag = 0U,
       .endpoint_generation = kEndpointGeneration,
   };
   const auto payload = std::span<const std::byte>{storage}.first(*encoded);
@@ -206,20 +206,20 @@ class Sink final : public holoscan::Operator<> {
       package, header, identity, kEndpointGeneration, corrupted_payload);
 
   auto foreign_header = header;
-  foreign_header.schema_id.value[0] ^= std::byte{0xFF};
+  foreign_header.schema_family_id.value[0] ^= std::byte{0xFF};
   const auto foreign = holoscan::verify_and_materialize_received_schema(
       package, foreign_header, identity, kEndpointGeneration, payload);
 
-  auto bumped_header = header;
-  ++bumped_header.schema_version;
-  const auto bumped = holoscan::verify_and_materialize_received_schema(
-      package, bumped_header, identity, kEndpointGeneration, payload);
+  auto profiled_header = header;
+  ++profiled_header.transport_profile_tag;
+  const auto profiled = holoscan::verify_and_materialize_received_schema(
+      package, profiled_header, identity, kEndpointGeneration, payload);
 
   // Key assertion: every peer mutation is rejected as a protocol error before an owning
   // CustomControlT can be exposed.
   return !corrupted && corrupted.error().code == holoscan::ErrorCode::kProtocolError && !foreign &&
-         foreign.error().code == holoscan::ErrorCode::kProtocolError && !bumped &&
-         bumped.error().code == holoscan::ErrorCode::kProtocolError;
+         foreign.error().code == holoscan::ErrorCode::kProtocolError && !profiled &&
+         profiled.error().code == holoscan::ErrorCode::kProtocolError;
 }
 
 }  // namespace

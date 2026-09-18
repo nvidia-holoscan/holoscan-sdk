@@ -451,7 +451,7 @@ TEST(CompilePhysicalPlan,
 //
 //   multi-source --[oversized descriptor envelope]--X--> multi-sink
 //
-// REQ: CHAN-125
+// REQ: CHAN-145
 TEST(CompilePhysicalPlan, MultiTensorSchemaRejectsOversizedDescriptorEnvelopeAtCompileTime) {
   // Key setup: author a cross-process descriptor schema one byte beyond the endpoint maximum.
   auto fixture = make_multi_tensor_snapshot(channel_internal::kMaximumInlinePayloadBytes + 1U);
@@ -1260,6 +1260,53 @@ TEST(CompilePhysicalPlan, DropOldestTensorUsesSplitIngressAndTypedCapacity) {
               holomq_transport_retention->reasons.end());
   }
   EXPECT_EQ(holomq_allocation->slot_count, 12U);
+}
+
+// REQ: CHAN-146
+// REQ: TENSOR-STORAGE-011
+TEST(CompilePhysicalPlan, BudgetsDepthOneReuseFallbackBesideTheTensorCache) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "sink")};
+  snapshot.ports = {output_port(1U, 1U, "out", tensor_payload()),
+                    input_port(2U, 2U, "in", tensor_payload())};
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
+      .memory_kind = MemoryKind::kHost,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = 1U,
+  };
+  snapshot.ports.front().setup.tensor_allocation =
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  for (const auto policy : {QueuePolicy::kDropOldest, QueuePolicy::kBlocking}) {
+    for (const auto selector : {InputSelectorKind::kLatestWithin, InputSelectorKind::kExact}) {
+      for (const std::uint32_t depth : {1U, 2U}) {
+        SCOPED_TRACE(fmt::format("policy={} selector={} depth={}",
+                                 static_cast<int>(policy),
+                                 static_cast<int>(selector),
+                                 depth));
+        snapshot.edges = {edge(1U, 1U, 2U, depth, policy)};
+        const std::array selections{InputSelectionPlanRecord{
+            .input = PortId{2U},
+            .selector = selector,
+            .max_selected_samples = 1U,
+            .cache_capacity = depth,
+            .missing = TemporalRecordMissingKind::kReuseLast,
+        }};
+        const auto result = lower_for_test(snapshot, 10U, profiles, selections);
+        ASSERT_TRUE(result.errors.empty());
+        ASSERT_EQ(result.tensor_allocations.size(), 1U);
+        const auto* retention =
+            find_contributor(result, result.tensor_allocations.front().pool_id, ".retention");
+        ASSERT_NE(retention, nullptr);
+        const bool private_fallback = policy == QueuePolicy::kDropOldest &&
+                                      selector == InputSelectorKind::kLatestWithin && depth == 1U;
+        EXPECT_EQ(retention->maximum_distinct_slots, depth + (private_fallback ? 1U : 0U));
+        ASSERT_EQ(result.payload_edges.size(), 1U);
+        EXPECT_EQ(result.payload_edges.front().cache_capacity, depth);
+      }
+    }
+  }
 }
 
 // REQ: COMPILE-002
@@ -2833,6 +2880,7 @@ TEST(CompilePhysicalPlan, CrossProcessTensorRejectsUnrealizableDirectLayouts) {
 // Graph authoring rejects conflicts between explicit port declarations. Physical lowering also
 // joins the resolved direct-pool contract so an implicit host default cannot contradict a target.
 // REQ: GRAPH-025
+// REQ: COMPILE-078
 TEST(CompilePhysicalPlan, SameProcessDirectTensorPoolSatisfiesEveryTargetLayout) {
   const auto lower_with_layouts = [](std::optional<TensorRepresentation> source_layout,
                                      TensorRepresentation target_layout) {
@@ -2865,9 +2913,17 @@ TEST(CompilePhysicalPlan, SameProcessDirectTensorPoolSatisfiesEveryTargetLayout)
                                    std::string_view expected_token) {
     SCOPED_TRACE(label);
     const auto result = lower_with_layouts(std::move(source_layout), std::move(target_layout));
-    EXPECT_TRUE(std::any_of(result.errors.begin(), result.errors.end(), [&](const auto& error) {
-      return error.token == expected_token;
-    }));
+    const auto failure = std::ranges::find_if(
+        result.errors, [&](const auto& error) { return error.token == expected_token; });
+    ASSERT_NE(failure, result.errors.end());
+    if (expected_token == "PHYSICAL_TENSOR_LAYOUT_MISMATCH") {
+      ASSERT_TRUE(failure->detail);
+      EXPECT_EQ(failure->detail->operator_path, "sink");
+      EXPECT_EQ(failure->detail->port_name, "in");
+      EXPECT_EQ(failure->detail->related_operator_path, "source");
+      EXPECT_EQ(failure->detail->related_port_name, "out");
+      EXPECT_FALSE(failure->detail->mismatches.empty());
+    }
     EXPECT_TRUE(result.process_local_channel_services.empty());
   };
 
@@ -3083,6 +3139,7 @@ TEST(CompilePhysicalPlan, CanonicalizesDescriptorAndRawTensorBindingsAfterComple
 // REQ: CHAN-119
 // REQ: TENSOR-SCHEMA-005
 // REQ: OPERATOR-035
+// REQ: OPERATOR-049
 // REQ: CHAN-128
 TEST(CompilePhysicalPlan, DescriptorTensorImageUsesTypedServiceWithoutFabricatingPoolEvidence) {
   const auto payload = image_payload();
@@ -3118,9 +3175,10 @@ TEST(CompilePhysicalPlan, DescriptorTensorImageUsesTypedServiceWithoutFabricatin
   ASSERT_TRUE(service.payload_identity.schema);
   ASSERT_TRUE(payload.schema);
   EXPECT_EQ(service.payload_identity.schema->canonical_name, payload.schema->canonical_name);
-  EXPECT_EQ(service.payload_identity.schema->version, payload.schema->version);
-  EXPECT_EQ(service.payload_identity.schema->schema_sha256, payload.schema->schema_sha256);
-  EXPECT_EQ(service.payload_identity.schema->id, payload.schema->id);
+  EXPECT_EQ(service.payload_identity.schema->compatibility_epoch,
+            payload.schema->compatibility_epoch);
+  EXPECT_EQ(service.payload_identity.schema->family_id, payload.schema->family_id);
+  EXPECT_EQ(service.payload_identity.schema->file_identifier, payload.schema->file_identifier);
   EXPECT_TRUE(service.tensor_payload);
   EXPECT_EQ(service.payload_size_bytes, type_ops->wire_capacity);
   EXPECT_EQ(service.tensor_max_byte_span, 0U);

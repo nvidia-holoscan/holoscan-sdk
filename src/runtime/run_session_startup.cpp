@@ -142,19 +142,39 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
   return receiver && owns_receiver(state, *receiver);
 }
 
+[[nodiscard]] bool RunSessionState::has_owned_unwired_inputs(const GraphExec& exec,
+                                                             const ReadyRunState& state) const {
+  return std::any_of(
+      plan_->input_selections.begin(),
+      plan_->input_selections.end(),
+      [&](const InputSelectionPlanRecord& selection) {
+        const auto port = std::find_if(plan_->graph.ports().begin(),
+                                       plan_->graph.ports().end(),
+                                       [&](const PortRecord& record) {
+                                         return record.id.value == selection.input.value() &&
+                                                record.direction == PortDirection::kInput;
+                                       });
+        if (port == plan_->graph.ports().end() || !owns_vertex(state, exec, port->owner) ||
+            !worker_owns_vertex(*plan_, exec.process_group(), port->owner)) {
+          return false;
+        }
+        return selection.unwired_safe_default;
+      });
+}
+
 [[nodiscard]] bool RunSessionState::initialize_channel_session(
     GraphExec& exec, ReadyRunState& state, ReadySharedResources& shared,
     const RuntimeCudaExecutionResources& cuda_resources,
     RuntimeChannelSizingOverride sizing_override) {
-  const bool channel_plan_present = !plan_->process_local_channel_services.empty() ||
-                                    !plan_->channel_services.empty() ||
-                                    !plan_->cross_process_channel_services.empty();
+  const bool channel_plan_present =
+      !plan_->process_local_channel_services.empty() || !plan_->channel_services.empty() ||
+      !plan_->cross_process_channel_services.empty() || has_owned_unwired_inputs(exec, state);
   if (!channel_plan_present) {
     return true;
   }
 
   shared.channel_replay_ports.reserve(plan_->ports.size());
-  for (const RuntimeOperatorInstance& instance : exec.operators()) {
+  for (RuntimeOperatorInstance& instance : exec.operators()) {
     if (instance.replay_spec == nullptr) {
       append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH", instance.vertex);
       return false;
@@ -180,6 +200,7 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
           .direction = replay.direction,
           .declaration = const_cast<void*>(replay.declaration),
           .type_ops = replay.runtime_type_ops,
+          .tensor_failure = &instance.tensor_failure,
       });
     }
   }
@@ -330,6 +351,7 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
       continue;
     }
     ++local_selection_count;
+    const bool connected = !selection.unwired_safe_default;
     const auto bracketed = std::find_if(
         plan_->bracketed_windows.begin(),
         plan_->bracketed_windows.end(),
@@ -382,6 +404,7 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
     ReadyRunState::InputSelectorSlot slot{
         .owner = port->owner,
         .input = selection.input,
+        .connected = connected,
         .selector = std::move(created).value(),
         .predicate_id = predicate_input == plan_->predicate_inputs.end()
                             ? std::string_view{}
@@ -392,9 +415,11 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
         .predicate_input = predicate_input != plan_->predicate_inputs.end(),
         .aligned_member = false,
     };
-    slot.channel_payload_claims.reserve(payload_claim_capacity);
-    slot.channel_payload_claim_scratch.resize(payload_claim_capacity);
-    slot.channel_payload_retire_scratch.resize(payload_claim_capacity);
+    if (slot.connected) {
+      slot.channel_payload_claims.reserve(payload_claim_capacity);
+      slot.channel_payload_claim_scratch.resize(payload_claim_capacity);
+      slot.channel_payload_retire_scratch.resize(payload_claim_capacity);
+    }
     state.input_selectors.push_back(std::move(slot));
   }
   std::sort(state.input_selectors.begin(),
@@ -432,6 +457,7 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
   state.selection.maximum_selected_samples = max_selected + trigger_pin_capacity;
   state.selection.channel_selections.reserve(selection_capacity);
   state.selection.predicate_inputs.reserve(local_selection_count);
+  state.freshness_input_fences.reserve(local_selection_count);
   return true;
 }
 
@@ -702,7 +728,13 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
   lanes->request_stop();
   const auto joined = lanes->join();
   if (!joined) {
-    append_diagnostic(registered_token_or(joined.error().message, "RUNTIME_LANE_JOIN_FAILED"));
+    RuntimeDiagnosticDetail detail{.present = true,
+                                   .operation = DiagnosticOperation::kRuntime,
+                                   .role = DiagnosticFailureRole::kTeardown};
+    detail.capture.emplace();
+    detail.capture->append(joined.error().code, joined.error().message);
+    append_diagnostic(
+        registered_token_or(joined.error().message, "RUNTIME_LANE_JOIN_FAILED"), {}, {}, &detail);
     return false;
   }
   return true;
@@ -1080,11 +1112,12 @@ RunSessionState::initialize_predicate(const RuntimeOperatorInstance& instance,
       if (selector.owner != instance.vertex) {
         continue;
       }
-      if (!selector_readiness_source) {
+      if (selector.connected && !selector_readiness_source) {
         append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH", instance.vertex);
         return false;
       }
-      selector.readiness_source = selector_readiness_source;
+      selector.receiver_index = index;
+      selector.readiness_source = selector.connected ? selector_readiness_source : SourceId{};
       selector.witness_port = trigger->trigger_input;
       if (trigger->kind == TemporalRecordTriggerKind::kAnyInput) {
         const std::size_t trigger_input_count = static_cast<std::size_t>(
@@ -1096,6 +1129,11 @@ RunSessionState::initialize_predicate(const RuntimeOperatorInstance& instance,
         }
       }
       selector.witness_source = trigger->readiness_source;
+      selector.nontrigger_prerequisite =
+          freshness_input_is_nontrigger_prerequisite(selector.selector.plan(),
+                                                     selector.witness_port,
+                                                     selector.readiness_source,
+                                                     selector.witness_source);
       if (selector.selector.plan().selector == InputSelectorKind::kLatestWithin ||
           selector.selector.plan().missing == TemporalRecordMissingKind::kReuseLast) {
         auto supported = state.channels->supports_freshness_refill(selector.input);
@@ -1104,6 +1142,16 @@ RunSessionState::initialize_predicate(const RuntimeOperatorInstance& instance,
           return false;
         }
         selector.freshness_reconcile = *supported;
+        if (*supported && clock_source) {
+          auto drop_oldest_supported =
+              state.channels->supports_drop_oldest_freshness_refill(selector.input);
+          if (!drop_oldest_supported) {
+            append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", instance.vertex);
+            return false;
+          }
+          selector.upcoming_clock_freshness = qualifies_upcoming_clock_freshness(
+              selector.selector.plan(), *drop_oldest_supported, true);
+        }
       }
       if (selector_index > std::numeric_limits<std::uint32_t>::max()) {
         append_diagnostic("RUNTIME_PARAMETER_BINDING_UNAVAILABLE", instance.vertex);
@@ -1426,6 +1474,7 @@ RunSessionState::resolve_notification_descriptor(
     }
     state.bindings.push_back(std::move(binding).value());
   }
+  const std::size_t first_channel_binding = state.bindings.size();
   for (const auto& [owner, request] : state.channel_binding_requests) {
     auto binding = state.channels->create_readiness_binding(owner, request);
     if (!binding || binding.value() == nullptr || binding.value()->capacity() < request.capacity) {
@@ -1444,6 +1493,7 @@ RunSessionState::resolve_notification_descriptor(
     }
     state.bindings.push_back(std::move(*binding));
   }
+  const std::size_t channel_binding_end = state.bindings.size();
   for (const auto& request : state.clock_binding_requests) {
     auto clock = exec.resolve_clock(request.schedule.clock);
     if (!clock) {
@@ -1484,6 +1534,11 @@ RunSessionState::resolve_notification_descriptor(
     }
     state.clock_bindings[request.receiver_index] = binding->get();
     state.bindings.push_back(std::move(*binding));
+  }
+  state.contention_retry_eligible_by_binding.assign(state.bindings.size(), 0U);
+  for (std::size_t binding_index = first_channel_binding; binding_index < channel_binding_end;
+       ++binding_index) {
+    state.contention_retry_eligible_by_binding[binding_index] = 1U;
   }
   state.freshness_bindings.clear();
   state.freshness_bindings.reserve(state.input_selectors.size());
@@ -1847,7 +1902,12 @@ RunSessionState::resolve_notification_descriptor(
   channels->cancel();
   const auto joined = channels->join();
   if (!joined) {
-    append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE");
+    RuntimeDiagnosticDetail detail{.present = true,
+                                   .operation = DiagnosticOperation::kRuntime,
+                                   .role = DiagnosticFailureRole::kTeardown};
+    detail.capture.emplace();
+    detail.capture->append(joined.error().code, joined.error().message);
+    append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE", {}, {}, &detail);
     return false;
   }
   return true;

@@ -24,8 +24,9 @@ namespace holoscan::vision {
 
 /// @brief Configure coordinate mapping for \ref RemapOp.
 struct RemapOpParams {
-  std::int32_t width{1};   ///< Positive output width in pixels.
-  std::int32_t height{1};  ///< Positive output height in pixels.
+  std::int32_t width{1};             ///< Positive output width in pixels.
+  std::int32_t height{1};            ///< Positive output height in pixels.
+  std::uint32_t max_batch_size{1U};  ///< Maximum admitted image batch size.
   InterpolationMode input_interpolation{InterpolationMode::kLinear};  ///< Image sampling mode.
   InterpolationMode map_interpolation{InterpolationMode::kLinear};    ///< Map sampling mode.
   RemapMapValueMode map_value_mode{RemapMapValueMode::kAbsolute};     ///< Map encoding.
@@ -39,13 +40,20 @@ struct RemapOpParams {
 };
 
 HOLOSCAN_PARAM_SCHEMA(
-    RemapOpParams, holoscan::param_schema("com.nvidia.holoscan.vision.RemapOpParams", 1),
+    RemapOpParams, holoscan::param_schema("com.nvidia.holoscan.vision.RemapOpParams", 2),
     holoscan::field<&RemapOpParams::width>("width")
+        .recompile_required()
         .range(1, INT32_MAX)
         .description("Output image width in pixels."),
     holoscan::field<&RemapOpParams::height>("height")
+        .recompile_required()
         .range(1, INT32_MAX)
         .description("Output image height in pixels."),
+    holoscan::field<&RemapOpParams::max_batch_size>("max_batch_size")
+        .recompile_required()
+        .required_on_load()
+        .range(1U, kMaximumBatchSize)
+        .description("Maximum image batch size admitted by the operator."),
     holoscan::field<&RemapOpParams::input_interpolation>("input_interpolation")
         .allowed_values(
             {InterpolationMode::kNearest, InterpolationMode::kLinear, InterpolationMode::kCubic})
@@ -98,9 +106,8 @@ HOLOSCAN_PARAM_SCHEMA(
 /// with identical capture times instead.
 class HOLOSCAN_VISION_EXPORT RemapOp final : public Operator<RemapOpParams> {
  public:
-  /// @brief Construct an operator with fixed output-pool capacity.
-  /// @param capacity Maximum remapped output width, output height, and admitted batch size.
-  explicit RemapOp(VisionImageCapacity capacity);
+  /// @brief Construct an operator whose output capacity is derived from its Parameters.
+  RemapOp();
 
   /// @brief Destroy the operator and its retained CV-CUDA resource after runtime quiescence.
   ~RemapOp() override;
@@ -131,7 +138,6 @@ class HOLOSCAN_VISION_EXPORT RemapOp final : public Operator<RemapOpParams> {
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;
-  VisionImageCapacity capacity_;
 };
 
 static_assert(param_schema_availability<RemapOpParams>() == ParamSchemaAvailability::kDeclared,

@@ -6,10 +6,12 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <string>
 #include <type_traits>
 #include <utility>
 
 #include <holoscan/core/compile.hpp>
+#include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/lifecycle.hpp>
@@ -57,6 +59,63 @@ class InstalledLifecycleOperator final : public holoscan::Operator<> {
 
   bool producer_{};
 };
+
+class InstalledDiagnosticOperator final : public holoscan::Operator<> {
+ public:
+  explicit InstalledDiagnosticOperator(bool fail) : fail_(fail) {}
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.lifecycle().stage(holoscan::LifecycleStage::kConfigure,
+                           &InstalledDiagnosticOperator::configure);
+  }
+  holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnClock{.period = std::chrono::milliseconds{1}});
+    return result;
+  }
+  holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& context) override {
+    context.request_completion();
+    return {};
+  }
+
+ private:
+  holoscan::LifecycleStatus configure(holoscan::LifecycleContext& context) noexcept {
+    context.report_error(holoscan::ErrorCode::kInvalidArgument, "installed lifecycle cause");
+    context.report_error(holoscan::Error{holoscan::ErrorCode::kFailure});
+    return fail_ ? holoscan::LifecycleStatus::kFatalFailure : holoscan::LifecycleStatus::kOk;
+  }
+  bool fail_{};
+};
+
+bool exercise_installed_diagnostics() {
+  for (const bool fail : {false, true}) {
+    holoscan::Graph graph{"installed-diagnostic"};
+    graph.op<InstalledDiagnosticOperator>("probe", fail);
+    graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("clock"));
+    const auto plan = holoscan::compile(graph);
+    if (!plan.ok()) {
+      return false;
+    }
+    auto session = holoscan::run_async(plan);
+    session.wait();
+    if (!fail) {
+      if (session.termination() != holoscan::RunTermination::kRequestedCompleted ||
+          !session.diagnostics().empty()) {
+        return false;
+      }
+      continue;
+    }
+    if (session.termination() != holoscan::RunTermination::kFailed ||
+        session.diagnostics().size() != 1U || !session.diagnostics().front().detail) {
+      return false;
+    }
+    const auto& detail = *session.diagnostics().front().detail;
+    if (detail.error.code != holoscan::ErrorCode::kInvalidArgument ||
+        detail.error.message != "installed lifecycle cause" || detail.operator_path != "probe") {
+      return false;
+    }
+  }
+  return true;
+}
 
 struct InstalledRateState {
   static void reset() noexcept {
@@ -285,6 +344,9 @@ int main() {
     return 1;
   }
 
+  if (!exercise_installed_diagnostics()) {
+    return 13;
+  }
   if (!exercise_closed_lifecycle_control()) {
     return 2;
   }

@@ -427,7 +427,7 @@ TEST(CompilePhysicalPlan, RejectsCatalogSchemaCapacityMismatch) {
   });
   const auto profiles = standard_profiles(snapshot.vertices.size());
   auto endpoints = catalog_endpoints(snapshot);
-  ++endpoints.front().serialized_payload_capacity_bytes;
+  ++endpoints.front().schema_writer_max_serialized_bytes;
   const auto placements = default_process_placements(snapshot);
   const auto package = runtime_package_capability_view();
 
@@ -472,13 +472,13 @@ TEST(CompilePhysicalPlanValidation, RejectsExternalSchemaCapacityCorruption) {
   expect_rejection([](auto& state) {
     auto catalog = std::make_shared<ChannelEndpointCatalogState>(
         *ChannelEndpointCatalogAccess::state(state.endpoint_catalog));
-    ++catalog->endpoints.front().serialized_payload_capacity_bytes;
+    ++catalog->endpoints.front().schema_writer_max_serialized_bytes;
     state.endpoint_catalog = ChannelEndpointCatalogAccess::make(std::move(catalog));
   });
   expect_rejection([](auto& state) {
     auto catalog = std::make_shared<ChannelEndpointCatalogState>(
         *ChannelEndpointCatalogAccess::state(state.endpoint_catalog));
-    ++catalog->endpoints.front().service_static.serialized_payload_capacity_bytes;
+    ++catalog->endpoints.front().service_static.schema_writer_max_serialized_bytes;
     state.endpoint_catalog = ChannelEndpointCatalogAccess::make(std::move(catalog));
   });
 }

@@ -209,7 +209,7 @@ namespace holoscan::detail::physical_plan_test {
         .boundary_port = PortId{topic.graph_port.value},
         .service = "catalog-service-" + std::to_string(topic.id.value),
         .payload_identity = topic.payload_identity,
-        .serialized_payload_capacity_bytes = topic.serialized_payload_capacity_bytes,
+        .schema_writer_max_serialized_bytes = topic.serialized_payload_capacity_bytes,
         .attach = topic.attach,
         .tensor = topic.tensor,
         .tensor_fields = topic.tensor_fields,

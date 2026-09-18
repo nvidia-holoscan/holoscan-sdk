@@ -19,3 +19,4 @@ table StereoFrame {
 }
 
 root_type StereoFrame;
+file_identifier "ASFR";

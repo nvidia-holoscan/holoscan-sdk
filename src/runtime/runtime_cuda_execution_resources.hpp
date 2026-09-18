@@ -7,6 +7,7 @@
 
 #include <cuda_runtime_api.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -35,9 +36,10 @@ enum class RuntimeCudaExecutionFailurePoint : std::uint8_t {
   kIdentity = 5,
   kBinding = 6,
   kPublish = 7,
+  kComputeDeviceRestore = 8,
 };
 
-/// Inject one cold-path failure without changing immutable plan identity.
+/// Inject one source-tree failure without changing immutable plan identity.
 class RuntimeCudaExecutionTestControl final {
  public:
   RuntimeCudaExecutionTestControl(RuntimeCudaExecutionFailurePoint point,
@@ -48,15 +50,17 @@ class RuntimeCudaExecutionTestControl final {
     if (point != point_) {
       return false;
     }
-    return visits_++ == occurrence_;
+    return visits_.fetch_add(1U, std::memory_order_relaxed) == occurrence_;
   }
 
-  [[nodiscard]] std::size_t visits() const noexcept { return visits_; }
+  [[nodiscard]] std::size_t visits() const noexcept {
+    return visits_.load(std::memory_order_relaxed);
+  }
 
  private:
   RuntimeCudaExecutionFailurePoint point_;
   std::size_t occurrence_{};
-  std::size_t visits_{};
+  std::atomic_size_t visits_{};
 };
 
 /// Own all process-local CUDA compute streams independently of Tensor capacity resources.

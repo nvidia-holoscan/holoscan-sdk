@@ -1,144 +1,116 @@
-Every value your pipeline needs — a detection threshold, a camera gain, a
-deadline — is declared once as a typed parameter and resolved **before** the
-run starts. Holoscan SDK 5.0 deliberately has no runtime configuration file:
-you load a YAML or JSON document, convert it into typed parameter overrides
-validated against each operator's declared schema, hand those overrides to
-`compile()`, and run the resulting immutable plan. Once a plan exists, its
-configuration is part of its identity.
+Every value your pipeline needs, such as a threshold, gain, or deadline, is declared as
+typed operator parameters and resolved before the run starts. Holoscan SDK 5 does not make the
+runtime read configuration files. Your application loads YAML or JSON, sets typed parameters on operators,
+and lets `compile()` validate the final graph and freeze the effective values into the plan.
 
-This page covers the full path from a configuration file to a running
-application: loading documents, binding document values to typed `Params`,
-choosing a profile, declaring deployment bindings, and why the
-compile-then-freeze model is a feature rather than a limitation.
+This page covers loading documents, setting typed parameters, choosing a profile, and declaring
+deployment bindings.
 
 **Complete C++ example:** [`examples/essential/config_file/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/essential/config_file/cpp)
 
 <Note>
-  **baseline packaging boundary.** Source builds enable the optional
-  `config_io`/`params`/`params_io` libraries by default. Installed consumers
-  should request `find_package(holoscan REQUIRED CONFIG COMPONENTS params_io)`,
-  which imports the complete `core`/`config`/`config_io`/`params`/`params_io`
-  target closure. An unqualified aggregate find exposes every optional target
-  present in that installed package variant; component-qualified discovery is
-  the precise, portable spelling when an application depends on optional
-  tooling. A package built with any required optional component disabled
-  intentionally fails the component request instead of silently falling back
-  to a Core-only build.
+  Source builds enable the optional `config_io`, `params`, and `params_io` libraries by
+  default. Installed consumers should request
+  `find_package(holoscan REQUIRED CONFIG COMPONENTS params_io)`.
 </Note>
 
-<Note title="You will learn">
-  - How to load a YAML or JSON file into an immutable `config::Document`
-  - How `params::bind()` and `decode_overrides()` turn document values into
-    schema-validated typed overrides
-  - Where overrides, profiles, and deployment bindings plug into
-    `CompileOptions`
-  - What the five profiles mean and when to choose one
-  - How partition bindings request placement without applying it
-  - Why configuration is immutable after `compile()` — and how regulated
-    deployments benefit
-</Note>
+## Where configuration fits
 
-## Where configuration fits in compose → compile → run
-
-Configuration joins the three-phase model at the **compile** step. Composition
-describes the graph structure; the configuration document supplies concrete
-parameter values; `compile()` validates everything together and freezes the
-result into an `ExecutionPlan`. The runtime then executes exactly what the plan
-records — it never re-reads a file.
+With exceptions enabled, the concise startup path is:
 
 ```text
-config.yaml ──> Document ──> ParamOverrideSet ──┐
-                                                ├──> compile() ──> ExecutionPlan ──> run()
-Graph (op<>() / add_flow / set_params) ─────────┘
+load YAML or JSON -> config::Document -> decode<T>() -> operator.set_params() -> compile -> run
 ```
 
-Three consequences follow from this shape:
+The prepared typed value owns its available source evidence. Assigning it to an operator stores the
+value and evidence on the graph. `set_params()` does not snapshot the graph, compute a graph hash, or
+assume that graph construction is finished. `compile()` is the first operation that reads the final
+graph, profile, placement, schemas, and authored parameters together.
 
-- **Validation happens once, up front.** A typo'd key, an out-of-range value,
-  or a type mismatch is rejected while you still have a stack to debug on —
-  not mid-inference.
-- **The plan is self-contained.** Serializing the plan (its canonical JSON and
-  semantic digest) captures the configuration that will run, byte for byte.
-- **Defaults always exist.** Each parameter struct carries default member
-  initializers; a configuration file only *patches* what it explicitly names.
+This has three useful effects:
 
-This page assumes your operators already declare typed parameters with
-`HOLOSCAN_PARAM_SCHEMA`. If they do not, start with
-[typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters)
-and the full [parameter schema reference](/holoscan/sdk-user-guide/building-operators/parameter-schemas).
+- Validation happens before the run.
+- Graph construction can continue after configuration is attached.
+- The plan records the effective parameter values and their source evidence.
 
 ## Loading a configuration file
 
-`holoscan::config_io::load()` reads a file into an immutable
-`config::Document`. You name the format explicitly — the loader never infers
-it from a file extension or by sniffing content:
+`holoscan::config_io::load()` reads a file into an immutable `config::Document`. The format is
+explicit:
 
 ```cpp
 #include <holoscan/config/io.hpp>
 
-auto doc = holoscan::config_io::load("app_config.yaml",
-                                     holoscan::config_io::Format::kYaml);
-if (!doc) {
-  log_error(holoscan::config::format_error(doc.error()));
-  return 1;
-}
+auto config = holoscan::config_io::load(
+    "app_config.yaml", holoscan::config_io::Format::kYaml);
 ```
 
-Loading follows the errors-as-values style used across the SDK: the result is
-a `ConfigResult<Document>` (an `expected`), and failures carry a stable
-`CONFIG_*` token plus bounded diagnostic context (path, source excerpt, and
-the stage that failed) rather than free-form log prose.
-`config::format_error()` produces a single line for logs, including useful
-message, source, path, and cause context, with truncated fields marked. It
-never prints the raw source excerpt, which may contain sensitive configuration
-values. Use the structured error accessors, not the formatted wording, for
-programmatic decisions.
+`load()` returns the document directly and throws `ConfigException` on failure. `try_load()` returns
+a `ConfigResult<Document>` instead. Both forms retain a stable `CONFIG_*` token and structured
+context. The parser rejects duplicate keys, unsupported YAML features, invalid numbers, and inputs
+above its size or nesting limits.
 
-The parser is **fail-closed by design**. Duplicate keys are errors, not
-last-one-wins. YAML is an admitted semantic subset: ordinary acyclic anchors
-and aliases are supported, and each alias occurrence materializes as an
-independent owning value. Merge keys (`<<:`), native or custom tags,
-directives, and multi-document streams are rejected.
-JSON is strict. Input size, nesting depth, node count, and string lengths are
-all bounded — a malformed or hostile configuration file cannot exhaust your
-process. If you already hold the bytes, `config_io::parse()` accepts a
-`std::string_view` with the same contract.
+A `Document` is an immutable typed representation of configuration data. It may come from one
+file, parsed bytes, or a composition of several loaded values. Application code should not assume
+that one document means one file.
 
-Quote strings that look numeric. A plain scalar beginning with a digit or `-`
-must be a valid JSON number; otherwise loading fails with
-`CONFIG_UNSUPPORTED_VALUE`. Values such as `"1.2.3"`, `"192.168.1.10"`,
-`"30s"`, `"0755"`, and `"--verbose"` therefore need quotes.
+Paths are RFC 6901 JSON Pointers. For example, `/camera/gain` addresses `gain` inside
+`camera`. Dots are ordinary key characters, not separators.
 
-Lossless mode can replay unchanged alias-bearing YAML byte for byte, but only
-back to YAML. Cross-format serialization and every edit to that document fail
-closed. Parse with `Preservation::kSemanticOnly` when you need to edit an
-alias-bearing document or serialize it in another format.
+## Choosing how configuration failures are reported
 
-A `Document` is an immutable value: copies share state, reads are
-thread-safe, and you can address values directly with JSON Pointer paths
-(`doc->at("/camera/gain")`) when you need ad-hoc access. For application
-configuration, though, you rarely read values by hand — you bind whole
-objects to typed parameters, as follows.
+Configuration operations follow one naming rule:
 
-<Warning>
-  **Paths are JSON Pointers, not dotted names.** Everywhere the configuration
-  API takes a path — `Document::at()`, `params::bind()` — it is an RFC 6901
-  pointer like `"/camera/gain"`. A dotted spelling like `"camera.gain"` is a
-  single key named `camera.gain`, and the lookup will fail with
-  `CONFIG_PATH_NOT_FOUND`. Bindings never interpret dots as separators or
-  guess an operator name from a document key.
-</Warning>
+- The short name returns the value and throws `ConfigException` on failure.
+- The `try_*` name returns `ConfigResult<T>` for explicit error handling.
 
-## Binding document values to typed parameters
+`ConfigException::error()` exposes the original structured `ConfigError`, including its stable
+token, path, stage, destination state, and nested causes. Code built without exception support must
+use the `try_*` forms. The throwing declarations remain available so headers have the same API in
+every build, but an exception escaping in a no-exception program terminates the process.
 
-The bridge between an untyped document and your typed `Params` structs is a
-pair of functions from `<holoscan/params/config.hpp>`: `params::bind()`
-associates one operator handle with one document path, and
-`params::decode_overrides()` converts all bindings into a single validated
-`ParamOverrideSet`.
+The previous result-returning names changed as follows:
 
-Take the camera + IMU fusion pipeline as the running example. The detector
-operator declares its parameters and schema in the usual way:
+| Previous result-returning names | New structured-result names |
+|---|---|
+| `config_io::parse`, `load`, `serialize`, `save` | `try_parse`, `try_load`, `try_serialize`, `try_save` |
+| `Path::parse` | `Path::try_parse` |
+| `ConfigValue::boolean`, `signed_integer`, `unsigned_integer`, `floating`, `string`, `array`, `object` | matching `ConfigValue::try_*` names |
+| `ConfigView::as_bool`, `as_signed_integer`, `as_unsigned_integer`, `as_floating`, `as_string`, `element`, `key`, `member`, `find_member` | matching `ConfigView::try_*` names |
+| `Document::from_value`, `at`, `find`, `get`, `patch`, `replace`, `patched` | matching `Document::try_*` names |
+| `encode_config`, `decode_config`, `encode_semantic_value_v1`, `merge_config_values` | matching `try_*` names |
+
+This is an EA source and ABI change. Most result-handling call sites fail to compile until renamed.
+Truth tests need extra attention because some old source can still compile with a different meaning.
+For example, `if (view.as_bool())` now tests the decoded Boolean, not whether decoding succeeded.
+Likewise, `find()` and `find_member()` now return `std::optional`: an absent value is an empty
+optional, while malformed input or a traversal error throws. Use `try_find()` or
+`try_find_member()` when both absence and errors must be handled without exceptions.
+
+Custom `ConfigCodec<T>` implementations remain result-based extension points. They should use
+`try_*` configuration operations so failures return through the codec and retain its field-path
+context.
+
+String paths can be passed directly to edits. Value-taking edits also accept a `ConfigView`, so
+configuration composition does not need an explicit path parse or `to_value()` conversion:
+
+```cpp
+auto model_config =
+    holoscan::config_io::load("model.yaml", holoscan::config_io::Format::kYaml);
+auto inference_config = model_config.at("/gr00t_n1_7");
+auto composed_config = application_config.patched(
+    holoscan::config::Edit::add("/gr00t_n1_7/inference", inference_config));
+```
+
+The view conversion preserves the immutable subtree value, not the identity of the source document.
+The composed document's `base_source` and `SaveOptions::expected_source_digest` guard only the base
+file, not documents that supplied added views.
+Use an explicit `ConfigValue` or `ConfigView` for an empty edit value because
+`Edit::add("/path", {})` is ambiguous between those two overloads.
+
+## Decode and set typed parameters
+
+Suppose an operator declares:
 
 ```cpp
 struct DetectorParams {
@@ -152,7 +124,7 @@ HOLOSCAN_PARAM_SCHEMA(
     holoscan::field<&DetectorParams::gain>("gain").range(0.0F, 10.0F));
 ```
 
-A YAML file supplies deployment-specific values under a key of your choosing:
+A configuration object can provide those values:
 
 ```yaml
 detector:
@@ -160,79 +132,99 @@ detector:
   gain: 2.5
 ```
 
-Bind the operator's handle to that path and decode:
+Decode the object into the operator's parameter type, then set it on the operator:
 
 ```cpp
 #include <holoscan/params/config.hpp>
 
 holoscan::Graph graph{"pipeline"};
 auto detector = graph.op<Detector>("detector");
-detector.set_params(DetectorParams{.threshold = 5});   // authored baseline (optional)
 
-auto overrides = holoscan::params::decode_overrides(
-    *doc, {holoscan::params::bind(detector, "/detector")});
-if (!overrides) {
-  log_error(holoscan::params::format_error(overrides.error()));
+auto params = holoscan::params::decode<DetectorParams>(config, "/detector");
+detector.set_params(std::move(params));
+
+// Graph construction may continue here.
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+if (!plan.ok()) {
+  log_error(plan.json());
   return 1;
 }
 ```
 
-`decode_overrides()` is where the schema earns its keep. Every value in the
-bound object is checked against the operator's declared schema — field names
-(including declared aliases), exact types, ranges, allowed values, string
-encoding and length bounds. The conversion is **all-or-nothing**: one invalid
-field, one unknown key, or one duplicate target rejects the entire call with a
-typed error and no partial result. Numeric conversion is lossless by default;
-you opt into checked lossy conversion via `ParamConfigDecodeOptions` only if
-you mean it.
+`try_decode<T>()` returns a `ParamResult` for explicit error handling and works in no-exception
+builds. `decode<T>()` returns the prepared value directly and throws a formatted
+`holoscan::params::ParamException` that retains the structured `ParamToolError` if decoding fails.
+`decode<T>()` uses the type's C++ defaults; use
+`try_decode<T>()` when an explicit baseline is required.
 
-The contribution model is a **sparse patch**: fields present in the document
-override the baseline; fields absent from it preserve the value you authored
-with `set_params()` (or the struct's default member initializers if you
-authored nothing). You never have to repeat every field in every file.
+`PreparedParams<DetectorParams>` owns the decoded value and immutable source evidence. Fields absent
+from the configuration use the type's C++ defaults, or the explicit baseline passed to
+`try_decode<T>()`. Assigning a plain `DetectorParams` value intentionally records programmatic
+authoring without configuration evidence.
 
-Declared container fields work the same way and do not require a
-`ConfigCodec<ParamsT>`. Built-in codecs decode containers such as
-`std::vector<std::string>` and `std::map<std::string, double>` directly from
-their schema declarations. For a container of custom values, provide only the
-`ConfigCodec` for the element type and make that specialization visible where
-you call `params::bind()`. A supplied container replaces that field as a unit;
-an omitted container keeps its baseline value. If a whole-aggregate
-`ConfigCodec<ParamsT>` is visible, it remains the preferred path for
-non-scalar fields. `PARAM_CONFIG_FIELD_CODEC_UNAVAILABLE` means the needed
-codec was not visible at the `params::bind()` call site or the binding resolved
-to a different local parameter type.
+Container fields use field-local codecs. Standard containers have built-in support. A container of a
+custom type needs the custom element codec visible where decoding occurs. Schema-derived codecs can
+cover nested parameter objects without repeating their fields.
 
-The decoded `ParamOverrideSet` slots straight into compilation:
+Two common decode errors are:
+
+- `PARAM_CONFIG_BINDING_EMPTY`: the selected object contains no contributed fields. An empty object
+  is an error, not a request to use every default.
+- `PARAM_CONFIG_FIELD_DUPLICATE`: two input paths, such as a canonical name and its alias, select
+  the same parameter field.
+
+## Advanced atomic configuration transactions
+
+Use configuration bindings only when one configuration must sparsely update several operators as one
+all-or-nothing transaction over their final authored baselines:
 
 ```cpp
-holoscan::CompileOptions options;
-options.parameter_overrides = std::move(*overrides);
-
-const holoscan::ExecutionPlan plan = holoscan::compile(graph, options);
-if (!plan.ok()) { /* inspect plan.diagnostics() */ }
+auto backup_detector = graph.op<Detector>("backup_detector");
+auto configured = holoscan::params::set_params(
+    graph,
+    *config,
+    {
+        holoscan::params::bind(detector, "/detector"),
+        holoscan::params::bind(backup_detector, "/detector"),
+    });
+if (!configured) {
+  log_error(holoscan::params::format_error(configured.error()));
+  return 1;
+}
 ```
 
-From here the usual rules apply: check `plan.ok()`, read `plan.diagnostics()`
-on rejection, and pass the accepted plan to `holoscan::run()`. See
-[compiling and checking a plan](/holoscan/sdk-user-guide/getting-started/compile-and-check)
-for the full result model.
+`bind()` is a typed mapping from one operator handle to one path inside the configuration. It does not
+set parameters or infer the graph. The source graph must remain the same live graph through the
+`set_params()` call, and every binding must belong to the explicit destination graph. The handle
+itself does not need to outlive `bind()`.
 
-A decoded configuration override stays tied to the same Graph, schemas, and
-authored baseline, but not to the default profile and placement used during
-decoding. You can reuse it with another valid `CompileOptions::profile` or
-`CompileOptions::deployment`; the compiler checks the values against those
-actual options. Snapshot and rebind overrides remain tied to their captured
-context. When inspecting provenance, `target_profile` records the profile used
-during capture in both cases. Exact-context sets additionally require their
-captured admission-context digest to match the compile context.
+Fields present in a bound object replace the final authored baseline; absent fields keep that final
+baseline or C++ default. Pass every operator binding in the same `set_params()` call. One invalid
+field, target, or codec rejects the whole attachment. A graph accepts one pending advanced
+transaction, preventing independent sources from silently overwriting each other. Configuration and
+snapshot attachment share that slot. The rule is transitive through embedding, so two configured
+child graphs cannot both be embedded into one parent. A conflict reports `PARAM_CONFIG_ATTACH_FAILED`
+or `PARAM_REBIND_ATTACH_FAILED` with the underlying graph transaction error.
 
-<Tip>
-  Keep one document per deployment (bench, lab, production) rather than one
-  per operator. A single file with one top-level object per operator, each
-  wired with one `bind()` call, keeps the mapping between file and graph
-  explicit and reviewable.
-</Tip>
+## Snapshot restore
+
+Saved runtime parameters use the same graph-owned model:
+
+```cpp
+auto restored = holoscan::params::load_and_set_params(
+    graph, archive_path, holoscan::params::ParamRebindTargetScope::operator_(operator_path));
+if (!restored) {
+  log_error(holoscan::params::format_error(restored.error().detail()));
+  return 1;
+}
+```
+
+Snapshots remain reusable data. Target paths, aliases, migrations, and source provenance travel with
+the pending transaction, while final graph, schema, profile, and baseline checks happen only in
+`compile()`. Restore attachment mutates graph authoring state and must not run concurrently with
+other graph mutation. It shares the graph's one pending transaction slot with advanced configuration,
+including across embedded graphs. It is not a non-mutating compatibility check; use and compile a
+disposable graph when validation must not change the intended destination.
 
 ## Profiles: naming your deployment posture
 
@@ -343,14 +335,15 @@ diff, review, and deploy through
 
 ## Recap
 
-- `config_io::load()` parses YAML/JSON fail-closed into an immutable
-  `config::Document`; formats are explicit and errors are typed `CONFIG_*`
-  values.
-- `params::bind()` plus `params::decode_overrides()` convert document objects
-  into a schema-validated `ParamOverrideSet` — sparse patch over your authored
-  baseline, all-or-nothing on any error.
-- Overrides, a `Profile`, and `DeploymentBinding` requests all enter through
-  `CompileOptions`; `compile()` validates and freezes them into the plan.
+- `config_io::load()` parses YAML/JSON fail-closed into an immutable `config::Document` and throws
+  on failure; `config_io::try_load()` returns a structured result instead.
+- `params::decode<T>()` plus operator `set_params()` are the concise typed startup path when
+  exceptions are enabled; `params::try_decode<T>()` returns the same prepared value as an explicit
+  result and also works in no-exception builds.
+- `params::bind()` plus graph `set_params()` are reserved for an all-or-nothing sparse transaction
+  spanning one or more operators.
+- A `Profile` and `DeploymentBinding` enter through `CompileOptions`;
+  `compile()` validates them with the graph-owned parameter input.
 - Deployment bindings are recorded requests with probe evidence; the runtime,
   not the compiler, applies placement.
 - Configuration is resolved before the run and immutable after `compile()` —

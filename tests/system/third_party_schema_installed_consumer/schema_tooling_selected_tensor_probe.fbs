@@ -6,11 +6,12 @@ include "tensor.fbs";
 namespace holoscan.schema;
 
 table SchemaToolingSafeProbe {
-  sequence:ulong;
+  sequence:ulong (id: 0);
 }
 
 table SchemaToolingSelectedTensorProbe {
-  tensor:holoscan.schema.Tensor;
+  tensor:holoscan.schema.Tensor (id: 0);
 }
 
 root_type SchemaToolingSafeProbe;
+file_identifier "3PSP";

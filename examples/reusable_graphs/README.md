@@ -14,6 +14,10 @@ only through exported interface ports and belong to the parent-authored
 `stage` region with a `bounded_memory` constraint. Each reusable scope
 declares a `timeline` clock import, and its direct parent binds that import
 explicitly until the chain reaches one concrete root clock.
+Each branch is assigned atomically with `partition(name).add(graph_handle)`;
+chaining `.add(sink)` places its external sink on the same serial owner.
+`auto_partition_remaining()` leaves only the source for automatic planning.
+The accepted view checks each selected instance and its two resolved Operators.
 **Part 2 (runtime replay):** the same compiled cross-scope plan runs twice,
 proving that fresh sessions reconstruct the imported clock chain and
 constructor state consistently. A what-not-to-do stale-handle demonstration

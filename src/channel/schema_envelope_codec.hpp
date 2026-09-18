@@ -48,17 +48,17 @@ template <typename Integer>
 [[nodiscard]] inline expected<void, Error> encode_schema_envelope(
     std::span<std::byte> wire, const SchemaIdentityRecord& identity, const std::size_t payload_size,
     const std::uint64_t endpoint_generation = kInitialSchemaEndpointGeneration) noexcept {
-  if (wire.size() < kSchemaEnvelopeHeaderSize || identity.version == 0U ||
+  if (wire.size() < kSchemaEnvelopeHeaderSize || identity.compatibility_epoch == 0U ||
       endpoint_generation == 0U || payload_size == 0U ||
       payload_size > std::numeric_limits<std::uint32_t>::max()) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
   schema_envelope_detail::store_little<std::uint32_t>(wire, 0U, kSchemaEnvelopeABIVersion);
   schema_envelope_detail::store_little<std::uint32_t>(wire, 4U, kSchemaEnvelopeHeaderSize);
-  std::copy(identity.id.value.begin(), identity.id.value.end(), wire.begin() + 8U);
-  schema_envelope_detail::store_little<std::uint32_t>(wire, 24U, identity.version);
+  std::copy(identity.family_id.value.begin(), identity.family_id.value.end(), wire.begin() + 8U);
   schema_envelope_detail::store_little<std::uint32_t>(
-      wire, 28U, static_cast<std::uint32_t>(payload_size));
+      wire, 24U, static_cast<std::uint32_t>(payload_size));
+  schema_envelope_detail::store_little<std::uint32_t>(wire, 28U, 0U);
   schema_envelope_detail::store_little<std::uint64_t>(wire, 32U, endpoint_generation);
   return {};
 }
@@ -67,16 +67,17 @@ template <typename Integer>
     std::span<const std::byte> wire, const SchemaIdentityRecord& expected,
     const std::size_t payload_capacity,
     const std::uint64_t expected_generation = kInitialSchemaEndpointGeneration) noexcept {
-  if (wire.size() < kSchemaEnvelopeHeaderSize || expected.version == 0U ||
+  if (wire.size() < kSchemaEnvelopeHeaderSize || expected.compatibility_epoch == 0U ||
       expected_generation == 0U ||
       schema_envelope_detail::load_little<std::uint32_t>(wire, 0U) != kSchemaEnvelopeABIVersion ||
       schema_envelope_detail::load_little<std::uint32_t>(wire, 4U) != kSchemaEnvelopeHeaderSize ||
-      !std::equal(expected.id.value.begin(), expected.id.value.end(), wire.begin() + 8U) ||
-      schema_envelope_detail::load_little<std::uint32_t>(wire, 24U) != expected.version ||
+      !std::equal(
+          expected.family_id.value.begin(), expected.family_id.value.end(), wire.begin() + 8U) ||
+      schema_envelope_detail::load_little<std::uint32_t>(wire, 28U) != 0U ||
       schema_envelope_detail::load_little<std::uint64_t>(wire, 32U) != expected_generation) {
     return make_unexpected(Error{ErrorCode::kProtocolError, "ENDPOINT_SCHEMA_ENVELOPE_INVALID"});
   }
-  const std::size_t payload_size = schema_envelope_detail::load_little<std::uint32_t>(wire, 28U);
+  const std::size_t payload_size = schema_envelope_detail::load_little<std::uint32_t>(wire, 24U);
   if (payload_size == 0U || payload_size > payload_capacity ||
       payload_size > wire.size() - kSchemaEnvelopeHeaderSize) {
     return make_unexpected(

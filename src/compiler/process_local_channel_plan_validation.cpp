@@ -360,7 +360,8 @@ template <typename Record>
 [[nodiscard]] bool valid_cross_process_tensor_service(
     const CrossProcessChannelServicePlanRecord& service,
     const TensorServicePoolLookup& pool) noexcept {
-  if (!service.tensor_payload || service.payload_size_bytes != 0U || pool.ambiguous) {
+  if (!service.tensor_payload || service.payload_size_bytes != 0U ||
+      service.selected_inline_bucket_bytes != 0U || pool.ambiguous) {
     return false;
   }
   if (!pool.facts) {
@@ -377,6 +378,8 @@ template <typename Record>
     const CrossProcessChannelServicePlanRecord& service,
     const std::optional<std::uint64_t>& payload_size) noexcept {
   return payload_size && service.payload_size_bytes == *payload_size &&
+         service.selected_inline_bucket_bytes ==
+             channel_internal::inline_payload_bucket_size(*payload_size).value_or(0U) &&
          service.tensor_max_byte_span == 0U && service.tensor_pool_id.empty() &&
          service.tensor_memory_kind == MemoryKind::kUnknown && !service.tensor_device.valid();
 }
@@ -465,6 +468,8 @@ template <typename Record>
     const std::optional<std::uint64_t>& payload_size) noexcept {
   if (!service.tensor_fields.empty()) {
     return payload_size && service.tensor_payload && service.payload_size_bytes == *payload_size &&
+           service.selected_inline_bucket_bytes ==
+               channel_internal::inline_payload_bucket_size(*payload_size).value_or(0U) &&
            service.tensor_max_byte_span == 0U && service.tensor_pool_id.empty() &&
            service.tensor_memory_kind == MemoryKind::kUnknown && !service.tensor_device.valid() &&
            service.tensor_emit_policy == InterfaceTensorEmitPolicy::kCopyIfNeeded &&
@@ -472,6 +477,8 @@ template <typename Record>
                state, service.source, service.tensor_fields, true);
   }
   return payload_size && service.tensor_payload && service.payload_size_bytes == *payload_size &&
+         service.selected_inline_bucket_bytes ==
+             channel_internal::inline_payload_bucket_size(*payload_size).value_or(0U) &&
          service.tensor_max_byte_span != 0U && !service.tensor_pool_id.empty() &&
          ((service.tensor_memory_kind == MemoryKind::kHost && !service.tensor_device.valid()) ||
           ((service.tensor_memory_kind == MemoryKind::kPinnedHost ||
@@ -544,7 +551,10 @@ template <typename Record>
 [[nodiscard]] bool valid_cross_process_edge_contract(const PayloadEdgePlanRecord& edge,
                                                      const PortPlanRecord* source,
                                                      const PortPlanRecord* target) noexcept {
-  return edge.edge && source != nullptr && target != nullptr &&
+  const bool local_enum = edge.payload_identity.kind == PayloadIdentityKind::kScalar &&
+                          edge.payload_identity.scalar &&
+                          edge.payload_identity.scalar->kind == ScalarIdentityKind::kLocalEnum;
+  return !local_enum && edge.edge && source != nullptr && target != nullptr &&
          source->owner_kind == PortOwnerKind::kOperator &&
          target->owner_kind == PortOwnerKind::kOperator &&
          source->direction == PortDirection::kOutput &&
@@ -652,7 +662,7 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
     const bool target_schema = target->payload_identity.kind == PayloadIdentityKind::kSchema;
     if (source_schema != (source->serialized_payload_capacity_bytes != 0U) ||
         target_schema != (target->serialized_payload_capacity_bytes != 0U) ||
-        source->serialized_payload_capacity_bytes != target->serialized_payload_capacity_bytes) {
+        source->serialized_payload_capacity_bytes > target->serialized_payload_capacity_bytes) {
       return false;
     }
     const auto payload_size = channel_payload_size_bytes(
@@ -741,6 +751,13 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
         publisher.max_loaned_samples != edge.producer_max_emits_per_compute ||
         publisher.replacement_attribution_required !=
             (edge.queue_policy != QueuePolicy::kBlocking)) {
+      return false;
+    }
+    const std::uint64_t expected_bucket =
+        service.delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ && payload_size
+            ? channel_internal::inline_payload_bucket_size(*payload_size).value_or(0U)
+            : 0U;
+    if (service.selected_inline_bucket_bytes != expected_bucket) {
       return false;
     }
     if (tensor) {
@@ -1218,8 +1235,8 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
         endpoint.service_static.max_subscriber_borrowed != subscriber_borrows ||
         endpoint.service_static.publisher_history_depth != 0U ||
         !endpoint.service_static.event_wake ||
-        endpoint.serialized_payload_capacity_bytes != topic.serialized_payload_capacity_bytes ||
-        endpoint.service_static.serialized_payload_capacity_bytes !=
+        endpoint.schema_writer_max_serialized_bytes != topic.serialized_payload_capacity_bytes ||
+        endpoint.service_static.schema_writer_max_serialized_bytes !=
             topic.serialized_payload_capacity_bytes ||
         !payload_identity_exactly_equal(endpoint.payload_identity, topic.payload_identity) ||
         !payload_identity_exactly_equal(endpoint.service_static.payload_identity,

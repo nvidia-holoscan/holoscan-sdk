@@ -5,10 +5,19 @@
   - How to build the module and consume its installed CMake package
 </Note>
 
-Holoscan Vision is a C++ operator module for GPU-resident image
-and detection pipelines. Its eight operators wrap CV-CUDA operations in
-the Holoscan 5.x programming model: typed ports, temporal contracts, bounded
-output pools, and metadata-preserving tensor samples.
+Holoscan Vision is the [core module](/holoscan/sdk-user-guide/modules) for
+GPU-resident image and detection pipelines. Its C++ operators wrap CV-CUDA
+operations in the Holoscan 5.x programming model: typed ports, temporal
+contracts, bounded output pools, and metadata-preserving tensor samples.
+
+<Warning>
+  The operators listed below and the types in
+  `<holoscan/vision/vision_types.hpp>` are the public, supported API of this
+  module in Holoscan SDK 5.0. The CV-CUDA calls each operator issues are an
+  implementation detail: which CV-CUDA version the module builds against, and
+  how it invokes it, may change in any release. Write applications against the
+  operators.
+</Warning>
 
 ## Operators
 
@@ -127,47 +136,58 @@ from its boxes input.
 
 ## Author a graph
 
-Named constructor aggregates define fixed output-pool and admission capacity.
-Parameters choose the active shape and algorithm within that capacity; a
-parameter override cannot enlarge the pool. This example omits the source and
-sink operators:
+Vision operators are default-constructible. Their typed Parameters provide the
+structural fields used to derive fixed output-pool capacity. `ResizeOp`,
+`CustomCropOp`, and `RemapOp` use their fixed output dimensions directly;
+`NormalizeOp` and `ReformatOp` inherit their connected input's maximum byte
+span, and `ConvertToOp` scales that input bound for its selected output dtype.
+`CopyMakeBorderOp` requires maximum output dimensions, while NMS requires a
+maximum box count. Complete configuration loading also requires every
+capacity-only maximum, including `max_batch_size`; direct C++ aggregate setup
+should set these fields to the application's real bound instead of relying on
+their single-sample defaults. This example omits the source and sink operators:
 
 ```cpp
 #include <utility>
 
 #include <holoscan/core/compile.hpp>
 #include <holoscan/core/graph.hpp>
+#include <holoscan/vision/copy_make_border_op.hpp>
 #include <holoscan/vision/custom_crop_op.hpp>
 #include <holoscan/vision/resize_op.hpp>
 
 holoscan::Graph graph{"vision"};
 
-auto resize = graph.op<holoscan::vision::ResizeOp>(
-    "resize", holoscan::vision::VisionImageCapacity{
-                  .max_width = 1920,
-                  .max_height = 1080,
-                  .max_batch_size = 4U,
-              });
+auto resize = graph.op<holoscan::vision::ResizeOp>("resize");
 resize.set_params(holoscan::vision::ResizeOpParams{
     .width = 1280,
     .height = 720,
+    .max_batch_size = 4U,
     .interpolation = holoscan::vision::InterpolationMode::kLinear,
 });
 
-auto crop = graph.op<holoscan::vision::CustomCropOp>(
-    "crop", holoscan::vision::VisionImageCapacity{
-                .max_width = 640,
-                .max_height = 480,
-                .max_batch_size = 4U,
-            });
+auto crop = graph.op<holoscan::vision::CustomCropOp>("crop");
 crop.set_params(holoscan::vision::CustomCropOpParams{
     .x = 64,
     .y = 32,
     .width = 640,
     .height = 480,
+    .max_batch_size = 4U,
+});
+
+auto border = graph.op<holoscan::vision::CopyMakeBorderOp>("border");
+border.set_params(holoscan::vision::CopyMakeBorderOpParams{
+    .max_width = 672,
+    .max_height = 512,
+    .max_batch_size = 4U,
+    .top = 16,
+    .bottom = 16,
+    .left = 16,
+    .right = 16,
 });
 
 graph.add_flow(resize->output, crop->input);
+graph.add_flow(crop->output, border->input);
 ```
 
 Bind every runtime-pool CUDA Tensor producer to a deployment device, including
@@ -187,6 +207,11 @@ options.deployment
         .operator_path = "crop",
         .output_port = "output",
         .device = holoscan::DeviceId{0},
+    })
+    .bind_tensor_output_device(holoscan::TensorOutputDevicePlacement{
+        .operator_path = "border",
+        .output_port = "output",
+        .device = holoscan::DeviceId{0},
     });
 
 const holoscan::ExecutionPlan plan = holoscan::compile(graph, std::move(options));
@@ -204,9 +229,9 @@ and detection example at
 Build and test through the SDK-level runner from the repository root:
 
 ```bash
-./public/run build --config \
+./run build --config \
   "-DHOLOSCAN_BUILD_VISION=ON -DHOLOSCAN_BUILD_EXAMPLES=ON -DHOLOSCAN_BUILD_TESTS=ON"
-./public/run test --options "-L vision"
+./run test --options "-L vision"
 ```
 
 The SDK development image provides CV-CUDA. GPU tests report a CTest
@@ -215,21 +240,30 @@ skip when no usable CUDA device is present.
 Installed CMake consumers use the exported `holoscan::vision` target:
 
 ```cmake
+find_package(holoscan CONFIG REQUIRED COMPONENTS vision)
+target_link_libraries(my_pipeline PRIVATE holoscan::vision)
+```
+
+Standalone consumers can instead use:
+
+```cmake
 find_package(holoscan-vision CONFIG REQUIRED)
 target_link_libraries(my_pipeline PRIVATE holoscan::vision)
 ```
 
-`HOLOSCAN_BUILD_VISION` defaults to `ON`. The current distribution intentionally
-places the `holoscan-vision` CPack component in the single `holoscan` Debian
-package and installs CV-CUDA in the common SDK development image, so default
-packages and images carry the dependency. Set `HOLOSCAN_BUILD_VISION=OFF` to
-omit the module from a source build; there is no separate Vision package or
-image layer today.
+Set `holoscan-vision_DIR` to `<prefix>/lib/cmake/holoscan` when the SDK is outside CMake's
+default search locations.
 
-Shared packages accept `libcvcuda0` from the supported CV-CUDA 0.17.x window;
-static packages use the matching `cvcuda0-dev` window because their installed
-CMake configuration exposes link-only CV-CUDA requirements. Public Vision
-headers do not expose CV-CUDA types.
+`HOLOSCAN_BUILD_VISION` defaults to `ON`. CPack Debian generation packages Vision
+as the `holoscan-vision` payload by default, which depends on the matching
+`holoscan-core` version. Set `HOLOSCAN_BUILD_VISION=OFF` to omit the module from
+a source build.
+
+Shared Debian packages bundle the matching CV-CUDA 0.18.x runtime, so they do
+not require a separately configured CV-CUDA APT repository. Static packages
+use the matching `cvcuda0-dev` window because their installed CMake
+configuration exposes link-only CV-CUDA requirements. Public Vision headers do
+not expose CV-CUDA types.
 
 ## Recap
 
@@ -241,5 +275,5 @@ headers do not expose CV-CUDA types.
   validate producers against the tensor matrix before composing a pipeline.
 - `RemapOp` reuses a causal map by default; configure `map_max_age` for the
   required freshness or select `kExact` for timestamp-paired maps.
-- Build through `public/run`, or consume the installed `holoscan::vision`
-  CMake target from the `holoscan-vision` package.
+- Build through `./run`, or consume the installed `holoscan::vision`
+  CMake target through the `vision` component of the `holoscan` package.

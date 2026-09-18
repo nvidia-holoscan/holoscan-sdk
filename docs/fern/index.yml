@@ -120,6 +120,20 @@ navigation:
         path: ../external_topics.mdx
         slug: external-topics
 
+  - section: Holoscan Modules
+    slug: modules
+    path: ../holoscan_modules.mdx
+    contents:
+      - page: Inference
+        path: ../holoscan_inference.mdx
+        slug: inference
+      - page: Vision
+        path: ../holoscan_vision.mdx
+        slug: vision
+      - page: Visualization
+        path: ../holoscan_visualization.mdx
+        slug: visualization
+
   - section: Data & Payloads
     slug: data-and-payloads
     contents:
@@ -216,9 +230,6 @@ navigation:
     slug: advanced
     collapsed: true
     contents:
-      - page: Holoscan Vision
-        path: ../holoscan_vision.mdx
-        slug: holoscan-vision
       - page: Plan Tooling & CI
         path: ../plan_tooling.mdx
         slug: plan-tooling

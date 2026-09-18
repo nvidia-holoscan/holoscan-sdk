@@ -26,5 +26,5 @@ endif()
 
 install(TARGETS operator_anatomy
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/operator_anatomy/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

@@ -42,5 +42,5 @@ endif()
 
 install(TARGETS automatic_partitioning
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/automatic_partitioning/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

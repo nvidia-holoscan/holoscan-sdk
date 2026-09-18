@@ -170,14 +170,14 @@ TEST(CompileIngress, RetainsExecutableFactoriesAfterTheSourceGraphIsDestroyed) {
   // the source Graph is gone.
   for (const auto& record : state->executable_factories.operators) {
     ASSERT_NE(record.factory, nullptr);
-    const auto created = record.factory->create();
+    const auto created = record.factory->create(nullptr);
     ASSERT_TRUE(created);
     EXPECT_NE(created.value(), nullptr);
   }
   const auto& clock_record = state->executable_factories.clocks.front();
   ASSERT_NE(clock_record.factory, nullptr);
   EXPECT_EQ(clock_record.shared, nullptr);
-  const auto created_clock = clock_record.factory->create();
+  const auto created_clock = clock_record.factory->create(nullptr);
   ASSERT_TRUE(created_clock);
   EXPECT_NE(created_clock.value(), nullptr);
 }

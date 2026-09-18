@@ -321,8 +321,11 @@ wait_for_integrated_control(holoscan::ChannelSubscriber<std::uint32_t>& subscrib
   }
   const std::uint32_t value = sample->data;
   const int stopped = stop(0);
+  const auto control_closed = control->close();
+  const auto control_after_close = control->receive_sample();
   if (stopped != 0 || session.termination() != holoscan::RunTermination::kStopped ||
-      !session.diagnostics().empty()) {
+      !session.diagnostics().empty() || !control_closed || control_after_close ||
+      control_after_close.error().code != holoscan::ErrorCode::kClosed) {
     return 11;
   }
   std::cout << "control=" << value << " sequence=" << sample->metadata.sequence << '\n';

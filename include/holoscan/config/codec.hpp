@@ -102,8 +102,6 @@ class DecodeContext {
   detail::CodecCallState& state_;
   std::uint32_t depth_{1};
   friend struct detail::CodecContextFactory;
-  template <class T>
-  friend ConfigResult<T> decode_config(ConfigView, const DecodeOptions&);
   friend class ObjectDecoder;
   friend class ArrayDecoder;
 };
@@ -158,8 +156,6 @@ class EncodeContext {
   detail::CodecCallState& state_;
   std::uint32_t depth_{1};
   friend struct detail::CodecContextFactory;
-  template <class T>
-  friend ConfigResult<ConfigValue> encode_config(const T&, const EncodeOptions&);
 };
 
 /// @brief Declare the sole application customization point for typed configuration values.
@@ -253,7 +249,7 @@ inline ConfigResult<void> DecodeContext::charge(const ConfigView& value) noexcep
   }
   --state_.remaining_nodes;
   if (value.kind() == ConfigValueKind::kString) {
-    const auto text = value.as_string();
+    const auto text = value.try_as_string();
     if (!text) {
       return tl::make_unexpected(text.error());
     }
@@ -377,19 +373,21 @@ ConfigResult<ConfigValue> EncodeContext::encode_child(std::string_view token, co
   return encoded;
 }
 
-/// @brief Decode one complete semantic value through its explicit ConfigCodec specialization.
+/// @brief Try to decode one complete semantic value through its explicit ConfigCodec
+/// specialization.
 ///
-/// The helper owns one monotonic context tree. A successful codec must close every ObjectDecoder or
-/// ArrayDecoder scope it opened. With exceptions enabled, an escaping codec exception is translated
-/// to `CONFIG_CODEC_FAILURE`; without exceptions, ConfigCodable requires non-throwing callbacks.
+/// The helper owns one monotonic context tree. A successful codec must close every ObjectDecoder
+/// or ArrayDecoder scope it opened. With exceptions enabled, an escaping ConfigException retains
+/// its structured error; other exceptions become `CONFIG_CODEC_FAILURE`. Without exceptions,
+/// ConfigCodable requires non-throwing callbacks.
 ///
 /// @tparam T Owning destination type.
 /// @param view Valid semantic value.
 /// @param options Immutable typed-decoding policy.
 /// @return The owning decoded value or a bounded structured failure.
 template <ConfigCodable T>
-[[nodiscard]] ConfigResult<T> decode_config(ConfigView view,
-                                            const DecodeOptions& options = DecodeOptions{}) {
+[[nodiscard]] ConfigResult<T> try_decode_config(ConfigView view,
+                                                const DecodeOptions& options = DecodeOptions{}) {
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   try {
 #endif
@@ -409,6 +407,8 @@ template <ConfigCodable T>
     }
     return ConfigResult<T>{std::move(*result)};
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (const ConfigException& exception) {
+    return tl::make_unexpected(exception.error());
   } catch (...) {
     return tl::make_unexpected(
         ConfigError::make(ConfigErrorCode::kCodecFailure, "configuration codec threw"));
@@ -416,18 +416,29 @@ template <ConfigCodable T>
 #endif
 }
 
-/// @brief Encode one complete typed value through its explicit ConfigCodec specialization.
+/// @brief Decode one complete semantic value through its explicit ConfigCodec specialization.
+/// @tparam T Owning destination type.
+/// @param view Valid semantic value.
+/// @param options Immutable typed-decoding policy.
+/// @return The owning decoded value.
+/// @throws ConfigException on a structured decode or codec failure.
+template <ConfigCodable T>
+[[nodiscard]] T decode_config(ConfigView view, const DecodeOptions& options = DecodeOptions{}) {
+  return detail::value_or_throw(try_decode_config<T>(std::move(view), options));
+}
+
+/// @brief Try to encode one complete typed value through its explicit ConfigCodec specialization.
 ///
-/// The helper owns one monotonic context tree and translates an escaping exception to
-/// `CONFIG_CODEC_FAILURE` when exceptions are enabled.
+/// The helper owns one monotonic context tree. With exceptions enabled, an escaping
+/// ConfigException retains its structured error; other exceptions become `CONFIG_CODEC_FAILURE`.
 ///
 /// @tparam T Owning source type.
 /// @param value Typed value borrowed for the duration of this call.
 /// @param options Immutable typed-encoding policy.
 /// @return The immutable semantic value or a bounded structured failure.
 template <ConfigCodable T>
-[[nodiscard]] ConfigResult<ConfigValue> encode_config(const T& value,
-                                                      const EncodeOptions& options = {}) {
+[[nodiscard]] ConfigResult<ConfigValue> try_encode_config(const T& value,
+                                                          const EncodeOptions& options = {}) {
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   try {
 #endif
@@ -440,11 +451,24 @@ template <ConfigCodable T>
     auto result = ConfigCodec<T>::encode(value, options, context);
     return result;
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (const ConfigException& exception) {
+    return tl::make_unexpected(exception.error());
   } catch (...) {
     return tl::make_unexpected(
         ConfigError::make(ConfigErrorCode::kCodecFailure, "configuration codec threw"));
   }
 #endif
+}
+
+/// @brief Encode one complete typed value through its explicit ConfigCodec specialization.
+/// @tparam T Owning source type.
+/// @param value Typed value borrowed for the duration of this call.
+/// @param options Immutable typed-encoding policy.
+/// @return The immutable semantic value.
+/// @throws ConfigException on a structured encode or codec failure.
+template <ConfigCodable T>
+[[nodiscard]] ConfigValue encode_config(const T& value, const EncodeOptions& options = {}) {
+  return detail::value_or_throw(try_encode_config(value, options));
 }
 
 /// @brief Traverse an object while recording consumed members for strict finish validation.
@@ -484,7 +508,7 @@ class ObjectDecoder {
   ObjectDecoder& operator=(const ObjectDecoder&) = delete;
   /// @brief Destroy local consumption state without implicitly closing the context scope.
   ///
-  /// A codec that returns success without calling \ref finish is rejected by decode_config.
+  /// A codec that returns success without calling \ref finish is rejected by try_decode_config.
   ~ObjectDecoder() = default;
 
   /// @brief Decode and mark one required object member as consumed.
@@ -501,10 +525,10 @@ class ObjectDecoder {
           ConfigErrorCode::kTypeMismatch, "configuration value is not an object", context_.path()));
     }
     for (std::size_t index = 0; index < view_.size(); ++index) {
-      auto candidate = view_.key(index);
+      auto candidate = view_.try_key(index);
       if (candidate && *candidate == key) {
         consumed_[index] = true;
-        auto child = view_.element(index);
+        auto child = view_.try_element(index);
         if (!child) {
           return tl::make_unexpected(child.error());
         }
@@ -530,10 +554,10 @@ class ObjectDecoder {
           ConfigErrorCode::kTypeMismatch, "configuration value is not an object", context_.path()));
     }
     for (std::size_t index = 0; index < view_.size(); ++index) {
-      auto candidate = view_.key(index);
+      auto candidate = view_.try_key(index);
       if (candidate && *candidate == key) {
         consumed_[index] = true;
-        auto child = view_.element(index);
+        auto child = view_.try_element(index);
         if (!child) {
           return tl::make_unexpected(child.error());
         }
@@ -778,7 +802,7 @@ struct ObjectCodec {
     if (!encoded) {
       return tl::make_unexpected(encoded.error());
     }
-    return ConfigValue::object(entries);
+    return ConfigValue::try_object(entries);
   }
 };
 
@@ -803,7 +827,7 @@ class ArrayDecoder {
   ArrayDecoder& operator=(const ArrayDecoder&) = delete;
   /// @brief Destroy local cursor state without implicitly closing the context scope.
   ///
-  /// A codec that returns success without calling \ref finish is rejected by decode_config.
+  /// A codec that returns success without calling \ref finish is rejected by try_decode_config.
   ~ArrayDecoder() = default;
 
   /// @brief Decode the next array element in order.
@@ -819,7 +843,7 @@ class ArrayDecoder {
       return std::optional<T>{};
     }
     const auto child_index = index_++;
-    auto child = view_.element(child_index);
+    auto child = view_.try_element(child_index);
     if (!child) {
       return tl::make_unexpected(child.error());
     }
@@ -859,7 +883,7 @@ namespace detail {
 template <class T>
 [[nodiscard]] ConfigResult<T> decode_signed_integer(const ConfigView& view) {
   static_assert(std::is_integral_v<T> && !std::is_same_v<T, bool>);
-  auto value = view.as_signed_integer();
+  auto value = view.try_as_signed_integer();
   if (!value) {
     return tl::make_unexpected(value.error());
   }
@@ -881,7 +905,7 @@ template <class T>
 template <class T>
 [[nodiscard]] ConfigResult<T> decode_unsigned_integer(const ConfigView& view) {
   static_assert(std::is_integral_v<T> && !std::is_same_v<T, bool>);
-  auto value = view.as_unsigned_integer();
+  auto value = view.try_as_unsigned_integer();
   if (!value) {
     return tl::make_unexpected(value.error());
   }
@@ -900,7 +924,7 @@ template <class T>
 template <class T>
 [[nodiscard]] ConfigResult<T> decode_floating_integer(const ConfigView& view) {
   static_assert(std::is_integral_v<T> && !std::is_same_v<T, bool>);
-  auto value = view.as_floating();
+  auto value = view.try_as_floating();
   constexpr int value_bits = std::numeric_limits<T>::digits;
   const double upper_exclusive = std::ldexp(1.0, value_bits);
   const double lower_inclusive = std::is_signed_v<T> ? -upper_exclusive : 0.0;
@@ -936,7 +960,7 @@ template <class T>
 [[nodiscard]] ConfigResult<T> decode_native_floating(const ConfigView& view,
                                                      const DecodeOptions& options) {
   static_assert(std::is_floating_point_v<T>);
-  auto value = view.as_floating();
+  auto value = view.try_as_floating();
   if (!value) {
     return tl::make_unexpected(value.error());
   }
@@ -961,7 +985,7 @@ template <class T>
 [[nodiscard]] ConfigResult<T> decode_signed_floating(const ConfigView& view,
                                                      const DecodeOptions& options) {
   static_assert(std::is_floating_point_v<T>);
-  auto value = view.as_signed_integer();
+  auto value = view.try_as_signed_integer();
   if (!value) {
     return tl::make_unexpected(value.error());
   }
@@ -984,7 +1008,7 @@ template <class T>
 [[nodiscard]] ConfigResult<T> decode_unsigned_floating(const ConfigView& view,
                                                        const DecodeOptions& options) {
   static_assert(std::is_floating_point_v<T>);
-  auto value = view.as_unsigned_integer();
+  auto value = view.try_as_unsigned_integer();
   if (!value) {
     return tl::make_unexpected(value.error());
   }
@@ -1026,9 +1050,9 @@ template <class T>
     return tl::make_unexpected(charged.error());
   }
   if constexpr (std::is_signed_v<T>) {
-    return ConfigValue::signed_integer(static_cast<std::int64_t>(value));
+    return ConfigValue::try_signed_integer(static_cast<std::int64_t>(value));
   } else {
-    return ConfigValue::unsigned_integer(static_cast<std::uint64_t>(value));
+    return ConfigValue::try_unsigned_integer(static_cast<std::uint64_t>(value));
   }
 }
 
@@ -1074,7 +1098,7 @@ struct ConfigCodec<bool> {
   /// @return The Boolean or `CONFIG_TYPE_MISMATCH`.
   static ConfigResult<bool> decode(ConfigView view,  // NOLINT(performance-unnecessary-value-param)
                                    const DecodeOptions&, DecodeContext&) {
-    return view.as_bool();
+    return view.try_as_bool();
   }
   /// @brief Encode a Boolean after charging its owning node allocation.
   /// @param value Boolean to encode.
@@ -1086,7 +1110,7 @@ struct ConfigCodec<bool> {
     if (!charged) {
       return tl::make_unexpected(charged.error());
     }
-    return ConfigValue::boolean(value);
+    return ConfigValue::try_boolean(value);
   }
 };
 
@@ -1111,7 +1135,7 @@ struct ConfigCodec<float> {
     if (!charged) {
       return tl::make_unexpected(charged.error());
     }
-    return ConfigValue::floating(static_cast<double>(value));
+    return ConfigValue::try_floating(static_cast<double>(value));
   }
 };
 
@@ -1137,7 +1161,7 @@ struct ConfigCodec<double> {
     if (!charged) {
       return tl::make_unexpected(charged.error());
     }
-    return ConfigValue::floating(value);
+    return ConfigValue::try_floating(value);
   }
 };
 
@@ -1151,7 +1175,7 @@ struct ConfigCodec<std::string> {
   static ConfigResult<std::string> decode(
       ConfigView view,  // NOLINT(performance-unnecessary-value-param)
       const DecodeOptions&, DecodeContext& context) {
-    auto value = view.as_string();
+    auto value = view.try_as_string();
     if (!value) {
       return tl::make_unexpected(value.error());
     }
@@ -1175,7 +1199,7 @@ struct ConfigCodec<std::string> {
     if (!charged) {
       return tl::make_unexpected(charged.error());
     }
-    return ConfigValue::string(value);
+    return ConfigValue::try_string(value);
   }
 };
 
@@ -1254,7 +1278,7 @@ struct ConfigCodec<std::vector<T>> {
     std::vector<T> result;
     result.reserve(view.size());
     for (std::size_t index = 0; index < view.size(); ++index) {
-      auto child = view.element(index);
+      auto child = view.try_element(index);
       if (!child) {
         return tl::make_unexpected(child.error());
       }
@@ -1287,7 +1311,7 @@ struct ConfigCodec<std::vector<T>> {
       }
       encoded.push_back(std::move(*item));
     }
-    return ConfigValue::array(encoded);
+    return ConfigValue::try_array(encoded);
   }
 };
 
@@ -1314,7 +1338,7 @@ struct ConfigCodec<std::array<T, N>> {
     }
     std::array<T, N> result{};
     for (std::size_t index = 0; index < N; ++index) {
-      auto child = view.element(index);
+      auto child = view.try_element(index);
       if (!child) {
         return tl::make_unexpected(child.error());
       }
@@ -1347,7 +1371,7 @@ struct ConfigCodec<std::array<T, N>> {
       }
       encoded.push_back(std::move(*item));
     }
-    return ConfigValue::array(encoded);
+    return ConfigValue::try_array(encoded);
   }
 };
 
@@ -1381,8 +1405,8 @@ struct ConfigCodec<std::map<std::string, T, Compare, Allocator>> {
     }
     Map result;
     for (std::size_t index = 0; index < view.size(); ++index) {
-      auto key = view.key(index);
-      auto child = view.element(index);
+      auto key = view.try_key(index);
+      auto child = view.try_element(index);
       if (!key) {
         return tl::make_unexpected(key.error());
       }
@@ -1434,68 +1458,92 @@ struct ConfigCodec<std::map<std::string, T, Compare, Allocator>> {
     for (std::size_t index = 0; index < keys.size(); ++index) {
       entries.push_back({keys[index], encoded[index]});
     }
-    return ConfigValue::object(entries);
+    return ConfigValue::try_object(entries);
   }
 };
 
 template <class T>
-ConfigResult<T> Document::get(const Path& path, DecodeOptions options) const {
-  auto value = at(path);
+T Document::get(const Path& path, DecodeOptions options) const {
+  return detail::value_or_throw(try_get<T>(path, options));
+}
+
+template <class T>
+ConfigResult<T> Document::try_get(const Path& path, DecodeOptions options) const {
+  auto value = try_at(path);
   if (!value) {
     return tl::make_unexpected(value.error());
   }
-  return decode_config<T>(*value, options);
+  return try_decode_config<T>(*value, options);
 }
 
 template <class T>
-ConfigResult<T> Document::get(std::string_view path, DecodeOptions options) const {
-  auto parsed = Path::parse(path);
+T Document::get(std::string_view path, DecodeOptions options) const {
+  return detail::value_or_throw(try_get<T>(path, options));
+}
+
+template <class T>
+ConfigResult<T> Document::try_get(std::string_view path, DecodeOptions options) const {
+  auto parsed = Path::try_parse(path);
   if (!parsed) {
     return tl::make_unexpected(parsed.error());
   }
-  return get<T>(*parsed, options);
+  return try_get<T>(*parsed, options);
 }
 
 template <class T>
-ConfigResult<T> Document::patch(const Path& path, T baseline, DecodeOptions options) const {
-  auto patch_view = at(path);
+T Document::patch(const Path& path, T baseline, DecodeOptions options) const {
+  return detail::value_or_throw(try_patch(path, T(std::move(baseline)), options));
+}
+
+template <class T>
+ConfigResult<T> Document::try_patch(const Path& path, T baseline, DecodeOptions options) const {
+  auto patch_view = try_at(path);
   if (!patch_view) {
     return tl::make_unexpected(patch_view.error());
   }
-  auto encoded = encode_config<T>(baseline);
+  auto encoded = try_encode_config<T>(baseline);
   if (!encoded) {
     return tl::make_unexpected(encoded.error());
   }
   if (encoded->kind() != ConfigValueKind::kObject ||
       patch_view->kind() != ConfigValueKind::kObject) {
-    return tl::make_unexpected(ConfigError::make(ConfigErrorCode::kTypeMismatch,
-                                                 "typed configuration patch requires object values",
-                                                 path.to_string()));
+    return tl::make_unexpected(detail::make_path_error(
+        ConfigErrorCode::kTypeMismatch, "typed configuration patch requires object values", path));
   }
-  auto merged = merge_config_values(*encoded, patch_view->to_value());
+  auto merged = try_merge_config_values(*encoded, patch_view->to_value());
   if (!merged) {
     return tl::make_unexpected(merged.error());
   }
-  return decode_config<T>(merged->view(), options);
+  return try_decode_config<T>(merged->view(), options);
 }
 
 template <class T>
-ConfigResult<Document> Document::replace(const Path& path, T&& value) const {
+Document Document::replace(const Path& path, T&& value) const {
+  return detail::value_or_throw(try_replace(path, std::forward<T>(value)));
+}
+
+template <class T>
+ConfigResult<Document> Document::try_replace(const Path& path, T&& value) const {
   using Value = std::remove_cvref_t<T>;
-  auto encoded = encode_config<Value>(std::forward<T>(value));
+  auto encoded = try_encode_config<Value>(std::forward<T>(value));
   if (!encoded) {
     return tl::make_unexpected(encoded.error());
   }
-  return patched(Edit::replace(path, std::move(*encoded)));
+  return try_patched(Edit::replace(path, std::move(*encoded)));
 }
 
 template <class T>
-ConfigResult<Document> Document::replace(std::string_view path, T&& value) const {
-  auto parsed = Path::parse(path);
+Document Document::replace(std::string_view path, T&& value) const {
+  return detail::value_or_throw(try_replace(path, std::forward<T>(value)));
+}
+
+template <class T>
+ConfigResult<Document> Document::try_replace(std::string_view path, T&& value) const {
+  auto parsed = Path::try_parse(path);
   if (!parsed) {
     return tl::make_unexpected(parsed.error());
   }
-  return replace(*parsed, std::forward<T>(value));
+  return try_replace(*parsed, std::forward<T>(value));
 }
 
 }  // namespace holoscan::config

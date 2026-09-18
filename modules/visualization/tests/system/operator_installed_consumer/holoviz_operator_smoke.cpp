@@ -5,12 +5,12 @@
 
 #include <utility>
 
-#include <holoscan/operators/holoviz/holoviz_op.hpp>
+#include <holoscan/visualization/holoviz_op.hpp>
 
 int holoviz_operator_smoke() {
-  ::holoviz::LayerStack layers;
-  holoscan::holoviz::HolovizOp op{std::move(layers),
-                                  ::holoviz::WindowSinkDesc{.title = "installed-consumer"}};
+  holoscan::visualization::LayerStack layers;
+  holoscan::visualization::HolovizOp op{
+      std::move(layers), holoscan::visualization::WindowSinkDesc{.title = "installed-consumer"}};
   static_cast<void>(op.layer_input(0));
   return 0;
 }

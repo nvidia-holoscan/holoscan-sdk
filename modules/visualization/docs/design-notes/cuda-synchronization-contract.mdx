@@ -1,11 +1,11 @@
 # CUDA synchronization contract
 
-*This is implemented: `rhi/external_semaphore.hpp` on the API side,
+*This is implemented: `holoviz/external_semaphore.hpp` on the API side,
 `vk_external_semaphore.cpp` underneath, exercised end-to-end by
-`examples/rhi/cuda_interop_benchmark/`.*
+`examples/core/cuda_interop_benchmark/`.*
 
 Every `CUstream` used anywhere in this contract must be bound to the
-`rhi::Device`'s `CUcontext` — the one supplied at init, or the one the device
+`holoviz::Device`'s `CUcontext` — the one supplied at init, or the one the device
 creates for itself when none is given.
 
 All synchronization is expressed as timeline values, in both directions across
@@ -43,7 +43,7 @@ policy — which stays outside the renderer:
   5.x pattern — core `Tensor`'s `synchronize_for_consumer_stream()`,
   `CudaEventPool`, HoloMQ's `enqueue_ready_wait`), and the frame uses one
   semaphore and one token. This is ordinary CUDA stream/event dependency
-  tracking — nothing RHI-specific until the final signal:
+  tracking — nothing HoloViz-specific until the final signal:
 
   ```mermaid
   flowchart LR
@@ -61,7 +61,7 @@ policy — which stays outside the renderer:
 
 - **Join in the submit**: each producer stream gets its own `ExternalSemaphore`
   and the submit waits on all of the tokens — no CUDA-side join stream at all;
-  the RHI does the fan-in:
+  HoloViz does the fan-in:
 
   ```mermaid
   flowchart LR
@@ -78,19 +78,19 @@ Either way the module never enumerates streams behind the caller's back and
 never inserts synchronization the caller did not ask for: the renderer supplies
 mechanism, the operator supplies policy.
 
-## The rest of the RHI shape it leans on
+## The rest of the HoloViz shape it leans on
 
 - Timeline values are the only synchronization vocabulary (`SubmitSyncToken` /
-  `ExternalSyncToken` in `rhi/common.hpp`) — no fences, no binary semaphores in
+  `ExternalSyncToken` in `holoviz/common.hpp`) — no fences, no binary semaphores in
   the API; the swapchain gates confine the presentation engine's
   binary-semaphore special case to one file.
-- Images live in a pinned home state (`rhi/image.hpp`) precisely so an external
+- Images live in a pinned home state (`holoviz/image.hpp`) precisely so an external
   observer — a CUDA importer at a fence boundary — always finds a known layout.
 - The CUDA context relationship is owned at device creation
   (`DeviceDesc::cuda_context_mode`): an externally supplied or primary context
   by default (`kExternal`), with implemented CUDA-in-Graphics (CiG) modes
   (`kCigRequired`/`kCigPreferred`, via `VK_NV_external_compute_queue`) for
   sharing the graphics hardware queue. Every `CUstream` used to create an
-  `ExternalSemaphore` on a given `rhi::Device` must be bound to that device's
+  `ExternalSemaphore` on a given `holoviz::Device` must be bound to that device's
   `CUcontext` — the one supplied at init, or the one the device created for
   itself when none was given.

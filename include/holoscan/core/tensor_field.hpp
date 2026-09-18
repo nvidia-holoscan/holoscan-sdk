@@ -69,6 +69,8 @@ struct TensorFieldConfigurationRecord {
   std::optional<TensorContractRecord> tensor_contract;       ///< Owned normalized contract.
   /// Immutable compile-derived slot-capacity expression for this field, when authored.
   std::optional<TensorByteSpanExpressionRecord> tensor_byte_span_expression;
+  /// Immutable compile-derived memory-kind expression for this field, when authored.
+  std::optional<TensorMemoryKindExpressionRecord> tensor_memory_kind_expression;
 };
 
 }  // namespace holoscan

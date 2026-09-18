@@ -207,8 +207,10 @@ to the hero application from separate processes:
 
 - **`sensor_daemon`** publishes `uint32_t` IMU samples with caller-owned
   capture coordinates.
-- **`recorder`** consumes the exported control result with
-  `receive_sample()` and prints the public `SampleMetadata`.
+- **`recorder`** consumes exported control results with `receive_sample()` and
+  prints the public `SampleMetadata`. It drains finite streams through remote
+  EOS by default and accepts a positive sample limit for an unbounded graph
+  such as the hero application.
 
 Each receives the exact `endpoint-catalog.json` path emitted by the
 graph-definition executable and attaches by explicit endpoint name — there is

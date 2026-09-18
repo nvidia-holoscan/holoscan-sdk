@@ -78,6 +78,25 @@ void quarantine_run_execution_owners(std::unique_ptr<GraphExec> graph,
                                      std::shared_ptr<RuntimeChannelSession> channels,
                                      std::unique_ptr<RuntimeCudaExecutionResources> cuda) noexcept;
 
+/// Return whether freshness admission must precede a distinct activation witness.
+[[nodiscard]] constexpr bool freshness_input_is_nontrigger_prerequisite(
+    const InputSelectionPlanRecord& selection, const PortId witness_port,
+    const SourceId readiness_source, const SourceId witness_source) noexcept {
+  const bool freshness_selector = selection.selector == InputSelectorKind::kLatestWithin ||
+                                  selection.missing == TemporalRecordMissingKind::kReuseLast;
+  return freshness_selector && selection.input != witness_port &&
+         (witness_port || readiness_source != witness_source);
+}
+
+/// Return whether a staged successor may be qualified against the next periodic clock tick.
+[[nodiscard]] constexpr bool qualifies_upcoming_clock_freshness(
+    const InputSelectionPlanRecord& selection, const bool drop_oldest_refill_supported,
+    const bool clock_driven) noexcept {
+  return drop_oldest_refill_supported && clock_driven &&
+         selection.selector == InputSelectorKind::kLatestWithin && selection.cache_capacity == 1U &&
+         selection.missing == TemporalRecordMissingKind::kReuseLast;
+}
+
 /// Own one run generation and every runtime resource whose lifetime it bounds.
 ///
 /// Cold startup publishes immutable and preallocated state to the worker; the worker alone
@@ -185,6 +204,8 @@ class RunSessionState final {
     Error admission_error{ErrorCode::kSuccess};
     Error direct_continuation_error{ErrorCode::kSuccess};
     ComputeAdmissionDisposition admission{ComputeAdmissionDisposition::kPending};
+    bool callback_failed{};
+    bool cuda_device_restore_failed{};
     bool completed_selection{};
     bool direct_continuation_enabled{};
     bool direct_continuation_clock_failed{};
@@ -273,7 +294,8 @@ class RunSessionState final {
   /// The controller and sole partition runner are the same thread in this
   /// specialization. Re-entering ExecutionLaneSet would only reacquire the
   /// lane's stop/serialization locks around a callback that cannot migrate.
-  [[nodiscard]] expected<void, Error> invoke_inline_owner_task(ExecutionLaneTask task) noexcept;
+  [[nodiscard]] expected<void, Error> invoke_inline_owner_task(
+      const ExecutionLaneTask& task) noexcept;
 
   void signal_controller_wake(RuntimePhaseCounter counter) noexcept;
 
@@ -309,6 +331,20 @@ class RunSessionState final {
 
   [[nodiscard]] expected<void, Error> release_execution_resources(
       RuntimeCudaExecutionDiagnostic* cuda_diagnostic);
+
+  void append_callback_diagnostic(
+      std::string_view token, VertexId vertex, std::string_view service, const Error& error,
+      const RuntimeCallbackIdentity& identity, std::string_view predicate_id = {},
+      const RuntimeDeadlineMissDiagnostic* deadline = nullptr,
+      ::holoscan::DiagnosticSeverity severity = ::holoscan::DiagnosticSeverity::kError) noexcept;
+
+  void append_compute_diagnostics(const RuntimeOperatorInstance& instance,
+                                  const ComputeLaneInvocation& invocation, const Error& error,
+                                  const RuntimeCallbackIdentity& identity) noexcept;
+
+  void append_lifecycle_diagnostics(
+      const GraphExec& exec,
+      ::holoscan::DiagnosticSeverity severity = ::holoscan::DiagnosticSeverity::kError) noexcept;
 
   void append_diagnostic(
       std::string_view token, VertexId vertex = {}, std::string_view service = {},
@@ -360,10 +396,16 @@ class RunSessionState final {
     struct InputSelectorSlot {
       VertexId owner{};
       PortId input{};
+      std::size_t receiver_index{std::numeric_limits<std::size_t>::max()};
       PortId witness_port{};
       SourceId witness_source{};
       SourceId readiness_source{};
+      // True only when this input's arrivals populate selector state but cannot activate the
+      // owning Operator under its trigger contract.
+      bool nontrigger_prerequisite{};
       bool freshness_reconcile{};
+      bool connected{true};
+      bool upcoming_clock_freshness{};
       RuntimeInputSelectionState selector;
       std::optional<std::uint32_t> derived_term_index;
       std::uint64_t arrival_watermark{};
@@ -392,10 +434,16 @@ class RunSessionState final {
       // Capture of the record actually promoted, which need not be the one the gate approved:
       // the approved successor can be dropped from staging before the promotion reaches it.
       std::int64_t freshness_promoted_capture_ns{};
-      // Durable marker for a committed ReuseLast handoff until the exact non-trigger input
-      // prerequisite is ingested, or its selector/producer generation resets. Generic
-      // LatestWithin refill uses ordinary candidate order; TimePoint coordinate zero remains valid.
-      std::optional<TimePoint> reuse_replacement_prerequisite_reference;
+      // Durable marker for a committed ReuseLast handoff until that exact non-trigger input and
+      // every earlier arrival on the same port are ingested, or its selector/producer generation
+      // resets. The complete temporal identity disambiguates equal capture coordinates and lets
+      // the prerequisite path prove that it has reached, rather than passed, the successor. Store
+      // the capture coordinate normalized into the selector's reference clock, matching the exact
+      // record ReadinessBinding publishes for temporal_sample().
+      // Exact promoted arrival that must be ingested before its authorizing non-trigger witness.
+      std::optional<TemporalSampleRecord> freshness_refill_prerequisite;
+      // Newest witness-qualified arrival fenced while surviving predecessors are admitted first.
+      std::optional<TemporalSampleRecord> freshness_refill_target;
       std::int64_t selection_reference_ns{};
       // Whether any record reached this selector's cache during the current freeze round.
       bool freshness_ingested_this_round{};
@@ -494,8 +542,16 @@ class RunSessionState final {
     // same-position binding to its cold recovery slot, avoiding a per-round linear lookup while
     // leaving ordinary graphs allocation-free.
     std::vector<std::size_t> freshness_binding_index_by_binding;
+    // One flag per same-position binding: set for Channel readiness bindings, whose ordinary poll
+    // can decline on a contended input cache lock and may retry once before the owner parks.
+    // Physical bindings never decline, so this keeps the incomplete-status query off their path.
+    std::vector<std::uint8_t> contention_retry_eligible_by_binding;
     std::vector<ClockTriggerPortBinding*> clock_bindings;
     std::vector<InputSelectorSlot> input_selectors;
+    // Reused only while a non-trigger freshness prefix is live. Each fence exposes that input's
+    // oldest arrival while keeping the owner's activation witnesses pending; unrelated owners
+    // retain the coordinator's ordinary global ordering.
+    std::vector<RuntimeCandidateInputFence> freshness_input_fences;
     std::vector<OperatorParameterPolicy> parameter_policies;
     std::vector<AlignedSelectorSlot> aligned_selectors;
     std::vector<ActivationSelectionState> activation_selections;
@@ -586,6 +642,9 @@ class RunSessionState final {
     bool defer_startup{};
     bool resources_materialized{};
   };
+
+  [[nodiscard]] bool has_owned_unwired_inputs(const GraphExec& exec,
+                                              const ReadyRunState& state) const;
 
   [[nodiscard]] bool initialize_channel_session(GraphExec& exec, ReadyRunState& state,
                                                 ReadySharedResources& shared,
@@ -738,8 +797,9 @@ class RunSessionState final {
   [[nodiscard]] static std::optional<TimePoint> selector_witness_reference(
       ReadyRunState& state, VertexId owner, SourceId witness_source, PortId witness_port) noexcept;
 
-  [[nodiscard]] static bool replacement_input_is_nontrigger_prerequisite(
-      const ReadyRunState::InputSelectorSlot& slot) noexcept;
+  [[nodiscard]] static bool input_arrival_can_activate(const TemporalTriggerPlanRecord& trigger,
+                                                       const PredicateTriggerPlanRecord* predicate,
+                                                       PortId input) noexcept;
 
   [[nodiscard]] bool reconcile_superseded_retention(ReadyRunState& state, SourceId readiness_source,
                                                     std::size_t& refill_credit,
@@ -747,8 +807,11 @@ class RunSessionState final {
 
   // Channel ingestion atomically reconciles producer epochs, temporal selectors, bracket anchors,
   // predicate state, and payload claims for one frozen witness.
-  [[nodiscard]] bool ingest_channel_candidate(GraphExec& exec, ReadyRunState& state,
-                                              const FrozenRuntimeCandidate& candidate);
+  /// Freshness prerequisite draining may supply the immutable temporal record it already resolved
+  /// while proving prefix order. Ordinary ingestion leaves it null and resolves the record once.
+  [[nodiscard]] bool ingest_channel_candidate(
+      GraphExec& exec, ReadyRunState& state, const FrozenRuntimeCandidate& candidate,
+      const TemporalSampleRecord* pre_resolved_sample = nullptr);
 
   [[nodiscard]] bool channel_candidate_is_eligible(
       const GraphExec& exec, const ReadyRunState& state,

@@ -85,15 +85,12 @@ struct FixedTensorByteStrides {
 [[nodiscard]] expected<std::array<std::int64_t, ImageTensorView::kMaxRank>, Error>
 contiguous_byte_strides(std::span<const std::int64_t> shape, DLDataType dtype);
 
-[[nodiscard]] expected<std::size_t, Error> maximum_output_byte_span(std::int32_t width,
-                                                                    std::int32_t height,
-                                                                    std::uint32_t max_batch_size,
-                                                                    std::size_t max_element_size);
-
-[[nodiscard]] expected<void, Error> validate_authored_capacity(std::string_view operator_name,
-                                                               std::string_view field_name,
-                                                               std::int64_t active_value,
-                                                               std::int64_t authored_maximum);
+/// Resolve the conservative four-channel Vision output bound used by compile-time projectors.
+/// Returns `kInvalidArgument` for malformed geometry, `kNotSupported` for a CV-CUDA span limit,
+/// and `kArithmeticOverflow` when the intermediate byte count is not representable.
+[[nodiscard]] expected<std::uint64_t, Error> projected_image_output_byte_span(
+    std::int32_t width, std::int32_t height, std::uint32_t max_batch_size,
+    std::size_t max_element_size) noexcept;
 
 [[nodiscard]] expected<void, Error> validate_crop_rectangle(std::int64_t input_width,
                                                             std::int64_t input_height,

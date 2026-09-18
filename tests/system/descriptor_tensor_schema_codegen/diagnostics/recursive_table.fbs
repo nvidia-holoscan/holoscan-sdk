@@ -15,3 +15,4 @@ table RecursiveDescriptor {
 }
 
 root_type RecursiveDescriptor;
+file_identifier "DRT1";

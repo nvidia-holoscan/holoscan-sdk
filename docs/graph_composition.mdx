@@ -140,23 +140,37 @@ if (auto cfg = g.try_configure(worker->input)) {
 
 ## Regions: coarse policy over groups of operators
 
-A **region** names a group of operators (or embedded graphs) so that
-constraints, optimization hints, and profiles can be authored once at graph
-scope instead of per operator. `region(name)` returns a fluent
-`RegionHandle`:
+A **region** names a group of operators (or embedded graphs) so that constraints
+and profiles can be authored once at graph scope instead of per operator.
+`region(name)` returns a fluent `RegionHandle`:
 
 ```cpp
 g.region("gpu-stage")
     .add(preprocess)
     .add(fusion)
+    .constrain(RegionConstraint::cuda_graph())
     .profile(/* ... */);
 ```
 
 `RegionHandle` offers `add(...)` for membership (operator handles and
 embedded-graph handles alike), `constrain(...)` for placement or resource
-constraints, `optimize(...)` for optimization hints, and `profile(...)` for a
-named profile. Regions are pure authoring metadata here — the compiler
-consumes them when it lowers the graph to an executable plan.
+constraints, and `profile(...)` for a named profile. CUDA Graph execution is
+optional and explicitly requested with `RegionConstraint::cuda_graph()`;
+regions without it use ordinary execution. If the compiler cannot safely lower
+a requested CUDA Graph region, compilation fails instead of silently ignoring
+the request. `cuda_graph()` must be the region's only `RegionConstraint`; the
+compiler rejects combinations with static-topology, bounded-memory,
+device-compatible-operator, or latency-budget constraints. The separate
+`profile(...)` selection remains permitted. Regions are pure authoring metadata
+here — the compiler consumes them when it lowers the graph to an executable plan.
+
+An inputless CUDA Graph region source may use
+`complete_after(ComputeCalls{.limit = N})` with any supported explicit source
+trigger. Compilation retains completion as the source Operator's separate
+completion policy and joins it to the capture plan by Operator identity; it is
+not copied into the reduced capture-trigger record. Capture setup is not an
+application activation and later execution lowering must not count it toward
+the requested limit.
 
 ## Execution partitions
 
@@ -248,6 +262,23 @@ The frozen authoring view exposes this directive directly through
 `graph.view().automatic_partition_remaining()`, alongside the exact manual
 declarations returned by `graph.view().partitions()`.
 
+A named partition can also select an embedded Graph without enumerating its
+internal Operators:
+
+```cpp
+graph.partition("fusion-owner").add(fusion);  // GraphHandle returned by embed<G>().
+graph.auto_partition_remaining();
+```
+
+The selection includes all nested descendants and may contain independent
+sources. The selected subtree must have no internal partition declarations,
+even empty ones. Chaining adds sibling instances or direct Operators to the
+same exact set; direct-Operator-only partitions keep their single-root rule.
+The retained `graph_members()` view reports selected instance roots, while
+`members()` and `operator_paths()` report resolved work. See
+[atomic instance placement](/holoscan/sdk-user-guide/composing-applications/reusable-graphs#assigning-an-instance-to-one-thread-partition)
+for ownership, conflict and lifetime rules.
+
 Use `partition(name).include_all()` on the compile root when one explicit
 serial owner should cover the complete composed application, including
 embedded Graph descendants:
@@ -297,6 +328,7 @@ const holoscan::ClockKey clock = add_clock<holoscan::RealtimeClock>(
     "capture-clock", holoscan::RealtimeClock::Config{.use_time_since_epoch = true});
 set_default_clock(clock);
 ```
+
 ## Lifecycle ordering
 
 Most pipelines never need explicit lifecycle ordering — the runtime already
@@ -385,7 +417,7 @@ for the full boundary rules.
 - Tune ports and edges with `configure()`/`try_configure()` configurators;
   apply them immediately, never stash them.
 - Group operators with `region(name).add(...)` for graph-scope policy.
-- Use `partition(name).add(...)` only for an exact flat-Graph serial-owner cover.
+- Use `partition(name).add(...)` for exact direct-Operator or atomic embedded-instance ownership.
 - Declare clocks with `add_clock`/`bind_shared_clock`/`set_default_clock`;
   order lifecycle work with `lifecycle().before(...)`.
 - `view()` freezes an immutable `GraphView` — spans over vertices, edges,

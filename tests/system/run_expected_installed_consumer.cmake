@@ -28,8 +28,8 @@ file(REMOVE_RECURSE "${install_prefix}" "${consumer_build_dir}")
 set(sdk_build_command
     "${CMAKE_COMMAND}" --build "${HOLOSCAN_BUILD_DIR}" --target core holoscan_schema sensor_io
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND sdk_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(COMMAND ${sdk_build_command} RESULT_VARIABLE sdk_build_result)
 if(NOT sdk_build_result EQUAL 0)
@@ -41,7 +41,7 @@ foreach(component IN ITEMS
         holoscan-dependencies
         iceoryx2-lib
         dev
-        holomq
+        holoscan-holomq
         holoscan-core
         holoscan-sensor-io)
     set(install_command
@@ -49,8 +49,8 @@ foreach(component IN ITEMS
         --prefix "${install_prefix}"
         --component "${component}"
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND install_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     # Run the installation and capture log output to reduce log noise
     message(STATUS "Run: ${install_command}")
@@ -122,8 +122,8 @@ if(DEFINED HOLOSCAN_MSVC_RUNTIME_LIBRARY AND NOT HOLOSCAN_MSVC_RUNTIME_LIBRARY S
         "-DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=${HOLOSCAN_MSVC_RUNTIME_LIBRARY}"
     )
 endif()
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}")
 endif()
 
 execute_process(COMMAND ${configure_command} RESULT_VARIABLE configure_result)
@@ -132,8 +132,8 @@ if(NOT configure_result EQUAL 0)
 endif()
 
 set(consumer_build_command "${CMAKE_COMMAND}" --build "${consumer_build_dir}")
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND consumer_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND consumer_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(COMMAND ${consumer_build_command} RESULT_VARIABLE consumer_build_result)
 if(NOT consumer_build_result EQUAL 0)
@@ -143,8 +143,8 @@ endif()
 set(consumer_test_command
     "${HOLOSCAN_CTEST_COMMAND}" --test-dir "${consumer_build_dir}" --output-on-failure
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND consumer_test_command -C "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND consumer_test_command -C "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(COMMAND ${consumer_test_command} RESULT_VARIABLE consumer_test_result)
 if(NOT consumer_test_result EQUAL 0)

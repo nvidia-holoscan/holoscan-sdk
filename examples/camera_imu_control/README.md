@@ -12,6 +12,17 @@ are stable and explicit:
 - `baseline.camera_imu.control` — `uint32_t` results consumed by
   `result_recorder`.
 
+The camera is an unbounded clock-driven producer, so a separately deployed
+graph does not close the control export merely because the finite IMU publisher
+closes. Bound the companion recorder explicitly when consuming this endpoint:
+
+```sh
+./result_recorder <catalog.json> baseline.camera_imu.control 1
+```
+
+The recorder's default no-limit mode remains the data-then-EOS demonstration
+for finite input-driven graphs.
+
 Run the bounded reference path directly:
 
 ```sh

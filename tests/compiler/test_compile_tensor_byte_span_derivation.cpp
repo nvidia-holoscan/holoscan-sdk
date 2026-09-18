@@ -36,8 +36,6 @@
 #include "compiler/plan_generation.hpp"
 #include "compiler/process_placement_internal.hpp"
 #include "core/graph_compiler_access.hpp"
-#include "core/parameter_override_set_internal.hpp"
-#include "core/parameter_rebind_support.hpp"
 #include "core/parameter_schema_test_access.hpp"
 
 // GTest fatal assertions establish optional preconditions that clang-tidy does not model.
@@ -112,7 +110,7 @@ template <>
 struct DescriptorTensorSchemaNativeTraits<DerivedMultiTensorSchema> {
   using root_type = schema::Image;
   static constexpr std::size_t metadata_capacity =
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<root_type>;
+      schema::flatbuffer_descriptor_metadata_capacity_v<root_type>;
   static constexpr std::size_t tensor_count = 2U;
   static constexpr std::array<std::uint16_t, 2U> tensor_field_ids{1U, 7U};
 
@@ -129,7 +127,7 @@ const RuntimePortTypeOps* runtime_port_type_ops<DerivedMultiTensorSchema>() noex
   static const RuntimePortTypeOps ops = schema::make_descriptor_tensor_port_type_ops<
       DerivedMultiTensorSchema,
       schema::Image,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>(
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>>(
       [](void*) noexcept -> expected<void, Error> {
         return make_unexpected(Error{ErrorCode::kNotImplemented});
       },
@@ -781,33 +779,6 @@ template <typename ParamsT>
   return digest.digest;
 }
 
-[[nodiscard]] ParamOverrideSet tensor_byte_span_override(Graph& graph,
-                                                         TensorByteSpanTestParams resolved,
-                                                         std::string_view changed_field) {
-  const TensorByteSpanTestParams baseline{};
-  const ParamSchemaDescriptor* const schema = param_schema_descriptor<TensorByteSpanTestParams>();
-  const auto field =
-      std::find_if(schema->fields.begin(), schema->fields.end(), [&](const auto& item) {
-        return item.canonical_name == changed_field;
-      });
-  const auto captured = detail::capture_parameter_rebind_graph(graph);
-  if (field == schema->fields.end() || !captured) {
-    throw std::logic_error{"invalid Tensor byte-span override fixture"};
-  }
-  const ParamSchemaHash resolved_digest = required_value_digest(resolved);
-  std::vector<detail::ParamOverrideOperatorState> operators;
-  operators.push_back(detail::ParamOverrideSetAccess::resolved_operator(
-      "source",
-      std::move(resolved),
-      required_value_digest(baseline),
-      resolved_digest,
-      {{.field = field->id,
-        .full_id = field->full_id,
-        .origin = detail::ParamOverrideContributionOrigin::kCaptured}}));
-  return detail::ParamOverrideSetAccess::make_complete(
-      graph.view().identity(), std::move(operators), captured->admission_context_digest);
-}
-
 [[nodiscard]] const TensorAllocationPlanRecord& only_allocation(const ExecutionPlan& plan) {
   if (plan.tensor_allocations().size() != 1U) {
     throw std::logic_error{"expected one Tensor allocation"};
@@ -997,19 +968,16 @@ TEST(TensorByteSpanDerivationCompile,
      HybridPartitioningIsInvariantToGenerationZeroDerivedCapacity) {
   Graph graph{"hybrid-generation-zero-capacity-invariance"};
   test::add_compile_test_default_clock(graph);
-  const auto source = graph.op<HybridCapacitySource>("source");
+  auto source = graph.op<HybridCapacitySource>("source");
   const auto remainder = graph.op<test::CompileTestOperator>("automatic-remainder");
   graph.add_flow(source->scalar, remainder->input);
   graph.partition("derived-anchor").add(source);
   graph.auto_partition_remaining();
-  const GraphAuthoringIdentity identity = graph.view().identity();
-
   const auto compile_capacity = [&](std::uint64_t bytes) {
     TensorByteSpanTestParams resolved;
     resolved.bytes = bytes;
-    CompileOptions options;
-    options.parameter_overrides = tensor_byte_span_override(graph, resolved, "bytes");
-    return compile(graph, std::move(options));
+    source.set_params(resolved);
+    return compile(graph);
   };
 
   const ExecutionPlan smaller = compile_capacity(1024U);
@@ -1017,7 +985,6 @@ TEST(TensorByteSpanDerivationCompile,
 
   ASSERT_TRUE(smaller.ok()) << smaller.json();
   ASSERT_TRUE(larger.ok()) << larger.json();
-  EXPECT_EQ(graph.view().identity(), identity);
   ASSERT_EQ(smaller.tensor_byte_span_derivations().size(), 1U);
   ASSERT_EQ(larger.tensor_byte_span_derivations().size(), 1U);
   ASSERT_EQ(smaller.tensor_allocations().size(), 1U);
@@ -1106,19 +1073,16 @@ TEST(TensorByteSpanDerivationCompile,
      ParameterAndInputDerivedBytesComposeWithFixedAndFollowedRateSizing) {
   Graph graph{"rate-and-derived-byte-capacity"};
   test::add_compile_test_default_clock(graph);
-  const auto source = graph.op<RateDerivedTensorSource>("source");
+  auto source = graph.op<RateDerivedTensorSource>("source");
   const auto relay = graph.op<RateInputDerivedTensorRelay>("relay");
   const auto sink = graph.op<RateDerivedTensorSink>("sink");
   graph.add_flow(source->output, relay->input);
   graph.add_flow(relay->output, sink->input);
-  const GraphAuthoringIdentity identity = graph.view().identity();
-
   const auto compile_capacity = [&](const std::uint64_t bytes) {
     TensorByteSpanTestParams resolved;
     resolved.bytes = bytes;
-    CompileOptions options;
-    options.parameter_overrides = tensor_byte_span_override(graph, resolved, "bytes");
-    return compile(graph, std::move(options));
+    source.set_params(resolved);
+    return compile(graph);
   };
 
   const ExecutionPlan smaller = compile_capacity(1024U);
@@ -1126,7 +1090,6 @@ TEST(TensorByteSpanDerivationCompile,
 
   ASSERT_TRUE(smaller.ok()) << smaller.json();
   ASSERT_TRUE(larger.ok()) << larger.json();
-  EXPECT_EQ(graph.view().identity(), identity);
   ASSERT_EQ(smaller.tensor_byte_span_derivations().size(), 2U);
   ASSERT_EQ(larger.tensor_byte_span_derivations().size(), 2U);
   ASSERT_EQ(smaller.tensor_allocations().size(), 2U);
@@ -1212,24 +1175,20 @@ TEST(TensorByteSpanDerivationCompile,
   EXPECT_NE(relay_bytes[0], relay_bytes[1]);
 }
 
-TEST(TensorByteSpanDerivationCompile, GenerationZeroOverrideChangesCapacityNotGraphIdentity) {
+TEST(TensorByteSpanDerivationCompile, GenerationZeroValueChangesCapacity) {
   // Graph topology:
   //   source (isolated derived raw Tensor output)
   Graph graph{"derived-override-capacity"};
   test::add_compile_test_default_clock(graph);
-  (void)graph.op<DerivedTensorSource>("source", DerivationCase::kScalar);
-  const GraphAuthoringIdentity identity = graph.view().identity();
-
+  auto source = graph.op<DerivedTensorSource>("source", DerivationCase::kScalar);
   TensorByteSpanTestParams resolved;
   resolved.bytes = 8192U;
-  CompileOptions options;
-  options.parameter_overrides = tensor_byte_span_override(graph, resolved, "bytes");
-  // Key setup: compile one immutable graph with an accepted generation-zero value override.
-  const ExecutionPlan plan = compile(graph, std::move(options));
+  source.set_params(resolved);
+  // Key setup: compile one immutable graph with an authored generation-zero value.
+  const ExecutionPlan plan = compile(graph);
 
   // Key assertion: the plan capacity changes without changing declaration identity or rebuilding.
   ASSERT_TRUE(plan.ok()) << plan.json();
-  EXPECT_EQ(graph.view().identity(), identity);
   EXPECT_EQ(only_allocation(plan).bounds.max_byte_span, 8192U);
   ASSERT_EQ(plan.tensor_byte_span_derivations().size(), 1U);
   EXPECT_EQ(plan.tensor_byte_span_derivations().front().resolved_max_byte_span, 8192U);
@@ -1892,7 +1851,7 @@ TEST(TensorByteSpanDerivationCompile, ResolvesSingularDescriptorFieldIntoExistin
   //   source (isolated derived Image output)
   Graph graph{"derived-singular-descriptor"};
   test::add_compile_test_default_clock(graph);
-  const auto source = graph.op<DerivedImageSource>("source");
+  auto source = graph.op<DerivedImageSource>("source");
 
   // Key setup: one descriptor field owns an unresolved Parameter-derived capacity.
   const ExecutionPlan plan = compile(graph);
@@ -1920,19 +1879,18 @@ TEST(TensorByteSpanDerivationCompile, ResolvesSingularDescriptorFieldIntoExistin
 }
 
 // REQ: COMPILE-067
-TEST(TensorByteSpanDerivationCompile, ReplaysOverrideForSingularDescriptorDerivedOutput) {
+TEST(TensorByteSpanDerivationCompile, ReplaysAuthoredValueForSingularDescriptorDerivedOutput) {
   // Graph topology:
   //   source (isolated derived Image output)
   Graph graph{"derived-singular-descriptor-override"};
   test::add_compile_test_default_clock(graph);
-  (void)graph.op<DerivedImageSource>("source");
+  auto source = graph.op<DerivedImageSource>("source");
   TensorByteSpanTestParams resolved;
   resolved.bytes = 8192U;
-  CompileOptions options;
-  options.parameter_overrides = tensor_byte_span_override(graph, resolved, "bytes");
+  source.set_params(resolved);
 
   // Key setup: generation-zero replay re-runs the singular field-scoped declaration.
-  const ExecutionPlan plan = compile(graph, std::move(options));
+  const ExecutionPlan plan = compile(graph);
 
   // Key assertion: replay canonicalizes to the same collapsed port and uses the override value.
   ASSERT_TRUE(plan.ok()) << plan.json();

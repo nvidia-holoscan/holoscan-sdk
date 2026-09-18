@@ -5,9 +5,17 @@
 
 #include <holoscan/core/lifecycle.hpp>
 
+#include "diagnostic_context.hpp"
 #include "lifecycle_context_internal.hpp"
 
 namespace holoscan {
+
+void LifecycleContext::report_error(ErrorCode code, std::string_view message) noexcept {
+  if (state_ != nullptr && state_->diagnostic_capture != nullptr &&
+      state_->diagnostic_capture->count == 0U) {
+    state_->diagnostic_capture->append(code, message);
+  }
+}
 
 CancellationView LifecycleContext::cancellation() const noexcept {
   if (state_ == nullptr) {

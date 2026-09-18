@@ -37,15 +37,65 @@ enum class ScalarIdentityKind : std::uint8_t {
 /// @brief Preserve pointer-free scalar classification for Graph inspection.
 struct ScalarIdentityRecord {
   ScalarIdentityKind kind{ScalarIdentityKind::kBoolean};  ///< Exact closed representation.
+  /// Native object size for \ref ScalarIdentityKind::kLocalEnum; zero for portable scalars.
+  std::uint8_t native_object_size{};
 };
 
 /// @brief Preserve a complete owned schema identity in cold Graph metadata.
 struct SchemaIdentityRecord {
-  std::string canonical_name;                 ///< Owned exact semantic name.
-  std::uint32_t version{};                    ///< Nonzero exact semantic version.
-  std::array<std::byte, 32> schema_sha256{};  ///< Complete canonical schema digest.
-  SchemaId id{};  ///< Derived compact reference that is never sufficient as identity alone.
+  std::string canonical_name;                  ///< Owned stable compatibility-family name.
+  std::uint32_t compatibility_epoch{};         ///< Positive intentional wire-break epoch.
+  SchemaId family_id{};                        ///< Stable compact compatibility-family identity.
+  FlatBufferFileIdentifier file_identifier{};  ///< Exact independent in-buffer type check.
 };
+
+/// @brief Deep-copy a borrowed schema identity into cold Graph/catalog storage.
+[[nodiscard]] inline SchemaIdentityRecord make_schema_identity_record(
+    const SchemaIdentity& identity) {
+  return SchemaIdentityRecord{
+      .canonical_name = std::string(identity.canonical_name),
+      .compatibility_epoch = identity.compatibility_epoch,
+      .family_id = identity.family_id,
+      .file_identifier = identity.file_identifier,
+  };
+}
+
+/// @brief Borrow a complete identity view from an owned identity record.
+/// @warning The returned name view remains valid only while the record's string storage is stable.
+[[nodiscard]] inline SchemaIdentity schema_identity_view(
+    const SchemaIdentityRecord& identity) noexcept {
+  return SchemaIdentity{
+      .canonical_name = identity.canonical_name,
+      .compatibility_epoch = identity.compatibility_epoch,
+      .family_id = identity.family_id,
+      .file_identifier = identity.file_identifier,
+  };
+}
+
+/// @brief Compare two complete owned schema identities exactly.
+[[nodiscard]] inline bool schema_identity_equal(const SchemaIdentityRecord& left,
+                                                const SchemaIdentityRecord& right) noexcept {
+  return left.canonical_name == right.canonical_name &&
+         left.compatibility_epoch == right.compatibility_epoch &&
+         left.family_id == right.family_id && left.file_identifier == right.file_identifier;
+}
+
+/// @brief Compare an owned schema identity with a borrowed identity exactly.
+[[nodiscard]] inline bool schema_identity_equal(const SchemaIdentityRecord& left,
+                                                const SchemaIdentity& right) noexcept {
+  return schema_identity_equal(schema_identity_view(left), right);
+}
+
+/// @brief Compare a borrowed schema identity with an owned identity exactly.
+[[nodiscard]] inline bool schema_identity_equal(const SchemaIdentity& left,
+                                                const SchemaIdentityRecord& right) noexcept {
+  return schema_identity_equal(right, left);
+}
+
+/// @brief Validate one complete owned schema identity through the borrowed core contract.
+[[nodiscard]] inline bool valid_schema_identity(const SchemaIdentityRecord& identity) noexcept {
+  return valid_schema_identity(schema_identity_view(identity));
+}
 
 /// @brief Preserve one owned raw-POD field declaration before codec lowering.
 struct PodFieldIdentityRecord {
@@ -88,6 +138,8 @@ enum class PayloadIdentityKind : std::uint8_t {
 struct PayloadIdentityRecord {
   PayloadIdentityKind kind{PayloadIdentityKind::kScalar};  ///< Active identity family.
   PayloadKind payload_kind{PayloadKind::kInlineTyped};     ///< Declared representation family.
+  /// Exact generated Holoscan carriage profile; zero for non-descriptor payloads.
+  std::uint32_t transport_profile_tag{};
   std::optional<ScalarIdentityRecord> scalar;  ///< Scalar classification when applicable.
   std::optional<SchemaIdentityRecord> schema;  ///< Owned generated schema identity.
   std::optional<PodIdentityRecord> pod;        ///< Owned raw-POD identity and structural layout.

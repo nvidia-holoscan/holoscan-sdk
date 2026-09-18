@@ -10,10 +10,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 
 #include <fmt/format.h>
@@ -23,7 +26,9 @@
 
 #include "compiler/closed_island_activation_plan.hpp"
 #include "compiler/cuda_execution_plan_validation.hpp"
+#include "compiler/cuda_graph_region_lowering.hpp"
 #include "compiler/inline_partition_execution_plan.hpp"
+#include "compiler/optional_input_plan_validation.hpp"
 #include "compiler/parameter_plan_lowering.hpp"
 #include "compiler/partition_authority_validation.hpp"
 #include "compiler/partition_runner_plan.hpp"
@@ -31,6 +36,7 @@
 #include "compiler/process_local_channel_plan_validation.hpp"
 #include "core/canonical_text_encoding.hpp"
 #include "core/diagnostic_registry.hpp"
+#include "core/memory_kind_validation.hpp"
 #include "core/source_id_internal.hpp"
 #include "core/tensor_allocation_record_validation.hpp"
 
@@ -47,10 +53,148 @@ using plan_artifact_serialization_internal::append_optional_tensor_layout;
 using plan_artifact_serialization_internal::append_tensor_allocation_bounds;
 using plan_artifact_serialization_internal::append_tensor_axes;
 
-constexpr std::string_view kPlanSchema = "holoscan.execution_plan.private.v4";
+constexpr std::string_view kPlanSchema = "holoscan.execution_plan.private.v6";
 
 [[nodiscard]] Error artifact_error(ErrorCode code, std::string_view token) {
   return Error{.code = code, .message = std::string(token)};
+}
+
+[[nodiscard]] bool has_rejected_tensor_layout(const ExecutionPlanState& state) noexcept {
+  return !state.admitted &&
+         std::any_of(
+             state.diagnostics.begin(), state.diagnostics.end(), [](const auto& diagnostic) {
+               return diagnostic.severity == holoscan::DiagnosticSeverity::kError &&
+                      diagnostic.token == "PHYSICAL_TENSOR_LAYOUT_MISMATCH";
+             });
+}
+
+[[nodiscard]] bool nonzero_parameter_hash(const ParamSchemaHash& hash) noexcept {
+  return std::any_of(
+      hash.value.begin(), hash.value.end(), [](std::byte value) { return value != std::byte{}; });
+}
+
+[[nodiscard]] bool projection_dependency_less(
+    const TensorByteSpanProjectionDependencyRecord& left,
+    const TensorByteSpanProjectionDependencyRecord& right) noexcept {
+  if (left.parameter_member_full_ids != right.parameter_member_full_ids) {
+    return std::lexicographical_compare(left.parameter_member_full_ids.begin(),
+                                        left.parameter_member_full_ids.end(),
+                                        right.parameter_member_full_ids.begin(),
+                                        right.parameter_member_full_ids.end(),
+                                        [](ParamSchemaHash left_id, ParamSchemaHash right_id) {
+                                          return left_id.value < right_id.value;
+                                        });
+  }
+  return std::tuple{left.parameter_field, left.parameter_full_id.value, left.parameter_path} <
+         std::tuple{right.parameter_field, right.parameter_full_id.value, right.parameter_path};
+}
+
+[[nodiscard]] bool valid_tensor_byte_span_projection_evidence(const ExecutionPlanState& state) {
+  for (const auto& record : state.tensor_byte_span_derivations) {
+    for (const auto& node : record.nodes) {
+      const bool projection = node.operation == TensorByteSpanOperation::kParameterProjection;
+      if (!projection) {
+        if (!node.projection_id.empty() || !node.projection_dependencies.empty()) {
+          return false;
+        }
+        continue;
+      }
+      if (!valid_schema_text(node.projection_id) ||
+          node.projection_id.size() > kMaximumTensorByteSpanProjectionIdBytes ||
+          !valid_schema_text(node.parameter_schema_id) || node.parameter_schema_version == 0U ||
+          node.projection_dependencies.empty() ||
+          node.projection_dependencies.size() > kMaximumTensorByteSpanExpressionDependencies ||
+          node.left != 0U || node.right != 0U || node.operand != 0U || node.parameter_field != 0U ||
+          node.input || node.resolved_value == 0U ||
+          node.resolved_value > std::numeric_limits<std::size_t>::max() ||
+          !std::is_sorted(node.projection_dependencies.begin(),
+                          node.projection_dependencies.end(),
+                          projection_dependency_less)) {
+        return false;
+      }
+      for (std::size_t index = 0U; index < node.projection_dependencies.size(); ++index) {
+        const auto& dependency = node.projection_dependencies[index];
+        if (dependency.parameter_field == 0U ||
+            !nonzero_parameter_hash(dependency.parameter_full_id) ||
+            dependency.parameter_member_full_ids.empty() ||
+            dependency.parameter_member_full_ids.back() != dependency.parameter_full_id ||
+            std::any_of(dependency.parameter_member_full_ids.begin(),
+                        dependency.parameter_member_full_ids.end(),
+                        [](const auto& member_full_id) {
+                          return !nonzero_parameter_hash(member_full_id);
+                        }) ||
+            !valid_schema_text(dependency.parameter_path) ||
+            (index != 0U && dependency == node.projection_dependencies[index - 1U])) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] auto memory_kind_derivation_key(
+    const TensorMemoryKindDerivationPlanRecord& record) noexcept {
+  return std::tuple{record.output.value(), record.field_id, record.tensor_index};
+}
+
+[[nodiscard]] bool valid_tensor_memory_kind_derivations(const ExecutionPlanState& state) {
+  for (std::size_t index = 0U; index < state.tensor_memory_kind_derivations.size(); ++index) {
+    const auto& record = state.tensor_memory_kind_derivations[index];
+    if (!record.output || record.plan_generation != state.plan_generation ||
+        record.run_generation != 0U || record.parameter_schema_id.empty() ||
+        record.parameter_schema_version == 0U || record.parameter_field == 0U ||
+        record.parameter_full_id == ParamSchemaHash() || record.parameter_path.empty() ||
+        record.parameter_member_full_ids.empty() ||
+        record.parameter_member_full_ids.back() != record.parameter_full_id ||
+        std::any_of(record.parameter_member_full_ids.begin(),
+                    record.parameter_member_full_ids.end(),
+                    [](const auto& member) { return member == ParamSchemaHash(); }) ||
+        record.field_id.has_value() != record.tensor_index.has_value() ||
+        !valid_concrete_memory_kind(record.resolved_memory_kind) ||
+        record.origin != TensorContractValueOrigin::kCompilerDerivedMemoryKind ||
+        (record.update_disposition !=
+             TensorMemoryKindDerivationUpdateDisposition::kFrozenCompileTime &&
+         record.update_disposition !=
+             TensorMemoryKindDerivationUpdateDisposition::kRecompileRequired)) {
+      return false;
+    }
+    if (index != 0U &&
+        !(memory_kind_derivation_key(state.tensor_memory_kind_derivations[index - 1U]) <
+          memory_kind_derivation_key(record))) {
+      return false;
+    }
+    if (record.form == TensorMemoryKindExpressionForm::kDirect) {
+      if (!record.mapping.empty()) {
+        return false;
+      }
+    } else if (record.form == TensorMemoryKindExpressionForm::kMapped) {
+      if (record.mapping.empty() || record.mapping.size() > kMaximumTensorMemoryKindMappingCases ||
+          std::none_of(record.mapping.begin(), record.mapping.end(), [&](const auto& row) {
+            return row.memory_kind == record.resolved_memory_kind;
+          })) {
+        return false;
+      }
+      for (std::size_t row_index = 0U; row_index < record.mapping.size(); ++row_index) {
+        const auto& row = record.mapping[row_index];
+        if (row.source.kind == ParamScalarKind::kNone || row.source.bit_width == 0U ||
+            !valid_concrete_memory_kind(row.memory_kind)) {
+          return false;
+        }
+        if (row_index != 0U) {
+          const auto& previous = record.mapping[row_index - 1U];
+          if (!(std::tuple{
+                    previous.source.kind, previous.source.bit_width, previous.source.raw_bits} <
+                std::tuple{row.source.kind, row.source.bit_width, row.source.raw_bits})) {
+            return false;
+          }
+        }
+      }
+    } else {
+      return false;
+    }
+  }
+  return true;
 }
 
 template <typename Digest>
@@ -63,6 +207,24 @@ template <typename Digest>
   Digest result;
   result.value = hash.finish().value;
   return result;
+}
+
+template <typename Records, typename Predicate, typename AppendRecord>
+void append_filtered_array(std::string& output, const Records& records, Predicate include_record,
+                           AppendRecord append_record) {
+  output.push_back('[');
+  bool first = true;
+  for (const auto& record : records) {
+    if (!include_record(record)) {
+      continue;
+    }
+    if (!first) {
+      output.push_back(',');
+    }
+    first = false;
+    append_record(output, record);
+  }
+  output.push_back(']');
 }
 
 template <typename Bytes>
@@ -190,6 +352,8 @@ void append_parameter_type_shape(std::string& output, const ParamFieldTypeShape&
   append_number(output, static_cast<std::uint32_t>(shape.element_or_rep_type));
   output += ",\"has_stable_shape\":";
   append_bool(output, shape.has_stable_shape);
+  output += ",\"optional\":";
+  append_bool(output, shape.optional);
   output += ",\"type\":";
   append_number(output, static_cast<std::uint32_t>(shape.type));
   output.push_back('}');
@@ -260,6 +424,8 @@ void append_payload_identity(std::string& output, const PayloadIdentityRecord& i
   append_number(output, static_cast<std::uint32_t>(identity.kind));
   output += ",\"payload_kind\":";
   append_number(output, static_cast<std::uint32_t>(identity.payload_kind));
+  output += ",\"transport_profile_tag\":";
+  append_number(output, identity.transport_profile_tag);
   output += ",\"pod\":";
   if (identity.pod) {
     output += "{\"alignment\":";
@@ -292,33 +458,29 @@ void append_payload_identity(std::string& output, const PayloadIdentityRecord& i
   } else {
     output += "null";
   }
+  output += ",\"scalar_native_object_size\":";
+  if (identity.scalar) {
+    append_number(output, identity.scalar->native_object_size);
+  } else {
+    output += "null";
+  }
   output += ",\"schema\":";
   if (identity.schema) {
-    output += "{\"digest\":";
-    append_hex(output, identity.schema->schema_sha256);
-    output += ",\"id\":";
-    append_hex(output, identity.schema->id.value);
-    output += ",\"name\":";
+    output += "{\"canonical_name\":";
     append_json_string(output, identity.schema->canonical_name);
-    output += ",\"version\":";
-    append_number(output, identity.schema->version);
+    output += ",\"compatibility_epoch\":";
+    append_number(output, identity.schema->compatibility_epoch);
+    output += ",\"family_id\":";
+    append_hex(output, identity.schema->family_id.value);
+    output += ",\"file_identifier\":";
+    append_json_string(output,
+                       std::string_view{identity.schema->file_identifier.value.data(),
+                                        identity.schema->file_identifier.value.size()});
     output.push_back('}');
   } else {
     output += "null";
   }
   output.push_back('}');
-}
-
-void append_schema_package_provenance(std::string& output,
-                                      std::span<const SchemaPackagePlanRecord> records,
-                                      bool include_provenance) {
-  if (!include_provenance) {
-    return;
-  }
-  output += ",\"schema_packages\":";
-  append_array(output, records, [](std::string& json, const SchemaPackagePlanRecord& record) {
-    append_package_plan_record(json, record);
-  });
 }
 
 void append_optional_tensor_layout_value(std::string& output,
@@ -387,6 +549,8 @@ void append_tensor_axes_value(std::string& output, const std::span<const TensorA
       return "derived_shape_bounds";
     case TensorContractValueOrigin::kCompilerDerivedByteSpan:
       return "compiler_derived_byte_span";
+    case TensorContractValueOrigin::kCompilerDerivedMemoryKind:
+      return "compiler_derived_memory_kind";
   }
   return "absent";
 }
@@ -1293,6 +1457,117 @@ void append_temporal_channel_and_diagnostic_sections(std::string& output,
 }
 
 void append_graph_and_lifecycle_sections(std::string& output, const ExecutionPlanState& state) {
+  const auto capture_eligible = [](const VertexRecord& vertex) {
+    return vertex.cuda_graph_capture_eligible;
+  };
+  if (std::any_of(state.graph.vertices().begin(), state.graph.vertices().end(), capture_eligible)) {
+    output += ",\"cuda_graph_capture_eligible_operators\":";
+    append_filtered_array(output,
+                          state.graph.vertices(),
+                          capture_eligible,
+                          [](std::string& json, const VertexRecord& vertex) {
+                            json += "{\"graph\":";
+                            append_number(json, vertex.graph.value);
+                            json += ",\"name\":";
+                            append_json_string(json, vertex.name);
+                            json += ",\"vertex\":";
+                            append_number(json, vertex.id.value);
+                            json.push_back('}');
+                          });
+  }
+  const auto cuda_graph_region = [](const RegionRecord& region) {
+    return std::any_of(region.constraints.begin(), region.constraints.end(), [](const auto& item) {
+      return item.kind() == RegionConstraintKind::kCudaGraph;
+    });
+  };
+  if (std::any_of(state.graph.regions().begin(), state.graph.regions().end(), cuda_graph_region)) {
+    output += ",\"cuda_graph_regions\":";
+    append_filtered_array(
+        output,
+        state.graph.regions(),
+        cuda_graph_region,
+        [](std::string& json, const RegionRecord& region) {
+          json += "{\"constraint_kind\":\"cuda_graph\",\"graph\":";
+          append_number(json, region.graph.value);
+          json += ",\"graph_members\":";
+          append_array(json, region.graph_members, [](std::string& values, GraphId graph) {
+            append_number(values, graph.value);
+          });
+          json += ",\"id\":";
+          append_number(json, region.id.value);
+          json += ",\"members\":";
+          append_array(json, region.members, [](std::string& values, VertexId vertex) {
+            append_number(values, vertex.value);
+          });
+          json += ",\"name\":";
+          append_json_string(json, region.name);
+          json.push_back('}');
+        });
+  }
+  if (!state.cuda_graph_capture_plans.empty()) {
+    const auto append_capture_edge = [](std::string& json, const CUDAGraphCaptureEdgeRecord& edge) {
+      json += "{\"edge\":";
+      append_number(json, edge.edge.value);
+      json += ",\"source\":";
+      append_number(json, edge.source.value);
+      json += ",\"source_port\":";
+      append_number(json, edge.source_port.value());
+      json += ",\"target\":";
+      append_number(json, edge.target.value);
+      json += ",\"target_port\":";
+      append_number(json, edge.target_port.value());
+      json.push_back('}');
+    };
+    output += ",\"cuda_graph_capture_plans\":";
+    append_array(
+        output, state.cuda_graph_capture_plans, [&](std::string& json, const auto& capture_plan) {
+          json += "{\"contracts\":";
+          append_array(json, capture_plan.contracts, [](std::string& values, const auto& contract) {
+            values += "{\"owner\":";
+            append_operator_ref(values, contract.owner);
+            values += ",\"synthesized_default\":";
+            append_bool(values, contract.synthesized_default);
+            values += ",\"trigger\":";
+            append_number(values, static_cast<std::uint32_t>(contract.trigger));
+            values += ",\"trigger_input\":";
+            append_number(values, contract.trigger_input.value());
+            values.push_back('}');
+          });
+          json += ",\"egress\":";
+          if (capture_plan.egress) {
+            append_capture_edge(json, *capture_plan.egress);
+          } else {
+            json += "null";
+          }
+          json += ",\"graph\":";
+          append_number(json, capture_plan.graph.value);
+          json += ",\"ingress\":";
+          if (capture_plan.ingress) {
+            append_capture_edge(json, *capture_plan.ingress);
+          } else {
+            json += "null";
+          }
+          json += ",\"internal_edges\":";
+          append_array(json, capture_plan.internal_edges, append_capture_edge);
+          json += ",\"members\":";
+          append_array(json, capture_plan.members, [](std::string& values, const auto& member) {
+            values += "{\"operator_ref\":";
+            append_operator_ref(values, member.operator_ref);
+            values += ",\"vertex\":";
+            append_number(values, member.vertex.value);
+            values.push_back('}');
+          });
+          json += ",\"region\":";
+          append_number(json, capture_plan.region.value);
+          json += ",\"region_name\":";
+          append_json_string(json, capture_plan.region_name);
+          json += ",\"sink\":";
+          append_operator_ref(json, capture_plan.sink);
+          json += ",\"source\":";
+          append_operator_ref(json, capture_plan.source);
+          json.push_back('}');
+        });
+  }
   output += ",\"graph_generation\":";
   append_number(output, state.graph_identity.version);
   output += ",\"graph_hash\":";
@@ -1404,6 +1679,8 @@ void append_graph_and_lifecycle_sections(std::string& output, const ExecutionPla
     append_number(json, record.reuse_max_age_ns);
     json += ",\"selector\":";
     append_number(json, static_cast<std::uint32_t>(record.selector));
+    json += ",\"unwired_safe_default\":";
+    append_bool(json, record.unwired_safe_default);
     json.push_back('}');
   });
   output += ",\"interface_port_bindings\":";
@@ -1680,6 +1957,18 @@ void append_graph_and_lifecycle_sections(std::string& output, const ExecutionPla
     append_json_string(json, record.canonical_name);
     json += ",\"earliest_invalidated_stage\":";
     append_number(json, static_cast<std::uint32_t>(record.earliest_invalidated_stage));
+    json += ",\"enum_choices\":";
+    append_array(json, record.enum_choices, [](std::string& enum_json, const auto& choice) {
+      enum_json += "{\"name\":";
+      append_json_string(enum_json, choice.name);
+      enum_json += ",\"value\":{\"bit_width\":";
+      append_number(enum_json, choice.value.bit_width);
+      enum_json += ",\"kind\":";
+      append_number(enum_json, static_cast<std::uint32_t>(choice.value.kind));
+      enum_json += ",\"raw_bits\":";
+      append_number(enum_json, choice.value.raw_bits);
+      enum_json += "}}";
+    });
     json += ",\"external_access\":";
     append_number(json, static_cast<std::uint32_t>(record.external_access));
     json += ",\"field\":";
@@ -1802,6 +2091,8 @@ void append_topology_and_predicate_sections(std::string& output, const Execution
     append_json_string(json, record.local_name);
     json += ",\"max_emits_per_compute\":";
     append_number(json, record.max_emits_per_compute);
+    json += ",\"optional\":";
+    append_bool(json, record.optional);
     json += ",\"owner\":";
     append_number(json, record.owner.value);
     json += ",\"owner_kind\":";
@@ -1889,6 +2180,10 @@ void append_topology_and_predicate_sections(std::string& output, const Execution
     } else {
       json += "null";
     }
+    json += ",\"graph_members\":";
+    append_array(json, record.graph_members, [](std::string& values, GraphId graph) {
+      append_number(values, graph.value);
+    });
     json += ",\"id\":";
     append_number(json, record.id.value);
     json += ",\"lane\":";
@@ -2505,7 +2800,6 @@ void append_profile_and_schedule_sections(std::string& output, const ExecutionPl
   output += ",\"worker_count\":";
   append_number(output, state.scheduler_plan.worker_count);
   output.push_back('}');
-  append_schema_package_provenance(output, state.schema_packages, include_provenance);
   output += ",\"temporal_triggers\":";
   append_array(output, state.temporal_triggers, [](std::string& json, const auto& record) {
     json += "{\"bounded_state_capacity\":";
@@ -2700,6 +2994,14 @@ expected<std::string, Error> plan_artifact_json(const ExecutionPlanState& state,
     return make_unexpected(artifact_error(ErrorCode::kInvalidArgument,
                                           "PHYSICAL_TENSOR_FIELD_ALLOCATION_ORDER_INVALID"));
   }
+  if (!valid_tensor_byte_span_projection_evidence(state)) {
+    return make_unexpected(
+        artifact_error(ErrorCode::kInvalidArgument, "TENSOR_BYTE_SPAN_PROJECTION_PLAN_INVALID"));
+  }
+  if (!valid_tensor_memory_kind_derivations(state)) {
+    return make_unexpected(
+        artifact_error(ErrorCode::kInvalidArgument, "TENSOR_MEMORY_KIND_DERIVATION_PLAN_INVALID"));
+  }
   if (!plan_artifact_rate_serialization_internal::rate_plan_records_valid(state)) {
     return make_unexpected(
         artifact_error(ErrorCode::kInvalidArgument, "RATE_PLAN_RECORDS_INVALID"));
@@ -2716,11 +3018,12 @@ expected<std::string, Error> plan_artifact_json(const ExecutionPlanState& state,
     return make_unexpected(
         artifact_error(ErrorCode::kInvalidArgument, "OPERATOR_COMPLETION_PLAN_INVALID"));
   }
-  if (!valid_process_local_channel_plan(state)) {
+  const bool rejected_tensor_layout = has_rejected_tensor_layout(state);
+  if (!valid_process_local_channel_plan(state) && !rejected_tensor_layout) {
     return make_unexpected(
         artifact_error(ErrorCode::kInvalidArgument, "PROCESS_LOCAL_CHANNEL_PLAN_INVALID"));
   }
-  if (!valid_closed_island_activation_plan(state)) {
+  if (!valid_closed_island_activation_plan(state) && !rejected_tensor_layout) {
     return make_unexpected(
         artifact_error(ErrorCode::kInvalidArgument, "CLOSED_ISLAND_ACTIVATION_PLAN_INVALID"));
   }
@@ -2728,9 +3031,17 @@ expected<std::string, Error> plan_artifact_json(const ExecutionPlanState& state,
     return make_unexpected(
         artifact_error(ErrorCode::kInvalidArgument, "INLINE_PARTITION_EXECUTION_PLAN_INVALID"));
   }
+  if (!valid_optional_input_plan(state)) {
+    return make_unexpected(
+        artifact_error(ErrorCode::kInvalidArgument, "TEMPORAL_INPUT_OPTIONAL_INVALID"));
+  }
   if (!valid_partition_runner_plan(state)) {
     return make_unexpected(
         artifact_error(ErrorCode::kInvalidArgument, "PARTITION_RESOURCE_REALIZATION_FAILED"));
+  }
+  if (!valid_cuda_graph_capture_plans(state)) {
+    return make_unexpected(
+        artifact_error(ErrorCode::kInvalidArgument, "CUDA_GRAPH_CAPTURE_PLAN_INVALID"));
   }
   if (auto cuda_plan = validate_cuda_execution_plan_records(state); !cuda_plan) {
     return make_unexpected(std::move(cuda_plan).error());

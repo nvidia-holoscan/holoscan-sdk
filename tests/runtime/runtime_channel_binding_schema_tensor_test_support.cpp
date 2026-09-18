@@ -26,6 +26,7 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
 
+#include "channel/channel_payload_limits.hpp"
 #include "compiler/compile_internal.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "core/operator_spec_compiler_access.hpp"
@@ -112,6 +113,9 @@ GeneratedSchemaSessionFixture::GeneratedSchemaSessionFixture() {
   plan.process_local_channel_services[0].payload_identity = output.payload_identity;
   plan.process_local_channel_services[0].payload_size_bytes =
       output.serialized_payload_capacity_bytes + kSchemaEnvelopeHeaderSize;
+  plan.process_local_channel_services[0].selected_inline_bucket_bytes =
+      *channel_internal::inline_payload_bucket_size(
+          plan.process_local_channel_services[0].payload_size_bytes);
   plan.payload_edges[0].payload_identity = output.payload_identity;
   plan.generic_output_loans[0].slot_size_bytes = sizeof(schema::StringT);
   plan.generic_output_loans[0].aggregate_byte_capacity =
@@ -151,6 +155,8 @@ void GeneratedSchemaSessionFixture::use_cross_process_edge() {
   auto& service = base.plan.cross_process_channel_services.front();
   service.payload_identity = base.plan.ports.front().payload_identity;
   service.payload_size_bytes = replay.front().type_ops->wire_capacity;
+  service.selected_inline_bucket_bytes =
+      *channel_internal::inline_payload_bucket_size(service.payload_size_bytes);
 }
 ImageSessionFixture::ImageSessionFixture() {
   source.setup(source_spec);
@@ -168,6 +174,9 @@ ImageSessionFixture::ImageSessionFixture() {
   plan.process_local_channel_services[0].payload_identity = output.payload_identity;
   plan.process_local_channel_services[0].payload_size_bytes =
       output.serialized_payload_capacity_bytes;
+  plan.process_local_channel_services[0].selected_inline_bucket_bytes =
+      *channel_internal::inline_payload_bucket_size(
+          plan.process_local_channel_services[0].payload_size_bytes);
   plan.process_local_channel_services[0].tensor_payload = true;
   plan.process_local_channel_services[0].tensor_pool_id.clear();
   plan.process_local_channel_services[0].tensor_max_byte_span = 0U;
@@ -229,6 +238,8 @@ void ImageSessionFixture::use_cross_process_staging(std::uint64_t max_byte_span,
   auto& service = base.plan.cross_process_channel_services.front();
   service.payload_identity = base.plan.ports.front().payload_identity;
   service.payload_size_bytes = replay.front().type_ops->wire_capacity;
+  service.selected_inline_bucket_bytes =
+      *channel_internal::inline_payload_bucket_size(service.payload_size_bytes);
   service.tensor_payload = true;
   service.tensor_max_byte_span = max_byte_span;
   service.tensor_pool_id = "runtime-image-staging." + std::to_string(base.plan.plan_generation);
@@ -250,6 +261,9 @@ TensorPacketSessionFixture::TensorPacketSessionFixture() {
   plan.process_local_channel_services[0].payload_identity = output.payload_identity;
   plan.process_local_channel_services[0].payload_size_bytes =
       output.serialized_payload_capacity_bytes;
+  plan.process_local_channel_services[0].selected_inline_bucket_bytes =
+      *channel_internal::inline_payload_bucket_size(
+          plan.process_local_channel_services[0].payload_size_bytes);
   plan.process_local_channel_services[0].tensor_payload = true;
   plan.process_local_channel_services[0].tensor_pool_id.clear();
   plan.process_local_channel_services[0].tensor_max_byte_span = 0U;
@@ -288,6 +302,8 @@ void TensorPacketSessionFixture::use_cross_process_staging(std::uint64_t max_byt
   auto& service = base.plan.cross_process_channel_services.front();
   service.payload_identity = base.plan.ports.front().payload_identity;
   service.payload_size_bytes = replay.front().type_ops->wire_capacity;
+  service.selected_inline_bucket_bytes =
+      *channel_internal::inline_payload_bucket_size(service.payload_size_bytes);
   service.tensor_payload = true;
   service.tensor_max_byte_span = max_byte_span;
   service.tensor_pool_id =
@@ -311,6 +327,7 @@ TensorSessionFixture::TensorSessionFixture() {
   plan.ports[1].serialized_payload_capacity_bytes = 0U;
   plan.process_local_channel_services[0].payload_identity = output.payload_identity;
   plan.process_local_channel_services[0].payload_size_bytes = 0U;
+  plan.process_local_channel_services[0].selected_inline_bucket_bytes = 0U;
   plan.process_local_channel_services[0].tensor_payload = true;
   plan.process_local_channel_services[0].tensor_pool_id.clear();
   plan.process_local_channel_services[0].tensor_max_byte_span = 0U;
@@ -376,6 +393,7 @@ void TensorSessionFixture::use_cross_process_edge() {
   base.use_cross_process_edge();
   auto& service = base.plan.cross_process_channel_services.front();
   service.payload_size_bytes = 0U;
+  service.selected_inline_bucket_bytes = 0U;
   service.tensor_payload = true;
   service.tensor_max_byte_span = 0U;
   service.tensor_pool_id.clear();

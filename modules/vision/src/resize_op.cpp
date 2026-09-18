@@ -25,6 +25,12 @@ constexpr TensorRepresentation kCudaTensorRepresentation{
     .memory_kind = MemoryKind::kCudaDevice,
 };
 
+[[nodiscard]] expected<std::uint64_t, Error> resize_output_byte_span(
+    const ResizeOpParams& params) noexcept {
+  return detail::projected_image_output_byte_span(
+      params.width, params.height, params.max_batch_size, sizeof(float));
+}
+
 [[nodiscard]] auto failure(ErrorCode code, std::string message) {
   return make_unexpected(Error{code, std::move(message)});
 }
@@ -50,22 +56,21 @@ class ResizeOp::Impl {
   std::unique_ptr<cvcuda::Resize> operation;
 };
 
-ResizeOp::ResizeOp(VisionImageCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+ResizeOp::ResizeOp() : impl_(std::make_unique<Impl>()) {}
 
 ResizeOp::~ResizeOp() = default;
 
 void ResizeOp::setup(OperatorSpec& spec) {
-  const ResizeOpParams& configuration = params();
-  if (configuration.width > capacity_.max_width || configuration.height > capacity_.max_height) {
-    throw RuntimeError(ErrorCode::kInvalidArgument,
-                       "ResizeOp parameters exceed the authored output-pool capacity");
+  const auto projected_capacity = resize_output_byte_span(params());
+  if (!projected_capacity) {
+    throw RuntimeError(projected_capacity.error().code,
+                       "ResizeOp output capacity exceeds CV-CUDA's 32-bit tensor limit");
   }
-  auto byte_span = detail::maximum_output_byte_span(
-      capacity_.max_width, capacity_.max_height, capacity_.max_batch_size, sizeof(float));
-  if (!byte_span) {
-    throw RuntimeError(byte_span.error());
-  }
+  const auto capacity = parameter_projected_byte_span<&resize_output_byte_span>(
+      "holoscan.vision.ResizeOp.output-max-byte-span.v1",
+      param_ref<&ResizeOpParams::width>(),
+      param_ref<&ResizeOpParams::height>(),
+      param_ref<&ResizeOpParams::max_batch_size>());
 
   spec.input(input, "input")
       .queue_depth(1U)
@@ -74,16 +79,14 @@ void ResizeOp::setup(OperatorSpec& spec) {
           .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
       });
   spec.output(output, "output")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = detail::ImageTensorView::kMaxRank,
-                  .max_byte_span = *byte_span,
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          capacity);
 }
 
 Contract ResizeOp::contract() const {
@@ -111,16 +114,6 @@ void ResizeOp::stop() {
 
 expected<void, Error> ResizeOp::compute(ExecutionContext& context) {
   const ResizeOpParams& configuration = context.params<ResizeOpParams>();
-  auto valid_width = detail::validate_authored_capacity(
-      "ResizeOp", "width", configuration.width, capacity_.max_width);
-  if (!valid_width) {
-    return make_unexpected(std::move(valid_width).error());
-  }
-  auto valid_height = detail::validate_authored_capacity(
-      "ResizeOp", "height", configuration.height, capacity_.max_height);
-  if (!valid_height) {
-    return make_unexpected(std::move(valid_height).error());
-  }
   if (!impl_->operation) {
     return failure(ErrorCode::kNotReady, "ResizeOp CV-CUDA resource is not initialized");
   }
@@ -134,7 +127,7 @@ expected<void, Error> ResizeOp::compute(ExecutionContext& context) {
     return make_unexpected(std::move(sample).error());
   }
   auto input_view = detail::describe_image_tensor(
-      sample->data, detail::TensorOperation::kResize, capacity_.max_batch_size);
+      sample->data, detail::TensorOperation::kResize, configuration.max_batch_size);
   if (!input_view) {
     return make_unexpected(std::move(input_view).error());
   }
@@ -173,7 +166,7 @@ expected<void, Error> ResizeOp::compute(ExecutionContext& context) {
                                                    input_view->dtype,
                                                    DLDevice{kDLCUDA, loan->device_id().value},
                                                    detail::TensorOperation::kResize,
-                                                   capacity_.max_batch_size);
+                                                   configuration.max_batch_size);
   if (!output_view) {
     return make_unexpected(std::move(output_view).error());
   }

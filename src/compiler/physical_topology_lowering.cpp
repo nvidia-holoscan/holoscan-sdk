@@ -44,13 +44,19 @@ constexpr std::string_view kTensorPoolBoundsInvalid{"PHYSICAL_TENSOR_ALLOCATION_
   switch (payload.kind) {
     case PayloadIdentityKind::kScalar:
       return payload.scalar && !payload.schema && !payload.pod &&
-             enum_at_most(payload.scalar->kind, ScalarIdentityKind::kLocalEnum);
+             enum_at_most(payload.scalar->kind, ScalarIdentityKind::kLocalEnum) &&
+             (payload.scalar->kind == ScalarIdentityKind::kLocalEnum
+                  ? payload.scalar->native_object_size == 1U ||
+                        payload.scalar->native_object_size == 2U ||
+                        payload.scalar->native_object_size == 4U ||
+                        payload.scalar->native_object_size == 8U
+                  : payload.scalar->native_object_size == 0U);
     case PayloadIdentityKind::kTensor:
       return !payload.scalar && !payload.schema && !payload.pod &&
              payload.payload_kind == PayloadKind::kDescriptorBacked;
     case PayloadIdentityKind::kSchema:
       return !payload.scalar && payload.schema && !payload.pod &&
-             !payload.schema->canonical_name.empty() && payload.schema->version != 0U;
+             valid_schema_identity(*payload.schema);
     case PayloadIdentityKind::kPod:
       return !payload.scalar && !payload.schema && payload.pod && payload.pod->object_size != 0U &&
              payload.pod->object_alignment != 0U && !payload.pod->fields.empty();
@@ -114,7 +120,7 @@ constexpr std::string_view kTensorPoolBoundsInvalid{"PHYSICAL_TENSOR_ALLOCATION_
     return endpoint.boundary_port.value() == topic.graph_port.value && endpoint.uri == topic.uri &&
            endpoint.direction == direction &&
            payload_identity_exactly_equal(endpoint.payload_identity, topic.payload_identity) &&
-           endpoint.serialized_payload_capacity_bytes == topic.serialized_payload_capacity_bytes;
+           endpoint.schema_writer_max_serialized_bytes == topic.serialized_payload_capacity_bytes;
   });
   if (found == endpoints.end() || found->service.empty() ||
       !enum_at_most(found->attach.peer, PeerRequirement::kRequired)) {
@@ -335,6 +341,7 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
         .owner = port.owner,
         .owner_kind = port.owner_kind,
         .direction = port.direction,
+        .optional = port.optional,
         .local_name = port.name,
         .payload_identity = port.payload_identity,
         .serialized_payload_capacity_bytes = port.serialized_payload_capacity_bytes,
@@ -397,7 +404,17 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
           result,
           kEdgeInvalid,
           source_for(
-              snapshot, source != nullptr ? source->owner : VertexId{}, PortId{edge.source.value}));
+              snapshot, source != nullptr ? source->owner : VertexId{}, PortId{edge.source.value}),
+          "/edges/" + std::to_string(edge.id.value));
+      result.errors.back().detail = physical_edge_detail(snapshot, target, source);
+      result.errors.back().detail->error.message =
+          source == nullptr || target == nullptr ? "connection references a missing port"
+          : source->direction != PortDirection::kOutput ||
+                  target->direction != PortDirection::kInput
+              ? "connection requires an output producer and an input consumer"
+          : !payload_identity_exactly_equal(source->payload_identity, target->payload_identity)
+              ? "producer and consumer payload identities differ"
+              : "connection has an invalid queue policy";
       continue;
     }
     if (!effective_profile_for_vertex(effective_profiles, source->owner) ||
@@ -490,6 +507,18 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
       }
       reuse_by_output[output_index] = reuse_by_output[output_index] ||
                                       selection.missing == TemporalRecordMissingKind::kReuseLast;
+      // The depth-one freshness path preserves ReuseLast beside the ordinary cache row.
+      if (policy == QueuePolicy::kDropOldest &&
+          selection.selector == InputSelectorKind::kLatestWithin &&
+          selection.cache_capacity == 1U &&
+          selection.missing == TemporalRecordMissingKind::kReuseLast) {
+        if (!checked_add(cache_by_output[output_index], 1U, next)) {
+          reject_physical_plan(
+              result, kQueueInvalid, source_for(snapshot, source->owner, PortId{source_id.value}));
+        } else {
+          cache_by_output[output_index] = next;
+        }
+      }
       drain_by_output[output_index] =
           drain_by_output[output_index] || selection.selector == InputSelectorKind::kDrainAll;
     }

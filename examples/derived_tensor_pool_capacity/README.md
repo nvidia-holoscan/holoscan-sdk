@@ -2,25 +2,38 @@
 
 > **User guide:** [Tensors in depth](https://docs.nvidia.com/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#derive-slot-bytes-from-deployment-parameters) — see how compile-time expressions size runtime-owned Tensor pools.
 
-This example compiles one graph with three scalar capacity derivations and one
-rate-aware lifecycle graph:
+This example compiles one graph with four scalar capacity derivations, one memory-kind
+derivation, and one rate-aware lifecycle graph:
 
 - `ConfiguredResize` reduces a bounded HWC shape Parameter to the exact contiguous byte capacity
-  for each output slot.
+  for each output slot and independently maps an `OutputStorage` Parameter to pageable or pinned
+  host memory.
 - `PackedGrayscale` divides its producer's finite byte capacity by four for a packed RGBA-to-gray
   transform, demonstrating checked scalar expression composition.
 - `ConservativeGrayscale` uses the producer's complete finite byte capacity directly, avoiding any
   packed-layout assumption at the cost of reserving more memory.
+- `ProjectedBatchOutput` uses a named, compile-only C++ projector to calculate
+  `width * height * max_batch_size * 4 * sizeof(float)`. All three Parameters read by the
+  projector are declared explicitly as dependencies, and Runtime receives only the resolved
+  per-slot byte span. Its output is connected to `ProjectedBatchSink`, so the projected capacity
+  participates in an ordinary producer-to-consumer Tensor pipeline.
 - `CameraSource` declares a fixed 60 Hz output, `ConfiguredResize` carries a 60 Hz input
   expectation and declares `follows(input, RateRatio{1, 4})`, and a one-second clocked consumer
   causes the resulting 15 Hz output to receive the default 30-entry automatic recommendation.
 - A second, direct-host Tensor source derives 6 MiB per slot from a Parameter, selects 60 Hz at
   `kDiscover` under a 120 Hz maximum, and restarts at 30 Hz while reusing the larger allocation.
 
-The command-line shape must have exactly four channels. The 4:1 ratio is valid because this
+The command-line shape must have exactly four channels. Its optional memory-kind argument is
+`host` or `pinned`, so the installed example remains CPU-only. The 4:1 ratio is valid because this
 example's input capacity describes packed RGBA bytes. It is not generally valid when an input bound
 includes padded rows or another non-packed layout. Such an Operator must use a conservative bound
 or a different formula justified by its input contract.
+
+Both grayscale consumers declare an exact input memory kind matching the selected resize output.
+That constraint is load-bearing: a derived producer may select only a kind accepted by every exact
+consumer, and compilation rejects a mismatch rather than inserting an implicit copy. Each grayscale
+stage deliberately produces a new pageable-host output buffer; that is an explicit transform-output
+contract, not an inferred transition from the input kind.
 
 The connected fixed output is authoritative for the resize input. `expected_rate(60 Hz)` is weaker
 fallback and diagnostic evidence; it does not override a connected producer. The resize output's
@@ -51,9 +64,26 @@ depth is reported as authoritative and never offered as a replacement pin.
 The default 2/1 headroom is a release policy to validate on representative workloads, not a jitter,
 burst, scheduling, or safety guarantee.
 
-Changing `ResizeParams::output_shape` requires compiling a new execution plan and rematerializing
-its resources. It does not require rebuilding or relinking the application binary, and the
-expression is not evaluated while the plan runs.
+Changing `ResizeParams::output_shape` or `ResizeParams::output_storage` requires compiling a new
+execution plan and starting a session from that plan. It does not require rebuilding or relinking
+the application binary, and neither expression is evaluated while the plan runs. Memory kind is
+separate from byte capacity, allocator/provider identity, and CUDA device placement. A device-backed
+selection would still require explicit deployment authority; this example intentionally demonstrates
+only pageable and pinned host pools.
+
+`ProjectedBatchOutput` demonstrates the escape hatch for formulas that are clearer as checked C++
+than as a long closed expression. Its static function is non-throwing, returns
+`expected<uint64_t, Error>`, and has a stable semantic ID independent of the C++ symbol address.
+The compiler invokes it once against finalized generation-zero `BatchProjectionParams`, records
+only the stable ID and canonical dependency identities, and then uses the same allocation path as
+a literal bound. `max_batch_size` remains an ordinary recompile-required Parameter because it is an
+independent capacity dimension; it is not inferred from one frame's width and height.
+
+The `param_ref` list passed beside the projector is normative compiler input. Core cannot inspect
+the C++ function body, so every Params field the projector reads must appear in that list; an
+undeclared read is an authoring correctness bug even if the code compiles. The versioned semantic
+ID must change whenever the algorithm can produce a different result for the same declared inputs.
+Renaming or moving the C++ function without changing its result does not require an ID change.
 
 The lifecycle source binds only from its declared `kDiscover` callback. Repeating the same
 normalized rate is idempotent; a different repeat conflicts. The global Discover barrier resolves
@@ -73,11 +103,13 @@ cmake --build build
 
 ## Run
 
-The default deployment uses an output shape of `1080 1920 4`. Supply another positive packed RGBA
-HWC shape without changing or rebuilding the source:
+The default deployment uses an output shape of `1080 1920 4` and pageable host memory. Supply another
+positive packed RGBA HWC shape and optionally select pinned host memory without changing or rebuilding
+the source:
 
 ```bash
 ./build/derived_tensor_pool_capacity 720 1280 4
+./build/derived_tensor_pool_capacity 720 1280 4 pinned
 ```
 
 ## Expected output
@@ -89,7 +121,10 @@ deterministic for this graph:
 output=resize.output per_slot_bytes=3686400 ...
 output=packed_grayscale.output per_slot_bytes=921600 ...
 output=conservative_grayscale.output per_slot_bytes=3686400 ...
+output=projected_batch.output per_slot_bytes=29491200 ...
 lifecycle_rate=60/1 max_rate=120/1 active_entries=14 active_bytes=88080384 admitted_entries=22 admitted_bytes=138412032 restart_rate=30/1 restart_entries=10 allocation=reused-larger binding=fresh
+compile_us=... artifact_bytes=... resize_memory=host ...
+projector=ProjectedBatchOutput.output-max-byte-span.v1 max_batch_size=2 projected_per_slot_bytes=29491200
 fixed_rate=60/1 follows_ratio=1/4 resolved_rate=15/1 automatic_depth=30 explicit_depth=4
 ...
 derived tensor pool capacity: configured and checked transform bounds verified

@@ -22,10 +22,11 @@ from holoscan.core import (
     Tensor,
     is_tensor_like,
 )
-from holoscan.core._core import _test_dlpack_c_exchange_api
+from holoscan.core._core import _test_dlpack_c_exchange_api, _test_tensor_metadata_projection
 
 # DLDataTypeCode raw value (DLDataType.code stays a plain int field, matching DLPack/4.x).
 _KDLFLOAT = 2
+_KDLUINT = 1
 
 
 def _torch_version_at_least(torch, major: int, minor: int) -> bool:
@@ -125,10 +126,23 @@ class TestTensorType:
         ):
             assert hasattr(Tensor, name), f"Tensor is missing expected attribute: {name}"
 
+    # REQ: TENSOR-PY-002
     def test_metadata_properties_are_read_only(self):
         np = pytest.importorskip("numpy")
         tensor = Tensor.as_tensor(np.zeros(3, dtype=np.float32))
-        for name in ("ndim", "shape", "size", "itemsize", "nbytes", "byte_offset"):
+        for name in (
+            "ndim",
+            "shape",
+            "strides",
+            "size",
+            "itemsize",
+            "nbytes",
+            "byte_offset",
+            "device",
+            "dtype",
+            "data",
+            "is_read_only",
+        ):
             with pytest.raises(AttributeError):
                 setattr(tensor, name, 1)
 
@@ -136,6 +150,7 @@ class TestTensorType:
 class TestTensorDLPack:
     """DLPack export + minimal import (numpy host round-trips)."""
 
+    # REQ: TENSOR-PY-002
     # REQ: TENSOR-PY-011
     def test_as_tensor_metadata_roundtrip(self):
         np = pytest.importorskip("numpy")
@@ -148,6 +163,13 @@ class TestTensorDLPack:
         assert tensor.nbytes == arr.nbytes
         assert tensor.byte_offset == 0
         assert tensor.strides == arr.strides  # both in bytes for a C-contiguous array
+        assert tensor.device.device_type == DLDeviceType.DLCPU
+        assert tensor.device.device_id == 0
+        assert tensor.dtype.code == _KDLFLOAT
+        assert tensor.dtype.bits == 32
+        assert tensor.dtype.lanes == 1
+        assert tensor.data == arr.ctypes.data
+        assert tensor.is_contiguous()
         assert tensor.is_read_only
 
     def test_dlpack_device_is_cpu(self):
@@ -333,6 +355,55 @@ class TestArrayInterface:
         src = cupy.arange(6, dtype=cupy.float32).reshape(2, 3)
         out = cupy.asarray(Tensor.as_tensor(src))
         cupy.testing.assert_array_equal(out, src)
+
+
+class TestTensorMetadataProjection:
+    """Metadata projection behavior not constructible through normal Python protocols."""
+
+    def test_nonzero_offset_and_explicit_strides(self):
+        np = pytest.importorskip("numpy")
+
+        # Key setup: Project a strided view four bytes into a live host backing allocation.
+        backing = np.arange(32, dtype=np.uint8)
+        result = _test_tensor_metadata_projection(
+            Tensor.as_tensor(backing), (2, 3), (8, 2), DLDataType(_KDLUINT, 8, 1), 4
+        )
+
+        # Key assertion: Both Tensor and array-interface metadata expose the logical offset view.
+        assert result["shape"] == (2, 3)
+        assert result["strides"] == (8, 2)
+        assert result["data"] == backing.ctypes.data + 4
+        assert result["array_interface"]["data"][0] == backing.ctypes.data + 4
+        assert result["array_interface"]["strides"] == (8, 2)
+
+    def test_multi_lane_implicit_strides(self):
+        np = pytest.importorskip("numpy")
+
+        # Key setup: Leave strides implicit for a two-byte DLPack element encoded as two lanes.
+        backing = np.arange(32, dtype=np.uint8)
+        result = _test_tensor_metadata_projection(
+            Tensor.as_tensor(backing), (2, 3), None, DLDataType(_KDLUINT, 8, 2), 0
+        )
+
+        # Key assertion: Contiguous strides use the complete lane-aware element size.
+        assert result["itemsize"] == 2
+        assert result["strides"] == (6, 2)
+        assert result["array_interface"]["strides"] is None
+
+    def test_rank_zero_projection(self):
+        np = pytest.importorskip("numpy")
+
+        # Key setup: Project scalar metadata with no shape or stride entries.
+        backing = np.zeros(1, dtype=np.uint8)
+        result = _test_tensor_metadata_projection(
+            Tensor.as_tensor(backing), (), None, DLDataType(_KDLUINT, 8, 1), 0
+        )
+
+        # Key assertion: Rank-zero Tensor and array-interface projections stay empty and implicit.
+        assert result["shape"] == ()
+        assert result["strides"] == ()
+        assert result["array_interface"]["shape"] == ()
+        assert result["array_interface"]["strides"] is None
 
 
 class TestArrayInterfaceImport:

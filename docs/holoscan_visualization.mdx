@@ -1,0 +1,145 @@
+<Note title="You will learn">
+  - What the Visualization module provides and which part of it is supported API
+  - How `HolovizOp` declares layers, binds them to input ports, and presents frames
+  - How the operator's temporal contract keeps the display running when inputs lag
+  - How to build the module and link it from an installed SDK
+</Note>
+
+Holoscan Visualization is the core module that provides
+`holoscan::visualization::HolovizOp`, a sink operator that composites image,
+geometry, text, and color-lookup-table layers and presents them at a fixed
+display rate. The rendering backend is **HoloViz**, a CUDA/Vulkan renderer
+written for the Holoscan 5.x frame path: layer resources are allocated once
+from declared maxima, and the per-frame path performs no allocation.
+
+<Warning>
+  `HolovizOp` — its parameters, input ports, and the layer and sink descriptor
+  types it accepts — is the only public, supported API of this module in
+  Holoscan SDK 5.0. The HoloViz layer renderer and rendering hardware interface (RHI)
+  beneath the operator are internal: their headers install with the module but
+  carry no source or ABI compatibility promise, and they may change in any
+  release. Write applications against the operator.
+</Warning>
+
+## The operator
+
+`HolovizOp` is constructed with a fixed `LayerStack`, a `SinkDesc`, and an
+optional display period:
+
+```cpp
+#include <holoscan/visualization/holoviz_op.hpp>
+
+namespace viz = holoscan::visualization;
+
+viz::LayerStack layers;
+layers.add_image_layer("video", viz::ImageLayerDesc{
+    .format = viz::ImageFormat::kR8G8B8A8Unorm,
+    .max_width = 1920,
+    .max_height = 1080,
+});
+layers.add_geometry_layer("overlay", viz::GeometryLayerDesc{
+    .topologies = {viz::GeometryTopology::kRectangleList},
+    .max_primitives = 64,
+});
+
+auto holoviz = graph.op<holoscan::visualization::HolovizOp>(
+    "holoviz", std::move(layers),
+    viz::WindowSinkDesc{.title = "Demo", .width = 1920, .height = 1080});
+graph.add_flow(decoder->output, holoviz->layer_input(0));
+graph.add_flow(detector->boxes, holoviz->layer_input(1));
+```
+
+Each call to `add_*_layer` declares one input port named by its first
+argument; `layer_input(i)` returns the port for the *i*-th declared layer. Up to
+`kMaxLayerPorts` (8) layers may be declared per operator instance.
+
+### Layers
+
+Layer descriptors are the declared maxima the renderer sizes its pools to.
+A frame may use any subregion or count up to that maximum without triggering a
+reallocation; exceeding it is rejected as a mis-declaration.
+
+| Layer | Descriptor | Input tensor | Declares | 5.0 status |
+|---|---|---|---|---|
+| Image | `ImageLayerDesc` | Device image tensor | Pixel format, maximum width and height, color space, optional view transform | Implemented |
+| Geometry | `GeometryLayerDesc` | Host F32 rank-1 tensor of primitive coordinates | Allowed topologies (lines, crosses, rectangles, ovals), maximum primitive count, default line width | Implemented |
+| Text | `TextLayerDesc` | Text records | Maximum glyph count | Declaration only; frame path in a later release |
+| LUT | `LUTLayerDesc` | Device index tensor (for example a segmentation mask) | LUT size, maximum width and height | Declaration only; frame path in a later release |
+
+Image layers in 5.0 accept `kR8G8B8A8Unorm` and `kR8Unorm` uploads with
+pass-through color space; YUV formats are part of the declaration surface but
+their conversion path arrives in a later release.
+
+### Sinks
+
+`SinkDesc` states where rendered frames go. `WindowSinkDesc` (a
+compositor-managed window) is the implemented present path in 5.0.
+`ExclusiveDisplaySinkDesc`, `CudaPitchLinearSinkDesc`, and `CudaArraySinkDesc`
+are declared so call sites do not change when their paths are wired, but a
+backend rejects them at construction today. See
+[Enable exclusive display](/holoscan/sdk-user-guide/setup/additional-setup/exclusive-display)
+for the display-side prerequisites of the exclusive path.
+
+## Temporal contract
+
+`HolovizOp` triggers on the display clock, not on data arrival, so the display
+keeps refreshing even when an upstream operator stalls:
+
+- `OnClock{.period = display_rate}` — defaults to 60 Hz.
+- Every layer input uses `LatestWithin{.max_age = max_input_age}`; the default
+  equals the display period.
+- A missing or stale image layer applies `ReuseLast`, so the last frame stays
+  on screen; other layer kinds apply `SafeDefault` and are skipped for that
+  activation.
+
+<Tip>
+  When a producer publishes slower than the display rate — a 30 fps decoder
+  feeding a 60 Hz window — pass a wider `max_input_age` to the constructor.
+  Otherwise the layer is stale on every other activation. See
+  [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+  for the selector and missing-data semantics.
+</Tip>
+
+Graphs require explicit partition membership for the operator, for example
+`graph.partition("holoviz").add(holoviz)`; see
+[Deployment stack](/holoscan/sdk-user-guide/configuration/deployment-stack).
+HoloViz backend errors are translated into the Holoscan error domain at the
+operator lifecycle boundary, so they surface through the same
+[errors-as-values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+path as any other operator failure.
+
+## Build, test, and consume
+
+`HOLOSCAN_BUILD_VISUALIZATION` defaults to `ON`. Rendering needs a
+CUDA-capable GPU and a Vulkan 1.3 capable driver; headless presentation
+additionally needs `libegl1`. The Vulkan SDK is not a build prerequisite. Build
+and test through the SDK-level runner:
+
+```bash
+./run build --config "-DHOLOSCAN_BUILD_VISUALIZATION=ON -DHOLOSCAN_BUILD_TESTS=ON"
+./run test --options "-L holoviz"
+```
+
+The module can also be configured as a top-level project against an installed
+SDK (`cmake -S modules/visualization -B build -Dholoscan_ROOT=<install>`), which
+is how module CI exercises it on Linux and Windows.
+
+Installed consumers link the operator target from the main Holoscan package;
+the HoloViz renderer is carried as a private dependency of the operator:
+
+```cmake
+find_package(holoscan 5 REQUIRED CONFIG COMPONENTS visualization)
+target_link_libraries(my_pipeline PRIVATE holoscan::core holoscan::visualization::op_holoviz)
+```
+
+## Recap
+
+- The Visualization module ships `HolovizOp`; the HoloViz renderer and RHI
+  underneath are internal and may change.
+- Layers and the sink are declared once at construction; each layer becomes a
+  typed input port reached through `layer_input(i)`.
+- The operator is clock-driven: it presents at `display_rate`, reuses the last
+  image when a layer is late, and skips other stale layers.
+- Build with `HOLOSCAN_BUILD_VISUALIZATION`; consume through
+  `holoscan::visualization::op_holoviz` from the installed Holoscan package.
+- Next: [Holoscan Modules](/holoscan/sdk-user-guide/modules).

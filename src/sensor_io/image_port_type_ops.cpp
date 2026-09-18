@@ -21,7 +21,7 @@ namespace holoscan::detail {
 namespace {
 
 using ImagePayload = schema::DescriptorFlatBufferPayload<
-    schema::Image, schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>;
+    schema::Image, schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>>;
 
 // plane_layouts arrives from the wire and lands in a std::vector, so its capacity is reserved
 // during prepare and the bound comes from schema::kMaximumImagePlanes rather than a second constant
@@ -191,7 +191,7 @@ const RuntimePortTypeOps* runtime_port_type_ops<schema::ImageT>() noexcept {
   static const RuntimePortTypeOps ops = schema::make_descriptor_tensor_port_type_ops<
       schema::ImageT,
       schema::Image,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>(
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>>(
       PrepareImageSampleCallback{},
       ResetImageSampleCallback{},
       EncodeImageMetadataCallback{},

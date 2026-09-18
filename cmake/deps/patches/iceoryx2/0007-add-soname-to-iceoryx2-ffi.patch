@@ -1,0 +1,24 @@
+From 3c7b7ce0e0472fa4614c281fd79bda2956c0e911 Mon Sep 17 00:00:00 2001
+From: Tom Birdsong <tbirdsong@nvidia.com>
+Date: Fri, 4 Sep 2026 16:54:20 -0400
+Subject: [PATCH] Add SONAME to the iceoryx2 FFI shared library
+
+The Rust cdylib produced for the C FFI does not receive an ELF SONAME by default. Add the SONAME only to the cdylib link so the shared C++ binding can refer to a stable library identity at runtime without affecting static builds or non-Linux targets.
+
+Upstream-Status: Pending [upstream submission not yet prepared]
+
+diff --git a/iceoryx2-ffi/c/build.rs b/iceoryx2-ffi/c/build.rs
+index 0af64495..f1681c84 100644
+--- a/iceoryx2-ffi/c/build.rs
++++ b/iceoryx2-ffi/c/build.rs
+@@ -28,6 +28,10 @@ fn main() {
+ 
+     let crate_dir = env::var("CARGO_MANIFEST_DIR").expect("Cargo manifest dir");
+ 
++    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
++        println!("cargo:rustc-link-arg-cdylib=-Wl,-soname,libiceoryx2_ffi_c.so");
++    }
++
+     cbindgen::generate(crate_dir)
+         .expect("Unable to generate c bindings")
+         .write_to_file(header_path);

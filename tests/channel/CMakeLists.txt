@@ -29,14 +29,13 @@ function(holoscan_add_channel_expected_compile_fail_test
     add_test(NAME "CHANNEL_EXPECTED_COMPILE_FAIL.${test_name}"
         COMMAND ${CMAKE_COMMAND}
             -DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}
-            -DHOLOSCAN_BUILD_CONFIG=$<CONFIG>
+            -DCMAKE_BUILD_TYPE=$<CONFIG>
             -DHOLOSCAN_TARGET=${target_name}
             -DHOLOSCAN_EXPECTED_DIAGNOSTIC=${diagnostic_fragment}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/../core/expected_compile_fail/verify_compile_failure.cmake
     )
-    set_tests_properties("CHANNEL_EXPECTED_COMPILE_FAIL.${test_name}" PROPERTIES
-        RESOURCE_LOCK expected_compile_fail_build
-    )
+    # Building a negative fixture may relink libraries used by running SDK tests.
+    set_tests_properties("CHANNEL_EXPECTED_COMPILE_FAIL.${test_name}" PROPERTIES RUN_SERIAL TRUE)
 endfunction()
 
 add_library(channel_process_test_support STATIC
@@ -159,7 +158,8 @@ holoscan_add_flatbuffer_schema(
     SCHEMAS custom_control.fbs
     INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_DIR "${HOLOSCAN_CHANNEL_TEST_SCHEMA_GENERATED_DIR}"
-    BFBS_EMBED
+    TRAITS_HEADER custom_control_schema_traits.hpp
+    MAX_SERIALIZED_SIZE 512
 )
 add_dependencies(channel_schema_test
     holoscan_flatbuffer_schemas_generated

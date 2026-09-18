@@ -8,23 +8,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     return()
 endif()
 
-set(DESCRIPTOR_TOPIC_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 holoscan_add_flatbuffer_schema(
     TARGET descriptor_tensor_external_topic_generated
-    SCHEMAS external_frame.fbs
-    INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-    OUTPUT_DIR "${DESCRIPTOR_TOPIC_GENERATED_DIR}"
-    BFBS_EMBED
-    DESCRIPTOR_TENSOR
-    TRAITS_HEADER external_frame_traits.hpp
-    TRAITS_ROOT_TYPE tensor_topic::ExternalFrame
-    TRAITS_NATIVE_TYPE tensor_topic::ExternalFrameT
-    TRAITS_BINARY_SCHEMA_TYPE tensor_topic::ExternalFrameBinarySchema
-    TRAITS_PACKAGE_NAMESPACE tensor_topic::package
-    TRAITS_CANONICAL_NAME tensor_topic.ExternalFrame
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 1024
-    TRAITS_DESCRIPTOR_METADATA_CAPACITY 512
+    SCHEMA external_frame.fbs
+    MAX_SERIALIZED_SIZE 512
 )
 
 set(DESCRIPTOR_TOPIC_TARGETS
@@ -33,11 +20,9 @@ set(DESCRIPTOR_TOPIC_TARGETS
 )
 foreach(target IN LISTS DESCRIPTOR_TOPIC_TARGETS)
     add_executable(${target} "${target}.cpp")
-    add_dependencies(${target} descriptor_tensor_external_topic_generated)
     target_compile_features(${target} PRIVATE cxx_std_20)
-    target_include_directories(${target}
-        PRIVATE "${DESCRIPTOR_TOPIC_GENERATED_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(${target} PRIVATE holoscan::core holoscan::schema)
+    target_link_libraries(${target}
+        PRIVATE holoscan::core descriptor_tensor_external_topic_generated)
     set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
     if(COMMAND holoscan_configure_example_install)
         holoscan_configure_example_install(${target})
@@ -77,7 +62,7 @@ endif()
 install(TARGETS ${DESCRIPTOR_TOPIC_TARGETS}
     RUNTIME DESTINATION
         "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/flatbuffer_schemas/descriptor_tensor_external_topic/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )
 # The examples source install matches only C++, CMake, schema, and document extensions, so every
 # Python file this directory's tests read must be installed explicitly. test_run_example.py imports
@@ -85,10 +70,10 @@ install(TARGETS ${DESCRIPTOR_TOPIC_TARGETS}
 install(FILES external_frame.fbs external_topic_common.hpp test_run_example.py
     DESTINATION
         "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/flatbuffer_schemas/descriptor_tensor_external_topic/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )
 install(PROGRAMS run_example.py
     DESTINATION
         "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/flatbuffer_schemas/descriptor_tensor_external_topic/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

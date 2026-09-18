@@ -196,13 +196,6 @@ template <typename Element>
   return false;
 }
 
-[[nodiscard]] expected<std::size_t, Error> checked_multiply(std::size_t lhs, std::size_t rhs) {
-  if (rhs != 0U && lhs > std::numeric_limits<std::size_t>::max() / rhs) {
-    return invalid_argument("Vision tensor byte span exceeds the platform limit");
-  }
-  return lhs * rhs;
-}
-
 [[nodiscard]] expected<std::int64_t, Error> checked_stride_product(std::int64_t lhs,
                                                                    std::int64_t rhs) {
   if (lhs <= 0 || rhs <= 0 || lhs > std::numeric_limits<std::int64_t>::max() / rhs) {
@@ -426,39 +419,27 @@ expected<std::array<std::int64_t, ImageTensorView::kMaxRank>, Error> contiguous_
   return strides;
 }
 
-expected<std::size_t, Error> maximum_output_byte_span(std::int32_t width, std::int32_t height,
-                                                      std::uint32_t max_batch_size,
-                                                      std::size_t max_element_size) {
+expected<std::uint64_t, Error> projected_image_output_byte_span(
+    std::int32_t width, std::int32_t height, std::uint32_t max_batch_size,
+    std::size_t max_element_size) noexcept {
   if (width <= 0 || height <= 0 || max_batch_size == 0U || max_batch_size > kMaximumBatchSize ||
       max_element_size == 0U) {
-    return invalid_argument("Vision output allocation dimensions are outside the supported range");
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
-  expected<std::size_t, Error> span = static_cast<std::size_t>(width);
-  for (const std::size_t factor : {static_cast<std::size_t>(height),
-                                   static_cast<std::size_t>(max_batch_size),
-                                   std::size_t{4U},
-                                   max_element_size}) {
-    span = checked_multiply(*span, factor);
-    if (!span) {
-      return make_unexpected(std::move(span).error());
+  std::uint64_t span = static_cast<std::uint64_t>(width);
+  for (const std::uint64_t factor : {static_cast<std::uint64_t>(height),
+                                     static_cast<std::uint64_t>(max_batch_size),
+                                     std::uint64_t{4U},
+                                     static_cast<std::uint64_t>(max_element_size)}) {
+    if (span > std::numeric_limits<std::uint64_t>::max() / factor) {
+      return make_unexpected(Error{ErrorCode::kArithmeticOverflow});
     }
+    span *= factor;
   }
-  if (*span > static_cast<std::size_t>(kMaxCvCudaTensorByteSpan)) {
-    return invalid_argument("Vision output allocation exceeds CV-CUDA's 32-bit limit");
+  if (span > static_cast<std::uint64_t>(kMaxCvCudaTensorByteSpan)) {
+    return make_unexpected(Error{ErrorCode::kNotSupported});
   }
   return span;
-}
-
-expected<void, Error> validate_authored_capacity(std::string_view operator_name,
-                                                 std::string_view field_name,
-                                                 std::int64_t active_value,
-                                                 std::int64_t authored_maximum) {
-  if (active_value <= authored_maximum) {
-    return {};
-  }
-  std::string message{operator_name};
-  message.append(" ").append(field_name).append(" exceeds the authored output-pool capacity");
-  return invalid_argument(std::move(message));
 }
 
 expected<void, Error> validate_crop_rectangle(std::int64_t input_width, std::int64_t input_height,
@@ -517,7 +498,7 @@ expected<nvcv::Tensor, Error> wrap_nvcv_tensor(const void* data,
     buffer.basePtr = reinterpret_cast<NVCVByte*>(const_cast<void*>(data));
     const nvcv::TensorShape tensor_shape(
         shape.data(), static_cast<std::int32_t>(shape.size()), layout);
-    // CV-CUDA 0.17.x copies this descriptor synchronously and the wrapper has no cleanup
+    // CV-CUDA 0.18.x copies this descriptor synchronously and the wrapper has no cleanup
     // callback, so it neither owns nor releases the Holoscan backing allocation. Revalidate this
     // assumption, plus asynchronous metadata/workspace retention, for every new CV-CUDA operator
     // and supported CV-CUDA version before relying on callback-lifetime wrapper destruction.

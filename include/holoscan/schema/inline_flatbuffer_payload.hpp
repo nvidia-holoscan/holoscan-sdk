@@ -18,6 +18,7 @@
 
 #include "holoscan/core/errors.hpp"
 #include "holoscan/core/expected.hpp"
+#include "holoscan/schema/flatbuffer_root_access.hpp"
 #include "holoscan/schema/flatbuffer_schema_traits.hpp"
 #include "holoscan/schema/schema_package.hpp"
 
@@ -35,23 +36,21 @@ namespace holoscan::schema {
  * @tparam Root Generated FlatBuffer root type.
  * @tparam Capacity Maximum serialized FlatBuffer bytes stored inline.
  */
-template <typename Root, std::size_t Capacity>
+template <OrdinaryFlatBufferSchemaRoot Root, std::size_t Capacity>
 struct InlineFlatBufferPayload {
   using root_type = Root;
   static constexpr std::size_t inline_capacity = Capacity;  ///< Maximum serialized byte count.
   static constexpr SchemaIdentity expected_schema_identity =
       flatbuffer_schema_identity_v<Root>;  ///< Exact generated-root semantic identity.
-  static constexpr SchemaId expected_schema_id =
-      expected_schema_identity.id;  ///< Complete compact semantic identity.
-  static constexpr std::uint32_t expected_schema_version =
-      flatbuffer_schema_version_v<Root>;  ///< Exact nonzero semantic version.
+  static constexpr SchemaId expected_schema_family_id =
+      expected_schema_identity.family_id;  ///< Stable compact compatibility-family identity.
 
   std::uint32_t envelope_abi_version{kSchemaEnvelopeABIVersion};  ///< Exact wrapper ABI version.
-  std::uint32_t envelope_header_size{kSchemaEnvelopeHeaderSize};  ///< Exact v2 prefix byte size.
-  SchemaId schema_id{expected_schema_id};                         ///< Complete compact identity.
-  std::uint32_t schema_version{expected_schema_version};          ///< Exact semantic version.
+  std::uint32_t envelope_header_size{kSchemaEnvelopeHeaderSize};  ///< Exact prefix byte size.
+  SchemaId schema_family_id{expected_schema_family_id};           ///< Stable compatibility family.
   std::uint32_t payload_size{};                                   ///< Valid bytes in `payload`.
-  std::uint64_t endpoint_generation{};  ///< Attached endpoint generation, or zero before binding.
+  std::uint32_t transport_profile_tag{};  ///< Reserved zero in the inline envelope ABI.
+  std::uint64_t endpoint_generation{};    ///< Attached endpoint generation, or zero before binding.
   std::array<std::byte, Capacity> payload{};  ///< Fixed-capacity serialized storage.
 
   /// @brief Return the versioned schema envelope prefix carried by this wrapper.
@@ -60,9 +59,9 @@ struct InlineFlatBufferPayload {
     return SchemaEnvelopeHeader{
         .abi_version = envelope_abi_version,
         .header_size = envelope_header_size,
-        .schema_id = schema_id,
-        .schema_version = schema_version,
+        .schema_family_id = schema_family_id,
         .payload_size = payload_size,
+        .transport_profile_tag = transport_profile_tag,
         .endpoint_generation = endpoint_generation,
     };
   }
@@ -94,25 +93,18 @@ struct InlineFlatBufferPayload {
    * validate() succeeds. It intentionally does not re-run the FlatBuffers verifier.
    */
   [[nodiscard]] const Root* root() const noexcept {
-    const auto view = uint8_bytes();
-    if (view.empty()) {
-      return nullptr;
-    }
-    return flatbuffers::GetRoot<Root>(view.data());
+    return detail::parse_flatbuffer_root_bytes<Root>(bytes());
   }
 
   /**
    * @brief Validate exact schema identity, size bounds, and FlatBuffer structure.
-   *
-   * @note Schema version matching is exact in this first slice. Additive FlatBuffers evolution can
-   * be relaxed later once graph setup has an explicit compatibility policy.
    */
   [[nodiscard]] expected<void, Error> validate() const {
     if (envelope_abi_version != kSchemaEnvelopeABIVersion ||
         envelope_header_size != kSchemaEnvelopeHeaderSize) {
       return make_unexpected(Error{ErrorCode::kCodecError, "FlatBuffer envelope ABI mismatch"});
     }
-    if (schema_id != expected_schema_id || schema_version != expected_schema_version) {
+    if (schema_family_id != expected_schema_family_id || transport_profile_tag != 0U) {
       return make_unexpected(Error{ErrorCode::kCodecError, "FlatBuffer schema identity mismatch"});
     }
     if (payload_size == 0U) {
@@ -195,9 +187,7 @@ struct InlineFlatBufferPayload {
       return make_unexpected(
           Error{ErrorCode::kInvalidArgument, "FlatBuffer payload exceeds inline capacity"});
     }
-    const auto* data = reinterpret_cast<const std::uint8_t*>(bytes.data());
-    auto verifier = flatbuffers::Verifier(data, bytes.size());
-    if (!verifier.VerifyBuffer<Root>(nullptr)) {
+    if (!detail::verify_flatbuffer_root_bytes<Root>(bytes)) {
       return make_unexpected(
           Error{ErrorCode::kCodecError, "FlatBuffer payload verification failed"});
     }
@@ -218,15 +208,12 @@ struct InlineFlatBufferPayload {
 /**
  * @brief Fixed-capacity inline FlatBuffer payload using the root type's trait capacity.
  *
- * Application-defined schemas can specialize `FlatBufferSchemaTraits<Root>` with
- * `default_inline_capacity` and then use this alias instead of repeating the
- * capacity at each port declaration.
+ * Application-defined ordinary schemas use their complete serialized-payload bound. Descriptor-
+ * Tensor roots require \c DescriptorFlatBufferPayloadFor<Root> so their metadata and Tensor
+ * descriptors retain one exact carriage profile.
  */
-template <typename Root>
+template <OrdinaryFlatBufferSchemaRoot Root>
 using InlineFlatBufferPayloadFor =
-    InlineFlatBufferPayload<Root, flatbuffer_default_inline_capacity_v<Root>>;
-
-static_assert(std::is_standard_layout_v<InlineFlatBufferPayload<Time, 512>>);
-static_assert(std::is_trivially_copyable_v<InlineFlatBufferPayload<Time, 512>>);
+    InlineFlatBufferPayload<Root, flatbuffer_schema_max_serialized_size_v<Root>>;
 
 }  // namespace holoscan::schema

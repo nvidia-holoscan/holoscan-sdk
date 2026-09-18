@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "../compiler/execution_plan_lookup.hpp"
+#include "../core/canonical_text_encoding.hpp"
 #include "../core/clock_binding_resolution.hpp"
 
 namespace holoscan::detail {
@@ -93,21 +94,47 @@ namespace {
 }
 
 [[nodiscard]] expected<std::shared_ptr<Clock>, Error> reconstruct_clock(
-    const ExecutableClockFactoryRecord& executable) {
+    const ExecutionPlanState& plan, const ExecutableClockFactoryRecord& executable,
+    RuntimeDiagnosticDetail* failure_detail) {
   if (static_cast<bool>(executable.factory) == static_cast<bool>(executable.shared)) {
     return make_unexpected(startup_error(ErrorCode::kFailure, "RUNTIME_CLOCK_FACTORY_INVALID"));
   }
   if (executable.factory == nullptr) {
     return executable.shared;
   }
-  auto created = executable.factory->create();
+  if (failure_detail != nullptr) {
+    failure_detail->operation = DiagnosticOperation::kConstruct;
+    failure_detail->component_graph = executable.graph;
+    failure_detail->capture.emplace();
+  }
+  auto created =
+      executable.factory->create(failure_detail != nullptr ? &*failure_detail->capture : nullptr);
   if (!created) {
+    if (failure_detail != nullptr) {
+      failure_detail->present = true;
+      if (failure_detail->capture->count == 0U) {
+        failure_detail->capture->append(created.error().code, created.error().message);
+      }
+      for (const auto& graph : plan.graph.graphs()) {
+        if (graph.id == executable.graph && graph.path) {
+          for (const auto& segment : graph.path->segments()) {
+            append_percent_encoded_uri_path_segment(failure_detail->component_path, segment);
+          }
+        }
+      }
+      append_percent_encoded_uri_path_segment(failure_detail->component_path, "clock");
+      append_percent_encoded_uri_path_segment(failure_detail->component_path,
+                                              executable.key.name());
+    }
     return make_unexpected(
         startup_error(created.error().code, "RUNTIME_CLOCK_RECONSTRUCTION_FAILED"));
   }
   if (created.value() == nullptr) {
     return make_unexpected(
         startup_error(ErrorCode::kFailure, "RUNTIME_CLOCK_RECONSTRUCTION_FAILED"));
+  }
+  if (failure_detail != nullptr) {
+    *failure_detail = RuntimeDiagnosticDetail{};
   }
   return std::shared_ptr<Clock>{std::move(created).value()};
 }
@@ -243,7 +270,7 @@ ClockId resolve_runtime_clock_id(const ExecutionPlanState& plan, GraphId graph,
 
 // NOLINTBEGIN(readability-function-cognitive-complexity)
 [[nodiscard]] expected<RuntimeClockReconstruction, Error> reconstruct_runtime_clocks(
-    const ExecutionPlanState& plan) {
+    const ExecutionPlanState& plan, RuntimeDiagnosticDetail* failure_detail) {
   if (plan.executable_factories.clocks.size() != plan.clocks.size()) {
     return make_unexpected(startup_error(ErrorCode::kFailure, "RUNTIME_CLOCK_INVENTORY_MISMATCH"));
   }
@@ -271,7 +298,7 @@ ClockId resolve_runtime_clock_id(const ExecutionPlanState& plan, GraphId graph,
       return make_unexpected(
           startup_error(ErrorCode::kFailure, "RUNTIME_CLOCK_INVENTORY_MISMATCH"));
     }
-    auto clock = reconstruct_clock(executable);
+    auto clock = reconstruct_clock(plan, executable, failure_detail);
     if (!clock) {
       return make_unexpected(std::move(clock.error()));
     }

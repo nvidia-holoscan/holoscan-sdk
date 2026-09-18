@@ -27,17 +27,21 @@ namespace {
 
 expected<std::unique_ptr<GraphExec>, Error> GraphExec::reconstruct(
     std::shared_ptr<const ExecutionPlanState> plan, RunGenerationId run_generation,
-    ProcessGroupId process_group, RuntimeReplayMismatchDetail* replay_mismatch) {
+    ProcessGroupId process_group, RuntimeReplayMismatchDetail* replay_mismatch,
+    RuntimeDiagnosticDetail* failure_detail) {
   if (replay_mismatch != nullptr) {
     *replay_mismatch = RuntimeReplayMismatchDetail{};
+  }
+  if (failure_detail != nullptr) {
+    *failure_detail = RuntimeDiagnosticDetail{};
   }
   if (!plan) {
     return make_unexpected(
         startup_error(ErrorCode::kInvalidArgument, "RUNTIME_EXECUTION_PLAN_EMPTY"));
   }
 
-  auto operators =
-      reconstruct_runtime_operators(*plan, run_generation, process_group, replay_mismatch);
+  auto operators = reconstruct_runtime_operators(
+      *plan, run_generation, process_group, replay_mismatch, failure_detail);
   if (!operators) {
     return make_unexpected(std::move(operators.error()));
   }
@@ -56,7 +60,7 @@ expected<std::unique_ptr<GraphExec>, Error> GraphExec::reconstruct(
     return result;
   }
 
-  auto clock = reconstruct_runtime_clocks(*result->plan_);
+  auto clock = reconstruct_runtime_clocks(*result->plan_, failure_detail);
   if (!clock) {
     return make_unexpected(std::move(clock.error()));
   }
@@ -170,6 +174,21 @@ LifecycleRestartExecutionOutcome GraphExec::lifecycle_restart(
 
 bool GraphExec::lifecycle_shutdown() noexcept {
   return lifecycle_ == nullptr || lifecycle_->shutdown();
+}
+
+void GraphExec::clear_lifecycle_failure_evidence() noexcept {
+  if (lifecycle_ != nullptr) {
+    lifecycle_->clear_failure_evidence();
+  }
+}
+
+const LifecycleExecutionResult* GraphExec::lifecycle_result() const noexcept {
+  return lifecycle_ != nullptr ? &lifecycle_->result() : nullptr;
+}
+
+std::span<const RuntimeLifecycleFailure> GraphExec::lifecycle_failures() const noexcept {
+  return lifecycle_ == nullptr ? std::span<const RuntimeLifecycleFailure>{}
+                               : lifecycle_->failures();
 }
 
 std::string_view GraphExec::lifecycle_failure_token() const noexcept {

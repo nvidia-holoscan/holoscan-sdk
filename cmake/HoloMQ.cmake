@@ -229,4 +229,4 @@ endif()
 unset(_holomq_symbol_check_script)
 unset(_holomq_symbol_baseline)
 
-list(APPEND HOLOSCAN_INSTALL_TARGETS holomq)
+list(APPEND HOLOSCAN_HOLOMQ_INSTALL_TARGETS holomq)

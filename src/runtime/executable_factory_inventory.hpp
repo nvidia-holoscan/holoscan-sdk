@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <holoscan/core/graph.hpp>
@@ -36,6 +37,7 @@ class RuntimeTerminationAdmissionTestControl;
 class RuntimeWaitTestControl;
 class RuntimeWindowTimeoutTestControl;
 class ExecutionLanePlacementAdapter;
+struct ParameterTransactionState;
 
 /// @brief Identify how one frozen lifecycle callback must be reconstructed.
 enum class ExecutableLifecycleCallbackOrigin : std::uint8_t {
@@ -52,15 +54,27 @@ struct ExecutableLifecycleCallbackRecord {
   ExecutableLifecycleCallbackOrigin origin{ExecutableLifecycleCallbackOrigin::kAdvancedMember};
 };
 
+/// @brief Retain exact C++ enum identity only in the process-local executable inventory.
+struct ExecutableLocalEnumPortRecord {
+  PortDirection direction{PortDirection::kInput};
+  std::string name;
+  const void* local_type_token{};
+};
+
 /// @brief Retain one executable Operator factory outside serialized plan state.
 struct ExecutableOperatorFactoryRecord {
   VertexId vertex{};                             ///< Canonical plan vertex owning this factory.
   OperatorInstanceId operator_id{};              ///< Dense canonical Operator identity.
+  bool cuda_graph_capture_eligible{};            ///< Frozen OperatorSpec eligibility declaration.
   std::shared_ptr<OperatorFactoryBase> factory;  ///< Cold clone used by compile and RunSession.
+  std::shared_ptr<const ParameterInputEvidenceState>
+      parameter_input_evidence;  ///< Optional producer evidence for the authored value.
   /// Exact callback declarations captured with the canonical factory.
   std::vector<ExecutableLifecycleCallbackRecord> lifecycle_callbacks;
   /// Source root-Graph Operator index, absent for every embedded Operator.
   std::optional<std::size_t> root_operator_index;
+  /// Authored enum identity is not portable payload identity and never enters the artifact.
+  std::vector<ExecutableLocalEnumPortRecord> local_enum_ports;
 };
 
 /// @brief Retain one executable clock source outside serialized plan state.
@@ -80,6 +94,7 @@ struct ExecutableClockFactoryRecord {
 struct ExecutableFactoryInventory {
   std::vector<ExecutableOperatorFactoryRecord> operators;
   std::vector<ExecutableClockFactoryRecord> clocks;
+  std::shared_ptr<const ParameterTransactionState> parameter_transaction;
   /// Optional process-local readiness factory configured by the embedding Runtime.
   ///
   /// The baseline direct conformance implementation supplies this only through

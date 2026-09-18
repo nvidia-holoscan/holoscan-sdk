@@ -21,9 +21,22 @@ if(BUILD_TESTING)
                 "compile_and_check example complete: admission, diagnostics, and digest verified"
             LABELS "examples;compile"
             TIMEOUT 30)
+
+    # Verify plan JSON remains stable across independent processes.
+    add_test(
+        NAME EXAMPLE_CPP_COMPILE_AND_CHECK_PLAN_JSON_DETERMINISM_TEST
+        COMMAND ${CMAKE_COMMAND}
+            "-DCOMPILE_AND_CHECK_EXECUTABLE=$<TARGET_FILE:compile_and_check>"
+            "-DDETERMINISM_WORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/plan-json-determinism"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_plan_json_determinism.cmake"
+    )
+    set_tests_properties(EXAMPLE_CPP_COMPILE_AND_CHECK_PLAN_JSON_DETERMINISM_TEST
+        PROPERTIES
+            LABELS "examples;compile"
+            TIMEOUT 90)
 endif()
 
 install(TARGETS compile_and_check
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/compile_and_check/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

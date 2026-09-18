@@ -25,5 +25,5 @@ endif()
 
 install(TARGETS restart_control
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/restart_control/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

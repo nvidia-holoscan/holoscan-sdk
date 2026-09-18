@@ -293,7 +293,8 @@ namespace holoscan::detail {
       }
       selector.end_of_stream_received = false;
       selector.end_of_stream_decision_pending = false;
-      selector.reuse_replacement_prerequisite_reference.reset();
+      selector.freshness_refill_prerequisite.reset();
+      selector.freshness_refill_target.reset();
     }
   }
   for (auto& aligned : state.aligned_selectors) {
@@ -487,6 +488,7 @@ namespace holoscan::detail {
       // NOLINTNEXTLINE(readability-function-cognitive-complexity)
       [](void* state, const LifecycleRestartExecutionRequest& request) noexcept {
         auto& publication = *static_cast<RestartPublicationState*>(state);
+        publication.exec->clear_lifecycle_failure_evidence();
         const auto transition_candidates = [&](LifecycleTransactionState lifecycle_state) {
           for (const auto& candidate : request.parameter_candidates) {
             if (!publication.exec->parameter_updates().transition_lifecycle_candidate(
@@ -567,6 +569,10 @@ namespace holoscan::detail {
             publication.session->rate_state_->reject_candidate(
                 Error{ErrorCode::kLifecycleStageFailed, std::string{failure_token}});
           }
+        }
+        if (outcome.disposition == LifecycleRestartExecutionDisposition::kRolledBack) {
+          publication.session->append_lifecycle_diagnostics(
+              *publication.exec, ::holoscan::DiagnosticSeverity::kWarning);
         }
         return outcome;
       },

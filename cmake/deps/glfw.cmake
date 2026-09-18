@@ -7,19 +7,18 @@ if(TARGET glfw)
   return()
 endif()
 
+# GLFW is absorbed into libholoviz as a static archive in every configuration. holoviz links it
+# PRIVATE; a static dependency is neither propagated to consumers nor recorded in the exported
+# target's IMPORTED_LINK_DEPENDENT_LIBRARIES, so glfw needs no export set and never becomes a
+# runtime dependency of the SDK or module package. holoviz links with --exclude-libs,ALL, so the
+# archive's symbols stay hidden. An existing parent-provided target remains untouched.
 set(_holoscan_glfw_options
   "GLFW_BUILD_EXAMPLES OFF"
   "GLFW_BUILD_TESTS OFF"
   "GLFW_BUILD_DOCS OFF"
   "GLFW_INSTALL OFF"
+  "GLFW_LIBRARY_TYPE STATIC"
 )
-
-# Preserve the fetched-dependency policy of top-level Holoscan Visualization builds: GLFW is absorbed into the
-# backend rather than becoming another runtime dependency of the module package. An existing
-# parent-provided target remains untouched.
-if(holoscan_visualization_IS_TOP_LEVEL)
-  list(APPEND _holoscan_glfw_options "GLFW_LIBRARY_TYPE STATIC")
-endif()
 
 # Keep this recipe self-contained. RAPIDS guards this command module against repeated inclusion;
 # the explicit include also lets configure-contract tests replace acquisition with a local stub.
@@ -35,10 +34,3 @@ rapids_cpm_find(glfw ${HOLOSCAN_GLFW_VERSION}
     ${_holoscan_glfw_options}
 )
 unset(_holoscan_glfw_options)
-
-if(NOT holoscan_visualization_IS_TOP_LEVEL)
-  install(TARGETS glfw
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    COMPONENT ${HOLOSCAN_DEPEND_INSTALL_COMPONENT}
-  )
-endif()

@@ -456,6 +456,7 @@ TEST(Errors, StableCodesUseFixedAbiAndDistinctMeanings) {
   static_assert(static_cast<std::uint32_t>(ErrorCode::kRateBindingInvalid) == 37U);
   static_assert(static_cast<std::uint32_t>(ErrorCode::kRateBindingAboveMaximum) == 38U);
   static_assert(static_cast<std::uint32_t>(ErrorCode::kRateBindingConflict) == 39U);
+  static_assert(static_cast<std::uint32_t>(ErrorCode::kArithmeticOverflow) == 40U);
 
   EXPECT_EQ(error_code_name(ErrorCode::kInputEmpty), "kInputEmpty");
   EXPECT_EQ(error_code_name(ErrorCode::kInputNotSelected), "kInputNotSelected");
@@ -471,6 +472,7 @@ TEST(Errors, StableCodesUseFixedAbiAndDistinctMeanings) {
   EXPECT_EQ(error_code_name(ErrorCode::kRateBindingInvalid), "kRateBindingInvalid");
   EXPECT_EQ(error_code_name(ErrorCode::kRateBindingAboveMaximum), "kRateBindingAboveMaximum");
   EXPECT_EQ(error_code_name(ErrorCode::kRateBindingConflict), "kRateBindingConflict");
+  EXPECT_EQ(error_code_name(ErrorCode::kArithmeticOverflow), "kArithmeticOverflow");
   EXPECT_NE(ErrorCode::kNotSupported, ErrorCode::kNotImplemented);
   EXPECT_TRUE(publication_error_consumes_authority(ErrorCode::kPublicationIndeterminate));
   EXPECT_TRUE(publication_error_consumes_authority(ErrorCode::kPublicationPartial));
@@ -493,6 +495,9 @@ static_assert(HOLOSCAN_HAS_TRY_EXPR == 0,
 // REQ: COMPILE-051
 // REQ: COMPILE-068
 // REQ: COMPILE-069
+// REQ: COMPILE-073
+// REQ: COMPILE-074
+// REQ: COMPILE-080
 // REQ: RUNTIME-027
 // REQ: RUNTIME-028
 // REQ: RUNTIME-047
@@ -2174,6 +2179,112 @@ TEST(StructuralDiagnosticRegistry, OwnsUniqueStableTokensAndTypedSchemas) {
        detail::kCompileLoweringCommonFields},
       {StructuralDiagnosticId::kRateLifecycleCrossProcessUnsupported,
        "RATE_LIFECYCLE_CROSS_PROCESS_UNSUPPORTED",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kParameterInputRouteConflict,
+       "PARAMETER_INPUT_ROUTE_CONFLICT",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kParameterRebindScopeIncomplete,
+       "PARAMETER_REBIND_SCOPE_INCOMPLETE",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kParameterRebindScopeInvalid,
+       "PARAMETER_REBIND_SCOPE_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kParameterRebindProfileMismatch,
+       "PARAMETER_REBIND_PROFILE_MISMATCH",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kGraphPartitionGraphInvalid,
+       "GRAPH_PARTITION_GRAPH_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kGraphPartitionGraphEmpty,
+       "GRAPH_PARTITION_GRAPH_EMPTY",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kGraphPartitionInternalDeclaration,
+       "GRAPH_PARTITION_INTERNAL_DECLARATION",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kPartitionEmbeddedInstanceUnassigned,
+       "PARTITION_EMBEDDED_INSTANCE_UNASSIGNED",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      // REQ: COMPILE-076
+      {StructuralDiagnosticId::kPhysicalTensorMemoryKindDerivationInvalid,
+       "PHYSICAL_TENSOR_MEMORY_KIND_DERIVATION_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kPhysicalTensorMemoryKindDependencyInvalid,
+       "PHYSICAL_TENSOR_MEMORY_KIND_DEPENDENCY_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kPhysicalTensorMemoryKindParameterMutabilityInvalid,
+       "PHYSICAL_TENSOR_MEMORY_KIND_PARAMETER_MUTABILITY_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kPhysicalTensorMemoryKindParameterTypeInvalid,
+       "PHYSICAL_TENSOR_MEMORY_KIND_PARAMETER_TYPE_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kPhysicalTensorMemoryKindMappingInvalid,
+       "PHYSICAL_TENSOR_MEMORY_KIND_MAPPING_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kPhysicalTensorMemoryKindValueInvalid,
+       "PHYSICAL_TENSOR_MEMORY_KIND_VALUE_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kPhysicalTensorMemoryKindContractConflict,
+       "PHYSICAL_TENSOR_MEMORY_KIND_CONTRACT_CONFLICT",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kTensorMemoryKindDerivationPlanInvalid,
+       "TENSOR_MEMORY_KIND_DERIVATION_PLAN_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      // REQ: COMPILE-077
+      {StructuralDiagnosticId::kPhysicalTensorByteSpanProjectionFailed,
+       "PHYSICAL_TENSOR_BYTE_SPAN_PROJECTION_FAILED",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kTensorByteSpanProjectionPlanInvalid,
+       "TENSOR_BYTE_SPAN_PROJECTION_PLAN_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kCudaGraphRegionAnalysisUnavailable,
+       "CUDA_GRAPH_REGION_ANALYSIS_UNAVAILABLE",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kRuntimeComputeCudaDeviceRestoreFailed,
+       "RUNTIME_COMPUTE_CUDA_DEVICE_RESTORE_FAILED",
+       DiagnosticSeverity::kError,
+       {}},
+      {StructuralDiagnosticId::kRuntimeComputeDispatchFailed,
+       "RUNTIME_COMPUTE_DISPATCH_FAILED",
+       DiagnosticSeverity::kError,
+       {}},
+      {StructuralDiagnosticId::kCUDAGraphRegionInvalid,
+       "CUDA_GRAPH_REGION_INVALID",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kCUDAGraphExecutionLoweringUnavailable,
+       "CUDA_GRAPH_EXECUTION_LOWERING_UNAVAILABLE",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kTemporalInputUnconnectedSafeDefault,
+       "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT",
+       DiagnosticSeverity::kWarning,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kChannelLocalEnumCrossProcessUnsupported,
+       "CHANNEL_LOCAL_ENUM_CROSS_PROCESS_UNSUPPORTED",
+       DiagnosticSeverity::kError,
+       detail::kCompileLoweringCommonFields},
+      {StructuralDiagnosticId::kTemporalInputOptionalInvalid,
+       "TEMPORAL_INPUT_OPTIONAL_INVALID",
        DiagnosticSeverity::kError,
        detail::kCompileLoweringCommonFields},
   }};

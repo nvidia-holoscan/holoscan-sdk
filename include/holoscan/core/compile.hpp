@@ -20,7 +20,6 @@
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/execution_plan.hpp>
 #include <holoscan/core/expected.hpp>
-#include <holoscan/core/parameter_override_set.hpp>
 #include <holoscan/core/rate.hpp>
 #include <holoscan/threading/thread_placement.hpp>
 
@@ -256,7 +255,6 @@ struct CompileOptions {
   Profile profile{Profile::kStandard};  ///< Closed requested root profile.
   bool auto_insert_converters{true};    ///< False rejects until converter lowering is available.
   std::optional<ChannelEndpointCatalog> endpoint_catalog;  ///< Optional immutable authority.
-  std::optional<ParamOverrideSet> parameter_overrides;     ///< Optional target-bound overrides.
   ParameterCompileOptions parameters;                      ///< Parameter storage/update policy.
   std::optional<LifecycleTransactionOptions> lifecycle_transactions;  ///< Active restart opt-in.
   AutomaticQueueSizingOptions automatic_queue_sizing;  ///< Advisory rate-derived depth policy.

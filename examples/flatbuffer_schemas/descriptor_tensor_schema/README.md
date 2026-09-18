@@ -5,8 +5,8 @@ metadata plus one `holoscan.schema.Tensor`. It is deliberately outside the SDK n
 against either the SDK build tree or an installed SDK package.
 
 The CMake file uses the installed `holoscan_add_flatbuffer_schema()` helper and
-the SDK's `tensor.fbs`. Its explicit `DESCRIPTOR_TENSOR` mode generates
-`descriptor_frame_traits.hpp`: identity and package evidence, the root and native traits, indexed
+the SDK's `tensor.fbs`. The reflected direct Tensor field selects descriptor mode and generates
+`descriptor_frame_schema_traits.hpp`: identity, bounded codec policy, the root and native traits, indexed
 Tensor-view accessors, the ordinary-field codec, and the
 `make_standard_descriptor_tensor_port_type_ops()` factory call. The SDK default adapter owns
 persistent sample storage, bounded metadata-only Tensor encoding, Tensor/root consistency checks,
@@ -36,8 +36,8 @@ reflected type is `holoscan.schema.Tensor`, then ordered by FlatBuffers field `i
 requires explicit IDs throughout the schema closure so declaration order cannot become a second
 ordering convention.
 
-The generated header retains both `kDescriptorTensorFields` and
-`kDescriptorTensorFieldIds`. Runtime admission uses the complete reflected Tensor-field inventory,
+The generated root binding retains both `tensor_fields` and `tensor_field_ids`. Runtime admission
+uses the complete reflected Tensor-field inventory,
 ordered by FlatBuffers field ID; multi-field schemas receive one bounded provider per authoritative
 field. See the
 [multi-field bundle and lifecycle-rate guidance](../../../docs/custom_flatbuffer_schemas.mdx#bound-lifecycle-selected-multi-field-rates).
@@ -45,9 +45,9 @@ field. See the
 ## Custom-codec escape hatch
 
 Generation fails with a schema path and field name for unsupported unions, table/struct vectors,
-deprecated fields, or other unsupported object-API shapes. For one of those roots, omit
-`DESCRIPTOR_TENSOR`, generate the normal FlatBuffers headers, and provide a hand-written traits
-header whose codec calls `make_standard_descriptor_tensor_port_type_ops()`. The standard adapter
-remains the only storage and transport implementation; the escape hatch changes only
-ordinary-field mapping and adds no registry. Descriptor generation also emits the narrow
+deprecated fields, or other unsupported object-API shapes. For one of those roots,
+`DESCRIPTOR_TENSOR_CUSTOM_CODEC` retains generated identity and Tensor inventory while a
+hand-written codec calls `make_standard_descriptor_tensor_port_type_ops()`. The standard adapter
+remains the only storage and transport implementation; the escape hatch changes only ordinary-field
+mapping and adds no registry. Descriptor generation also emits the narrow
 cross-namespace `CreateTensor` forwarding overload needed by FlatBuffers 25.12.19.

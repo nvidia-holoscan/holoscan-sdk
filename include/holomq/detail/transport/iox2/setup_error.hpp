@@ -241,6 +241,21 @@ namespace holomq::detail::transport {
   return make_setup_error(holomq::ErrorCode::kFailure, "event service setup failed");
 }
 
+[[nodiscard]] inline bool is_retryable_event_open_or_create_error(
+    const iox2::EventOpenOrCreateError error) noexcept {
+  using IoxError = iox2::EventOpenOrCreateError;
+  switch (error) {
+    case IoxError::OpenDoesNotExist:
+    case IoxError::OpenServiceInCorruptedState:
+    case IoxError::OpenIsMarkedForDestruction:
+    case IoxError::CreateServiceInCorruptedState:
+    case IoxError::CreateOldConnectionsStillActive:
+      return true;
+    default:
+      return false;
+  }
+}
+
 [[nodiscard]] inline auto map_publisher_create_error(const iox2::PublisherCreateError error)
     -> holomq::Error {
   switch (error) {

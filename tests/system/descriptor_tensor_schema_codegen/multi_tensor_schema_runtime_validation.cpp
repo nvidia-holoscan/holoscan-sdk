@@ -44,6 +44,7 @@
 #include "compiler/compile_internal.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "descriptor_frame_multi_order_traits.hpp"
+#include "runtime/runtime_phase_counters.hpp"
 #include "runtime/runtime_tensor_resources.hpp"
 #include "runtime/runtime_test_access.hpp"
 #include "runtime/runtime_worker.hpp"
@@ -84,6 +85,7 @@ constexpr std::array<std::int64_t, 2U> kInRangeFirstShape{2, 2};
 constexpr std::array<std::int64_t, 2U> kPaddedFirstByteStrides{12, 4};
 constexpr std::array<std::int64_t, 2U> kOverBoundThirdByteStrides{6, 2};
 constexpr std::array<std::uint64_t, 2U> kThirdMaxByteStrides{4U, 2U};
+constexpr std::size_t kInlineFrameCount = 3U;
 constexpr std::array<float, 6U> kFirstValues{1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 6.0F};
 constexpr std::array<std::uint8_t, 4U> kSecondValues{3U, 5U, 8U, 13U};
 constexpr std::array<std::int16_t, 2U> kThirdValues{21, 34};
@@ -139,6 +141,12 @@ enum class Topology : std::uint8_t {
   kCrossProcessFanout,
 };
 
+struct InlineComputeRecord {
+  std::uint32_t operator_id{};
+  std::uint64_t frame{};
+  holoscan::TagTime tag_time{};
+};
+
 struct ProbeState {
   static void reset() noexcept {
     source_starts.store(0U, std::memory_order_release);
@@ -151,6 +159,10 @@ struct ProbeState {
     invalid_bundle_rejections.store(0U, std::memory_order_release);
     allocate_callbacks.store(0U, std::memory_order_release);
     allocate_saw_preallocated_fields.store(false, std::memory_order_release);
+    {
+      const std::lock_guard lock{mutex};
+      inline_compute_records.clear();
+    }
     tensor_control.reset();
   }
 
@@ -175,6 +187,21 @@ struct ProbeState {
 
   static void notify() noexcept { ready.notify_all(); }
 
+  static void record_inline_compute(const std::uint32_t operator_id, const std::uint64_t frame,
+                                    const holoscan::TagTime tag_time) {
+    const std::lock_guard lock{mutex};
+    inline_compute_records.push_back(InlineComputeRecord{
+        .operator_id = operator_id,
+        .frame = frame,
+        .tag_time = tag_time,
+    });
+  }
+
+  [[nodiscard]] static std::vector<InlineComputeRecord> inline_compute_snapshot() {
+    const std::lock_guard lock{mutex};
+    return inline_compute_records;
+  }
+
   [[nodiscard]] static bool wait_for(const std::atomic<std::size_t>& counter,
                                      const std::size_t expected) {
     std::unique_lock lock{mutex};
@@ -196,6 +223,7 @@ struct ProbeState {
   static inline std::atomic<std::size_t> allocate_callbacks{};
   static inline std::atomic<bool> allocate_saw_preallocated_fields{};
   static inline std::shared_ptr<holoscan::detail::RuntimeTensorOutputTestControl> tensor_control;
+  static inline std::vector<InlineComputeRecord> inline_compute_records;
 };
 
 [[nodiscard]] bool check(const bool condition, const std::string_view message) {
@@ -896,10 +924,10 @@ class MultiTensorSource final : public holoscan::Operator<> {
   bool restart_requested_{};
 };
 
-// Receives and validates the exact metadata, placement, shape, and contents of all three fields.
-// Representative tests: multi_tensor_schema_process-local, multi_tensor_schema_bundle-fanout.
 [[nodiscard]] bool host_multi_tensor_value_matches(const Native& value);
 
+// Receives and validates the exact metadata, placement, shape, and contents of all three fields.
+// Representative tests: multi_tensor_schema_process-local, multi_tensor_schema_bundle-fanout.
 template <SourceMode Mode = SourceMode::kValid>
 class MultiTensorSink final : public holoscan::Operator<> {
  public:
@@ -1075,6 +1103,8 @@ class MultiTensorSink final : public holoscan::Operator<> {
          std::equal(kThirdValues.begin(), kThirdValues.end(), third);
 }
 
+// Validates that an externally imported three-Tensor schema was materialized in host memory.
+// Representative test: multi_tensor_schema_external_import.
 class ExternalHostMultiTensorSink final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
@@ -1273,7 +1303,7 @@ class InlineMultiTensorSource final : public holoscan::Operator<> {
 
   [[nodiscard]] holoscan::Contract contract() const override {
     holoscan::Contract result;
-    result.trigger(holoscan::OnClock{.period = 1ms});
+    result.trigger(holoscan::OnClock{.period = 1ns});
     return result;
   }
 
@@ -1284,15 +1314,19 @@ class InlineMultiTensorSource final : public holoscan::Operator<> {
 
   [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
       holoscan::ExecutionContext& context) override {
-    if (completed_ || !ProbeState::source_released.load(std::memory_order_acquire)) {
+    if (next_frame_ == kInlineFrameCount ||
+        !ProbeState::source_released.load(std::memory_order_acquire)) {
       return {};
     }
-    auto emitted =
-        emit_inline_bundle<Kind>(output, make_native_metadata(), context.cuda_stream(), false);
+    Native value = make_native_metadata();
+    value.sequence = next_frame_;
+    value.header->frame_id = next_frame_;
+    auto emitted = emit_inline_bundle<Kind>(output, std::move(value), context.cuda_stream(), false);
     if (!emitted) {
       return holoscan::make_unexpected(std::move(emitted).error());
     }
-    completed_ = true;
+    ProbeState::record_inline_compute(1U, next_frame_, context.tag_time());
+    ++next_frame_;
     ProbeState::emitted.fetch_add(1U, std::memory_order_acq_rel);
     ProbeState::notify();
     return {};
@@ -1301,7 +1335,7 @@ class InlineMultiTensorSource final : public holoscan::Operator<> {
   holoscan::Output<Native> output;
 
  private:
-  bool completed_{};
+  std::uint64_t next_frame_{};
 };
 
 // Relays a generated multi-Tensor value through a second independent set of field pools.
@@ -1328,7 +1362,14 @@ class InlineMultiTensorRelay final : public holoscan::Operator<> {
     if (!sample) {
       return holoscan::make_unexpected(std::move(sample).error());
     }
-    return emit_inline_bundle<Kind>(output, std::move(sample->data), context.cuda_stream(), true);
+    const std::uint64_t frame = sample->data.sequence;
+    auto emitted =
+        emit_inline_bundle<Kind>(output, std::move(sample->data), context.cuda_stream(), true);
+    if (!emitted) {
+      return holoscan::make_unexpected(std::move(emitted).error());
+    }
+    ProbeState::record_inline_compute(2U, frame, context.tag_time());
+    return {};
   }
 
   holoscan::Input<Native> input;
@@ -1411,9 +1452,10 @@ class InlineMultiTensorSink final : public holoscan::Operator<> {
                                       : value.first->device().device_id == kDevice.value &&
                                             value.second->device().device_id == kDevice.value &&
                                             value.third->device().device_id == kDevice.value;
-    if (value.header == nullptr || value.sequence != 42U ||
+    const std::uint64_t frame = value.sequence;
+    if (value.header == nullptr || frame >= kInlineFrameCount ||
         value.label != "heterogeneous three-Tensor frame" || value.exposure != 2.5F ||
-        value.header->source != "stereo-camera" || value.header->frame_id != 17U ||
+        value.header->source != "stereo-camera" || value.header->frame_id != frame ||
         value.first->device().device_type != expected_device_type ||
         value.second->device().device_type != expected_device_type ||
         value.third->device().device_type != expected_device_type || !device_ids_match ||
@@ -1423,6 +1465,7 @@ class InlineMultiTensorSink final : public holoscan::Operator<> {
       return holoscan::make_unexpected(
           holoscan::Error{holoscan::ErrorCode::kFailure, "inline multi-Tensor data mismatch"});
     }
+    ProbeState::record_inline_compute(3U, frame, context.tag_time());
     ProbeState::received.fetch_add(1U, std::memory_order_acq_rel);
     ProbeState::notify();
     return {};
@@ -1597,10 +1640,8 @@ template <holoscan::MemoryKind Kind>
   auto source = graph.op<InlineMultiTensorSource<Kind>>("source");
   auto relay = graph.op<InlineMultiTensorRelay<Kind>>("relay");
   auto sink = graph.op<InlineMultiTensorSink<Kind>>("sink");
-  graph.add_flow(
-      source->output, relay->input, holoscan::ConnectionOptions{.queue_depth = kDefaultQueueDepth});
-  graph.add_flow(
-      relay->output, sink->input, holoscan::ConnectionOptions{.queue_depth = kDefaultQueueDepth});
+  graph.add_flow(source->output, relay->input, holoscan::ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(relay->output, sink->input, holoscan::ConnectionOptions{.queue_depth = 1U});
   holoscan::CompileOptions options;
   if constexpr (Kind == holoscan::MemoryKind::kCudaDevice) {
     options.deployment
@@ -1841,7 +1882,7 @@ template <holoscan::MemoryKind Kind>
 
 // REQ: OPERATOR-036
 // REQ: CHAN-123
-// REQ: CHAN-125
+// REQ: CHAN-145
 // REQ: CHAN-126
 [[nodiscard]] bool run_contract_validation(const std::uint32_t queue_depth) {
   // Key setup: compile the same generated three-field schema as local, cross-process, and
@@ -1877,6 +1918,7 @@ template <SourceMode Mode = SourceMode::kRateAwareFields>
 [[nodiscard]] bool run_rate_aware_fields() {
   static_assert(Mode == SourceMode::kFixedRateFields || Mode == SourceMode::kRateAwareFields ||
                 Mode == SourceMode::kRateAwareFieldsConfigure);
+  // Key setup: compile and run three finite-maximum field pools selected at their lifecycle stage.
   ProbeState::reset();
   const holoscan::ExecutionPlan compiled =
       compile_plan<Mode>(Topology::kProcessLocal, kDefaultQueueDepth);
@@ -1973,6 +2015,7 @@ template <SourceMode Mode = SourceMode::kRateAwareFields>
   if (!valid) {
     print_diagnostics(session);
   }
+  // Key assertion: every field materializes once with Fresh evidence and the selected limit.
   return check(valid,
                Mode == SourceMode::kFixedRateFields
                    ? "fixed-rate field pools did not publish startup Fresh evidence"
@@ -1985,6 +2028,7 @@ template <SourceMode Mode>
 [[nodiscard]] bool run_rate_aware_fields_late_binding() {
   static_assert(Mode == SourceMode::kRateAwareFieldsWarmUp ||
                 Mode == SourceMode::kRateAwareFieldsArm);
+  // Key setup: select a smaller active rate during a late WarmUp or Arm lifecycle stage.
   ProbeState::reset();
   const holoscan::ExecutionPlan compiled =
       compile_plan<Mode>(Topology::kProcessLocal, kDefaultQueueDepth);
@@ -2025,6 +2069,7 @@ template <SourceMode Mode>
   if (!valid) {
     print_diagnostics(session);
   }
+  // Key assertion: late selection changes only active limits, not physical field backing.
   return check(valid,
                "late-stage lifecycle rate changed field backing instead of its active limit");
 }
@@ -2032,6 +2077,7 @@ template <SourceMode Mode>
 // REQ: COMPILE-069
 // REQ: LIFECYCLE-012
 [[nodiscard]] bool run_rate_aware_fields_restart() {
+  // Key setup: restart three finite-maximum field pools with a smaller second generation.
   ProbeState::reset();
   const holoscan::ExecutionPlan compiled = compile_plan<SourceMode::kRateAwareFieldsRestart>(
       Topology::kProcessLocal, kDefaultQueueDepth);
@@ -2108,6 +2154,7 @@ template <SourceMode Mode>
   if (!valid) {
     print_diagnostics(session);
   }
+  // Key assertion: restart atomically reuses allocations while publishing new storage bindings.
   return check(valid,
                "finite-maximum lifecycle field pools did not restart with atomic retained reuse");
 }
@@ -2117,6 +2164,7 @@ template <SourceMode Mode>
 // REQ: RUNTIME-008
 // REQ: TENSOR-STORAGE-011
 [[nodiscard]] bool run_rate_aware_fields_restart_reject() {
+  // Key setup: inject a final-field preflight failure during a three-field pool restart.
   ProbeState::reset();
   const holoscan::ExecutionPlan compiled = compile_plan<SourceMode::kRateAwareFieldsRestartReject>(
       Topology::kProcessLocal, kDefaultQueueDepth);
@@ -2237,10 +2285,11 @@ template <SourceMode Mode>
     }
     print_diagnostics(session);
   }
+  // Key assertion: the rejected generation publishes no partial field or allocation changes.
   return check(valid, "failed finite-maximum field restart partially published one bundle member");
 }
 
-// REQ: CHAN-125
+// REQ: CHAN-145
 // REQ: CHAN-126
 // REQ: CHAN-127
 [[nodiscard]] bool run_process_local() {
@@ -2275,7 +2324,7 @@ template <SourceMode Mode>
   return check(valid, "process-local multi-Tensor execution failed");
 }
 
-// REQ: CHAN-125
+// REQ: CHAN-145
 // REQ: CHAN-126
 // REQ: CHAN-127
 [[nodiscard]] bool run_process_local_fanout() {
@@ -2320,6 +2369,7 @@ template <SourceMode Mode>
   return check(valid, "process-local multi-Tensor fanout execution failed");
 }
 
+// REQ: RUNTIME-041
 template <holoscan::MemoryKind Kind>
 [[nodiscard]] bool run_inline_partition() {
   if constexpr (Kind == holoscan::MemoryKind::kCudaDevice) {
@@ -2346,21 +2396,68 @@ template <holoscan::MemoryKind Kind>
     HOLOSCAN_LOG_ERROR("{}", plan.json());
     return check(false, "multi-Tensor schema chain was not admitted for inline execution");
   }
-  holoscan::RunSession session = holoscan::run_async(plan);
+  const auto counters = std::make_shared<holoscan::detail::RuntimePhaseCounters>();
+  const holoscan::ExecutionPlan run_plan =
+      holoscan::detail::RuntimeTestPlanAccess::with_phase_counters(plan, counters);
+  if (!run_plan.ok()) {
+    return check(false, "multi-Tensor schema phase counters could not be installed");
+  }
+  holoscan::RunSession session = holoscan::run_async(run_plan);
   const bool started = ProbeState::wait_for(ProbeState::source_starts, 1U) &&
                        ProbeState::wait_for(ProbeState::sink_starts, 1U);
   ProbeState::source_released.store(started, std::memory_order_release);
   ProbeState::notify();
-  const bool completed = started && ProbeState::wait_for(ProbeState::received, 1U);
+  const bool completed = started && ProbeState::wait_for(ProbeState::received, kInlineFrameCount);
   session.request_stop();
   session.wait();
-  // Key assertion: the generated multi-Tensor chain runs through the authoritative inline plan
-  // without a worker-lane fallback and uses the one shared CUDA stream only when requested.
-  const bool valid = completed && ProbeState::emitted.load(std::memory_order_acquire) == 1U &&
-                     ProbeState::received.load(std::memory_order_acquire) == 1U &&
+  const auto records = ProbeState::inline_compute_snapshot();
+  bool causal_order = records.size() == kInlineFrameCount * 3U;
+  for (std::size_t frame = 0U; causal_order && frame < kInlineFrameCount; ++frame) {
+    const std::size_t source_index = frame * 3U;
+    const holoscan::TagTime source_tag = records[source_index].tag_time;
+    causal_order = source_tag.valid() &&
+                   source_tag.microstep <= std::numeric_limits<std::uint32_t>::max() - 2U;
+    for (std::size_t stage = 0U; causal_order && stage < 3U; ++stage) {
+      const InlineComputeRecord& record = records[source_index + stage];
+      causal_order =
+          record.operator_id == stage + 1U && record.frame == frame &&
+          record.tag_time.logical_ns == source_tag.logical_ns &&
+          record.tag_time.microstep == source_tag.microstep + static_cast<std::uint32_t>(stage);
+    }
+  }
+  const auto phase_snapshot = counters->snapshot();
+  const auto phase_count = [&phase_snapshot](const holoscan::detail::RuntimePhaseCounter counter) {
+    return phase_snapshot[holoscan::detail::RuntimePhaseCounters::index(counter)];
+  };
+  const std::uint64_t expected_receipts = 2U * kInlineFrameCount;
+  const bool continuation_evidence =
+      phase_count(holoscan::detail::RuntimePhaseCounter::kDirectContinuationReceiptsAccepted) ==
+          expected_receipts &&
+      phase_count(holoscan::detail::RuntimePhaseCounter::kPartitionCausalFrontierAttempts) ==
+          expected_receipts &&
+      phase_count(holoscan::detail::RuntimePhaseCounter::kPartitionCausalFrontierAccepted) ==
+          expected_receipts &&
+      phase_count(holoscan::detail::RuntimePhaseCounter::kPartitionCausalFrontierFallbacks) == 0U;
+  // Key assertion: every generated multi-Tensor frame traverses the complete three-Operator chain
+  // before the next clock frame starts, without a worker-lane fallback. Each logical schema
+  // publication advances readiness and earns exactly one continuation receipt, regardless of its
+  // three independently pooled Tensor fields.
+  const bool valid = completed && causal_order && continuation_evidence &&
+                     ProbeState::emitted.load(std::memory_order_acquire) == kInlineFrameCount &&
+                     ProbeState::received.load(std::memory_order_acquire) == kInlineFrameCount &&
                      session.termination() == holoscan::RunTermination::kStopped &&
                      session.diagnostics().empty();
   if (!valid) {
+    HOLOSCAN_LOG_ERROR(
+        "inline multi-Tensor evidence emitted={} received={} records={} receipts={} attempts={} "
+        "accepted={} fallbacks={}",
+        ProbeState::emitted.load(),
+        ProbeState::received.load(),
+        records.size(),
+        phase_count(holoscan::detail::RuntimePhaseCounter::kDirectContinuationReceiptsAccepted),
+        phase_count(holoscan::detail::RuntimePhaseCounter::kPartitionCausalFrontierAttempts),
+        phase_count(holoscan::detail::RuntimePhaseCounter::kPartitionCausalFrontierAccepted),
+        phase_count(holoscan::detail::RuntimePhaseCounter::kPartitionCausalFrontierFallbacks));
     print_diagnostics(session);
   }
   return check(valid, "inline multi-Tensor schema execution failed");
@@ -2610,7 +2707,8 @@ template <SourceMode Mode>
 #else
 template <SourceMode Mode>
 [[nodiscard]] bool run_cross_process(bool) {
-  // Cross-address-space validation uses the Linux process API.
+  // Key setup: cross-address-space process APIs are unavailable on this platform.
+  // Key assertion: report the platform-specific scenario as skipped successfully.
   return true;
 }
 #endif
@@ -2725,6 +2823,9 @@ wait_for_schema_bundle(holoscan::ChannelTensorSchemaSubscriber<Payload>& subscri
       holoscan::MemoryKind::kHost,
       holoscan::MemoryKind::kHost,
   };
+  // [imported topic] -> [sink]
+  //          \---- fanout --> [relay] -> [first sink]
+  //                                    \-> [second sink]
   holoscan::Graph graph{fanout ? "multi-tensor-schema-external-import-fanout"
                                : "multi-tensor-schema-external-import"};
   const holoscan::ClockKey clock = graph.add_clock<holoscan::RealtimeClock>("runtime-clock");
@@ -2737,8 +2838,8 @@ wait_for_schema_bundle(holoscan::ChannelTensorSchemaSubscriber<Payload>& subscri
     graph.add_flow(imported.output(), sink->input, holoscan::ConnectionOptions{.queue_depth = 1U});
   } else {
     auto relay = graph.op<InlineMultiTensorRelay<holoscan::MemoryKind::kHost>>("relay");
-    auto first = graph.op<InlineMultiTensorSink<holoscan::MemoryKind::kHost>>("first-sink");
-    auto second = graph.op<InlineMultiTensorSink<holoscan::MemoryKind::kHost>>("second-sink");
+    auto first = graph.op<ExternalHostMultiTensorSink>("first-sink");
+    auto second = graph.op<ExternalHostMultiTensorSink>("second-sink");
     graph.add_flow(imported.output(), relay->input, holoscan::ConnectionOptions{.queue_depth = 1U});
     graph.add_flow(relay->output, first->input, holoscan::ConnectionOptions{.queue_depth = 1U});
     graph.add_flow(relay->output, second->input, holoscan::ConnectionOptions{.queue_depth = 1U});
@@ -2749,6 +2850,7 @@ wait_for_schema_bundle(holoscan::ChannelTensorSchemaSubscriber<Payload>& subscri
 
 [[nodiscard]] holoscan::ExecutionPlan compile_external_topic_export_plan(
     const std::string_view endpoint_name) {
+  // [source] -> [exported topic]
   holoscan::Graph graph{"multi-tensor-schema-external-export"};
   const holoscan::ClockKey clock = graph.add_clock<holoscan::RealtimeClock>("runtime-clock");
   graph.set_default_clock(clock);
@@ -2817,6 +2919,7 @@ wait_for_schema_bundle(holoscan::ChannelTensorSchemaSubscriber<Payload>& subscri
   if (!cuda_available()) {
     return true;
   }
+  // Key setup: export one mixed-memory three-Tensor schema to an external local subscriber.
   ProbeState::reset();
   const std::string endpoint_name = external_topic_name("export");
   const holoscan::ExecutionPlan plan = compile_external_topic_export_plan(endpoint_name);
@@ -2851,6 +2954,7 @@ wait_for_schema_bundle(holoscan::ChannelTensorSchemaSubscriber<Payload>& subscri
   if (!session.diagnostics().empty()) {
     print_diagnostics(session);
   }
+  // Key assertion: the subscriber resolves and validates every exported Tensor field exactly once.
   return check(source_started && connected && emitted && valid_bundle &&
                    session.termination() == holoscan::RunTermination::kStopped &&
                    session.diagnostics().empty(),
@@ -2860,6 +2964,7 @@ wait_for_schema_bundle(holoscan::ChannelTensorSchemaSubscriber<Payload>& subscri
 #if defined(__linux__)
 [[nodiscard]] bool run_external_topic_export_subscriber_worker(
     const int result_descriptor, const std::string_view endpoint_name) {
+  // Key setup: create the isolated external subscriber and report each readiness phase by pipe.
   const bool cuda_ready = cuda_available() && cudaSetDevice(kDevice.value) == cudaSuccess;
   const holoscan::ExecutionPlan plan = compile_external_topic_export_plan(endpoint_name);
   auto external_runtime = holoscan::ChannelRuntime::create();
@@ -2883,6 +2988,7 @@ wait_for_schema_bundle(holoscan::ChannelTensorSchemaSubscriber<Payload>& subscri
                                            holoscan::Error>{holoscan::make_unexpected(
                             holoscan::Error{holoscan::ErrorCode::kNotReady})};
   const bool valid = received && external_mixed_bundle_matches(*received);
+  // Key assertion: report success only after the complete external Tensor bundle is validated.
   return write_byte(result_descriptor, valid ? 1 : 0) && valid;
 }
 
@@ -2890,6 +2996,7 @@ wait_for_schema_bundle(holoscan::ChannelTensorSchemaSubscriber<Payload>& subscri
   if (!cuda_available()) {
     return true;
   }
+  // Key setup: fork an external subscriber before starting the mixed-memory export graph.
   ProbeState::reset();
   const std::string endpoint_name = external_topic_name("export-cross-process");
   const holoscan::ExecutionPlan plan = compile_external_topic_export_plan(endpoint_name);
@@ -2949,10 +3056,13 @@ wait_for_schema_bundle(holoscan::ChannelTensorSchemaSubscriber<Payload>& subscri
   if (!valid) {
     print_diagnostics(session);
   }
+  // Key assertion: the child receives the full schema and both processes terminate cleanly.
   return check(valid, "cross-process external multi-Tensor schema export failed");
 }
 #else
 [[nodiscard]] bool run_external_topic_export_cross_process() {
+  // Key setup: external cross-process export APIs are unavailable on this platform.
+  // Key assertion: report the platform-specific scenario as skipped successfully.
   return true;
 }
 #endif

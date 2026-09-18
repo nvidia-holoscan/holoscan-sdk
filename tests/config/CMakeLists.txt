@@ -4,6 +4,7 @@
 include(GoogleTest)
 
 add_executable(config_test
+    ../common/allocation_counter.cpp
     test_codec.cpp
     test_document.cpp
     test_sha256.cpp
@@ -31,30 +32,28 @@ target_link_libraries(config_test
         GTest::gtest_main
 )
 
-if(HOLOSCAN_BUILD_CONFIG_IO)
-  add_executable(config_io_test
-      test_io.cpp
-      ${holoscan_SOURCE_DIR}/src/config/reflect_backend.cpp
-      $<TARGET_OBJECTS:holoscan_config_reflect_private_objects>
-      $<TARGET_OBJECTS:holoscan_config_yyjson_private_objects>
-  )
-  holoscan_configure_test_clang_tidy(config_io_test)
-  target_compile_definitions(config_io_test PRIVATE yyjson_api=)
-  target_include_directories(config_io_test
-      PRIVATE ${holoscan_SOURCE_DIR}/src
-      SYSTEM PRIVATE "${reflectcpp_SOURCE_DIR}/include"
-  )
-  target_link_libraries(config_io_test
-      PRIVATE
-          holoscan::config_io
-          GTest::gtest_main
-  )
-  gtest_discover_tests(config_io_test
-      DISCOVERY_MODE PRE_TEST
-      TEST_PREFIX CONFIG_IO.
-      WORKING_DIRECTORY ${holoscan_BINARY_DIR}
-  )
-endif()
+add_executable(config_io_test
+    test_io.cpp
+    ${holoscan_SOURCE_DIR}/src/config/reflect_backend.cpp
+    $<TARGET_OBJECTS:holoscan_config_reflect_private_objects>
+    $<TARGET_OBJECTS:holoscan_config_yyjson_private_objects>
+)
+holoscan_configure_test_clang_tidy(config_io_test)
+target_compile_definitions(config_io_test PRIVATE yyjson_api=)
+target_include_directories(config_io_test
+    PRIVATE ${holoscan_SOURCE_DIR}/src
+    SYSTEM PRIVATE "${reflectcpp_SOURCE_DIR}/include"
+)
+target_link_libraries(config_io_test
+    PRIVATE
+        holoscan::config_io
+        GTest::gtest_main
+)
+gtest_discover_tests(config_io_test
+    DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX CONFIG_IO.
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+)
 
 gtest_discover_tests(config_test
     DISCOVERY_MODE PRE_TEST
@@ -89,7 +88,7 @@ add_test(NAME CONFIG.installed_package_components
         "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/installed_consumer"
         "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed_consumer"
         "-DHOLOSCAN_COMPONENT_MODES=${_holoscan_tooling_component_modes_csv}"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
         "-DHOLOSCAN_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
         "-DHOLOSCAN_CXX_COMPILER=${CMAKE_CXX_COMPILER}"

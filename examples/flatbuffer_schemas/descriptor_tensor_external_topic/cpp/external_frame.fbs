@@ -13,3 +13,4 @@ table ExternalFrame {
 }
 
 root_type ExternalFrame;
+file_identifier "AEFR";

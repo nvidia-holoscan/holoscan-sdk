@@ -14,3 +14,4 @@ table TensorPacket {
 }
 
 root_type TensorPacket;
+file_identifier "HSTP";

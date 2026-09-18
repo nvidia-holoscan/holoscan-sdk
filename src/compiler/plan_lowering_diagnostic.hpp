@@ -14,6 +14,8 @@
 
 #include <holoscan/core/diagnostic.hpp>
 
+#include "diagnostic_detail.hpp"
+
 namespace holoscan::detail {
 
 /// Preserve one stable lowering diagnostic and its bounded canonical evidence.
@@ -23,6 +25,7 @@ struct PlanLoweringDiagnostic {
   std::string json_pointer;
   std::string required;
   std::string provided;
+  std::optional<DiagnosticDetail> detail;
 };
 
 /// Return whether two lowering diagnostics contain the same complete value.
@@ -54,18 +57,32 @@ struct PlanLoweringDiagnostic {
 /// Sort lowering diagnostics canonically and remove complete duplicates.
 inline void canonicalize_plan_lowering_diagnostics(
     std::vector<PlanLoweringDiagnostic>& diagnostics) {
-  std::sort(diagnostics.begin(), diagnostics.end(), plan_lowering_diagnostic_less);
-  diagnostics.erase(
-      std::unique(diagnostics.begin(), diagnostics.end(), plan_lowering_diagnostic_exactly_equal),
-      diagnostics.end());
+  std::stable_sort(diagnostics.begin(), diagnostics.end(), plan_lowering_diagnostic_less);
+  auto retained = diagnostics.begin();
+  for (auto current = diagnostics.begin(); current != diagnostics.end(); ++current) {
+    if (retained != diagnostics.begin() &&
+        plan_lowering_diagnostic_exactly_equal(*(retained - 1), *current)) {
+      const auto& incoming = current->detail;
+      enrich_diagnostic_detail((retained - 1)->detail, incoming ? &*incoming : nullptr);
+    } else {
+      if (retained != current) {
+        *retained = std::move(*current);
+      }
+      ++retained;
+    }
+  }
+  diagnostics.erase(retained, diagnostics.end());
 }
 
 /// Append one lowering diagnostic unless the same complete value is already present.
 [[nodiscard]] inline bool append_unique_plan_lowering_diagnostic(
     std::vector<PlanLoweringDiagnostic>& diagnostics, PlanLoweringDiagnostic diagnostic) {
-  if (std::find_if(diagnostics.begin(), diagnostics.end(), [&](const auto& existing) {
+  const auto found =
+      std::find_if(diagnostics.begin(), diagnostics.end(), [&](const auto& existing) {
         return plan_lowering_diagnostic_exactly_equal(existing, diagnostic);
-      }) != diagnostics.end()) {
+      });
+  if (found != diagnostics.end()) {
+    enrich_diagnostic_detail(found->detail, diagnostic.detail ? &*diagnostic.detail : nullptr);
     return false;
   }
   diagnostics.push_back(std::move(diagnostic));

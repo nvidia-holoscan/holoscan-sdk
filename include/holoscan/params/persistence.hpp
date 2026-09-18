@@ -126,24 +126,21 @@ struct ParamSaveResult {
 [[nodiscard]] HOLOSCAN_PARAMS_IO_EXPORT ParamArchiveResult<ParamSnapshot> load(
     const std::filesystem::path& path, ParamLoadOptions options = {});
 
-/// @brief Load and explicitly rebind one archive to a target Graph.
+/// @brief Load one snapshot archive and attach it as a graph-owned parameter transaction.
+/// @param graph Destination Graph that owns the pending transaction.
 /// @param path Existing archive path.
-/// @param graph Draft destination Graph captured synchronously under the standard context.
+/// @param target_scope Exact destination authority.
 /// @param options Coverage mode and borrowed directed conversion tables.
-/// @return Immutable target-bound override set or a typed load/rebind failure.
-/// @note This cold convenience allocates and blocks on filesystem I/O. It does not mutate graph;
-/// do not mutate graph concurrently.
-[[nodiscard]] HOLOSCAN_PARAMS_IO_EXPORT ParamRebindResult<ParamOverrideSet> load_overrides(
-    const std::filesystem::path& path, Graph& graph, ParamRebindOptions options = {});
-
-/// @brief Load and explicitly rebind one archive to an immutable target.
-/// @param path Existing archive path.
-/// @param target Immutable destination captured by make_param_rebind_target().
-/// @param options Coverage mode and borrowed directed conversion tables.
-/// @return Immutable target-bound override set or a typed load/rebind failure.
-/// @note This cold convenience allocates and blocks on filesystem I/O.
-[[nodiscard]] HOLOSCAN_PARAMS_IO_EXPORT ParamRebindResult<ParamOverrideSet> load_overrides(
-    const std::filesystem::path& path, const ParamRebindTarget& target,
+/// @return Owning conversion provenance or one typed load or attachment failure.
+/// @note This cold operation allocates, blocks on filesystem I/O, and mutates Graph authoring
+/// state. Do not call it concurrently with Graph mutation. Configuration and snapshot attachment
+/// share one transaction slot, including across embedded Graphs.
+/// @note This is not a non-mutating compatibility preflight. Compile a disposable Graph when
+/// validation must not alter the intended destination.
+[[nodiscard]] HOLOSCAN_PARAMS_IO_EXPORT ParamRebindResult<ParamRebindProvenance>
+load_and_set_params(
+    Graph& graph, const std::filesystem::path& path,
+    const ParamRebindTargetScope& target_scope = ParamRebindTargetScope::whole_graph(),
     ParamRebindOptions options = {});
 
 }  // namespace holoscan::params

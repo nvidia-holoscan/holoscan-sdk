@@ -53,7 +53,7 @@ Licensed under BSD-3-Clause (https://github.com/cpplint/cpplint/blob/master/LICE
 
 CV-CUDA (https://github.com/CVCUDA/CV-CUDA)
 Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-Licensed under Apache-2.0 (https://github.com/CVCUDA/CV-CUDA/blob/v0.17.0/LICENSE.md)
+Licensed under Apache-2.0 (https://github.com/CVCUDA/CV-CUDA/blob/v0.18.0/LICENSE.md)
 
 dear_imgui (https://github.com/ocornut/imgui)
 Copyright (c) 2014-2023 Omar Cornut
@@ -247,7 +247,7 @@ Licensed under MIT (https://github.com/pre-commit/mirrors-clang-format/blob/main
 
 nanobind (https://github.com/wjakob/nanobind)
 Copyright (c) 2022 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
-Licensed under BSD-3-Clause (https://github.com/wjakob/nanobind/blob/v2.12.0/LICENSE)
+Licensed under BSD-3-Clause (https://github.com/wjakob/nanobind/blob/v3.0.1/LICENSE)
 
 net-tools (https://github.com/ecki/net-tools)
 Licensed under GPL-2.0-or-later (https://github.com/ecki/net-tools?tab=GPL-2.0-1-ov-file)

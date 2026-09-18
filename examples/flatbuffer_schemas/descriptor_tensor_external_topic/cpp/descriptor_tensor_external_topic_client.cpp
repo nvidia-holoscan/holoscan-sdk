@@ -238,6 +238,20 @@ int main(int argc, char** argv) {
     return 14;
   }
 
+  auto subscriber_closed = subscriber->close();
+  auto readiness_after_close = subscriber->has_samples();
+  auto receive_after_close = subscriber->receive_tensors();
+  auto repeated_subscriber_close = subscriber->close();
+  if (!subscriber_closed || readiness_after_close ||
+      readiness_after_close.error().code != holoscan::ErrorCode::kClosed || receive_after_close ||
+      receive_after_close.error().code != holoscan::ErrorCode::kClosed ||
+      repeated_subscriber_close ||
+      repeated_subscriber_close.error().code != holoscan::ErrorCode::kClosed ||
+      !descriptor_tensor_external_topic::tensors_match(received->tensors)) {
+    std::cerr << "failed to retire output subscriber locally\n";
+    return 15;
+  }
+
   std::cout << "descriptor Tensor external-topic client complete\n";
   return 0;
 }

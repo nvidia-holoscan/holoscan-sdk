@@ -24,39 +24,66 @@ constexpr std::size_t kLifecycleStageCount = 8U;
 constexpr std::size_t kForwardStageCount = 6U;
 
 void default_lifecycle_log_sink(void*, const LifecycleLogRecord& record) {
+  constexpr std::array operations{"startup", "restart", "shutdown"};
+  constexpr std::array stages{
+      "configure", "discover", "allocate", "warm_up", "arm", "start", "stop", "release"};
+  constexpr std::array phases{"none",
+                              "startup_forward",
+                              "pre_restart_teardown",
+                              "restart_forward",
+                              "forward_rollback",
+                              "restore_old",
+                              "shutdown_teardown"};
+  constexpr std::array statuses{"ok", "skipped", "retryable_failure", "fatal_failure"};
+  constexpr std::array dispositions{"completed",
+                                    "rolled_back",
+                                    "invalid_state",
+                                    "invalid_restart_stage",
+                                    "invalid_binding",
+                                    "stage_failed",
+                                    "rollback_failed",
+                                    "capacity_exceeded"};
+  const auto name = [](auto value, const auto& names) noexcept {
+    const auto index = static_cast<std::size_t>(value);
+    return index < names.size() ? names[index] : "unknown";
+  };
   switch (lifecycle_log_severity(record)) {
     case LifecycleLogSeverity::kDebug:
       if (record.kind == LifecycleLogEventKind::kTransitionBegin) {
         HOLOSCAN_LOG_DEBUG("Lifecycle transition begin: operation={}",
-                           static_cast<unsigned>(record.operation));
+                           name(record.operation, operations));
       } else {
         HOLOSCAN_LOG_DEBUG("Lifecycle transition completed: operation={}",
-                           static_cast<unsigned>(record.operation));
+                           name(record.operation, operations));
       }
       break;
     case LifecycleLogSeverity::kTrace:
       HOLOSCAN_LOG_TRACE("Lifecycle callback: event={} node={} stage={} phase={} status={}",
                          static_cast<unsigned>(record.kind),
                          record.node_id,
-                         static_cast<unsigned>(record.stage),
-                         static_cast<unsigned>(record.phase),
-                         static_cast<unsigned>(record.status));
+                         name(record.stage, stages),
+                         name(record.phase, phases),
+                         name(record.status, statuses));
       break;
     case LifecycleLogSeverity::kError:
       HOLOSCAN_LOG_ERROR(
           "Lifecycle transition failed: operation={} disposition={} node={} "
           "stage={} phase={} status={}",
-          static_cast<unsigned>(record.operation),
-          static_cast<unsigned>(record.disposition),
+          name(record.operation, operations),
+          name(record.disposition, dispositions),
           record.node_id,
-          static_cast<unsigned>(record.stage),
-          static_cast<unsigned>(record.phase),
-          static_cast<unsigned>(record.status));
+          name(record.stage, stages),
+          name(record.phase, phases),
+          name(record.status, statuses));
       break;
   }
 }
 
 void emit_kernel_log(const LifecycleKernelState& state, const LifecycleLogRecord& record) noexcept {
+  if (state.defer_failure_report &&
+      lifecycle_log_severity(record) == LifecycleLogSeverity::kError) {
+    return;
+  }
   emit_lifecycle_log_noexcept(
       state.log_sink != nullptr ? state.log_sink : default_lifecycle_log_sink,
       state.log_sink != nullptr ? state.log_state : nullptr,

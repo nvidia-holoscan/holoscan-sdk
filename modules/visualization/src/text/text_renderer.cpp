@@ -11,10 +11,10 @@
 #include <string_view>
 #include <utility>
 
-#include "rhi/detail/handle_errors.hpp"
-#include "text/detail/imgui_context_guard.hpp"
+#include "detail/handle_errors.hpp"
+#include "imgui/detail/context_guard.hpp"
+#include "imgui/renderer_impl.hpp"
 #include "text/detail/text_renderer_impl.hpp"
-#include "text/imgui_backend_impl.hpp"
 
 namespace holoviz::text {
 
@@ -53,18 +53,18 @@ AnchorFactors anchor_factors(Anchor anchor) {
 }
 
 /// TextRenderer implementation that drives a private ImGui context's background draw list
-/// through an owned ImGuiBackend.
+/// through an owned imgui::Renderer.
 class ImGuiTextRendererImpl final : public TextRendererImpl {
  public:
-  explicit ImGuiTextRendererImpl(ImGuiBackend backend) : backend_(std::move(backend)) {}
+  explicit ImGuiTextRendererImpl(imgui::Renderer backend) : backend_(std::move(backend)) {}
 
   expected<void> destroy(std::chrono::nanoseconds timeout) override {
     frame_open_ = false;
     return backend_.destroy(timeout);
   }
 
-  expected<void> begin_frame(rhi::Extent2D framebuffer_extent, uint32_t renderer_slot,
-                             rhi::SubmitSyncToken slot_last_use) override {
+  expected<void> begin_frame(Extent2D framebuffer_extent, uint32_t renderer_slot,
+                             SubmitSyncToken slot_last_use) override {
     if (frame_open_) {
       return make_unexpected(Error{
           .code = ErrorCode::kInvalidState,
@@ -74,7 +74,7 @@ class ImGuiTextRendererImpl final : public TextRendererImpl {
     VIZ_FORWARD_ERROR(backend_.begin_frame(renderer_slot, slot_last_use));
     // new_frame() switches the process-global current ImGui context; restore the
     // caller's on every exit path.
-    const detail::ImGuiContextGuard context_guard;
+    const imgui::detail::ContextGuard context_guard;
     if (expected<void> begun = backend_.impl().new_frame(framebuffer_extent); !begun) {
       // The backend frame opened but the ImGui frame did not; roll the backend back so
       // this failure is not sticky for the next begin_frame.
@@ -96,7 +96,7 @@ class ImGuiTextRendererImpl final : public TextRendererImpl {
       return {};  // nothing to draw
     }
     VIZ_UNWRAP(ImGuiContext*, context, backend_.context());
-    const detail::ImGuiContextGuard context_guard;
+    const imgui::detail::ContextGuard context_guard;
     ImGui::SetCurrentContext(context);
     ImFont* font = ImGui::GetFont();
     const char* text_begin = utf8_text.data();
@@ -116,7 +116,7 @@ class ImGuiTextRendererImpl final : public TextRendererImpl {
     return {};
   }
 
-  expected<rhi::ExternalSyncToken> end_frame() override {
+  expected<ExternalSyncToken> end_frame() override {
     if (!frame_open_) {
       return make_unexpected(Error{
           .code = ErrorCode::kInvalidState,
@@ -125,14 +125,14 @@ class ImGuiTextRendererImpl final : public TextRendererImpl {
     }
     frame_open_ = false;
     VIZ_UNWRAP(ImGuiContext*, context, backend_.context());
-    const detail::ImGuiContextGuard context_guard;
+    const imgui::detail::ContextGuard context_guard;
     ImGui::SetCurrentContext(context);
     ImGui::Render();
-    VIZ_UNWRAP(ImGuiFrameSync, sync, backend_.upload_draw_data(ImGui::GetDrawData()));
+    VIZ_UNWRAP(imgui::FrameSync, sync, backend_.upload_draw_data(ImGui::GetDrawData()));
     return sync.upload_done;
   }
 
-  expected<void> record(rhi::CommandList& command_list, rhi::Extent2D framebuffer_extent) override {
+  expected<void> record(CommandList& command_list, Extent2D framebuffer_extent) override {
     return backend_.record_draws(command_list, framebuffer_extent);
   }
 
@@ -142,7 +142,7 @@ class ImGuiTextRendererImpl final : public TextRendererImpl {
     }
     frame_open_ = false;
     VIZ_UNWRAP(ImGuiContext*, context, backend_.context());
-    const detail::ImGuiContextGuard context_guard;
+    const imgui::detail::ContextGuard context_guard;
     ImGui::SetCurrentContext(context);
     // Close the NewFrame() begin_frame ran, without Render()/upload. The stream-side
     // semaphore wait begin_frame enqueued targets an already-passed timeline value and
@@ -152,7 +152,7 @@ class ImGuiTextRendererImpl final : public TextRendererImpl {
   }
 
  private:
-  ImGuiBackend backend_;
+  imgui::Renderer backend_;
   bool frame_open_ = false;
 };
 
@@ -178,52 +178,51 @@ expected<void> TextRenderer::destroy(std::chrono::nanoseconds timeout) {
   return result;
 }
 
-expected<void> TextRenderer::begin_frame(rhi::Extent2D framebuffer_extent, uint32_t renderer_slot,
-                                         rhi::SubmitSyncToken slot_last_use) {
+expected<void> TextRenderer::begin_frame(Extent2D framebuffer_extent, uint32_t renderer_slot,
+                                         SubmitSyncToken slot_last_use) {
   if (!impl_) {
-    return rhi::detail::null_impl_error("TextRenderer::begin_frame");
+    return holoviz::detail::null_impl_error("TextRenderer::begin_frame");
   }
   return impl_->begin_frame(framebuffer_extent, renderer_slot, slot_last_use);
 }
 
 expected<void> TextRenderer::add_text(const TextDesc& desc, std::string_view utf8_text) {
   if (!impl_) {
-    return rhi::detail::null_impl_error("TextRenderer::add_text");
+    return holoviz::detail::null_impl_error("TextRenderer::add_text");
   }
   return impl_->add_text(desc, utf8_text);
 }
 
-expected<rhi::ExternalSyncToken> TextRenderer::end_frame() {
+expected<ExternalSyncToken> TextRenderer::end_frame() {
   if (!impl_) {
-    return rhi::detail::null_impl_error("TextRenderer::end_frame");
+    return holoviz::detail::null_impl_error("TextRenderer::end_frame");
   }
   return impl_->end_frame();
 }
 
 expected<void> TextRenderer::cancel_frame() {
   if (!impl_) {
-    return rhi::detail::null_impl_error("TextRenderer::cancel_frame");
+    return holoviz::detail::null_impl_error("TextRenderer::cancel_frame");
   }
   return impl_->cancel_frame();
 }
 
-expected<void> TextRenderer::record(rhi::CommandList& command_list,
-                                    rhi::Extent2D framebuffer_extent) {
+expected<void> TextRenderer::record(CommandList& command_list, Extent2D framebuffer_extent) {
   if (!impl_) {
-    return rhi::detail::null_impl_error("TextRenderer::record");
+    return holoviz::detail::null_impl_error("TextRenderer::record");
   }
   return impl_->record(command_list, framebuffer_extent);
 }
 
-expected<TextRenderer> create_text_renderer(rhi::Device& device, const TextRendererDesc& desc) {
-  const ImGuiBackendDesc backend_desc{
+expected<TextRenderer> create_text_renderer(Device& device, const TextRendererDesc& desc) {
+  const imgui::RendererDesc backend_desc{
       .stream = desc.stream,
       .frames_in_flight = desc.frames_in_flight,
       .ttf_path = desc.ttf_path,
       .ttf_size_px = desc.base_font_size_px,
       .debug_name = desc.debug_name != nullptr ? desc.debug_name : "text renderer",
   };
-  VIZ_UNWRAP(ImGuiBackend, backend, create_imgui_backend(device, backend_desc));
+  VIZ_UNWRAP(imgui::Renderer, backend, imgui::create_renderer(device, backend_desc));
   return TextRenderer{std::make_unique<detail::ImGuiTextRendererImpl>(std::move(backend))};
 }
 

@@ -139,17 +139,11 @@ void publish_terminal_summary(RunGenerationId run_generation,
       sink->publish(summary);
       return;
     }
-    HOLOSCAN_LOG_ERROR(
-        "RunSession failed: run_generation={} category=failed diagnostics={} first_diagnostic={} "
-        "first_token={} graph_generation={} graph={} vertex={} port={}",
-        summary.run_generation,
-        summary.diagnostic_count,
-        summary.first_diagnostic.value,
-        summary.first_token,
-        summary.first_source.graph_generation,
-        summary.first_source.graph.value,
-        summary.first_source.vertex.value,
-        summary.first_source.port.value());
+    HOLOSCAN_LOG_ERROR("RunSession failed: run_generation={} category=failed diagnostics={}\n{}",
+                       summary.run_generation,
+                       summary.diagnostic_count,
+                       diagnostics.empty() ? "No diagnostic detail retained."
+                                           : format_diagnostics(diagnostics, ExecutionGraphView{}));
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   } catch (...) {
     // Supplemental observability cannot weaken an already-committed terminal outcome.
@@ -718,15 +712,11 @@ void RunSessionState::count_phase(RuntimePhaseCounter counter) noexcept {
 /// specialization. Re-entering ExecutionLaneSet would only reacquire the
 /// lane's stop/serialization locks around a callback that cannot migrate.
 [[nodiscard]] expected<void, Error> RunSessionState::invoke_inline_owner_task(
-    ExecutionLaneTask task) noexcept {
+    const ExecutionLaneTask& task) noexcept {
   if (task.invoke == nullptr) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument, "RUNTIME_LANE_DISPATCH_INVALID"});
   }
-  RuntimeCallbackIdentity identity = task.callback_identity;
-  if (identity.context == RuntimeCallbackContext::kNone) {
-    identity.context = task.callback_context;
-  }
-  const RuntimeCallbackContextScope callback_scope{identity};
+  const RuntimeCallbackContextScope callback_scope{task.callback_identity, task.callback_context};
   count_phase(RuntimePhaseCounter::kLaneInlineOwnerInvocations);
   count_phase(RuntimePhaseCounter::kLaneCallbacksEntered);
   struct CallbackExit {
@@ -957,18 +947,49 @@ void RunSessionState::append_diagnostic(std::string_view token, VertexId vertex,
                                         std::string_view required, std::string_view provided,
                                         ::holoscan::DiagnosticSeverity severity) noexcept {
   const std::lock_guard diagnostic_lock(diagnostic_mutex_);
+  const auto graph = plan_ != nullptr ? plan_->graph : GraphView{};
+  GraphId graph_id = detail != nullptr ? detail->component_graph : GraphId{};
+  for (const auto& candidate : graph.vertices()) {
+    if (candidate.id == vertex) {
+      graph_id = candidate.graph;
+      break;
+    }
+  }
+  if (!graph_id) {
+    for (const auto& candidate : graph.graphs()) {
+      if (!candidate.parent) {
+        graph_id = candidate.id;
+        break;
+      }
+    }
+  }
+  PortId port{};
+  std::string_view port_name;
+  if (plan_ != nullptr && detail != nullptr && detail->tensor_failure.port) {
+    for (const auto& candidate : plan_->ports) {
+      if (candidate.id == detail->tensor_failure.port && candidate.owner == vertex) {
+        port = candidate.id;
+        port_name = candidate.local_name;
+        break;
+      }
+    }
+  }
   diagnostic_buffer_.append(
       diagnostic_id(token),
       token,
       DiagnosticSource{
           .graph_generation = plan_ != nullptr ? plan_->graph.generation() : 0U,
+          .graph = graph_id,
           .vertex = vertex,
+          .port = port,
       },
       service,
       detail,
       required,
       provided,
-      severity);
+      severity,
+      graph,
+      port_name);
 }
 
 // Construct the bounded terminal fallback before application code can inject

@@ -748,6 +748,7 @@ TEST(PhysicalReadinessBinding, PollClockFailurePreservesRegisteredClockDiagnosti
 }
 
 // REQ: RUNTIME-035
+// REQ: RUNTIME-054
 TEST(PhysicalReadinessBinding, FreeFormBindingFailurePublishesRegisteredBoundedIdentity) {
   test::RuntimeProbeState::reset();
   const ExecutionPlan baseline = test::make_runtime_test_plan();

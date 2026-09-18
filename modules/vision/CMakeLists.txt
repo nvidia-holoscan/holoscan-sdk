@@ -1,9 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/CVCUDAVersion.cmake")
+if(NOT holoscan_vision_IS_TOP_LEVEL)
+    set(HOLOSCAN_VISION_CVCUDA_VERSION_MIN "${HOLOSCAN_VISION_CVCUDA_VERSION_MIN}" PARENT_SCOPE)
+    set(HOLOSCAN_VISION_CVCUDA_VERSION_MAX "${HOLOSCAN_VISION_CVCUDA_VERSION_MAX}" PARENT_SCOPE)
+endif()
+
+set(HOLOSCAN_VISION_EXAMPLES_INSTALL_COMPONENT holoscan-vision-examples)
+if(WIN32)
+    set(HOLOSCAN_VISION_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}/holoscan/examples")
+else()
+    set(HOLOSCAN_VISION_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/holoscan/examples")
+endif()
 
 # CV-CUDA's package configuration consumes the nvcv_types target without discovering it.
 find_package(nvcv_types
@@ -68,11 +78,24 @@ set_target_properties(vision PROPERTIES
 )
 holoscan_configure_linux_shared_link(vision)
 
+# The CV-CUDA project publishes Debian archives as release assets, not through an APT repository.
+# Bundle the exact shared objects selected for this build with the shared Vision payload so its
+# Debian package remains installable from an APT repository containing only Holoscan packages.
+if(BUILD_SHARED_LIBS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_holoscan_vision_cvcuda_install_dir "${HOLOSCAN_INSTALL_LIB_DIR}/holoscan/cvcuda")
+    set_property(TARGET vision APPEND PROPERTY INSTALL_RPATH "\$ORIGIN/holoscan/cvcuda")
+    install(IMPORTED_RUNTIME_ARTIFACTS cvcuda nvcv_types
+        LIBRARY DESTINATION "${_holoscan_vision_cvcuda_install_dir}"
+        COMPONENT holoscan-vision
+    )
+    unset(_holoscan_vision_cvcuda_install_dir)
+endif()
+
 set(_holoscan_vision_package_dir
     "${CMAKE_CURRENT_BINARY_DIR}/holoscan-vision-package"
 )
 set(_holoscan_vision_cmake_install_dir
-    "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan-vision"
+    "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
 )
 file(MAKE_DIRECTORY "${_holoscan_vision_package_dir}")
 
@@ -113,7 +136,6 @@ install(FILES
     DESTINATION "${_holoscan_vision_cmake_install_dir}"
     COMPONENT holoscan-vision
 )
-
 unset(_holoscan_vision_cmake_install_dir)
 unset(_holoscan_vision_package_dir)
 

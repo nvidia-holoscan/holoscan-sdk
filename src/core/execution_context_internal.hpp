@@ -8,6 +8,7 @@
 #include <cuda_runtime_api.h>
 
 #include <atomic>
+#include <string_view>
 
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/parameter_schema.hpp>
@@ -75,6 +76,7 @@ struct ExecutionContextState {
   void* termination_request_state{};
   TerminationRequestFunction request_termination{};
   OperatorRef self{};
+  std::string_view operator_path{};
   void* rate_state{};
   ExecutionPortRateResolver resolve_rate{};
 };

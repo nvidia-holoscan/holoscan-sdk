@@ -434,6 +434,140 @@ refinements likewise require field scope.
   already materialized pool.
 </Warning>
 
+### Use a parameter byte-span projector for custom formulas
+
+Use the closed expression operations above whenever they can describe the
+capacity relationship. For irreducible domain logic, a **parameter byte-span
+projector** is a named C++ free or static function with this exact contract:
+
+```cpp
+holoscan::expected<std::uint64_t, holoscan::Error> projector(
+    const Params& params) noexcept;
+```
+
+The function runs once while the plan is compiled and returns the maximum
+addressable bytes for one Tensor slot. It must be deterministic,
+side-effect-free, reentrant, and non-throwing. C++ enforces the exact signature
+and `noexcept`; operator authors remain responsible for the other properties.
+Runtime receives only the resolved scalar and never retains the callback or a
+Params snapshot.
+
+Declare every Parameter the function reads next to the versioned semantic ID:
+
+```cpp
+static holoscan::expected<std::uint64_t, holoscan::Error>
+output_max_byte_span(const BatchParams& params) noexcept {
+  // Perform domain validation and overflow-checked arithmetic here.
+  return checked_batch_bytes(params.width,
+                             params.height,
+                             params.max_batch_size);
+}
+
+const auto capacity =
+    holoscan::parameter_projected_byte_span<&output_max_byte_span>(
+        "com.example.BatchOutput.output-max-byte-span.v1",
+        holoscan::param_ref<&BatchParams::width>(),
+        holoscan::param_ref<&BatchParams::height>(),
+        holoscan::param_ref<&BatchParams::max_batch_size>());
+
+spec.output(output, "output").produces_tensor(output_spec, capacity);
+```
+
+The `param_ref` list is normative compiler input, not documentation. Core
+cannot inspect the function body, so reading an undeclared field is an
+authoring correctness bug. Dependencies must belong to the exact Params
+schema, be non-sensitive, and be compile-time or recompile-required. Nested
+paths are distinct dependencies even when they end at the same reused nested
+field descriptor.
+
+The stable ID identifies the calculation independently of its C++ address or
+symbol spelling. Increment its semantic version whenever the function could
+return a different result or error for the same declared inputs. Renaming or
+moving an otherwise unchanged function does not require a new ID. Reusing one
+ID for different implementations in the same compilation fails closed.
+
+Return `ErrorCode::kArithmeticOverflow` when checked arithmetic overflows; the
+compiler reports `PHYSICAL_TENSOR_BYTE_SPAN_OVERFLOW`. Other returned errors
+become `PHYSICAL_TENSOR_BYTE_SPAN_PROJECTION_FAILED`, exposing only the stable
+error-code name rather than private error text. Zero and values that cannot be
+represented by the compiling host remain invalid byte spans.
+
+The projected leaf can be composed with the same checked multiplication,
+ceiling division, maximum, and alignment operations as any other byte-span
+expression. Keep such standard operations outside the projector when
+possible, so the plan retains their structure. Registered C++ operators use
+the same projector when instantiated from Python; arbitrary Python callbacks
+are not accepted during compiler lowering.
+
+### Derive memory kind from deployment parameters
+
+A runtime-pooled output can also select its physical memory kind from a
+generation-zero Parameter. Keep a module's public vocabulary narrow by mapping
+its own enum exhaustively to concrete Core memory kinds:
+
+```cpp
+enum class OutputStorage : std::uint8_t { kHost, kPinned };
+
+struct ResizeParams {
+  OutputStorage output_storage{OutputStorage::kHost};
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    ResizeParams,
+    holoscan::param_schema("com.example.ResizeParams", 1),
+    holoscan::field<&ResizeParams::output_storage>("output_storage")
+        .enum_values({
+            holoscan::param_enum_value("host", OutputStorage::kHost),
+            holoscan::param_enum_value("pinned", OutputStorage::kPinned),
+        })
+        .recompile_required());
+
+spec.output(output, "output")
+    .produces_tensor(
+        holoscan::TensorOutputSpec{
+            .representation = {.dtype = kByteDtype, .rank = 3U},
+            .bounds = holoscan::tensor_bounds(max_output_bytes),
+            .storage = holoscan::TensorOutputStorage::kRuntimePool,
+        },
+        holoscan::TensorOutputDerivations{
+            .memory_kind = holoscan::parameter_memory_kind(
+                holoscan::param_ref<&ResizeParams::output_storage>(),
+                {
+                    holoscan::memory_kind_case(
+                        OutputStorage::kHost, holoscan::MemoryKind::kHost),
+                    holoscan::memory_kind_case(
+                        OutputStorage::kPinned,
+                        holoscan::MemoryKind::kPinnedHost),
+                }),
+        });
+```
+
+The mapping must cover every value admitted by the field's named enum domain,
+with no extra or duplicate source values. An operator may instead expose an
+exact `MemoryKind` Parameter and use the one-argument
+`parameter_memory_kind()` overload. That direct field must still declare a
+nonempty `.enum_values(...)` domain containing exactly the concrete kinds the
+operator supports; `MemoryKind::kUnknown` is never an admissible choice.
+
+Compilation reads the accepted value once and freezes the resulting concrete
+kind into the ordinary Tensor allocation and channel plan. Runtime does not
+retain or reevaluate the expression. Changing a `.recompile_required()` value
+therefore requires compiling a new plan and starting a new session; it cannot
+migrate an already materialized pool.
+
+A derived producer choice must satisfy every downstream exact-memory
+requirement. Compilation rejects a mismatch with
+`PHYSICAL_TENSOR_LAYOUT_MISMATCH`; it does not silently insert a copy. A
+CUDA-backed result also needs separate explicit operator/device placement and
+never implies device zero. Memory kind answers *where each slot is allocated*;
+it does not choose the CUDA device, determine per-slot byte capacity, select an
+allocator/provider, or change the number of pool entries.
+
+The
+[`derived_tensor_pool_capacity` example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/derived_tensor_pool_capacity/cpp)
+keeps the selectable memory kind independent of its byte-span and rate-derived
+capacity calculations, and pins its consumers to the selected kind.
+
 ### Size queue entries from nominal rates
 
 Byte-span derivation answers **how many logical payload bytes fit in one
@@ -592,7 +726,7 @@ active depth. Explicit depth remains authoritative and is reported without a rep
 The `derived_tensor_pool_capacity` example exercises both renderings against its real published
 lifecycle generation and checks the canonical schema marker.
 
-The private-v4 artifact writer/finalizer includes the immutable recipe and
+The private-v6 artifact writer/finalizer includes the immutable recipe and
 capability evidence. There is no persisted `ExecutionPlan` importer or
 reconstructor in this release; `plan.json()` is canonical inspection output,
 not a reload API.

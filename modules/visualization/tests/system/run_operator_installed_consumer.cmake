@@ -24,34 +24,86 @@ set(package_work_dir "${HOLOSCAN_CONSUMER_WORK_DIR}/${package_lane}")
 set(install_prefix "${package_work_dir}/install")
 file(REMOVE_RECURSE "${package_work_dir}")
 
-# Build every exported target exercised by this consumer. The install emits one
-# holoscan-targets.cmake, so an unbuilt exported target makes find_package fail.
+# Build every exported target exercised by this consumer. The install emits import files for
+# every export set (holoscan-targets.cmake, holoscan-visualization-targets.cmake), so an unbuilt
+# exported target makes find_package fail.
 set(sdk_build_command
     "${CMAKE_COMMAND}" --build "${HOLOSCAN_BUILD_DIR}"
-    --target core sensor_io holoscan_operators_holoviz)
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    --target core sensor_io holoviz op_holoviz)
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND sdk_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(COMMAND ${sdk_build_command} RESULT_VARIABLE sdk_build_result)
 if(NOT sdk_build_result EQUAL 0)
     message(FATAL_ERROR "Failed to build SDK targets required by the operator installed consumer")
 endif()
 
+# Component isolation: the module payload (both libraries, both header trees and the module's
+# package files) must arrive from the holoscan-visualization component alone. The full install
+# below also brings holoscan-dependencies, the SDK's default component, so an artifact that fell
+# back to that default would otherwise go unnoticed here and in the per-component packages.
+set(visualization_only_prefix "${package_work_dir}/visualization-only")
+set(install_command
+    "${CMAKE_COMMAND}" --install "${HOLOSCAN_BUILD_DIR}"
+    --prefix "${visualization_only_prefix}"
+    --component holoscan-visualization
+)
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND install_command --config "${CMAKE_BUILD_TYPE}")
+endif()
+execute_process(COMMAND ${install_command} RESULT_VARIABLE install_result)
+if(NOT install_result EQUAL 0)
+    message(FATAL_ERROR "Failed to install the holoscan-visualization component on its own")
+endif()
+if(WIN32)
+    set(visualization_only_libraries
+        "${visualization_only_prefix}/bin/holoviz.dll"
+        "${visualization_only_prefix}/lib/holoviz.lib"
+        "${visualization_only_prefix}/bin/holoscan_op_holoviz.dll"
+        "${visualization_only_prefix}/lib/holoscan_op_holoviz.lib")
+else()
+    set(visualization_only_libraries
+        "${visualization_only_prefix}/lib*/libholoviz.so"
+        "${visualization_only_prefix}/lib*/libholoscan_op_holoviz.so")
+endif()
+foreach(required_glob IN LISTS visualization_only_libraries ITEMS
+        "${visualization_only_prefix}/include/holoviz/holoviz.hpp"
+        "${visualization_only_prefix}/include/holoviz/holoviz_export.h"
+        "${visualization_only_prefix}/include/holoviz/imgui/vendor/imgui.h"
+        "${visualization_only_prefix}/include/holoscan/visualization/holoviz_op.hpp"
+        "${visualization_only_prefix}/lib*/cmake/holoscan/holoscan-visualization-config.cmake"
+        "${visualization_only_prefix}/lib*/cmake/holoscan/holoscan-visualization-config-version.cmake"
+        "${visualization_only_prefix}/lib*/cmake/holoscan/holoscan-visualization-targets.cmake")
+    file(GLOB required_matches LIST_DIRECTORIES FALSE "${required_glob}")
+    if(NOT required_matches)
+        message(FATAL_ERROR
+            "The holoscan-visualization component alone did not install ${required_glob}")
+    endif()
+endforeach()
+file(GLOB_RECURSE foreign_libraries LIST_DIRECTORIES FALSE
+    "${visualization_only_prefix}/*holoscan_core*")
+if(foreign_libraries)
+    message(FATAL_ERROR
+        "The holoscan-visualization component installed Core artifacts: ${foreign_libraries}")
+endif()
+file(REMOVE_RECURSE "${visualization_only_prefix}")
+
 foreach(component IN ITEMS
         holoscan
         holoscan-dependencies
         iceoryx2-lib
         dev
-        holomq
+        holoscan-holomq
         holoscan-core
+        holoscan-visualization
         holoscan-sensor-io)
     set(install_command
         "${CMAKE_COMMAND}" --install "${HOLOSCAN_BUILD_DIR}"
         --prefix "${install_prefix}"
         --component "${component}"
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND install_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(COMMAND ${install_command} RESULT_VARIABLE install_result)
     if(NOT install_result EQUAL 0)
@@ -101,7 +153,10 @@ foreach(required_install_path IN ITEMS
         "${install_prefix}/include/holoscan/channel/pod_type.hpp"
         "${install_prefix}/include/holoscan/channel/runtime.hpp"
         "${holoscan_package_dir}/holoscan-config.cmake"
-        "${holoscan_package_dir}/holoscan-config-version.cmake")
+        "${holoscan_package_dir}/holoscan-config-version.cmake"
+        "${holoscan_package_dir}/holoscan-visualization-config.cmake"
+        "${holoscan_package_dir}/holoscan-visualization-config-version.cmake"
+        "${holoscan_package_dir}/holoscan-visualization-targets.cmake")
     if(NOT EXISTS "${required_install_path}")
         message(FATAL_ERROR "Installed consumer prerequisite is missing: ${required_install_path}")
     endif()
@@ -185,33 +240,45 @@ endforeach()
 
 set(consumer_build_dir "${package_work_dir}/build")
     file(REMOVE_RECURSE "${consumer_build_dir}")
+    set(consumer_configure_options
+        -G "${HOLOSCAN_GENERATOR}"
+        "-DCMAKE_CXX_COMPILER:FILEPATH=${HOLOSCAN_CXX_COMPILER}"
+    )
+    if(DEFINED HOLOSCAN_GENERATOR_PLATFORM AND NOT HOLOSCAN_GENERATOR_PLATFORM STREQUAL "")
+        list(APPEND consumer_configure_options -A "${HOLOSCAN_GENERATOR_PLATFORM}")
+    endif()
+    if(DEFINED HOLOSCAN_GENERATOR_TOOLSET AND NOT HOLOSCAN_GENERATOR_TOOLSET STREQUAL "")
+        list(APPEND consumer_configure_options -T "${HOLOSCAN_GENERATOR_TOOLSET}")
+    endif()
+    if(DEFINED HOLOSCAN_MAKE_PROGRAM AND NOT HOLOSCAN_MAKE_PROGRAM STREQUAL "")
+        list(APPEND consumer_configure_options "-DCMAKE_MAKE_PROGRAM:FILEPATH=${HOLOSCAN_MAKE_PROGRAM}")
+    endif()
+    if(DEFINED HOLOSCAN_TOOLCHAIN_FILE AND NOT HOLOSCAN_TOOLCHAIN_FILE STREQUAL "")
+        list(APPEND consumer_configure_options "-DCMAKE_TOOLCHAIN_FILE:FILEPATH=${HOLOSCAN_TOOLCHAIN_FILE}")
+    endif()
+    if(DEFINED HOLOSCAN_MSVC_RUNTIME_LIBRARY AND NOT HOLOSCAN_MSVC_RUNTIME_LIBRARY STREQUAL "")
+        list(APPEND consumer_configure_options
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=${HOLOSCAN_MSVC_RUNTIME_LIBRARY}")
+    endif()
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND consumer_configure_options "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}")
+    endif()
+
     set(configure_command
         "${CMAKE_COMMAND}"
         -S "${HOLOSCAN_CONSUMER_SOURCE_DIR}"
         -B "${consumer_build_dir}"
-        -G "${HOLOSCAN_GENERATOR}"
+        ${consumer_configure_options}
         "-DCMAKE_PREFIX_PATH:PATH=${install_prefix}"
         "-DHOLOSCAN_TEST_INSTALL_PREFIX:PATH=${install_prefix}"
-        "-DCMAKE_CXX_COMPILER:FILEPATH=${HOLOSCAN_CXX_COMPILER}"
     )
-    if(DEFINED HOLOSCAN_GENERATOR_PLATFORM AND NOT HOLOSCAN_GENERATOR_PLATFORM STREQUAL "")
-        list(APPEND configure_command -A "${HOLOSCAN_GENERATOR_PLATFORM}")
-    endif()
-    if(DEFINED HOLOSCAN_GENERATOR_TOOLSET AND NOT HOLOSCAN_GENERATOR_TOOLSET STREQUAL "")
-        list(APPEND configure_command -T "${HOLOSCAN_GENERATOR_TOOLSET}")
-    endif()
-    if(DEFINED HOLOSCAN_MAKE_PROGRAM AND NOT HOLOSCAN_MAKE_PROGRAM STREQUAL "")
-        list(APPEND configure_command "-DCMAKE_MAKE_PROGRAM:FILEPATH=${HOLOSCAN_MAKE_PROGRAM}")
-    endif()
-    if(DEFINED HOLOSCAN_TOOLCHAIN_FILE AND NOT HOLOSCAN_TOOLCHAIN_FILE STREQUAL "")
-        list(APPEND configure_command "-DCMAKE_TOOLCHAIN_FILE:FILEPATH=${HOLOSCAN_TOOLCHAIN_FILE}")
-    endif()
-    if(DEFINED HOLOSCAN_MSVC_RUNTIME_LIBRARY AND NOT HOLOSCAN_MSVC_RUNTIME_LIBRARY STREQUAL "")
+    if(DEFINED HOLOSCAN_CONSUMER_FIND_MODE AND NOT HOLOSCAN_CONSUMER_FIND_MODE STREQUAL "")
         list(APPEND configure_command
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=${HOLOSCAN_MSVC_RUNTIME_LIBRARY}")
+            "-DHOLOSCAN_PACKAGE_FIND_MODE:STRING=${HOLOSCAN_CONSUMER_FIND_MODE}")
     endif()
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED HOLOSCAN_MODULE_PACKAGE_DIR AND NOT HOLOSCAN_MODULE_PACKAGE_DIR STREQUAL "")
+        list(APPEND configure_command
+            "-DHOLOSCAN_MODULE_PACKAGE_DIR:PATH=${install_prefix}/${HOLOSCAN_MODULE_PACKAGE_DIR}")
     endif()
 
     set(all_configure_output "")
@@ -244,8 +311,8 @@ set(consumer_build_dir "${package_work_dir}/build")
     endforeach()
 
     set(consumer_build_command "${CMAKE_COMMAND}" --build "${consumer_build_dir}" --verbose)
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND consumer_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND consumer_build_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${consumer_build_command}
@@ -269,8 +336,8 @@ set(consumer_build_dir "${package_work_dir}/build")
     set(consumer_test_command
         "${HOLOSCAN_CTEST_COMMAND}" --test-dir "${consumer_build_dir}" --output-on-failure
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND consumer_test_command -C "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND consumer_test_command -C "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${consumer_test_command}
@@ -285,3 +352,10 @@ set(consumer_build_dir "${package_work_dir}/build")
             "Installed-package consumer execution failed:\n"
             "${consumer_test_output}")
     endif()
+
+# Use the same installed SDK to check direct HoloViz consumption, after moving it so no original
+# install path can accidentally satisfy dependency discovery or shared-library loading.
+file(RENAME "${install_prefix}" "${package_work_dir}/relocated")
+set(install_prefix "${package_work_dir}/relocated")
+set(HOLOVIZ_CONSUMER_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/holoviz_installed_consumer")
+include("${CMAKE_CURRENT_LIST_DIR}/run_holoviz_installed_consumer.cmake")

@@ -123,12 +123,6 @@ template <typename Bucket>
   return true;
 }
 
-[[nodiscard]] bool schema_identity_equal(const SchemaIdentityRecord& actual,
-                                         const SchemaIdentity expected) noexcept {
-  return actual.canonical_name == expected.canonical_name && actual.version == expected.version &&
-         actual.schema_sha256 == expected.schema_sha256 && actual.id == expected.id;
-}
-
 [[nodiscard]] bool supported_catalog_tensor_memory(const MemoryKind memory_kind) noexcept {
   return memory_kind == MemoryKind::kHost || memory_kind == MemoryKind::kPinnedHost ||
          memory_kind == MemoryKind::kCudaDevice;
@@ -300,7 +294,12 @@ validate_catalog_tensor_schema_endpoint(const ChannelEndpointCatalog::EndpointVi
       record->service_static.payload_identity.payload_kind != PayloadKind::kDescriptorBacked ||
       !record->service_static.schema_identity ||
       !schema_identity_equal(*record->service_static.schema_identity, expected_schema) ||
-      record->service_static.serialized_payload_capacity_bytes != payload_size) {
+      record->service_static.schema_writer_max_serialized_bytes != payload_size ||
+      record->service_static.required_data_frame_bytes != payload_size ||
+      record->service_static.selected_inline_bucket_bytes !=
+          channel_internal::inline_payload_bucket_size(payload_size).value_or(0U) ||
+      record->service_static.bucket_usable_serialized_bytes !=
+          record->service_static.selected_inline_bucket_bytes) {
     return make_unexpected(Error{ErrorCode::kIncompatible, "ENDPOINT_TYPE_MISMATCH"});
   }
   if (record->service_static.id.empty() ||
@@ -1925,11 +1924,15 @@ class TensorSchemaPayloadSubscriberImpl final
     return end_of_stream_sequence_;
   }
 
-  [[nodiscard]] expected<void, Error> detach_catalog_wait_set() noexcept override {
+  [[nodiscard]] expected<void, Error> detach_wait_set() noexcept override {
     terminal_attachment_.reset();
     terminal_wait_handle_ = 0U;
     attachment_.reset();
     return {};
+  }
+
+  [[nodiscard]] expected<void, Error> detach_catalog_wait_set() noexcept override {
+    return detach_wait_set();
   }
 
   [[nodiscard]] std::optional<std::uint64_t> protected_terminal_wait_handle()

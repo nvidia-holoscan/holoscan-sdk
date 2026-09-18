@@ -2487,6 +2487,7 @@ class TestResultValidation:
         # Channel backpressure expectation.
         runner.validate_callback_counts(Path("result.json"), counts, args, 3, 3)
 
+    # REQ: RUNTIME-041
     @pytest.mark.parametrize(
         "args",
         [
@@ -2500,10 +2501,10 @@ class TestResultValidation:
         ],
         ids=("direct-retained-tensor", "holomq-pod"),
     )
-    def test_tensor_and_holomq_rows_reject_continuation_receipt_evidence(
+    def test_direct_tensor_allows_and_holomq_rejects_continuation_receipt_evidence(
         self, args: SimpleNamespace
     ) -> None:
-        # Key setup: model a complete Tensor or HoloMQ shared-lane cycle using ordinary dispatch.
+        # Key setup: model a complete direct Tensor or HoloMQ shared-lane cycle.
         counts = {
             "source_callbacks": 1,
             "source_compute_entries": 2,
@@ -2525,6 +2526,7 @@ class TestResultValidation:
             "candidates_frozen": 3,
             "candidates_selected": 3,
             "readiness_poll_dispatches": 1,
+            "readiness_poll_contention_retries": 0,
             "direct_continuation_receipts_accepted": 0,
             "direct_continuation_poll_elisions": 0,
             "direct_composite_attempts": 0,
@@ -2548,6 +2550,7 @@ class TestResultValidation:
             "channel_activation_cut_drains": 0,
             "channel_activation_cut_skips": 0,
             "channel_receive_backpressured": 0,
+            "channel_poll_incomplete": 0,
             "channel_activation_cut_inventory_scans": 0,
             "channel_activation_cut_subscriber_probes": 0,
             "channel_activation_cut_transport_probes": 0,
@@ -2573,7 +2576,7 @@ class TestResultValidation:
             counters["channel_activation_cuts"] = 3
             counters["channel_activation_cut_skips"] = 3
 
-        # Key assertion: zero receipts pass, while fabricated receipt evidence fails closed.
+        # Key assertion: zero receipts remain valid for both delivery paths.
         runner.validate_runtime_phase_counters(counters, counts, args)
 
         if runner.uses_holomq(args):
@@ -2606,7 +2609,13 @@ class TestResultValidation:
             runner.validate_runtime_phase_counters(terminal_frozen, counts, args)
         counters["direct_continuation_receipts_accepted"] = 1
         counters["direct_continuation_poll_elisions"] = 1
-        with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+        if runner.uses_holomq(args):
+            # Key assertion: transported delivery rejects direct continuation evidence.
+            with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+                runner.validate_runtime_phase_counters(counters, counts, args)
+        else:
+            # Key assertion: direct-retained Tensor delivery admits matched receipt and poll-elision
+            # evidence under the same cardinality bounds as other process-local payloads.
             runner.validate_runtime_phase_counters(counters, counts, args)
 
     def test_runtime_phase_counters_require_exact_activation_cardinality(self) -> None:
@@ -2633,6 +2642,7 @@ class TestResultValidation:
             "candidates_frozen": 3,
             "candidates_selected": 3,
             "readiness_poll_dispatches": 1,
+            "readiness_poll_contention_retries": 0,
             "direct_continuation_receipts_accepted": 0,
             "direct_continuation_poll_elisions": 0,
             "direct_composite_attempts": 0,
@@ -2656,6 +2666,7 @@ class TestResultValidation:
             "channel_activation_cut_drains": 0,
             "channel_activation_cut_skips": 0,
             "channel_receive_backpressured": 0,
+            "channel_poll_incomplete": 0,
             "channel_activation_cut_inventory_scans": 0,
             "channel_activation_cut_subscriber_probes": 0,
             "channel_activation_cut_transport_probes": 0,
@@ -2863,6 +2874,18 @@ class TestResultValidation:
         # claim cardinality decide whether this row observes them.
         assert runner.pressured_staged_diagnostics_required(args)
         runner.validate_runtime_phase_counters(counters, counts, args)
+        # A private fallback can let all three revisions become retired witnesses, although only
+        # two payloads are read. Otherwise the extra revision is replaced before publication.
+        runner.validate_runtime_phase_counters(
+            {**counters, "channel_witness_retired": 3, "channel_pre_witness_replacements": 0},
+            counts,
+            args,
+        )
+        for retired in (1, 3):
+            with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+                runner.validate_runtime_phase_counters(
+                    {**counters, "channel_witness_retired": retired}, counts, args
+                )
         runner.validate_runtime_phase_counters(
             {**counters, "channel_protected_terminal_probes_with_pending_data": 1}, counts, args
         )

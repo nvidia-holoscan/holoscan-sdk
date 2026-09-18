@@ -135,42 +135,36 @@ struct InlineLikeSchemaPayload {
 
 template <>
 consteval SchemaIdentity schema_identity<ConstructorOnlySchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.ConstructorOnlySchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(
+      make_schema_family_identity("holoscan.test.ConstructorOnlySchemaPayload"),
+      make_flatbuffer_file_identifier("COSP"));
 }
 
 template <>
 consteval SchemaIdentity schema_identity<ThrowingMoveSchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.ThrowingMoveSchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(
+      make_schema_family_identity("holoscan.test.ThrowingMoveSchemaPayload"),
+      make_flatbuffer_file_identifier("TMSP"));
 }
 
 template <>
 consteval SchemaIdentity schema_identity<LateThrowingMoveSchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.LateThrowingMoveSchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(
+      make_schema_family_identity("holoscan.test.LateThrowingMoveSchemaPayload"),
+      make_flatbuffer_file_identifier("LTMP"));
 }
 
 template <>
 consteval SchemaIdentity schema_identity<ThrowingCopySchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.ThrowingCopySchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(
+      make_schema_family_identity("holoscan.test.ThrowingCopySchemaPayload"),
+      make_flatbuffer_file_identifier("TCSP"));
 }
 
 template <>
 consteval SchemaIdentity schema_identity<InlineLikeSchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.InlineLikeSchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(make_schema_family_identity("holoscan.test.InlineLikeSchemaPayload"),
+                              make_flatbuffer_file_identifier("ILSP"));
 }
 
 template <>

@@ -16,6 +16,7 @@
 
 #include <holoscan/core/execution_plan.hpp>
 
+#include "../channel/channel_payload_limits.hpp"
 #include "../channel/endpoint_catalog_state.hpp"
 #include "../core/plan_record_contracts.hpp"
 #include "../runtime/executable_factory_inventory.hpp"
@@ -243,6 +244,53 @@ struct PartitionRunnerPlanRecord {
                          const PartitionRunnerPlanRecord&) = default;
 };
 
+/// Preserve one resolved Tensor connection in a CUDA Graph region.
+struct CUDAGraphCaptureEdgeRecord {
+  EdgeId edge{};
+  VertexId source{};
+  PortId source_port{};
+  VertexId target{};
+  PortId target_port{};
+
+  friend constexpr bool operator==(const CUDAGraphCaptureEdgeRecord&,
+                                   const CUDAGraphCaptureEdgeRecord&) noexcept = default;
+};
+
+/// Preserve the accepted trigger form for one CUDA Graph region member.
+///
+/// This is a reduced scheduling-contract summary, not a copy of the member's complete Contract.
+/// A source without ingress may use OnClock, OnReadable, OnNotified, OnDoorbell, or OnSpin. Other
+/// members may use OnEach or normalized OnAnyInput on their sole expected input. Future
+/// multi-input support can extend this private record without changing the public SDK API.
+/// Operator completion remains authoritative in the separate OperatorCompletionPlanRecord and is
+/// joined to an inputless capture source through the shared OperatorRef owner.
+struct CUDAGraphCaptureMemberContractRecord {
+  OperatorRef owner{};
+  TemporalRecordTriggerKind trigger{TemporalRecordTriggerKind::kAnyInput};
+  PortId trigger_input{};
+  bool synthesized_default{};
+};
+
+/// Bind one captured operator identity to its Graph vertex.
+struct CUDAGraphCaptureMemberRecord {
+  OperatorRef operator_ref{};
+  VertexId vertex{};
+};
+
+/// Describe how later compiler stages will capture one validated CUDA Graph region.
+struct CUDAGraphCapturePlanRecord {
+  GraphId graph{};
+  RegionId region{};
+  std::string region_name;
+  OperatorRef source{};
+  OperatorRef sink{};
+  std::vector<CUDAGraphCaptureMemberRecord> members;
+  std::vector<CUDAGraphCaptureEdgeRecord> internal_edges;
+  std::optional<CUDAGraphCaptureEdgeRecord> ingress;
+  std::optional<CUDAGraphCaptureEdgeRecord> egress;
+  std::vector<CUDAGraphCaptureMemberContractRecord> contracts;
+};
+
 /// Derive the process-local edge families authorized to bypass HoloMQ transport.
 [[nodiscard]] inline ProcessLocalChannelDeliveryKind process_local_channel_delivery_kind(
     const PayloadEdgePlanRecord& edge) noexcept {
@@ -373,7 +421,8 @@ struct ProcessLocalChannelServicePlanRecord {
   PortId source{};
   std::string service_id;
   PayloadIdentityRecord payload_identity;
-  std::uint64_t payload_size_bytes{};
+  std::uint64_t payload_size_bytes{};            ///< Required logical payload frame bytes.
+  std::uint64_t selected_inline_bucket_bytes{};  ///< Exact HoloMQ bucket, or zero when direct.
   bool tensor_payload{};
   std::uint64_t tensor_max_byte_span{};
   std::string tensor_pool_id;
@@ -426,7 +475,8 @@ struct CrossProcessChannelServicePlanRecord {
   PortId target{};
   std::string service_id;
   PayloadIdentityRecord payload_identity;
-  std::uint64_t payload_size_bytes{};
+  std::uint64_t payload_size_bytes{};            ///< Required logical payload frame bytes.
+  std::uint64_t selected_inline_bucket_bytes{};  ///< Exact HoloMQ bucket specialization.
   bool tensor_payload{};
   std::uint64_t tensor_max_byte_span{};
   std::string tensor_pool_id;
@@ -471,6 +521,7 @@ struct CrossProcessChannelSubscriberPlanRecord {
 struct TensorServiceContract {
   PayloadIdentityRecord payload_identity;
   std::uint64_t payload_size_bytes{};
+  std::uint64_t selected_inline_bucket_bytes{};
   bool tensor_payload{};
   std::uint64_t tensor_max_byte_span{};
   std::string tensor_pool_id;
@@ -506,6 +557,8 @@ struct TensorServiceStorageContract {
   return TensorServiceContract{
       .payload_identity = std::move(payload_identity),
       .payload_size_bytes = storage.payload_size_bytes,
+      .selected_inline_bucket_bytes =
+          channel_internal::inline_payload_bucket_size(storage.payload_size_bytes).value_or(0U),
       .tensor_payload = tensor_payload,
       .tensor_max_byte_span = storage.max_byte_span,
       .tensor_pool_id = std::move(storage.pool_id),
@@ -527,6 +580,7 @@ struct TensorServiceStorageContract {
   return TensorServiceContract{
       .payload_identity = service.payload_identity,
       .payload_size_bytes = service.payload_size_bytes,
+      .selected_inline_bucket_bytes = service.selected_inline_bucket_bytes,
       .tensor_payload = service.tensor_payload,
       .tensor_max_byte_span = service.tensor_max_byte_span,
       .tensor_pool_id = service.tensor_pool_id,
@@ -571,6 +625,9 @@ struct TensorServiceStorageContract {
       .service_id = std::move(service_id),
       .payload_identity = contract.payload_identity,
       .payload_size_bytes = contract.payload_size_bytes,
+      .selected_inline_bucket_bytes = delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ
+                                          ? contract.selected_inline_bucket_bytes
+                                          : 0U,
       .tensor_payload = contract.tensor_payload,
       .tensor_max_byte_span = contract.tensor_max_byte_span,
       .tensor_pool_id = contract.tensor_pool_id,
@@ -600,6 +657,7 @@ struct TensorServiceStorageContract {
       .service_id = std::move(service_id),
       .payload_identity = contract.payload_identity,
       .payload_size_bytes = contract.payload_size_bytes,
+      .selected_inline_bucket_bytes = contract.selected_inline_bucket_bytes,
       .tensor_payload = contract.tensor_payload,
       .tensor_max_byte_span = contract.tensor_max_byte_span,
       .tensor_pool_id = contract.tensor_pool_id,
@@ -674,8 +732,6 @@ struct ExecutionPlanState {
       hard_floor_contributors;  ///< Reviewable hard-floor composition.
   std::vector<QueueSizingRecipePlanRecord>
       queue_sizing_recipes;  ///< Immutable logical edge-sizing recipes.
-  std::vector<SchemaPackagePlanRecord>
-      schema_packages;  ///< Deep-owned generated-package diagnostic provenance.
   std::vector<InterfacePortBindingPlanRecord>
       interface_port_bindings;                          ///< Plan-local interface aliases.
   std::vector<PayloadEdgePlanRecord> payload_edges;     ///< Resolved queue/cache edges.
@@ -705,6 +761,8 @@ struct ExecutionPlanState {
       tensor_allocations;  ///< Explicit direct Tensor allocation capabilities.
   std::vector<TensorByteSpanDerivationPlanRecord>
       tensor_byte_span_derivations;  ///< Compile-evaluated Tensor slot-capacity evidence.
+  std::vector<TensorMemoryKindDerivationPlanRecord>
+      tensor_memory_kind_derivations;  ///< Compile-evaluated Tensor memory-kind evidence.
   std::vector<TensorFieldAllocationPlanRecord>
       tensor_field_allocations;  ///< Allocations ordered canonically by (output, field_id).
   std::vector<TensorInterfacePoolPlanRecord>
@@ -734,7 +792,9 @@ struct ExecutionPlanState {
   std::vector<ProviderAllocationPlanRecord>
       provider_allocation_plans;  ///< Immutable provider dependency-range recipes.
   std::vector<PublicationOutcomePlanRecord>
-      publication_outcomes;             ///< Pre/post-submit authority contracts.
+      publication_outcomes;  ///< Pre/post-submit authority contracts.
+  std::vector<CUDAGraphCapturePlanRecord>
+      cuda_graph_capture_plans;         ///< Validated region capture plans.
   PlanGenerationId plan_generation{};   ///< Nonzero identity for all plan-bound records.
   ClockId root_default_clock{};         ///< Root Graph default, or invalid when absent.
   std::vector<ClockPlanRecord> clocks;  ///< Dense plan-local clock catalog.

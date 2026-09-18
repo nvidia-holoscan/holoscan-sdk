@@ -16,6 +16,8 @@
 
 #include <holoscan/core/tensor_contract.hpp>
 
+#include "memory_kind_validation.hpp"
+
 namespace holoscan {
 namespace {
 
@@ -48,10 +50,20 @@ constexpr std::uint64_t kMaximumTensorByteSpanAlignment = 1ULL << 30U;
 
 TensorByteSpanExpression::TensorByteSpanExpression(detail::TensorByteSpanAuthoringNode node)
     : nodes_{std::move(node)} {
-  invalid_reason_ = nodes_.front().operation == TensorByteSpanOperation::kPositiveConstant &&
-                            nodes_.front().value == 0U
-                        ? TensorByteSpanExpressionInvalidReason::kNonPositiveConstant
-                        : TensorByteSpanExpressionInvalidReason::kNone;
+  if (nodes_.front().operation == TensorByteSpanOperation::kPositiveConstant &&
+      nodes_.front().value == 0U) {
+    invalid_reason_ = TensorByteSpanExpressionInvalidReason::kNonPositiveConstant;
+    return;
+  }
+  if (nodes_.front().operation == TensorByteSpanOperation::kParameterProjection &&
+      (!nodes_.front().projection ||
+       nodes_.front().projection.stable_id.size() > kMaximumTensorByteSpanProjectionIdBytes ||
+       nodes_.front().projection.dependencies.size() >
+           kMaximumTensorByteSpanExpressionDependencies)) {
+    invalid_reason_ = TensorByteSpanExpressionInvalidReason::kProjectionInvalid;
+    return;
+  }
+  invalid_reason_ = TensorByteSpanExpressionInvalidReason::kNone;
 }
 
 TensorByteSpanExpression TensorByteSpanExpression::combine(
@@ -171,6 +183,44 @@ TensorByteSpanExpression detail_make_input_max_byte_span(const void* input) {
       .operation = TensorByteSpanOperation::kInputMaxByteSpan,
       .input_declaration = input,
   }};
+}
+
+TensorMemoryKindExpression::TensorMemoryKindExpression(
+    TensorMemoryKindExpressionForm form, detail::TensorMemoryKindParameterDependency parameter,
+    std::vector<detail::TensorMemoryKindAuthoringCase> cases)
+    : form_(form), parameter_(parameter), cases_(std::move(cases)) {
+  if (!parameter_) {
+    invalid_reason_ = TensorMemoryKindExpressionInvalidReason::kEmpty;
+    return;
+  }
+  if (form_ == TensorMemoryKindExpressionForm::kDirect) {
+    invalid_reason_ = cases_.empty() ? TensorMemoryKindExpressionInvalidReason::kNone
+                                     : TensorMemoryKindExpressionInvalidReason::kUnexpectedMapping;
+    return;
+  }
+  if (cases_.empty()) {
+    invalid_reason_ = TensorMemoryKindExpressionInvalidReason::kMappingEmpty;
+    return;
+  }
+  if (cases_.size() > kMaximumTensorMemoryKindMappingCases) {
+    invalid_reason_ = TensorMemoryKindExpressionInvalidReason::kMappingLimitExceeded;
+    return;
+  }
+  for (std::size_t index = 0U; index < cases_.size(); ++index) {
+    if (!detail::valid_concrete_memory_kind(cases_[index].memory_kind)) {
+      invalid_reason_ = TensorMemoryKindExpressionInvalidReason::kMappingTargetInvalid;
+      return;
+    }
+    const auto duplicate = std::find_if(
+        cases_.begin(), cases_.begin() + static_cast<std::ptrdiff_t>(index), [&](const auto& item) {
+          return item.source == cases_[index].source;
+        });
+    if (duplicate != cases_.begin() + static_cast<std::ptrdiff_t>(index)) {
+      invalid_reason_ = TensorMemoryKindExpressionInvalidReason::kMappingDuplicate;
+      return;
+    }
+  }
+  invalid_reason_ = TensorMemoryKindExpressionInvalidReason::kNone;
 }
 
 }  // namespace holoscan
@@ -406,13 +456,11 @@ template <typename Enum>
     const std::optional<TensorTransferPolicy>& transfer,
     const std::optional<MemoryConversionPolicy>& memory_conversion,
     const TensorOutputStorage storage, const TensorContractRole role,
-    const bool derived_byte_span = false) {
+    const bool derived_byte_span = false, const bool derived_memory_kind = false) {
   if (representation.dtype && !valid_dtype(*representation.dtype)) {
     return make_unexpected(contract_error("GRAPH_TENSOR_DTYPE_INVALID"));
   }
-  if ((representation.memory_kind &&
-       (!enum_at_most(*representation.memory_kind, MemoryKind::kCudaManaged) ||
-        *representation.memory_kind == MemoryKind::kUnknown)) ||
+  if ((representation.memory_kind && !valid_concrete_memory_kind(*representation.memory_kind)) ||
       (representation.strides &&
        !enum_at_most(*representation.strides, TensorStridePolicy::kBoundedStrided)) ||
       (memory_conversion && !enum_at_most(*memory_conversion, MemoryConversionPolicy::kRequire)) ||
@@ -478,7 +526,7 @@ template <typename Enum>
     return make_unexpected(contract_error("GRAPH_TENSOR_BOUNDARY_INVALID"));
   }
   if (storage == TensorOutputStorage::kRuntimePool &&
-      (!result.representation.memory_kind || !result.max_rank ||
+      ((!derived_memory_kind && !result.representation.memory_kind) || !result.max_rank ||
        (!derived_byte_span && !result.max_byte_span))) {
     return make_unexpected(contract_error("GRAPH_TENSOR_ALLOCATION_INVALID"));
   }
@@ -526,9 +574,24 @@ expected<TensorContractRecord, Error> normalize_tensor_output_spec(const TensorO
 
 expected<TensorContractRecord, Error> normalize_tensor_output_spec_with_derived_byte_span(
     const TensorOutputSpec& spec) {
-  if (spec.storage != TensorOutputStorage::kRuntimePool ||
-      (spec.bounds && (spec.bounds->max_byte_span || spec.bounds->max_shape))) {
+  return normalize_tensor_output_spec_with_derivations(spec, true, false);
+}
+
+expected<TensorContractRecord, Error> normalize_tensor_output_spec_with_derivations(
+    const TensorOutputSpec& spec, const bool derive_byte_span, const bool derive_memory_kind) {
+  if (!derive_byte_span && !derive_memory_kind) {
+    return make_unexpected(contract_error("GRAPH_TENSOR_DERIVATION_INVALID"));
+  }
+  if (spec.storage != TensorOutputStorage::kRuntimePool) {
+    return make_unexpected(contract_error(derive_memory_kind
+                                              ? "GRAPH_TENSOR_MEMORY_KIND_DERIVATION_INVALID"
+                                              : "GRAPH_TENSOR_BYTE_SPAN_SOURCE_CONFLICT"));
+  }
+  if (derive_byte_span && (spec.bounds && (spec.bounds->max_byte_span || spec.bounds->max_shape))) {
     return make_unexpected(contract_error("GRAPH_TENSOR_BYTE_SPAN_SOURCE_CONFLICT"));
+  }
+  if (derive_memory_kind && spec.representation.memory_kind) {
+    return make_unexpected(contract_error("GRAPH_TENSOR_MEMORY_KIND_SOURCE_CONFLICT"));
   }
   return normalize_contract(spec.representation,
                             spec.bounds,
@@ -536,7 +599,8 @@ expected<TensorContractRecord, Error> normalize_tensor_output_spec_with_derived_
                             std::nullopt,
                             spec.storage,
                             TensorContractRole::kOutput,
-                            true);
+                            derive_byte_span,
+                            derive_memory_kind);
 }
 
 expected<TensorContractRecord, Error>

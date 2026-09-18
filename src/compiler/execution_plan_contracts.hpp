@@ -40,6 +40,7 @@ namespace holoscan::detail {
 struct TensorServiceContractView {
   const PayloadIdentityRecord& payload_identity;
   std::uint64_t payload_size_bytes{};
+  std::uint64_t selected_inline_bucket_bytes{};
   bool tensor_payload{};
   std::uint64_t tensor_max_byte_span{};
   std::string_view tensor_pool_id;
@@ -124,6 +125,7 @@ provider_sizing_dependencies(std::span<const PoolCapacityDependencyPlanRecord> d
   return TensorServiceContractView{
       .payload_identity = service.payload_identity,
       .payload_size_bytes = service.payload_size_bytes,
+      .selected_inline_bucket_bytes = service.selected_inline_bucket_bytes,
       .tensor_payload = service.tensor_payload,
       .tensor_max_byte_span = service.tensor_max_byte_span,
       .tensor_pool_id = service.tensor_pool_id,
@@ -144,6 +146,7 @@ provider_sizing_dependencies(std::span<const PoolCapacityDependencyPlanRecord> d
   return TensorServiceContractView{
       .payload_identity = service.payload_identity,
       .payload_size_bytes = service.payload_size_bytes,
+      .selected_inline_bucket_bytes = service.selected_inline_bucket_bytes,
       .tensor_payload = service.tensor_payload,
       .tensor_max_byte_span = service.tensor_max_byte_span,
       .tensor_pool_id = service.tensor_pool_id,
@@ -165,6 +168,7 @@ provider_sizing_dependencies(std::span<const PoolCapacityDependencyPlanRecord> d
   return TensorServiceContractView{
       .payload_identity = service.payload_identity,
       .payload_size_bytes = service.payload_size_bytes,
+      .selected_inline_bucket_bytes = service.selected_inline_bucket_bytes,
       .tensor_payload = service.tensor_payload,
       .tensor_max_byte_span = service.tensor_max_byte_span,
       .tensor_pool_id = service.tensor_pool_id,
@@ -210,6 +214,7 @@ inline void for_each_tensor_service_storage(TensorServiceContractView service, F
     TensorServiceContractView left, TensorServiceContractView right) noexcept {
   return payload_identity_exactly_equal(left.payload_identity, right.payload_identity) &&
          left.payload_size_bytes == right.payload_size_bytes &&
+         left.selected_inline_bucket_bytes == right.selected_inline_bucket_bytes &&
          left.tensor_payload == right.tensor_payload &&
          left.tensor_max_byte_span == right.tensor_max_byte_span &&
          left.tensor_pool_id == right.tensor_pool_id &&

@@ -866,6 +866,177 @@ TEST(ChannelInlinePayloadTest, BlockingPublishesAndReceivesControlPayload) {
   EXPECT_EQ(empty.error().code, holoscan::ErrorCode::kNotReady);
 }
 
+// A local subscriber close consumes only this process's receive endpoint. Moving first proves the
+// source facade is already closed without introducing a second status flag.
+// REQ: CHAN-143
+TEST(ChannelInlinePayloadTest, LocalCloseConsumesInlineSubscriber) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  auto publisher = runtime->create_publisher<std::uint64_t>(channel_name);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<std::uint64_t>(channel_name);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+  auto moved = std::move(*subscriber);
+  const auto moved_from_close = subscriber->close();
+  ASSERT_FALSE(moved_from_close);
+  EXPECT_EQ(moved_from_close.error().code, holoscan::ErrorCode::kClosed);
+
+  std::size_t close_allocations = 0U;
+  holoscan::expected<void, holoscan::Error> closed;
+  {
+    const holoscan::test::ScopedAllocationCounter allocations;
+    closed = moved.close();
+    close_allocations = allocations.count();
+  }
+  ASSERT_TRUE(closed) << holoscan::runtime_error_message(closed.error());
+  EXPECT_EQ(close_allocations, 0U);
+  EXPECT_FALSE(moved.has_publishers());
+
+  const auto readiness = moved.has_samples();
+  ASSERT_FALSE(readiness);
+  EXPECT_EQ(readiness.error().code, holoscan::ErrorCode::kClosed);
+  const auto received = moved.receive();
+  ASSERT_FALSE(received);
+  EXPECT_EQ(received.error().code, holoscan::ErrorCode::kClosed);
+  const auto sample = moved.receive_sample();
+  ASSERT_FALSE(sample);
+  EXPECT_EQ(sample.error().code, holoscan::ErrorCode::kClosed);
+
+  const auto repeated = moved.close();
+  ASSERT_FALSE(repeated);
+  EXPECT_EQ(repeated.error().code, holoscan::ErrorCode::kClosed);
+}
+
+// Producer EOS remains remote terminal evidence until the application observes it. A later local
+// close succeeds and only retires the still-owned receive endpoint.
+// REQ: CHAN-143
+TEST(ChannelInlinePayloadTest, LocalCloseAfterObservedProducerEndOfStreamSucceeds) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  auto publisher = runtime->create_publisher<std::uint64_t>(channel_name);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<std::uint64_t>(channel_name);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+  ASSERT_TRUE(publisher->close());
+
+  bool observed_remote_end_of_stream = false;
+  ASSERT_TRUE(wait_until(
+      [&] {
+        auto received = subscriber->receive();
+        if (!received && received.error().code == holoscan::ErrorCode::kClosed) {
+          observed_remote_end_of_stream = true;
+          return true;
+        }
+        return false;
+      },
+      std::chrono::seconds(2)));
+  ASSERT_TRUE(observed_remote_end_of_stream);
+  EXPECT_TRUE(subscriber->close());
+}
+
+// Local close first detaches both data and protected-terminal wait arms, then retires the backend
+// endpoint. A serialized later attach reports local closure without creating replacement state.
+// REQ: CHAN-143
+TEST(ChannelInlinePayloadTest, LocalCloseDetachesProtectedWaitAndBackendEndpoint) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  holoscan::ChannelOptions options{};
+  options.queue_policy = holoscan::ChannelQueuePolicy::kDropOldest;
+  options.subscriber_queue_depth = 1U;
+  options.max_subscriber_queue_depth = 1U;
+  options.enable_event_wake = true;
+  auto publisher = runtime->create_publisher<ControlPayload>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<ControlPayload>(channel_name, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+  auto wait_set = holoscan::channel_internal::InlinePayloadTestAccess::create_wait_set(*runtime);
+  ASSERT_TRUE(wait_set) << holoscan::runtime_error_message(wait_set.error());
+  auto attached =
+      holoscan::channel_internal::InlinePayloadTestAccess::attach_wait_set(**wait_set, *subscriber);
+  ASSERT_TRUE(attached) << holoscan::runtime_error_message(attached.error());
+  EXPECT_TRUE(
+      holoscan::channel_internal::InlinePayloadTestAccess::secondary_wait_set_handle(*subscriber)
+          .has_value());
+
+  ASSERT_TRUE(subscriber->close());
+  auto attach_after_close =
+      holoscan::channel_internal::InlinePayloadTestAccess::attach_wait_set(**wait_set, *subscriber);
+  ASSERT_FALSE(attach_after_close);
+  EXPECT_EQ(attach_after_close.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_FALSE(
+      holoscan::channel_internal::InlinePayloadTestAccess::secondary_wait_set_handle(*subscriber)
+          .has_value());
+
+  auto waited = (*wait_set)->wait_for(std::chrono::milliseconds(10));
+  ASSERT_FALSE(waited);
+  EXPECT_EQ(waited.error().code, holoscan::ErrorCode::kInvalidArgument);
+  std::array<std::uint64_t, 2U> ready{};
+  auto ready_count = (*wait_set)->ready_handles(ready);
+  ASSERT_TRUE(ready_count) << holoscan::runtime_error_message(ready_count.error());
+  EXPECT_EQ(*ready_count, 0U);
+
+  EXPECT_TRUE(wait_until(
+      [&publisher] {
+        auto refreshed = publisher->update_connections();
+        return refreshed && !publisher->has_subscribers();
+      },
+      std::chrono::seconds(2)));
+}
+
+// Move replacement retires the destination's old local endpoint through the same cold helper,
+// then transfers the source endpoint without changing either publisher generation.
+// REQ: CHAN-143
+TEST(ChannelInlinePayloadTest, MoveAssignmentRetiresReplacedSubscriberEndpoint) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string source_name = make_unique_channel_name();
+  const std::string replaced_name = make_unique_channel_name();
+
+  auto source_publisher = runtime->create_publisher<ControlPayload>(source_name);
+  ASSERT_TRUE(source_publisher) << holoscan::runtime_error_message(source_publisher.error());
+  auto replaced_publisher = runtime->create_publisher<ControlPayload>(replaced_name);
+  ASSERT_TRUE(replaced_publisher) << holoscan::runtime_error_message(replaced_publisher.error());
+  auto source_subscriber = runtime->create_subscriber<ControlPayload>(source_name);
+  ASSERT_TRUE(source_subscriber) << holoscan::runtime_error_message(source_subscriber.error());
+  auto destination_subscriber = runtime->create_subscriber<ControlPayload>(replaced_name);
+  ASSERT_TRUE(destination_subscriber)
+      << holoscan::runtime_error_message(destination_subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*source_publisher, std::chrono::seconds(2)));
+  ASSERT_TRUE(wait_for_subscribers(*replaced_publisher, std::chrono::seconds(2)));
+
+  *destination_subscriber = std::move(*source_subscriber);
+  const auto moved_from_close = source_subscriber->close();
+  ASSERT_FALSE(moved_from_close);
+  EXPECT_EQ(moved_from_close.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_TRUE(wait_until(
+      [&replaced_publisher] {
+        auto refreshed = replaced_publisher->update_connections();
+        return refreshed && !replaced_publisher->has_subscribers();
+      },
+      std::chrono::seconds(2)));
+
+  const ControlPayload expected{.sequence = 72U, .value = 19, .timestamp = 12.5};
+  auto emitted = source_publisher->emit(expected);
+  ASSERT_TRUE(emitted) << holoscan::runtime_error_message(emitted.error());
+  auto received = destination_subscriber->receive();
+  ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  EXPECT_EQ(received->sequence, expected.sequence);
+  EXPECT_EQ(received->value, expected.value);
+  EXPECT_DOUBLE_EQ(received->timestamp, expected.timestamp);
+  EXPECT_TRUE(destination_subscriber->close());
+}
+
 // Manual named channels do not carry catalog type identity. Two payload sizes in the same HoloMQ
 // bucket can therefore attach, but the typed facade must reject a short frame before bit-casting
 // persistent endpoint scratch into the wider type.
@@ -1123,6 +1294,121 @@ TEST(ChannelInlinePayloadTest, ExplicitClosePublishesOrderedEndOfStreamToEveryFa
   }
 }
 
+// Local subscriber retirement emits no data or control operation and does not close the producer.
+// A publisher authored for two required recipients keeps that strict pre-submit policy; after a
+// replacement arm attaches, both it and the continuously attached arm resume data and EOS.
+// REQ: CHAN-143
+TEST(ChannelInlinePayloadTest, LocalClosePreservesProducerAndRequiredFanoutContract) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+  holoscan::ChannelOptions options{};
+  options.expected_recipient_count = 2U;
+  options.queue_policy = holoscan::ChannelQueuePolicy::kDropOldest;
+  options.subscriber_queue_depth = 2U;
+  options.max_subscriber_queue_depth = 2U;
+
+  auto publisher = runtime->create_publisher<ControlPayload>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber_a = runtime->create_subscriber<ControlPayload>(channel_name, options);
+  ASSERT_TRUE(subscriber_a) << holoscan::runtime_error_message(subscriber_a.error());
+  auto subscriber_b = runtime->create_subscriber<ControlPayload>(channel_name, options);
+  ASSERT_TRUE(subscriber_b) << holoscan::runtime_error_message(subscriber_b.error());
+  ASSERT_TRUE(wait_for_control_payload_recipients(
+      *publisher, 2U, std::chrono::seconds(2), *subscriber_a, *subscriber_b));
+
+  const ControlPayload both_expected{.sequence = 80U, .value = 13, .timestamp = 4.0};
+  auto both = publisher->emit(both_expected);
+  ASSERT_TRUE(both) << holoscan::runtime_error_message(both.error());
+  EXPECT_EQ(*both, 2U);
+  for (auto* subscriber : {&*subscriber_a, &*subscriber_b}) {
+    auto received = subscriber->receive();
+    ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+    EXPECT_EQ(received->sequence, both_expected.sequence);
+  }
+
+  ASSERT_TRUE(subscriber_a->close());
+  auto no_local_control = subscriber_b->receive();
+  ASSERT_FALSE(no_local_control);
+  EXPECT_EQ(no_local_control.error().code, holoscan::ErrorCode::kNotReady);
+  ASSERT_TRUE(wait_until(
+      [&publisher] {
+        auto refreshed = publisher->update_connections();
+        return refreshed && publisher->has_subscribers();
+      },
+      std::chrono::seconds(2)));
+
+  const ControlPayload rejected_expected{.sequence = 81U, .value = 29, .timestamp = 5.0};
+  auto rejected = publisher->emit(rejected_expected);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code, holoscan::ErrorCode::kNotReady);
+  auto no_partial_delivery = subscriber_b->receive();
+  ASSERT_FALSE(no_partial_delivery);
+  EXPECT_EQ(no_partial_delivery.error().code, holoscan::ErrorCode::kNotReady);
+
+  auto replacement = runtime->create_subscriber<ControlPayload>(channel_name, options);
+  ASSERT_TRUE(replacement) << holoscan::runtime_error_message(replacement.error());
+  ASSERT_TRUE(wait_for_control_payload_recipients(
+      *publisher, 2U, std::chrono::seconds(2), *subscriber_b, *replacement));
+  const ControlPayload resumed_expected{.sequence = 82U, .value = 31, .timestamp = 6.0};
+  auto resumed = publisher->emit(resumed_expected);
+  ASSERT_TRUE(resumed) << holoscan::runtime_error_message(resumed.error());
+  EXPECT_EQ(*resumed, 2U);
+  for (auto* subscriber : {&*subscriber_b, &*replacement}) {
+    auto received = subscriber->receive();
+    ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+    EXPECT_EQ(received->sequence, resumed_expected.sequence);
+    EXPECT_EQ(received->value, resumed_expected.value);
+  }
+
+  ASSERT_TRUE(publisher->close());
+  for (auto* subscriber : {&*subscriber_b, &*replacement}) {
+    auto remote_end_of_stream = subscriber->receive();
+    ASSERT_FALSE(remote_end_of_stream);
+    EXPECT_EQ(remote_end_of_stream.error().code, holoscan::ErrorCode::kClosed);
+  }
+  EXPECT_TRUE(subscriber_b->close());
+  EXPECT_TRUE(replacement->close());
+}
+
+// An unread protected terminal record is local capacity owned by that recipient. Retiring one arm
+// after the producer's successful close releases it without changing or duplicating the EOS
+// already accepted by the other arm.
+// REQ: CHAN-143
+TEST(ChannelInlinePayloadTest, LocalCloseDiscardsUnreadTerminalWithoutChangingPeerEos) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+  holoscan::ChannelOptions options{};
+  options.expected_recipient_count = 2U;
+  options.queue_policy = holoscan::ChannelQueuePolicy::kDropOldest;
+  options.subscriber_queue_depth = 1U;
+  options.max_subscriber_queue_depth = 1U;
+
+  auto publisher = runtime->create_publisher<ControlPayload>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber_a = runtime->create_subscriber<ControlPayload>(channel_name, options);
+  ASSERT_TRUE(subscriber_a) << holoscan::runtime_error_message(subscriber_a.error());
+  auto subscriber_b = runtime->create_subscriber<ControlPayload>(channel_name, options);
+  ASSERT_TRUE(subscriber_b) << holoscan::runtime_error_message(subscriber_b.error());
+  ASSERT_TRUE(wait_for_control_payload_recipients(
+      *publisher, 2U, std::chrono::seconds(2), *subscriber_a, *subscriber_b));
+
+  ASSERT_TRUE(publisher->close());
+  ASSERT_TRUE(subscriber_a->close());
+
+  auto remote_end_of_stream = subscriber_b->receive();
+  ASSERT_FALSE(remote_end_of_stream);
+  EXPECT_EQ(remote_end_of_stream.error().code, holoscan::ErrorCode::kClosed);
+  auto repeated_observation = subscriber_b->receive();
+  ASSERT_FALSE(repeated_observation);
+  EXPECT_EQ(repeated_observation.error().code, holoscan::ErrorCode::kNotReady);
+  auto pending = subscriber_b->has_samples();
+  ASSERT_TRUE(pending);
+  EXPECT_FALSE(*pending);
+  EXPECT_TRUE(subscriber_b->close());
+}
+
 // A recipient may legitimately miss an earlier partial fanout publication. The protected terminal
 // lane drains each recipient's own data lane first instead of requiring a global contiguous
 // sequence, so the recipient that accepted data observes it before EOS while the later recipient
@@ -1326,7 +1612,7 @@ TEST(ChannelInlinePayloadTest, NoRecipientRejectsBeforeSubmission) {
   EXPECT_EQ(emitted.error().code, holoscan::ErrorCode::kNotReady);
 }
 
-// REQ: CHAN-125
+// REQ: CHAN-145
 TEST(ChannelInlinePayloadTest, SelectsLargeFixedPayloadBucketsThroughThirtyTwoKiB) {
   auto runtime = holoscan::ChannelRuntime::create();
   ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
@@ -1733,7 +2019,6 @@ TEST(ChannelInlinePayloadTest, IncompleteFanoutRejectsBeforeSubmission) {
 //                               --> subscriber_b
 //                               --> subscriber_c
 // Key assertion: emit returns fanout count 3; all three subscribers receive the same payload.
-// REQ: CHAN-124
 TEST(ChannelInlinePayloadTest, BlockingFanoutPublishesToAllControlPayloadSubscribers) {
   auto runtime = holoscan::ChannelRuntime::create();
   ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());

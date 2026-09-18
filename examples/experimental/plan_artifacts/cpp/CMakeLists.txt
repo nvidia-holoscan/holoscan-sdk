@@ -50,5 +50,5 @@ endif()
 
 install(TARGETS plan_artifacts
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/plan_artifacts/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

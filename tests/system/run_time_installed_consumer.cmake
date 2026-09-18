@@ -39,8 +39,8 @@ list(REMOVE_DUPLICATES sdk_build_targets)
 set(sdk_build_command
     "${CMAKE_COMMAND}" --build "${HOLOSCAN_BUILD_DIR}" --target ${sdk_build_targets} --parallel 4
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND sdk_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(COMMAND ${sdk_build_command} RESULT_VARIABLE sdk_build_result)
 if(NOT sdk_build_result EQUAL 0)
@@ -56,7 +56,7 @@ set(install_components
     holoscan-dependencies
     iceoryx2-lib
     dev
-    holomq
+    holoscan-holomq
     holoscan-core
     holoscan-sensor-io
 )
@@ -70,8 +70,8 @@ foreach(component IN LISTS install_components)
         --prefix "${install_prefix}"
         --component "${component}"
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND install_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(COMMAND ${install_command} RESULT_VARIABLE install_result)
     if(NOT install_result EQUAL 0)
@@ -85,13 +85,10 @@ foreach(required_install_path IN ITEMS
         "${install_prefix}/include/holoscan/core/managed_shutdown_signals.hpp"
         "${install_prefix}/include/holoscan/core/source_id.hpp"
         "${install_prefix}/include/holoscan/core/tag.hpp"
-        "${install_prefix}/include/holoscan/schemas/tensor_bfbs_generated.h"
         "${install_prefix}/include/holoscan/time/clock_registry.hpp"
         "${install_prefix}/include/holoscan/time/time_point.hpp"
         "${install_prefix}/lib/cmake/holoscan/HoloscanSchemaTools.cmake"
-        "${install_prefix}/lib/cmake/holoscan/HoloscanGenerateSchemaTraits.cmake"
-        "${install_prefix}/lib/cmake/holoscan/HoloscanGenerateDescriptorSchemaTraits.cmake"
-        "${install_prefix}/lib/cmake/holoscan/HoloscanSchemaTraitsConfig.cmake.in"
+        "${install_prefix}/lib/cmake/holoscan/generate_schema_traits.py"
         "${install_prefix}/lib/cmake/holoscan/holoscan-config.cmake"
         "${install_prefix}/share/holoscan/schemas/flatbuffers/reflection.fbs"
         "${install_prefix}/share/holoscan/schemas/tensor.fbs"
@@ -103,6 +100,9 @@ foreach(required_install_path IN ITEMS
         message(FATAL_ERROR "Installed consumer prerequisite is missing: ${required_install_path}")
     endif()
 endforeach()
+if(EXISTS "${install_prefix}/include/holoscan/schemas/tensor_bfbs_generated.h")
+    message(FATAL_ERROR "Default SDK schema generation unexpectedly installed runtime BFBS bytes")
+endif()
 
 set(configure_command
     "${CMAKE_COMMAND}"
@@ -130,8 +130,16 @@ if(DEFINED HOLOSCAN_MSVC_RUNTIME_LIBRARY AND NOT HOLOSCAN_MSVC_RUNTIME_LIBRARY S
     list(APPEND configure_command
         "-DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=${HOLOSCAN_MSVC_RUNTIME_LIBRARY}")
 endif()
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}")
+endif()
+if(DEFINED HOLOSCAN_CONSUMER_FIND_MODE AND NOT HOLOSCAN_CONSUMER_FIND_MODE STREQUAL "")
+    list(APPEND configure_command
+        "-DHOLOSCAN_PACKAGE_FIND_MODE:STRING=${HOLOSCAN_CONSUMER_FIND_MODE}")
+endif()
+if(DEFINED HOLOSCAN_MODULE_PACKAGE_DIR AND NOT HOLOSCAN_MODULE_PACKAGE_DIR STREQUAL "")
+    list(APPEND configure_command
+        "-DHOLOSCAN_MODULE_PACKAGE_DIR:PATH=${install_prefix}/${HOLOSCAN_MODULE_PACKAGE_DIR}")
 endif()
 
 execute_process(COMMAND ${configure_command} RESULT_VARIABLE configure_result)
@@ -141,8 +149,8 @@ endif()
 
 set(consumer_build_command
     "${CMAKE_COMMAND}" --build "${consumer_build_dir}" --parallel 4)
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND consumer_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND consumer_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(COMMAND ${consumer_build_command} RESULT_VARIABLE consumer_build_result)
 if(NOT consumer_build_result EQUAL 0)
@@ -152,8 +160,8 @@ endif()
 set(consumer_test_command
     "${HOLOSCAN_CTEST_COMMAND}" --test-dir "${consumer_build_dir}" --output-on-failure --verbose
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND consumer_test_command -C "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND consumer_test_command -C "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${consumer_test_command}

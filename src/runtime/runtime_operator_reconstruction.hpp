@@ -29,6 +29,7 @@ struct RuntimeOperatorReconstruction {
 /// Validate and reconstruct all process-local Operators and their Parameter bindings.
 [[nodiscard]] expected<RuntimeOperatorReconstruction, Error> reconstruct_runtime_operators(
     const ExecutionPlanState& plan, RunGenerationId run_generation,
-    ProcessGroupId process_group = {}, RuntimeReplayMismatchDetail* replay_mismatch = nullptr);
+    ProcessGroupId process_group = {}, RuntimeReplayMismatchDetail* replay_mismatch = nullptr,
+    RuntimeDiagnosticDetail* failure_detail = nullptr);
 
 }  // namespace holoscan::detail

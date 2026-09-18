@@ -4,5 +4,5 @@
 namespace schema_tools;
 
 table Included {
-  value: uint;
+  value: uint (id: 0);
 }

@@ -1,0 +1,131 @@
+<Note title="You will learn">
+  - What a Holoscan module is and how modules relate to the core runtime and HoloMQ
+  - The difference between SDK core modules and HoloHub ecosystem modules
+  - Which core modules ship with Holoscan SDK 5 and how to enable and consume them
+  - Where to start when you want to build a module of your own or contribute one to the SDK
+</Note>
+
+Holoscan SDK 5 is layered. [HoloMQ](/holoscan/sdk-user-guide/advanced/interprocess-channels)
+provides zero-copy transport, the core runtime provides the
+compose → compile → run machinery, and **modules** provide domain-specific
+components for composing applications. This page introduces modules as a
+concept; the sub-pages in this section document each core module in detail.
+
+## What is a module?
+
+A "Holoscan Module" is a library that extends the Holoscan SDK API with a
+separately selectable, domain-specific capability. A module typically bundles:
+
+- **Operators** — ready-to-wire `holoscan::Operator` implementations with typed
+  ports, temporal contracts, and parameter aggregates.
+- **Resources and helpers** — the backend a module wraps (TensorRT, CV-CUDA,
+  the HoloViz renderer) together with the pools, contexts, and utilities its
+  operators need.
+- **Examples and tests** — a shipped example and an installed-consumer test
+  that show and verify the supported way to use the module.
+
+Modules build on `holoscan::core`. Everything a module
+operator does — port typing, tensor loans, missing-data policy, error
+reporting — follows the same rules as an operator you write yourself (see
+[Operator anatomy in depth](/holoscan/sdk-user-guide/building-operators/operator-anatomy)).
+Core-integrated subsystems such as HoloMQ are part of the runtime and are not
+modules.
+
+## Core modules and ecosystem modules
+
+Two kinds of module exist, with different owners and support levels:
+
+| | Core modules | External modules |
+|---|---|---|
+| Source location | `modules/` in the Holoscan SDK repository | A standalone `holoscan-<name>` repository, or [HoloHub](/holoscan/sdk-user-guide/resources/holohub) |
+| Released by | NVIDIA, with each Holoscan SDK release | The module's maintainers, on their own cadence |
+| Support | Holoscan SDK release qualification and support channels | Community-supported unless the module documents otherwise |
+| Discover | This section of the user guide | The [HoloHub Modules catalog](https://nvidia-holoscan.github.io/holohub/modules/) |
+| Contributor guide | [`modules/DEVELOPER.md`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/modules/DEVELOPER.md) | [Holoscan Module Template and tutorials](#build-your-own-external-holoscan-module) |
+
+Generally new modules are started as external modules  in dedicated project
+repositories and iterated on with the community. Capabilities that prove broadly useful and
+meet the SDK's quality bar can graduate into core modules. The two layers are
+complementary: use core modules for supported domain capabilities, and browse
+the Holoscan Ecosystem for reference applications, hardware integrations, and components that
+are not part of the core SDK.
+
+## Core modules in Holoscan SDK 5.x
+
+| Module | Provides | Backend | Namespace | Build option |
+|---|---|---|---|---|
+| [Inference](/holoscan/sdk-user-guide/modules/inference) | `InferenceOp`: multi-model TensorRT inference with automatic dispatch selection | HoloInfer (NVIDIA TensorRT) | `holoscan::ops` | `HOLOSCAN_BUILD_INFERENCE` |
+| [Vision](/holoscan/sdk-user-guide/modules/vision) | Eight GPU image and detection operators: resize, crop, border, remap, normalize, convert, reformat, NMS | NVIDIA CV-CUDA | `holoscan::vision` | `HOLOSCAN_BUILD_VISION` |
+| [Visualization](/holoscan/sdk-user-guide/modules/visualization) | `HolovizOp`: fixed-rate layered rendering of image, geometry, text, and LUT layers | HoloViz (CUDA/Vulkan) | `holoscan::visualization` | `HOLOSCAN_BUILD_VISUALIZATION` |
+
+All three build options default to `ON`, so a default SDK build, Debian
+package, or container image carries every core module. Set an option to `OFF`
+to omit a module from a source build.
+
+<Note>
+  Each module page states its own API stability. See individual module pages for details.
+</Note>
+
+## Use a core module
+
+Building a module in-tree is a matter of leaving its option enabled:
+
+```bash
+./run build --config "-DHOLOSCAN_BUILD_INFERENCE=ON -DHOLOSCAN_BUILD_VISION=ON -DHOLOSCAN_BUILD_VISUALIZATION=ON"
+```
+
+Installed consumers find a module through the SDK's CMake package. Every core
+module supports one or both of these forms; the module page documents which
+targets to link:
+
+```cmake
+# Request a module as a component of the main Holoscan package ...
+find_package(holoscan REQUIRED COMPONENTS inference)
+target_link_libraries(my_pipeline PRIVATE holoscan::core holoscan::op_inference)
+
+# ... or find a module that ships as its own package.
+find_package(holoscan-vision CONFIG REQUIRED)
+target_link_libraries(my_pipeline PRIVATE holoscan::vision)
+```
+
+Module headers are namespaced by module rather than exposed through the
+`<holoscan/holoscan.hpp>` umbrella, for example
+`<holoscan/operators/inference/inference.hpp>`,
+`<holoscan/vision/resize_op.hpp>`, and
+`<holoscan/visualization/holoviz_op.hpp>`. Module operators join a graph
+exactly like your own operators do — see
+[Composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph).
+
+## Build your own external Holoscan Module
+
+Anyone can develop a Holoscan external module. Holoscan CLI provides the tooling and the
+public conventions (`holoscan-<name>` repository naming, a `metadata.json`
+descriptor, and a CMake layout that consumes an installed SDK):
+
+- Start from the template with the Holoscan CLI:
+
+  ```bash
+  holoscan create my-module
+  ```
+
+- Follow the [Create a Holoscan module](https://nvidia-holoscan.github.io/holohub/tutorials/holoscan-modules/create-a-module/)
+  and [Use a Holoscan module](https://nvidia-holoscan.github.io/holohub/tutorials/holoscan-modules/use-a-module/)
+  tutorials for the end-to-end workflow, from scaffold to a downstream
+  application that consumes your installed package.
+- List your module in the [Holoscan Ecosystem Modules catalog](https://nvidia-holoscan.github.io/holohub/modules/)
+  so other developers can find it.
+
+The [HoloHub Overview](/holoscan/sdk-user-guide/resources/holohub) page
+describes the surrounding ecosystem.
+
+## Recap
+
+- A module is a library of operators and supporting components that extends
+  `holoscan::core` with a domain capability.
+- Core modules ship and are supported with the SDK; ecosystem modules are
+  published through HoloHub, which is also the graduation path into the SDK.
+- Holoscan SDK 5.x ships three core modules — Inference, Vision, and
+  Visualization — enabled by default and consumed through
+  `find_package(holoscan COMPONENTS ...)` or `find_package(holoscan-<module>)`.
+- Build your own external module from the Holoscan CLI template.
+- Next: [Inference](/holoscan/sdk-user-guide/modules/inference).

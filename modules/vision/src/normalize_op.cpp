@@ -73,8 +73,7 @@ class NormalizeOp::Impl {
   std::unique_ptr<cvcuda::Normalize> operation;
 };
 
-NormalizeOp::NormalizeOp(VisionImageCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+NormalizeOp::NormalizeOp() : impl_(std::make_unique<Impl>()) {}
 
 NormalizeOp::~NormalizeOp() = default;
 
@@ -87,12 +86,6 @@ void NormalizeOp::setup(OperatorSpec& spec) {
   if (!valid_scale) {
     throw RuntimeError(valid_scale.error());
   }
-  auto byte_span = detail::maximum_output_byte_span(
-      capacity_.max_width, capacity_.max_height, capacity_.max_batch_size, sizeof(float));
-  if (!byte_span) {
-    throw RuntimeError(byte_span.error());
-  }
-
   spec.input(input, "input")
       .queue_depth(1U)
       .expects_tensor(TensorInputSpec{
@@ -100,16 +93,14 @@ void NormalizeOp::setup(OperatorSpec& spec) {
           .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
       });
   spec.output(output, "output")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = detail::ImageTensorView::kMaxRank,
-                  .max_byte_span = *byte_span,
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          input_max_byte_span(input));
 }
 
 Contract NormalizeOp::contract() const {
@@ -150,13 +141,9 @@ expected<void, Error> NormalizeOp::compute(ExecutionContext& context) {
     return make_unexpected(std::move(sample).error());
   }
   auto input_view = detail::describe_image_tensor(
-      sample->data, detail::TensorOperation::kNormalize, capacity_.max_batch_size);
+      sample->data, detail::TensorOperation::kNormalize, kMaximumBatchSize);
   if (!input_view) {
     return make_unexpected(std::move(input_view).error());
-  }
-  if (input_view->width > capacity_.max_width || input_view->height > capacity_.max_height) {
-    return failure(ErrorCode::kInvalidArgument,
-                   "NormalizeOp output exceeds the authored output-pool capacity");
   }
   auto base = to_channel_values(configuration.base, input_view->channels, "base");
   if (!base) {
@@ -200,7 +187,7 @@ expected<void, Error> NormalizeOp::compute(ExecutionContext& context) {
                                                    input_view->dtype,
                                                    DLDevice{kDLCUDA, loan->device_id().value},
                                                    detail::TensorOperation::kNormalize,
-                                                   capacity_.max_batch_size);
+                                                   kMaximumBatchSize);
   if (!output_view) {
     return make_unexpected(std::move(output_view).error());
   }

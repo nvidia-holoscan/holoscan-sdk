@@ -24,12 +24,8 @@ struct BatchTensorSchema {};
 
 template <>
 consteval SchemaIdentity schema_identity<SingularTensorSchema>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.SingularTensorSchema",
-      .version = 1U,
-      .schema_sha256 = {std::byte{0x15}},
-      .id = SchemaId{.value = {std::byte{0x51}}},
-  };
+  return make_schema_identity(make_schema_family_identity("holoscan.test.SingularTensorSchema"),
+                              make_flatbuffer_file_identifier("STSC"));
 }
 
 template <>

@@ -9,6 +9,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -81,11 +82,49 @@ class RuntimeChannelTeardownTestControl final {
   std::atomic_bool runtime_destroyed_{false};
 };
 
-/// Source-tree control that makes a bounded number of blocking Channel polls report incomplete.
+/// Select which Channel poll flavour a \ref RuntimeChannelIncompletePollTestControl forces.
+///
+/// Each flavour is also the acquisition the Channel readiness binding performs for that poll.
+enum class RuntimeChannelIncompletePollKind : std::uint8_t {
+  /// Blocking recovery polls (\ref PortBinding::poll_blocking).
+  kBlocking,
+  /// Ordinary nonblocking readiness polls (\ref PortBinding::poll).
+  kNonblocking,
+  /// The bounded retry after a contended decline (\ref PortBinding::poll_after_contention).
+  kContentionRetry,
+};
+
+/// Budget for one contended input cache acquisition during \ref PortBinding::poll_after_contention.
+///
+/// Every holder of an input cache mutex is a short, non-blocking critical section (a slot
+/// reservation or a bounded store, measured at roughly 100-200 ns), so 50 us leaves a wide margin
+/// per acquisition while staying far below the 1 ms fallback park the retry avoids. The Channel
+/// readiness binding applies the budget per contended acquisition, not per poll, and reports an
+/// expired budget exactly like a declined nonblocking poll.
+constexpr std::chrono::nanoseconds kContentionRetryBudget = std::chrono::microseconds{50};
+
+/// Source-tree control that makes a bounded number of Channel polls report incomplete.
+///
+/// A forced nonblocking decline models an ordinary readiness poll that lost its input cache lock
+/// to a concurrent bounded holder; the contention retry then completes, so a test can prove the
+/// retry converts the published revision promptly. A forced contention-retry decline models a
+/// holder that outlives the retry, so a round can still end with an incomplete ordinary scan.
 class RuntimeChannelIncompletePollTestControl final {
  public:
-  explicit RuntimeChannelIncompletePollTestControl(std::uint32_t count) noexcept
-      : remaining_(count) {}
+  explicit RuntimeChannelIncompletePollTestControl(
+      std::uint32_t count,
+      RuntimeChannelIncompletePollKind kind = RuntimeChannelIncompletePollKind::kBlocking) noexcept
+      : remaining_(count), kind_(kind) {}
+
+  /// Return whether this control targets the given poll flavour.
+  [[nodiscard]] bool applies_to(const RuntimeChannelIncompletePollKind flavour) const noexcept {
+    return flavour == kind_;
+  }
+
+  /// Replace the remaining forced-incomplete budget, for example after a warm-up delivery.
+  void arm(const std::uint32_t count) noexcept {
+    remaining_.store(count, std::memory_order_release);
+  }
 
   [[nodiscard]] bool consume() noexcept {
     std::uint32_t remaining = remaining_.load(std::memory_order_acquire);
@@ -106,6 +145,7 @@ class RuntimeChannelIncompletePollTestControl final {
  private:
   std::atomic<std::uint32_t> remaining_{};
   std::atomic<std::uint32_t> forced_{};
+  RuntimeChannelIncompletePollKind kind_{RuntimeChannelIncompletePollKind::kBlocking};
 };
 
 /// Source-tree hook invoked after RunSession creates its Channel session and before the run starts.
@@ -232,12 +272,15 @@ struct RuntimeChannelTensorTransferState {
 };
 
 /// Describe one process-local replay declaration without placing C++ type state in the plan.
+struct TensorContractMismatchCapture;
+
 struct RuntimeChannelPortReplayRecord {
   PortId port{};
   VertexId owner{};
   PortDirection direction{PortDirection::kInput};
   void* declaration{};
   const RuntimePortTypeOps* type_ops{};
+  TensorContractMismatchCapture* tensor_failure{};
 };
 
 /// Select retained typed samples for one input during one activation.
@@ -249,6 +292,13 @@ struct RuntimeChannelActivationSelection {
   bool destructive{};
 };
 
+/// Choose which eligible staged sample one freshness handoff reserves.
+enum class RuntimeChannelFreshnessSelectionMode : std::uint8_t {
+  kNewest,
+  kNewestWithArrivalPrefix,
+  kOldestProducerSuccessor,
+};
+
 /// Identify the exact staged sample and subscriber selected for one freshness handoff.
 ///
 /// The generation is opaque to callers. RuntimeChannelSession validates it against the live
@@ -258,7 +308,21 @@ struct RuntimeChannelFreshnessReservation {
   PortId port{};
   TemporalSampleRecord successor{};
   TimePoint successor_reference{};
+  TemporalSampleRecord target{};
+  TimePoint target_reference{};
   std::uint64_t generation{};
+};
+
+/// Bind one transported ReuseLast probe to the exact staged head it observed.
+///
+/// The subscriber index is private plan materialization order. Sequence and capture are copied
+/// from the transport while its consumer lock is held; commit revalidates both under that same
+/// lock before releasing any retained selector claim.
+struct RuntimeChannelStagedReuseCandidate {
+  std::uint32_t subscriber_index{};
+  std::uint64_t source_sequence{};
+  TimePoint source_capture{};
+  TimePoint successor_reference{};
 };
 
 /// Describe one cold-proven destination that may consume a direct continuation poll in-place.
@@ -352,10 +416,10 @@ class RuntimeChannelSession {
   /// This cold query distinguishes bound Channel endpoints from replay-only port declarations.
   [[nodiscard]] bool has_materialized_activation_state(VertexId owner) const noexcept;
 
-  /// Return whether reconstruction materialized Channel input state for an Operator.
+  /// Return whether reconstruction materialized subscriber-backed Channel input state.
   ///
-  /// Output-only owners still require activation state for publication but must not acquire an
-  /// input-arrival readiness source.
+  /// Output-only owners and channel-free optional declarations may still require activation state
+  /// but must not acquire an input-arrival readiness source.
   [[nodiscard]] bool has_materialized_input_state(VertexId owner) const noexcept;
 
   /// Create one event-ring facade for all Channel inputs owned by an Operator.
@@ -529,11 +593,15 @@ class RuntimeChannelSession {
   /// @param floor Bound on the reference coordinate of every witness the round can produce, or
   /// \c std::nullopt when the round can produce none. No witness means nothing to strand, so the
   /// coordinate test is skipped and any strictly newer staged record qualifies.
+  /// @param selection_mode Producer-order selection for a single handoff, or newest-causal target
+  /// selection with its producer-order arrival prefix preserved.
   /// @return The exact reservation when one subscriber owns both the retained claim and an
   ///         admissible successor; \c std::nullopt when the caller must decline the eviction.
   [[nodiscard]] expected<std::optional<RuntimeChannelFreshnessReservation>, Error>
   reserve_freshness_refill(PortId port, const TemporalSampleRecord& retained,
-                           std::optional<TimePoint> floor) noexcept;
+                           std::optional<TimePoint> floor,
+                           RuntimeChannelFreshnessSelectionMode selection_mode =
+                               RuntimeChannelFreshnessSelectionMode::kNewest) noexcept;
 
   /// Return whether an exact subscriber owns a reclaimable retained claim and newer staging.
   ///
@@ -543,29 +611,38 @@ class RuntimeChannelSession {
   [[nodiscard]] expected<bool, Error> has_freshness_refill_candidate(
       PortId port, const TemporalSampleRecord& retained) const noexcept;
 
-  /// Return capture ordering for a staged successor of one exact dual-claimed ReuseLast slot.
-  [[nodiscard]] expected<std::optional<TimePoint>, Error> staged_reuse_replacement_candidate(
-      PortId port, const TemporalSampleRecord& retained) const noexcept;
+  /// Return an exact transported-head token for one retained selector slot.
+  [[nodiscard]] expected<std::optional<RuntimeChannelStagedReuseCandidate>, Error>
+  staged_reuse_replacement_candidate(PortId port,
+                                     const TemporalSampleRecord& retained) const noexcept;
 
   /// Return whether one exact input's current generation has a non-consuming terminal head.
   [[nodiscard]] expected<bool, Error> input_terminal_observed(PortId port) const noexcept;
 
-  /// Replace one exact dual-claimed ReuseLast slot with its already-staged newer successor.
-  [[nodiscard]] expected<void, Error> replace_staged_reuse(
-      PortId port, const TemporalSampleRecord& retained) noexcept;
+  /// Replace one exact retained selector slot with its already-staged newer successor.
+  ///
+  /// @return The immutable temporal identity assigned to the committed replacement.
+  [[nodiscard]] expected<TemporalSampleRecord, Error> replace_staged_reuse(
+      PortId port, const TemporalSampleRecord& retained,
+      const RuntimeChannelStagedReuseCandidate& candidate) noexcept;
+
+  /// Return whether this input has a bounded freshness-refill path.
+  ///
+  /// Direct drop-oldest subscribers and transported ReuseLast staging can use the handoff.
+  [[nodiscard]] expected<bool, Error> supports_freshness_refill(PortId port) const noexcept;
 
   /// Return whether this input has a drop-oldest subscriber with bounded refill staging.
-  ///
-  /// RunSession uses this cold startup query to keep freshness-only poll status, claim scans, and
-  /// recovery work off temporal inputs whose queue policy cannot use the handoff.
-  [[nodiscard]] expected<bool, Error> supports_freshness_refill(PortId port) const noexcept;
+  [[nodiscard]] expected<bool, Error> supports_drop_oldest_freshness_refill(
+      PortId port) const noexcept;
 
   /// Recover an abandoned reservation before this input's next reconcile decision.
   ///
   /// The operation promotes newly writable staging while holding the subscriber cache lock. It
   /// returns false when a producer owns that lock, leaving the generation-fenced reservation for
-  /// another non-blocking attempt.
-  [[nodiscard]] expected<bool, Error> recover_abandoned_freshness_reservation(PortId port) noexcept;
+  /// another non-blocking attempt. A caller that will immediately re-reserve may preserve an
+  /// uncommitted target while its retained claim remains live.
+  [[nodiscard]] expected<bool, Error> recover_abandoned_freshness_reservation(
+      PortId port, bool preserve_uncommitted_target = false) noexcept;
 
   /// Abandon an exact reservation whose eviction did not proceed.
   void release_freshness_reservation(

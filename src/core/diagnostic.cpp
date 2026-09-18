@@ -5,11 +5,16 @@
 
 #include <algorithm>
 #include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 #include <fmt/format.h>
+#include <magic_enum/magic_enum.hpp>
+
+#include "diagnostic_context.hpp"
 
 #include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/execution_plan.hpp>
@@ -27,19 +32,32 @@ std::string_view severity_name(DiagnosticSeverity severity) noexcept {
   return "unknown";
 }
 
-}  // namespace
+std::string source_vertex_name(const ExecutionGraphView& graph, VertexId id,
+                               std::string_view fallback = "unknown") {
+  const auto vertices = graph.vertices();
+  const auto vertex = std::ranges::find(vertices, id, &VertexRecord::id);
+  if (vertex == vertices.end()) {
+    return std::string{fallback};
+  }
+  return vertex->name.empty() ? "unnamed" : detail::diagnostic_operator_path(graph, id);
+}
 
-std::string format_diagnostic(const Diagnostic& diagnostic, const ExecutionGraphView& graph) {
-  fmt::memory_buffer output;
-  fmt::format_to(
-      std::back_inserter(output), "{} {}", severity_name(diagnostic.severity), diagnostic.token);
+std::optional<std::string_view> source_port_name(const ExecutionGraphView& graph, PortId id) {
+  if (!id) {
+    return std::nullopt;
+  }
+  const auto ports = graph.ports();
+  const auto port = std::ranges::find_if(
+      ports, [id](const auto& candidate) { return candidate.id.value == id.value(); });
+  if (port == ports.end()) {
+    return std::nullopt;
+  }
+  return port->name;
+}
 
-  bool first_field = true;
-  const auto append_field = [&output, &first_field](std::string_view name, const auto& value) {
-    fmt::format_to(std::back_inserter(output), "{}{}={}", first_field ? " [" : ", ", name, value);
-    first_field = false;
-  };
-
+template <typename AppendField>
+void append_source_fields(const Diagnostic& diagnostic, const ExecutionGraphView& graph,
+                          const AppendField& append_field) {
   if (diagnostic.id) {
     append_field("id", diagnostic.id.value);
   }
@@ -50,19 +68,136 @@ std::string format_diagnostic(const Diagnostic& diagnostic, const ExecutionGraph
     append_field("graph", diagnostic.source.graph.value);
   }
   if (diagnostic.source.vertex) {
-    const auto vertices = graph.vertices();
-    const auto vertex = std::find_if(vertices.begin(), vertices.end(), [&](const auto& candidate) {
-      return candidate.id == diagnostic.source.vertex;
-    });
-    const std::string_view name =
-        vertex == vertices.end()
-            ? std::string_view{"unknown"}
-            : (vertex->name.empty() ? std::string_view{"unnamed"} : std::string_view{vertex->name});
-    append_field("vertex", name);
+    const std::string_view fallback = diagnostic.detail && !diagnostic.detail->operator_path.empty()
+                                          ? std::string_view{diagnostic.detail->operator_path}
+                                          : std::string_view{"unknown"};
+    append_field("vertex", source_vertex_name(graph, diagnostic.source.vertex, fallback));
     append_field("vertex_id", diagnostic.source.vertex.value);
   }
   if (diagnostic.source.port) {
     append_field("port", diagnostic.source.port.value());
+    if (const auto name = source_port_name(graph, diagnostic.source.port)) {
+      append_field("port_name", *name);
+    }
+  }
+}
+
+template <typename AppendField>
+void append_detail_context(const Diagnostic& diagnostic, const ExecutionGraphView& graph,
+                           const DiagnosticDetail& evidence, const AppendField& append_field) {
+  if (!evidence.operator_path.empty()) {
+    append_field(diagnostic.source.vertex ? "operator" : "component", evidence.operator_path);
+  } else if (const auto path = detail::diagnostic_operator_path(graph, diagnostic.source.vertex);
+             !path.empty()) {
+    append_field("operator", path);
+  }
+  if (evidence.operation != DiagnosticOperation::kUnknown) {
+    append_field("operation", magic_enum::enum_name(evidence.operation));
+  }
+  if (evidence.stage) {
+    append_field("stage", magic_enum::enum_name(*evidence.stage));
+  }
+  if (evidence.phase != LifecycleTransitionPhase::kNone) {
+    append_field("phase", magic_enum::enum_name(evidence.phase));
+  }
+  if (evidence.transaction_id != 0U) {
+    append_field("transaction", evidence.transaction_id);
+  }
+  const bool has_cause =
+      evidence.error.code != ErrorCode::kSuccess || !evidence.error.message.empty();
+  if (has_cause || evidence.stage || evidence.role != DiagnosticFailureRole::kPrimary) {
+    append_field("role", magic_enum::enum_name(evidence.role));
+  }
+  if (has_cause) {
+    append_field("cause", runtime_error_message(evidence.error));
+  }
+  for (std::size_t index = 0U; index < std::min(evidence.causes.size(), std::size_t{3U}); ++index) {
+    append_field("caused_by", runtime_error_message(evidence.causes[index]));
+  }
+}
+
+template <typename AppendField>
+void append_related_source(const DiagnosticDetail& evidence, const ExecutionGraphView& graph,
+                           const AppendField& append_field) {
+  const auto& source = evidence.related_source;
+  if (source.graph_generation != 0U) {
+    append_field("related_graph_generation", source.graph_generation);
+  }
+  if (source.graph) {
+    append_field("related_graph", source.graph.value);
+  }
+  if (source.vertex) {
+    append_field("related_vertex_id", source.vertex.value);
+  }
+  if (source.port) {
+    append_field("related_port_id", source.port.value());
+  }
+  if (!evidence.related_operator_path.empty()) {
+    append_field("related_operator", evidence.related_operator_path);
+  } else if (source.vertex) {
+    append_field("related_operator", source_vertex_name(graph, source.vertex));
+  }
+  if (!evidence.related_port_name.empty()) {
+    append_field("related_port", evidence.related_port_name);
+  } else if (const auto name = source_port_name(graph, source.port)) {
+    append_field("related_port", *name);
+  }
+}
+
+template <typename AppendField>
+void append_detail_contract(const Diagnostic& diagnostic, const ExecutionGraphView& graph,
+                            const DiagnosticDetail& evidence, const AppendField& append_field) {
+  if (!evidence.port_name.empty()) {
+    const auto compiled_name = source_port_name(graph, diagnostic.source.port);
+    // Compare owned evidence before display escaping or truncation can make names look alike.
+    if (!compiled_name || *compiled_name != evidence.port_name) {
+      append_field(compiled_name && !compiled_name->empty() ? "captured_port_name" : "port_name",
+                   evidence.port_name);
+    }
+  }
+  append_related_source(evidence, graph, append_field);
+  for (std::size_t index = 0U; index < std::min(evidence.mismatches.size(), std::size_t{16U});
+       ++index) {
+    const auto& mismatch = evidence.mismatches[index];
+    append_field("field", mismatch.field);
+    append_field("provided", mismatch.provided);
+    append_field("required", mismatch.required);
+  }
+  if (evidence.primary_diagnostic_index) {
+    append_field("primary_diagnostic_index", *evidence.primary_diagnostic_index);
+  }
+  if (evidence.truncated || evidence.causes.size() > 3U || evidence.mismatches.size() > 16U) {
+    append_field("detail_truncated", true);
+  }
+}
+
+}  // namespace
+
+std::string format_diagnostic(const Diagnostic& diagnostic, const ExecutionGraphView& graph) {
+  fmt::memory_buffer output;
+  fmt::format_to(std::back_inserter(output),
+                 "{} {}",
+                 severity_name(diagnostic.severity),
+                 detail::diagnostic_display_text(diagnostic.token, 256U));
+
+  bool first_field = true;
+  const auto append_field = [&output, &first_field](std::string_view name, const auto& value) {
+    if constexpr (std::is_convertible_v<decltype(value), std::string_view>) {
+      fmt::format_to(std::back_inserter(output),
+                     "{}{}={}",
+                     first_field ? " [" : ", ",
+                     name,
+                     detail::diagnostic_display_text(value));
+    } else {
+      fmt::format_to(std::back_inserter(output), "{}{}={}", first_field ? " [" : ", ", name, value);
+    }
+    first_field = false;
+  };
+
+  append_source_fields(diagnostic, graph, append_field);
+  if (diagnostic.detail) {
+    append_detail_context(diagnostic, graph, *diagnostic.detail, append_field);
+    append_detail_contract(diagnostic, graph, *diagnostic.detail, append_field);
   }
   if (!diagnostic.service.empty()) {
     append_field("service", diagnostic.service);
@@ -86,6 +221,37 @@ std::string format_diagnostic(const Diagnostic& diagnostic, const ExecutionGraph
     output.push_back(']');
   }
   return fmt::to_string(output);
+}
+
+std::string format_diagnostics(std::span<const Diagnostic> diagnostics,
+                               const ExecutionGraphView& graph) {
+  constexpr std::size_t limit = 16384U;
+  constexpr std::size_t marker_reserve = 96U;
+  std::string result;
+  std::size_t rendered = 0U;
+  for (const bool errors_first : {true, false}) {
+    for (std::size_t index = 0U; index < diagnostics.size(); ++index) {
+      const auto& diagnostic = diagnostics[index];
+      if ((diagnostic.severity == DiagnosticSeverity::kError) != errors_first) {
+        continue;
+      }
+      // Keep causal references readable after errors-first display ordering or truncation.
+      const auto line =
+          fmt::format("{} [diagnostic_index={}]", format_diagnostic(diagnostic, graph), index);
+      if (!result.empty() && result.size() < limit - marker_reserve) {
+        result.push_back('\n');
+      }
+      const auto remaining = limit - marker_reserve - result.size();
+      result.append(line, 0U, remaining);
+      if (line.size() > remaining) {
+        result += fmt::format("\n[diagnostic report truncated; {} records not fully rendered]",
+                              diagnostics.size() - rendered);
+        return result;
+      }
+      ++rendered;
+    }
+  }
+  return result;
 }
 
 }  // namespace holoscan

@@ -17,3 +17,4 @@ table UnionDescriptor {
 }
 
 root_type UnionDescriptor;
+file_identifier "DUN1";

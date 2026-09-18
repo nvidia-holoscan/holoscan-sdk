@@ -2577,6 +2577,7 @@ expected<std::unique_ptr<ParameterUpdateCoordinator>, Error> ParameterUpdateCoor
             .alias = planned.alias,
             .validator_id = planned.validator_id,
             .constraints = planned.constraints,
+            .enum_choices = planned.enum_choices,
             .string_encoding = planned.string_encoding,
             .element_string_encoding = planned.element_string_encoding,
             .value_route = planned.value_route,

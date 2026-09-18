@@ -250,8 +250,8 @@ TEST(WaitSetTest, KernelWaitReportsReadinessForASecondQueuedSample) {
 //                                          `-- second wait observes sequence 1
 // Key setup: the first wait blocks before publication, drains the resulting notification, and
 // deliberately leaves the sample queued.
-// Key assertion: the public pre-block readiness check makes the second wait return immediately;
-// the Runtime-only unchecked entry point is not exposed to this caller.
+// Key assertion: the pre-block readiness check makes the second wait return immediately. Every
+// kernel wait performs this check; the formerly unchecked Runtime entry point now does too.
 TEST(WaitSetTest, PublicKernelWaitPrechecksAQueuedSampleWithoutANotification) {
   REQUIRE_CONTEXT(context);
   const std::string topic = make_unique_topic();

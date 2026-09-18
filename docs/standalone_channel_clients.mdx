@@ -37,6 +37,7 @@ catalog, and producer restart — see
   - How to obtain a catalog: load one saved by a Graph, or build one directly
   - How `create_publisher<T>` / `create_subscriber<T>` bind to named endpoints
   - The emit and receive verbs, and why identity traits must match exactly
+  - How producer EOS drains through a finite input-driven graph
   - The retry discipline for asynchronous cross-process attach
   - How to wait for samples on an event lane instead of polling for them
   - When a standalone client is the right tool — and when it never is
@@ -127,7 +128,8 @@ boundary changes, regenerate and re-share it.
 
   The catalog selects the transport bucket. A schema publisher's local maximum
   may be smaller than the catalog capacity; a schema subscriber must admit at
-  least the catalog capacity. Payload identity still has to match exactly.
+  least the catalog capacity. The schema family and endpoint contract must
+  still be compatible.
   Descriptor-backed Tensor schemas and raw Tensor buffers use their separate
   bounded paths.
 
@@ -188,13 +190,16 @@ catalog afterwards. An optional third argument,
 attachment timeout.
 
 <Warning>
-  **Identity traits must match the graph side exactly.** For a custom POD,
-  the standalone process must declare the *same* `ChannelTypeIdentity<T>`
-  (name + version) and `ChannelPodLayout<T>` specializations as the graph
-  process; for a schema type, name, version, schema digest, and id must all
-  agree. Identity is pinned, not negotiated — any mismatch is rejected with
-  a typed incompatibility error at attach or at the boundary, and a
-  malformed or wrong-identity frame never reaches the graph's operators.
+  **Payload contracts are not negotiated.** For a custom POD, the standalone
+  process must declare the *same* `ChannelTypeIdentity<T>` (name + version)
+  and `ChannelPodLayout<T>` specializations as the graph process. A schema
+  endpoint must agree on the stable family name, compatibility epoch, derived
+  family id, and four-byte file identifier; descriptor-Tensor schemas also
+  require the exact generated carriage profile. Envelope ABI, endpoint
+  generation, capacity bucket, and directional capacity constraints remain
+  exact. Any mismatch is rejected with a typed incompatibility error at
+  attach or at the boundary, and a malformed or wrong-family frame never
+  reaches the graph's operators.
   See [Payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules)
   for the trait declarations.
 </Warning>
@@ -229,9 +234,106 @@ These are the client-side mirrors of the failure conventions you know from
 [errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values):
 every operation returns `holoscan::expected`, and you branch on `ErrorCode`.
 
+## Producer EOS and local subscriber shutdown
+
+Publisher and subscriber close operations have deliberately different scope:
+
+```text
+publisher.close()  = ordered producer EOS
+subscriber.close() = local consumer endpoint retirement
+```
+
 When a producer finishes, publish an explicit end-of-stream with
-`publisher->close()`. Process exit, disconnect, or silence never imply EOS —
-the importing graph (and its restart fencing) relies on the explicit signal.
+`publisher->close()`. Process exit, disconnect, silence, and subscriber close
+never imply EOS—the importing graph (and its restart fencing) relies on the
+explicit producer signal.
+
+For an ordinary finite input-driven path, an accepted producer close is
+ordered after every accepted data publication. Runtime lets those samples,
+callbacks, output publications, temporal claims, Tensor loans, and qualified
+device work drain before closing the Operator's outputs. That terminal control
+then follows the same rule through downstream input-driven Operators. A live
+external subscriber observes the final accepted data before
+`ErrorCode::kClosed`, and the session becomes `RunTermination::kCompleted`
+only after every contributing finite path has drained. The caller-managed
+blocking `run(plan, RunSignalPolicy::kCallerManaged)` form returns `0` for the
+same natural completion.
+
+This automatic propagation applies to input-driven activation such as
+`OnEach`, `OnAnyInput`, `OnAligned`, and `OnWindow`. An input read by an
+independently triggered Operator—for example one driven by `OnClock` or
+`OnNotified`—is a side input; closing that input does not close outputs while
+the independent trigger can still admit work. At fan-in, all inputs required
+by the selector must close and drain. At fan-out, each required receiver arm
+gets its own ordered terminal observation. An unrelated unbounded producer
+keeps the overall session live.
+
+A subscriber on a required graph export must remain attached until it observes
+remote `kClosed`. If terminal drain finds that the required subscriber
+disappeared after accepting data, the run fails; local subscriber close is not
+reclassified as EOS receipt. Runtime does not wait through a reconnection grace
+period in that terminal transaction. A replacement client must attach before
+terminal drain observes the abandoned obligation.
+
+Lifecycle replacement is the explicit exception. When the graph author uses
+`allow_external_restart(operator)`, the first producer EOS fences that
+generation but leaves output authority open while the admitted replacement is
+still possible. After the finite replacement budget is exhausted, final EOS
+propagates normally. Runtime never infers this transition from peer absence,
+and there is no whole-run shutdown deadline: completion remains cooperative
+with retained application and device work.
+
+On the receiving side, observe remote EOS before local cleanup:
+
+```cpp
+for (;;) {
+  auto sample = subscriber->receive_sample();
+  if (sample) { consume(*sample); continue; }
+  if (sample.error().code == holoscan::ErrorCode::kNotReady) {
+    continue;  // apply the bounded wait/retry policy described below
+  }
+  if (sample.error().code == holoscan::ErrorCode::kClosed) {
+    break;  // remote producer EOS after all accepted data
+  }
+  return holoscan::make_unexpected(std::move(sample).error());
+}
+
+auto locally_closed = subscriber->close();  // local cleanup, not EOS
+```
+
+When this process no longer needs a subscriber, retire that local endpoint
+explicitly and inspect the result:
+
+```cpp
+auto closed = subscriber->close();
+if (!closed) { /* inspect closed.error().code; the endpoint is still consumed */ }
+
+auto after_close = subscriber->receive_sample();
+if (!after_close && after_close.error().code == holoscan::ErrorCode::kClosed) {
+  // This local facade is closed. This is not evidence of producer EOS.
+}
+```
+
+The first live call succeeds after local cleanup. Repeated close and close on a
+moved-from facade return `kClosed`. A cleanup error is terminal for the local
+facade: cleanup continues best-effort, and later checked operations return
+`kClosed`. Unread local samples may be discarded. Values already returned by a
+receive retain their ordinary owning lifetime, including raw Tensors, derived
+views, and descriptor-Tensor bundles.
+
+Calls on one subscriber remain externally serialized. For a client thread,
+request cancellation in ordinary thread context, let its receive or bounded
+wait return, join the thread, and only then call `subscriber->close()`. Do not
+race close against receive or a wait. Close the subscriber before its
+`ChannelRuntime`; the runtime must also outlive any returned Tensor storage.
+
+Local retirement sends no Channel operation, closes no graph port, and cannot
+make a `RunSession` complete. It does remove a transport recipient just as
+destruction does, so later connection observations, backpressure, and delivery
+results follow the publisher's existing recipient policy. For example, a
+publisher requiring two recipients returns pre-submit `kNotReady` after one
+detaches until a replacement attaches; local close does not relax that
+contract or fabricate a partial delivery to the remaining peer.
 
 ## Reporting capture-clock health
 
@@ -503,13 +605,14 @@ standalone and graph processes must use matching Holoscan SDK builds.
 - Ordinary scalar, POD, and serialized-schema frames share the 32,768-byte
   fixed-inline ceiling, including catalog attribution and schema framing.
 - `create_publisher<T>` / `create_subscriber<T>` attach by endpoint name;
-  identity traits (POD name/version/layout, schema identity) must match the
-  graph side exactly — identity is pinned, never negotiated.
+  POD identity/layout must match exactly, while schemas must satisfy the
+  graph side's family and endpoint contract. Neither path is negotiated.
 - `emit_sample` / `emit_captured` publish; `receive_sample` takes what is
   already queued and `wait_and_receive_sample` blocks on the event lane until
   an absolute deadline. Retry `kNotReady` / `kBackpressured` with a deadline;
   never retry `kPublicationPartial` or `kPublicationIndeterminate`. Signal EOS
-  explicitly with `close()`.
+  explicitly with publisher `close()`; use subscriber `close()` only to retire
+  the local consumer endpoint after its client thread is quiescent.
 - When the catalog requires monitored capture-clock health, publish ordered
   `ClockHealthReport` transitions; a preceding report is applied before the
   following data operation for scalar, raw-Tensor, and descriptor-schema

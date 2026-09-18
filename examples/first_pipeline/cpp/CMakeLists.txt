@@ -25,5 +25,5 @@ endif()
 
 install(TARGETS first_pipeline
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/first_pipeline/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

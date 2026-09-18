@@ -20,6 +20,11 @@ namespace holoscan::detail {
 /// compilation metadata survives the typed builder boundary.
 class OperatorSpecTestAccess {
  public:
+  /// @brief Return whether `compute()` was declared eligible for CUDA Graph capture.
+  [[nodiscard]] static bool cuda_graph_capture_eligible(const OperatorSpec& spec) noexcept {
+    return spec.cuda_graph_capture_eligible_;
+  }
+
   /// @brief Identify which stable builder collection owns one source record.
   enum class SourceBuilderFamily : std::uint8_t {
     kSingleWitness,
@@ -82,9 +87,9 @@ class OperatorSpecTestAccess {
       const SchemaIdentityRecord& owned = *record.payload_identity.schema;
       schema_identity = SchemaIdentity{
           .canonical_name = owned.canonical_name,
-          .version = owned.version,
-          .schema_sha256 = owned.schema_sha256,
-          .id = owned.id,
+          .compatibility_epoch = owned.compatibility_epoch,
+          .family_id = owned.family_id,
+          .file_identifier = owned.file_identifier,
       };
     }
     return PortMetadata{

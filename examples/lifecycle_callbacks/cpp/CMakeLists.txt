@@ -26,5 +26,5 @@ endif()
 
 install(TARGETS lifecycle_callbacks
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/lifecycle_callbacks/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

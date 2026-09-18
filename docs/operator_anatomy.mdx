@@ -273,6 +273,9 @@ wait — `compute()` cannot reach outside its activation.
   and never synchronize on the hot path.
 - **Tracing and status** — `ctx.trace()` / `ctx.trace_id()` for correlation,
   `ctx.activation()` for the activation and violation outcome.
+- **Identity**: `ctx.operator_path()` returns the canonical percent-encoded
+  authored path of this Operator, such as `a/b%2Fc`, for callback-time logs and
+  diagnostics. The borrowed view must not be retained after `compute()`.
 - **Cancellation** — `ctx.cancellation().stop_requested()` observes a
   cooperative stop. A long-running or looping `compute()` should poll it and
   wind down cleanly:
@@ -310,7 +313,9 @@ wait — `compute()` cannot reach outside its activation.
 Not every C++ type may travel between operators. A port admits only
 **`PublishedPayload`** types:
 
-- **Arithmetic types and enums** — plain scalar values.
+- **Arithmetic types and enums** — plain scalar values. Enums are limited to
+  same-process typed Graph edges; use their fixed-width underlying type across
+  process or external boundaries.
 - **Exactly `Tensor`** — the SDK's pooled, stream-ordered payload (not
   tensor-like wrappers).
 - **Schema-identified copyable values** — structs you have explicitly
@@ -337,9 +342,9 @@ are in [payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-t
   `max_emits_per_compute` (which sizes the output pool), and readiness
   sources for `contract()` to trigger on.
 - `ExecutionContext` is the callback-lifetime runtime surface inside
-  `compute()`: params, clock, tag, CUDA stream, cancellation, whole-run
-  termination requests, and restart requests. Its queries are O(1); termination
-  requests are bounded, non-blocking, and allocation-free.
+  `compute()`: Operator path, params, clock, tag, CUDA stream, cancellation,
+  whole-run termination requests, and restart requests. Its queries are O(1);
+  termination requests are bounded, non-blocking, and allocation-free.
 - Only `PublishedPayload` types cross ports: arithmetic/enums, exact `Tensor`,
   and schema-identified copyable values.
 

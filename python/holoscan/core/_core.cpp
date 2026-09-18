@@ -5,13 +5,11 @@
 
 #include <nanobind/nanobind.h>
 
-#include "holoscan/holoscan.hpp"
 #include "tensor.hpp"
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays)
 NB_MODULE(_core, module) {
   module.doc() = "Minimal Holoscan SDK core Python bindings.";
-  module.def("hello", &holoscan::hello, "Print a Holoscan greeting.");
 
   holoscan::init_tensor(module);
 }

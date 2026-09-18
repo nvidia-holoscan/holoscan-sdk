@@ -24,7 +24,7 @@
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/execution_plan.hpp>
 #include <holoscan/memory/memory_buffer.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "channel/catalog_inline_payload_contract.hpp"

@@ -47,23 +47,33 @@ set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
     "${CMAKE_CURRENT_LIST_DIR}/cpack/triggers")
 
-# Just one package will all the components
+# Generate the granular package layout by default. Developers can request the historical
+# single-package layout at CPack invocation time with
+# `-D HOLOSCAN_CPACK_MONOLITHIC_PACKAGE=ON`; see HoloscanCPackProjectConfig.cmake.
 set(CPACK_DEB_COMPONENT_INSTALL 1)
-set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
+set(CPACK_COMPONENTS_GROUPING ONE_PER_GROUP)
+set(CPACK_PROJECT_CONFIG_FILE
+  "${CMAKE_CURRENT_LIST_DIR}/cpack/HoloscanCPackProjectConfig.cmake")
 
 # List of the components that should be installed
 set(CPACK_COMPONENTS_ALL
   holoscan # component from rapids-cmake export
   holoscan-core
+  holoscan-config
+  holoscan-config-io
   # Sensor acquisition support. Listed here so it ships with the SDK by default, but kept as its
   # own component so it can be omitted from a deployment that does no device acquisition.
   holoscan-sensor-io
-  holoscan-examples
+  holoscan-holomq
+  holoscan-core-examples
   holoscan-benchmarks
   holoscan-dependencies
+  # iceoryx2-cxx installs its package configuration and headers in the upstream `dev` component,
+  # while its targets and libraries use `holoscan-dependencies` and `iceoryx2-lib`. Include it so
+  # a CPack-installed core prefix remains consumable through find_package(holoscan).
+  dev
   holoscan-python_libs
   holoscan-cpack
-  holomq
   # iceoryx2 component holding its C++ and Rust FFI libraries. Upstream names it 'lib'; the
   # SDK renames it in cmake/deps/patches/iceoryx2/0004-name-library-install-component.patch.
   iceoryx2-lib
@@ -76,12 +86,6 @@ set(CPACK_COMPONENTS_ALL
 # request it directly with
 # `cmake --install <build-directory> --component holoscan-graph-artifacts`.
 
-if(HOLOSCAN_BUILD_CONFIG)
-  list(APPEND CPACK_COMPONENTS_ALL holoscan-config)
-endif()
-if(HOLOSCAN_BUILD_CONFIG_IO)
-  list(APPEND CPACK_COMPONENTS_ALL holoscan-config-io)
-endif()
 if(HOLOSCAN_BUILD_PARAMS)
   list(APPEND CPACK_COMPONENTS_ALL holoscan-params)
 endif()
@@ -90,6 +94,12 @@ if(HOLOSCAN_BUILD_PARAMS_IO)
 endif()
 if(HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER)
   list(APPEND CPACK_COMPONENTS_ALL holoscan-experimental-params-web-tuner)
+endif()
+if(HOLOSCAN_BUILD_INFERENCE)
+  list(APPEND CPACK_COMPONENTS_ALL holoscan-inference)
+  if(HOLOSCAN_BUILD_EXAMPLES)
+    list(APPEND CPACK_COMPONENTS_ALL holoscan-inference-examples)
+  endif()
 endif()
 if(HOLOSCAN_BUILD_VISION)
   include("${holoscan_SOURCE_DIR}/modules/vision/cmake/CVCUDAVersion.cmake")
@@ -100,6 +110,18 @@ if(HOLOSCAN_BUILD_VISION)
     )
   endif()
   list(APPEND CPACK_COMPONENTS_ALL holoscan-vision)
+  if(TARGET holoscan_vision_python)
+    list(APPEND CPACK_COMPONENTS_ALL holoscan-vision-python_libs)
+  endif()
+  if(HOLOSCAN_BUILD_EXAMPLES)
+    list(APPEND CPACK_COMPONENTS_ALL holoscan-vision-examples)
+  endif()
+endif()
+if(HOLOSCAN_BUILD_VISUALIZATION)
+  list(APPEND CPACK_COMPONENTS_ALL holoscan-visualization)
+  if(HOLOSCAN_BUILD_EXAMPLES)
+    list(APPEND CPACK_COMPONENTS_ALL holoscan-visualization-examples)
+  endif()
 endif()
 
 
@@ -108,32 +130,70 @@ endif()
 # - cuda-cudart-dev: needed for downstream CUDAToolkit development.
 find_package(CUDAToolkit REQUIRED)
 if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13")
-  set(CPACK_DEBIAN_PACKAGE_DEPENDS
+  set(_HOLOSCAN_CPACK_CORE_DEBIAN_DEPENDS
     "cuda-nvcc-13-0 | cuda-nvcc-13, \
     cuda-cudart-dev-13-0 | libcudart.so.13-dev"
   )
 endif()
 if(HOLOSCAN_BUILD_VISION)
-  if(CPACK_DEBIAN_PACKAGE_DEPENDS)
-    string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS ", ")
-  endif()
-  if(BUILD_SHARED_LIBS)
-    string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS
-      "libcvcuda0 (>= ${HOLOSCAN_VISION_CVCUDA_VERSION_MIN}), "
-      "libcvcuda0 (<< ${HOLOSCAN_VISION_CVCUDA_VERSION_MAX})"
-    )
-  else()
-    string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS
-      "cvcuda0-dev (>= ${HOLOSCAN_VISION_CVCUDA_VERSION_MIN}), "
-      "cvcuda0-dev (<< ${HOLOSCAN_VISION_CVCUDA_VERSION_MAX})"
+  if(NOT BUILD_SHARED_LIBS)
+    set(_HOLOSCAN_CPACK_VISION_DEBIAN_DEPENDS
+      "cvcuda0-dev (>= ${HOLOSCAN_VISION_CVCUDA_VERSION_MIN}), cvcuda0-dev (<< ${HOLOSCAN_VISION_CVCUDA_VERSION_MAX})"
     )
   endif()
 endif()
 
-include(CPack)
+# The global dependency list preserves the dependency metadata of the default monolithic package.
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "${_HOLOSCAN_CPACK_CORE_DEBIAN_DEPENDS}")
+if(_HOLOSCAN_CPACK_VISION_DEBIAN_DEPENDS)
+  if(CPACK_DEBIAN_PACKAGE_DEPENDS)
+    string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS ", ")
+  endif()
+  string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS "${_HOLOSCAN_CPACK_VISION_DEBIAN_DEPENDS}")
+endif()
+if(HOLOSCAN_BUILD_INFERENCE)
+  # TensorRT is needed by the inference libraries at runtime, but downstream users may choose a
+  # different TensorRT deployment. Recommend the TensorRT 10 runtime libraries that match the
+  # SONAMEs linked by this SDK; the unversioned tensorrt-libs meta-package may select TensorRT 11.
+  set(_HOLOSCAN_CPACK_INFERENCE_DEBIAN_RECOMMENDS
+    "libnvinfer10, libnvinfer-plugin10, libnvonnxparsers10")
+  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS
+    "${_HOLOSCAN_CPACK_INFERENCE_DEBIAN_RECOMMENDS}")
+endif()
+
+# In granular mode each component group becomes one payload package. Defining every group-level
+# dependency variable prevents CPack from copying the monolithic dependency list to module packages.
+set(CPACK_DEBIAN_CORE_PACKAGE_NAME holoscan-core)
+set(CPACK_DEBIAN_CORE_PACKAGE_DEPENDS "${_HOLOSCAN_CPACK_CORE_DEBIAN_DEPENDS}")
+set(CPACK_DEBIAN_VISION_PACKAGE_NAME holoscan-vision)
+set(CPACK_DEBIAN_VISION_PACKAGE_DEPENDS "${_HOLOSCAN_CPACK_VISION_DEBIAN_DEPENDS}")
+set(CPACK_DEBIAN_INFERENCE_PACKAGE_NAME holoscan-inference)
+set(CPACK_DEBIAN_INFERENCE_PACKAGE_DEPENDS "")
+set(CPACK_DEBIAN_INFERENCE_PACKAGE_RECOMMENDS
+  "${_HOLOSCAN_CPACK_INFERENCE_DEBIAN_RECOMMENDS}")
+set(CPACK_DEBIAN_VISUALIZATION_PACKAGE_NAME holoscan-visualization)
+set(CPACK_DEBIAN_VISUALIZATION_PACKAGE_DEPENDS "")
+
+include(CPackComponent)
+
+cpack_add_component_group(core DESCRIPTION "Holoscan SDK core and developer payload")
+cpack_add_component_group(vision DESCRIPTION "Holoscan Vision module")
+cpack_add_component_group(inference DESCRIPTION "Holoscan Inference module")
+cpack_add_component_group(visualization DESCRIPTION "Holoscan Visualization module")
 
 # Add the components to packages
 message(STATUS "Components to pack: ${CPACK_COMPONENTS_ALL}")
 foreach(component IN LISTS CPACK_COMPONENTS_ALL)
-  cpack_add_component(${component})
+  if(component STREQUAL "holoscan-vision" OR component STREQUAL "holoscan-vision-examples"
+      OR component STREQUAL "holoscan-vision-python_libs")
+    cpack_add_component(${component} GROUP vision DEPENDS holoscan-core)
+  elseif(component STREQUAL "holoscan-inference" OR component STREQUAL "holoscan-inference-examples")
+    cpack_add_component(${component} GROUP inference DEPENDS holoscan-core)
+  elseif(component STREQUAL "holoscan-visualization" OR component STREQUAL "holoscan-visualization-examples")
+    cpack_add_component(${component} GROUP visualization DEPENDS holoscan-core)
+  else()
+    cpack_add_component(${component} GROUP core)
+  endif()
 endforeach()
+
+include(CPack)

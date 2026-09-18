@@ -12,7 +12,6 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <limits>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -23,6 +22,7 @@
 #include "holoscan/channel/types.hpp"
 #include "holoscan/core/errors.hpp"
 #include "holoscan/core/expected.hpp"
+#include "holoscan/schema/flatbuffer_root_access.hpp"
 #include "holoscan/schema/flatbuffer_schema_traits.hpp"
 #include "holoscan/schema/schema_package.hpp"
 #include "holoscan/schema/tensor_materialization.hpp"
@@ -35,11 +35,16 @@ namespace holoscan::schema {
  * trait. */
 template <typename Root>
 struct DescriptorFlatBufferTensorViewTraits {
-  /** @brief Report that the schema does not define Tensor view metadata.
+  /// @brief Report that the schema does not define an indexed Tensor inventory.
+  static constexpr std::size_t tensor_count = 0U;
+
+  /** @brief Report that the schema does not define indexed Tensor view metadata.
    * @param metadata_bytes Serialized schema metadata bytes.
+   * @param index Tensor accessor index.
    * @return ErrorCode::kNotImplemented for the unspecialized trait. */
-  [[nodiscard]] static expected<TensorViewMetadata, Error> tensor_view_metadata(
-      [[maybe_unused]] std::span<const std::byte> metadata_bytes) {
+  [[nodiscard]] static expected<TensorViewMetadata, Error> tensor_view_metadata_at(
+      [[maybe_unused]] std::span<const std::byte> metadata_bytes,
+      [[maybe_unused]] std::size_t index) {
     return make_unexpected(
         Error{ErrorCode::kNotImplemented, "schema does not expose Tensor view metadata"});
   }
@@ -48,8 +53,8 @@ struct DescriptorFlatBufferTensorViewTraits {
 /// @brief Supply the common Tensor-view trait implementation for a generated FlatBuffers root.
 ///
 /// The adapter verifies the enclosing root, selects a generated Tensor field by index, and decodes
-/// that field through \ref tensor_view_metadata. A singular specialization may inherit from this
-/// adapter and name its generated accessor:
+/// that field through \ref tensor_view_metadata. A one-field specialization inherits from this
+/// adapter with one generated accessor:
 ///
 /// @code{.cpp}
 /// template <>
@@ -112,14 +117,11 @@ struct DescriptorFlatBufferTensorViewAdapter {
       return make_unexpected(
           Error{ErrorCode::kInvalidArgument, "descriptor Tensor metadata is empty"});
     }
-    flatbuffers::Verifier verifier{reinterpret_cast<const std::uint8_t*>(metadata_bytes.data()),
-                                   metadata_bytes.size()};
-    if (!verifier.VerifyBuffer<Root>(nullptr)) {
+    if (!detail::verify_flatbuffer_root_bytes<Root>(metadata_bytes)) {
       return make_unexpected(
           Error{ErrorCode::kCodecError, "descriptor Tensor root verification failed"});
     }
-    const Root* root =
-        flatbuffers::GetRoot<Root>(reinterpret_cast<const std::uint8_t*>(metadata_bytes.data()));
+    const Root* root = detail::parse_flatbuffer_root_bytes<Root>(metadata_bytes);
     if (root == nullptr) {
       return make_unexpected(Error{ErrorCode::kCodecError, "descriptor Tensor root is missing"});
     }
@@ -144,12 +146,10 @@ struct DescriptorTensorCarriage {
   static_assert(MaxTensors > 0U && MaxTensors <= 64U,
                 "descriptor Tensor carriage supports 1 through 64 fields");
 
-  // ABI version 3 requires every declared Tensor field to be present and descriptor-carried.
+  // The current ABI requires every declared Tensor field to be present and descriptor-carried.
   // Optional presence or alternate carriage requires explicit protocol evolution before either
   // mask can admit a proper subset.
-  static constexpr std::uint64_t all_fields_mask = MaxTensors == 64U
-                                                       ? std::numeric_limits<std::uint64_t>::max()
-                                                       : (std::uint64_t{1U} << MaxTensors) - 1U;
+  static constexpr std::uint64_t all_fields_mask = descriptor_tensor_all_fields_mask(MaxTensors);
 
   std::uint32_t tensor_count{MaxTensors};                   ///< Exact occupied descriptor count.
   std::uint32_t reserved{};                                 ///< Must remain zero for this ABI.
@@ -194,16 +194,30 @@ struct DescriptorFlatBufferPayload {
       kDescriptorTensorSchemaEnvelopeABIVersion;  ///< Exact descriptor-envelope ABI.
   static constexpr SchemaIdentity expected_schema_identity =
       flatbuffer_schema_identity_v<Root>;  ///< Exact generated-root semantic identity.
-  static constexpr SchemaId expected_schema_id =
-      expected_schema_identity.id;  ///< Complete compact semantic identity.
-  static constexpr std::uint32_t expected_schema_version =
-      flatbuffer_schema_version_v<Root>;  ///< Exact nonzero semantic version.
+  static constexpr SchemaId expected_schema_family_id =
+      expected_schema_identity.family_id;  ///< Stable compact compatibility-family identity.
+
+  /// @brief Return the generated descriptor-Tensor carriage profile for this root package.
+  [[nodiscard]] static std::uint32_t expected_transport_profile_tag() noexcept {
+    return schema_transport_profile_tag(schema_package<Root>().transport_profile());
+  }
+
+  /// @brief Return whether the root package exactly describes this descriptor wrapper geometry.
+  [[nodiscard]] static bool has_compatible_transport_profile() noexcept {
+    const SchemaTransportProfile profile = schema_package<Root>().transport_profile();
+    return profile.kind == SchemaTransportProfileKind::kDescriptorTensor &&
+           schema_transport_profile_tag(profile) != 0U &&
+           profile.tensor_field_ids.size() == MaxTensors &&
+           schema_transport_profile_field_mask(profile) ==
+               descriptor_carriage_type::all_fields_mask &&
+           profile.metadata_capacity_bytes == MetadataCapacity;
+  }
 
   std::uint32_t envelope_abi_version{expected_envelope_abi_version};  ///< Exact wrapper ABI.
   std::uint32_t envelope_header_size{kSchemaEnvelopeHeaderSize};      ///< Exact prefix byte size.
-  SchemaId schema_id{expected_schema_id};                 ///< Complete compact identity.
-  std::uint32_t schema_version{expected_schema_version};  ///< Exact semantic version.
-  std::uint32_t metadata_size{};                          ///< Valid bytes in `metadata`.
+  SchemaId schema_family_id{expected_schema_family_id};  ///< Stable compatibility family.
+  std::uint32_t metadata_size{};                         ///< Valid bytes in `metadata`.
+  std::uint32_t transport_profile_tag{};  ///< Exact generated descriptor carriage profile.
   std::uint64_t endpoint_generation{};    ///< Attached endpoint generation, or zero before binding.
   descriptor_carriage_type descriptor{};  ///< Canonically indexed descriptor carriage.
   std::array<std::byte, MetadataCapacity> metadata{};  ///< Fixed-capacity metadata storage.
@@ -214,9 +228,9 @@ struct DescriptorFlatBufferPayload {
     return SchemaEnvelopeHeader{
         .abi_version = envelope_abi_version,
         .header_size = envelope_header_size,
-        .schema_id = schema_id,
-        .schema_version = schema_version,
+        .schema_family_id = schema_family_id,
         .payload_size = metadata_size,
+        .transport_profile_tag = transport_profile_tag,
         .endpoint_generation = endpoint_generation,
     };
   }
@@ -252,10 +266,7 @@ struct DescriptorFlatBufferPayload {
    */
   [[nodiscard]] static const Root* root_from_metadata(
       const std::span<const std::byte> metadata_bytes) noexcept {
-    if (metadata_bytes.empty()) {
-      return nullptr;
-    }
-    return flatbuffers::GetRoot<Root>(reinterpret_cast<const std::uint8_t*>(metadata_bytes.data()));
+    return detail::parse_flatbuffer_root_bytes<Root>(metadata_bytes);
   }
 
   /// @brief Return the encoded descriptor count bounded by this static envelope.
@@ -297,21 +308,28 @@ struct DescriptorFlatBufferPayload {
   /**
    * @brief Validate exact schema identity, metadata bytes, and same-process descriptor shape.
    *
-   * @note Schema version matching is exact in this first slice. Additive FlatBuffers evolution can
-   * be relaxed later once graph setup has an explicit compatibility policy.
+   * @note Family identity admits compatible FlatBuffers revisions. The descriptor transport
+   * profile remains exact.
    */
   [[nodiscard]] expected<void, Error> validate() const {
+    if (!has_compatible_transport_profile()) {
+      return make_unexpected(
+          Error{ErrorCode::kCodecError, "descriptor Tensor transport profile mismatch"});
+    }
     if (envelope_abi_version != expected_envelope_abi_version) {
       return make_unexpected(
-          Error{ErrorCode::kCodecError,
-                "descriptor Tensor envelope ABI version mismatch (version 3 required)"});
+          Error{ErrorCode::kCodecError, "descriptor Tensor envelope ABI version mismatch"});
     }
     if (envelope_header_size != kSchemaEnvelopeHeaderSize) {
       return make_unexpected(
           Error{ErrorCode::kCodecError, "descriptor Tensor envelope header size mismatch"});
     }
-    if (schema_id != expected_schema_id || schema_version != expected_schema_version) {
-      return make_unexpected(Error{ErrorCode::kCodecError, "FlatBuffer schema identity mismatch"});
+    if (schema_family_id != expected_schema_family_id) {
+      return make_unexpected(Error{ErrorCode::kCodecError, "FlatBuffer schema family mismatch"});
+    }
+    if (transport_profile_tag != expected_transport_profile_tag()) {
+      return make_unexpected(
+          Error{ErrorCode::kCodecError, "FlatBuffer transport profile tag mismatch"});
     }
     if (metadata_size == 0U) {
       return make_unexpected(Error{ErrorCode::kCodecError, "FlatBuffer metadata bytes are empty"});
@@ -350,24 +368,6 @@ struct DescriptorFlatBufferPayload {
   }
 
   /**
-   * @brief Build a descriptor-backed payload from a FlatBufferBuilder after verification.
-   * @param builder Builder containing serialized metadata.
-   * @param payload_descriptor Transport descriptor for the payload.
-   * @param endpoint_generation Attached endpoint generation, or zero for an unbound local value.
-   * @return Payload or Error for invalid metadata or descriptor.
-   */
-  [[nodiscard]] static expected<DescriptorFlatBufferPayload, Error> copy_from_builder(
-      const flatbuffers::FlatBufferBuilder& builder,
-      const ChannelSampleDescriptor& payload_descriptor, std::uint64_t endpoint_generation = 0U)
-    requires(MaxTensors == 1U)
-  {  // NOLINT(whitespace/braces)
-    const auto* data = reinterpret_cast<const std::byte*>(builder.GetBufferPointer());
-    return copy_from(std::span<const std::byte>(data, builder.GetSize()),
-                     payload_descriptor,
-                     endpoint_generation);
-  }
-
-  /**
    * @brief Build a descriptor-backed payload from a FlatBufferBuilder and public payload reference.
    * @param builder Builder containing serialized metadata.
    * @param payload_descriptor Public transport reference for the associated payload.
@@ -379,35 +379,8 @@ struct DescriptorFlatBufferPayload {
       std::uint64_t endpoint_generation = 0U)
     requires(MaxTensors == 1U)
   {  // NOLINT(whitespace/braces)
-    const auto* data = reinterpret_cast<const std::byte*>(builder.GetBufferPointer());
-    return copy_from(std::span<const std::byte>(data, builder.GetSize()),
-                     payload_descriptor,
-                     endpoint_generation);
-  }
-
-  /**
-   * @brief Build a descriptor-backed payload from serialized metadata bytes after verification.
-   * @param metadata_bytes Serialized FlatBuffer metadata.
-   * @param payload_descriptor Transport descriptor for the payload.
-   * @param endpoint_generation Attached endpoint generation, or zero for an unbound local value.
-   * @return Payload or Error for empty, oversized, invalid, or mismatched metadata.
-   */
-  [[nodiscard]] static expected<DescriptorFlatBufferPayload, Error> copy_from(
-      const std::span<const std::byte> metadata_bytes,
-      const ChannelSampleDescriptor& payload_descriptor, std::uint64_t endpoint_generation = 0U)
-    requires(MaxTensors == 1U)
-  {  // NOLINT(whitespace/braces)
-    auto descriptor_status = validate_descriptor(payload_descriptor);
-    if (!descriptor_status) {
-      return make_unexpected(std::move(descriptor_status).error());
-    }
-    auto metadata_status = verify_metadata(metadata_bytes);
-    if (!metadata_status) {
-      return make_unexpected(std::move(metadata_status).error());
-    }
-    return copy_from_verified_metadata(metadata_bytes,
-                                       payload_descriptor_from_descriptor(payload_descriptor),
-                                       endpoint_generation);
+    return copy_from_builder(
+        builder, std::span<const PayloadDescriptor>{&payload_descriptor, 1U}, endpoint_generation);
   }
 
   /**
@@ -423,46 +396,9 @@ struct DescriptorFlatBufferPayload {
       std::uint64_t endpoint_generation = 0U)
     requires(MaxTensors == 1U)
   {  // NOLINT(whitespace/braces)
-    auto descriptor_status = validate_descriptor(payload_descriptor);
-    if (!descriptor_status) {
-      return make_unexpected(std::move(descriptor_status).error());
-    }
-    auto metadata_status = verify_metadata(metadata_bytes);
-    if (!metadata_status) {
-      return make_unexpected(std::move(metadata_status).error());
-    }
-    return copy_from_verified_metadata(metadata_bytes, payload_descriptor, endpoint_generation);
-  }
-
-  /**
-   * @brief Build a descriptor-backed payload from already-verified metadata bytes.
-   *
-   * External or untrusted metadata should use copy_from() so the generated FlatBuffers verifier
-   * runs at the boundary.
-   * @param metadata_bytes Serialized metadata previously verified by the exact generated verifier.
-   * @param payload_descriptor Transport descriptor for the associated payload.
-   * @param endpoint_generation Attached endpoint generation, or zero for an unbound local value.
-   * @return Payload or Error for empty, oversized, or invalid descriptor state.
-   */
-  [[nodiscard]] static expected<DescriptorFlatBufferPayload, Error> copy_from_trusted_metadata(
-      const std::span<const std::byte> metadata_bytes,
-      const ChannelSampleDescriptor& payload_descriptor, std::uint64_t endpoint_generation = 0U)
-    requires(MaxTensors == 1U)
-  {  // NOLINT(whitespace/braces)
-    auto descriptor_status = validate_descriptor(payload_descriptor);
-    if (!descriptor_status) {
-      return make_unexpected(std::move(descriptor_status).error());
-    }
-    if (metadata_bytes.empty()) {
-      return make_unexpected(Error{ErrorCode::kCodecError, "FlatBuffer metadata bytes are empty"});
-    }
-    if (metadata_bytes.size() > MetadataCapacity) {
-      return make_unexpected(
-          Error{ErrorCode::kInvalidArgument, "FlatBuffer metadata exceeds inline capacity"});
-    }
-    return copy_from_verified_metadata(metadata_bytes,
-                                       payload_descriptor_from_descriptor(payload_descriptor),
-                                       endpoint_generation);
+    return copy_from(metadata_bytes,
+                     std::span<const PayloadDescriptor>{&payload_descriptor, 1U},
+                     endpoint_generation);
   }
 
   /**
@@ -478,18 +414,9 @@ struct DescriptorFlatBufferPayload {
       std::uint64_t endpoint_generation = 0U)
     requires(MaxTensors == 1U)
   {  // NOLINT(whitespace/braces)
-    auto descriptor_status = validate_descriptor(payload_descriptor);
-    if (!descriptor_status) {
-      return make_unexpected(std::move(descriptor_status).error());
-    }
-    if (metadata_bytes.empty()) {
-      return make_unexpected(Error{ErrorCode::kCodecError, "FlatBuffer metadata bytes are empty"});
-    }
-    if (metadata_bytes.size() > MetadataCapacity) {
-      return make_unexpected(
-          Error{ErrorCode::kInvalidArgument, "FlatBuffer metadata exceeds inline capacity"});
-    }
-    return copy_from_verified_metadata(metadata_bytes, payload_descriptor, endpoint_generation);
+    return copy_from_trusted_metadata(metadata_bytes,
+                                      std::span<const PayloadDescriptor>{&payload_descriptor, 1U},
+                                      endpoint_generation);
   }
 
   /// @brief Build a descriptor Tensor payload from a metadata builder and descriptor array.
@@ -516,6 +443,10 @@ struct DescriptorFlatBufferPayload {
     if (!descriptors_status) {
       return make_unexpected(std::move(descriptors_status).error());
     }
+    auto profile_status = validate_transport_profile();
+    if (!profile_status) {
+      return make_unexpected(std::move(profile_status).error());
+    }
     auto metadata_status = verify_metadata(metadata_bytes);
     if (!metadata_status) {
       return make_unexpected(std::move(metadata_status).error());
@@ -534,6 +465,10 @@ struct DescriptorFlatBufferPayload {
     if (!descriptors_status) {
       return make_unexpected(std::move(descriptors_status).error());
     }
+    auto profile_status = validate_transport_profile();
+    if (!profile_status) {
+      return make_unexpected(std::move(profile_status).error());
+    }
     if (metadata_bytes.empty()) {
       return make_unexpected(Error{ErrorCode::kCodecError, "FlatBuffer metadata bytes are empty"});
     }
@@ -551,6 +486,10 @@ struct DescriptorFlatBufferPayload {
    */
   [[nodiscard]] static expected<void, Error> verify_metadata(
       const std::span<const std::byte> metadata_bytes) {
+    auto profile_status = validate_transport_profile();
+    if (!profile_status) {
+      return profile_status;
+    }
     if (metadata_bytes.empty()) {
       return make_unexpected(Error{ErrorCode::kCodecError, "FlatBuffer metadata bytes are empty"});
     }
@@ -558,9 +497,7 @@ struct DescriptorFlatBufferPayload {
       return make_unexpected(
           Error{ErrorCode::kInvalidArgument, "FlatBuffer metadata exceeds inline capacity"});
     }
-    const auto* data = reinterpret_cast<const std::uint8_t*>(metadata_bytes.data());
-    auto verifier = flatbuffers::Verifier(data, metadata_bytes.size());
-    if (!verifier.VerifyBuffer<Root>(nullptr)) {
+    if (!detail::verify_flatbuffer_root_bytes<Root>(metadata_bytes)) {
       return make_unexpected(
           Error{ErrorCode::kCodecError, "FlatBuffer metadata verification failed"});
     }
@@ -575,30 +512,12 @@ struct DescriptorFlatBufferPayload {
    */
   [[nodiscard]] static expected<TensorViewMetadata, Error> tensor_view_metadata(
       const DescriptorFlatBufferPayload& payload) {
-    return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(payload.bytes());
-  }
-
-  /**
-   * @brief Extract Tensor view metadata from an already-verified payload.
-   * @param payload Descriptor-backed payload whose metadata was verified and remains unmodified.
-   * @return Tensor view metadata on success, or Error when the root is missing or incompatible.
-   * @warning The caller must first validate the same immutable payload bytes.
-   */
-  [[nodiscard]] static expected<TensorViewMetadata, Error> tensor_view_metadata_from_verified(
-      const DescriptorFlatBufferPayload& payload) {
-    const Root* root = payload.root();
-    if (root == nullptr) {
-      return make_unexpected(Error{ErrorCode::kCodecError, "descriptor Tensor root is missing"});
-    }
-    if constexpr (requires {
-                    {
-                      DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(*root)
-                    } -> std::same_as<expected<TensorViewMetadata, Error>>;
-                  }) {
-      return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(*root);
+    if constexpr (MaxTensors == 1U) {
+      return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(payload.bytes(),
+                                                                                 0U);
     } else {
-      // Preserve compatibility with manual traits that only implement the verified-byte API.
-      return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(payload.bytes());
+      return make_unexpected(
+          Error{ErrorCode::kNotSupported, "Tensor view requires an explicit field index"});
     }
   }
 
@@ -627,55 +546,7 @@ struct DescriptorFlatBufferPayload {
     if (root == nullptr) {
       return make_unexpected(Error{ErrorCode::kCodecError, "descriptor Tensor root is missing"});
     }
-    if constexpr (requires {
-                    {
-                      DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(*root,
-                                                                                          index)
-                    } -> std::same_as<expected<TensorViewMetadata, Error>>;
-                  }) {
-      return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(*root, index);
-    } else if constexpr (MaxTensors == 1U) {
-      if (index != 0U) {
-        return make_unexpected(
-            Error{ErrorCode::kInvalidArgument, "descriptor Tensor index is invalid"});
-      }
-      if constexpr (requires {
-                      {
-                        DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(*root)
-                      } -> std::same_as<expected<TensorViewMetadata, Error>>;
-                    }) {
-        return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(*root);
-      } else {
-        return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(metadata_bytes);
-      }
-    } else {
-      return make_unexpected(
-          Error{ErrorCode::kNotImplemented,
-                "multi-Tensor schema does not expose indexed Tensor view metadata"});
-    }
-  }
-
-  /**
-   * @brief Validate that a descriptor has the local-buffer shape supported today.
-   *
-   * @note This is a structural pre-check shared by generic descriptor-backed payloads. The
-   * materializing receive path still performs the authoritative process-identity and
-   * TensorSidecarStore lookup before returning a Tensor handle. Keeping that operating-system
-   * check in the private transport implementation makes this installed header portable.
-   */
-  [[nodiscard]] static expected<void, Error> validate_descriptor(
-      const ChannelSampleDescriptor& payload_descriptor) {
-    if (!payload_descriptor.has_supported_abi()) {
-      return make_unexpected(Error{ErrorCode::kCodecError, "Channel descriptor ABI mismatch"});
-    }
-    if (payload_descriptor.sidecar_token == 0U) {
-      return make_unexpected(Error{ErrorCode::kCodecError, "Channel descriptor token is empty"});
-    }
-    if (payload_descriptor.payload_kind != ChannelPayloadKind::kLocalBufferDescriptor) {
-      return make_unexpected(
-          Error{ErrorCode::kCodecError, "Channel descriptor payload kind is not a local buffer"});
-    }
-    return {};
+    return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(*root, index);
   }
 
   /**
@@ -706,6 +577,14 @@ struct DescriptorFlatBufferPayload {
   }
 
  private:
+  [[nodiscard]] static expected<void, Error> validate_transport_profile() {
+    if (!has_compatible_transport_profile()) {
+      return make_unexpected(
+          Error{ErrorCode::kCodecError, "descriptor Tensor transport profile mismatch"});
+    }
+    return {};
+  }
+
   [[nodiscard]] static expected<void, Error> validate_descriptors(
       const std::span<const PayloadDescriptor> payload_descriptors)
     requires(MaxTensors >= 1U)
@@ -724,34 +603,12 @@ struct DescriptorFlatBufferPayload {
   }
 
   [[nodiscard]] static DescriptorFlatBufferPayload copy_from_verified_metadata(
-      const std::span<const std::byte> metadata_bytes, const PayloadDescriptor& payload_descriptor,
-      std::uint64_t endpoint_generation)
-    requires(MaxTensors == 1U)
-  {  // NOLINT(whitespace/braces)
-    DescriptorFlatBufferPayload wrapper;
-    wrapper.metadata_size = static_cast<std::uint32_t>(metadata_bytes.size());
-    wrapper.endpoint_generation = endpoint_generation;
-    wrapper.descriptor.descriptors[0] = payload_descriptor;
-    std::memcpy(wrapper.metadata.data(), metadata_bytes.data(), metadata_bytes.size());
-    return wrapper;
-  }
-
-  [[nodiscard]] static DescriptorFlatBufferPayload copy_from_verified_metadata(
-      const std::span<const std::byte> metadata_bytes,
-      const ChannelSampleDescriptor& payload_descriptor, std::uint64_t endpoint_generation)
-    requires(MaxTensors == 1U)
-  {  // NOLINT(whitespace/braces)
-    return copy_from_verified_metadata(metadata_bytes,
-                                       payload_descriptor_from_descriptor(payload_descriptor),
-                                       endpoint_generation);
-  }
-
-  [[nodiscard]] static DescriptorFlatBufferPayload copy_from_verified_metadata(
       const std::span<const std::byte> metadata_bytes,
       const std::span<const PayloadDescriptor> payload_descriptors,
       std::uint64_t endpoint_generation) {
     DescriptorFlatBufferPayload wrapper;
     wrapper.metadata_size = static_cast<std::uint32_t>(metadata_bytes.size());
+    wrapper.transport_profile_tag = expected_transport_profile_tag();
     wrapper.endpoint_generation = endpoint_generation;
     std::copy(payload_descriptors.begin(),
               payload_descriptors.end(),
@@ -764,41 +621,27 @@ struct DescriptorFlatBufferPayload {
 /**
  * @brief Descriptor-backed FlatBuffer payload using the root type's trait capacity.
  *
- * Application-defined schemas can specialize `FlatBufferSchemaTraits<Root>` with
- * `default_descriptor_metadata_capacity` and then use this alias for metadata
- * plus descriptor transport.
+ * Application-defined descriptor schemas use their generated `metadata_capacity` bound for
+ * metadata plus descriptor transport.
  */
 namespace detail {
 
 template <typename Root>
 [[nodiscard]] consteval std::size_t descriptor_flatbuffer_tensor_count() {
-  if constexpr (requires {
-                  {
-                    DescriptorFlatBufferTensorViewTraits<Root>::tensor_count
-                  } -> std::convertible_to<std::size_t>;
-                }) {
-    constexpr std::size_t kTensorCount =
-        static_cast<std::size_t>(DescriptorFlatBufferTensorViewTraits<Root>::tensor_count);
-    static_assert(kTensorCount > 0U,
-                  "DescriptorFlatBufferTensorViewTraits<Root>::tensor_count must be positive");
-    return kTensorCount;
-  } else if constexpr (requires(const Root& root) {
-                         DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(
-                             root, std::size_t{});
-                       }) {
-    static_assert(!std::same_as<Root, Root>,
-                  "indexed DescriptorFlatBufferTensorViewTraits<Root> must declare tensor_count");
-  }
-  // Preserve the original singular-trait compatibility path. Indexed traits must declare their
-  // complete generated field count above so a stale multi-Tensor specialization cannot truncate.
-  return 1U;
+  constexpr std::size_t kTensorCount =
+      static_cast<std::size_t>(DescriptorFlatBufferTensorViewTraits<Root>::tensor_count);
+  static_assert(kTensorCount > 0U,
+                "DescriptorFlatBufferTensorViewTraits<Root>::tensor_count must be positive");
+  static_assert(kTensorCount <= 64U,
+                "DescriptorFlatBufferTensorViewTraits<Root>::tensor_count must not exceed 64");
+  return kTensorCount;
 }
 
 }  // namespace detail
 
 template <typename Root>
 using DescriptorFlatBufferPayloadFor =
-    DescriptorFlatBufferPayload<Root, flatbuffer_default_descriptor_metadata_capacity_v<Root>,
+    DescriptorFlatBufferPayload<Root, flatbuffer_descriptor_metadata_capacity_v<Root>,
                                 detail::descriptor_flatbuffer_tensor_count<Root>()>;
 
 namespace detail {

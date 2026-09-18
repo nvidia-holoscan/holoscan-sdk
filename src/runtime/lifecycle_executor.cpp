@@ -263,7 +263,7 @@ expected<void, Error> RuntimeLifecycleExecutor::bind_nominal_rate(void* receiver
   const bool forward = bound->context->phase == LifecycleTransitionPhase::kStartupForward ||
                        bound->context->phase == LifecycleTransitionPhase::kRestartForward;
   if (!result && forward) {
-    bound->executor->record_failure_diagnostic(result.error().message);
+    bound->executor->record_failure_diagnostic(result.error());
   }
   return result;
 }
@@ -280,24 +280,73 @@ expected<PortRateView, Error> RuntimeLifecycleExecutor::resolve_rate(void* recei
       bound->instance->operator_id, bound->stage, bound->context->phase, declaration, output);
 }
 
+void RuntimeLifecycleExecutor::record_callback_failure(const CallbackReceiver& bound,
+                                                       LifecycleStage stage,
+                                                       LifecycleTransitionPhase phase,
+                                                       LifecycleStatus status) noexcept {
+  if (failure_count_ < failures_.size()) {
+    auto& recorded = failures_[failure_count_++];
+    recorded.vertex = bound.instance != nullptr ? bound.instance->vertex : VertexId{};
+    recorded.transaction_id = transaction_id_;
+    recorded.token = bound.materialization_index ? "PROFILE_MATERIALIZATION_FAILED"
+                                                 : "RUNTIME_LIFECYCLE_CALLBACK_FAILED";
+    if (const auto* descriptor =
+            find_structural_diagnostic(static_cast<StructuralDiagnosticId>(callback_diagnostic_));
+        descriptor != nullptr) {
+      recorded.token = descriptor->token;
+    }
+    recorded.component_path = {};
+    if (bound.materialization_index && materialization_ &&
+        *bound.materialization_index < materialization_->size()) {
+      recorded.component_path = materialization_->record(*bound.materialization_index).object_id;
+    } else if (bound.rate_barrier) {
+      recorded.component_path = "rate binding/materialization barrier";
+    }
+    recorded.failure = LifecycleExecutionFailure{true, bound.node_id, stage, phase, status};
+    if (callback_capture_.count == 0U) {
+      callback_capture_.append(ErrorCode::kLifecycleStageFailed,
+                               "lifecycle stage failed without an explanatory error");
+    }
+    recorded.capture = callback_capture_;
+  } else {
+    failures_.back().capture.truncated = true;
+  }
+}
+
+LifecycleStatus RuntimeLifecycleExecutor::finish_callback(const CallbackReceiver& bound,
+                                                          LifecycleStage stage,
+                                                          LifecycleTransitionPhase phase,
+                                                          LifecycleStatus status) noexcept {
+  if (status == LifecycleStatus::kOk || status == LifecycleStatus::kSkipped) {
+    return status;
+  }
+  record_callback_failure(bound, stage, phase, status);
+  if (startup_in_progress_ && phase == LifecycleTransitionPhase::kStartupForward) {
+    // Apply startup rollback bookkeeping at the single kernel callback
+    // boundary so failures during materialization, lane dispatch, Parameter
+    // pinning, or user invocation all exclude legacy stop() callbacks whose
+    // matching start() was never entered.
+    startup_legacy_stop_cutoff_ = !bound.materialization_index.has_value() && !bound.rate_barrier &&
+                                          bound.instance != nullptr &&
+                                          stage == LifecycleStage::kStart
+                                      ? startup_position(bound.instance->operator_id)
+                                      : 0U;
+  }
+  return status;
+}
+
 LifecycleStatus RuntimeLifecycleExecutor::invoke_callback(void* receiver, LifecycleStage stage,
                                                           LifecycleTransitionPhase phase) noexcept {
-  auto& bound = *static_cast<CallbackReceiver*>(receiver);
+  auto* const receiver_state = static_cast<CallbackReceiver*>(receiver);
+  if (receiver_state == nullptr || receiver_state->executor == nullptr) {
+    return LifecycleStatus::kFatalFailure;
+  }
+  auto& bound = *receiver_state;
+  auto& executor = *bound.executor;
+  executor.callback_capture_.clear();
+  executor.callback_diagnostic_ = 0U;
   const auto finish = [&](LifecycleStatus status) noexcept {
-    if (bound.executor != nullptr && bound.executor->startup_in_progress_ &&
-        phase == LifecycleTransitionPhase::kStartupForward && status != LifecycleStatus::kOk &&
-        status != LifecycleStatus::kSkipped) {
-      // Apply startup rollback bookkeeping at the single kernel callback
-      // boundary so failures during materialization, lane dispatch, Parameter
-      // pinning, or user invocation all exclude legacy stop() callbacks whose
-      // matching start() was never entered.
-      bound.executor->startup_legacy_stop_cutoff_ =
-          !bound.materialization_index.has_value() && !bound.rate_barrier &&
-                  bound.instance != nullptr && stage == LifecycleStage::kStart
-              ? bound.executor->startup_position(bound.instance->operator_id)
-              : 0U;
-    }
-    return status;
+    return executor.finish_callback(bound, stage, phase, status);
   };
   if (bound.materialization_index.has_value() || bound.rate_barrier) {
     return finish(invoke_callback_direct(bound, stage, phase));
@@ -354,7 +403,7 @@ LifecycleStatus RuntimeLifecycleExecutor::invoke_callback_direct(
     if (bound.executor->rates_->requires_barrier(stage)) {
       auto closed = bound.executor->rates_->close_stage_barrier(stage, phase);
       if (!closed) {
-        bound.executor->record_failure_diagnostic(closed.error().message);
+        bound.executor->record_failure_diagnostic(closed.error());
         return LifecycleStatus::kFatalFailure;
       }
     }
@@ -385,7 +434,7 @@ LifecycleStatus RuntimeLifecycleExecutor::invoke_callback_direct(
         },
         require_all_resolved);
     if (!ensured) {
-      bound.executor->record_failure_diagnostic(ensured.error().message);
+      bound.executor->record_failure_diagnostic(ensured.error());
     }
     return ensured ? LifecycleStatus::kOk : LifecycleStatus::kFatalFailure;
   }
@@ -508,6 +557,7 @@ LifecycleStatus RuntimeLifecycleExecutor::invoke_callback_direct(
       }
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     } catch (...) {
+      bound.executor->callback_capture_.capture_exception();
       return LifecycleStatus::kFatalFailure;
     }
 #endif
@@ -756,6 +806,7 @@ expected<void, Error> RuntimeLifecycleExecutor::initialize_restart_runtime(
   runtime.graph = std::move(graph).value();
   runtime.bindings = bindings_for(receivers, runtime.members, false, has_rate_work(rates));
   runtime.state = make_lifecycle_kernel_state(runtime.graph);
+  runtime.state.defer_failure_report = true;
   for (std::size_t stage_index = 0U; stage_index < kForwardStageCount; ++stage_index) {
     for (const auto& level : runtime.graph.stages[stage_index].levels) {
       for (const LifecycleNodeId node : level.node_ids) {
@@ -963,6 +1014,7 @@ expected<std::unique_ptr<RuntimeLifecycleExecutor>, Error> RuntimeLifecycleExecu
     receiver.context->rate_state = &receiver;
     receiver.context->bind_nominal_rate = &RuntimeLifecycleExecutor::bind_nominal_rate;
     receiver.context->resolve_rate = &RuntimeLifecycleExecutor::resolve_rate;
+    receiver.context->diagnostic_capture = &result->callback_capture_;
   }
 
   auto graph =
@@ -974,6 +1026,7 @@ expected<std::unique_ptr<RuntimeLifecycleExecutor>, Error> RuntimeLifecycleExecu
   apply_runtime_stop_order(result->graph_);
   result->bindings_ = bindings_for(result->receivers_, all_members, true, has_rate_work(rates));
   result->state_ = make_lifecycle_kernel_state(result->graph_);
+  result->state_.defer_failure_report = true;
 
   result->restarts_.reserve(plan.lifecycle_restart_closures.size() + 1U);
   std::vector<OperatorInstanceId> union_members;
@@ -1029,7 +1082,7 @@ expected<std::unique_ptr<RuntimeLifecycleExecutor>, Error> RuntimeLifecycleExecu
 }
 
 bool RuntimeLifecycleExecutor::startup() noexcept {
-  failure_diagnostic_.store(0U, std::memory_order_release);
+  clear_failure_evidence();
   for (auto& receiver : receivers_) {
     if (receiver.context != nullptr) {
       receiver.context->cancellation_requested.store(
@@ -1039,7 +1092,8 @@ bool RuntimeLifecycleExecutor::startup() noexcept {
   }
   startup_in_progress_ = true;
   startup_legacy_stop_cutoff_ = graph_.nodes.size();
-  const auto result = execute_lifecycle_startup(graph_, bindings_, state_);
+  result_ = execute_lifecycle_startup(graph_, bindings_, state_);
+  const auto& result = result_;
   startup_in_progress_ = false;
   if (result.disposition != LifecycleExecutionDisposition::kCompleted && materialization_) {
     materialization_->cleanup_remaining();
@@ -1050,7 +1104,8 @@ bool RuntimeLifecycleExecutor::startup() noexcept {
 
 LifecycleRestartExecutionOutcome RuntimeLifecycleExecutor::restart(
     const LifecycleRestartExecutionRequest& request) noexcept {
-  failure_diagnostic_.store(0U, std::memory_order_release);
+  clear_failure_evidence();
+  transaction_id_ = request.transaction;
   auto found = std::find_if(restarts_.begin(), restarts_.end(), [&](const auto& runtime) {
     return runtime.members.size() == request.members.size() &&
            std::equal(runtime.members.begin(), runtime.members.end(), request.members.begin());
@@ -1061,6 +1116,7 @@ LifecycleRestartExecutionOutcome RuntimeLifecycleExecutor::restart(
     });
   }
   if (found == restarts_.end()) {
+    result_.disposition = LifecycleExecutionDisposition::kInvalidBinding;
     return {};
   }
   for (auto& receiver : receivers_) {
@@ -1075,8 +1131,8 @@ LifecycleRestartExecutionOutcome RuntimeLifecycleExecutor::restart(
   for (auto& receiver : receivers_) {
     receiver.creating_parameter_view.reset();
   }
-  const LifecycleExecutionResult result =
-      execute_lifecycle_restart(found->graph, found->bindings, request.stage, found->state);
+  result_ = execute_lifecycle_restart(found->graph, found->bindings, request.stage, found->state);
+  const auto& result = result_;
   active_restart_members_ = {};
   active_restart_candidates_ = {};
   for (auto& receiver : receivers_) {
@@ -1108,13 +1164,14 @@ LifecycleRestartExecutionOutcome RuntimeLifecycleExecutor::restart(
 }
 
 bool RuntimeLifecycleExecutor::shutdown() noexcept {
-  failure_diagnostic_.store(0U, std::memory_order_release);
+  clear_failure_evidence();
   for (auto& receiver : receivers_) {
     if (receiver.context != nullptr) {
       receiver.context->cancellation_requested.store(true, std::memory_order_release);
     }
   }
-  const auto result = execute_lifecycle_shutdown(graph_, bindings_, state_);
+  result_ = execute_lifecycle_shutdown(graph_, bindings_, state_);
+  const auto& result = result_;
   if (materialization_) {
     materialization_->cleanup_remaining();
   }
@@ -1123,6 +1180,9 @@ bool RuntimeLifecycleExecutor::shutdown() noexcept {
 }
 
 std::string_view RuntimeLifecycleExecutor::failure_token() const noexcept {
+  if (failure_count_ != 0U && !failures_[0].token.empty()) {
+    return failures_[0].token;
+  }
   const auto raw = failure_diagnostic_.load(std::memory_order_acquire);
   if (raw != 0U) {
     const auto* descriptor = find_structural_diagnostic(static_cast<StructuralDiagnosticId>(raw));
@@ -1136,10 +1196,16 @@ std::string_view RuntimeLifecycleExecutor::failure_token() const noexcept {
   return "RUNTIME_LIFECYCLE_CALLBACK_FAILED";
 }
 
-void RuntimeLifecycleExecutor::record_failure_diagnostic(const std::string_view token) noexcept {
-  const std::uint32_t id = diagnostic_id(token).value;
+void RuntimeLifecycleExecutor::record_failure_diagnostic(const Error& error) noexcept {
+  if (callback_capture_.count == 0U) {
+    callback_capture_.append(error.code, error.message);
+  }
+  const std::uint32_t id = diagnostic_id(error.message).value;
   if (id == 0U) {
     return;
+  }
+  if (callback_diagnostic_ == 0U) {
+    callback_diagnostic_ = id;
   }
   std::uint32_t expected{};
   (void)failure_diagnostic_.compare_exchange_strong(

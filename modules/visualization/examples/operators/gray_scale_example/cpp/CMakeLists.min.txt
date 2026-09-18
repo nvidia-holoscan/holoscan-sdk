@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND "$ENV{CUDAARCHS}" STREQUAL "")
+    set(CMAKE_CUDA_ARCHITECTURES "native")
+endif()
+
+project(holoscan_gray_scale_example LANGUAGES CXX CUDA)
+
+find_package(Threads REQUIRED)
+find_package(CUDAToolkit REQUIRED)
+find_package(holoscan REQUIRED CONFIG COMPONENTS visualization
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+)
+
+if(NOT TARGET holoscan::visualization::op_holoviz)
+    message(FATAL_ERROR
+        "gray_scale_example needs holoscan::visualization::op_holoviz; install the SDK with the "
+        "visualization module enabled (HOLOSCAN_BUILD_VISUALIZATION=ON) including the "
+        "holoscan-visualization component.")
+endif()
+
+add_executable(gray_scale_example
+    gray_scale_example.cpp
+    gray_scale_source.cu
+)
+target_compile_features(gray_scale_example PRIVATE cxx_std_20 cuda_std_20)
+target_link_libraries(gray_scale_example
+    PRIVATE
+        CUDA::cudart
+        holoscan::core
+        holoscan::visualization::op_holoviz
+        Threads::Threads
+)

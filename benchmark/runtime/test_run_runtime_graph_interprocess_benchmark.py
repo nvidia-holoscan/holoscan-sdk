@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import copy
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -1287,6 +1288,124 @@ def test_worker_failure_details_reports_bounded_role_logs(tmp_path: Path) -> Non
     assert "--- producer.log\nproducer failed" in details
     assert "--- consumer.log\n[... earlier output truncated ...]" in details
     assert "discarded-prefix" not in details
+
+
+def test_worker_result_failure_details_reports_enriched_and_legacy_records(
+    tmp_path: Path,
+) -> None:
+    # Key setup: retain one enriched failed producer result beside legacy, malformed, and missing
+    # worker artifacts. Large unrelated measurement payloads must not enter the top-level error.
+    producer_result = tmp_path / "producer.json"
+    legacy_result = tmp_path / "consumer_001.json"
+    malformed_result = tmp_path / "consumer_002.json"
+    undecodable_result = tmp_path / "consumer_003.json"
+    recursive_result = tmp_path / "consumer_004.json"
+    missing_result = tmp_path / "consumer_005.json"
+    producer_result.write_text(
+        json.dumps(
+            {
+                "role": "producer",
+                "termination": "other",
+                "diagnostic_count": 1,
+                "diagnostics": [
+                    {
+                        "token": "RUNTIME_OPERATOR_CALLBACK_FAILED",
+                        "detail": {
+                            "operation": "compute",
+                            "error": {
+                                "code": "kPublicationIndeterminate",
+                                "numeric_code": 22,
+                                "message": "recipient 2 remained full",
+                            },
+                        },
+                    }
+                ],
+                "counts": {"publications": 521},
+                "runtime_thread_usage": {"enabled": False},
+                "support_threads": [{"role": "controller", "entered": True}],
+                "large_unrelated_trace": "x" * runner.WORKER_FAILURE_LOG_LIMIT,
+            }
+        ),
+        encoding="utf-8",
+    )
+    legacy_result.write_text(
+        json.dumps({"role": "consumer", "termination": "other", "diagnostic_count": 1}),
+        encoding="utf-8",
+    )
+    malformed_result.write_text("{", encoding="utf-8")
+    undecodable_result.write_bytes(b'{"role":"consumer","diagnostics":"\xe2\x82"}')
+    recursive_result.write_text("[" * 10_000 + "0" + "]" * 10_000, encoding="utf-8")
+
+    details = runner.worker_result_failure_details(
+        [
+            producer_result,
+            malformed_result,
+            undecodable_result,
+            recursive_result,
+            legacy_result,
+            missing_result,
+        ]
+    )
+
+    # Key assertion: actionable structured evidence reaches the raised error while incomplete old
+    # artifacts remain readable and malformed/missing files cannot hide the original failure.
+    assert "--- producer.json diagnostic result" in details
+    assert '"code":"kPublicationIndeterminate"' in details
+    assert '"numeric_code":22' in details
+    assert "recipient 2 remained full" in details
+    assert "--- consumer_001.json diagnostic result" in details
+    assert '"diagnostics":null' in details
+    assert "consumer_002.json" not in details
+    assert "consumer_003.json" not in details
+    assert "consumer_004.json" not in details
+    assert "consumer_005.json" not in details
+    assert "large_unrelated_trace" not in details
+
+
+def test_run_repetition_preserves_worker_failure_with_undecodable_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class Worker:
+        def __init__(self, command: list[str], *, stdout: Any, **_: Any) -> None:
+            role = command[command.index("--role") + 1]
+            ready_fd = int(command[command.index("--ready-fd") + 1])
+            result_path = Path(command[command.index("--output") + 1])
+            runner.os.write(ready_fd, b"\x01")
+            stdout.write(f"{role} callback failed\n")
+            stdout.flush()
+            if role == "producer":
+                result_path.write_bytes(b'{"role":"producer","diagnostics":"\xe2\x82"}')
+                self.returncode = 1
+            else:
+                result_path.write_text(
+                    json.dumps(
+                        {
+                            "role": "consumer",
+                            "termination": "stopped",
+                            "diagnostic_count": 0,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                self.returncode = 0
+
+        def poll(self) -> int:
+            return self.returncode
+
+    args = validated_args()
+    args.benchmark_binary = Path("benchmark")
+    monkeypatch.setattr(runner.subprocess, "Popen", Worker)
+    monkeypatch.setattr(runner, "release_producer_start", lambda _: None)
+
+    with pytest.raises(RuntimeError) as error:
+        runner.run_repetition(args, 0, tmp_path)
+
+    message = str(error.value)
+    assert "benchmark process failures [1]" in message
+    assert "--- producer.log\nproducer callback failed" in message
+    assert "--- consumer_001.log\nconsumer callback failed" in message
+    assert "--- consumer_001.json diagnostic result" in message
+    assert '"role":"consumer"' in message
 
 
 def test_common_command_carries_tensor_identity() -> None:

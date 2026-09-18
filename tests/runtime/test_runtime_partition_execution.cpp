@@ -506,8 +506,16 @@ class AutomaticFanInDrainOperator final : public Operator<> {
 // Counts callbacks from operators whose embedded paths require lossless percent encoding.
 // Used by RuntimeAdmitsLosslesslyEncodedPartitionOperatorPaths.
 struct EncodedPartitionPathProbeState {
-  static void reset() noexcept { callbacks.store(0U, std::memory_order_relaxed); }
+  static void reset() noexcept {
+    callbacks.store(0U, std::memory_order_relaxed);
+    first_path.store(0U, std::memory_order_relaxed);
+    second_path.store(0U, std::memory_order_relaxed);
+    unexpected_path.store(false, std::memory_order_relaxed);
+  }
   static inline std::atomic<std::size_t> callbacks{};
+  static inline std::atomic<std::size_t> first_path{};
+  static inline std::atomic<std::size_t> second_path{};
+  static inline std::atomic_bool unexpected_path{};
 };
 
 // Supplies a single callback at an authored path containing slash-like segments.
@@ -525,8 +533,15 @@ class EncodedPartitionPathOperator final : public Operator<> {
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     EncodedPartitionPathProbeState::callbacks.fetch_add(1U, std::memory_order_relaxed);
+    if (context.operator_path() == "a/b%2Fc") {
+      EncodedPartitionPathProbeState::first_path.fetch_add(1U, std::memory_order_relaxed);
+    } else if (context.operator_path() == "a%2Fb/c") {
+      EncodedPartitionPathProbeState::second_path.fetch_add(1U, std::memory_order_relaxed);
+    } else {
+      EncodedPartitionPathProbeState::unexpected_path.store(true, std::memory_order_relaxed);
+    }
     return {};
   }
 
@@ -1272,6 +1287,7 @@ TEST(DispatcherTest, AutomaticSourceChainInterfaceV2RunsThroughPartitionLocalSer
 
 // REQ: COMPILE-068
 // REQ: RUNTIME-041
+// REQ: OPERATOR-050
 TEST(DispatcherTest, RuntimeAdmitsLosslesslyEncodedPartitionOperatorPaths) {
   const ScopedPartitionEnvironment absent{std::nullopt};
   EncodedPartitionPathProbeState::reset();
@@ -1295,6 +1311,9 @@ TEST(DispatcherTest, RuntimeAdmitsLosslesslyEncodedPartitionOperatorPaths) {
   EXPECT_EQ(session.termination(), RunTermination::kCompleted);
   EXPECT_TRUE(session.diagnostics().empty());
   EXPECT_EQ(EncodedPartitionPathProbeState::callbacks.load(std::memory_order_relaxed), 2U);
+  EXPECT_EQ(EncodedPartitionPathProbeState::first_path.load(std::memory_order_relaxed), 1U);
+  EXPECT_EQ(EncodedPartitionPathProbeState::second_path.load(std::memory_order_relaxed), 1U);
+  EXPECT_FALSE(EncodedPartitionPathProbeState::unexpected_path.load(std::memory_order_relaxed));
 }
 
 // REQ: COMPILE-068

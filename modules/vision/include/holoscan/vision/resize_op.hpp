@@ -22,19 +22,27 @@ namespace holoscan::vision {
 
 /// @brief Configure the output geometry and interpolation of \ref ResizeOp.
 struct ResizeOpParams {
-  std::int32_t width{1};   ///< Positive output width in pixels.
-  std::int32_t height{1};  ///< Positive output height in pixels.
+  std::int32_t width{1};             ///< Positive output width in pixels.
+  std::int32_t height{1};            ///< Positive output height in pixels.
+  std::uint32_t max_batch_size{1U};  ///< Maximum admitted image batch size.
   InterpolationMode interpolation{InterpolationMode::kLinear};  ///< Resize algorithm.
 };
 
 HOLOSCAN_PARAM_SCHEMA(ResizeOpParams,
-                      holoscan::param_schema("com.nvidia.holoscan.vision.ResizeOpParams", 1),
+                      holoscan::param_schema("com.nvidia.holoscan.vision.ResizeOpParams", 2),
                       holoscan::field<&ResizeOpParams::width>("width")
+                          .recompile_required()
                           .range(1, INT32_MAX)
                           .description("Output image width in pixels."),
                       holoscan::field<&ResizeOpParams::height>("height")
+                          .recompile_required()
                           .range(1, INT32_MAX)
                           .description("Output image height in pixels."),
+                      holoscan::field<&ResizeOpParams::max_batch_size>("max_batch_size")
+                          .recompile_required()
+                          .required_on_load()
+                          .range(1U, kMaximumBatchSize)
+                          .description("Maximum image batch size admitted by the operator."),
                       holoscan::field<&ResizeOpParams::interpolation>("interpolation")
                           .allowed_values({InterpolationMode::kNearest,
                                            InterpolationMode::kLinear,
@@ -53,13 +61,8 @@ HOLOSCAN_PARAM_SCHEMA(ResizeOpParams,
 /// include padding. Output storage is contiguous.
 class HOLOSCAN_VISION_EXPORT ResizeOp final : public Operator<ResizeOpParams> {
  public:
-  /// @brief Construct an operator with fixed output-pool capacity.
-  /// @param capacity Maximum output width, output height, and admitted batch size.
-  ///
-  /// The capacity is graph structure and cannot be changed by a parameter
-  /// override. Each field must be positive and every bound
-  /// \ref ResizeOpParams geometry must fit within it.
-  explicit ResizeOp(VisionImageCapacity capacity);
+  /// @brief Construct an operator whose output capacity is derived from its Parameters.
+  ResizeOp();
 
   /// @brief Destroy the operator and its retained CV-CUDA resource after runtime quiescence.
   ~ResizeOp() override;
@@ -89,7 +92,6 @@ class HOLOSCAN_VISION_EXPORT ResizeOp final : public Operator<ResizeOpParams> {
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;
-  VisionImageCapacity capacity_;
 };
 
 static_assert(param_schema_availability<ResizeOpParams>() == ParamSchemaAvailability::kDeclared,

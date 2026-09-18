@@ -53,5 +53,5 @@ endif()
 
 install(TARGETS rate_aware_ports
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/rate_aware_ports/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

@@ -29,5 +29,5 @@ endif()
 
 install(TARGETS green_context
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/green_context/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

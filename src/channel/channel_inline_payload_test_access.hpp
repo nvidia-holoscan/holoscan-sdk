@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -29,6 +30,24 @@ struct InlinePayloadTestAccess {
   [[nodiscard]] static ChannelSubscriber<T> make_subscriber(
       std::unique_ptr<InlinePayloadSubscriber> subscriber) {
     return ChannelSubscriber<T>(std::move(subscriber));
+  }
+
+  template <typename T>
+    requires(ChannelInlinePayload<T> || CatalogChannelPayload<T>)
+  [[nodiscard]] static expected<std::uint64_t, Error> attach_wait_set(
+      InlinePayloadWaitSet& wait_set, ChannelSubscriber<T>& subscriber) {
+    if (!subscriber.subscriber_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    return wait_set.attach(*subscriber.subscriber_);
+  }
+
+  template <typename T>
+    requires(ChannelInlinePayload<T> || CatalogChannelPayload<T>)
+  [[nodiscard]] static std::optional<std::uint64_t> secondary_wait_set_handle(
+      ChannelSubscriber<T>& subscriber) noexcept {
+    return subscriber.subscriber_ ? protected_terminal_wait_handle(*subscriber.subscriber_)
+                                  : std::nullopt;
   }
 
   [[nodiscard]] static expected<std::unique_ptr<InlinePayloadPublisher>, Error> create_publisher(

@@ -43,5 +43,5 @@ endif()
 
 install(TARGETS slow_fast_fusion
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/slow_fast_fusion/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

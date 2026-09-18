@@ -366,7 +366,14 @@ contract validation happen earlier and may be replayed:
 Advanced lifecycle callbacks are `noexcept` and report their disposition as a
 value, consistent with the SDK-wide errors-as-values model. (Simple
 `start()`/`stop()` overrides return `void`; their failure story is in the next
-section.) The four statuses:
+section.) Supply an explanation with
+`ctx.report_error(error)` or `ctx.report_error(code, message)` before returning a
+failure status. Reporting copies bounded text without allocation or exceptions;
+the first report wins for that invocation. It does not change the returned
+status, and a successful callback does not publish a failure merely because it
+reported detail. The next callback starts with fresh diagnostic state.
+
+The four statuses:
 
 | Status | Meaning |
 |---|---|

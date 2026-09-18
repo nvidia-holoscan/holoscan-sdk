@@ -16,9 +16,9 @@ function(holoscan_configure_example_install target)
         set(HCEI_RUNTIME_DESTINATION
             "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/${HCEI_EXAMPLE_RELATIVE_DIR}")
     endif()
-    # Installed C++ binaries mirror their source directory under share/examples:
+    # Installed C++ binaries mirror their source directory under holoscan/examples:
     #
-    #   <prefix>/share/examples/<example path>/cpp/<binary>
+    #   <prefix>/<libdir>/holoscan/examples/<example path>/cpp/<binary>
     #
     # The SDK libraries live in <prefix>/<libdir>. Compute the path from the
     # runtime destination so each ../ corresponds to one layout component and

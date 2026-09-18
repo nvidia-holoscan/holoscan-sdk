@@ -14,6 +14,7 @@ class PointerCaptureOp final : public holoscan::Operator<> {
 };
 
 // REQ: GRAPH-003
+// REQ: GRAPH-036
 int main() {
   holoscan::Graph graph;
   int borrowed = 0;

@@ -17,6 +17,9 @@ import tempfile
 import time
 from pathlib import Path
 
+PROCESS_FAILURE_LOG_LIMIT = 8_192
+BenchmarkProcess = tuple[str, subprocess.Popen[str]]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -392,17 +395,61 @@ def fanout_summary(
     return summary
 
 
-def terminate(processes: list[subprocess.Popen[str]]) -> None:
-    for proc in processes:
+def terminate(processes: list[BenchmarkProcess]) -> set[str]:
+    terminated_roles: set[str] = set()
+    for role, proc in processes:
         if proc.poll() is None:
+            terminated_roles.add(role)
             proc.terminate()
     deadline = time.monotonic() + 2.0
-    for proc in processes:
+    for _, proc in processes:
         while proc.poll() is None and time.monotonic() < deadline:
             time.sleep(0.01)
-    for proc in processes:
+    for _, proc in processes:
         if proc.poll() is None:
             proc.kill()
+    return terminated_roles
+
+
+def format_returncode(returncode: int | None) -> str:
+    if returncode is None:
+        return "running"
+    if returncode >= 0:
+        return f"exit {returncode}"
+    signal_number = -returncode
+    try:
+        signal_name = signal.Signals(signal_number).name
+    except ValueError:
+        return f"signal {signal_number}"
+    return f"signal {signal_number} ({signal_name})"
+
+
+def process_failure_summary(processes: list[BenchmarkProcess], terminated_roles: set[str]) -> str:
+    return ", ".join(
+        f"{role}={format_returncode(process.returncode)}"
+        f"{' [harness cleanup]' if role in terminated_roles else ''}"
+        for role, process in processes
+        if process.returncode != 0
+    )
+
+
+def process_failure_details(processes: list[BenchmarkProcess], output_dir: Path) -> str:
+    details: list[str] = []
+    for role, _ in processes:
+        path = output_dir / f"{role}.log"
+        try:
+            with path.open("rb") as stream:
+                stream.seek(0, os.SEEK_END)
+                size = stream.tell()
+                start = max(0, size - PROCESS_FAILURE_LOG_LIMIT)
+                stream.seek(start)
+                text = stream.read(PROCESS_FAILURE_LOG_LIMIT).decode("utf-8", errors="replace")
+        except OSError as error:
+            details.append(f"--- {path.name} unavailable: {error}")
+            continue
+        marker = "[... earlier output truncated ...]\n" if start != 0 else ""
+        details.append(f"--- {path.name}\n{marker}{text.rstrip()}")
+    return "\n".join(details)
 
 
 def run_intraprocess(
@@ -480,13 +527,14 @@ def run_interprocess(
     subscriber_cpus: list[int],
     output_dir: Path,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
-    processes: list[subprocess.Popen[str]] = []
+    processes: list[BenchmarkProcess] = []
     try:
         for index in range(args.expected_subscribers):
             out = (output_dir / f"subscriber_{index}.json").open("w", encoding="utf-8")
             err = (output_dir / f"subscriber_{index}.log").open("w", encoding="utf-8")
             command = [*common, "--role", "subscriber", "--cpu", str(subscriber_cpus[index])]
-            processes.append(subprocess.Popen(command, stdout=out, stderr=err, text=True))
+            process = subprocess.Popen(command, stdout=out, stderr=err, text=True)
+            processes.append((f"subscriber_{index}", process))
 
         time.sleep(0.2)
 
@@ -496,12 +544,12 @@ def run_interprocess(
         publisher = subprocess.Popen(
             publisher_command, stdout=publisher_out, stderr=publisher_err, text=True
         )
-        processes.append(publisher)
+        processes.append(("publisher", publisher))
 
         deadline = time.monotonic() + args.timeout_sec
-        while any(process.poll() is None for process in processes):
+        while any(process.poll() is None for _, process in processes):
             failed = [
-                process.returncode for process in processes if process.poll() not in (None, 0)
+                process.returncode for _, process in processes if process.poll() not in (None, 0)
             ]
             if failed:
                 break
@@ -509,9 +557,9 @@ def run_interprocess(
                 raise TimeoutError(f"benchmark timed out after {args.timeout_sec} s")
             time.sleep(0.05)
     finally:
-        terminate(processes)
+        terminated_roles = terminate(processes)
 
-    failed = [process.returncode for process in processes if process.returncode != 0]
+    failed = [process.returncode for _, process in processes if process.returncode != 0]
     if failed:
         if (
             args.skip_if_no_cuda
@@ -520,7 +568,10 @@ def run_interprocess(
         ):
             print("CUDA is unavailable; skipping benchmark", file=sys.stderr)
             raise SystemExit(77)
-        raise RuntimeError(f"benchmark process failures: {failed}; logs in {output_dir}")
+        raise RuntimeError(
+            f"benchmark process failures: {process_failure_summary(processes, terminated_roles)}; "
+            f"logs in {output_dir}\n{process_failure_details(processes, output_dir)}"
+        )
 
     publisher_json = checked_json(output_dir / "publisher.json")
     subscriber_json = [

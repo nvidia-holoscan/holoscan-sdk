@@ -45,7 +45,9 @@ struct RuntimeCallbackIdentity {
 class HOLOSCAN_CORE_EXPORT RuntimeCallbackContextScope {
  public:
   explicit RuntimeCallbackContextScope(RuntimeCallbackContext context) noexcept;
-  explicit RuntimeCallbackContextScope(RuntimeCallbackIdentity identity) noexcept;
+  explicit RuntimeCallbackContextScope(
+      const RuntimeCallbackIdentity& identity,
+      RuntimeCallbackContext fallback = RuntimeCallbackContext::kNone) noexcept;
 
   RuntimeCallbackContextScope(const RuntimeCallbackContextScope&) = delete;
   RuntimeCallbackContextScope& operator=(const RuntimeCallbackContextScope&) = delete;

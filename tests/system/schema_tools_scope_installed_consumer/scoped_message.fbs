@@ -4,7 +4,8 @@
 namespace holoscan.tests;
 
 table ScopedMessage {
-  value:uint64;
+  value:uint64 (id: 0);
 }
 
 root_type ScopedMessage;
+file_identifier "SCPM";

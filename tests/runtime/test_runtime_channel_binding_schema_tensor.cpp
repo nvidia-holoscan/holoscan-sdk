@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <future>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <semaphore>
@@ -20,6 +21,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -30,7 +32,7 @@
 #include <holoscan/core/run.hpp>
 #include <holoscan/memory/block_memory_pool.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/time/manual_clock.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
@@ -44,6 +46,7 @@
 #include "core/graph_compiler_access.hpp"
 #include "core/source_id_internal.hpp"
 #include "runtime/channel_runtime_binding_access.hpp"
+#include "runtime/dispatcher.hpp"
 #include "runtime/graph_exec.hpp"
 #include "runtime/runtime_channel_binding.hpp"
 #include "runtime/runtime_phase_counters.hpp"
@@ -523,11 +526,256 @@ TEST(ChannelBindingParityTest, CatalogTensorPermanentSequenceExhaustionRemainsTe
   ASSERT_NO_FATAL_FAILURE(run_catalog_tensor_terminal_exhaustion_scenario(true));
 }
 
-// Direct-retained descriptor Tensor delivery keeps the ordinary readiness path. Receipt
-// bookkeeping does not improve the production-sized path enough to justify touching publication.
+// Select the peer disposition at exhausted Runtime capacity without exhausting the endpoint's
+// independent operation sequence. Used by RawTensorExportCloseClassifiesPeersAtExhaustion and
+// DescriptorTensorExportCloseClassifiesPeersAtExhaustion.
+enum class ExhaustedExportPeer : std::uint8_t {
+  kNeverAttached,
+  kRequiredRetired,
+  kOptionalRetired,
+  kConnected
+};
+
+// Exercise real catalog endpoints and accepted payloads under a disarmed Runtime session so
+// counter injection and terminal refresh cannot race a RunSession worker. Representative caller:
+// RawTensorExportCloseClassifiesPeersAtExhaustion.
+template <typename Payload>
+void expect_export_close_at_exhaustion(const ExhaustedExportPeer peer) {
+  const std::string endpoint_name = unique_service();
+  Graph graph{"exhausted-terminal-" + endpoint_name};
+  graph.set_default_clock(graph.bind_shared_clock("clock", std::make_shared<ManualClock>(0)));
+  using Source = std::conditional_t<std::is_same_v<Payload, Tensor>,
+                                    ContractTensorSourceOperator,
+                                    ImageSourceOperator>;
+  auto source = graph.op<Source>("source");
+  static constexpr std::array axes{TensorAxisBounds{.max_extent = 16U, .max_abs_stride_bytes = 1U}};
+  const TensorBoundaryContract contract{
+      .representation = {.memory_kind = MemoryKind::kHost,
+                         .dtype = DLDataType{kDLUInt, 8U, 1U},
+                         .rank = 1U,
+                         .strides = TensorStridePolicy::kContiguousOnly},
+      .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 16U, .axes = axes},
+      .transfer =
+          TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded}};
+  TopicOptions options;
+  options.endpoint_name = endpoint_name;
+  options.attach = {.peer = peer == ExhaustedExportPeer::kRequiredRetired ||
+                                    peer == ExhaustedExportPeer::kConnected
+                                ? PeerRequirement::kRequired
+                                : PeerRequirement::kOptional,
+                    .max_wait = 2s};
+  options.bounds.subscriber = {.queue_depth = 1U, .max_borrowed_samples = 1U};
+  auto exported = [&] {
+    if constexpr (std::is_same_v<Payload, Tensor>) {
+      options.tensor = contract;
+      return graph.export_topic<Tensor>("holomq://" + endpoint_name, std::move(options));
+    } else {
+      DescriptorTensorTopicContract<schema::ImageT> image_contract;
+      image_contract.field(TensorFieldSelector<schema::ImageT>{4U, 0U}, contract);
+      return graph.export_topic<schema::ImageT>(
+          "holomq://" + endpoint_name, std::move(options), image_contract);
+    }
+  }();
+  graph.add_flow(source->output,
+                 exported.input(),
+                 ConnectionOptions{.queue_policy = QueuePolicy::kBlocking, .queue_depth = 1U});
+  const auto plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto state = ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(state, nullptr);
+  const auto* output = planned_operator_port(*state, PortDirection::kOutput);
+  ASSERT_NE(output, nullptr);
+  const std::array replay{RuntimeChannelPortReplayRecord{
+      .port = output->id,
+      .owner = output->owner,
+      .direction = PortDirection::kOutput,
+      .declaration = const_cast<void*>(static_cast<const void*>(&source->output)),
+      .type_ops = runtime_port_type_ops<Payload>()}};
+  // Replay binds this exact declaration; Graph handles expose it const to ordinary callers.
+  auto& source_output = *static_cast<Output<Payload>*>(replay[0].declaration);
+  auto session = RuntimeChannelSession::create(*state, replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  const auto exhausted_sequence = std::numeric_limits<std::uint64_t>::max();
+  const auto expect_state = [&](const std::size_t resolved_arms) {
+    auto sequence = RuntimeChannelSessionTestAccess::output_next_sequence(**session, output->id);
+    ASSERT_TRUE(sequence);
+    EXPECT_EQ(*sequence, exhausted_sequence);
+    auto resolved =
+        RuntimeChannelSessionTestAccess::resolved_output_terminal_arms(**session, output->id);
+    ASSERT_TRUE(resolved);
+    EXPECT_EQ(*resolved, resolved_arms);
+    auto progress = RuntimeChannelSessionTestAccess::process_local_progress_state(**session);
+    ASSERT_TRUE(progress);
+    EXPECT_EQ(progress->published_deliveries, 0U);
+    EXPECT_EQ(progress->publications_in_flight, 0U);
+  };
+  if (peer == ExhaustedExportPeer::kNeverAttached) {
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+        **session, output->id, exhausted_sequence));
+    ASSERT_TRUE((*session)->close_owner_outputs(output->owner));
+    ASSERT_TRUE((*session)->close_owner_outputs(output->owner));
+    expect_state(1U);
+    return;
+  }
+  auto client = ChannelRuntime::create();
+  ASSERT_TRUE(client);
+  auto subscriber = [&] {
+    if constexpr (std::is_same_v<Payload, Tensor>) {
+      return client->create_subscriber<Tensor>(plan.endpoint_catalog(), endpoint_name);
+    } else {
+      return client
+          ->create_tensor_schema_subscriber<schema::DescriptorFlatBufferPayloadFor<schema::Image>>(
+              plan.endpoint_catalog(), endpoint_name);
+    }
+  }();
+  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+  const auto attach_deadline = std::chrono::steady_clock::now() + 2s;
+  do {
+    ASSERT_TRUE(subscriber->has_samples());
+    ASSERT_TRUE((*session)->refresh_connections());
+    if (subscriber->has_publishers()) {
+      break;
+    }
+    std::this_thread::sleep_for(1ms);
+  } while (std::chrono::steady_clock::now() < attach_deadline);
+  ASSERT_TRUE(subscriber->has_publishers());
+  ASSERT_TRUE((*session)->prepare_activation(output->owner, 1U, {}));
+  auto tensor =
+      make_contract_test_tensor(std::array<std::int64_t, 1U>{8}, DLDataType{kDLUInt, 8U, 1U});
+  ASSERT_TRUE(tensor);
+  if constexpr (std::is_same_v<Payload, Tensor>) {
+    ASSERT_TRUE(source_output.emit(std::move(*tensor)));
+  } else {
+    schema::ImageT image{};
+    image.height = 1U;
+    image.width = 8U;
+    image.encoding = schema::ImageEncoding_CUSTOM;
+    image.data = std::make_shared<Tensor>(std::move(*tensor));
+    ASSERT_TRUE(source_output.emit(std::move(image)));
+  }
+  ASSERT_TRUE((*session)->retire_activation(output->owner, 1U, true));
+  // Receiving the payload establishes actual recipient acceptance before exhaustion injection.
+  const auto receive_deadline = std::chrono::steady_clock::now() + 2s;
+  expected<bool, Error> ready = false;
+  do {
+    ready = subscriber->has_samples();
+    ASSERT_TRUE(ready);
+    if (*ready) {
+      break;
+    }
+    std::this_thread::sleep_for(1ms);
+  } while (std::chrono::steady_clock::now() < receive_deadline);
+  ASSERT_TRUE(*ready);
+  {
+    auto received = [&] {
+      if constexpr (std::is_same_v<Payload, Tensor>) {
+        return subscriber->receive_sample();
+      } else {
+        return subscriber->receive();
+      }
+    }();
+    ASSERT_TRUE(received) << runtime_error_message(received.error());
+  }
+  if (peer != ExhaustedExportPeer::kConnected) {
+    ASSERT_TRUE(subscriber->close());
+  }
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+      **session, output->id, exhausted_sequence));
+  auto closed = (*session)->close_owner_outputs(output->owner);
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code,
+            peer == ExhaustedExportPeer::kRequiredRetired ? ErrorCode::kClosed
+                                                          : ErrorCode::kResourceExhausted);
+  expect_state(peer == ExhaustedExportPeer::kRequiredRetired ? 1U : 0U);
+  if (peer == ExhaustedExportPeer::kRequiredRetired) {
+    auto reset = (*session)->reset();
+    ASSERT_FALSE(reset);
+    EXPECT_EQ(reset.error().code, ErrorCode::kClosed);
+    ASSERT_TRUE((*session)->close_owner_outputs(output->owner));
+    expect_state(1U);
+  } else if (peer == ExhaustedExportPeer::kConnected) {
+    // The still-live recipient observes no EOS or phantom data from the rejected close.
+    auto ready_after_close = subscriber->has_samples();
+    ASSERT_TRUE(ready_after_close);
+    EXPECT_FALSE(*ready_after_close);
+  }
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+// REQ: CHAN-144
+TEST(ChannelBindingParityTest, RawTensorExportCloseClassifiesPeersAtExhaustion) {
+  // Key setup: source.output -> raw Tensor export -> external subscriber (absent/live/retired).
+  // Key assertion: no-obligation close succeeds locally, required abandonment returns kClosed,
+  // and connected or previously obligated optional arms remain exhausted; none advances N.
+  for (const auto peer : {ExhaustedExportPeer::kNeverAttached,
+                          ExhaustedExportPeer::kRequiredRetired,
+                          ExhaustedExportPeer::kOptionalRetired,
+                          ExhaustedExportPeer::kConnected}) {
+    SCOPED_TRACE(static_cast<unsigned>(peer));
+    ASSERT_NO_FATAL_FAILURE(expect_export_close_at_exhaustion<Tensor>(peer));
+  }
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+// REQ: CHAN-144
+TEST(ChannelBindingParityTest, DescriptorTensorExportCloseClassifiesPeersAtExhaustion) {
+  // Key setup: source.output -> descriptor-schema export -> external Image subscriber.
+  // Key assertion: classify no-EOS dispositions before exhausted Runtime capacity, preserving
+  // accepted-recipient obligations and the endpoint-owned operation sequence boundary.
+  for (const auto peer : {ExhaustedExportPeer::kNeverAttached,
+                          ExhaustedExportPeer::kRequiredRetired,
+                          ExhaustedExportPeer::kOptionalRetired,
+                          ExhaustedExportPeer::kConnected}) {
+    SCOPED_TRACE(static_cast<unsigned>(peer));
+    ASSERT_NO_FATAL_FAILURE(expect_export_close_at_exhaustion<schema::ImageT>(peer));
+  }
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(ChannelBindingParityTest, ExhaustedProcessLocalTensorCloseDoesNotPublish) {
+  // Key setup: source.output -> process-local raw Tensor or descriptor-schema input.
+  // Key assertion: exhaustion rejects EOS before delivery accounting or receiver terminal state.
+  const auto check = [](auto& fixture) {
+    auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+    ASSERT_TRUE(session);
+    ASSERT_TRUE((*session)->refresh_connections());
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+        **session, PortId{1U}, std::numeric_limits<std::uint64_t>::max()));
+    auto closed = (*session)->close_owner_outputs(VertexId{1U});
+    ASSERT_FALSE(closed);
+    EXPECT_EQ(closed.error().code, ErrorCode::kResourceExhausted);
+    auto sequence = RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+    ASSERT_TRUE(sequence);
+    EXPECT_EQ(*sequence, std::numeric_limits<std::uint64_t>::max());
+    auto progress = RuntimeChannelSessionTestAccess::process_local_progress_state(**session);
+    ASSERT_TRUE(progress);
+    EXPECT_EQ(progress->published_deliveries, 0U);
+    EXPECT_EQ(progress->publications_in_flight, 0U);
+    auto input = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+    ASSERT_TRUE(input);
+    EXPECT_FALSE(input->end_of_stream_received);
+    auto resolved =
+        RuntimeChannelSessionTestAccess::resolved_output_terminal_arms(**session, PortId{1U});
+    ASSERT_TRUE(resolved);
+    EXPECT_EQ(*resolved, 0U);
+  };
+  TensorSessionFixture tensor;
+  ASSERT_NO_FATAL_FAILURE(check(tensor));
+  ImageSessionFixture image;
+  ASSERT_NO_FATAL_FAILURE(check(image));
+}
+
+// Direct-retained descriptor Tensor delivery can arm causal continuation while preserving the
+// ordinary readiness record, schema metadata, and retained Tensor lifetime authority.
 // REQ: CHAN-099
+// REQ: CHAN-128
 // REQ: RUNTIME-019
-TEST(ChannelBindingParityTest, DirectDescriptorTensorUsesOrdinaryReadinessInsteadOfContinuation) {
+// REQ: RUNTIME-037
+TEST(ChannelBindingParityTest,
+     DirectDescriptorTensorArmsContinuationAndPreservesOrdinaryReadiness) {
   // Key setup: create an otherwise eligible exact shared-lane direct descriptor Tensor edge.
   ImageSessionFixture fixture;
   fixture.use_direct_retained_delivery();
@@ -547,7 +795,7 @@ TEST(ChannelBindingParityTest, DirectDescriptorTensorUsesOrdinaryReadinessInstea
   ASSERT_TRUE(binding) << runtime_error_message(binding.error());
   ASSERT_TRUE((*session)->refresh_connections());
   ASSERT_TRUE((*session)->arm());
-  EXPECT_FALSE((*session)->arm_direct_continuation(VertexId{1U}, 0U));
+  EXPECT_TRUE((*session)->arm_direct_continuation(VertexId{1U}, 0U));
 
   auto published = publish_image_sample(**session, **binding, fixture.source, 91U);
   ASSERT_TRUE(published) << runtime_error_message(published.error());
@@ -560,8 +808,8 @@ TEST(ChannelBindingParityTest, DirectDescriptorTensorUsesOrdinaryReadinessInstea
   ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, selection));
   ASSERT_TRUE((*session)->prepare_tensor_access(VertexId{2U}, 1U, nullptr));
 
-  // Key assertion: ordinary polling publishes one readiness record while schema metadata and the
-  // embedded Tensor backing remain valid through typed receive and retirement.
+  // Key assertion: continuation eligibility does not consume ordinary readiness; schema metadata
+  // and embedded Tensor backing remain valid through typed receive and retirement.
   {
     auto received = fixture.sink.input.receive();
     ASSERT_TRUE(received) << runtime_error_message(received.error());
@@ -587,7 +835,7 @@ TEST(ChannelBindingParityTest, DirectDescriptorTensorUsesOrdinaryReadinessInstea
 TEST(ChannelBindingParityTest, MalformedDescriptorTensorTerminalDoesNotExposeRuntimeEndOfStream) {
   using ImageEnvelope = schema::detail::DescriptorTensorRuntimeEnvelope<
       schema::Image,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>,
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>,
       1U>;
   constexpr auto bucket_size = channel_internal::inline_payload_bucket_size(sizeof(ImageEnvelope));
   static_assert(bucket_size.has_value());
@@ -704,6 +952,102 @@ TEST(ChannelBindingParityTest, MalformedDescriptorTensorTerminalDoesNotExposeRun
     ASSERT_TRUE((*binding)->retire(terminal->source_sequence));
     (*session)->cancel();
     ASSERT_TRUE((*session)->join());
+  }
+}
+
+// Exercise the same real terminal transport contract for raw Tensor and descriptor-schema roots.
+// No pump races the missing-data boundary: the existing test seam performs each bounded receive.
+// Representative callers: RawTensorSequenceAndTerminalSurviveLifecycleCutovers and
+// DescriptorSchemaSequenceAndTerminalSurviveLifecycleCutovers.
+template <typename Fixture, typename Publish>
+void expect_tensor_sequence_across_cutover(Fixture& fixture, Publish publish,
+                                           const bool replacement_data) {
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  ASSERT_TRUE(publish());
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U}));
+  // Each successful empty transition preserves the same consumed source authority.
+  ASSERT_TRUE((*session)->reset());
+  ASSERT_TRUE((*session)->reset(VertexId{1U}));
+  const std::array affected{VertexId{1U}, VertexId{2U}};
+  ASSERT_TRUE((*session)->commit_restart(VertexId{1U}, affected));
+  ASSERT_TRUE((*session)->refresh_connections());
+  if (replacement_data) {
+    ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 3U, {}));
+    ASSERT_TRUE(publish());
+    ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 3U, true));
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U}));
+    auto data = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+    ASSERT_TRUE(data);
+    EXPECT_EQ(data->last_producer_sequence, 2U);
+    EXPECT_EQ(data->producer_epoch, 4U);
+  }
+  auto closed = (*session)->close_owner_outputs(VertexId{1U});
+  ASSERT_TRUE(closed) << runtime_error_message(closed.error());
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U}));
+  auto terminal = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(terminal);
+  EXPECT_TRUE(terminal->end_of_stream_received);
+  EXPECT_EQ(terminal->end_of_stream_transport_sequence, replacement_data ? 3U : 2U);
+  ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
+  auto counter = RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+  ASSERT_TRUE(counter);
+  EXPECT_EQ(*counter, replacement_data ? 4U : 3U);
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(ChannelBindingParityTest, RawTensorSequenceAndTerminalSurviveLifecycleCutovers) {
+  // Key setup: source.output -> process-local raw Tensor -> sink.input; publish data,
+  // then perform full reset, source reset and committed restart, optionally publishing again.
+  // Key assertion: data sequence remains monotonic and EOS is the immediate successor,
+  // including an empty replacement epoch; repeated close consumes no second coordinate.
+  for (const bool replacement_data : {false, true}) {
+    SCOPED_TRACE(replacement_data);
+    TensorSessionFixture fixture;
+    expect_tensor_sequence_across_cutover(
+        fixture,
+        [&]() -> expected<void, Error> {
+          auto owned = make_owned_tensor_sample(71U);
+          if (!owned) {
+            return make_unexpected(std::move(owned).error());
+          }
+          return fixture.source.output.emit(std::move(owned->tensor));
+        },
+        replacement_data);
+  }
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(ChannelBindingParityTest, DescriptorSchemaSequenceAndTerminalSurviveLifecycleCutovers) {
+  // Key setup: source.output -> process-local descriptor-schema Image -> sink.input; publish data,
+  // then perform full reset, source reset and committed restart, optionally publishing again.
+  // Key assertion: data sequence remains monotonic and EOS is the immediate successor,
+  // including an empty replacement epoch; repeated close consumes no second coordinate.
+  for (const bool replacement_data : {false, true}) {
+    SCOPED_TRACE(replacement_data);
+    ImageSessionFixture fixture;
+    expect_tensor_sequence_across_cutover(
+        fixture,
+        [&]() -> expected<void, Error> {
+          auto owned = make_owned_tensor_sample(72U);
+          if (!owned) {
+            return make_unexpected(std::move(owned).error());
+          }
+          schema::ImageT image{};
+          image.height = 1;
+          image.width = 1;
+          image.encoding = schema::ImageEncoding_CUSTOM;
+          image.header = std::make_shared<schema::HeaderT>();
+          image.header->frame_id = "lifecycle sequence";
+          image.data = std::make_shared<Tensor>(std::move(owned->tensor));
+          return fixture.source.output.emit(std::move(image));
+        },
+        replacement_data);
   }
 }
 
@@ -854,7 +1198,12 @@ TEST(ChannelBindingParityTest, InlineFinalDataReplacesDepthOneReuseLastBeforeEnd
   EXPECT_EQ(staged.error().code, ErrorCode::kBackpressured);
   ASSERT_TRUE(
       RuntimeChannelSessionTestAccess::fail_next_reuse_replacement_receive(**session, PortId{2U}));
-  const auto forced_failure = (*session)->replace_staged_reuse(PortId{2U}, *first_record);
+  auto replacement_candidate =
+      (*session)->staged_reuse_replacement_candidate(PortId{2U}, *first_record);
+  ASSERT_TRUE(replacement_candidate) << runtime_error_message(replacement_candidate.error());
+  ASSERT_TRUE(replacement_candidate->has_value());
+  const auto forced_failure =
+      (*session)->replace_staged_reuse(PortId{2U}, *first_record, **replacement_candidate);
   ASSERT_FALSE(forced_failure);
   EXPECT_EQ(forced_failure.error().code, ErrorCode::kFailure);
   const auto rolled_back =
@@ -867,7 +1216,8 @@ TEST(ChannelBindingParityTest, InlineFinalDataReplacesDepthOneReuseLastBeforeEnd
   const auto selector_owned = RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U});
   ASSERT_FALSE(selector_owned);
   EXPECT_EQ(selector_owned.error().code, ErrorCode::kBackpressured);
-  auto final_data = (*session)->replace_staged_reuse(PortId{2U}, *first_record);
+  auto final_data =
+      (*session)->replace_staged_reuse(PortId{2U}, *first_record, **replacement_candidate);
   ASSERT_TRUE(final_data) << runtime_error_message(final_data.error());
   auto final_event = wait_for_event(**session, **binding);
   ASSERT_TRUE(final_event) << runtime_error_message(final_event.error());
@@ -915,6 +1265,358 @@ TEST(ChannelBindingParityTest, InlineFinalDataReplacesDepthOneReuseLastBeforeEnd
   auto duplicate_count = (*binding)->drain(std::span<RuntimeEvent>{&duplicate, 1U});
   ASSERT_TRUE(duplicate_count) << runtime_error_message(duplicate_count.error());
   EXPECT_EQ(*duplicate_count, 0U);
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
+// REQ: RUNTIME-017
+// REQ: CHAN-131
+// A staged-reuse probe is only advisory. If the serialized transport head changes before commit,
+// the stale identity must not consume the successor or release the incumbent ReuseLast claim.
+TEST(ChannelBindingParityTest, StagedReuseReplacementRejectsStaleTransportHeadIdentity) {
+  SessionFixture fixture;
+  fixture.use_one_slot_blocking_transport();
+  fixture.enable_reuse_last();
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto binding = (*session)->create_readiness_binding(
+      VertexId{2U},
+      RuntimePortBindingRequest{.plan_generation = fixture.plan.plan_generation,
+                                .run_generation = 1U,
+                                .kind = RuntimeEventKind::kInputArrival,
+                                .source = make_source_id(1U),
+                                .source_clock = ClockId{1U},
+                                .reference_clock = ClockId{1U},
+                                .capacity = 2U});
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  ASSERT_TRUE(
+      fixture.source.output.emit(11, EmitOptions{.capture_time = TimePoint{10, ClockId{1U}}}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U}));
+  auto retained_event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(retained_event) << runtime_error_message(retained_event.error());
+  auto retained =
+      (*session)->temporal_sample(retained_event->port, retained_event->source_sequence);
+  ASSERT_TRUE(retained) << runtime_error_message(retained.error());
+  const std::array retained_selection{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = {InputState::kSelected, SelectionReason::kNone},
+      .samples = std::span<const TemporalSampleRecord>{&*retained, 1U},
+      .destructive = true}};
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, retained_selection));
+  auto retained_sample = fixture.sink.input.receive();
+  ASSERT_TRUE(retained_sample) << runtime_error_message(retained_sample.error());
+  EXPECT_EQ(retained_sample->data, 11);
+  ASSERT_TRUE((*binding)->retire(retained_event->source_sequence));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 1U, true));
+  const auto retained_by_reuse =
+      (*session)->retire_samples(PortId{2U}, retained_selection.front().samples);
+  ASSERT_FALSE(retained_by_reuse);
+  ASSERT_EQ(retained_by_reuse.error().code, ErrorCode::kBackpressured);
+
+  // With the sole typed slot retained, the failed receive stages sequence 2 without consuming it.
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 2U, {}));
+  ASSERT_TRUE(
+      fixture.source.output.emit(22, EmitOptions{.capture_time = TimePoint{20, ClockId{1U}}}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 2U, true));
+  const auto blocked_head = RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U});
+  ASSERT_FALSE(blocked_head);
+  ASSERT_EQ(blocked_head.error().code, ErrorCode::kBackpressured);
+
+  auto staged_sequence =
+      RuntimeChannelSessionTestAccess::staged_data_sequence(**session, PortId{2U});
+  ASSERT_TRUE(staged_sequence) << runtime_error_message(staged_sequence.error());
+  ASSERT_EQ(*staged_sequence, 2U);
+  auto stale_candidate = (*session)->staged_reuse_replacement_candidate(PortId{2U}, *retained);
+  ASSERT_TRUE(stale_candidate) << runtime_error_message(stale_candidate.error());
+  ASSERT_TRUE(stale_candidate->has_value());
+  ASSERT_EQ((**stale_candidate).source_sequence, 2U);
+
+  // Queue sequence 3 behind the protected staged head, then advance the serialized head without
+  // giving the stale probe token an opportunity to consume either record.
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 3U, {}));
+  ASSERT_TRUE(
+      fixture.source.output.emit(33, EmitOptions{.capture_time = TimePoint{30, ClockId{1U}}}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 3U, true));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::discard_staged_data_head(**session, PortId{2U}));
+  staged_sequence = RuntimeChannelSessionTestAccess::staged_data_sequence(**session, PortId{2U});
+  ASSERT_TRUE(staged_sequence) << runtime_error_message(staged_sequence.error());
+  ASSERT_EQ(*staged_sequence, 3U);
+  const auto stale_replace =
+      (*session)->replace_staged_reuse(PortId{2U}, *retained, **stale_candidate);
+  ASSERT_FALSE(stale_replace);
+  EXPECT_EQ(stale_replace.error().code, ErrorCode::kNotReady);
+  const auto preserved = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(preserved) << runtime_error_message(preserved.error());
+  EXPECT_EQ(preserved->occupied_samples, 1U);
+  EXPECT_TRUE(preserved->reuse_retained);
+  EXPECT_TRUE(preserved->temporal_retained);
+  EXPECT_TRUE(preserved->reuse_slot_matches_single_occupied);
+
+  auto fresh_candidate = (*session)->staged_reuse_replacement_candidate(PortId{2U}, *retained);
+  ASSERT_TRUE(fresh_candidate) << runtime_error_message(fresh_candidate.error());
+  ASSERT_TRUE(fresh_candidate->has_value());
+  ASSERT_EQ((**fresh_candidate).source_sequence, 3U);
+  auto replaced = (*session)->replace_staged_reuse(PortId{2U}, *retained, **fresh_candidate);
+  ASSERT_TRUE(replaced) << runtime_error_message(replaced.error());
+  EXPECT_EQ(replaced->source_sequence, 3U);
+  const auto committed = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(committed) << runtime_error_message(committed.error());
+  EXPECT_EQ(committed->occupied_samples, 1U);
+  EXPECT_FALSE(committed->reuse_retained);
+  EXPECT_FALSE(committed->reuse_slot_matches_single_occupied);
+
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
+// REQ: CHAN-146
+// Rollback must restore both ledgers, not just the selector metadata, while the fallback lives.
+TEST(ChannelBindingParityTest, TransportedCacheReplacementPreservesFallbackAcrossReceiveFailure) {
+  TensorSessionFixture fixture;
+  fixture.use_one_slot_drop_oldest_queue();
+  fixture.enable_reuse_last();
+  auto& selection = fixture.base.plan.input_selections.front();
+  selection.selector = InputSelectorKind::kLatestWithin;
+  selection.cache_capacity = 1U;
+  selection.max_age_ns = 100;
+  auto selector = RuntimeInputSelectionState::create(selection);
+  ASSERT_TRUE(selector);
+  const auto incomplete = std::make_shared<RuntimeChannelIncompletePollTestControl>(1U);
+  fixture.base.plan.executable_factories.test_channel_incomplete_poll_control = incomplete;
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session);
+  auto binding = (*session)->create_readiness_binding(
+      VertexId{2U},
+      RuntimePortBindingRequest{.plan_generation = fixture.base.plan.plan_generation,
+                                .run_generation = 1U,
+                                .kind = RuntimeEventKind::kInputArrival,
+                                .source = make_source_id(1U),
+                                .source_clock = ClockId{1U},
+                                .reference_clock = ClockId{1U},
+                                .capacity = 2U});
+  ASSERT_TRUE(binding);
+  ASSERT_TRUE((*session)->refresh_connections());
+  const auto publish = [&](std::uint64_t sequence) {
+    ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, sequence, {}));
+    auto sample = make_owned_tensor_sample(sequence);
+    ASSERT_TRUE(sample);
+    ASSERT_TRUE(fixture.source.output.emit(
+        std::move(sample->tensor),
+        EmitOptions{.capture_time =
+                        TimePoint{static_cast<std::int64_t>(sequence * 10U), ClockId{1U}}}));
+    ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, sequence, true));
+  };
+  ASSERT_NO_FATAL_FAILURE(publish(1U));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U}));
+  auto first_event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(first_event);
+  auto first = (*session)->temporal_sample(PortId{2U}, first_event->source_sequence);
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(selector->push(*first));
+  auto selected = selector->begin(first->capture_time, 1U, 1U);
+  ASSERT_TRUE(selected);
+  const std::array selected_payload{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = {InputState::kSelected, SelectionReason::kNone},
+      .samples = std::span<const TemporalSampleRecord>{&*first, 1U},
+      .destructive = true}};
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, selected_payload));
+  ASSERT_TRUE((*session)->prepare_tensor_access(VertexId{2U}, 1U, nullptr));
+  ASSERT_TRUE(fixture.sink.input.receive());
+  ASSERT_TRUE((*binding)->retire(first_event->source_sequence));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 1U, true));
+  ASSERT_TRUE(selected->finish(true));
+
+  ASSERT_NO_FATAL_FAILURE(publish(2U));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U}));
+  auto second_event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(second_event);
+  auto second = (*session)->temporal_sample(PortId{2U}, second_event->source_sequence);
+  ASSERT_TRUE(second);
+  ASSERT_TRUE(selector->push(*second));
+  ASSERT_TRUE((*binding)->retire(second_event->source_sequence));
+  ASSERT_NO_FATAL_FAILURE(publish(3U));
+  auto staged = RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U});
+  ASSERT_FALSE(staged);
+  ASSERT_EQ(staged.error().code, ErrorCode::kBackpressured);
+  auto candidate = (*session)->staged_reuse_replacement_candidate(PortId{2U}, *second);
+  ASSERT_TRUE(candidate);
+  ASSERT_TRUE(candidate->has_value());
+  ASSERT_TRUE(
+      RuntimeChannelSessionTestAccess::fail_next_reuse_replacement_receive(**session, PortId{2U}));
+  {
+    auto transaction = selector->reserve_cache_replacement(*second);
+    ASSERT_TRUE(transaction);
+    auto replaced = (*session)->replace_staged_reuse(PortId{2U}, *second, **candidate);
+    ASSERT_FALSE(replaced);
+    EXPECT_EQ(replaced.error().code, ErrorCode::kFailure);
+  }
+  std::array<TemporalSampleRecord, 2U> claims{};
+  auto restored = selector->copy_payload_claims(claims);
+  ASSERT_TRUE(restored);
+  ASSERT_EQ(*restored, 2U);
+  EXPECT_NE(std::find(claims.begin(), claims.end(), *first), claims.end());
+  EXPECT_NE(std::find(claims.begin(), claims.end(), *second), claims.end());
+  EXPECT_TRUE((*session)->temporal_sample(PortId{2U}, first_event->source_sequence));
+  EXPECT_TRUE((*session)->temporal_sample(PortId{2U}, second_event->source_sequence));
+  auto state = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(state);
+  EXPECT_EQ(state->occupied_samples, 2U);
+  auto reservations =
+      RuntimeChannelSessionTestAccess::typed_ingress_reservations(**session, PortId{2U});
+  ASSERT_TRUE(reservations);
+  EXPECT_EQ(*reservations, 0U);
+  auto staged_sequence =
+      RuntimeChannelSessionTestAccess::staged_data_sequence(**session, PortId{2U});
+  ASSERT_TRUE(staged_sequence);
+  EXPECT_EQ(*staged_sequence, 3U);
+
+  auto transaction = selector->reserve_cache_replacement(*second);
+  ASSERT_TRUE(transaction);
+  ASSERT_TRUE((*session)->replace_staged_reuse(PortId{2U}, *second, **candidate));
+  transaction->commit();
+  ASSERT_TRUE((*binding)->poll_blocking(TimePoint{40, ClockId{1U}}));
+  EXPECT_EQ(incomplete->forced(), 1U);
+  EXPECT_TRUE((*binding)->last_poll_incomplete());
+  RuntimeEvent event{};
+  auto drained = (*binding)->drain(std::span<RuntimeEvent>{&event, 1U});
+  ASSERT_TRUE(drained);
+  EXPECT_EQ(*drained, 0U);
+  auto third_event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(third_event);
+  auto third = (*session)->temporal_sample(PortId{2U}, third_event->source_sequence);
+  ASSERT_TRUE(third);
+  EXPECT_EQ(third->source_sequence, 3U);
+  EXPECT_EQ(selector->reuse_retained_record(), *first);
+  EXPECT_TRUE((*session)->temporal_sample(PortId{2U}, first_event->source_sequence));
+  EXPECT_FALSE((*session)->temporal_sample(PortId{2U}, second_event->source_sequence));
+  ASSERT_TRUE(selector->push(*third));
+  ASSERT_TRUE((*binding)->retire(third_event->source_sequence));
+  drained = (*binding)->drain(std::span<RuntimeEvent>{&event, 1U});
+  ASSERT_TRUE(drained);
+  EXPECT_EQ(*drained, 0U);
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
+// REQ: RUNTIME-017
+// REQ: CHAN-131
+// A transported ReuseLast replacement has no payload claim until readiness publishes. A newer
+// drop-oldest arrival must not overwrite that exact successor in the pre-witness window.
+TEST(ChannelBindingParityTest, TransportedPromotedRefillIsNotReplacedBeforeItsReadinessPublishes) {
+  TensorSessionFixture fixture;
+  fixture.use_one_slot_drop_oldest_queue();
+  fixture.enable_reuse_last();
+  const auto counters = std::make_shared<RuntimePhaseCounters>();
+  fixture.base.plan.executable_factories.phase_counters = counters;
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  auto binding = (*session)->create_readiness_binding(
+      VertexId{2U},
+      RuntimePortBindingRequest{.plan_generation = fixture.base.plan.plan_generation,
+                                .run_generation = 1U,
+                                .kind = RuntimeEventKind::kInputArrival,
+                                .source = make_source_id(1U),
+                                .source_clock = ClockId{1U},
+                                .reference_clock = ClockId{1U},
+                                .capacity = 2U});
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  auto first = make_owned_tensor_sample(0x11U);
+  ASSERT_TRUE(first) << runtime_error_message(first.error());
+  ASSERT_TRUE(fixture.source.output.emit(std::move(first->tensor)));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U}));
+  auto retained_event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(retained_event) << runtime_error_message(retained_event.error());
+  auto retained =
+      (*session)->temporal_sample(retained_event->port, retained_event->source_sequence);
+  ASSERT_TRUE(retained) << runtime_error_message(retained.error());
+  const std::array retained_selection{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = {InputState::kSelected, SelectionReason::kNone},
+      .samples = std::span<const TemporalSampleRecord>{&*retained, 1U},
+      .destructive = true}};
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, retained_selection));
+  ASSERT_TRUE((*session)->prepare_tensor_access(VertexId{2U}, 1U, nullptr));
+  auto retained_sample = fixture.sink.input.receive();
+  ASSERT_TRUE(retained_sample) << runtime_error_message(retained_sample.error());
+  ASSERT_NE(retained_sample->data.data_as<std::uint64_t>(), nullptr);
+  EXPECT_EQ(*retained_sample->data.data_as<std::uint64_t>(), 0x11U);
+  ASSERT_TRUE((*binding)->retire(retained_event->source_sequence));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 1U, true));
+  const auto retained_by_reuse =
+      (*session)->retire_samples(PortId{2U}, retained_selection.front().samples);
+  ASSERT_FALSE(retained_by_reuse);
+  ASSERT_EQ(retained_by_reuse.error().code, ErrorCode::kBackpressured);
+
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 2U, {}));
+  auto refill = make_owned_tensor_sample(0x22U);
+  ASSERT_TRUE(refill) << runtime_error_message(refill.error());
+  ASSERT_TRUE(fixture.source.output.emit(std::move(refill->tensor)));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 2U, true));
+  const auto staged_refill = RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U});
+  ASSERT_FALSE(staged_refill);
+  ASSERT_EQ(staged_refill.error().code, ErrorCode::kBackpressured);
+  auto staged_sequence =
+      RuntimeChannelSessionTestAccess::staged_data_sequence(**session, PortId{2U});
+  ASSERT_TRUE(staged_sequence) << runtime_error_message(staged_sequence.error());
+  ASSERT_EQ(*staged_sequence, 2U);
+
+  auto replacement_candidate =
+      (*session)->staged_reuse_replacement_candidate(PortId{2U}, *retained);
+  ASSERT_TRUE(replacement_candidate) << runtime_error_message(replacement_candidate.error());
+  ASSERT_TRUE(replacement_candidate->has_value());
+  auto replaced = (*session)->replace_staged_reuse(PortId{2U}, *retained, **replacement_candidate);
+  ASSERT_TRUE(replaced) << runtime_error_message(replaced.error());
+  ASSERT_EQ(replaced->source_sequence, 2U);
+
+  // Do not poll readiness yet. This creates the exact pre-witness replacement opportunity.
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 3U, {}));
+  auto intruder = make_owned_tensor_sample(0x33U);
+  ASSERT_TRUE(intruder) << runtime_error_message(intruder.error());
+  ASSERT_TRUE(fixture.source.output.emit(std::move(intruder->tensor)));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 3U, true));
+  const auto staged_intruder = RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U});
+  ASSERT_FALSE(staged_intruder);
+  ASSERT_EQ(staged_intruder.error().code, ErrorCode::kBackpressured);
+  staged_sequence = RuntimeChannelSessionTestAccess::staged_data_sequence(**session, PortId{2U});
+  ASSERT_TRUE(staged_sequence) << runtime_error_message(staged_sequence.error());
+  ASSERT_EQ(*staged_sequence, 3U);
+  const auto guarded = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(guarded) << runtime_error_message(guarded.error());
+  EXPECT_EQ(guarded->occupied_samples, 1U);
+  EXPECT_EQ(guarded->pending_direct_ingress_samples, 0U);
+  EXPECT_FALSE(guarded->reuse_retained);
+  EXPECT_FALSE(guarded->temporal_retained);
+  auto outcome = (*session)->last_refill_outcome(PortId{2U});
+  ASSERT_TRUE(outcome) << runtime_error_message(outcome.error());
+  ASSERT_EQ(*outcome, 2U);
+
+  auto refilled_event = wait_for_event(**session, **binding);
+  ASSERT_TRUE(refilled_event) << runtime_error_message(refilled_event.error());
+  auto refilled =
+      (*session)->temporal_sample(refilled_event->port, refilled_event->source_sequence);
+  ASSERT_TRUE(refilled) << runtime_error_message(refilled.error());
+  EXPECT_EQ(*refilled, *replaced);
+  outcome = (*session)->last_refill_outcome(PortId{2U});
+  ASSERT_TRUE(outcome) << runtime_error_message(outcome.error());
+  EXPECT_EQ(*outcome, 1U);
+  const auto phases = counters->snapshot();
+  EXPECT_GT(phases[RuntimePhaseCounters::index(
+                RuntimePhaseCounter::kChannelReleasedClaimRefillReplacementDeclined)],
+            0U);
+  EXPECT_GT(phases[RuntimePhaseCounters::index(
+                RuntimePhaseCounter::kChannelReleasedClaimRefillPublished)],
+            0U);
+
+  ASSERT_TRUE((*binding)->retire(refilled_event->source_sequence));
   (*session)->cancel();
   ASSERT_TRUE((*session)->join());
 }
@@ -979,7 +1681,12 @@ TEST(ChannelBindingParityTest, RawTensorFinalDataReplacesDepthOneReuseLastBefore
   ASSERT_FALSE(staged);
   EXPECT_EQ(staged.error().code, ErrorCode::kBackpressured);
   ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
-  auto final_data = (*session)->replace_staged_reuse(PortId{2U}, *first_record);
+  auto replacement_candidate =
+      (*session)->staged_reuse_replacement_candidate(PortId{2U}, *first_record);
+  ASSERT_TRUE(replacement_candidate) << runtime_error_message(replacement_candidate.error());
+  ASSERT_TRUE(replacement_candidate->has_value());
+  auto final_data =
+      (*session)->replace_staged_reuse(PortId{2U}, *first_record, **replacement_candidate);
   ASSERT_TRUE(final_data) << runtime_error_message(final_data.error());
   auto final_event = wait_for_event(**session, **binding);
   ASSERT_TRUE(final_event) << runtime_error_message(final_event.error());
@@ -1105,7 +1812,12 @@ TEST(ChannelBindingParityTest,
   ASSERT_FALSE(staged);
   EXPECT_EQ(staged.error().code, ErrorCode::kBackpressured);
   ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
-  auto final_data = (*session)->replace_staged_reuse(PortId{2U}, *first_record);
+  auto replacement_candidate =
+      (*session)->staged_reuse_replacement_candidate(PortId{2U}, *first_record);
+  ASSERT_TRUE(replacement_candidate) << runtime_error_message(replacement_candidate.error());
+  ASSERT_TRUE(replacement_candidate->has_value());
+  auto final_data =
+      (*session)->replace_staged_reuse(PortId{2U}, *first_record, **replacement_candidate);
   ASSERT_TRUE(final_data) << runtime_error_message(final_data.error());
   auto final_event = wait_for_event(**session, **binding);
   ASSERT_TRUE(final_event) << runtime_error_message(final_event.error());

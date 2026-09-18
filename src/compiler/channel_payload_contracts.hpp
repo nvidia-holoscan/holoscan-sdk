@@ -40,7 +40,15 @@ namespace holoscan::detail {
     case ScalarIdentityKind::kFloat64:
       return 8U;
     case ScalarIdentityKind::kLocalEnum:
-      return std::nullopt;
+      switch (identity.scalar->native_object_size) {
+        case 1U:
+        case 2U:
+        case 4U:
+        case 8U:
+          return identity.scalar->native_object_size;
+        default:
+          return std::nullopt;
+      }
   }
   return std::nullopt;
 }

@@ -102,6 +102,18 @@ class PortBinding {
     return poll(observed_at);
   }
 
+  /// Retry one declined \ref poll while waiting out the bounded contended cache lock.
+  ///
+  /// An ordinary poll that loses a cache lock leaves its published revision unobserved, but the
+  /// wake token that announced it has already been consumed and the lock holder does not signal
+  /// again on release. The owner that consumed that token may retry once here instead of parking
+  /// for the bounded fallback wait. Every holder of an input cache lock is a short, non-blocking
+  /// critical section, so this wait is bounded by that section rather than by a producer.
+  [[nodiscard]] virtual expected<void, Error> poll_after_contention(
+      TimePoint observed_at) noexcept {
+    return poll(observed_at);
+  }
+
   /// Return the admitted poll placement, or no target for event-driven bindings.
   [[nodiscard]] virtual std::optional<PortBindingPollTarget> poll_target() const noexcept {
     return std::nullopt;
@@ -116,6 +128,12 @@ class PortBinding {
   /// that published a readiness change and needs it converted in this same pass cannot otherwise
   /// tell that outcome from "nothing was ready".
   [[nodiscard]] virtual bool last_poll_incomplete() const noexcept { return false; }
+
+  /// Return whether the most recent \ref poll was declined by a contended input cache lock.
+  ///
+  /// This is the exact condition \ref poll_after_contention exists for: a lost try_lock, not any
+  /// other reason a poll can report incomplete.
+  [[nodiscard]] virtual bool last_poll_lock_contended() const noexcept { return false; }
 
   /// Enqueue one internally scheduled window-timeout witness.
   ///

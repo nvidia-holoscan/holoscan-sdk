@@ -15,6 +15,19 @@ the fast dispatch paths that `InferenceOp` selects automatically at `start()`.
 (`include/holoscan/operators/inference/fast_path_eligibility.hpp`) from the operator's existing
 configuration. There is no user-facing opt-in.
 
+## Installed CMake package
+
+New consumers should use the dedicated package, pointing CMake at the SDK's shared package
+directory:
+
+```cmake
+find_package(holoscan-inference CONFIG REQUIRED)
+target_link_libraries(my_pipeline PRIVATE holoscan::infer holoscan::op_inference)
+```
+
+Configure with `-Dholoscan-inference_DIR=<prefix>/lib/cmake/holoscan`. The required compatibility
+form is `find_package(holoscan COMPONENTS inference REQUIRED)`.
+
 | Kind          | Models | Shapes  | Concurrency | Notes                                            |
 | ------------- | ------ | ------- | ----------- | ------------------------------------------------ |
 | `kFast`       | 1      | static  | –           | cached pointers, event handshake                 |

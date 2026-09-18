@@ -29,13 +29,14 @@ constexpr std::string_view kPlanGenerationDomain = "holoscan.plan_generation.v1"
 PlanGenerationId derive_plan_generation_id(const ExecutionPlanState& canonical_state) noexcept {
   StableHashBuilder hash;
   hash.add(kPlanGenerationDomain);
+  // Authoring origins and source records do not define runtime behavior. Advanced transaction
+  // masks do, so each field retains only whether the transaction contributed its final value.
   for (const std::byte byte : canonical_state.digest.value) {
     hash.add_byte(std::to_integer<std::uint8_t>(byte));
   }
   hash.add_canonical_size(canonical_state.parameter_generation_zero_operators.size());
   for (const auto& record : canonical_state.parameter_generation_zero_operators) {
     hash.add(record.owner.id);
-    hash.add(record.baseline_origin);
     hash.add(record.value_digest.disposition);
     for (const std::byte byte : record.value_digest.digest.value) {
       hash.add_byte(std::to_integer<std::uint8_t>(byte));
@@ -48,34 +49,10 @@ PlanGenerationId derive_plan_generation_id(const ExecutionPlanState& canonical_s
     for (const std::byte byte : record.full_id.value) {
       hash.add_byte(std::to_integer<std::uint8_t>(byte));
     }
-    hash.add(record.origin);
+    hash.add(record.transaction_contributed);
     hash.add(record.value_digest.disposition);
     for (const std::byte byte : record.value_digest.digest.value) {
       hash.add_byte(std::to_integer<std::uint8_t>(byte));
-    }
-    hash.add(record.config_source.has_value());
-    if (record.config_source) {
-      const auto& source = *record.config_source;
-      hash.add(source.document.semantic_version);
-      for (const std::byte byte : source.document.semantic_digest) {
-        hash.add_byte(std::to_integer<std::uint8_t>(byte));
-      }
-      hash.add(source.document.has_raw_source);
-      hash.add(source.document.raw_algorithm_version);
-      for (const std::byte byte : source.document.raw_digest) {
-        hash.add_byte(std::to_integer<std::uint8_t>(byte));
-      }
-      hash.add(source.document.raw_byte_size);
-      hash.add(source.source_path);
-      hash.add(source.source_ordinal);
-      hash.add(source.target_operator_path);
-      hash.add(source.target_schema_id);
-      hash.add(source.target_schema_version);
-      hash.add(source.target_field_id);
-      for (const std::byte byte : source.target_full_id.value) {
-        hash.add_byte(std::to_integer<std::uint8_t>(byte));
-      }
-      hash.add(source.origin);
     }
   }
   const auto digest = hash.finish();
@@ -193,6 +170,9 @@ void rebind_plan_generation(ExecutionPlanState& state, PlanGenerationId plan_gen
   for (auto& record : state.tensor_byte_span_derivations) {
     record.plan_generation = plan_generation;
   }
+  for (auto& record : state.tensor_memory_kind_derivations) {
+    record.plan_generation = plan_generation;
+  }
   for (auto& record : state.tensor_field_allocations) {
     record.plan_generation = plan_generation;
     rebind_logical_id(record.pool_id,
@@ -271,6 +251,16 @@ void rebind_plan_generation(ExecutionPlanState& state, PlanGenerationId plan_gen
       rebind_logical_id(
           record.stream_id,
           tensor_compute_stream_id(plan_generation, record.process_group, record.device));
+    }
+  }
+  for (auto& capture_plan : state.cuda_graph_capture_plans) {
+    rebind_operator(capture_plan.source);
+    rebind_operator(capture_plan.sink);
+    for (auto& member : capture_plan.members) {
+      rebind_operator(member.operator_ref);
+    }
+    for (auto& contract : capture_plan.contracts) {
+      rebind_operator(contract.owner);
     }
   }
   for (auto& record : state.process_local_channel_services) {

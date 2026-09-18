@@ -268,7 +268,7 @@ void ExecutionPlan::require_no_errors() const {
     throw CompileError{"EXECUTION_PLAN_EMPTY"};
   }
   if (!ok()) {
-    throw CompileError{"EXECUTION_PLAN_REJECTED"};
+    throw CompileError{"EXECUTION_PLAN_REJECTED: " + format_diagnostics(diagnostics(), graph())};
   }
 }
 
@@ -300,6 +300,10 @@ std::span<const VertexId> ExecutionPartitionView::members() const noexcept {
 
 std::span<const std::string> ExecutionPartitionView::operator_paths() const noexcept {
   return state_->execution_partitions[index_].operator_paths;
+}
+
+std::span<const GraphId> ExecutionPartitionView::graph_members() const noexcept {
+  return state_->execution_partitions[index_].graph_members;
 }
 
 std::uint32_t ExecutionPartitionView::execution_lane() const noexcept {
@@ -513,10 +517,6 @@ std::span<const QueueSizingRecipePlanRecord> ExecutionPlan::queue_sizing_recipes
   return plan_span(state_, &detail::ExecutionPlanState::queue_sizing_recipes);
 }
 
-std::span<const SchemaPackagePlanRecord> ExecutionPlan::schema_packages() const noexcept {
-  return plan_span(state_, &detail::ExecutionPlanState::schema_packages);
-}
-
 std::span<const InterfacePortBindingPlanRecord> ExecutionPlan::interface_port_bindings()
     const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::interface_port_bindings);
@@ -585,6 +585,51 @@ const TensorByteSpanDerivationPlanRecord* ExecutionPlan::find_tensor_byte_span_d
   }
   const TensorByteSpanDerivationPlanRecord* match{};
   for (const auto& candidate : state_->tensor_byte_span_derivations) {
+    if (candidate.output != output->id ||
+        (field_id && (candidate.field_id != field_id || candidate.tensor_index != tensor_index))) {
+      continue;
+    }
+    if (match != nullptr) {
+      return nullptr;
+    }
+    match = &candidate;
+  }
+  return match;
+}
+
+std::span<const TensorMemoryKindDerivationPlanRecord>
+ExecutionPlan::tensor_memory_kind_derivations() const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::tensor_memory_kind_derivations);
+}
+
+const TensorMemoryKindDerivationPlanRecord* ExecutionPlan::find_tensor_memory_kind_derivation(
+    std::string_view operator_path, std::string_view output_name,
+    std::optional<std::uint16_t> field_id,
+    std::optional<std::uint16_t> tensor_index) const noexcept {
+  if (!state_ || operator_path.empty() || output_name.empty() ||
+      field_id.has_value() != tensor_index.has_value()) {
+    return nullptr;
+  }
+  const auto owner = std::ranges::find(
+      state_->operator_parameters, operator_path, &OperatorParameterPlanRecord::operator_path);
+  if (owner == state_->operator_parameters.end()) {
+    return nullptr;
+  }
+  const auto factory = std::ranges::find(state_->executable_factories.operators,
+                                         owner->owner.id,
+                                         &detail::ExecutableOperatorFactoryRecord::operator_id);
+  if (factory == state_->executable_factories.operators.end()) {
+    return nullptr;
+  }
+  const auto output = std::ranges::find_if(state_->ports, [&](const auto& candidate) {
+    return candidate.owner == factory->vertex && candidate.direction == PortDirection::kOutput &&
+           candidate.local_name == output_name;
+  });
+  if (output == state_->ports.end()) {
+    return nullptr;
+  }
+  const TensorMemoryKindDerivationPlanRecord* match{};
+  for (const auto& candidate : state_->tensor_memory_kind_derivations) {
     if (candidate.output != output->id ||
         (field_id && (candidate.field_id != field_id || candidate.tensor_index != tensor_index))) {
       continue;

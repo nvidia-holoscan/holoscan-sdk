@@ -17,6 +17,7 @@
 
 #include "compiler/detail/checked_arithmetic.hpp"
 #include "compiler/physical_plan_lowering.hpp"
+#include "compiler/snapshot_lookup.hpp"
 #include "core/tensor_contract_resolution_internal.hpp"
 
 namespace holoscan::detail {
@@ -52,6 +53,48 @@ inline void reject_physical_plan(PhysicalPlanLoweringResult& output, std::string
       .required = std::move(required),
       .provided = std::move(provided),
   });
+}
+
+inline DiagnosticDetail physical_edge_detail(const GraphSnapshotData& snapshot,
+                                             const PortRecord* source, const PortRecord* target,
+                                             std::vector<DiagnosticMismatch> mismatches = {}) {
+  DiagnosticDetail detail{
+      .operation = DiagnosticOperation::kCompile,
+      .error = Error{ErrorCode::kIncompatible, "incompatible connection contract"}};
+  const auto path = [&](const PortRecord* port) {
+    const auto* owner = port != nullptr ? find_vertex(snapshot, port->owner) : nullptr;
+    std::string result;
+    if (owner == nullptr) {
+      return result;
+    }
+    const auto* graph = find_graph(snapshot, owner->graph);
+    if (graph != nullptr && graph->path) {
+      for (const auto& segment : graph->path->segments()) {
+        append_percent_encoded_uri_path_segment(result, segment);
+      }
+    }
+    append_percent_encoded_uri_path_segment(result, owner->name);
+    return result;
+  };
+  detail.operator_path = path(target);
+  detail.related_operator_path = path(source);
+  if (target != nullptr) {
+    detail.port_name = target->name;
+  }
+  if (source != nullptr) {
+    const auto* owner = find_vertex(snapshot, source->owner);
+    detail.related_source = DiagnosticSource{.graph_generation = snapshot.generation,
+                                             .graph = owner != nullptr ? owner->graph : GraphId{},
+                                             .vertex = source->owner,
+                                             .port = PortId{source->id.value}};
+    detail.related_port_name = source->name;
+  }
+  detail.truncated = mismatches.size() > 16U;
+  if (detail.truncated) {
+    mismatches.resize(16U);
+  }
+  detail.mismatches = std::move(mismatches);
+  return detail;
 }
 
 template <typename Enum>

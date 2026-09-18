@@ -243,9 +243,25 @@ std::atomic<std::uint32_t> RuntimeAlignedChannelProbeState::observed_first{};
 
 std::atomic<std::uint32_t> RuntimeAlignedChannelProbeState::observed_second{};
 
+std::atomic<std::uint32_t> RuntimeAlignedChannelProbeState::observed_optional{};
+
 std::atomic<std::int64_t> RuntimeAlignedChannelProbeState::observed_first_capture{};
 
 std::atomic<std::int64_t> RuntimeAlignedChannelProbeState::observed_second_capture{};
+
+std::atomic<std::int64_t> RuntimeAlignedChannelProbeState::side_reference_capture{};
+
+std::atomic<InputState> RuntimeAlignedChannelProbeState::observed_optional_state{
+    InputState::kNotSelected};
+
+std::atomic<SelectionReason> RuntimeAlignedChannelProbeState::observed_optional_reason{
+    SelectionReason::kNotSelectedForActivation};
+
+std::atomic<ErrorCode> RuntimeAlignedChannelProbeState::observed_optional_error{
+    ErrorCode::kSuccess};
+
+std::atomic<ErrorCode> RuntimeAlignedChannelProbeState::observed_optional_batch_error{
+    ErrorCode::kSuccess};
 
 std::mutex RuntimeUnconnectedPortProbeState::mutex{};
 
@@ -298,6 +314,14 @@ std::atomic<RuntimeInputContractReplayMode> RuntimeInputContractPredicateOperato
     RuntimeInputContractReplayMode::kMatch};
 
 std::atomic<std::uint32_t> RuntimeClockInputReplayOperator::mismatch_ordinal{};
+
+std::atomic<std::uint32_t> RuntimeOptionalSafeDefaultOperator::compute_count{};
+std::atomic<InputState> RuntimeOptionalSafeDefaultOperator::observed_state{
+    InputState::kNotSelected};
+std::atomic<SelectionReason> RuntimeOptionalSafeDefaultOperator::observed_reason{
+    SelectionReason::kNotSelectedForActivation};
+std::atomic<ErrorCode> RuntimeOptionalSafeDefaultOperator::scalar_error{ErrorCode::kSuccess};
+std::atomic<ErrorCode> RuntimeOptionalSafeDefaultOperator::batch_error{ErrorCode::kSuccess};
 
 std::mutex RuntimeInputPredicateChannelState::mutex{};
 
@@ -1323,8 +1347,15 @@ void RuntimeAlignedChannelProbeState::reset(RuntimeAlignedChannelScript requeste
   sink_compute_count.store(0U, std::memory_order_relaxed);
   observed_first.store(0U, std::memory_order_relaxed);
   observed_second.store(0U, std::memory_order_relaxed);
+  observed_optional.store(0U, std::memory_order_relaxed);
   observed_first_capture.store(0, std::memory_order_relaxed);
   observed_second_capture.store(0, std::memory_order_relaxed);
+  side_reference_capture.store(0, std::memory_order_relaxed);
+  observed_optional_state.store(InputState::kNotSelected, std::memory_order_relaxed);
+  observed_optional_reason.store(SelectionReason::kNotSelectedForActivation,
+                                 std::memory_order_relaxed);
+  observed_optional_error.store(ErrorCode::kSuccess, std::memory_order_relaxed);
+  observed_optional_batch_error.store(ErrorCode::kSuccess, std::memory_order_relaxed);
 }
 
 [[nodiscard]] bool RuntimeAlignedChannelProbeState::wait_for_source(std::size_t expected) {
@@ -1358,6 +1389,7 @@ void RuntimeAlignedChannelProbeState::record_sink_compute(const Sample<std::uint
 
 void RuntimeAlignedChannelSourceOperator::setup(OperatorSpec& spec) {
   spec.output(first, "first").max_emits_per_compute(2U);
+  spec.output(optional, "optional").max_emits_per_compute(1U);
   spec.output(second, "second").max_emits_per_compute(1U);
 }
 
@@ -1365,7 +1397,15 @@ void RuntimeAlignedChannelSourceOperator::setup(OperatorSpec& spec) {
   Contract result;
   // Keep the producer alive while the Channel-backed sink is pending without
   // introducing a second source activation into this one-shot selection test.
-  result.trigger(OnClock{.period = std::chrono::seconds{30}});
+  const auto period =
+      RuntimeAlignedChannelProbeState::script.load(std::memory_order_relaxed) ==
+              RuntimeAlignedChannelScript::kSideInputReference
+          ? std::chrono::milliseconds{100}
+          : std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::seconds{30});
+  result.trigger(OnClock{.period = period});
+  if (finite_) {
+    result.complete_after(ComputeCalls{.limit = 1U});
+  }
   return result;
 }
 
@@ -1383,6 +1423,32 @@ void RuntimeAlignedChannelSourceOperator::setup(OperatorSpec& spec) {
   const std::size_t step =
       RuntimeAlignedChannelProbeState::next_step.fetch_add(1U, std::memory_order_relaxed);
   const auto script = RuntimeAlignedChannelProbeState::script.load(std::memory_order_relaxed);
+  if (script == RuntimeAlignedChannelScript::kSideInputReference) {
+    const TimePoint activation_time = context.activation_time();
+    if (!activation_time.valid() || activation_time.clock_id != ClockId{1U}) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    if (step == 0U) {
+      const std::int64_t reference = activation_time.timestamp_ns + 10;
+      RuntimeAlignedChannelProbeState::side_reference_capture.store(reference,
+                                                                    std::memory_order_relaxed);
+      auto emitted = emit_captured(optional, 3U, reference);
+      RuntimeAlignedChannelProbeState::record_source_compute();
+      return emitted;
+    }
+    if (step == 1U) {
+      const std::int64_t reference =
+          RuntimeAlignedChannelProbeState::side_reference_capture.load(std::memory_order_relaxed);
+      auto emitted = emit_captured(first, 1U, reference);
+      if (emitted) {
+        emitted = emit_captured(second, 2U, reference - 5);
+      }
+      RuntimeAlignedChannelProbeState::record_source_compute();
+      return emitted;
+    }
+    RuntimeAlignedChannelProbeState::record_source_compute();
+    return {};
+  }
   if (step != 0U) {
     RuntimeAlignedChannelProbeState::record_source_compute();
     return {};
@@ -1405,6 +1471,8 @@ void RuntimeAlignedChannelSourceOperator::setup(OperatorSpec& spec) {
     emitted = emit_captured(second, 2U, base + 20);
   } else if (script == RuntimeAlignedChannelScript::kExactBoundary) {
     emitted = emit_captured(second, 2U, base + 10);
+  } else if (script == RuntimeAlignedChannelScript::kMisalignedMembers) {
+    emitted = emit_captured(second, 2U, base + 11);
   }
   RuntimeAlignedChannelProbeState::record_source_compute();
   return emitted;
@@ -1413,17 +1481,29 @@ void RuntimeAlignedChannelSourceOperator::setup(OperatorSpec& spec) {
 void RuntimeAlignedChannelSinkOperator::setup(OperatorSpec& spec) {
   spec.input(first, "first").queue_depth(8U);
   spec.input(second, "second").queue_depth(8U);
+  spec.input(optional, "optional").queue_depth(8U).optional();
+  spec.input(additional_optional, "additional_optional").optional();
 }
 
 [[nodiscard]] Contract RuntimeAlignedChannelSinkOperator::contract() const {
   Contract result;
   result.trigger(OnAligned{.ports = ports(first, second), .window = std::chrono::nanoseconds{10}})
       .input(first, Exact{})
-      .input(second, Exact{});
+      .input(second, Exact{})
+      .input(optional, Exact{})
+      .on_missing(optional, SafeDefault{})
+      .input(additional_optional, Exact{})
+      .on_missing(additional_optional, SafeDefault{});
   return result;
 }
 
 [[nodiscard]] expected<void, Error> RuntimeAlignedChannelSinkOperator::compute(ExecutionContext&) {
+  if (additional_optional.selection().state != InputState::kSafeDefault ||
+      additional_optional.selection().reason != SelectionReason::kNotConnected ||
+      additional_optional.receive() || additional_optional.selected_batch()) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+
   auto first_sample = first.receive();
   if (!first_sample) {
     return make_unexpected(std::move(first_sample.error()));
@@ -1432,6 +1512,23 @@ void RuntimeAlignedChannelSinkOperator::setup(OperatorSpec& spec) {
   if (!second_sample) {
     return make_unexpected(std::move(second_sample.error()));
   }
+  const InputSelection optional_selection = optional.selection();
+  RuntimeAlignedChannelProbeState::observed_optional_state.store(optional_selection.state,
+                                                                 std::memory_order_relaxed);
+  RuntimeAlignedChannelProbeState::observed_optional_reason.store(optional_selection.reason,
+                                                                  std::memory_order_relaxed);
+  auto optional_sample = optional.receive();
+  RuntimeAlignedChannelProbeState::observed_optional_error.store(
+      optional_sample ? ErrorCode::kSuccess : optional_sample.error().code,
+      std::memory_order_relaxed);
+  if (optional_sample) {
+    RuntimeAlignedChannelProbeState::observed_optional.store(optional_sample->data,
+                                                             std::memory_order_relaxed);
+  }
+  auto optional_batch = optional.selected_batch();
+  RuntimeAlignedChannelProbeState::observed_optional_batch_error.store(
+      optional_batch ? ErrorCode::kSuccess : optional_batch.error().code,
+      std::memory_order_relaxed);
   RuntimeAlignedChannelProbeState::record_sink_compute(*first_sample, *second_sample);
   return {};
 }
@@ -1710,6 +1807,9 @@ void RuntimeWindowChannelRelayOperator::setup(OperatorSpec& spec) {
 }
 
 void RuntimeWindowChannelSinkOperator::setup(OperatorSpec& spec) {
+  if (optional_side_) {
+    spec.input(side, "side").optional();
+  }
   spec.input(anchor, "anchor").queue_depth(8U);
   spec.input(windowed, "windowed").queue_depth(16U);
   spec.output(output, "output").max_emits_per_compute(1U);
@@ -1728,11 +1828,22 @@ void RuntimeWindowChannelSinkOperator::setup(OperatorSpec& spec) {
       .input(anchor, Exact{})
       .input(windowed, BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 5U})
       .on_missing(windowed, SafeDefault{});
+  if (optional_side_) {
+    result.input(side, Exact{}).on_missing(side, SafeDefault{});
+  }
   return result;
 }
 
 [[nodiscard]] expected<void, Error> RuntimeWindowChannelSinkOperator::compute(
     ExecutionContext& context) {
+  if (optional_side_) {
+    if (side.selection().state != InputState::kSafeDefault ||
+        side.selection().reason != SelectionReason::kNotConnected || side.receive() ||
+        side.selected_batch()) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    optional_checks.fetch_add(1U);
+  }
   auto anchor_sample = anchor.receive();
   if (!anchor_sample) {
     return make_unexpected(std::move(anchor_sample.error()));
@@ -1904,6 +2015,32 @@ void RuntimeClockInputReplayOperator::setup(OperatorSpec& spec) {
 }
 
 [[nodiscard]] expected<void, Error> RuntimeClockInputReplayOperator::compute(ExecutionContext&) {
+  return {};
+}
+
+void RuntimeOptionalSafeDefaultOperator::setup(OperatorSpec& spec) {
+  spec.input(optional, "optional").queue_depth(4U).optional();
+}
+
+[[nodiscard]] Contract RuntimeOptionalSafeDefaultOperator::contract() const {
+  Contract result;
+  result.trigger(OnClock{.period = std::chrono::milliseconds{1}})
+      .input(optional, Exact{})
+      .on_missing(optional, SafeDefault{});
+  return result;
+}
+
+[[nodiscard]] expected<void, Error> RuntimeOptionalSafeDefaultOperator::compute(
+    ExecutionContext& context) {
+  const InputSelection selection = optional.selection();
+  observed_state.store(selection.state, std::memory_order_relaxed);
+  observed_reason.store(selection.reason, std::memory_order_relaxed);
+  auto scalar = optional.receive();
+  scalar_error.store(scalar ? ErrorCode::kSuccess : scalar.error().code, std::memory_order_relaxed);
+  auto batch = optional.selected_batch();
+  batch_error.store(batch ? ErrorCode::kSuccess : batch.error().code, std::memory_order_relaxed);
+  compute_count.fetch_add(1U, std::memory_order_relaxed);
+  context.request_completion();
   return {};
 }
 
@@ -2249,6 +2386,14 @@ void RuntimeComputeCallChannelProbeState::reset(const bool hold_first_compute) n
   return cv.wait_for(lock, std::chrono::seconds{5}, [] { return source_entered; });
 }
 
+[[nodiscard]] bool RuntimeComputeCallChannelProbeState::wait_until_sink_count(
+    const std::size_t expected_count) {
+  std::unique_lock lock(mutex);
+  return cv.wait_for(lock, std::chrono::seconds{5}, [expected_count] {
+    return sink_count.load(std::memory_order_acquire) >= expected_count;
+  });
+}
+
 void RuntimeComputeCallChannelProbeState::release_source_compute() {
   {
     const std::lock_guard lock(mutex);
@@ -2258,12 +2403,16 @@ void RuntimeComputeCallChannelProbeState::release_source_compute() {
 }
 
 void RuntimeComputeCallChannelProbeState::record_sink(const std::uint32_t value) noexcept {
-  const std::size_t index = sink_count.fetch_add(1U, std::memory_order_release);
-  if (index == 0U) {
-    first_value.store(value, std::memory_order_relaxed);
-  } else if (index == 1U) {
-    second_value.store(value, std::memory_order_relaxed);
+  {
+    const std::lock_guard lock(mutex);
+    const std::size_t index = sink_count.fetch_add(1U, std::memory_order_release);
+    if (index == 0U) {
+      first_value.store(value, std::memory_order_relaxed);
+    } else if (index == 1U) {
+      second_value.store(value, std::memory_order_relaxed);
+    }
   }
+  cv.notify_all();
 }
 
 RuntimeComputeCallSourceOperator::RuntimeComputeCallSourceOperator(
@@ -2292,6 +2441,12 @@ void RuntimeComputeCallSourceOperator::setup(OperatorSpec& spec) {
     ExecutionContext& context) {
   const std::size_t call = RuntimeComputeCallChannelProbeState::enter_source_compute();
   if (action_ == RuntimeComputeCallAction::kFailOnSecond && call == 2U) {
+    // Failure stops the other workers; witness the prior fanout before injecting it instead of
+    // assuming both sinks are scheduled between two 1 ms source ticks.
+    if (!RuntimeComputeCallChannelProbeState::wait_until_sink_count(2U)) {
+      return make_unexpected(
+          Error{ErrorCode::kFailure, "timed out waiting for prior publication witnesses"});
+    }
     return make_unexpected(Error{ErrorCode::kFailure});
   }
   auto emitted = output.emit(static_cast<std::uint32_t>(76U + call));
@@ -2666,6 +2821,25 @@ void RuntimeComputeCallSinkOperator::setup(OperatorSpec& spec) {
   return compile(graph, std::move(options));
 }
 
+// Graph for RunSessionTest.UnwiredExactSafeDefaultRunsWithNotConnectedSelection:
+//   [unwired] optional.optional [clock-driven operator]
+[[nodiscard]] ExecutionPlan make_runtime_optional_safe_default_plan() {
+  RuntimeOptionalSafeDefaultOperator::compute_count.store(0U, std::memory_order_relaxed);
+  RuntimeOptionalSafeDefaultOperator::observed_state.store(InputState::kNotSelected,
+                                                           std::memory_order_relaxed);
+  RuntimeOptionalSafeDefaultOperator::observed_reason.store(
+      SelectionReason::kNotSelectedForActivation, std::memory_order_relaxed);
+  RuntimeOptionalSafeDefaultOperator::scalar_error.store(ErrorCode::kSuccess,
+                                                         std::memory_order_relaxed);
+  RuntimeOptionalSafeDefaultOperator::batch_error.store(ErrorCode::kSuccess,
+                                                        std::memory_order_relaxed);
+  Graph graph{"runtime-optional-safe-default"};
+  (void)graph.op<RuntimeOptionalSafeDefaultOperator>("optional");
+  const ClockKey default_clock = graph.add_clock<RuntimeProbeClock>("runtime-test-clock");
+  graph.set_default_clock(default_clock);
+  return compile(graph);
+}
+
 [[nodiscard]] ExecutionPlan make_runtime_dual_clock_input_replay_plan() {
   RuntimeClockInputReplayOperator::mismatch_ordinal.store(0U, std::memory_order_relaxed);
   Graph graph{"runtime-dual-clock-input-replay"};
@@ -2786,11 +2960,21 @@ void RuntimeComputeCallSinkOperator::setup(OperatorSpec& spec) {
   return compile(graph);
 }
 
-[[nodiscard]] ExecutionPlan make_runtime_aligned_channel_plan(bool complete_manual_cover) {
+// Graph for RunSessionTest.ChannelAlignedUnwiredSideInputDoesNotBlockNaturalCompletion:
+//   source.first  --> sink.first
+//   source.second --> sink.second
+//   source.optional --(if connect_optional)--> sink.optional
+//   [unwired] sink.additional_optional
+[[nodiscard]] ExecutionPlan make_runtime_aligned_channel_plan(bool complete_manual_cover,
+                                                              bool connect_optional,
+                                                              bool finite_source) {
   Graph graph{"runtime-aligned-channel"};
-  auto source = graph.op<RuntimeAlignedChannelSourceOperator>("source");
+  auto source = graph.op<RuntimeAlignedChannelSourceOperator>("source", finite_source);
   auto sink = graph.op<RuntimeAlignedChannelSinkOperator>("sink");
   graph.add_flow(source->first, sink->first, ConnectionOptions{.queue_depth = 8U});
+  if (connect_optional) {
+    graph.add_flow(source->optional, sink->optional, ConnectionOptions{.queue_depth = 8U});
+  }
   graph.add_flow(source->second, sink->second, ConnectionOptions{.queue_depth = 8U});
   if (complete_manual_cover) {
     graph.partition("runtime-aligned-channel").include_all();
@@ -2800,11 +2984,16 @@ void RuntimeComputeCallSinkOperator::setup(OperatorSpec& spec) {
   return compile(graph);
 }
 
-[[nodiscard]] ExecutionPlan make_runtime_hybrid_aligned_channel_plan() {
+// Graph: source.{first,second} --> sink.{first,second}; source is in a named partition.
+// source.optional --> sink.optional only if requested; sink.additional_optional stays unwired.
+[[nodiscard]] ExecutionPlan make_runtime_hybrid_aligned_channel_plan(bool connect_optional) {
   Graph graph{"runtime-hybrid-aligned-channel"};
   auto source = graph.op<RuntimeAlignedChannelSourceOperator>("source");
   auto sink = graph.op<RuntimeAlignedChannelSinkOperator>("sink");
   graph.add_flow(source->first, sink->first, ConnectionOptions{.queue_depth = 8U});
+  if (connect_optional) {
+    graph.add_flow(source->optional, sink->optional, ConnectionOptions{.queue_depth = 8U});
+  }
   graph.add_flow(source->second, sink->second, ConnectionOptions{.queue_depth = 8U});
   graph.partition("runtime-aligned-anchor").add(source);
   graph.auto_partition_remaining();
@@ -2850,10 +3039,17 @@ void RuntimeComputeCallSinkOperator::setup(OperatorSpec& spec) {
   return compile(graph);
 }
 
-[[nodiscard]] ExecutionPlan make_runtime_window_channel_plan(bool separate_execution_partitions) {
+// Graph used by RunSessionTest.OptionalWindowSidePreservesSuccessfulAndDegradedWindowSelection:
+//   source.{anchor,windowed} --> sink.{anchor,windowed}; sink.side is unwired if enabled.
+// Terminal-drain variant:
+//   source.anchor --> relay.input
+//   relay.{anchor,windowed} --> sink.{anchor,windowed}
+//   sink.output --> drain.input
+[[nodiscard]] ExecutionPlan make_runtime_window_channel_plan(bool separate_execution_partitions,
+                                                             bool optional_side) {
   Graph graph{"runtime-window-channel"};
   auto source = graph.op<RuntimeWindowChannelSourceOperator>("source");
-  auto sink = graph.op<RuntimeWindowChannelSinkOperator>("sink");
+  auto sink = graph.op<RuntimeWindowChannelSinkOperator>("sink", optional_side);
   const bool terminal_drain =
       RuntimeWindowChannelProbeState::script.load(std::memory_order_relaxed) ==
       RuntimeWindowChannelScript::kEndOfStreamDrain;

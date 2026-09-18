@@ -26,5 +26,5 @@ endif()
 
 install(TARGETS reusable_graphs
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/reusable_graphs/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

@@ -34,6 +34,7 @@
 #include <holoscan/core/lifecycle.hpp>
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/parameter_input.hpp>
 #include <holoscan/core/parameter_schema.hpp>
 #include <holoscan/core/payload_identity.hpp>
 #include <holoscan/core/payload_options.hpp>
@@ -46,6 +47,10 @@
 
 namespace holoscan {
 
+namespace authoring {
+class HOLOSCAN_CORE_EXPORT OpaqueOperatorRef;
+}  // namespace authoring
+
 class Graph;
 class HOLOSCAN_CORE_EXPORT TensorOutputPortConfigurator;
 class GraphInstancePath;
@@ -54,8 +59,12 @@ class ExecutionPartitionsView;
 namespace detail {
 class GraphState;
 class GraphCompilerAccess;
+class GraphOperatorRegistrationAccess;
+class GraphPayloadRegistrationAccess;
 class ParameterConfigBindingAccess;
+class ParameterInputAccess;
 struct GraphSnapshotData;
+struct ParameterInputEvidenceState;
 }  // namespace detail
 
 template <typename G>
@@ -265,6 +274,8 @@ struct PortConfigurationRecord {
   std::optional<TensorPoolBounds> tensor_allocation;        ///< Direct Tensor allocation bound.
   /// Immutable compile-derived Tensor slot-capacity expression when authored.
   std::optional<TensorByteSpanExpressionRecord> tensor_byte_span_expression;
+  /// Immutable compile-derived Tensor memory-kind expression when authored.
+  std::optional<TensorMemoryKindExpressionRecord> tensor_memory_kind_expression;
   std::optional<PayloadOptionsRecord> payload_options;  ///< Deep-owned producer options.
   /// Field-scoped Tensor facts in canonical ascending field-id order.
   std::vector<TensorFieldConfigurationRecord> tensor_fields;
@@ -284,6 +295,7 @@ struct VertexRecord {
   GraphId graph{};                         ///< Owning Graph record.
   VertexKind kind{VertexKind::kOperator};  ///< Logical authoring kind before lowering.
   std::string name;                        ///< Owned authoring name.
+  bool cuda_graph_capture_eligible{};  ///< Operator `compute()` capture eligibility declaration.
 };
 
 /// @brief Describe one copied port declaration.
@@ -292,8 +304,9 @@ struct PortRecord {
   VertexId owner{};  ///< Owning logical vertex.
   PortOwnerKind owner_kind{PortOwnerKind::kOperator};  ///< Authoring owner classification.
   PortDirection direction{PortDirection::kInput};      ///< Input or output direction.
-  std::string name;                                    ///< Owned declaration-local name.
-  PayloadIdentityRecord payload_identity;              ///< Complete pointer-free semantic identity.
+  bool optional{};   ///< Operator-owned permission for eligible Exact/SafeDefault input absence.
+  std::string name;  ///< Owned declaration-local name.
+  PayloadIdentityRecord payload_identity;  ///< Complete pointer-free semantic identity.
   /// Positive generated-package serialized bound; zero for every other payload family.
   std::uint64_t serialized_payload_capacity_bytes{};
   /// Whether the exact typed output supports bounded generic-loan construction.
@@ -377,6 +390,7 @@ enum class RegionConstraintKind : std::uint8_t {
   kBoundedMemory,              ///< Require finite admitted memory use.
   kDeviceCompatibleOperators,  ///< Require operators compatible with selected device lowering.
   kLatencyBudget,              ///< Carry a positive end-to-end region latency budget.
+  kCudaGraph,                  ///< Require CUDA Graph capture and replay lowering.
 };
 
 /// @brief Carry one backend-neutral region constraint.
@@ -393,6 +407,22 @@ class HOLOSCAN_CORE_EXPORT RegionConstraint {
   /// @brief Create a device-compatible-operators constraint.
   /// @return Constraint with no associated duration.
   [[nodiscard]] static RegionConstraint device_compatible_ops() noexcept;
+
+  /// @brief Create a CUDA Graph capture-and-replay constraint.
+  /// @return Constraint with no associated duration.
+  /// @note This is a hard lowering request, not a best-effort optimization hint. Compilation fails
+  /// if the requested region cannot be lowered. Every member Operator must opt in through
+  /// `OperatorSpec::cuda_graph_capture_eligible()`.
+  /// @note The CUDA Graph constraint must be the region's only `RegionConstraint`. Compilation
+  /// rejects a region that combines it with static-topology, bounded-memory,
+  /// device-compatible-operator, or latency-budget constraints. A region profile is separate from
+  /// this closed constraint set and remains permitted.
+  /// @note The current compiler accepts only regions declared in the root Graph with directly
+  /// listed operators owned by that root Graph. Embedded Graph members, nested operators, and CUDA
+  /// Graph regions declared inside embedded Graphs are rejected. Nested Graph support might be
+  /// added in a future release.
+  /// @see OperatorSpec::cuda_graph_capture_eligible()
+  [[nodiscard]] static RegionConstraint cuda_graph() noexcept;
 
   /// @brief Create a positive region latency-budget constraint.
   /// @param budget Positive latency budget.
@@ -415,11 +445,6 @@ class HOLOSCAN_CORE_EXPORT RegionConstraint {
   std::chrono::nanoseconds latency_{};
 };
 
-/// @brief Select one backend-neutral optimization hint.
-enum class OptimizationHint : std::uint8_t {
-  kCudaGraphFusion = 0,  ///< Request analysis for CUDA Graph fusion; never select a backend.
-};
-
 /// @brief Describe one canonical Graph region declaration.
 struct RegionRecord {
   RegionId id{};                              ///< Nonzero snapshot-local region identity.
@@ -428,14 +453,13 @@ struct RegionRecord {
   std::vector<VertexId> members;              ///< Canonical logical operator membership.
   std::vector<GraphId> graph_members;         ///< Canonical embedded Graph membership.
   std::vector<RegionConstraint> constraints;  ///< Unique backend-neutral constraints.
-  std::vector<OptimizationHint> hints;        ///< Unique optimization requests.
   std::optional<Profile> profile;             ///< Optional region-level profile request.
 };
 
 /// @brief Describe one developer-preview manual execution partition.
 ///
 /// Partition declarations are distinct from overlapping \ref RegionRecord
-/// scopes. Each record owns its name and either direct Operator membership or
+/// scopes. Each record owns its name, direct Operator and atomic child-instance membership, or
 /// the mutually exclusive compile-root \ref PartitionHandle::include_all
 /// directive. Without an explicit automatic-remainder request, the compiler
 /// requires ordinary authored membership to form a nonempty, disjoint, exact
@@ -446,6 +470,8 @@ struct PartitionRecord {
   std::string name;               ///< Owned unique partition name in the Graph scope.
   std::vector<VertexId> members;  ///< Canonical direct-Operator membership.
   bool include_all{};             ///< Expand to the complete compile-root application at compile.
+  std::vector<GraphId>
+      graph_members;  ///< Explicit atomic child roots; includes descendant Operators.
 };
 
 /// @brief Describe one owned/replayable clock declaration.
@@ -517,12 +543,25 @@ namespace detail {
 class GraphState;
 class GraphCompilerAccess;
 struct GraphSnapshotData;
+struct DiagnosticCapture;
 
 /// @brief Log cold user-factory exception detail without placing logger macros in public headers.
 /// @param context Stable bounded construction context token.
 /// @param detail Arbitrary exception text used only for cold diagnostics.
 HOLOSCAN_CORE_EXPORT void graph_log_factory_exception(std::string_view context,
                                                       std::string_view detail) noexcept;
+
+/// @brief Capture the currently handled factory exception with bounded explanatory context.
+/// @param token Stable construction or declaration failure token, or empty for cause text only.
+/// @return Original category and contextual message, or a code-only allocation-safe fallback.
+HOLOSCAN_CORE_EXPORT Error graph_factory_error(std::string_view token) noexcept;
+
+/// @brief Capture into borrowed fixed storage, or render the ordinary authoring error.
+/// @param token Stable authoring failure token when no capture is supplied.
+/// @param capture Storage borrowed for this call only; nonnull capture returns a code-only Error.
+/// @return Original error category with independently retained evidence.
+HOLOSCAN_CORE_EXPORT Error graph_factory_error(std::string_view token,
+                                               DiagnosticCapture* capture) noexcept;
 
 class GraphPortOwnershipAccess {
  public:
@@ -634,7 +673,8 @@ class GraphOperatorAccess {
 class OperatorFactoryBase {
  public:
   virtual ~OperatorFactoryBase() = default;
-  [[nodiscard]] virtual expected<std::unique_ptr<OperatorBase>, Error> create() const = 0;
+  [[nodiscard]] virtual expected<std::unique_ptr<OperatorBase>, Error> create(
+      DiagnosticCapture* capture) const = 0;
   [[nodiscard]] virtual std::shared_ptr<OperatorFactoryBase> clone() const = 0;
   [[nodiscard]] virtual expected<std::shared_ptr<OperatorFactoryBase>, Error> clone_with_params(
       const void* params, const void* type_token) const = 0;
@@ -709,29 +749,9 @@ struct IsReferenceWrapper : std::false_type {};
 template <typename T>
 struct IsReferenceWrapper<std::reference_wrapper<T>> : std::true_type {};
 template <typename T>
-struct IsUniquePtr : std::false_type {};
-template <typename T, typename D>
-struct IsUniquePtr<std::unique_ptr<T, D>> : std::true_type {};
-template <typename T>
-struct IsSharedPtr : std::false_type {};
-template <typename T>
-struct IsSharedPtr<std::shared_ptr<T>> : std::true_type {};
-template <typename T>
-struct IsWeakPtr : std::false_type {};
-template <typename T>
-struct IsWeakPtr<std::weak_ptr<T>> : std::true_type {};
-template <typename T>
 struct IsInitializerList : std::false_type {};
 template <typename T>
 struct IsInitializerList<std::initializer_list<T>> : std::true_type {};
-template <typename T>
-struct IsStdFunction : std::false_type {};
-template <typename Result, typename... Args>
-struct IsStdFunction<std::function<Result(Args...)>> : std::true_type {};
-template <typename T>
-struct IsGraphHandle : std::false_type {};
-template <typename G>
-struct IsGraphHandle<GraphHandle<G>> : std::true_type {};
 template <typename T>
 inline constexpr bool kStringCapture =
     std::same_as<std::remove_cvref_t<T>, std::string> ||
@@ -761,27 +781,13 @@ template <typename T>
 template <typename T>
 using NormalizedGraphCapture = decltype(normalize_graph_capture(std::declval<T>()));
 
-template <typename T>
-concept GraphOwnedCapture =
-    !std::is_pointer_v<std::remove_cvref_t<T>> && !IsSpan<std::remove_cvref_t<T>>::value &&
-    !IsReferenceWrapper<std::remove_cvref_t<T>>::value &&
-    !IsUniquePtr<std::remove_cvref_t<T>>::value && !IsSharedPtr<std::remove_cvref_t<T>>::value &&
-    !IsWeakPtr<std::remove_cvref_t<T>>::value &&
-    !IsInitializerList<std::remove_cvref_t<T>>::value &&
-    !IsStdFunction<std::remove_cvref_t<T>>::value &&
-    !IsGraphHandle<std::remove_cvref_t<T>>::value &&
-    (!std::ranges::view<std::remove_cvref_t<T>> || kStringCapture<T>) &&
-    (!(std::ranges::range<std::remove_cvref_t<T>> &&
-       std::ranges::borrowed_range<std::remove_cvref_t<T>>) ||
-     kStringCapture<T>) &&
-    std::copy_constructible<NormalizedGraphCapture<T>>;
-
 template <typename Op, typename... Captures>
 class OperatorFactoryModel final : public OperatorFactoryBase {
  public:
   explicit OperatorFactoryModel(Captures... captures) : captures_(std::move(captures)...) {}
 
-  [[nodiscard]] expected<std::unique_ptr<OperatorBase>, Error> create() const override {
+  [[nodiscard]] expected<std::unique_ptr<OperatorBase>, Error> create(
+      DiagnosticCapture* capture) const override {
     try {
       auto op = std::apply([](const auto&... values) { return std::make_unique<Op>(values...); },
                            captures_);
@@ -793,11 +799,13 @@ class OperatorFactoryModel final : public OperatorFactoryBase {
       }
       return std::unique_ptr<OperatorBase>(std::move(op));
     } catch (const std::exception& exception) {
+      auto error = graph_factory_error("GRAPH_OPERATOR_CONSTRUCTION_FAILED", capture);
       graph_log_factory_exception("operator", exception.what());
-      return make_unexpected(Error{ErrorCode::kFailure, "GRAPH_OPERATOR_CONSTRUCTION_FAILED"});
+      return make_unexpected(std::move(error));
     } catch (...) {
+      auto error = graph_factory_error("GRAPH_OPERATOR_CONSTRUCTION_FAILED", capture);
       graph_log_factory_exception("operator", "non-standard exception");
-      return make_unexpected(Error{ErrorCode::kFailure, "GRAPH_OPERATOR_CONSTRUCTION_FAILED"});
+      return make_unexpected(std::move(error));
     }
   }
 
@@ -857,7 +865,8 @@ class OperatorFactoryModel final : public OperatorFactoryBase {
 class ClockFactoryBase {
  public:
   virtual ~ClockFactoryBase() = default;
-  [[nodiscard]] virtual expected<std::unique_ptr<Clock>, Error> create() const = 0;
+  [[nodiscard]] virtual expected<std::unique_ptr<Clock>, Error> create(
+      DiagnosticCapture* capture) const = 0;
   [[nodiscard]] virtual std::shared_ptr<ClockFactoryBase> clone() const = 0;
 };
 
@@ -865,17 +874,20 @@ template <typename ClockT, typename... Captures>
 class ClockFactoryModel final : public ClockFactoryBase {
  public:
   explicit ClockFactoryModel(Captures... captures) : captures_(std::move(captures)...) {}
-  [[nodiscard]] expected<std::unique_ptr<Clock>, Error> create() const override {
+  [[nodiscard]] expected<std::unique_ptr<Clock>, Error> create(
+      DiagnosticCapture* capture) const override {
     try {
       auto clock = std::apply(
           [](const auto&... values) { return std::make_unique<ClockT>(values...); }, captures_);
       return std::unique_ptr<Clock>(std::move(clock));
     } catch (const std::exception& exception) {
+      auto error = graph_factory_error("GRAPH_CLOCK_CONSTRUCTION_FAILED", capture);
       graph_log_factory_exception("clock", exception.what());
-      return make_unexpected(Error{ErrorCode::kFailure, "GRAPH_CLOCK_CONSTRUCTION_FAILED"});
+      return make_unexpected(std::move(error));
     } catch (...) {
+      auto error = graph_factory_error("GRAPH_CLOCK_CONSTRUCTION_FAILED", capture);
       graph_log_factory_exception("clock", "non-standard exception");
-      return make_unexpected(Error{ErrorCode::kFailure, "GRAPH_CLOCK_CONSTRUCTION_FAILED"});
+      return make_unexpected(std::move(error));
     }
   }
   [[nodiscard]] std::shared_ptr<ClockFactoryBase> clone() const override {
@@ -904,6 +916,12 @@ struct OperatorRegistration {
   std::size_t index{};
 };
 
+struct InitialOperatorParameters {
+  const void* value{};
+  const void* local_type_token{};
+  const ParamSchemaDescriptor* schema{};
+};
+
 struct FlowRegistration {
   EdgeId edge{};
   GraphPortId source{};
@@ -925,10 +943,16 @@ struct GraphOperatorLocator {
   std::size_t root_operator_index{};
 };
 
+/// @brief Carry one defining-module parameter target for optional authoring tooling.
+struct GraphOperatorParameterTarget {
+  VertexId vertex{};
+  const ParamSchemaDescriptor* schema{};
+};
+
 HOLOSCAN_CORE_EXPORT expected<OperatorRegistration, Error> graph_register_operator(
     const std::shared_ptr<GraphState>& state, std::string_view name,
     std::shared_ptr<OperatorFactoryBase> factory, std::unique_ptr<OperatorBase> prototype,
-    const void* operator_type_token);
+    const void* operator_type_token, const InitialOperatorParameters* initial_params = nullptr);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_prepare_authoring(
     const std::shared_ptr<GraphState>& state);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_prepare_embed(
@@ -936,18 +960,31 @@ HOLOSCAN_CORE_EXPORT expected<void, Error> graph_prepare_embed(
 HOLOSCAN_CORE_EXPORT const OperatorBase* graph_operator_prototype(
     const std::shared_ptr<GraphState>& state, std::size_t index,
     const void* operator_type_token) noexcept;
+HOLOSCAN_CORE_EXPORT const void* graph_operator_port_declaration(
+    const std::shared_ptr<GraphState>& state, std::size_t index, std::string_view name) noexcept;
+HOLOSCAN_CORE_EXPORT expected<const void*, Error> graph_resolve_operator_port(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* operator_type_token,
+    std::string_view name, PortDirection direction, const PayloadIdentityRecord& payload_identity);
 HOLOSCAN_CORE_EXPORT bool graph_operator_valid(const std::shared_ptr<GraphState>& state,
                                                std::size_t index,
                                                const void* operator_type_token) noexcept;
 HOLOSCAN_CORE_EXPORT std::string_view graph_operator_name(const std::shared_ptr<GraphState>& state,
                                                           std::size_t index) noexcept;
+HOLOSCAN_CORE_EXPORT expected<std::size_t, Error> graph_find_operator(
+    const std::shared_ptr<GraphState>& state, std::string_view name) noexcept;
 HOLOSCAN_CORE_EXPORT OperatorRef graph_operator_ref(const std::shared_ptr<GraphState>& state,
                                                     std::size_t index) noexcept;
 HOLOSCAN_CORE_EXPORT expected<GraphOperatorLocator, Error> graph_operator_locator(
     const std::shared_ptr<GraphState>& state, std::size_t index) noexcept;
+HOLOSCAN_CORE_EXPORT expected<VertexId, Error> graph_operator_vertex(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* operator_type_token);
+HOLOSCAN_CORE_EXPORT expected<GraphOperatorParameterTarget, Error> graph_operator_parameter_target(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* operator_type_token);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_set_operator_params(
     const std::shared_ptr<GraphState>& state, std::size_t index, const void* params,
-    const void* parameter_type_token);
+    const void* operator_type_token, const void* caller_parameter_type_token,
+    const ParamSchemaDescriptor* caller_schema,
+    std::shared_ptr<const ParameterInputEvidenceState> evidence = nullptr);
 
 HOLOSCAN_CORE_EXPORT expected<FlowRegistration, Error> graph_add_flow(
     const std::shared_ptr<GraphState>& state, const OutputBase* source, const InputBase* target,
@@ -998,14 +1035,12 @@ HOLOSCAN_CORE_EXPORT expected<void, Error> graph_configure_flow_inflight(
 
 HOLOSCAN_CORE_EXPORT expected<GraphPortId, Error> graph_register_import(
     const std::shared_ptr<GraphState>&, std::string_view, TopicOptions, std::unique_ptr<OutputBase>,
-    PayloadIdentityRecord, std::optional<SchemaPackagePlanRecord>,
-    std::uint64_t serialized_payload_capacity_bytes,
+    PayloadIdentityRecord, std::uint64_t serialized_payload_capacity_bytes,
     std::vector<AuthoredDescriptorTensorTopicField> tensor_fields = {},
     std::uint16_t descriptor_tensor_field_count = 0U);
 HOLOSCAN_CORE_EXPORT expected<GraphPortId, Error> graph_register_export(
     const std::shared_ptr<GraphState>&, std::string_view, TopicOptions, std::unique_ptr<InputBase>,
-    PayloadIdentityRecord, std::optional<SchemaPackagePlanRecord>,
-    std::uint64_t serialized_payload_capacity_bytes,
+    PayloadIdentityRecord, std::uint64_t serialized_payload_capacity_bytes,
     std::vector<AuthoredDescriptorTensorTopicField> tensor_fields = {},
     std::uint16_t descriptor_tensor_field_count = 0U);
 
@@ -1017,8 +1052,6 @@ HOLOSCAN_CORE_EXPORT expected<void, Error> graph_region_add_embedded_graph(
     const std::shared_ptr<GraphState>&, RegionId, std::size_t);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_region_add_constraint(
     const std::shared_ptr<GraphState>&, RegionId, RegionConstraint);
-HOLOSCAN_CORE_EXPORT expected<void, Error> graph_region_add_hint(const std::shared_ptr<GraphState>&,
-                                                                 RegionId, OptimizationHint);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_region_set_profile(
     const std::shared_ptr<GraphState>&, RegionId, Profile);
 
@@ -1028,6 +1061,12 @@ HOLOSCAN_CORE_EXPORT expected<void, Error> graph_partition_add_operator(
     const std::shared_ptr<GraphState>&, PartitionId, std::size_t);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_partition_add_operators(
     const std::shared_ptr<GraphState>&, PartitionId, std::span<const std::size_t>);
+/// @brief Assign one direct-child instance without partial partition membership updates.
+/// @pre The non-null GraphState comes from matching live partition and Graph handles.
+/// @return An error for invalid identities, conflicting assignments, an empty subtree or
+/// internal partition declarations; otherwise publish the complete instance selection.
+HOLOSCAN_CORE_EXPORT expected<void, Error> graph_partition_add_embedded_graph(
+    const std::shared_ptr<GraphState>&, PartitionId, std::size_t);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_partition_include_all(
     const std::shared_ptr<GraphState>&, PartitionId);
 HOLOSCAN_CORE_EXPORT expected<void, Error> graph_auto_partition_remaining(
@@ -1130,6 +1169,9 @@ bool ExportedTopic<T>::graph_valid() const noexcept {
 template <std::derived_from<OperatorBase> Op>
 class OperatorPortProxy {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Resolve const access to the current sealed authoring prototype.
   /// @return Non-null current prototype pointer.
   /// @throws RuntimeError with `GRAPH_HANDLE_INVALID` if the Graph or declaration is retired.
@@ -1159,6 +1201,9 @@ class OperatorPortProxy {
 template <std::derived_from<OperatorBase> Op>
 class OperatorHandle {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Name the exact concrete Operator type represented by this handle.
   using Operator = Op;
 
@@ -1178,8 +1223,35 @@ class OperatorHandle {
     auto state = state_.lock();
     if (!state)
       detail::throw_graph_error(Error{ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"});
-    auto result = detail::graph_set_operator_params(
-        state, index_, &params, param_type_descriptor<Params>().local_type_token);
+    auto result =
+        detail::graph_set_operator_params(state,
+                                          index_,
+                                          &params,
+                                          operator_type_token_,
+                                          param_type_descriptor<Params>().local_type_token,
+                                          param_schema_descriptor<Params>(),
+                                          nullptr);
+    if (!result)
+      detail::throw_graph_error(std::move(result.error()));
+  }
+
+  /// @brief Replace parameters and retain their immutable producer evidence.
+  /// @param params Prepared value for this exact Operator parameter type.
+  /// @throws RuntimeError if validation/reconstruction fails or this handle is stale.
+  void set_params(PreparedParams<Params> params) {
+    auto state = state_.lock();
+    if (!state)
+      detail::throw_graph_error(Error{ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"});
+    auto evidence = detail::PreparedParamsAccess::evidence(params);
+    Params value = std::move(params).take();
+    auto result =
+        detail::graph_set_operator_params(state,
+                                          index_,
+                                          &value,
+                                          operator_type_token_,
+                                          param_type_descriptor<Params>().local_type_token,
+                                          param_schema_descriptor<Params>(),
+                                          std::move(evidence));
     if (!result)
       detail::throw_graph_error(std::move(result.error()));
   }
@@ -1193,8 +1265,7 @@ class OperatorHandle {
   /// @brief Return whether the source Graph still owns the exact typed declaration.
   [[nodiscard]] bool graph_valid() const noexcept {
     auto state = state_.lock();
-    return state &&
-           detail::graph_operator_valid(state, index_, &detail::kGraphOperatorTypeToken<Op>);
+    return state && detail::graph_operator_valid(state, index_, operator_type_token_);
   }
 
   /// @brief Return whether this handle names a live Graph declaration.
@@ -1220,9 +1291,10 @@ class OperatorHandle {
   [[nodiscard]] bool plan_bound() const noexcept { return ref().plan_bound(); }
 
  private:
-  OperatorHandle(Graph* graph, std::weak_ptr<detail::GraphState> state, std::size_t index) noexcept
-      : graph_(graph), state_(std::move(state)), index_(index) {}
-  Graph* graph_{};
+  OperatorHandle(const void* operator_type_token, std::weak_ptr<detail::GraphState> state,
+                 std::size_t index) noexcept
+      : operator_type_token_(operator_type_token), state_(std::move(state)), index_(index) {}
+  const void* operator_type_token_{};
   std::weak_ptr<detail::GraphState> state_;
   std::size_t index_{};
   friend class Graph;
@@ -1231,6 +1303,7 @@ class OperatorHandle {
   friend class GraphLifecycleBuilder;
   friend class ExecutionPartitionsView;
   friend class detail::ParameterConfigBindingAccess;
+  friend class authoring::OpaqueOperatorRef;
 };
 
 namespace detail {
@@ -1238,9 +1311,31 @@ namespace detail {
 /// @brief Expose call-scoped authoring ownership to optional Parameter tooling.
 class ParameterConfigBindingAccess {
  public:
+  [[nodiscard]] static const std::shared_ptr<GraphState>& state(Graph& graph) noexcept;
+
   template <std::derived_from<OperatorBase> Op>
-  [[nodiscard]] static Graph* graph(const OperatorHandle<Op>& handle) noexcept {
-    return handle.state_.expired() ? nullptr : handle.graph_;
+  [[nodiscard]] static const std::weak_ptr<GraphState>& state(
+      const OperatorHandle<Op>& handle) noexcept {
+    return handle.state_;
+  }
+
+  template <std::derived_from<OperatorBase> Op>
+  [[nodiscard]] static expected<GraphOperatorParameterTarget, Error> target(
+      const OperatorHandle<Op>& handle) {
+    auto state = handle.state_.lock();
+    if (!state) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument, "PARAM_CONFIG_HANDLE_INVALID"});
+    }
+    return graph_operator_parameter_target(state, handle.index_, handle.operator_type_token_);
+  }
+
+  template <std::derived_from<OperatorBase> Op>
+  [[nodiscard]] static expected<VertexId, Error> vertex(const OperatorHandle<Op>& handle) {
+    auto resolved = target(handle);
+    if (!resolved) {
+      return make_unexpected(std::move(resolved.error()));
+    }
+    return resolved->vertex;
   }
 };
 
@@ -1258,6 +1353,9 @@ class ParameterConfigBindingAccess {
 template <typename G>
 class GraphHandle {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   static_assert(std::derived_from<G, Graph>, "GraphHandle requires a Graph-derived type");
   /// @brief Name the exact reusable Graph type represented by this handle.
   using GraphType = G;
@@ -1305,6 +1403,7 @@ class GraphHandle {
   std::size_t index_{};
   friend class Graph;
   friend class RegionHandle;
+  friend class PartitionHandle;
 };
 
 /// @brief Hold one semantically compatible typed Graph edge declaration.
@@ -1317,6 +1416,9 @@ class GraphHandle {
 template <PublishedPayload SourceT, PublishedPayload TargetT = SourceT>
 class FlowHandle {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Return the snapshot-local authored edge identity.
   /// @return Nonzero edge identity while the source Graph exists.
   [[nodiscard]] EdgeId id() const noexcept { return id_; }
@@ -1382,6 +1484,9 @@ class FlowHandle {
 template <PublishedPayload T>
 class InputPortConfigurator {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Override the finite input history depth.
   /// @param depth Positive number of samples retained for this logical input.
   /// @return This configurator for fluent authoring.
@@ -1439,6 +1544,9 @@ class InputPortConfigurator {
 template <PublishedPayload T>
 class OutputPortConfigurator {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Override the positive per-compute emission bound.
   /// @param count Positive maximum accepted emissions per compute call.
   /// @return This configurator for fluent authoring.
@@ -1505,6 +1613,9 @@ class OutputPortConfigurator {
 /// @brief Configure a direct Tensor output while preserving specialized fluent type.
 class HOLOSCAN_CORE_EXPORT TensorOutputPortConfigurator {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Override the positive per-compute emission bound.
   /// @param count Positive maximum accepted emissions per compute call.
   /// @return This stable Graph-owned configurator.
@@ -1561,6 +1672,9 @@ class HOLOSCAN_CORE_EXPORT TensorOutputPortConfigurator {
 template <PublishedPayload SourceT, PublishedPayload TargetT = SourceT>
 class FlowConfigurator {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Override the authored finite-queue behavior.
   /// @param policy Closed queue policy.
   /// @return This configurator for fluent authoring.
@@ -1629,6 +1743,9 @@ class FlowConfigurator {
 /// mutation of the same Graph.
 class HOLOSCAN_CORE_EXPORT RegionHandle {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Add one logical Operator to this region.
   /// @tparam Op Exact Operator type.
   /// @param op Graph-owned Operator declaration.
@@ -1652,6 +1769,9 @@ class HOLOSCAN_CORE_EXPORT RegionHandle {
   /// @param graph Parent-owned embedded Graph instance.
   /// @return This handle for fluent authoring.
   /// @throws RuntimeError if the handle is foreign, stale, or already a member.
+  /// @note A region containing an embedded Graph cannot use
+  /// \ref RegionConstraint::cuda_graph(). CUDA Graph regions are currently limited to directly
+  /// listed operators in the root Graph.
   template <typename G>
     requires std::derived_from<G, Graph>
   RegionHandle& add(const GraphHandle<G>& graph) {
@@ -1669,12 +1789,6 @@ class HOLOSCAN_CORE_EXPORT RegionHandle {
   /// @return This handle for fluent authoring.
   /// @throws RuntimeError if the constraint is invalid or duplicated.
   RegionHandle& constrain(RegionConstraint constraint);
-
-  /// @brief Add one unique backend-neutral optimization hint.
-  /// @param hint Closed hint not already present.
-  /// @return This handle for fluent authoring.
-  /// @throws RuntimeError if \p hint is invalid or duplicated.
-  RegionHandle& optimize(OptimizationHint hint);
 
   /// @brief Set this region's capability profile request.
   /// @param profile Closed profile value.
@@ -1697,8 +1811,8 @@ class HOLOSCAN_CORE_EXPORT RegionHandle {
 /// @brief Author one developer-preview manual execution partition.
 ///
 /// This non-owning handle refers to one partition declaration in the
-/// originating Graph. Explicit membership accepts only direct Operator
-/// declarations from that Graph. The compile-root \ref include_all directive
+/// originating Graph. Explicit membership accepts direct Operator declarations
+/// and complete embedded instances from that Graph. The compile-root \ref include_all directive
 /// instead expands to all composed Operators. A compiler validates the final
 /// cover according to the Graph's exact manual or automatic-remainder intent.
 ///
@@ -1707,6 +1821,9 @@ class HOLOSCAN_CORE_EXPORT RegionHandle {
 /// other read or mutation of the same Graph.
 class HOLOSCAN_CORE_EXPORT PartitionHandle {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Add one direct logical Operator to this partition.
   /// @tparam Op Exact Operator type.
   /// @param op Graph-owned direct Operator declaration.
@@ -1776,6 +1893,33 @@ class HOLOSCAN_CORE_EXPORT PartitionHandle {
     return *this;
   }
 
+  /// @brief Assign one embedded Graph instance and all descendant Operators atomically.
+  /// @tparam G Exact embedded Graph type.
+  /// @param graph Live direct-child instance owned by this partition's Graph.
+  /// @return This handle for fluent authoring with other instances or direct Operators.
+  /// @throws RuntimeError if either handle is stale or foreign, the instance is already
+  /// assigned, the subtree has no Operators or declares any internal partition (even empty),
+  /// or this partition uses \ref include_all. Rejection leaves Graph identity and membership
+  /// unchanged. Compilation preserves the exact Operator set and validates placement constraints.
+  /// @note Independent sources in the selected subtree share one serial partition owner.
+  template <std::derived_from<Graph> G>
+  PartitionHandle& add(const GraphHandle<G>& graph) {
+    auto state = state_.lock();
+    auto graph_state = graph.state_.lock();
+    if (!state || !graph_state) {
+      detail::throw_graph_error(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"});
+    }
+    if (state != graph_state) {
+      detail::throw_graph_error(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_PARTITION_MEMBER_FOREIGN"});
+    }
+    auto result = detail::graph_partition_add_embedded_graph(state, id_, graph.index_);
+    if (!result)
+      detail::throw_graph_error(std::move(result.error()));
+    return *this;
+  }
+
   /// @brief Expand this partition to the complete compile-root application.
   /// @return This handle for fluent authoring.
   /// @throws RuntimeError if the declaration has explicit members, another
@@ -1802,6 +1946,9 @@ class HOLOSCAN_CORE_EXPORT PartitionHandle {
 /// thread-safe; callers must serialize it with all other Graph access.
 class HOLOSCAN_CORE_EXPORT GraphLifecycleBuilder {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Order two logical checkpoints within one lifecycle stage.
   /// @tparam BeforeT Predecessor Operator type.
   /// @tparam AfterT Successor Operator type.
@@ -1900,6 +2047,7 @@ class HOLOSCAN_CORE_EXPORT GraphLifecycleBuilder {
   }
   std::weak_ptr<detail::GraphState> state_;
   friend class Graph;
+  friend class authoring::OpaqueOperatorRef;
 };
 
 /// @brief Inspect one immutable deep-owning Graph authoring snapshot.
@@ -2000,6 +2148,28 @@ class HOLOSCAN_CORE_EXPORT GraphView {
   friend class detail::GraphCompilerAccess;
 };
 
+namespace detail {
+
+template <typename T>
+concept GraphAuthoringHandle =
+    requires { typename std::remove_cvref_t<T>::graph_authoring_handle_tag; };
+
+template <typename T>
+concept ShallowCapture =
+    (!std::is_pointer_v<std::remove_cvref_t<T>> ||
+     std::is_function_v<std::remove_pointer_t<std::remove_cvref_t<T>>>) &&
+    !IsSpan<std::remove_cvref_t<T>>::value && !IsReferenceWrapper<std::remove_cvref_t<T>>::value &&
+    !IsInitializerList<std::remove_cvref_t<T>>::value && !GraphAuthoringHandle<T> &&
+    (!std::ranges::view<std::remove_cvref_t<T>> || kStringCapture<T>) &&
+    (!(std::ranges::range<std::remove_cvref_t<T>> &&
+       std::ranges::borrowed_range<std::remove_cvref_t<T>>) ||
+     kStringCapture<T>);
+
+template <typename T>
+concept ReplayableCapture = ShallowCapture<T> && std::copy_constructible<NormalizedGraphCapture<T>>;
+
+}  // namespace detail
+
 /// @brief Own an editable cold graph declaration and replayable construction factories.
 ///
 /// Graph is the only HSDK 5 root authoring abstraction. It performs lazy
@@ -2057,12 +2227,14 @@ class HOLOSCAN_CORE_EXPORT Graph {
   /// @note If this is the first external authoring operation on a derived Graph, Core
   /// completes or terminally fails `compose()` before constructing the requested
   /// Operator factory or prototype.
-  /// @pre Each arbitrary user-defined captured value must establish independent
-  /// owning replayable state when copied; hidden borrowed fields and lambda
-  /// captures cannot be inspected mechanically by C++20 concepts.
-  /// @note Known top-level borrowed, pointer, smart-pointer, type-erased callable,
-  /// and noncopyable capture forms are rejected at compile time. String views and
-  /// string literals normalize to owned strings.
+  /// @pre Each normalized capture must be copy-constructible. Copies follow the
+  /// captured type's ordinary C++ semantics, including shared identity for
+  /// `std::shared_ptr` and non-owning observation for `std::weak_ptr`.
+  /// @note Obvious top-level borrowed forms, move-only values, and Graph authoring
+  /// handles are rejected at compile time. Function pointers and copyable callables
+  /// are accepted. String views and string literals normalize to owned strings.
+  /// Checks are intentionally shallow: nested container elements, user-defined
+  /// fields, and callable captures remain the application's lifetime responsibility.
   /// @warning Do not call Graph authoring verbs from a derived Graph constructor;
   /// author the reusable body only in the Core-managed \ref compose override.
   /// @pre Any legacy \c Operator::start or \c Operator::stop hook must be public, unambiguous,
@@ -2070,7 +2242,7 @@ class HOLOSCAN_CORE_EXPORT Graph {
   /// registered by \c setup() must be declared by \p Op itself rather than by a base or unrelated
   /// class.
   template <std::derived_from<OperatorBase> Op, typename... Args>
-    requires((detail::GraphOwnedCapture<Args> && ...) &&
+    requires((detail::ReplayableCapture<Args> && ...) &&
              std::constructible_from<Op, const detail::NormalizedGraphCapture<Args>&...>)
   OperatorHandle<Op> op(std::string_view name, Args&&... args) {
     if constexpr (!detail::SelectableOperatorLifecycleHooks<Op>) {
@@ -2084,9 +2256,11 @@ class HOLOSCAN_CORE_EXPORT Graph {
       using Factory = detail::OperatorFactoryModel<Op, detail::NormalizedGraphCapture<Args>...>;
       auto factory =
           std::make_shared<Factory>(detail::normalize_graph_capture(std::forward<Args>(args))...);
-      auto prototype = factory->create();
-      if (!prototype)
+      auto prototype = factory->create(nullptr);
+      if (!prototype) {
+        prototype.error().message += "; operator=" + std::string{name};
         detail::throw_graph_error(std::move(prototype.error()));
+      }
       auto registered = detail::graph_register_operator(state_,
                                                         name,
                                                         factory,
@@ -2094,7 +2268,8 @@ class HOLOSCAN_CORE_EXPORT Graph {
                                                         &detail::kGraphOperatorTypeToken<Op>);
       if (!registered)
         detail::throw_graph_error(std::move(registered.error()));
-      return OperatorHandle<Op>{this, state_, registered.value().index};
+      return OperatorHandle<Op>{
+          &detail::kGraphOperatorTypeToken<Op>, state_, registered.value().index};
     }
   }
 
@@ -2106,28 +2281,56 @@ class HOLOSCAN_CORE_EXPORT Graph {
   /// @return Copyable typed authoring handle.
   /// @throws RuntimeError under the same conditions as `op`.
   template <std::derived_from<OperatorBase> Op, typename... Args>
-    requires((detail::GraphOwnedCapture<Args> && ...) &&
+    requires((detail::ReplayableCapture<Args> && ...) &&
              std::constructible_from<Op, const detail::NormalizedGraphCapture<Args>&...>)
   OperatorHandle<Op> add_operator(std::string_view name, Args&&... args) {
     return op<Op>(name, std::forward<Args>(args)...);
+  }
+
+  /// @brief Resolve one existing graph-local root Operator by name and exact concrete type.
+  /// @tparam Op Expected concrete Operator type.
+  /// @param name Exact local declaration name from this Graph's root authoring inventory.
+  /// @return Copyable typed authoring handle interchangeable with the creation handle.
+  /// @throws RuntimeError with `GRAPH_OPERATOR_NOT_FOUND` when no root declaration has this name.
+  /// @throws RuntimeError with `GRAPH_OPERATOR_TYPE_MISMATCH` when the named root declaration has
+  /// another concrete Operator type.
+  /// @note This is a cold authoring-time lookup. It does not trigger lazy composition, inspect
+  /// embedded Graph operators, or participate in per-activation execution.
+  /// @note Whole-aggregate parameter reconstruction does not invalidate either the creation handle
+  /// or a handle returned by this lookup.
+  template <std::derived_from<OperatorBase> Op>
+  [[nodiscard]] OperatorHandle<Op> handle(std::string_view name) {
+    auto found = detail::graph_find_operator(state_, name);
+    if (!found) {
+      detail::throw_graph_error(std::move(found.error()));
+    }
+    if (!detail::graph_operator_valid(state_, *found, &detail::kGraphOperatorTypeToken<Op>)) {
+      detail::throw_graph_error(Error{ErrorCode::kIncompatible, "GRAPH_OPERATOR_TYPE_MISMATCH"});
+    }
+    return OperatorHandle<Op>{&detail::kGraphOperatorTypeToken<Op>, state_, *found};
   }
 
   /// @brief Independently construct, compose, and own one reusable Graph instance.
   /// @tparam G Concrete reusable Graph type.
   /// @tparam Args Constructor capture argument types.
   /// @param instance_name Nonempty unique local embedded-instance name.
-  /// @param args Constructor values normalized and copied into the child object.
+  /// @param args Constructor values normalized and forwarded once into the child object.
   /// @return Read-only typed handle exposing the child's public interface members.
   /// @throws RuntimeError if parent/child composition, construction, canonical
   /// remapping, name validation, or publication fails.
   /// @note Child composition reaches a terminal state before one atomic parent
   /// publication. The child Graph is never copied or moved and remains owned by
   /// the parent until parent retirement.
+  /// @note Unlike replayed Operator and clock factories, embedding constructs the
+  /// child once, so constructor arguments may transfer move-only ownership. The
+  /// same shallow top-level borrow checks still apply, and Graph authoring handles
+  /// remain rejected because they are composition-time identity.
   /// @warning The handle permits interface inspection only. It does not grant
   /// mutable access to the child authoring Graph.
   template <typename G, typename... Args>
-    requires std::derived_from<G, Graph> && (detail::GraphOwnedCapture<Args> && ...) &&
-             std::constructible_from<G, const detail::NormalizedGraphCapture<Args>&...>
+    requires std::derived_from<G, Graph> && (detail::ShallowCapture<Args> && ...) &&
+             (std::constructible_from<detail::NormalizedGraphCapture<Args>, Args> && ...) &&
+             std::constructible_from<G, detail::NormalizedGraphCapture<Args>...>
   GraphHandle<G> embed(std::string_view instance_name, Args&&... args) {
     auto prepared = detail::graph_prepare_authoring(state_);
     if (!prepared)
@@ -2141,18 +2344,31 @@ class HOLOSCAN_CORE_EXPORT Graph {
       child = std::make_unique<G>(detail::normalize_graph_capture(std::forward<Args>(args))...);
     } catch (const std::exception& exception) {
       detail::graph_log_factory_exception("embedded_graph", exception.what());
-      detail::throw_graph_error(Error{ErrorCode::kFailure, "GRAPH_EMBED_CONSTRUCTION_FAILED"});
+      auto error = detail::graph_factory_error("GRAPH_EMBED_CONSTRUCTION_FAILED");
+      error.message += "; graph instance=" + std::string(instance_name);
+      detail::throw_graph_error(std::move(error));
     } catch (...) {
       detail::graph_log_factory_exception("embedded_graph", "non-standard exception");
-      detail::throw_graph_error(
-          Error{ErrorCode::kFailure, "GRAPH_EMBED_CONSTRUCTION_UNKNOWN_EXCEPTION"});
+      auto error = detail::graph_factory_error("GRAPH_EMBED_CONSTRUCTION_UNKNOWN_EXCEPTION");
+      error.message += "; graph instance=" + std::string(instance_name);
+      detail::throw_graph_error(std::move(error));
     }
     const std::shared_ptr<detail::GraphState> child_state = child->state_;
     auto typed = detail::graph_prepare_embedded_type(
         state_, child_state, &detail::kGraphEmbeddingTypeToken<G>);
     if (!typed)
       detail::throw_graph_error(std::move(typed.error()));
-    const auto child_snapshot = detail::graph_snapshot(child_state);
+    std::shared_ptr<const detail::GraphSnapshotData> child_snapshot;
+    try {
+      child_snapshot = detail::graph_snapshot(child_state);
+    } catch (const RuntimeError& exception) {
+      auto error = make_error(exception);
+      if (error.message == "GRAPH_EMBED_CYCLE" || error.message == "GRAPH_COMPOSE_REENTRANT") {
+        throw;
+      }
+      error.message += "; graph instance=" + std::string(instance_name);
+      detail::throw_graph_error(std::move(error));
+    }
     auto registered = detail::graph_register_embedded(state_,
                                                       instance_name,
                                                       std::unique_ptr<Graph>(std::move(child)),
@@ -2433,14 +2649,12 @@ class HOLOSCAN_CORE_EXPORT Graph {
     if (!prepared)
       detail::throw_graph_error(std::move(prepared.error()));
     auto port = std::make_unique<Output<T>>("external");
-    auto result =
-        detail::graph_register_import(state_,
-                                      uri,
-                                      options,
-                                      std::unique_ptr<OutputBase>(std::move(port)),
-                                      detail::operator_spec_payload_identity<T>(),
-                                      detail::operator_spec_schema_package_plan_record<T>(),
-                                      detail::serialized_payload_capacity_bytes<T>());
+    auto result = detail::graph_register_import(state_,
+                                                uri,
+                                                options,
+                                                std::unique_ptr<OutputBase>(std::move(port)),
+                                                detail::operator_spec_payload_identity<T>(),
+                                                detail::serialized_payload_capacity_bytes<T>());
     if (!result)
       detail::throw_graph_error(std::move(result.error()));
     return ImportedTopic<T>{state_, result.value().value};
@@ -2469,7 +2683,6 @@ class HOLOSCAN_CORE_EXPORT Graph {
         std::move(options),
         std::unique_ptr<OutputBase>(std::move(port)),
         detail::operator_spec_payload_identity<T>(),
-        detail::operator_spec_schema_package_plan_record<T>(),
         detail::external_topic_payload_capacity_bytes<T>(),
         std::move(tensors.fields_),
         static_cast<std::uint16_t>(detail::descriptor_tensor_schema_tensor_count_v<T>));
@@ -2499,14 +2712,12 @@ class HOLOSCAN_CORE_EXPORT Graph {
     if (!prepared)
       detail::throw_graph_error(std::move(prepared.error()));
     auto port = std::make_unique<Input<T>>("external");
-    auto result =
-        detail::graph_register_export(state_,
-                                      uri,
-                                      options,
-                                      std::unique_ptr<InputBase>(std::move(port)),
-                                      detail::operator_spec_payload_identity<T>(),
-                                      detail::operator_spec_schema_package_plan_record<T>(),
-                                      detail::serialized_payload_capacity_bytes<T>());
+    auto result = detail::graph_register_export(state_,
+                                                uri,
+                                                options,
+                                                std::unique_ptr<InputBase>(std::move(port)),
+                                                detail::operator_spec_payload_identity<T>(),
+                                                detail::serialized_payload_capacity_bytes<T>());
     if (!result)
       detail::throw_graph_error(std::move(result.error()));
     return ExportedTopic<T>{state_, result.value().value};
@@ -2535,7 +2746,6 @@ class HOLOSCAN_CORE_EXPORT Graph {
         std::move(options),
         std::unique_ptr<InputBase>(std::move(port)),
         detail::operator_spec_payload_identity<T>(),
-        detail::operator_spec_schema_package_plan_record<T>(),
         detail::external_topic_payload_capacity_bytes<T>(),
         std::move(tensors.fields_),
         static_cast<std::uint16_t>(detail::descriptor_tensor_schema_tensor_count_v<T>));
@@ -2552,17 +2762,16 @@ class HOLOSCAN_CORE_EXPORT Graph {
 
   /// @brief Add one uniquely named developer-preview manual execution partition.
   /// @param name Nonempty unique bounded UTF-8 name copied before return.
-  /// @return Fluent partition handle accepting direct Operator members.
+  /// @return Fluent partition handle accepting direct Operators and complete embedded instances.
   /// @throws RuntimeError if \p name is invalid or duplicated.
   /// @note Without \ref auto_partition_remaining or
   /// \ref PartitionHandle::include_all, compile requires all partitions to be
   /// nonempty and to cover every executable Operator exactly once.
   /// @note Manual partitions and \ref region declarations are orthogonal;
   /// regions may overlap partition boundaries.
-  /// @note Direct root members may anchor an automatic remainder that includes
-  /// embedded descendants. A root \ref PartitionHandle::include_all declaration
-  /// may cover the complete composed application. Other manual selection
-  /// inside embedded Graph instances remains unsupported.
+  /// @note Direct root Operators and selected child subtrees may anchor automatic remainder.
+  /// Selected subtrees include every descendant Operator and must not declare partitions
+  /// internally. A root \ref PartitionHandle::include_all covers the complete application.
   PartitionHandle partition(std::string_view name);
 
   /// @brief Automatically partition Operators omitted from exact authored partitions.
@@ -2592,11 +2801,13 @@ class HOLOSCAN_CORE_EXPORT Graph {
   /// @note Registration constructs one Clock for validation and discards it. A
   /// later compiler or RunSession replays the retained factory to create its own
   /// ordinary Clock; only `bind_shared_clock()` retains a live instance.
-  /// @pre Every arbitrary user-defined capture copy independently owns replayable
-  /// state, and construction is repeatable. Constructor side effects are not
-  /// authoritative runtime state.
+  /// @pre Every normalized capture is copy-constructible and follows its ordinary
+  /// C++ copy semantics. Obvious top-level borrowed forms and Graph authoring handles
+  /// are rejected. Checks are shallow; nested borrows remain the application's lifetime
+  /// responsibility. Construction must be repeatable, and constructor side effects are
+  /// not authoritative runtime state.
   template <std::derived_from<Clock> ClockT, typename... Args>
-    requires((detail::GraphOwnedCapture<Args> && ...) &&
+    requires((detail::ReplayableCapture<Args> && ...) &&
              std::constructible_from<ClockT, const detail::NormalizedGraphCapture<Args>&...>)
   ClockKey add_clock(std::string_view name, Args&&... args) {
     auto prepared = detail::graph_prepare_authoring(state_);
@@ -2639,8 +2850,8 @@ class HOLOSCAN_CORE_EXPORT Graph {
   template <typename G>
     requires std::derived_from<G, Graph>
   // ClockKey is an owning cold-authoring value. Taking both keys by value preserves efficient
-  // rvalue transfer into the type-erased implementation while giving lvalue callers one explicit
-  // ownership copy at this public boundary.
+  // rvalue transfer into the type-erased implementation while giving lvalue callers one
+  // explicit ownership copy at this public boundary.
   // NOLINTNEXTLINE(performance-unnecessary-value-param)
   Graph& bind_clock(const GraphHandle<G>& child, ClockKey child_import, ClockKey parent_clock) {
     auto child_owner = child.state_.lock();
@@ -2692,9 +2903,99 @@ class HOLOSCAN_CORE_EXPORT Graph {
   virtual void compose() {}
 
  private:
+  template <std::derived_from<OperatorBase> Op>
+  OperatorHandle<Op> add_operator_with_initial_params(std::string_view name,
+                                                      const typename Op::Params& params) {
+    if constexpr (!detail::SelectableOperatorLifecycleHooks<Op>) {
+      static_assert(detail::SelectableOperatorLifecycleHooks<Op>,
+                    "Operator lifecycle hooks must be public, unambiguous, and have the exact "
+                    "void() signature");
+    } else {
+      auto prepared = detail::graph_prepare_authoring(state_);
+      if (!prepared)
+        detail::throw_graph_error(std::move(prepared.error()));
+      using Factory = detail::OperatorFactoryModel<Op>;
+      auto factory = std::make_shared<Factory>();
+      auto prototype = factory->create(nullptr);
+      if (!prototype) {
+        prototype.error().message += "; operator=" + std::string{name};
+        detail::throw_graph_error(std::move(prototype.error()));
+      }
+      const detail::InitialOperatorParameters initial_params{
+          .value = &params,
+          .local_type_token = param_type_descriptor<typename Op::Params>().local_type_token,
+          .schema = param_schema_descriptor<typename Op::Params>(),
+      };
+      auto registered = detail::graph_register_operator(state_,
+                                                        name,
+                                                        factory,
+                                                        std::move(prototype.value()),
+                                                        &detail::kGraphOperatorTypeToken<Op>,
+                                                        &initial_params);
+      if (!registered)
+        detail::throw_graph_error(std::move(registered.error()));
+      return OperatorHandle<Op>{
+          &detail::kGraphOperatorTypeToken<Op>, state_, registered.value().index};
+    }
+  }
+
   std::shared_ptr<detail::GraphState> state_;
   friend class detail::GraphCompilerAccess;
+  friend class detail::GraphOperatorRegistrationAccess;
+  friend class detail::GraphPayloadRegistrationAccess;
   friend class detail::GraphState;
+  friend class detail::ParameterConfigBindingAccess;
+  friend class detail::ParameterInputAccess;
 };
+
+namespace detail {
+
+class GraphOperatorRegistrationAccess {
+ public:
+  template <std::derived_from<OperatorBase> Op>
+  static OperatorHandle<Op> add_with_params(Graph& graph, std::string_view name,
+                                            const typename Op::Params& params) {
+    return graph.add_operator_with_initial_params<Op>(name, params);
+  }
+};
+
+/// @brief Route type-erased registry declarations through Graph-owned validation.
+class GraphPayloadRegistrationAccess {
+ public:
+  static void add_flow(Graph& graph, const OutputBase& source, const InputBase& target,
+                       const PayloadIdentityRecord& source_identity,
+                       const PayloadIdentityRecord& target_identity, ConnectionOptions options) {
+    auto result = graph_add_flow(
+        graph.state_, &source, &target, source_identity, target_identity, std::move(options));
+    if (!result) {
+      throw_graph_error(std::move(result.error()));
+    }
+  }
+
+  static void export_input(Graph& graph, const InputBase& public_port,
+                           const InputBase& internal_port, PayloadIdentityRecord identity) {
+    auto result =
+        graph_bind_input_interface(graph.state_, &public_port, &internal_port, std::move(identity));
+    if (!result) {
+      throw_graph_error(std::move(result.error()));
+    }
+  }
+
+  static void export_output(Graph& graph, const OutputBase& public_port,
+                            const OutputBase& internal_port, PayloadIdentityRecord identity) {
+    auto result = graph_bind_output_interface(
+        graph.state_, &internal_port, &public_port, std::move(identity));
+    if (!result) {
+      throw_graph_error(std::move(result.error()));
+    }
+  }
+};
+
+}  // namespace detail
+
+inline const std::shared_ptr<detail::GraphState>& detail::ParameterConfigBindingAccess::state(
+    Graph& graph) noexcept {
+  return graph.state_;
+}
 
 }  // namespace holoscan

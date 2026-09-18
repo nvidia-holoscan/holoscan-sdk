@@ -50,8 +50,8 @@ inline constexpr uint32_t kMonospaceMaxCharsPerDraw = 224;
 /// How glyph quads are rasterized. kFillRectangle draws one triangle per glyph
 /// and lets VK_NV_fill_rectangle rasterize its axis-aligned bounding rectangle
 /// — half the vertex work, no diagonal seam. It requires
-/// rhi::CapabilityReport::fill_rectangle: creation fails without it, so gate
-/// the selection on rhi::Device::capabilities().
+/// CapabilityReport::fill_rectangle: creation fails without it, so gate
+/// the selection on Device::capabilities().
 enum class MonospaceFillMode : uint8_t {
   kTriangles,      ///< Two triangles per glyph (works everywhere).
   kFillRectangle,  ///< One triangle per glyph via VK_NV_fill_rectangle.
@@ -59,7 +59,7 @@ enum class MonospaceFillMode : uint8_t {
 
 struct MonospaceTextRendererDesc {
   /// Glyph rasterization mode; kFillRectangle requires
-  /// rhi::CapabilityReport::fill_rectangle (see MonospaceFillMode).
+  /// CapabilityReport::fill_rectangle (see MonospaceFillMode).
   MonospaceFillMode fill_mode = MonospaceFillMode::kTriangles;
   /// Monospace TTF to bake the ASCII atlas from; nullptr selects the built-in
   /// font (ImGui's ProggyClean, which bakes at 13 px — atlas_glyph_height_px
@@ -81,6 +81,6 @@ struct MonospaceTextRendererDesc {
 /// device with a 256-byte push-constant budget (NVIDIA hardware); creation fails with a
 /// clear error otherwise.
 [[nodiscard]] HOLOVIZ_EXPORT expected<TextRenderer> create_monospace_text_renderer(
-    rhi::Device& device, const MonospaceTextRendererDesc& desc);
+    Device& device, const MonospaceTextRendererDesc& desc);
 
 }  // namespace holoviz::text

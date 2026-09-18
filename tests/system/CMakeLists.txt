@@ -1,6 +1,33 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+add_executable(runtime_failure_report_probe test_runtime_failure_report.cpp)
+holoscan_configure_test_clang_tidy(runtime_failure_report_probe)
+holoscan_apply_logging_policy(runtime_failure_report_probe)
+target_link_libraries(runtime_failure_report_probe PRIVATE holoscan::core)
+foreach(mode IN ITEMS start compute compute-error advanced advanced-success cleanup success embedded worker async)
+    add_test(NAME SYSTEM.RuntimeFailureReport.${mode}
+        COMMAND ${CMAKE_COMMAND}
+            "-DPROBE=$<TARGET_FILE:runtime_failure_report_probe>"
+            "-DMODE=${mode}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_runtime_failure_report.cmake
+    )
+    set_tests_properties(SYSTEM.RuntimeFailureReport.${mode} PROPERTIES
+        TIMEOUT 45
+        ENVIRONMENT "HOLOSCAN_LOG_LEVEL=INFO"
+    )
+endforeach()
+
+add_test(NAME SYSTEM.RuntimeFailureReport.rejects_unexpected_exit
+    COMMAND ${CMAKE_COMMAND}
+        "-DPROBE=$<TARGET_FILE:runtime_failure_report_probe>"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_runtime_failure_report_rejection.cmake
+)
+set_tests_properties(SYSTEM.RuntimeFailureReport.rejects_unexpected_exit PROPERTIES
+    TIMEOUT 45
+    ENVIRONMENT "HOLOSCAN_LOG_LEVEL=INFO"
+)
+
 add_executable(expected_helpers_smoke expected_helpers_smoke.cpp)
 target_link_libraries(expected_helpers_smoke PRIVATE holoscan::core)
 
@@ -24,6 +51,22 @@ add_test(NAME SYSTEM.example_readme_tier_banners
 set_tests_properties(SYSTEM.example_readme_tier_banners
     PROPERTIES LABELS "ea2;examples;documentation"
 )
+
+if(NOT HOLOSCAN_BUILD_PARAMS)
+    # REQ: PARAM-024
+    add_test(NAME CMAKE.params_disabled_excludes_schema_codec_compile_fail_tests
+        COMMAND ${CMAKE_COMMAND}
+            "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
+            "-DCMAKE_BUILD_TYPE=$<CONFIG>"
+            "-DHOLOSCAN_CTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_params_disabled_test_registration.cmake
+    )
+    set_tests_properties(CMAKE.params_disabled_excludes_schema_codec_compile_fail_tests
+        PROPERTIES
+            LABELS "cmake;params"
+            TIMEOUT 30
+    )
+endif()
 
 # Configures Holoscan under a parent project and then inspects the install rules that
 # configuration generated. The second half matters because an install rule rooted at
@@ -49,7 +92,7 @@ if(HOLOSCAN_BUILD_BENCHMARKS)
             "-DHOLOSCAN_BENCHMARK_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/standalone_benchmark"
             "-DHOLOSCAN_INSTALL_LIB_DIR=${HOLOSCAN_INSTALL_LIB_DIR}"
             "-DHOLOSCAN_BUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
-            "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+            "-DCMAKE_BUILD_TYPE=$<CONFIG>"
             "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
             "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
             "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -75,7 +118,7 @@ add_test(NAME EXPECTED_HELPERS_SMOKE.installed_package_consumer
         "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
         "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/expected_installed_consumer"
         "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/expected_installed_consumer"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
         "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
         "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -94,6 +137,14 @@ set_tests_properties(EXPECTED_HELPERS_SMOKE.installed_package_consumer
 )
 
 if(HOLOSCAN_BUILD_EXAMPLES AND HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
+    if(WIN32)
+        set(installed_examples_package_install_dir
+            "${CMAKE_INSTALL_BINDIR}/holoscan/examples")
+    else()
+        set(installed_examples_package_install_dir
+            "${CMAKE_INSTALL_LIBDIR}/holoscan/examples")
+    endif()
+
     if(BUILD_SHARED_LIBS)
         set(installed_examples_package_iceoryx2_target iceoryx2-cxx::shared-lib-cxx)
     else()
@@ -141,14 +192,14 @@ if(HOLOSCAN_BUILD_EXAMPLES AND HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
             "-DHOLOSCAN_EXAMPLES_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed_examples_package"
             "-DHOLOSCAN_INSTALL_LIB_DIR=${HOLOSCAN_INSTALL_LIB_DIR}"
             "-DHOLOSCAN_INSTALL_DATA_DIR=${CMAKE_INSTALL_DATADIR}/holoscan"
-            "-DHOLOSCAN_EXAMPLES_INSTALL_DIR=${CMAKE_INSTALL_DATADIR}/examples"
+            "-DHOLOSCAN_EXAMPLES_INSTALL_DIR=${installed_examples_package_install_dir}"
             "-DHOLOSCAN_INSTALL_BIN_DIR=${CMAKE_INSTALL_BINDIR}"
             "-DHOLOSCAN_EXPECT_SHARED=$<BOOL:${BUILD_SHARED_LIBS}>"
             "-DHOLOSCAN_SHARED_LIBRARY_PREFIX=${CMAKE_SHARED_LIBRARY_PREFIX}"
             "-DHOLOSCAN_SHARED_LIBRARY_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}"
             "-DHOLOSCAN_STATIC_LIBRARY_PREFIX=${CMAKE_STATIC_LIBRARY_PREFIX}"
             "-DHOLOSCAN_STATIC_LIBRARY_SUFFIX=${CMAKE_STATIC_LIBRARY_SUFFIX}"
-            "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+            "-DCMAKE_BUILD_TYPE=$<CONFIG>"
             "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
             "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
             "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -156,8 +207,6 @@ if(HOLOSCAN_BUILD_EXAMPLES AND HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
             "-DHOLOSCAN_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
             "-DHOLOSCAN_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
             "-DHOLOSCAN_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"
-            "-DHOLOSCAN_CONFIG_COMPONENT_ENABLED=${HOLOSCAN_BUILD_CONFIG}"
-            "-DHOLOSCAN_CONFIG_IO_COMPONENT_ENABLED=${HOLOSCAN_BUILD_CONFIG_IO}"
             "-DHOLOSCAN_PARAMS_COMPONENT_ENABLED=${HOLOSCAN_BUILD_PARAMS}"
             "-DHOLOSCAN_PARAMS_IO_COMPONENT_ENABLED=${HOLOSCAN_BUILD_PARAMS_IO}"
             "-DHOLOSCAN_WEB_TUNER_COMPONENT_ENABLED=${HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER}"
@@ -189,7 +238,7 @@ foreach(invalid_artifact_mode IN LISTS invalid_artifact_modes)
             "-DHOLOSCAN_ARTIFACT_FIXTURE_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/graph_artifact_install_fixture/${invalid_artifact_mode}"
             "-DHOLOSCAN_GRAPH_ARTIFACTS_MODULE=${holoscan_SOURCE_DIR}/cmake/HoloscanGraphArtifacts.cmake"
             "-DHOLOSCAN_ARTIFACT_FIXTURE_MODE=${invalid_artifact_mode}"
-            "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+            "-DCMAKE_BUILD_TYPE=$<CONFIG>"
             "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
             "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
             "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -224,7 +273,7 @@ foreach(artifact_fixture_mode IN ITEMS
             "-DHOLOSCAN_ARTIFACT_FIXTURE_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/graph_artifact_install_fixture/${artifact_fixture_mode}"
             "-DHOLOSCAN_GRAPH_ARTIFACTS_MODULE=${holoscan_SOURCE_DIR}/cmake/HoloscanGraphArtifacts.cmake"
             "-DHOLOSCAN_ARTIFACT_FIXTURE_MODE=${artifact_fixture_mode}"
-            "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+            "-DCMAKE_BUILD_TYPE=$<CONFIG>"
             "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
             "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
             "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -251,6 +300,42 @@ set_tests_properties(GRAPH_ARTIFACT_INSTALL.default_package_excludes_generation
         LABELS "installed-package;graph-artifacts"
 )
 
+add_test(NAME CONFIG.cpack_granular_configuration
+    COMMAND ${CMAKE_COMMAND}
+        "-DHOLOSCAN_CPACK_CONFIG=${holoscan_BINARY_DIR}/CPackConfig.cmake"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_granular_cpack_configuration.cmake
+)
+set_tests_properties(CONFIG.cpack_granular_configuration
+    PROPERTIES
+        LABELS "installed-package;cpack"
+)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_program(HOLOSCAN_DPKG_DEB_COMMAND dpkg-deb)
+    if(HOLOSCAN_DPKG_DEB_COMMAND)
+        add_test(NAME CONFIG.cpack_granular_debian_packages
+            COMMAND ${CMAKE_COMMAND}
+                "-DHOLOSCAN_CPACK_COMMAND=${CMAKE_CPACK_COMMAND}"
+                "-DHOLOSCAN_CPACK_CONFIG=${holoscan_BINARY_DIR}/CPackConfig.cmake"
+                "-DHOLOSCAN_DPKG_DEB_COMMAND=${HOLOSCAN_DPKG_DEB_COMMAND}"
+                "-DHOLOSCAN_INSTALL_LIB_DIR=${HOLOSCAN_INSTALL_LIB_DIR}"
+                "-DHOLOSCAN_PACKAGE_VERSION=${PROJECT_VERSION}"
+                "-DHOLOSCAN_BUILD_VISION=${HOLOSCAN_BUILD_VISION}"
+                "-DHOLOSCAN_BUILD_INFERENCE=${HOLOSCAN_BUILD_INFERENCE}"
+                "-DHOLOSCAN_BUILD_VISUALIZATION=${HOLOSCAN_BUILD_VISUALIZATION}"
+                "-DHOLOSCAN_CPACK_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/cpack_granular_debian_packages"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/check_granular_cpack_debian_packages.cmake
+        )
+        set_tests_properties(CONFIG.cpack_granular_debian_packages
+            PROPERTIES
+                LABELS "installed-package;cpack;debian"
+                RUN_SERIAL "TRUE"
+                TIMEOUT 300
+        )
+    else()
+        message(STATUS "Skipping CONFIG.cpack_granular_debian_packages: dpkg-deb not found")
+    endif()
+endif()
 add_test(NAME GRAPH_ARTIFACT_INSTALL.default_build_excludes_generation
     COMMAND ${CMAKE_COMMAND}
         "-DHOLOSCAN_RUN_SCRIPT=${holoscan_SOURCE_DIR}/run"
@@ -274,7 +359,7 @@ add_test(NAME CLOCK_REGISTRY.installed_package_consumer
         "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
         "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/time_installed_consumer"
         "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/time_installed_consumer"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
         "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
         "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -422,13 +507,14 @@ set_tests_properties(RUNTIME.partition_environment_process_invariance
 # REQ: RUNTIME-036
 # REQ: RUNTIME-047
 # REQ: RUNTIME-049
+# REQ: RUNTIME-054
 # REQ: COMPILE-061
 add_test(NAME RUNTIME.installed_package_consumer
     COMMAND ${CMAKE_COMMAND}
         "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
         "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/runtime_installed_consumer"
         "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/runtime_installed_consumer"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
         "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
         "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -457,7 +543,7 @@ add_test(NAME COMPILE.installed_package_consumer
         "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
         "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/compile_installed_consumer"
         "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/compile_installed_consumer"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DHOLOSCAN_BUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
         "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
         "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
@@ -551,7 +637,7 @@ add_test(NAME CORE.installed_package_boundary
     COMMAND ${CMAKE_COMMAND}
         "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
         "-DHOLOSCAN_BOUNDARY_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/core_installed_package_boundary"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DHOLOSCAN_INSTALL_LIB_DIR=${HOLOSCAN_INSTALL_LIB_DIR}"
         "-DHOLOSCAN_NM_EXECUTABLE=${CMAKE_NM}"
         "-DHOLOSCAN_READELF_EXECUTABLE=${CMAKE_READELF}"
@@ -573,7 +659,7 @@ foreach(build_tree_find_mode IN ITEMS direct exact_version version_range compone
             "-DHOLOSCAN_BUILD_TREE_FIXTURE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/build_tree_package_consumer"
             "-DHOLOSCAN_BUILD_TREE_FIXTURE_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/build_tree_package_consumer"
             "-DHOLOSCAN_BUILD_TREE_FIND_MODE=${build_tree_find_mode}"
-            "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+            "-DCMAKE_BUILD_TYPE=$<CONFIG>"
             "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
             "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
             "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -607,7 +693,7 @@ add_test(NAME TEMPORAL_CONTRACT.installed_package_consumer
         "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
         "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/temporal_installed_consumer"
         "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/temporal_installed_consumer"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
         "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
         "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -647,7 +733,7 @@ add_test(NAME LIFECYCLE.installed_package_consumer
         "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
         "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_installed_consumer"
         "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/lifecycle_installed_consumer"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
         "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
         "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -708,7 +794,7 @@ function(holoscan_add_installed_consumer_test test_name source_dir work_dir)
             "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
             "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${source_dir}"
             "-DHOLOSCAN_CONSUMER_WORK_DIR=${work_dir}"
-            "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+            "-DCMAKE_BUILD_TYPE=$<CONFIG>"
             "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
             "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
             "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -797,6 +883,152 @@ set_tests_properties(CHANNEL_SCHEMA.schema_tools_validation
         LABELS "channel;schema;cmake"
 )
 
+# REQ: SCHEMA-004
+# REQ: SCHEMA-006
+add_test(NAME CHANNEL_SCHEMA.schema_traits_generator
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test_generate_schema_traits.py"
+)
+set_tests_properties(CHANNEL_SCHEMA.schema_traits_generator
+    PROPERTIES
+        ENVIRONMENT
+            "HOLOSCAN_SCHEMA_TRAITS_GENERATOR=${holoscan_SOURCE_DIR}/scripts/generate_schema_traits.py;HOLOSCAN_TEST_FLATC=$<TARGET_FILE:flatbuffers::flatc>;HOLOSCAN_TEST_FLATC_VERSION=${Flatbuffers_VERSION};HOLOSCAN_TEST_REFLECTION_SCHEMA=${HOLOSCAN_SCHEMA_DIR}/flatbuffers/reflection.fbs;HOLOSCAN_TEST_SCHEMA_DIR=${holoscan_SOURCE_DIR}/schemas;HOLOSCAN_TEST_SCHEMA_DIAGNOSTICS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/descriptor_tensor_schema_codegen/diagnostics"
+        LABELS "channel;schema;flatbuffers;codegen"
+)
+
+set(schema_evolution_source_dir
+    "${CMAKE_CURRENT_SOURCE_DIR}/flatbuffer_schema_evolution")
+set(schema_evolution_generated_dir
+    "${CMAKE_CURRENT_BINARY_DIR}/flatbuffer_schema_evolution/generated")
+set(schema_evolution_generated_headers
+    "${schema_evolution_generated_dir}/evolution_v1_generated.h"
+    "${schema_evolution_generated_dir}/evolution_v2_generated.h"
+    "${schema_evolution_generated_dir}/collision_a_generated.h"
+    "${schema_evolution_generated_dir}/collision_b_generated.h")
+set(schema_evolution_bfbs_files
+    "${schema_evolution_generated_dir}/evolution_v1.bfbs"
+    "${schema_evolution_generated_dir}/evolution_renamed.bfbs"
+    "${schema_evolution_generated_dir}/incompatible_required_field.bfbs")
+
+add_custom_command(
+    OUTPUT
+        ${schema_evolution_generated_headers}
+        ${schema_evolution_bfbs_files}
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${schema_evolution_generated_dir}"
+    COMMAND $<TARGET_FILE:flatbuffers::flatc>
+        --cpp
+        --gen-object-api
+        --require-explicit-ids
+        -o "${schema_evolution_generated_dir}"
+        "${schema_evolution_source_dir}/evolution_v1.fbs"
+        "${schema_evolution_source_dir}/evolution_v2.fbs"
+        "${schema_evolution_source_dir}/collision_a.fbs"
+        "${schema_evolution_source_dir}/collision_b.fbs"
+    COMMAND $<TARGET_FILE:flatbuffers::flatc>
+        -b
+        --schema
+        --require-explicit-ids
+        -o "${schema_evolution_generated_dir}"
+        "${schema_evolution_source_dir}/evolution_v1.fbs"
+        "${schema_evolution_source_dir}/evolution_renamed.fbs"
+        "${schema_evolution_source_dir}/incompatible_required_field.fbs"
+    DEPENDS
+        flatbuffers::flatc
+        "${schema_evolution_source_dir}/evolution_v1.fbs"
+        "${schema_evolution_source_dir}/evolution_v2.fbs"
+        "${schema_evolution_source_dir}/evolution_renamed.fbs"
+        "${schema_evolution_source_dir}/incompatible_required_field.fbs"
+        "${schema_evolution_source_dir}/collision_a.fbs"
+        "${schema_evolution_source_dir}/collision_b.fbs"
+    COMMENT "Generating FlatBuffers evolution characterization artifacts"
+    VERBATIM)
+add_custom_target(flatbuffer_schema_evolution_artifacts
+    DEPENDS
+        ${schema_evolution_generated_headers}
+        ${schema_evolution_bfbs_files})
+
+foreach(revision IN ITEMS v1 v2)
+    add_executable(flatbuffer_schema_evolution_${revision}_codec
+        flatbuffer_schema_evolution/evolution_codec.cpp)
+    add_dependencies(flatbuffer_schema_evolution_${revision}_codec
+        flatbuffer_schema_evolution_artifacts)
+    target_compile_features(flatbuffer_schema_evolution_${revision}_codec PRIVATE cxx_std_20)
+    target_compile_definitions(flatbuffer_schema_evolution_${revision}_codec
+        PRIVATE
+            "EVOLUTION_SCHEMA_HEADER=\"evolution_${revision}_generated.h\"")
+    target_include_directories(flatbuffer_schema_evolution_${revision}_codec
+        PRIVATE "${schema_evolution_generated_dir}")
+    target_link_libraries(flatbuffer_schema_evolution_${revision}_codec
+        PRIVATE flatbuffers::flatbuffers)
+    set_target_properties(flatbuffer_schema_evolution_${revision}_codec
+        PROPERTIES CXX_EXTENSIONS OFF)
+endforeach()
+target_compile_definitions(flatbuffer_schema_evolution_v1_codec
+    PRIVATE EVOLUTION_HAS_NOTE=0)
+target_compile_definitions(flatbuffer_schema_evolution_v2_codec
+    PRIVATE EVOLUTION_HAS_NOTE=1)
+
+holoscan_add_flatbuffer_schema(
+    TARGET flatbuffer_schema_evolution_v2_package
+    SCHEMAS flatbuffer_schema_evolution/evolution_v2.fbs
+    INCLUDE_DIRS "${schema_evolution_source_dir}"
+    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/flatbuffer_schema_evolution/package-v2"
+    TRAITS_HEADER flatbuffer_schema_evolution_v2_traits.hpp
+    COMPATIBILITY_EPOCH 3
+    MAX_SERIALIZED_SIZE 1024)
+get_target_property(schema_evolution_package_dir
+    flatbuffer_schema_evolution_v2_package HOLOSCAN_FLATBUFFER_OUTPUT_DIR)
+
+add_executable(flatbuffer_schema_evolution_characterization
+    flatbuffer_schema_evolution/schema_evolution_characterization.cpp)
+add_dependencies(flatbuffer_schema_evolution_characterization
+    flatbuffer_schema_evolution_artifacts
+    flatbuffer_schema_evolution_v2_package)
+target_compile_features(flatbuffer_schema_evolution_characterization PRIVATE cxx_std_20)
+target_compile_definitions(flatbuffer_schema_evolution_characterization
+    PRIVATE
+        "EVOLUTION_V1_BFBS=\"${schema_evolution_generated_dir}/evolution_v1.bfbs\""
+        "EVOLUTION_RENAMED_BFBS=\"${schema_evolution_generated_dir}/evolution_renamed.bfbs\""
+        "EVOLUTION_REQUIRED_BFBS=\"${schema_evolution_generated_dir}/incompatible_required_field.bfbs\"")
+target_include_directories(flatbuffer_schema_evolution_characterization
+    PRIVATE
+        "${schema_evolution_generated_dir}"
+        "${schema_evolution_package_dir}")
+target_link_libraries(flatbuffer_schema_evolution_characterization
+    PRIVATE
+        flatbuffers::flatbuffers
+        holoscan::core
+        holoscan::schema)
+set_target_properties(flatbuffer_schema_evolution_characterization
+    PROPERTIES CXX_EXTENSIONS OFF)
+
+# REQ: SCHEMA-002
+add_test(NAME CHANNEL_SCHEMA.flatbuffer_evolution_cross_read
+    COMMAND "${CMAKE_COMMAND}"
+        "-DV1_CODEC=$<TARGET_FILE:flatbuffer_schema_evolution_v1_codec>"
+        "-DV2_CODEC=$<TARGET_FILE:flatbuffer_schema_evolution_v2_codec>"
+        "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/flatbuffer_schema_evolution/cross-read"
+        -P "${schema_evolution_source_dir}/RunEvolutionCrossRead.cmake")
+set_tests_properties(CHANNEL_SCHEMA.flatbuffer_evolution_cross_read
+    PROPERTIES LABELS "ea2;channel;schema;flatbuffers;evolution")
+
+# REQ: SCHEMA-002
+add_test(NAME CHANNEL_SCHEMA.flatbuffer_evolution_conformance
+    COMMAND "${CMAKE_COMMAND}"
+        "-DFLATC=$<TARGET_FILE:flatbuffers::flatc>"
+        "-DSOURCE_DIR=${schema_evolution_source_dir}"
+        -P "${schema_evolution_source_dir}/VerifyEvolutionConformance.cmake")
+set_tests_properties(CHANNEL_SCHEMA.flatbuffer_evolution_conformance
+    PROPERTIES LABELS "ea2;channel;schema;flatbuffers;evolution")
+
+# REQ: SCHEMA-001
+# REQ: SCHEMA-002
+# REQ: SCHEMA-003
+add_test(NAME CHANNEL_SCHEMA.flatbuffer_evolution_characterization
+    COMMAND flatbuffer_schema_evolution_characterization)
+set_tests_properties(CHANNEL_SCHEMA.flatbuffer_evolution_characterization
+    PROPERTIES LABELS "ea2;channel;schema;flatbuffers;evolution")
+
 if(TARGET custom_schema_flatbuffers_generated)
     get_target_property(public_custom_schema_generated_dir
         custom_schema_flatbuffers_generated HOLOSCAN_FLATBUFFER_OUTPUT_DIR)
@@ -818,7 +1050,9 @@ if(TARGET custom_schema_flatbuffers_generated)
 endif()
 
 # REQ: CHAN-120
+# REQ: CHAN-143
 # REQ: OPERATOR-035
+# REQ: SCHEMA-004
 holoscan_add_installed_consumer_test(
     CHANNEL_SCHEMA.installed_third_party_descriptor_tensor_consumer
     "${holoscan_SOURCE_DIR}/examples/flatbuffer_schemas/descriptor_tensor_schema/cpp"
@@ -841,35 +1075,31 @@ foreach(generation_suffix IN ITEMS a b)
         SCHEMAS descriptor_tensor_schema_codegen/descriptor_frame_multi_order_test.fbs
         INCLUDE_DIRS "${descriptor_schema_codegen_source_dir}"
         OUTPUT_DIR "${descriptor_schema_generated_dir}"
-        BFBS_EMBED
-        DESCRIPTOR_TENSOR
         TRAITS_HEADER descriptor_frame_multi_order_traits.hpp
-        TRAITS_ROOT_TYPE app3p::MultiDescriptorFrame
-        TRAITS_NATIVE_TYPE app3p::MultiDescriptorFrameT
-        TRAITS_BINARY_SCHEMA_TYPE app3p::MultiDescriptorFrameBinarySchema
-        TRAITS_PACKAGE_NAMESPACE app3p::multi_order_package
-        TRAITS_CANONICAL_NAME app3p.MultiDescriptorFrame
-        TRAITS_SCHEMA_VERSION 1
-        TRAITS_MAX_SERIALIZED_SIZE 1024
-        TRAITS_DESCRIPTOR_METADATA_CAPACITY 512
+        MAX_SERIALIZED_SIZE 512
     )
 endforeach()
+
+get_target_property(descriptor_tensor_schema_codegen_a_traits_header
+    descriptor_tensor_schema_codegen_a HOLOSCAN_FLATBUFFER_TRAITS_HEADER)
+get_target_property(descriptor_tensor_schema_codegen_b_traits_header
+    descriptor_tensor_schema_codegen_b HOLOSCAN_FLATBUFFER_TRAITS_HEADER)
 
 set(descriptor_schema_determinism_stamp
     "${CMAKE_CURRENT_BINARY_DIR}/descriptor_tensor_schema_codegen/traits.deterministic")
 add_custom_command(
     OUTPUT "${descriptor_schema_determinism_stamp}"
     COMMAND "${CMAKE_COMMAND}" -E compare_files
-        "${descriptor_tensor_schema_codegen_a_TRAITS_HEADER}"
-        "${descriptor_tensor_schema_codegen_b_TRAITS_HEADER}"
+        "${descriptor_tensor_schema_codegen_a_traits_header}"
+        "${descriptor_tensor_schema_codegen_b_traits_header}"
     COMMAND "${CMAKE_COMMAND}"
-        "-DGENERATED_TRAITS_A=${descriptor_tensor_schema_codegen_a_TRAITS_HEADER}"
-        "-DGENERATED_TRAITS_B=${descriptor_tensor_schema_codegen_b_TRAITS_HEADER}"
+        "-DGENERATED_TRAITS_A=${descriptor_tensor_schema_codegen_a_traits_header}"
+        "-DGENERATED_TRAITS_B=${descriptor_tensor_schema_codegen_b_traits_header}"
         -P "${descriptor_schema_codegen_source_dir}/VerifyDescriptorSchemaIntermediates.cmake"
     COMMAND "${CMAKE_COMMAND}" -E touch "${descriptor_schema_determinism_stamp}"
     DEPENDS
-        "${descriptor_tensor_schema_codegen_a_TRAITS_HEADER}"
-        "${descriptor_tensor_schema_codegen_b_TRAITS_HEADER}"
+        "${descriptor_tensor_schema_codegen_a_traits_header}"
+        "${descriptor_tensor_schema_codegen_b_traits_header}"
         "${descriptor_schema_codegen_source_dir}/VerifyDescriptorSchemaIntermediates.cmake"
     COMMENT "Comparing independently generated descriptor traits headers"
     VERBATIM
@@ -880,11 +1110,11 @@ set(descriptor_schema_multi_order_stamp
 add_custom_command(
     OUTPUT "${descriptor_schema_multi_order_stamp}"
     COMMAND "${CMAKE_COMMAND}"
-        "-DGENERATED_TRAITS=${descriptor_tensor_schema_codegen_a_TRAITS_HEADER}"
+        "-DGENERATED_TRAITS=${descriptor_tensor_schema_codegen_a_traits_header}"
         -P "${descriptor_schema_codegen_source_dir}/VerifyDescriptorTensorFieldOrder.cmake"
     COMMAND "${CMAKE_COMMAND}" -E touch "${descriptor_schema_multi_order_stamp}"
     DEPENDS
-        "${descriptor_tensor_schema_codegen_a_TRAITS_HEADER}"
+        "${descriptor_tensor_schema_codegen_a_traits_header}"
         "${descriptor_schema_codegen_source_dir}/VerifyDescriptorTensorFieldOrder.cmake"
     COMMENT "Verifying canonical reflected descriptor Tensor field ordering"
     VERBATIM
@@ -895,8 +1125,7 @@ add_custom_target(descriptor_tensor_schema_codegen_validation
         "${descriptor_schema_multi_order_stamp}"
 )
 
-# REQ: CHAN-124
-# REQ: CHAN-125
+# REQ: CHAN-137
 # REQ: OPERATOR-035
 add_executable(multi_tensor_schema_codec_validation
     descriptor_tensor_schema_codegen/multi_tensor_schema_codec_validation.cpp)
@@ -921,7 +1150,7 @@ set_tests_properties(CHANNEL_SCHEMA.multi_tensor_schema_codec_validation
 # REQ: OPERATOR-036
 # REQ: OPERATOR-037
 # REQ: CHAN-123
-# REQ: CHAN-125
+# REQ: CHAN-137
 # REQ: CHAN-126
 # REQ: CHAN-127
 # REQ: EXTERNAL-010
@@ -985,23 +1214,6 @@ foreach(capacity IN ITEMS 1 4 8)
             LABELS "benchmark;ea2;channel;schema;tensor;capacity"
             TIMEOUT 30)
 endforeach()
-
-add_test(NAME CHANNEL_SCHEMA.descriptor_tensor_schema_codegen_diagnostics
-    COMMAND "${CMAKE_COMMAND}"
-        "-DDIAGNOSTIC_SOURCE_DIR=${descriptor_schema_codegen_source_dir}/diagnostics"
-        "-DDIAGNOSTIC_BINARY_ROOT=${CMAKE_CURRENT_BINARY_DIR}/descriptor_tensor_schema_codegen/diagnostics"
-        "-DHOLOSCAN_FLATC_EXECUTABLE=$<TARGET_FILE:flatbuffers::flatc>"
-        "-DHOLOSCAN_FLATC_VERSION=$<TARGET_PROPERTY:holoscan::fbs_tools,HOLOSCAN_FLATC_VERSION>"
-        "-DHOLOSCAN_SCHEMA_DIR=$<TARGET_PROPERTY:holoscan::fbs_tools,HOLOSCAN_SCHEMA_DIR>"
-        "-DHOLOSCAN_REFLECTION_SCHEMA=$<TARGET_PROPERTY:holoscan::fbs_tools,HOLOSCAN_FLATBUFFERS_REFLECTION_SCHEMA>"
-        "-DHOLOSCAN_SCHEMA_TOOLS_DIR=${holoscan_SCHEMA_TOOLS_DIR}"
-        -P "${descriptor_schema_codegen_source_dir}/VerifyDescriptorSchemaDiagnostics.cmake"
-)
-set_tests_properties(CHANNEL_SCHEMA.descriptor_tensor_schema_codegen_diagnostics
-    PROPERTIES
-        LABELS "channel;schema;tensor;third-party;codegen"
-        TIMEOUT 30
-)
 
 if(TARGET descriptor_tensor_schema_generated)
     get_target_property(public_descriptor_schema_generated_dir
@@ -1082,6 +1294,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     )
 
     function(holoscan_add_external_matrix_test test_name cell_index)
+        # REQ: CHAN-132
+        # REQ: CHAN-136
         # REQ: SYSTEM-001
         # REQ: SYSTEM-002
         # REQ: SYSTEM-003
@@ -1120,4 +1334,21 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         SYSTEM.external_publisher_to_graph_import.exec_child.host_tensor 10)
     holoscan_add_external_matrix_test(
         SYSTEM.graph_export_to_external_subscriber.exec_child.host_tensor 11)
+
+    # REQ: CHAN-132
+    # REQ: CHAN-136
+    # REQ: RUNTIME-017
+    holoscan_add_installed_consumer_test(
+        CHANNEL.external_eos.installed_package_consumer
+        "${CMAKE_CURRENT_SOURCE_DIR}/external_eos_installed_consumer"
+        "${CMAKE_CURRENT_BINARY_DIR}/external_eos_installed_consumer"
+    )
+    # The watchdog covers SDK build/install and consumer compilation as well as execution.
+    # Allow bounded build time in source/header-tidy configurations before running the EOS check.
+    set_tests_properties(CHANNEL.external_eos.installed_package_consumer
+        PROPERTIES
+            RUN_SERIAL TRUE
+            TIMEOUT 180
+            LABELS "channel;external-client;eos;installed-package;linux"
+    )
 endif()

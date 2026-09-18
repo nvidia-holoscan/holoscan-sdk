@@ -23,6 +23,9 @@ namespace holoscan::vision {
 
 /// @brief Configure image borders for \ref CopyMakeBorderOp.
 struct CopyMakeBorderOpParams {
+  std::int32_t max_width{1};                      ///< Maximum bordered output width in pixels.
+  std::int32_t max_height{1};                     ///< Maximum bordered output height in pixels.
+  std::uint32_t max_batch_size{1U};               ///< Maximum admitted image batch size.
   std::int32_t top{};                             ///< Nonnegative top border width in pixels.
   std::int32_t bottom{};                          ///< Nonnegative bottom border width in pixels.
   std::int32_t left{};                            ///< Nonnegative left border width in pixels.
@@ -33,7 +36,22 @@ struct CopyMakeBorderOpParams {
 
 HOLOSCAN_PARAM_SCHEMA(
     CopyMakeBorderOpParams,
-    holoscan::param_schema("com.nvidia.holoscan.vision.CopyMakeBorderOpParams", 1),
+    holoscan::param_schema("com.nvidia.holoscan.vision.CopyMakeBorderOpParams", 2),
+    holoscan::field<&CopyMakeBorderOpParams::max_width>("max_width")
+        .recompile_required()
+        .required_on_load()
+        .range(1, INT32_MAX)
+        .description("Maximum bordered output width in pixels."),
+    holoscan::field<&CopyMakeBorderOpParams::max_height>("max_height")
+        .recompile_required()
+        .required_on_load()
+        .range(1, INT32_MAX)
+        .description("Maximum bordered output height in pixels."),
+    holoscan::field<&CopyMakeBorderOpParams::max_batch_size>("max_batch_size")
+        .recompile_required()
+        .required_on_load()
+        .range(1U, kMaximumBatchSize)
+        .description("Maximum image batch size admitted by the operator."),
     holoscan::field<&CopyMakeBorderOpParams::top>("top")
         .range(0, INT32_MAX)
         .description("Top border width in pixels."),
@@ -69,9 +87,8 @@ HOLOSCAN_PARAM_SCHEMA(
 /// contiguous.
 class HOLOSCAN_VISION_EXPORT CopyMakeBorderOp final : public Operator<CopyMakeBorderOpParams> {
  public:
-  /// @brief Construct an operator with fixed output-pool capacity.
-  /// @param capacity Maximum bordered output width, output height, and admitted batch size.
-  explicit CopyMakeBorderOp(VisionImageCapacity capacity);
+  /// @brief Construct an operator whose output capacity is derived from its Parameters.
+  CopyMakeBorderOp();
 
   /// @brief Destroy the operator and its retained CV-CUDA resource after runtime quiescence.
   ~CopyMakeBorderOp() override;
@@ -101,7 +118,6 @@ class HOLOSCAN_VISION_EXPORT CopyMakeBorderOp final : public Operator<CopyMakeBo
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;
-  VisionImageCapacity capacity_;
 };
 
 static_assert(param_schema_availability<CopyMakeBorderOpParams>() ==

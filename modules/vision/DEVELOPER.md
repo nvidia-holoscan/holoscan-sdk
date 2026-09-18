@@ -42,15 +42,18 @@ For a focused iteration in an existing SDK build tree:
 - Public headers expose only HSDK types; CV-CUDA types stay in `.cpp` files.
 - Port names are stable public API and describe their payload (`input`,
   `output`, `map`, `boxes`, `scores`, or `mask`).
-- `VisionImageCapacity` and `NMSCapacity` are immutable plan structure. Image
-  shape parameters may be smaller but cannot exceed the corresponding
-  capacity; batch admission always uses the structural capacity.
+- Structural fields in each operator's typed Parameters determine its immutable
+  plan capacity. Fixed-output operators use their output dimensions directly;
+  shape-preserving operators inherit the connected input byte bound, with
+  `ConvertToOp` additionally scaling for its output dtype. Only genuinely
+  capacity-only dimensions remain explicit. Complete parameter loading requires
+  those maxima and each `max_batch_size`.
 - Image inputs are CUDA HWC/NHWC tensors with pitch-linear interleaved storage;
   `ReformatOp` additionally supports CHW/NCHW and NMS uses its documented
   detection tensor layouts.
 - Every tensor byte stride and total strided byte span must fit CV-CUDA's
   32-bit kernel addressing.
-- With the supported CV-CUDA 0.17.x line, the adapter passes the original base
+- With the supported CV-CUDA 0.18.x line, the adapter passes the original base
   pointer, shape, dtype, and byte strides to `nvcv::TensorWrapData` without a
   cleanup callback. The operators in this module copy wrapper metadata during
   submission and retain no per-submit device workspace. These are
@@ -71,13 +74,10 @@ For a focused iteration in an existing SDK build tree:
 ## Packaging
 
 `HOLOSCAN_BUILD_VISION` controls the module and defaults to `ON`. Installation exports
-`holoscan::vision` through `holoscan-vision-config.cmake` and assigns files to
-the `holoscan-vision` CPack component. The current distribution intentionally
-combines all enabled components in the `holoscan` Debian package and installs
-CV-CUDA in the common SDK development image. Consequently, default packages
-and images include the Vision dependency even when an application does not use
-Vision. Set `HOLOSCAN_BUILD_VISION=OFF` for a source build that omits the module;
-separate Vision packages or image layers are not currently produced.
+`holoscan::vision` through the `vision` component of `holoscan-config.cmake` and
+assigns files to the `holoscan-vision` CPack component. The granular CPack Debian
+path packages the module separately from `holoscan-core`; set `HOLOSCAN_BUILD_VISION=OFF`
+for a source build that omits it.
 
 Shared packages declare `libcvcuda0` in the supported CV-CUDA version window.
 Static packages declare the matching `cvcuda0-dev` window and discover the

@@ -58,6 +58,10 @@ namespace {
     for (const VertexId member : partition.members) {
       hash.add(member.value);
     }
+    hash.add(static_cast<std::uint64_t>(partition.graph_members.size()));
+    for (const GraphId member : partition.graph_members) {
+      hash.add(member.value);
+    }
   }
   return PlanDigest{hash.finish().value};
 }
@@ -234,6 +238,7 @@ void append_schedule_edges(const GraphSnapshotData& snapshot, ExecutionPlanState
   output.execution_partitions.reserve(result.plan.partitions.size());
   for (const auto& partition : result.plan.partitions) {
     std::optional<std::string> authored_name;
+    std::vector<GraphId> graph_members;
     if (partition.authored_constraint.has_value()) {
       const auto authored = std::find_if(
           snapshot.partitions.begin(), snapshot.partitions.end(), [&](const auto& candidate) {
@@ -244,6 +249,7 @@ void append_schedule_edges(const GraphSnapshotData& snapshot, ExecutionPlanState
                                         "PARTITION_PROPOSAL_CONSTRAINT_VIOLATION");
       }
       authored_name = authored->name;
+      graph_members = authored->graph_members;
     }
     output.execution_partitions.push_back(ExecutionPartitionRecord{
         .id = ExecutionPartitionId{partition.canonical_id},
@@ -251,6 +257,7 @@ void append_schedule_edges(const GraphSnapshotData& snapshot, ExecutionPlanState
         .members = partition.members,
         .operator_paths = {},
         .execution_lane = 0U,
+        .graph_members = std::move(graph_members),
     });
     if (output.execution_partitions.back().authored_name) {
       ++output.partitioning_plan.authored_partition_count;
@@ -283,7 +290,10 @@ expected<void, Error> lower_partition_plan(
     std::span<const std::optional<Profile>> effective_profiles,
     bool removed_environment_selector_present,
     std::span<const std::uint32_t> process_group_by_vertex, const DeploymentBinding& deployment,
-    std::span<const TensorDeviceBindingRecord> tensor_device_bindings, ExecutionPlanState& output) {
+    std::span<const TensorDeviceBindingRecord> tensor_device_bindings, ExecutionPlanState& output,
+    DiagnosticSource* failure_source) {
+  if (failure_source != nullptr)
+    *failure_source = {};
   initialize_partition_attempt(root_profile,
                                effective_profiles,
                                snapshot.partitions,
@@ -331,7 +341,8 @@ expected<void, Error> lower_partition_plan(
 
   auto accepted = [&]() -> expected<partitioning::PartitioningPassResult, Error> {
     if (manual_cover) {
-      return build_manual_partition_cover(snapshot, storage, process_group_by_vertex);
+      return build_manual_partition_cover(
+          snapshot, storage, process_group_by_vertex, failure_source);
     }
     auto catalog = partitioning::PartitionPlannerCatalog::create_default_builtins();
     if (!catalog) {

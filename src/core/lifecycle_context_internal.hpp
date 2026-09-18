@@ -11,6 +11,8 @@
 
 namespace holoscan::detail {
 
+struct DiagnosticCapture;
+
 using LifecycleClockResolver = expected<ClockRef, Error> (*)(void*, const ClockKey&) noexcept;
 using LifecycleNotificationResolver =
     expected<NotificationSender, Error> (*)(void*, NotificationSource&) noexcept;
@@ -36,6 +38,7 @@ struct LifecycleContextState {
   void* rate_state{};
   LifecycleRateBinder bind_nominal_rate{};
   PortRateResolver resolve_rate{};
+  DiagnosticCapture* diagnostic_capture{};
 };
 
 }  // namespace holoscan::detail

@@ -22,14 +22,15 @@ namespace holoscan::vision {
 
 /// @brief Configure the crop rectangle of \ref CustomCropOp.
 struct CustomCropOpParams {
-  std::int32_t x{};        ///< Nonnegative left coordinate in pixels.
-  std::int32_t y{};        ///< Nonnegative top coordinate in pixels.
-  std::int32_t width{1};   ///< Positive crop width in pixels.
-  std::int32_t height{1};  ///< Positive crop height in pixels.
+  std::int32_t x{};                  ///< Nonnegative left coordinate in pixels.
+  std::int32_t y{};                  ///< Nonnegative top coordinate in pixels.
+  std::int32_t width{1};             ///< Positive crop width in pixels.
+  std::int32_t height{1};            ///< Positive crop height in pixels.
+  std::uint32_t max_batch_size{1U};  ///< Maximum admitted image batch size.
 };
 
 HOLOSCAN_PARAM_SCHEMA(CustomCropOpParams,
-                      holoscan::param_schema("com.nvidia.holoscan.vision.CustomCropOpParams", 1),
+                      holoscan::param_schema("com.nvidia.holoscan.vision.CustomCropOpParams", 2),
                       holoscan::field<&CustomCropOpParams::x>("x")
                           .range(0, INT32_MAX)
                           .description("Left crop coordinate in pixels."),
@@ -37,11 +38,18 @@ HOLOSCAN_PARAM_SCHEMA(CustomCropOpParams,
                           .range(0, INT32_MAX)
                           .description("Top crop coordinate in pixels."),
                       holoscan::field<&CustomCropOpParams::width>("width")
+                          .recompile_required()
                           .range(1, INT32_MAX)
                           .description("Crop width in pixels."),
                       holoscan::field<&CustomCropOpParams::height>("height")
+                          .recompile_required()
                           .range(1, INT32_MAX)
-                          .description("Crop height in pixels."));
+                          .description("Crop height in pixels."),
+                      holoscan::field<&CustomCropOpParams::max_batch_size>("max_batch_size")
+                          .recompile_required()
+                          .required_on_load()
+                          .range(1U, kMaximumBatchSize)
+                          .description("Maximum image batch size admitted by the operator."));
 
 /// @brief Crop interleaved HWC or NHWC CUDA tensors with CV-CUDA.
 ///
@@ -55,13 +63,8 @@ HOLOSCAN_PARAM_SCHEMA(CustomCropOpParams,
 /// padding. Output storage is contiguous.
 class HOLOSCAN_VISION_EXPORT CustomCropOp final : public Operator<CustomCropOpParams> {
  public:
-  /// @brief Construct an operator with fixed output-pool capacity.
-  /// @param capacity Maximum crop width, crop height, and admitted batch size.
-  ///
-  /// The capacity is graph structure and cannot be changed by a parameter
-  /// override. Each field must be positive and every bound
-  /// \ref CustomCropOpParams geometry must fit within it.
-  explicit CustomCropOp(VisionImageCapacity capacity);
+  /// @brief Construct an operator whose output capacity is derived from its Parameters.
+  CustomCropOp();
 
   /// @brief Destroy the operator and its retained CV-CUDA resource after runtime quiescence.
   ~CustomCropOp() override;
@@ -91,7 +94,6 @@ class HOLOSCAN_VISION_EXPORT CustomCropOp final : public Operator<CustomCropOpPa
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;
-  VisionImageCapacity capacity_;
 };
 
 static_assert(param_schema_availability<CustomCropOpParams>() == ParamSchemaAvailability::kDeclared,

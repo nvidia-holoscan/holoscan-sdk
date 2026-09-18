@@ -462,51 +462,61 @@ TEST(RunSessionTest, ComputeCallsZeroPublishesRequiredCatalogTensorEndOfStreamWi
 
 template <typename SourceOperator>
 [[nodiscard]] ExecutionPlan make_runtime_catalog_terminal_tensor_plan(
-    const std::string& graph_name, const std::string& endpoint_name) {
+    const std::string& graph_name, const std::span<const std::string> endpoint_names) {
   Graph graph{graph_name};
   const ClockKey runtime_clock = graph.add_clock<RealtimeClock>("runtime-clock");
   graph.set_default_clock(runtime_clock);
   const auto source = graph.op<SourceOperator>("source");
 
-  TopicOptions topic_options;
-  topic_options.endpoint_name = endpoint_name;
-  topic_options.attach = TopicAttachPolicy{
-      .peer = PeerRequirement::kRequired,
-      .max_wait = 10s,
-  };
-  topic_options.bounds.subscriber = SubscriberEndpointBounds{
-      .queue_depth = 1U,
-      .max_borrowed_samples = 1U,
-  };
-  topic_options.tensor = TensorBoundaryContract{
-      .representation = {.memory_kind = MemoryKind::kHost,
-                         .dtype = DLDataType{kDLUInt, 64U, 1U},
-                         .rank = 0U,
-                         .strides = TensorStridePolicy::kContiguousOnly},
-      .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
-      .transfer =
-          TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
-  };
-  auto exported = graph.export_topic<Tensor>("holomq://" + endpoint_name, std::move(topic_options));
-  graph.add_flow(source->output,
-                 exported.input(),
-                 ConnectionOptions{.queue_policy = QueuePolicy::kBlocking, .queue_depth = 1U});
+  for (const std::string& endpoint_name : endpoint_names) {
+    TopicOptions topic_options;
+    topic_options.endpoint_name = endpoint_name;
+    topic_options.attach = TopicAttachPolicy{
+        .peer = PeerRequirement::kRequired,
+        .max_wait = 10s,
+    };
+    topic_options.bounds.subscriber = SubscriberEndpointBounds{
+        .queue_depth = 1U,
+        .max_borrowed_samples = 1U,
+    };
+    topic_options.tensor = TensorBoundaryContract{
+        .representation = {.memory_kind = MemoryKind::kHost,
+                           .dtype = DLDataType{kDLUInt, 64U, 1U},
+                           .rank = 0U,
+                           .strides = TensorStridePolicy::kContiguousOnly},
+        .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
+        .transfer =
+            TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
+    };
+    auto exported =
+        graph.export_topic<Tensor>("holomq://" + endpoint_name, std::move(topic_options));
+    graph.add_flow(source->output,
+                   exported.input(),
+                   ConnectionOptions{.queue_policy = QueuePolicy::kBlocking, .queue_depth = 1U});
+  }
   return compile(graph);
+}
+
+template <typename SourceOperator>
+[[nodiscard]] ExecutionPlan make_runtime_catalog_terminal_tensor_plan(
+    const std::string& graph_name, const std::string& endpoint_name) {
+  return make_runtime_catalog_terminal_tensor_plan<SourceOperator>(
+      graph_name, std::span<const std::string>{&endpoint_name, 1U});
 }
 
 // A terminal catalog close has no authority while an unpublished direct Tensor loan remains
 // retained. The public subscriber must observe neither EOS nor completion before that loan drops.
 // REQ: CHAN-136
 // REQ: RUNTIME-050
-TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedUnpublishedOutputLoan) {
+TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedOutputLoanAcrossFanout) {
   RuntimeCatalogTensorTerminalProbeState::reset();
   const std::string graph_name =
       unique_runtime_graph_name("runtime-catalog-retained-unpublished-tensor-loan");
-  const std::string endpoint_name = graph_name + "-topic";
+  const std::array endpoint_names{graph_name + "-first", graph_name + "-second"};
   const auto counters = std::make_shared<detail::RuntimePhaseCounters>();
   const ExecutionPlan compiled =
       make_runtime_catalog_terminal_tensor_plan<RuntimeCatalogRetainedTensorLoanSourceOperator>(
-          graph_name, endpoint_name);
+          graph_name, endpoint_names);
   ASSERT_TRUE(compiled.ok()) << compiled.json();
   const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_phase_counters(compiled, counters);
   ASSERT_TRUE(plan.ok()) << plan.json();
@@ -527,22 +537,27 @@ TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedUnpublishedOutputLo
   } const cleanup{&session};
 
   const bool source_started = RuntimeCatalogTensorTerminalProbeState::wait_for_start();
-  auto subscriber = [&]() -> expected<ChannelSubscriber<Tensor>, Error> {
+  const auto create_subscriber =
+      [&](const std::string& endpoint_name) -> expected<ChannelSubscriber<Tensor>, Error> {
     if (!source_started) {
       return make_unexpected(Error{ErrorCode::kTimeout});
     }
     return client_runtime->create_subscriber<Tensor>(plan.endpoint_catalog(), endpoint_name);
-  }();
-  if (!source_started || !subscriber) {
+  };
+  auto first_subscriber = create_subscriber(endpoint_names[0]);
+  auto second_subscriber = create_subscriber(endpoint_names[1]);
+  if (!source_started || !first_subscriber || !second_subscriber) {
     session.request_stop();
   }
   RuntimeCatalogTensorTerminalProbeState::release_start();
-  if (!source_started || !subscriber) {
+  if (!source_started || !first_subscriber || !second_subscriber) {
     session.wait();
   }
 
   ASSERT_TRUE(source_started);
-  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+  ASSERT_TRUE(first_subscriber) << runtime_error_message(first_subscriber.error());
+  ASSERT_TRUE(second_subscriber) << runtime_error_message(second_subscriber.error());
+  const std::array subscribers{&*first_subscriber, &*second_subscriber};
   ASSERT_TRUE(RuntimeCatalogTensorTerminalProbeState::wait_for_loan());
   ASSERT_TRUE(wait_for_runtime_phase_count(
       counters, detail::RuntimePhaseCounter::kActivationsCompleted, 1U));
@@ -555,35 +570,47 @@ TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedUnpublishedOutputLo
   bool premature_terminal{};
   const auto no_eos_deadline = std::chrono::steady_clock::now() + 100ms;
   while (std::chrono::steady_clock::now() < no_eos_deadline) {
-    auto observed = subscriber->receive_sample();
-    if (!observed && observed.error().code == ErrorCode::kClosed) {
-      premature_terminal = true;
-      break;
+    for (ChannelSubscriber<Tensor>* const subscriber : subscribers) {
+      auto observed = subscriber->receive_sample();
+      if (!observed && observed.error().code == ErrorCode::kClosed) {
+        premature_terminal = true;
+        break;
+      }
+      EXPECT_FALSE(observed);
+      if (!observed) {
+        EXPECT_EQ(observed.error().code, ErrorCode::kNotReady);
+      }
     }
-    EXPECT_FALSE(observed);
-    if (!observed) {
-      EXPECT_EQ(observed.error().code, ErrorCode::kNotReady);
+    if (premature_terminal) {
+      break;
     }
     std::this_thread::sleep_for(1ms);
   }
   EXPECT_FALSE(premature_terminal);
-  EXPECT_EQ(
-      detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber), 0U);
+  for (ChannelSubscriber<Tensor>* const subscriber : subscribers) {
+    EXPECT_EQ(
+        detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber),
+        0U);
+  }
   EXPECT_TRUE(session.is_running());
   EXPECT_EQ(session.termination(), RunTermination::kRunning);
 
   RuntimeCatalogTensorTerminalProbeState::release_loan();
-  expected<Sample<Tensor>, Error> terminal = make_unexpected(Error{ErrorCode::kNotReady});
-  const auto terminal_deadline = std::chrono::steady_clock::now() + 5s;
-  while (!terminal && terminal.error().code == ErrorCode::kNotReady &&
-         std::chrono::steady_clock::now() < terminal_deadline) {
-    terminal = subscriber->receive_sample();
-    if (!terminal) {
-      std::this_thread::sleep_for(1ms);
+  bool observed_every_terminal = true;
+  for (ChannelSubscriber<Tensor>* const subscriber : subscribers) {
+    expected<Sample<Tensor>, Error> terminal = make_unexpected(Error{ErrorCode::kNotReady});
+    const auto terminal_deadline = std::chrono::steady_clock::now() + 5s;
+    while (!terminal && terminal.error().code == ErrorCode::kNotReady &&
+           std::chrono::steady_clock::now() < terminal_deadline) {
+      terminal = subscriber->receive_sample();
+      if (!terminal) {
+        std::this_thread::sleep_for(1ms);
+      }
     }
+    observed_every_terminal =
+        observed_every_terminal && !terminal && terminal.error().code == ErrorCode::kClosed;
   }
-  const bool observed_terminal = !terminal && terminal.error().code == ErrorCode::kClosed;
-  if (!observed_terminal) {
+  if (!observed_every_terminal) {
     session.request_stop();
   }
   const auto completion_deadline = std::chrono::steady_clock::now() + 5s;
@@ -596,14 +623,16 @@ TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedUnpublishedOutputLo
   }
   session.wait();
 
-  ASSERT_TRUE(observed_terminal) << (terminal ? "unexpected Tensor payload"
-                                              : runtime_error_message(terminal.error()));
+  ASSERT_TRUE(observed_every_terminal);
   EXPECT_TRUE(completed_without_timeout);
   EXPECT_EQ(session.termination(), RunTermination::kCompleted);
   EXPECT_TRUE(session.diagnostics().empty())
       << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
-  EXPECT_EQ(
-      detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber), 1U);
+  for (ChannelSubscriber<Tensor>* const subscriber : subscribers) {
+    EXPECT_EQ(
+        detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber),
+        1U);
+  }
 }
 
 // A commit-readiness fault quarantines its unpublished slot. Completion must fail before the

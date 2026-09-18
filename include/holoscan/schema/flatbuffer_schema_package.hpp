@@ -13,7 +13,6 @@
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <new>
 #include <span>
 #include <string_view>
 #include <type_traits>
@@ -24,25 +23,28 @@
 #include "holoscan/core/port.hpp"
 #include "holoscan/core/predicate_input_view.hpp"
 #include "holoscan/holoscan_schema_export.h"
+#include "holoscan/schema/bounded_span_allocator.hpp"
 #include "holoscan/schema/descriptor_flatbuffer_payload.hpp"
+#include "holoscan/schema/flatbuffer_root_access.hpp"
 #include "holoscan/schema/flatbuffer_schema_traits.hpp"
 #include "holoscan/schema/schema_package.hpp"
 #include "holoscan/schema/tensor_materialization.hpp"
-#include "holoscan/schema/tensor_packet_metadata.hpp"
-
-// image.fbs and imu.fbs are registered by holoscan/sensor_io/sensor_schema_package.hpp, which is
-// where their generated code is included. Core does not name them: a consumer that wants Image or
-// Imu on a port links holoscan::sensor_io.
-#include "string_bfbs_generated.h"
-#include "string_generated.h"
-#include "tensor_bfbs_generated.h"
-#include "tensor_generated.h"
-#include "tensor_packet_bfbs_generated.h"
-#include "tensor_packet_generated.h"
-#include "time_bfbs_generated.h"
-#include "time_generated.h"
 
 namespace holoscan::schema {
+
+/// @brief Bind the SDK Tensor custom native type to its generated FlatBuffers root.
+template <>
+struct FlatBufferSchemaBinding<Tensor> {
+  using root_type = Tensor;
+  using native_type = Tensor;
+  static constexpr std::uint32_t compatibility_epoch = 1U;
+  static constexpr FlatBufferFileIdentifier file_identifier =
+      make_flatbuffer_file_identifier("HSTN");
+  static constexpr SchemaFamilyIdentity family_identity =
+      make_schema_family_identity<Tensor>(compatibility_epoch);
+  static constexpr SchemaIdentity identity = make_schema_identity(family_identity, file_identifier);
+  static constexpr bool descriptor_tensor = false;
+};
 
 namespace detail {
 
@@ -70,111 +72,14 @@ template <typename T>
   return true;
 }
 
-// FlatBuffers allocator that admits exactly one caller-owned bounded span.
-class BoundedSpanAllocator final : public flatbuffers::Allocator {
- public:
-  explicit BoundedSpanAllocator(std::span<std::byte> storage) noexcept : storage_(storage) {}
-
-  std::uint8_t* allocate(std::size_t size) override {
-    if (allocated_ || size == 0U || size > storage_.size()) {
-      throw std::bad_alloc{};
-    }
-    allocated_ = true;
-    return reinterpret_cast<std::uint8_t*>(storage_.data());
-  }
-
-  void deallocate(std::uint8_t* pointer, std::size_t size) override {
-    static_cast<void>(pointer);
-    static_cast<void>(size);
-    allocated_ = false;
-  }
-
-  std::uint8_t* reallocate_downward(std::uint8_t* old_pointer, std::size_t old_size,
-                                    std::size_t new_size, std::size_t in_use_back,
-                                    std::size_t in_use_front) override {
-    static_cast<void>(old_pointer);
-    static_cast<void>(old_size);
-    static_cast<void>(new_size);
-    static_cast<void>(in_use_back);
-    static_cast<void>(in_use_front);
-    throw std::bad_alloc{};
-  }
-
- private:
-  std::span<std::byte> storage_;
-  bool allocated_{};
-};
-
-inline constexpr std::array<std::string_view, 13> kSdkSchemaFlatcFlags{
-    "--bfbs-gen-embed",
-    "--cpp",
-    "--cpp-ptr-type",
-    "std::shared_ptr",
-    "--gen-object-api",
-    "--reflect-names",
-    "--reflect-types",
-    "--schema",
-    "-o",
-    "<generated-schema-dir>",
-    "-I",
-    "<schema-root-0>",
-    "<ordered-root-schema-files>",
-};
-
-inline constexpr SchemaPackageSource kTimeSource{
-    .logical_path = "time.fbs",
-    .content_sha256 =
-        schema_hex_bytes<32>("51d9cc42ca6d3ca4589eac955767c9ea772512128c72a2ec299254bc87f5855a"),
-};
-// kGeometrySource, kHeaderSource, and kTimeSource have no in-Core consumer: neither geometry.fbs
-// nor header.fbs is a registered root, and the Time package declares no includes. They are here
-// because holoscan::sensor_io names them as the include evidence for Image and Imu, so they read as
-// dead code and are not.
-//
-// These hashes are the source bytes of the named file and nothing derived from them, so editing a
-// schema here means editing its constant in the same commit:
-//     sha256sum public/schemas/header.fbs
-// Nothing enforces that pairing. The generated-traits path computes the equivalent with
-// file(SHA256) at configure time, but these four are maintained by hand, so a stale value survives
-// every build and test: the .fbs sources do not exist at run time, which makes this recorded
-// evidence rather than a checkable fact. kHeaderSource has in fact drifted four times already:
-// when sequence moved into Header, when publish_timestamp_ns left it, when the comment explaining
-// that departure was corrected, and when that comment stopped saying the envelope was unpopulated
-// after the runtime began stamping it. A comment is source bytes too.
-inline constexpr SchemaPackageSource kHeaderSource{
-    .logical_path = "header.fbs",
-    .content_sha256 =
-        schema_hex_bytes<32>("85054752451442caef375d7507000ed84ff0ca78c65ec736d12411205380496e"),
-};
-inline constexpr SchemaPackageSource kGeometrySource{
-    .logical_path = "geometry.fbs",
-    .content_sha256 =
-        schema_hex_bytes<32>("7b316a005dbd64a03c4e8c42c2e6392e3364fe68cba57603133f89f486fafe3e"),
-};
-inline constexpr SchemaPackageSource kTensorSource{
-    .logical_path = "tensor.fbs",
-    .content_sha256 =
-        schema_hex_bytes<32>("1f6a3fb98deab8fe9d3d2c47f4e8c44e3b1b4b2c011f5472cecaf88df607bf76"),
-};
-
-inline constexpr std::array<SchemaPackageSource, 1> kTensorPacketIncludes{kTensorSource};
-inline constexpr std::array<SchemaPackageSource, 0> kNoIncludes{};
-
 template <typename Root>
 [[nodiscard]] bool verify_flatbuffer_root(std::span<const std::byte> bytes) noexcept {
-  if (bytes.empty()) {
-    return false;
-  }
-  flatbuffers::Verifier verifier{reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()};
-  return verifier.VerifyBuffer<Root>(nullptr);
+  return !bytes.empty() && verify_flatbuffer_root_bytes<Root>(bytes);
 }
 
 template <typename Root>
 [[nodiscard]] const Root* parse_flatbuffer_root(std::span<const std::byte> bytes) noexcept {
-  if (bytes.empty()) {
-    return nullptr;
-  }
-  return flatbuffers::GetRoot<Root>(reinterpret_cast<const std::uint8_t*>(bytes.data()));
+  return parse_flatbuffer_root_bytes<Root>(bytes);
 }
 
 template <typename Native, typename Root>
@@ -192,7 +97,7 @@ template <typename Native, typename Root>
     if (root.IsNull()) {
       return make_unexpected(Error{ErrorCode::kCodecError, "generated schema pack failed"});
     }
-    builder.Finish(root);
+    builder.Finish(root, flatbuffer_file_identifier_c_string_v<Root>.data());
     const std::size_t size = builder.GetSize();
     if (size == 0U || size > destination.size()) {
       return make_unexpected(
@@ -228,137 +133,131 @@ template <typename Native, typename Root>
   }
 }
 
-template <typename BinarySchema>
-[[nodiscard]] std::span<const std::byte> embedded_binary_schema() noexcept {
-  return {reinterpret_cast<const std::byte*>(BinarySchema::data()), BinarySchema::size()};
-}
-
-template <typename Root, typename BinarySchema>
-[[nodiscard]] SchemaPackageDescriptor<Root> make_flatbuffer_package_from_static_evidence(
-    SchemaIdentity identity, SchemaPackageEvidence evidence) noexcept {
-  return SchemaPackageDescriptor<Root>{identity,
-                                       embedded_binary_schema<BinarySchema>(),
-                                       evidence,
-                                       &verify_flatbuffer_root<Root>,
-                                       &parse_flatbuffer_root<Root>};
-}
-
-template <typename Native, typename Root, typename BinarySchema>
-  requires holoscan::detail::HasGeneratedSchemaNativeTraits<Native> &&
-           std::same_as<typename GeneratedSchemaNativeTraits<Native>::root_type, Root>
-[[nodiscard]] SchemaPackageDescriptor<Native> make_flatbuffer_native_package_from_static_evidence(
-    SchemaIdentity identity, SchemaPackageEvidence evidence) noexcept {
-  return SchemaPackageDescriptor<Native>{identity,
-                                         embedded_binary_schema<BinarySchema>(),
-                                         evidence,
-                                         &verify_flatbuffer_root<Root>,
-                                         generated_schema_max_serialized_size_v<Native>,
-                                         &encode_flatbuffer_native<Native, Root>,
-                                         &materialize_flatbuffer_native<Native, Root>};
-}
-
-template <typename Root, typename BinarySchema, std::size_t IncludeCount>
-[[nodiscard]] SchemaPackageDescriptor<Root> make_sdk_flatbuffer_package(
-    std::string_view root_path, std::span<const SchemaPackageSource, IncludeCount> includes) {
-  return SchemaPackageDescriptor<Root>{
-      schema_identity<Root>(),
-      embedded_binary_schema<BinarySchema>(),
-      SchemaPackageEvidence{
-          .flatc_build = "flatc 25.12.19",
-          .ordered_flags = kSdkSchemaFlatcFlags,
-          .root_logical_path = root_path,
-          .includes = includes,
-          .include_root_mapping = "schema-root-0=.",
-          .host_paths_stripped = true,
-          .generator_format_version = 1U,
-          .package_format_version = 1U,
-          .runtime_abi = FlatBufferRuntimeABI{.major = 25U, .minor = 12U, .revision = 19U},
-      },
-      &verify_flatbuffer_root<Root>,
-      &parse_flatbuffer_root<Root>,
-  };
-}
-
-template <typename Native, typename Root, typename BinarySchema, std::size_t IncludeCount>
-[[nodiscard]] SchemaPackageDescriptor<Native> make_sdk_flatbuffer_native_package(
-    std::string_view root_path, std::span<const SchemaPackageSource, IncludeCount> includes) {
-  return SchemaPackageDescriptor<Native>{
-      schema_identity<Native>(),
-      embedded_binary_schema<BinarySchema>(),
-      SchemaPackageEvidence{
-          .flatc_build = "flatc 25.12.19",
-          .ordered_flags = kSdkSchemaFlatcFlags,
-          .root_logical_path = root_path,
-          .includes = includes,
-          .include_root_mapping = "schema-root-0=.",
-          .host_paths_stripped = true,
-          .generator_format_version = 1U,
-          .package_format_version = 1U,
-          .runtime_abi = FlatBufferRuntimeABI{.major = 25U, .minor = 12U, .revision = 19U},
-      },
-      &verify_flatbuffer_root<Root>,
-      generated_schema_max_serialized_size_v<Native>,
-      &encode_flatbuffer_native<Native, Root>,
-      &materialize_flatbuffer_native<Native, Root>,
-  };
-}
-
 }  // namespace detail
 }  // namespace holoscan::schema
 
-namespace holoscan::schema {
+namespace holoscan {
 
-/// @brief Build a generated FlatBuffers root package from caller-supplied evidence.
-///
-/// This is the supported package-construction surface for a generated table root used as a
-/// borrowed verified view. The returned descriptor deep-copies and owns every string and span in
-/// \p evidence; the embedded binary schema remains generated package-static storage.
-///
-/// @tparam Root Generated FlatBuffers table root.
-/// @tparam BinarySchema Generated embedded `.bfbs` provider.
-/// @param identity Complete identity returned by the root's `schema_identity` specialization.
-/// @param evidence Reproducible caller-owned generator and Runtime evidence.
-/// @return Package descriptor using the generated verifier and borrowed-root parser.
-template <typename Root, typename BinarySchema>
+/// @brief Delegate ordinary owning-schema traits to the native type's generated root binding.
+template <typename Native>
+  requires detail::HasFlatBufferSchemaNativeBinding<Native> &&
+           (!schema::FlatBufferSchemaBinding<typename Native::TableType>::descriptor_tensor)
+struct GeneratedSchemaNativeTraits<Native> {
+  using root_type = typename Native::TableType;
+  static constexpr std::size_t max_serialized_size =
+      schema::FlatBufferSchemaBinding<root_type>::max_serialized_size;
+};
+
+/// @brief Delegate descriptor-Tensor traits to the native type's generated root binding.
+template <typename Native>
+  requires detail::HasFlatBufferSchemaNativeBinding<Native> &&
+           schema::FlatBufferSchemaBinding<typename Native::TableType>::descriptor_tensor
+struct DescriptorTensorSchemaNativeTraits<Native> {
+  using root_type = typename Native::TableType;
+  using Binding = schema::FlatBufferSchemaBinding<root_type>;
+  static constexpr std::size_t metadata_capacity = Binding::metadata_capacity;
+  static constexpr std::size_t tensor_count = Binding::tensor_count;
+  static constexpr auto tensor_field_ids = Binding::tensor_field_ids;
+
+  [[nodiscard]] static const Tensor* tensor_at(const Native& value,
+                                               const std::size_t index) noexcept {
+    return Binding::tensor_at(value, index);
+  }
+
+  [[nodiscard]] static const Tensor* tensor(const Native& value) noexcept
+    requires(Binding::tensor_count == 1U)
+  {  // NOLINT(whitespace/braces)
+    return Binding::tensor_at(value, 0U);
+  }
+};
+
+}  // namespace holoscan
+
+namespace holoscan::schema::detail {
+
+template <typename Root>
 [[nodiscard]] SchemaPackageDescriptor<Root> make_flatbuffer_package(
-    SchemaIdentity identity, const SchemaPackageEvidence& evidence) {
-  return SchemaPackageDescriptor<Root>::with_owned_evidence(
-      identity,
-      detail::embedded_binary_schema<BinarySchema>(),
-      evidence,
-      &detail::verify_flatbuffer_root<Root>,
-      &detail::parse_flatbuffer_root<Root>);
+    SchemaTransportProfile transport_profile = {}) noexcept {
+  return SchemaPackageDescriptor<Root>{
+      schema_identity<Root>(),
+      SchemaCodecDescriptor<Root>{
+          .verify = &verify_flatbuffer_root<Root>,
+          .parse = &parse_flatbuffer_root<Root>,
+      },
+      SchemaCodecCapacity{},
+      transport_profile,
+  };
 }
 
-/// @brief Build an owning object-API FlatBuffers package from caller-supplied evidence.
-///
-/// This is the supported package-construction surface for an application-defined generated
-/// object-API native type. Serialization is bounded by
-/// `GeneratedSchemaNativeTraits<Native>::max_serialized_size`; verification always precedes
-/// owning materialization. The returned descriptor deep-copies and owns every string and span in
-/// \p evidence; the embedded binary schema remains generated package-static storage.
-///
-/// @tparam Native Generated object-API owning type.
-/// @tparam Root Generated FlatBuffers table root named by the native traits.
-/// @tparam BinarySchema Generated embedded `.bfbs` provider.
-/// @param identity Complete identity returned by the native type's `schema_identity`
-/// specialization.
-/// @param evidence Reproducible caller-owned generator and Runtime evidence.
-/// @return Package descriptor using the generic bounded owning-value codec.
-template <typename Native, typename Root, typename BinarySchema>
+template <typename Native, typename Root>
   requires holoscan::detail::HasGeneratedSchemaNativeTraits<Native> &&
            std::same_as<typename GeneratedSchemaNativeTraits<Native>::root_type, Root>
-[[nodiscard]] SchemaPackageDescriptor<Native> make_flatbuffer_native_package(
-    SchemaIdentity identity, const SchemaPackageEvidence& evidence) {
-  return SchemaPackageDescriptor<Native>::with_owned_evidence(
-      identity,
-      detail::embedded_binary_schema<BinarySchema>(),
-      evidence,
-      &detail::verify_flatbuffer_root<Root>,
-      generated_schema_max_serialized_size_v<Native>,
-      &detail::encode_flatbuffer_native<Native, Root>,
-      &detail::materialize_flatbuffer_native<Native, Root>);
+[[nodiscard]] SchemaPackageDescriptor<Native> make_flatbuffer_native_package() noexcept {
+  return SchemaPackageDescriptor<Native>{
+      schema_identity<Native>(),
+      SchemaCodecDescriptor<Native>{
+          .verify = &verify_flatbuffer_root<Root>,
+          .encode = &encode_flatbuffer_native<Native, Root>,
+          .materialize = &materialize_flatbuffer_native<Native, Root>,
+      },
+      SchemaCodecCapacity{.max_serialized_size = generated_schema_max_serialized_size_v<Native>},
+      SchemaTransportProfile{},
+  };
 }
+
+template <typename Native, typename Root>
+  requires holoscan::detail::HasDescriptorTensorSchemaNativeTraits<Native> &&
+           std::same_as<typename DescriptorTensorSchemaNativeTraits<Native>::root_type, Root>
+[[nodiscard]] SchemaPackageDescriptor<Native> make_flatbuffer_descriptor_native_package(
+    const SchemaTransportProfile transport_profile) noexcept {
+  return SchemaPackageDescriptor<Native>{
+      schema_identity<Native>(),
+      SchemaCodecDescriptor<Native>{
+          .verify = &verify_flatbuffer_root<Root>,
+      },
+      SchemaCodecCapacity{},
+      transport_profile,
+  };
+}
+
+}  // namespace holoscan::schema::detail
+
+namespace holoscan {
+
+template <typename Root>
+  requires detail::HasFlatBufferSchemaRootBinding<Root>
+inline const SchemaPackageDescriptor<Root>& schema_package() noexcept {
+  using Binding = schema::FlatBufferSchemaBinding<Root>;
+  static const SchemaPackageDescriptor<Root> package = [] {
+    if constexpr (Binding::descriptor_tensor) {
+      return schema::detail::make_flatbuffer_package<Root>(
+          detail::descriptor_tensor_schema_transport_profile_v<typename Binding::native_type>);
+    } else {
+      return schema::detail::make_flatbuffer_package<Root>();
+    }
+  }();
+  return package;
+}
+
+template <typename Native>
+  requires detail::HasFlatBufferSchemaNativeBinding<Native>
+inline const SchemaPackageDescriptor<Native>& schema_package() noexcept {
+  using Root = typename Native::TableType;
+  using Binding = schema::FlatBufferSchemaBinding<Root>;
+  static const SchemaPackageDescriptor<Native> package = [] {
+    if constexpr (Binding::descriptor_tensor) {
+      return schema::detail::make_flatbuffer_descriptor_native_package<Native, Root>(
+          detail::descriptor_tensor_schema_transport_profile_v<Native>);
+    } else {
+      return schema::detail::make_flatbuffer_native_package<Native, Root>();
+    }
+  }();
+  return package;
+}
+
+}  // namespace holoscan
+
+namespace holoscan::schema {
 
 /// @brief Borrow an indexed collection of authoritative descriptor-schema Tensors.
 ///
@@ -422,27 +321,8 @@ template <typename Native>
 
 template <typename Root>
 [[nodiscard]] expected<TensorViewMetadata, Error> descriptor_tensor_view_metadata_at_from_root(
-    const Root& root, const std::span<const std::byte> metadata_bytes, const std::size_t index) {
-  if constexpr (requires {
-                  {
-                    DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(root, index)
-                  } -> std::same_as<expected<TensorViewMetadata, Error>>;
-                }) {
-    return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(root, index);
-  } else {
-    if (index != 0U) {
-      return make_unexpected(Error{ErrorCode::kInvalidArgument});
-    }
-    if constexpr (requires {
-                    {
-                      DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(root)
-                    } -> std::same_as<expected<TensorViewMetadata, Error>>;
-                  }) {
-      return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(root);
-    } else {
-      return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata(metadata_bytes);
-    }
-  }
+    const Root& root, const std::size_t index) {
+  return DescriptorFlatBufferTensorViewTraits<Root>::tensor_view_metadata_at(root, index);
 }
 
 template <typename Native, typename Root, std::size_t MetadataCapacity, typename Prepare,
@@ -450,9 +330,9 @@ template <typename Native, typename Root, std::size_t MetadataCapacity, typename
 struct DescriptorTensorPortTypeOpsFactory {
   static constexpr std::size_t kTensorCount =
       holoscan::detail::descriptor_tensor_schema_tensor_count_v<Native>;
-  static constexpr std::uint64_t kAllTensorsMask = kTensorCount == 64U
-                                                       ? std::numeric_limits<std::uint64_t>::max()
-                                                       : (std::uint64_t{1U} << kTensorCount) - 1U;
+  static constexpr std::uint64_t kAllTensorsMask = descriptor_tensor_all_fields_mask(kTensorCount);
+  static constexpr SchemaTransportProfile kTransportProfile =
+      holoscan::detail::descriptor_tensor_schema_transport_profile_v<Native>;
   using Payload = DescriptorTensorRuntimePayload<Root, MetadataCapacity, kTensorCount>;
   using Envelope = DescriptorTensorRuntimeEnvelope<Root, MetadataCapacity, kTensorCount>;
 
@@ -577,9 +457,9 @@ struct DescriptorTensorPortTypeOpsFactory {
     DecodedEnvelope envelope;
     std::uint32_t envelope_abi_version = 0U;
     std::uint32_t envelope_header_size = 0U;
-    SchemaId schema_id{};
-    std::uint32_t schema_version = 0U;
+    SchemaId schema_family_id{};
     std::uint32_t metadata_size = 0U;
+    std::uint32_t transport_profile_tag = 0U;
     std::uint64_t endpoint_generation = 0U;
     std::uint32_t tensor_count = 0U;
     std::uint32_t reserved = 0U;
@@ -591,11 +471,13 @@ struct DescriptorTensorPortTypeOpsFactory {
             bytes, kPayloadBase + offsetof(Payload, envelope_abi_version), envelope_abi_version) &&
         read_descriptor_wire_value(
             bytes, kPayloadBase + offsetof(Payload, envelope_header_size), envelope_header_size) &&
-        read_descriptor_wire_value(bytes, kPayloadBase + offsetof(Payload, schema_id), schema_id) &&
         read_descriptor_wire_value(
-            bytes, kPayloadBase + offsetof(Payload, schema_version), schema_version) &&
+            bytes, kPayloadBase + offsetof(Payload, schema_family_id), schema_family_id) &&
         read_descriptor_wire_value(
             bytes, kPayloadBase + offsetof(Payload, metadata_size), metadata_size) &&
+        read_descriptor_wire_value(bytes,
+                                   kPayloadBase + offsetof(Payload, transport_profile_tag),
+                                   transport_profile_tag) &&
         read_descriptor_wire_value(
             bytes, kPayloadBase + offsetof(Payload, endpoint_generation), endpoint_generation) &&
         read_descriptor_wire_value(
@@ -612,8 +494,8 @@ struct DescriptorTensorPortTypeOpsFactory {
     }
     if (envelope_abi_version != Payload::expected_envelope_abi_version ||
         envelope_header_size != kSchemaEnvelopeHeaderSize ||
-        schema_id != Payload::expected_schema_id ||
-        schema_version != Payload::expected_schema_version) {
+        schema_family_id != Payload::expected_schema_family_id ||
+        transport_profile_tag != schema_transport_profile_tag(kTransportProfile)) {
       return make_unexpected(
           Error{ErrorCode::kProtocolError, "descriptor Tensor envelope identity is invalid"});
     }
@@ -644,7 +526,7 @@ struct DescriptorTensorPortTypeOpsFactory {
           return make_unexpected(Error{ErrorCode::kProtocolError});
         }
         auto valid = Payload::validate_descriptor(envelope.descriptors[index]);
-        if (!valid || envelope.descriptors[index].schema_id != Payload::expected_schema_id) {
+        if (!valid || envelope.descriptors[index].schema_id != Payload::expected_schema_family_id) {
           return make_unexpected(Error{ErrorCode::kProtocolError});
         }
       }
@@ -675,11 +557,11 @@ struct DescriptorTensorPortTypeOpsFactory {
                                     kPayloadBase + offsetof(Payload, envelope_header_size),
                                     kSchemaEnvelopeHeaderSize) &&
         write_descriptor_wire_value(destination,
-                                    kPayloadBase + offsetof(Payload, schema_id),
-                                    Payload::expected_schema_id) &&
+                                    kPayloadBase + offsetof(Payload, schema_family_id),
+                                    Payload::expected_schema_family_id) &&
         write_descriptor_wire_value(destination,
-                                    kPayloadBase + offsetof(Payload, schema_version),
-                                    Payload::expected_schema_version) &&
+                                    kPayloadBase + offsetof(Payload, transport_profile_tag),
+                                    schema_transport_profile_tag(kTransportProfile)) &&
         write_descriptor_wire_value(destination,
                                     kPayloadBase + offsetof(Payload, endpoint_generation),
                                     endpoint_generation) &&
@@ -800,7 +682,7 @@ struct DescriptorTensorPortTypeOpsFactory {
       return make_unexpected(Error{ErrorCode::kProtocolError});
     }
     try {
-      return descriptor_tensor_view_metadata_at_from_root(*root, metadata_bytes, index);
+      return descriptor_tensor_view_metadata_at_from_root(*root, index);
     } catch (...) {
       return make_unexpected(Error{ErrorCode::kProtocolError});
     }
@@ -858,8 +740,7 @@ struct DescriptorTensorPortTypeOpsFactory {
       expected<TensorViewMetadata, Error> tensor_metadata =
           make_unexpected(Error{ErrorCode::kProtocolError});
       try {
-        tensor_metadata =
-            descriptor_tensor_view_metadata_at_from_root(*root, *metadata_bytes, index);
+        tensor_metadata = descriptor_tensor_view_metadata_at_from_root(*root, index);
       } catch (...) {
         return make_unexpected(Error{ErrorCode::kProtocolError});
       }
@@ -908,6 +789,7 @@ struct DescriptorTensorPortTypeOpsFactory {
         .payload_size = sizeof(Native),
         .payload_alignment = alignof(Native),
         .wire_capacity = sizeof(Envelope),
+        .transport_profile_tag = schema_transport_profile_tag(kTransportProfile),
         .sample_size = sizeof(Sample<Native>),
         .sample_alignment = alignof(Sample<Native>),
         .predicate_view_size = sizeof(PredicateInputView<Native>),
@@ -1147,7 +1029,7 @@ struct StandardDescriptorTensorCallbacks {
           return make_unexpected(
               Error{ErrorCode::kCodecError, "descriptor metadata root creation failed"});
         }
-        builder.Finish(*root);
+        builder.Finish(*root, flatbuffer_file_identifier_c_string_v<Root>.data());
         const std::size_t size = builder.GetSize();
         if (size == 0U || size > destination.size()) {
           return make_unexpected(
@@ -1231,9 +1113,9 @@ template <typename Native, typename Root, std::size_t MetadataCapacity>
 [[nodiscard]] holoscan::detail::RuntimePortTypeOps make_descriptor_tensor_port_type_ops(
     auto prepare, auto reset, auto encode, auto assign) noexcept {
   static_assert(MetadataCapacity == DescriptorTensorSchemaNativeTraits<Native>::metadata_capacity);
-  static_assert(holoscan::detail::schema_identity_equal(schema_identity<Native>(),
-                                                        flatbuffer_schema_identity_v<Root>),
-                "descriptor native and FlatBuffers root identities must match");
+  static_assert(
+      schema_identity_equal(schema_identity<Native>(), flatbuffer_schema_identity_v<Root>),
+      "descriptor native and FlatBuffers root identities must match");
   using Factory = detail::DescriptorTensorPortTypeOpsFactory<Native,
                                                              Root,
                                                              MetadataCapacity,
@@ -1292,140 +1174,3 @@ template <typename Native, typename Root, std::size_t MetadataCapacity, auto... 
 }
 
 }  // namespace holoscan::schema
-
-namespace holoscan {
-
-/// @brief Describe TensorPacket as bounded descriptor metadata plus one Core Tensor.
-template <>
-struct DescriptorTensorSchemaNativeTraits<schema::TensorPacketT> {
-  using root_type = schema::TensorPacket;  ///< Generated metadata table root.
-  static constexpr std::size_t metadata_capacity =
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<root_type>;
-  static constexpr std::size_t tensor_count = 1U;  ///< Number of direct Tensor fields.
-  static constexpr std::array<std::uint16_t, 1U> tensor_field_ids{3U};
-
-  /// @brief Return the embedded Tensor without extending its lifetime.
-  /// @param value Owning generated TensorPacket value.
-  /// @return Embedded Tensor, or `nullptr` when the packet has no Tensor member.
-  [[nodiscard]] static const Tensor* tensor(const schema::TensorPacketT& value) noexcept {
-    return value.data.get();
-  }
-
-  /// @brief Return the indexed embedded Tensor without extending its lifetime.
-  [[nodiscard]] static const Tensor* tensor_at(const schema::TensorPacketT& value,
-                                               const std::size_t index) noexcept {
-    return index == 0U ? tensor(value) : nullptr;
-  }
-};
-
-/// @brief Return the SDK TensorPacket identity for its descriptor-backed owning type.
-template <>
-consteval SchemaIdentity schema_identity<schema::TensorPacketT>() {
-  return schema::FlatBufferSchemaTraits<schema::TensorPacket>::identity;
-}
-
-namespace detail {
-
-/// @brief Return descriptor-backed Runtime operations for generated TensorPacket values.
-/// @return Process-local operations whose address never enters a plan or transport record.
-template <>
-[[nodiscard]] HOLOSCAN_SCHEMA_EXPORT const RuntimePortTypeOps*
-runtime_port_type_ops<schema::TensorPacketT>() noexcept;
-
-}  // namespace detail
-
-/// @brief Describe the SDK String owning generated type and finite serialized capacity.
-template <>
-struct GeneratedSchemaNativeTraits<schema::StringT> {
-  using root_type = schema::String;  ///< Generated table root used only for package codec evidence.
-  static constexpr std::size_t max_serialized_size =
-      schema::flatbuffer_default_inline_capacity_v<root_type>;  ///< Maximum serialized bytes.
-};
-
-/// @brief Describe the SDK Time owning generated type and finite serialized capacity.
-template <>
-struct GeneratedSchemaNativeTraits<schema::TimeT> {
-  using root_type = schema::Time;  ///< Generated table root used only for package codec evidence.
-  static constexpr std::size_t max_serialized_size =
-      schema::flatbuffer_default_inline_capacity_v<root_type>;  ///< Maximum serialized bytes.
-};
-
-/// @brief Return the SDK String semantic identity for its owning generated type.
-/// @return Complete stable identity shared with the generated String root package.
-template <>
-consteval SchemaIdentity schema_identity<schema::StringT>() {
-  return schema::FlatBufferSchemaTraits<schema::String>::identity;
-}
-
-/// @brief Return the SDK Time semantic identity for its owning generated type.
-/// @return Complete stable identity shared with the generated Time root package.
-template <>
-consteval SchemaIdentity schema_identity<schema::TimeT>() {
-  return schema::FlatBufferSchemaTraits<schema::Time>::identity;
-}
-
-/// @brief Return the generated SDK String package and verifier evidence.
-/// @return Process-lifetime immutable package; concurrent callers may borrow it safely.
-template <>
-inline const SchemaPackageDescriptor<schema::String>& schema_package<schema::String>() noexcept {
-  static const SchemaPackageDescriptor<schema::String> package =
-      schema::detail::make_sdk_flatbuffer_package<schema::String, schema::StringBinarySchema>(
-          "string.fbs", std::span{schema::detail::kNoIncludes});
-  return package;
-}
-
-/// @brief Return the generated SDK Tensor package and verifier evidence.
-/// @return Process-lifetime immutable package; concurrent callers may borrow it safely.
-template <>
-inline const SchemaPackageDescriptor<schema::Tensor>& schema_package<schema::Tensor>() noexcept {
-  static const SchemaPackageDescriptor<schema::Tensor> package =
-      schema::detail::make_sdk_flatbuffer_package<schema::Tensor, schema::TensorBinarySchema>(
-          "tensor.fbs", std::span{schema::detail::kNoIncludes});
-  return package;
-}
-
-/// @brief Return the generated SDK TensorPacket package and verifier evidence.
-/// @return Process-lifetime immutable package; concurrent callers may borrow it safely.
-template <>
-inline const SchemaPackageDescriptor<schema::TensorPacket>&
-schema_package<schema::TensorPacket>() noexcept {
-  static const SchemaPackageDescriptor<schema::TensorPacket> package =
-      schema::detail::make_sdk_flatbuffer_package<schema::TensorPacket,
-                                                  schema::TensorPacketBinarySchema>(
-          "tensor_packet.fbs", std::span{schema::detail::kTensorPacketIncludes});
-  return package;
-}
-
-/// @brief Return the generated SDK Time package and verifier evidence.
-/// @return Process-lifetime immutable package; concurrent callers may borrow it safely.
-template <>
-inline const SchemaPackageDescriptor<schema::Time>& schema_package<schema::Time>() noexcept {
-  static const SchemaPackageDescriptor<schema::Time> package =
-      schema::detail::make_sdk_flatbuffer_package<schema::Time, schema::TimeBinarySchema>(
-          "time.fbs", std::span{schema::detail::kNoIncludes});
-  return package;
-}
-
-/// @brief Return the generated SDK String package for its owning native type.
-/// @return Process-lifetime immutable package; concurrent callers may borrow it safely.
-template <>
-inline const SchemaPackageDescriptor<schema::StringT>& schema_package<schema::StringT>() noexcept {
-  static const SchemaPackageDescriptor<schema::StringT> package =
-      schema::detail::make_sdk_flatbuffer_native_package<schema::StringT,
-                                                         schema::String,
-                                                         schema::StringBinarySchema>(
-          "string.fbs", std::span{schema::detail::kNoIncludes});
-  return package;
-}
-
-/// @brief Return the generated SDK Time package for its owning native type.
-/// @return Process-lifetime immutable package; concurrent callers may borrow it safely.
-template <>
-inline const SchemaPackageDescriptor<schema::TimeT>& schema_package<schema::TimeT>() noexcept {
-  static const SchemaPackageDescriptor<schema::TimeT> package = schema::detail::
-      make_sdk_flatbuffer_native_package<schema::TimeT, schema::Time, schema::TimeBinarySchema>(
-          "time.fbs", std::span{schema::detail::kNoIncludes});
-  return package;
-}
-
-}  // namespace holoscan

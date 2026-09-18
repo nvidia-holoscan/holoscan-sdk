@@ -16,3 +16,4 @@ table CustomControl {
 }
 
 root_type CustomControl;
+file_identifier "HCCT";

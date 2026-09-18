@@ -208,14 +208,34 @@ that page rather than assuming a 4.x-era matrix carries over.
 
 ### Where are the domain operators — inference, visualization, video I/O?
 
-Not in this release, apart from the [Holoscan Vision](/holoscan/sdk-user-guide/advanced/holoscan-vision)
-module, which ships eight C++ operators backed by CV-CUDA.
-5.x deliberately ships the core runtime first — the
-graph/compile/run machinery, temporal contracts, payloads, tensors, and
-channels — and operator modules (inference, visualization, sensor I/O, and
-friends) arrive in later releases on top of it. In the meantime you author
-your own operators against the core API, and community reference applications
-live on [HoloHub](/holoscan/sdk-user-guide/resources/holohub).
+In [Holoscan Modules](/holoscan/sdk-user-guide/modules). 5.x separates the
+core runtime — the graph/compile/run machinery, temporal contracts, payloads,
+tensors, and channels — from domain operators, which ship as separately
+selectable modules on top of it. This release carries three core modules:
+[Inference](/holoscan/sdk-user-guide/modules/inference) (`InferenceOp`),
+[Vision](/holoscan/sdk-user-guide/modules/vision) (eight CV-CUDA operators),
+and [Visualization](/holoscan/sdk-user-guide/modules/visualization)
+(`HolovizOp`). For other capabilities, author your own operators against the core API or
+look for a community module on
+[HoloHub](/holoscan/sdk-user-guide/resources/holohub).
+
+### What is the difference between a Holoscan Core Module and a Holoscan External Module?
+
+Both are libraries that extend the SDK with operators, subgraphs, and/or schema. Core modules live in the
+SDK repository, are released on the SDK cadence as separate, optional Debian packages and
+Python wheels, and are supported through the SDK release process. External modules live in a
+separate project, are published by the community or by hardware partners on their own cadence,
+and are supported by their maintainers. See
+[Core modules and ecosystem modules](/holoscan/sdk-user-guide/modules#core-modules-and-ecosystem-modules).
+
+### How do I publish my own module?
+
+Scaffold it from the Holoscan CLI module template
+(`holoscan create my-module`), follow the HoloHub
+*Create a Holoscan module* tutorial, and list it in the HoloHub Modules
+catalog. If you want to propose a module for the SDK itself, read the
+[core module development guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/modules/DEVELOPER.md)
+first. See [Build your own module](/holoscan/sdk-user-guide/modules#build-your-own-external-holoscan-module).
 
 ### Is there anything like distributed applications / fragments?
 

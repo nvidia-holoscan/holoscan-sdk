@@ -261,6 +261,8 @@ class SlowSink final : public holoscan::Operator<> {
       return "device_compatible_ops";
     case holoscan::RegionConstraintKind::kLatencyBudget:
       return "latency_budget";
+    case holoscan::RegionConstraintKind::kCudaGraph:
+      return "cuda_graph";
   }
   return "unknown";
 }

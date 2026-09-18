@@ -56,7 +56,31 @@ Call **`./run build`** within the repository to build the build container and th
 
 Call the **`./run launch`** command to start and enter the build container.
 
-- *You can run from the `install` or `build` tree by passing the working directory as an argument (ex: `./run launch install`)*
+The commands in this guide run from the SDK source root. `launch` starts in
+the default build directory, for example `build-x86_64`. To make directory
+selection explicit:
+
+```bash
+BUILD_DIR=$(./run get_build_dir)
+INSTALL_DIR=$(./run get_install_dir)
+
+# Enter the build tree; equivalent to ./run launch.
+./run launch "${BUILD_DIR}"
+
+# Or enter the install tree.
+./run launch "${INSTALL_DIR}"
+```
+
+These queries return directory names relative to the directory containing `run`.
+They honor `HOLOSCAN_BUILD_ARCH` and an explicit `--arch` argument, which takes
+precedence; otherwise the target defaults to the host architecture. Use the same
+target selection for building, querying paths, and launching. For example, set
+`export HOLOSCAN_BUILD_ARCH=aarch64` before the commands above to select ARM64.
+Selecting a target does not make its binaries executable on another architecture.
+
+The queries describe the standard directory layout. If you build with a custom
+`--buildpath` or `--installprefix`, pass that path explicitly instead.
+
 - *Execute `./run launch --help` for more information*
 - *Execute `./run launch --dryrun` to see the commands that will be executed*
 - *Execute `./run launch --run-cmd "..."` to execute a bash command directly in the container*
@@ -113,28 +137,14 @@ The commands to run the [**examples**](./examples) are then the same as in the d
 
 The SDK can be built with different configurations to match various deployment targets:
 
-**CUDA Versions**: 13 (5.x supports CUDA 13 only)
+**CUDA Version**: 13 (pinned by the 5.x build image).
 
-```sh
-export CUDA_MAJOR=13
-./run build
-```
-
-**Architectures**: x86_64 (default), aarch64
+**Architectures**: x86_64, aarch64 (defaults to the host architecture)
 
 ```sh
 ./run build --arch aarch64
 # or
 export HOLOSCAN_BUILD_ARCH=aarch64
-./run build
-```
-
-**GPU Types**: dgpu (default), igpu (aarch64 only)
-
-```sh
-./run build --gpu igpu  # for aarch64 only
-# or
-export HOLOSCAN_BUILD_GPU_TYPE=igpu
 ./run build
 ```
 
@@ -147,8 +157,9 @@ export CMAKE_BUILD_TYPE=Debug
 ./run build
 ```
 
-Build directories follow the pattern: `build-cu<version>-<arch>[-<gpu>]`
-Install directories follow the pattern: `install-cu<version>-<arch>[-<gpu>]`
+The current directory layout is `build-<arch>` and `install-<arch>`, for example
+`build-x86_64` and `install-aarch64`. Use the queries above in commands that need
+a path so that they follow any future naming changes.
 
 ## Utilities
 
@@ -221,9 +232,8 @@ When a test fails (especially from CI), you can reproduce it locally:
 2. **Match the build configuration**:
 
    ```sh
-   export CUDA_MAJOR=13  # 5.x is CUDA 13 only
-   export ARCH=x86_64    # or aarch64, match CI
-   export GPU=dgpu       # or igpu, match CI
+   export HOLOSCAN_BUILD_ARCH=x86_64  # or aarch64, match CI
+   export CMAKE_BUILD_TYPE=Release   # match the build being tested
    ```
 
 3. **Run the specific test**:
@@ -239,9 +249,8 @@ When a test fails (especially from CI), you can reproduce it locally:
 4. **Debug in interactive container** (from build tree):
 
    ```sh
-   ./run launch build-cu13-x86_64
-   # Inside container:
-   cd build-cu13-x86_64
+   ./run launch
+   # Inside the container, already in the selected build directory:
    ctest -R <test_name> --verbose --output-on-failure
    ```
 
@@ -251,11 +260,12 @@ When a test fails (especially from CI), you can reproduce it locally:
 
    ```sh
    # Launch a container with the install tree mounted
-   ./run launch install-cu13-x86_64
-   # Inside the container, configure an example against the installed SDK and run
-   # it. Each example ships a CMakeLists.min.txt that uses find_package(holoscan).
+   INSTALL_DIR=$(./run get_install_dir)
+   ./run launch "${INSTALL_DIR}"
+   # Inside the container, configure an example against this install directory.
+   # Each example ships a CMakeLists.min.txt that uses find_package(holoscan).
    cmake -S <example_src_dir> -B <example_build_dir> \
-     -DHoloscan_ROOT=/workspace/holoscan-sdk/install-cu13-x86_64
+     -DCMAKE_PREFIX_PATH="${PWD}"
    cmake --build <example_build_dir> -j
    ctest --test-dir <example_build_dir> --output-on-failure
    ```

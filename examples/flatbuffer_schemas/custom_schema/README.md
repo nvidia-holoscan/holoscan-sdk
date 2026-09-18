@@ -37,25 +37,16 @@ The key CMake declaration is:
 ```cmake
 holoscan_add_flatbuffer_schema(
   TARGET custom_schema_flatbuffers_generated
-  SCHEMAS custom_control.fbs
-  INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-  OUTPUT_DIR "${CUSTOM_SCHEMA_GENERATED_DIR}"
-  BFBS_EMBED
-  TRAITS_HEADER custom_control_schema_traits.hpp
-  TRAITS_SCHEMA custom_control.fbs
-  TRAITS_ROOT_TYPE app::CustomControl
-  TRAITS_NATIVE_TYPE app::CustomControlT
-  TRAITS_BINARY_SCHEMA_TYPE app::CustomControlBinarySchema
-  TRAITS_PACKAGE_NAMESPACE app::package
-  TRAITS_CANONICAL_NAME app.CustomControl
-  TRAITS_SCHEMA_VERSION 1
-  TRAITS_MAX_SERIALIZED_SIZE 512
+  SCHEMA custom_control.fbs
+  MAX_SERIALIZED_SIZE 512
 )
 ```
 
-The schema determines the generated C++ shape. The CMake declaration supplies application policy
-that the `.fbs` file cannot safely infer: canonical identity, semantic version, and the maximum
-serialized size accepted by the Runtime.
+The schema determines the generated C++ shape. The CMake declaration supplies the maximum
+serialized size accepted by the Runtime; the compatibility epoch defaults to one. The root name
+and four-byte file identifier come directly from the schema. Applications that later freeze a
+supported cross-release lineage can add a source `CONFORMANCE_BASELINE`; it is not required for the
+normal generated-schema path.
 
 ## Application path
 
@@ -163,9 +154,11 @@ custom_schema: received 5 controls
 ## Limits
 
 - The generated ordinary-schema path is for self-contained FlatBuffers object graphs. Native types
-  containing a Core Tensor require the separately versioned descriptor-backed schema extension.
-- Compatibility is exact-match. A semantic schema change requires a version update and coordinated
-  producer/consumer deployment.
-- `TRAITS_MAX_SERIALIZED_SIZE` is a hard bound. Oversized values fail at emit instead of allocating
+  containing a Core Tensor require the distinct descriptor-backed schema extension.
+- Early access supports applications rebuilt against the latest schema set. Compatible edits keep
+  the root name, epoch, file identifier, and explicit field IDs and must pass `flatc --conform`
+  against the committed source baseline. An incompatible edit moves the epoch or defines a new
+  family and requires coordinated deployment.
+- `MAX_SERIALIZED_SIZE` is a hard bound. Oversized values fail at emit instead of allocating
   unbounded transport storage.
 - Generation is build-time and compile-time; no runtime registration or schema lookup is added.

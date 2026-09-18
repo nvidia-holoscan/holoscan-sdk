@@ -10,7 +10,10 @@
 #include <utility>
 #include <vector>
 
+#include "../common/allocation_counter.hpp"
+#include "compiler/compiler_diagnostic.hpp"
 #include "compiler/endpoint_catalog_lowering.hpp"
+#include "compiler/execution_plan_state.hpp"
 #include "compiler/lifecycle_plan_lowering.hpp"
 #include "compiler/physical_plan_lowering.hpp"
 #include "compiler/plan_lowering_diagnostic.hpp"
@@ -119,6 +122,175 @@ TEST(PlanLoweringDiagnostic, PreservesCatalogNormalizationEvidenceByFormat) {
   EXPECT_EQ(clock_health.required, "unavailable+not_required|status_reports+fresh_healthy_report");
   EXPECT_EQ(clock_health.provided,
             "endpoint=sensor;capability=status_reports;requirement=not_required");
+}
+
+// REQ: COMPILE-078
+// REQ: EXPECTED-030
+TEST(PlanLoweringDiagnostic, RetainsFirstCauseAndContextBeforeCanonicalPublication) {
+  const auto structural = diagnostic("TOKEN", 1U, GraphId{2U}, VertexId{3U}, PortId{4U});
+  auto context = structural;
+  context.detail = DiagnosticDetail{.operation = DiagnosticOperation::kCompile,
+                                    .error = Error{ErrorCode::kSuccess},
+                                    .operator_path = "retained-owner",
+                                    .port_name = "retained-output"};
+  auto first = structural;
+  first.detail = DiagnosticDetail{.operation = DiagnosticOperation::kSetup,
+                                  .error = Error{ErrorCode::kInvalidArgument, "first cause"},
+                                  .operator_path = "later-owner"};
+  auto later = first;
+  if (!later.detail.has_value()) {
+    FAIL() << "Expected the copied first-cause fixture detail";
+  }
+  later.detail->error = Error{ErrorCode::kNotSupported, "later cause"};
+  auto distinct = structural;
+  distinct.provided = "distinct structural evidence";
+  for (const bool canonicalize : {false, true}) {
+    for (const bool with_context : {false, true}) {
+      SCOPED_TRACE(canonicalize);
+      SCOPED_TRACE(with_context);
+      std::vector rows{with_context ? context : structural};
+      if (canonicalize) {
+        rows.insert(rows.end(), {first, later, distinct});
+        canonicalize_plan_lowering_diagnostics(rows);
+      } else {
+        EXPECT_FALSE(append_unique_plan_lowering_diagnostic(rows, first));
+        EXPECT_FALSE(append_unique_plan_lowering_diagnostic(rows, later));
+        EXPECT_TRUE(append_unique_plan_lowering_diagnostic(rows, distinct));
+      }
+      ASSERT_EQ(rows.size(), 2U);
+      const auto found = std::find_if(rows.begin(), rows.end(), [&](const auto& row) {
+        return plan_lowering_diagnostic_exactly_equal(row, structural);
+      });
+      ASSERT_NE(found, rows.end());
+      const auto& retained_detail = found->detail;
+      ASSERT_TRUE(retained_detail.has_value());
+      if (!retained_detail.has_value()) {
+        FAIL() << "Expected the retained first cause after deduplication";
+      }
+      const auto& evidence = retained_detail.value();
+      EXPECT_EQ(evidence.error.code, ErrorCode::kInvalidArgument);
+      EXPECT_EQ(evidence.error.message, "first cause");
+      EXPECT_EQ(evidence.operation, DiagnosticOperation::kSetup);
+      EXPECT_EQ(evidence.operator_path, with_context ? "retained-owner" : "later-owner");
+      if (with_context) {
+        EXPECT_EQ(evidence.port_name, "retained-output");
+      }
+    }
+  }
+}
+
+// REQ: COMPILE-076
+// REQ: COMPILE-077
+// REQ: COMPILE-078
+// REQ: EXPECTED-030
+TEST(PlanLoweringDiagnostic, FinalPublicationPreservesFirstCauseAndOwnedContext) {
+  for (const std::string token : {"PHYSICAL_TENSOR_MEMORY_KIND_VALUE_INVALID",
+                                  "PHYSICAL_TENSOR_BYTE_SPAN_PROJECTION_FAILED"}) {
+    SCOPED_TRACE(token);
+    ExecutionPlanState state;
+    auto row = diagnostic(token, 1U, GraphId{2U}, VertexId{3U}, PortId{4U});
+    row.detail = DiagnosticDetail{.operation = DiagnosticOperation::kCompile,
+                                  .error = Error{ErrorCode::kSuccess},
+                                  .operator_path = "retained-owner",
+                                  .port_name = "retained-output"};
+    publish_derivation_diagnostic(state, row);
+    ASSERT_EQ(state.diagnostics.size(), 1U);
+    const Diagnostic original = state.diagnostics.front();
+    row.detail->operation = DiagnosticOperation::kSetup;
+    row.detail->error = Error{ErrorCode::kInvalidArgument, "first cause"};
+    row.detail->operator_path = "later-owner";
+    publish_derivation_diagnostic(state, row);
+    row.detail->error = Error{ErrorCode::kNotSupported, "later cause"};
+    publish_derivation_diagnostic(state, row);
+    ASSERT_EQ(state.diagnostics.size(), 1U);
+    const auto& retained = state.diagnostics.front();
+    ASSERT_TRUE(retained.detail.has_value());
+    if (!retained.detail.has_value()) {
+      FAIL() << "Expected the published first cause";
+    }
+    EXPECT_EQ(retained.detail->operation, DiagnosticOperation::kSetup);
+    EXPECT_EQ(retained.detail->error.code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(retained.detail->error.message, "first cause");
+    EXPECT_EQ(retained.detail->operator_path, "retained-owner");
+    EXPECT_EQ(retained.detail->port_name, "retained-output");
+    EXPECT_EQ(retained.id.value, original.id.value);
+    EXPECT_EQ(retained.token, token);
+    EXPECT_EQ(retained.severity, original.severity);
+    EXPECT_EQ(retained.source.graph_generation, original.source.graph_generation);
+    EXPECT_EQ(retained.source.graph, original.source.graph);
+    EXPECT_EQ(retained.service, original.service);
+    EXPECT_EQ(retained.endpoint, original.endpoint);
+    EXPECT_EQ(retained.cause_id, original.cause_id);
+    EXPECT_EQ(retained.json_pointer, row.json_pointer);
+    EXPECT_EQ(retained.required, row.required);
+    EXPECT_EQ(retained.provided, row.provided);
+    EXPECT_EQ(retained.source.vertex, row.source.vertex);
+    EXPECT_EQ(retained.source.port, row.source.port);
+  }
+}
+
+// REQ: COMPILE-078
+// REQ: EXPECTED-030
+TEST(PlanLoweringDiagnostic, OptionalAllocationFailureKeepsRetainedCodeAndContext) {
+  const auto structural = diagnostic("TOKEN", 1U, GraphId{2U}, VertexId{3U}, PortId{4U});
+  auto incoming = structural;
+  incoming.detail =
+      DiagnosticDetail{.operation = DiagnosticOperation::kSetup,
+                       .error = Error{ErrorCode::kInvalidArgument, std::string(256U, 'p')},
+                       .causes = {Error{ErrorCode::kNotSupported, std::string(256U, 'n')}}};
+  for (const bool with_context : {false, true}) {
+    std::vector rows{structural};
+    if (with_context) {
+      rows.front().detail =
+          DiagnosticDetail{.error = Error{ErrorCode::kSuccess}, .operator_path = "retained-owner"};
+    }
+    auto candidate = incoming;
+    bool appended{};
+    {
+      const test::ScopedAllocationExhaustion exhausted{0U};
+      appended = append_unique_plan_lowering_diagnostic(rows, std::move(candidate));
+    }
+    EXPECT_FALSE(appended);
+    ASSERT_EQ(rows.size(), 1U);
+    EXPECT_TRUE(plan_lowering_diagnostic_exactly_equal(rows.front(), structural));
+    const auto& retained_detail = rows.front().detail;
+    ASSERT_TRUE(retained_detail.has_value());
+    if (!retained_detail.has_value()) {
+      FAIL() << "Expected retained code despite optional allocation failure";
+    }
+    const auto& retained = retained_detail.value();
+    EXPECT_EQ(retained.error.code, ErrorCode::kInvalidArgument);
+    EXPECT_TRUE(retained.truncated);
+    if (with_context) {
+      EXPECT_EQ(retained.operator_path, "retained-owner");
+    }
+  }
+  DiagnosticCapture capture;
+  capture.append(ErrorCode::kInvalidArgument, "primary cause");
+  capture.append(ErrorCode::kNotSupported, std::string(256U, 'n'));
+  std::optional<DiagnosticDetail> evidence;
+  {
+    // Primary text fits its string's short buffer. The nested cause allocation is optional.
+    const test::ScopedAllocationExhaustion exhausted{0U};
+    attach_diagnostic_capture(evidence, capture, DiagnosticOperation::kSetup);
+  }
+  ASSERT_TRUE(evidence.has_value());
+  if (!evidence.has_value()) {
+    FAIL() << "Expected retained primary capture evidence";
+  }
+  EXPECT_EQ(evidence->error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(evidence->error.message, "primary cause");
+  EXPECT_TRUE(evidence->truncated);
+  const DiagnosticDetail later{.error = Error{ErrorCode::kNotSupported, "replacement"}};
+  {
+    const test::ScopedAllocationExhaustion exhausted{0U};
+    enrich_diagnostic_detail(evidence, &later);
+  }
+  if (!evidence.has_value()) {
+    FAIL() << "Optional enrichment erased the retained primary";
+  }
+  EXPECT_EQ(evidence->error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(evidence->error.message, "primary cause");
 }
 
 }  // namespace

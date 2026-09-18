@@ -9,7 +9,8 @@ include "included.fbs";
 namespace schema_tools;
 
 table CommentedIncludeRoot {
-  nested: Included;
+  nested: Included (id: 0);
 }
 
 root_type CommentedIncludeRoot;
+file_identifier "CINC";

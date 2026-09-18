@@ -58,41 +58,50 @@ class TensorSidecarStore {
   [[nodiscard]] expected<std::size_t, Error> register_recipient(
       const holomq::DeliveryRecipientId& recipient_id) {
     const std::lock_guard<std::mutex> lock(setup_mutex_);
-    for (std::size_t index = 0U; index < registered_recipient_count_; ++index) {
+    std::optional<std::size_t> available_index;
+    for (std::size_t index = 0U; index < recipient_ids_.size(); ++index) {
       if (recipient_ids_[index] == recipient_id) {
         return index;
       }
+      if (!available_index && recipient_ids_[index] == holomq::DeliveryRecipientId{}) {
+        available_index = index;
+      }
     }
-    if (registered_recipient_count_ >= recipient_ids_.size()) {
+    if (registered_recipient_count_ >= recipient_ids_.size() || !available_index) {
       return make_unexpected(make_channel_error(
           ErrorCode::kResourceExhausted,
           "Tensor channel has more subscribers than its expected recipient count"));
     }
-    const std::size_t index = registered_recipient_count_++;
+    const std::size_t index = *available_index;
     recipient_ids_[index] = recipient_id;
+    ++registered_recipient_count_;
     registered_recipient_count_atomic_.store(registered_recipient_count_,
                                              std::memory_order_release);
     return index;
   }
 
-  /// Release the sole registered recipient after its endpoint is destroyed.
+  /// Release one registered recipient after its endpoint is destroyed.
   ///
-  /// Recipient indices are claim-bit positions and therefore cannot be compacted while other
-  /// recipients remain registered. Lifecycle replacement of an external-topic import owns one
-  /// recipient, so releasing that endpoint makes its exact index available to the replacement
-  /// without changing any surviving claim identity. Multi-recipient stores retain their static
-  /// registration contract.
+  /// Recipient indices are claim-bit positions and therefore are never compacted while other
+  /// recipients remain registered. Releasing one endpoint makes its exact hole available to a
+  /// replacement without changing any surviving claim identity.
   void unregister_recipient(const std::size_t recipient_index,
                             const holomq::DeliveryRecipientId& recipient_id) noexcept {
-    const std::lock_guard<std::mutex> lock(setup_mutex_);
-    if (expected_recipient_count_ != 1U || registered_recipient_count_ != 1U ||
-        recipient_index != 0U || recipient_ids_[recipient_index] != recipient_id) {
-      return;
+    {
+      const std::lock_guard<std::mutex> lock(setup_mutex_);
+      if (recipient_index >= recipient_ids_.size() || registered_recipient_count_ == 0U ||
+          recipient_ids_[recipient_index] != recipient_id) {
+        return;
+      }
+      recipient_ids_[recipient_index] = {};
+      --registered_recipient_count_;
+      registered_recipient_count_atomic_.store(registered_recipient_count_,
+                                               std::memory_order_release);
     }
-    recipient_ids_[recipient_index] = {};
-    --registered_recipient_count_;
-    registered_recipient_count_atomic_.store(registered_recipient_count_,
-                                             std::memory_order_release);
+    // Endpoint teardown is a bounded cold lifecycle path. Clear this recipient's unread records
+    // after making new inserts fail closed, and do not retain the setup lock while Tensor backing
+    // and its application-defined memory reference are released.
+    release_unread_claims_for_recipient(recipient_index);
   }
 
   [[nodiscard]] expected<ChannelSampleDescriptor, Error> insert(Tensor tensor,
@@ -452,6 +461,24 @@ class TensorSidecarStore {
     release_remaining_claim(record, descriptor, recipient_bit);
   }
 
+  void release_unread_claims_for_recipient(const std::size_t recipient_index) noexcept {
+    for (std::size_t index = 0U; index < records_.size(); ++index) {
+      Record& record = records_[index];
+      const std::uint64_t generation = record.generation.load(std::memory_order_acquire);
+      if (generation == 0U) {
+        continue;
+      }
+      const ChannelSampleDescriptor descriptor{
+          .sidecar_token = static_cast<std::uint64_t>(index + 1U),
+          .generation = generation,
+      };
+      if (try_enter_record(record, descriptor)) {
+        release_unread_claim_for_recipient(record, descriptor, recipient_index);
+        leave_record(record);
+      }
+    }
+  }
+
   void release_remaining_claim(Record& record, const ChannelSampleDescriptor& descriptor,
                                std::uint64_t recipient_bit) noexcept {
     const std::uint64_t previous_remaining =
@@ -465,7 +492,7 @@ class TensorSidecarStore {
   [[nodiscard]] std::optional<std::size_t> find_recipient_index(
       const holomq::DeliveryRecipientId& recipient_id) const {
     const std::lock_guard<std::mutex> lock(setup_mutex_);
-    for (std::size_t index = 0U; index < registered_recipient_count_; ++index) {
+    for (std::size_t index = 0U; index < recipient_ids_.size(); ++index) {
       if (recipient_ids_[index] == recipient_id) {
         return index;
       }

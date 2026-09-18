@@ -12,27 +12,6 @@ namespace holoscan::vision {
 /// @brief Maximum batch dimension supported by Vision operator kernels.
 inline constexpr std::uint32_t kMaximumBatchSize = 65'535U;
 
-/// @brief Structural image geometry and batch capacity authored into an execution plan.
-///
-/// Image operators use this named aggregate for bounded input admission and
-/// runtime-pool allocation. Every field must be positive and
-/// \p max_batch_size must not exceed \ref kMaximumBatchSize.
-struct VisionImageCapacity {
-  std::int32_t max_width{};        ///< Maximum admitted or produced image width in pixels.
-  std::int32_t max_height{};       ///< Maximum admitted or produced image height in pixels.
-  std::uint32_t max_batch_size{};  ///< Maximum admitted image batch size.
-};
-
-/// @brief Structural detection capacity authored into an execution plan.
-///
-/// Both fields must be positive and \p max_batch_size must not exceed
-/// \ref kMaximumBatchSize. The maximum S16 `[N, W, 4]` boxes tensor implied by
-/// both fields must also fit CV-CUDA's 32-bit byte-addressing limit.
-struct NMSCapacity {
-  std::int32_t max_boxes{};        ///< Maximum number of boxes per batch item.
-  std::uint32_t max_batch_size{};  ///< Maximum admitted detection batch size.
-};
-
 /// @brief Select an image interpolation algorithm.
 enum class InterpolationMode : std::uint8_t {
   kNearest = 0,  ///< Nearest-neighbor interpolation.

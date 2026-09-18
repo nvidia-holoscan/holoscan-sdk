@@ -70,6 +70,10 @@ OperatorRef ExecutionContext::self() const noexcept {
   return state_ != nullptr ? state_->self : OperatorRef{};
 }
 
+std::string_view ExecutionContext::operator_path() const noexcept {
+  return state_ != nullptr ? state_->operator_path : std::string_view{};
+}
+
 const void* ExecutionContext::parameter_address(const void* exact_type) const noexcept {
   if (state_ == nullptr) {
     return nullptr;

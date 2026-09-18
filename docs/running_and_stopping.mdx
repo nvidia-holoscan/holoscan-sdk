@@ -352,15 +352,22 @@ A `kFailed` session is not a dead end: the session retains a bounded set of
 structural `Diagnostic` records explaining why the run stopped or failed. Each
 record carries a stable registry token — a fixed spelling such as
 `RUNTIME_CLOCK_BINDING_UNAVAILABLE`, not free-form log prose — plus an optional
-plan-local source location:
+plan-local source location and optional owning failure detail:
 
 ```cpp
 if (session.termination() == holoscan::RunTermination::kFailed) {
   for (const holoscan::Diagnostic& d : session.diagnostics()) {
-    std::cerr << d.token << '\n';  // stable registry token
+    std::cerr << holoscan::format_diagnostic(d, plan.graph()) << '\n';
   }
 }
 ```
+
+The normal failed-session report already prints the retained explanation at
+ERROR level. Explicit application formatting is useful for a custom sink or UI,
+but may duplicate that output. Callback detail includes the qualified operator
+path, original message, and lifecycle phase; inspect `d.detail` directly when
+program logic needs those fields. Supplemental detail is not canonical plan
+JSON. Clean completion and clean cooperative stop produce no failure report.
 
 The returned span is append-only and stable: the storage and the prefix you
 observed remain valid until the wrapper is moved or destroyed, so you may hold

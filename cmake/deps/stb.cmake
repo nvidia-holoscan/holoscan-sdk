@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# stb single-file image loaders for the HoloViz RHI examples. Header-only and source-only
+# stb single-file image loaders for the HoloViz core examples. Header-only and source-only
 # upstream (no CMake project or releases): download only and expose the source directory through
 # one interface target. The revision is pinned to the SWIPAT-cleared commit; upgrading requires
 # a new clearance.

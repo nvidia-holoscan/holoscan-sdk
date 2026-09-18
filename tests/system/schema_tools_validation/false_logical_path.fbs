@@ -6,7 +6,8 @@ include "OFF";
 namespace schema_tools;
 
 table FalseLogicalRoot {
-  dependency:FalseLogicalDependency;
+  dependency:FalseLogicalDependency (id: 0);
 }
 
 root_type FalseLogicalRoot;
+file_identifier "FLOG";

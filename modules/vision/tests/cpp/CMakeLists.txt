@@ -41,10 +41,12 @@ add_test(NAME VISION.installed_package_consumer
         "-DHOLOSCAN_BUILD_DIR=${CMAKE_BINARY_DIR}"
         "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${_holoscan_vision_source_dir}/tests/installed_consumer"
         "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed_consumer"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DHOLOSCAN_BUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
         "-DHOLOSCAN_EXTRA_BUILD_TARGETS=vision"
         "-DHOLOSCAN_EXTRA_INSTALL_COMPONENTS=holoscan-vision"
+        "-DHOLOSCAN_CONSUMER_FIND_MODE=module"
+        "-DHOLOSCAN_MODULE_PACKAGE_DIR=${CMAKE_INSTALL_LIBDIR}/cmake/holoscan"
         "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
         "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
         "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -56,6 +58,31 @@ add_test(NAME VISION.installed_package_consumer
         -P "${CMAKE_SOURCE_DIR}/tests/system/run_time_installed_consumer.cmake"
 )
 set_tests_properties(VISION.installed_package_consumer PROPERTIES
+    RUN_SERIAL TRUE
+    LABELS "vision;installed-package"
+)
+
+add_test(NAME VISION.installed_component_consumer
+    COMMAND ${CMAKE_COMMAND}
+        "-DHOLOSCAN_BUILD_DIR=${CMAKE_BINARY_DIR}"
+        "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${_holoscan_vision_source_dir}/tests/installed_consumer"
+        "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed_component_consumer"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
+        "-DHOLOSCAN_BUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
+        "-DHOLOSCAN_EXTRA_BUILD_TARGETS=vision"
+        "-DHOLOSCAN_EXTRA_INSTALL_COMPONENTS=holoscan-vision"
+        "-DHOLOSCAN_CONSUMER_FIND_MODE=component"
+        "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
+        "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
+        "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
+        "-DHOLOSCAN_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+        "-DHOLOSCAN_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DHOLOSCAN_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DHOLOSCAN_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}"
+        "-DHOLOSCAN_CTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
+        -P "${CMAKE_SOURCE_DIR}/tests/system/run_time_installed_consumer.cmake"
+)
+set_tests_properties(VISION.installed_component_consumer PROPERTIES
     RUN_SERIAL TRUE
     LABELS "vision;installed-package"
 )

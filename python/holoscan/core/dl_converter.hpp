@@ -7,6 +7,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -54,6 +55,12 @@ std::shared_ptr<Tensor> as_tensor(const nb::object& obj);
 /// `as_tensor`.
 bool is_tensor_like(const nb::object& obj);
 
+/// @brief Build the Python tuple returned by Tensor.shape without allocating C++ metadata.
+nb::tuple tensor_shape_tuple(const Tensor& tensor);
+
+/// @brief Build the Python byte-stride tuple without allocating C++ metadata.
+nb::tuple tensor_strides_tuple(const Tensor& tensor);
+
 /// @brief Build the NumPy `__array_interface__` dict for a host (CPU / pinned-host) Tensor.
 /// Raises AttributeError if the tensor is not host-resident, so `hasattr` reports correctly.
 nb::dict array_interface(const Tensor& tensor);
@@ -65,6 +72,11 @@ nb::dict cuda_array_interface(const Tensor& tensor);
 /// @brief PyCapsule wrapping the DLPack 1.3 C exchange API table; bound as
 /// `Tensor.__dlpack_c_exchange_api__` (see https://dmlc.github.io/dlpack/latest/python_spec.html).
 nb::capsule dlpack_c_exchange_api_capsule();
+
+/// @brief Project synthetic Tensor metadata over a live backing Tensor for binding tests.
+nb::dict test_tensor_metadata_projection(const Tensor& backing, const nb::object& shape,
+                                         const nb::object& strides, DLDataType dtype,
+                                         std::uint64_t byte_offset);
 
 /// @brief Test-only helper that looks up the C exchange API capsule and invokes its callbacks
 /// (managed export, stack DLTensor export, import, stream), returning a dict of results.

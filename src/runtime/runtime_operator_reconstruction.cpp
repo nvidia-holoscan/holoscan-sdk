@@ -33,6 +33,7 @@
 #include "../compiler/closed_island_activation_plan.hpp"
 #include "../compiler/execution_plan_lookup.hpp"
 #include "../compiler/inline_partition_execution_plan.hpp"
+#include "../compiler/optional_input_plan_validation.hpp"
 #include "../compiler/partition_runner_plan.hpp"
 #include "../core/diagnostic_registry.hpp"
 #include "../core/lifecycle_capacity_derivation.hpp"
@@ -52,9 +53,40 @@
 namespace holoscan::detail {
 namespace {
 
+[[nodiscard]] expected<std::unique_ptr<OperatorBase>, Error> construct_operator(
+    const ExecutableOperatorFactoryRecord& record, RuntimeDiagnosticDetail* failure_detail) {
+  DiagnosticCapture* capture = nullptr;
+  if (failure_detail != nullptr) {
+    failure_detail->vertex = record.vertex;
+    failure_detail->operation = DiagnosticOperation::kConstruct;
+    capture = &failure_detail->capture.emplace();
+  }
+  auto created = record.factory->create(capture);
+  if (!created) {
+    if (failure_detail != nullptr) {
+      failure_detail->present = true;
+      if (capture->count == 0U) {
+        capture->append(created.error().code, created.error().message);
+      }
+    }
+    return make_unexpected(operator_reconstruction_error(created.error().code,
+                                                         "RUNTIME_OPERATOR_RECONSTRUCTION_FAILED"));
+  }
+  if (created.value() == nullptr) {
+    return make_unexpected(operator_reconstruction_error(ErrorCode::kFailure,
+                                                         "RUNTIME_OPERATOR_RECONSTRUCTION_FAILED"));
+  }
+  if (failure_detail != nullptr) {
+    *failure_detail = RuntimeDiagnosticDetail{};
+  }
+
+  return created;
+}
+
 [[nodiscard]] expected<RuntimeOperatorInstance, Error> reconstruct_operator(
     const ExecutionPlanState& plan, const ExecutableOperatorFactoryRecord& record,
-    std::uint32_t factory_slot, RuntimeReplayMismatchDetail* replay_mismatch) {
+    std::uint32_t factory_slot, RuntimeReplayMismatchDetail* replay_mismatch,
+    RuntimeDiagnosticDetail* failure_detail) {
   if (record.factory == nullptr || record.operator_id == 0U) {
     return make_unexpected(
         operator_reconstruction_error(ErrorCode::kFailure, "RUNTIME_OPERATOR_FACTORY_INVALID"));
@@ -63,31 +95,46 @@ namespace {
   // Owning control calls could otherwise wait for the coordinator that this reconstruction path
   // has not yet attached, so expose only callback-safe borrowed seams throughout reconstruction.
   const ParamGeneralControlContextScope general_control_scope;
-  auto created = record.factory->create();
+  auto created = construct_operator(record, failure_detail);
   if (!created) {
-    return make_unexpected(operator_reconstruction_error(created.error().code,
-                                                         "RUNTIME_OPERATOR_RECONSTRUCTION_FAILED"));
-  }
-  if (created.value() == nullptr) {
-    return make_unexpected(operator_reconstruction_error(ErrorCode::kFailure,
-                                                         "RUNTIME_OPERATOR_RECONSTRUCTION_FAILED"));
+    return make_unexpected(std::move(created.error()));
   }
   auto reconstructed_operator = std::move(created).value();
 
   auto replay = std::make_unique<OperatorSpec>();
+  auto operation = DiagnosticOperation::kSetup;
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   try {
 #endif
     reconstructed_operator->setup(*replay);
-    if (auto validated = validate_replayed_operator(
-            plan, record, *reconstructed_operator, *replay, factory_slot, replay_mismatch);
+    operation = DiagnosticOperation::kContract;
+    if (auto validated = validate_replayed_operator(plan,
+                                                    record,
+                                                    *reconstructed_operator,
+                                                    *replay,
+                                                    factory_slot,
+                                                    replay_mismatch,
+                                                    failure_detail);
         !validated) {
       return make_unexpected(std::move(validated.error()));
     }
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   } catch (...) {
-    return make_unexpected(
-        operator_reconstruction_error(ErrorCode::kFailure, "RUNTIME_OPERATOR_SETUP_FAILED"));
+    if (failure_detail != nullptr) {
+      if (!failure_detail->present) {
+        failure_detail->vertex = record.vertex;
+        failure_detail->operation = operation;
+        failure_detail->capture.emplace();
+        failure_detail->capture->capture_exception();
+      } else if (failure_detail->capture) {
+        failure_detail->capture->truncated = true;
+      }
+      failure_detail->present = true;
+    }
+    return make_unexpected(operator_reconstruction_error(ErrorCode::kFailure,
+                                                         operation == DiagnosticOperation::kSetup
+                                                             ? "RUNTIME_OPERATOR_SETUP_FAILED"
+                                                             : "RUNTIME_OPERATOR_CALLBACK_FAILED"));
   }
 #endif
 
@@ -133,6 +180,13 @@ namespace {
       .tags = std::move(tags),
       .temporal_trigger = temporal_trigger,
       .predicate_trigger = predicate_trigger,
+      .has_output_ports = std::ranges::any_of(plan.graph.ports(),
+                                              [&](const auto& port) {
+                                                return port.owner_kind ==
+                                                           PortOwnerKind::kOperator &&
+                                                       port.owner == record.vertex &&
+                                                       port.direction == PortDirection::kOutput;
+                                              }),
       .compute_nvtx_message = nvtx3::message{nvtxDomainRegisterStringA(
           holoscan::profiler::operator_profile_domain(), compute_nvtx_label.c_str())},
   };
@@ -204,7 +258,7 @@ namespace {
 // NOLINTBEGIN(readability-function-cognitive-complexity)
 expected<RuntimeOperatorReconstruction, Error> reconstruct_runtime_operators(
     const ExecutionPlanState& plan, RunGenerationId run_generation, ProcessGroupId process_group,
-    RuntimeReplayMismatchDetail* replay_mismatch) {
+    RuntimeReplayMismatchDetail* replay_mismatch, RuntimeDiagnosticDetail* failure_detail) {
   if (replay_mismatch != nullptr) {
     *replay_mismatch = RuntimeReplayMismatchDetail{};
   }
@@ -263,7 +317,10 @@ expected<RuntimeOperatorReconstruction, Error> reconstruct_runtime_operators(
   // inventory cannot be masked by an unrelated unavailable readiness or placement binding.
   if (plan.operator_parameters.size() != planned_operator_count ||
       !plan.parameter_runtime_capacity.has_value() ||
-      !parameter_owner_inventories_well_formed(plan, planned_operator_count)) {
+      !parameter_owner_inventories_well_formed(plan, planned_operator_count) ||
+      std::any_of(plan.operator_parameters.begin(),
+                  plan.operator_parameters.end(),
+                  [](const auto& record) { return record.operator_path.empty(); })) {
     return make_unexpected(
         operator_reconstruction_error(ErrorCode::kFailure, "RUNTIME_PARAMETER_INVENTORY_MISMATCH"));
   }
@@ -280,7 +337,7 @@ expected<RuntimeOperatorReconstruction, Error> reconstruct_runtime_operators(
   // retained its more specific diagnostic, but before reconstructing any Operator or invoking any
   // lifecycle callback. The runner record is a cold GraphExec foundation fact; Runtime must never
   // rebuild or silently repair a mutated copy.
-  if (!valid_partition_runner_plan(plan)) {
+  if (!valid_partition_runner_plan(plan) || !valid_optional_input_plan(plan)) {
     return make_unexpected(
         operator_reconstruction_error(ErrorCode::kFailure, "RUNTIME_OPERATOR_REPLAY_MISMATCH"));
   }
@@ -316,8 +373,8 @@ expected<RuntimeOperatorReconstruction, Error> reconstruct_runtime_operators(
     if (process_group && !worker_owns_vertex(plan, process_group, record.vertex)) {
       continue;
     }
-    auto reconstructed =
-        reconstruct_operator(plan, record, static_cast<std::uint32_t>(index + 1U), replay_mismatch);
+    auto reconstructed = reconstruct_operator(
+        plan, record, static_cast<std::uint32_t>(index + 1U), replay_mismatch, failure_detail);
     if (!reconstructed) {
       return make_unexpected(std::move(reconstructed.error()));
     }
@@ -336,6 +393,7 @@ expected<RuntimeOperatorReconstruction, Error> reconstruct_runtime_operators(
       return make_unexpected(operator_reconstruction_error(ErrorCode::kFailure,
                                                            "RUNTIME_PARAMETER_INVENTORY_MISMATCH"));
     }
+    instance.canonical_operator_path = parameter_plan->operator_path;
     const ParamTypeDescriptor& parameter_type = OperatorRuntimeAccess::parameter_type(*instance.op);
     instance.static_parameter_header = PinnedParameterHeader{
         .value = OperatorRuntimeAccess::parameter_address(*instance.op),

@@ -67,6 +67,7 @@ RUNTIME_PHASE_COUNTER_NAMES = (
     "candidates_frozen",
     "candidates_selected",
     "readiness_poll_dispatches",
+    "readiness_poll_contention_retries",
     "direct_continuation_receipts_accepted",
     "direct_continuation_poll_elisions",
     "direct_composite_attempts",
@@ -90,6 +91,7 @@ RUNTIME_PHASE_COUNTER_NAMES = (
     "channel_activation_cut_drains",
     "channel_activation_cut_skips",
     "channel_receive_backpressured",
+    "channel_poll_incomplete",
     "channel_activation_cut_inventory_scans",
     "channel_activation_cut_subscriber_probes",
     "channel_activation_cut_transport_probes",
@@ -251,8 +253,8 @@ def event_wake_required(args: argparse.Namespace) -> bool:
 
 
 def continuation_receipt_ineligible(args: argparse.Namespace) -> bool:
-    """Return whether this row must stay off the continuation-receipt path."""
-    return args.scenario in TENSOR_BACKED_SCENARIOS or process_local_delivery(args) == "holomq"
+    """Return whether the selected transport prevents direct continuation receipts."""
+    return process_local_delivery(args) == "holomq"
 
 
 def benchmark_name(
@@ -1075,6 +1077,17 @@ def validate_runtime_phase_counters(
         else samples_received == expected_input_operations
         and readiness_published == expected_input_operations
     )
+    witnesses_retired = phase_counters["channel_witness_retired"]
+    witness_retirement_consistent = (
+        expected_input_operations <= witnesses_retired <= readiness_published
+        if has_lossy_subscriber(args)
+        else witnesses_retired == expected_input_operations
+    )
+    if pressured_staged_diagnostics:
+        witness_retirement_consistent = witness_retirement_consistent and (
+            witnesses_retired + phase_counters["channel_pre_witness_replacements"]
+            == readiness_published
+        )
     channel_consistent = (
         phase_counters["channel_prepare_calls"] == expected_compute
         and phase_counters["channel_emit_attempts"] == expected_emit_attempts
@@ -1082,7 +1095,7 @@ def validate_runtime_phase_counters(
         and phase_counters["channel_emit_backpressured"] == counts.get("backpressured_emits", 0)
         and retained_counts_consistent
         and phase_counters["channel_input_reads"] == expected_input_operations
-        and phase_counters["channel_witness_retired"] == expected_input_operations
+        and witness_retirement_consistent
         and phase_counters["channel_retire_calls"] == expected_compute
         and activation_cut_consistent
     )

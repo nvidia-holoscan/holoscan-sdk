@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -23,9 +24,9 @@
 
 #include "compiler/execution_plan_state.hpp"
 #include "compiler/parameter_plan_lowering.hpp"
+#include "core/graph_compiler_access.hpp"
 #include "core/parameter_catalog_internal.hpp"
-#include "core/parameter_override_set_internal.hpp"
-#include "core/parameter_rebind_support.hpp"
+#include "core/parameter_input_internal.hpp"
 
 namespace holoscan::params::test {
 
@@ -104,34 +105,70 @@ struct holoscan::config::ConfigCodec<holoscan::params::test::PartialCodecParams>
     }
     const std::array entries{ConfigObjectEntry{"managed", *managed},
                              ConfigObjectEntry{"local_only", *local_only}};
-    return ConfigValue::object(entries);
+    return ConfigValue::try_object(entries);
   }
 };
 
 namespace holoscan::params::test {
 namespace {
 
-// Test DSL helpers: parse_json wraps config_io::parse with an assertion and a null fallback;
-// path wraps config::Path::parse similarly.
+// Test DSL helper: parse_json wraps config_io::parse with an assertion and a null fallback.
 [[nodiscard]] config::Document parse_json(std::string_view source) {
-  auto parsed = config_io::parse(source, config_io::Format::kJson);
+  auto parsed = config_io::try_parse(source, config_io::Format::kJson);
   EXPECT_TRUE(parsed.has_value());
   if (parsed) {
     return std::move(*parsed);
   }
-  return config::Document::from_value(config::ConfigValue::null()).value();
+  return config::Document::try_from_value(config::ConfigValue::null()).value();
 }
 
+// Test DSL shorthand for paths whose literals are valid by construction.
 [[nodiscard]] config::Path path(std::string_view value) {
-  auto parsed = config::Path::parse(value);
-  EXPECT_TRUE(parsed.has_value());
-  return parsed ? std::move(*parsed) : config::Path::root();
+  return config::Path::parse(value);
 }
+
+class PreparedParamsChildGraph final : public Graph {
+ protected:
+  void compose() override {
+    const config::Document source = parse_json(R"({"primary":9})");
+    auto decoded = try_decode<ConfigProvenancePairParams>(
+        source,
+        config::Path::root(),
+        ConfigProvenancePairParams{.primary = 3U, .secondary = 7U},
+        config::DecodeOptions{});
+    if (!decoded) {
+      throw std::runtime_error{std::string{decoded.error().token()}};
+    }
+    auto configured = op<ConfigProvenancePairOperator>("op");
+    configured.set_params(std::move(*decoded));
+  }
+};
 
 // Returns true if any diagnostic in the plan carries the given token string.
 [[nodiscard]] bool has_diagnostic(const ExecutionPlan& plan, std::string_view token) {
   return std::ranges::any_of(plan.diagnostics(),
                              [&](const Diagnostic& item) { return item.token == token; });
+}
+
+[[nodiscard]] std::shared_ptr<holoscan::detail::ParameterTransactionState>
+copy_parameter_transaction(Graph& graph) {
+  const auto snapshot = holoscan::detail::GraphCompilerAccess::canonical_snapshot(graph);
+  auto factories = holoscan::detail::GraphCompilerAccess::executable_factories(graph, *snapshot);
+  EXPECT_NE(factories.parameter_transaction, nullptr);
+  return factories.parameter_transaction
+             ? std::make_shared<holoscan::detail::ParameterTransactionState>(
+                   *factories.parameter_transaction)
+             : nullptr;
+}
+
+[[nodiscard]] const ConfigProvenancePairParams* compiled_pair_params(const ExecutionPlan& plan) {
+  const auto* state = holoscan::detail::ExecutionPlanAccess::state(plan);
+  if (state == nullptr || state->executable_factories.operators.empty() ||
+      !state->executable_factories.operators.front().factory) {
+    return nullptr;
+  }
+  return static_cast<const ConfigProvenancePairParams*>(
+      state->executable_factories.operators.front().factory->initial_parameter_value());
 }
 
 // Builds a synthetic ParameterCatalogView for a single "managed" field on operator "op".
@@ -194,6 +231,7 @@ namespace {
 // REQ: COMPILE-072
 // REQ: PARAM-034
 // REQ: PARAM-037
+// REQ: PARAM-039
 // Graph: graph["partial-config-binding"]
 //   └─ op<PartialCodecOperator>("op")
 TEST(ParameterConfigProvenance, PartialSchemaOverlayPreservesTypedUnmanagedBaseline) {
@@ -204,37 +242,26 @@ TEST(ParameterConfigProvenance, PartialSchemaOverlayPreservesTypedUnmanagedBasel
   op.set_params(PartialCodecParams{.managed = "typed-managed", .local_only = "keep-local"});
   const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
 
-  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
+  auto attached = set_params(graph, source, {bind(op, "/overlay")});
 
   // Key assertion: managed field is patched; local_only is preserved; provenance records
   // the exact source path, semantic digest, and raw digest of the config document.
-  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
-  const auto& private_state = holoscan::detail::ParamOverrideSetAccess::state(*decoded);
-  ASSERT_EQ(private_state.operators.size(), 1U);
-  const auto* value =
-      static_cast<const PartialCodecParams*>(private_state.operators.front().resolved_value.get());
-  ASSERT_NE(value, nullptr);
-  EXPECT_EQ(value->managed, "configured");
-  EXPECT_EQ(value->local_only, "keep-local");
-
-  ASSERT_EQ(decoded->provenance().config_fields.size(), 1U);
-  EXPECT_EQ(decoded->provenance().context_binding, ParamOverrideContextBinding::kCompile);
-  EXPECT_EQ(decoded->provenance().admission_context_digest, ParamSchemaHash{});
-  const auto& source_field = decoded->provenance().config_fields.front();
+  ASSERT_TRUE(attached.has_value()) << attached.error().token();
+  ASSERT_EQ(attached->config_fields.size(), 1U);
+  const auto& source_field = attached->config_fields.front();
   const auto source_digest = source.digest();
   EXPECT_EQ(source_field.document.semantic_digest, source_digest.semantic.sha256);
   ASSERT_TRUE(source_digest.source.has_value());
   const auto raw_source_digest = source_digest.source.value_or(config::RawSourceDigest{});
   EXPECT_TRUE(source_field.document.has_raw_source);
   EXPECT_EQ(source_field.document.raw_digest, raw_source_digest.sha256);
+  EXPECT_FALSE(source_field.document.has_base_raw_source);
   EXPECT_EQ(source_field.source_path, "/overlay/managed");
   EXPECT_EQ(source_field.source_ordinal, 0U);
   EXPECT_EQ(source_field.target_operator_path, "op");
   EXPECT_EQ(source_field.target_schema_id, "holoscan.test.PartialCodecParams");
 
-  CompileOptions options;
-  options.parameter_overrides = *decoded;
-  const ExecutionPlan plan = compile(graph, std::move(options));
+  const ExecutionPlan plan = compile(graph);
   ASSERT_TRUE(plan.ok()) << plan.json();
   const auto* plan_state = holoscan::detail::ExecutionPlanAccess::state(plan);
   ASSERT_NE(plan_state, nullptr);
@@ -246,290 +273,363 @@ TEST(ParameterConfigProvenance, PartialSchemaOverlayPreservesTypedUnmanagedBasel
   const auto config_source = field->config_source.value_or(ParamConfigFieldProvenance{});
   EXPECT_EQ(config_source.source_path, "/overlay/managed");
   EXPECT_EQ(config_source.document.raw_digest, raw_source_digest.sha256);
+  const auto* value = static_cast<const PartialCodecParams*>(
+      plan_state->executable_factories.operators.front().factory->initial_parameter_value());
+  ASSERT_NE(value, nullptr);
+  EXPECT_EQ(value->managed, "configured");
+  EXPECT_EQ(value->local_only, "keep-local");
 }
 
-// REQ: PARAM-034
-// REQ: PARAM-037
-// Graph: graph["config-source-plan-generation"]
-//   └─ op<PartialCodecOperator>("op")
-// Compact and spaced JSON documents encode the same value but have different raw bytes,
-// so they must produce different plan generations even with identical semantic content.
-TEST(ParameterConfigProvenance, ExactRawSourceIdentityChangesPlanGeneration) {
-  // Key setup: compact vs spaced JSON → same semantic digest, different raw_source digest.
-  Graph graph{"config-source-plan-generation"};
-  auto op = graph.op<PartialCodecOperator>("op");
-  const config::Document compact = parse_json(R"({"overlay":{"managed":"configured"}})");
-  const config::Document spaced =
-      parse_json("{ \"overlay\" : { \"managed\" : \"configured\" } }\n");
-  const auto compact_digest = compact.digest();
-  const auto spaced_digest = spaced.digest();
-  ASSERT_EQ(compact_digest.semantic.sha256, spaced_digest.semantic.sha256);
-  ASSERT_TRUE(compact_digest.source.has_value());
-  ASSERT_TRUE(spaced_digest.source.has_value());
-  const auto compact_source = compact_digest.source.value_or(config::RawSourceDigest{});
-  const auto spaced_source = spaced_digest.source.value_or(config::RawSourceDigest{});
-  ASSERT_NE(compact_source.sha256, spaced_source.sha256);
+// REQ: PARAM-039
+// REQ: PARAM-048
+TEST(ParameterConfigProvenance, PreparedParamsRetainOnlySuppliedFieldEvidence) {
+  Graph graph{"prepared-config-provenance"};
+  auto op = graph.op<ConfigProvenancePairOperator>("op");
+  const config::Document source = parse_json(R"({"input":{"primary":9}})");
+  auto decoded = try_decode<ConfigProvenancePairParams>(
+      source,
+      path("/input"),
+      ConfigProvenancePairParams{.primary = 3U, .secondary = 7U},
+      config::DecodeOptions{});
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  op.set_params(std::move(*decoded));
 
-  auto first = decode_overrides(compact, {bind(op, "/overlay")});
-  auto second = decode_overrides(spaced, {bind(op, "/overlay")});
-  ASSERT_TRUE(first.has_value()) << first.error().token();
-  ASSERT_TRUE(second.has_value()) << second.error().token();
-  CompileOptions first_options;
-  first_options.parameter_overrides = *first;
-  CompileOptions second_options;
-  second_options.parameter_overrides = *second;
-  const ExecutionPlan first_plan = compile(graph, std::move(first_options));
-  const ExecutionPlan second_plan = compile(graph, std::move(second_options));
-  ASSERT_TRUE(first_plan.ok()) << first_plan.json();
-  ASSERT_TRUE(second_plan.ok()) << second_plan.json();
-  const auto* first_state = holoscan::detail::ExecutionPlanAccess::state(first_plan);
-  const auto* second_state = holoscan::detail::ExecutionPlanAccess::state(second_plan);
-  ASSERT_NE(first_state, nullptr);
-  ASSERT_NE(second_state, nullptr);
-  // Key assertion: plan_generation must differ when the raw source bytes differ.
-  EXPECT_NE(first_state->plan_generation, second_state->plan_generation);
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto* state = holoscan::detail::ExecutionPlanAccess::state(plan);
+  ASSERT_NE(state, nullptr);
+  ASSERT_EQ(state->parameter_generation_zero_fields.size(), 2U);
+  const auto configured =
+      std::ranges::find_if(state->parameter_generation_zero_fields,
+                           [](const auto& field) { return field.config_source.has_value(); });
+  ASSERT_NE(configured, state->parameter_generation_zero_fields.end());
+  EXPECT_EQ(configured->origin, holoscan::detail::ParameterGenerationZeroOrigin::kInputCaptured);
+  EXPECT_EQ(configured->config_source->source_path, "/input/primary");
+  EXPECT_EQ(configured->config_source->target_operator_path, "op");
+  const auto baseline =
+      std::ranges::find_if(state->parameter_generation_zero_fields,
+                           [](const auto& field) { return !field.config_source.has_value(); });
+  ASSERT_NE(baseline, state->parameter_generation_zero_fields.end());
+  EXPECT_EQ(baseline->origin, holoscan::detail::ParameterGenerationZeroOrigin::kTypedBaseline);
 }
 
-// REQ: PARAM-034
-// REQ: PARAM-037
-// Graph: graph["config-provenance-revalidation"]
-//   └─ op<PartialCodecOperator>("op")
-// A bit-flipped semantic digest must fail before any values are applied.
-TEST(ParameterConfigProvenance, CompilerRejectsStaleOverrideDigest) {
-  // Key setup: stale case manually XORs the first byte of the override set's semantic_digest.
-  Graph graph{"config-provenance-revalidation"};
-  auto op = graph.op<PartialCodecOperator>("op");
-  const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
-  auto stale = decode_overrides(source, {bind(op, "/overlay")});
-  ASSERT_TRUE(stale.has_value()) << stale.error().token();
-  auto& stale_state = const_cast<holoscan::detail::ParamOverrideSetState&>(
-      holoscan::detail::ParamOverrideSetAccess::state(*stale));
-  stale_state.semantic_digest.value.front() ^= std::byte{1U};
-  CompileOptions stale_options;
-  stale_options.parameter_overrides = *stale;
-  const ExecutionPlan stale_plan = compile(graph, std::move(stale_options));
-  // Key assertion: stale digest -> RECONSTRUCTION_UNAVAILABLE.
-  EXPECT_FALSE(stale_plan.ok());
-  EXPECT_TRUE(has_diagnostic(stale_plan, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE"));
+// REQ: PARAM-039
+// REQ: PARAM-048
+// REQ: COMPILE-073
+TEST(ParameterConfigProvenance, PreparedAndPlainValuesShareSemanticPlanIdentity) {
+  Graph prepared_graph{"equivalent-inputs"};
+  auto prepared_op = prepared_graph.op<ConfigProvenancePairOperator>("op");
+  const config::Document source = parse_json(R"({ "input" : { "primary" : 9 } })");
+  auto decoded = try_decode<ConfigProvenancePairParams>(
+      source,
+      path("/input"),
+      ConfigProvenancePairParams{.primary = 3U, .secondary = 7U},
+      config::DecodeOptions{});
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  prepared_op.set_params(std::move(*decoded));
+  const ExecutionPlan prepared_plan = compile(prepared_graph);
+  ASSERT_TRUE(prepared_plan.ok()) << prepared_plan.json();
+
+  Graph plain_graph{"equivalent-inputs"};
+  auto plain_op = plain_graph.op<ConfigProvenancePairOperator>("op");
+  plain_op.set_params(ConfigProvenancePairParams{.primary = 9U, .secondary = 7U});
+  const ExecutionPlan plain_plan = compile(plain_graph);
+  ASSERT_TRUE(plain_plan.ok()) << plain_plan.json();
+
+  const auto* prepared_state = holoscan::detail::ExecutionPlanAccess::state(prepared_plan);
+  const auto* plain_state = holoscan::detail::ExecutionPlanAccess::state(plain_plan);
+  ASSERT_NE(prepared_state, nullptr);
+  ASSERT_NE(plain_state, nullptr);
+  EXPECT_EQ(prepared_state->plan_generation, plain_state->plan_generation);
+
+  prepared_op.set_params(ConfigProvenancePairParams{.primary = 9U, .secondary = 7U});
+  const ExecutionPlan replaced_plan = compile(prepared_graph);
+  ASSERT_TRUE(replaced_plan.ok()) << replaced_plan.json();
+  const auto* replaced_state = holoscan::detail::ExecutionPlanAccess::state(replaced_plan);
+  ASSERT_NE(replaced_state, nullptr);
+  EXPECT_TRUE(
+      std::ranges::none_of(replaced_state->parameter_generation_zero_fields,
+                           [](const auto& field) { return field.config_source.has_value(); }));
 }
 
-// REQ: COMPILE-072
-// REQ: PARAM-037
-// Graph: graph["config-invalid-context-binding"]
-//   └─ op<PartialCodecOperator>("op")
-TEST(ParameterConfigProvenance, CompilerRejectsInvalidConfigContextBindingState) {
-  Graph graph{"config-invalid-context-binding"};
-  auto op = graph.op<PartialCodecOperator>("op");
-  const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
-  const auto captured = holoscan::detail::capture_parameter_rebind_graph(graph);
-  ASSERT_TRUE(captured.has_value()) << captured.error().message;
-  const ParamSchemaHash actual_context = captured->admission_context_digest;
-  ASSERT_NE(actual_context, ParamSchemaHash{});
-  const auto expect_rejected = [&](const char* case_name, const auto& mutate) {
-    SCOPED_TRACE(case_name);
-    auto decoded = decode_overrides(source, {bind(op, "/overlay")});
-    ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
-    auto& state = const_cast<holoscan::detail::ParamOverrideSetState&>(
-        holoscan::detail::ParamOverrideSetAccess::state(*decoded));
-    mutate(state);
-    state.semantic_digest =
-        holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded);
-    ASSERT_EQ(state.semantic_digest,
-              holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded));
-
-    CompileOptions options;
-    options.parameter_overrides = *decoded;
-    const ExecutionPlan plan = compile(graph, std::move(options));
-    EXPECT_FALSE(plan.ok());
-    EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE"));
+// REQ: PARAM-039
+// REQ: COMPILE-073
+TEST(ParameterConfigProvenance, PreparedScalarValuesChangeSemanticPlanIdentity) {
+  const auto compile_value = [](std::string_view json) {
+    Graph graph{"different-inputs"};
+    auto op = graph.op<ConfigProvenancePairOperator>("op");
+    const config::Document source = parse_json(json);
+    auto decoded = try_decode<ConfigProvenancePairParams>(
+        source,
+        path("/input"),
+        ConfigProvenancePairParams{.primary = 3U, .secondary = 7U},
+        config::DecodeOptions{});
+    EXPECT_TRUE(decoded.has_value());
+    if (!decoded) {
+      return PlanGenerationId{};
+    }
+    op.set_params(std::move(*decoded));
+    const ExecutionPlan plan = compile(graph);
+    EXPECT_TRUE(plan.ok()) << plan.json();
+    const auto* state = holoscan::detail::ExecutionPlanAccess::state(plan);
+    EXPECT_NE(state, nullptr);
+    return state == nullptr ? PlanGenerationId{} : state->plan_generation;
   };
 
-  expect_rejected("unknown binding", [](auto& state) {
-    const auto unknown = static_cast<ParamOverrideContextBinding>(255U);
-    state.context_binding = unknown;
-    state.provenance.context_binding = unknown;
-  });
-  expect_rejected("state and provenance disagree", [](auto& state) {
-    state.provenance.context_binding = ParamOverrideContextBinding::kExact;
-  });
-  expect_rejected("compile-context digest is nonempty", [](auto& state) {
-    state.admission_context_digest.value.front() = std::byte{1U};
-    state.provenance.admission_context_digest = state.admission_context_digest;
-  });
-  expect_rejected("exact-context digest is empty", [](auto& state) {
-    state.context_binding = ParamOverrideContextBinding::kExact;
-    state.provenance.context_binding = ParamOverrideContextBinding::kExact;
-  });
-  expect_rejected("exact-context retains configuration provenance", [actual_context](auto& state) {
-    ASSERT_FALSE(state.provenance.config_fields.empty());
-    state.context_binding = ParamOverrideContextBinding::kExact;
-    state.provenance.context_binding = ParamOverrideContextBinding::kExact;
-    state.admission_context_digest = actual_context;
-    state.provenance.admission_context_digest = actual_context;
-  });
+  EXPECT_NE(compile_value(R"({"input":{"primary":9}})"),
+            compile_value(R"({"input":{"primary":10}})"));
 }
 
-// REQ: COMPILE-072
-// REQ: PARAM-037
-// Graph: graph["config-unprovenanced-contribution"]
-//   └─ op<ConfigProvenancePairOperator>("op")
-TEST(ParameterConfigProvenance, CompilerRejectsUnprovenancedContributionInCompileContextOverride) {
-  Graph graph{"config-unprovenanced-contribution"};
+// REQ: PARAM-039
+TEST(ParameterConfigProvenance, EmbeddedPreparedParamsRetainFinalOperatorPath) {
+  Graph parent{"embedded-prepared-params"};
+  (void)parent.embed<PreparedParamsChildGraph>("child");
+
+  const ExecutionPlan plan = compile(parent);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto* state = holoscan::detail::ExecutionPlanAccess::state(plan);
+  ASSERT_NE(state, nullptr);
+  const auto configured =
+      std::ranges::find_if(state->parameter_generation_zero_fields,
+                           [](const auto& field) { return field.config_source.has_value(); });
+  ASSERT_NE(configured, state->parameter_generation_zero_fields.end());
+  EXPECT_EQ(configured->config_source->target_operator_path, "child/op");
+}
+
+// REQ: PARAM-053
+// REQ: PARAM-048
+// REQ: COMPILE-073
+TEST(ParameterConfigProvenance, PreparedEvidenceRejectsZeroCurrentRawSourceVersion) {
+  Graph graph{"prepared-zero-current-raw-version"};
   auto op = graph.op<ConfigProvenancePairOperator>("op");
-  const config::Document source = parse_json(R"({"overlay":{"primary":3}})");
-  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
+  const config::Document source = parse_json(R"({"input":{"primary":9}})");
+  auto decoded = try_decode<ConfigProvenancePairParams>(
+      source,
+      path("/input"),
+      ConfigProvenancePairParams{.primary = 3U, .secondary = 7U},
+      config::DecodeOptions{});
   ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  const auto& source_evidence = holoscan::detail::PreparedParamsAccess::evidence(*decoded);
+  ASSERT_NE(source_evidence, nullptr);
+  auto evidence = std::make_shared<holoscan::detail::ParameterInputEvidenceState>(*source_evidence);
+  ASSERT_EQ(evidence->config_fields.size(), 1U);
+  ASSERT_TRUE(evidence->config_fields.front().document.has_raw_source);
+  evidence->config_fields.front().document.raw_algorithm_version = 0U;
+  auto forged = holoscan::detail::PreparedParamsAccess::make(
+      std::move(*decoded).take(),
+      std::shared_ptr<const holoscan::detail::ParameterInputEvidenceState>{std::move(evidence)});
+  op.set_params(std::move(forged));
 
-  auto& state = const_cast<holoscan::detail::ParamOverrideSetState&>(
-      holoscan::detail::ParamOverrideSetAccess::state(*decoded));
-  ASSERT_EQ(state.operators.size(), 1U);
-  ASSERT_EQ(state.provenance.config_fields.size(), 1U);
-  auto& override_record = state.operators.front();
-  ASSERT_EQ(override_record.contributions.size(), 1U);
-  ASSERT_EQ(override_record.contributions.front().config_provenance_index,
-            std::optional<std::uint32_t>{0U});
-  EXPECT_EQ(override_record.contributions.front().field,
-            state.provenance.config_fields.front().target_field_id);
-  EXPECT_EQ(override_record.contributions.front().full_id,
-            state.provenance.config_fields.front().target_full_id);
-  const auto* resolved =
-      static_cast<const ConfigProvenancePairParams*>(override_record.resolved_value.get());
-  ASSERT_NE(resolved, nullptr);
-  ConfigProvenancePairParams malformed = *resolved;
-  malformed.secondary = 99U;
-  override_record.resolved_value = std::make_shared<const ConfigProvenancePairParams>(malformed);
+  const ExecutionPlan plan = compile(graph);
 
-  const ParamSchemaDescriptor* const schema = param_schema_descriptor<ConfigProvenancePairParams>();
-  ASSERT_NE(schema, nullptr);
-  const auto secondary = std::ranges::find_if(
-      schema->fields,
-      [](const ParamFieldDescriptor& field) { return field.canonical_name == "secondary"; });
-  ASSERT_NE(secondary, schema->fields.end());
-  const auto resolved_digest = holoscan::detail::parameter_value_digest(
-      param_type_descriptor<ConfigProvenancePairParams>(), schema, &malformed, false);
-  ASSERT_TRUE(resolved_digest.available());
-  override_record.resolved_value_digest = resolved_digest.digest;
-  override_record.contributions.push_back(holoscan::detail::ParamOverrideFieldOriginRecord{
-      .field = secondary->id,
-      .full_id = secondary->full_id,
-      .origin = holoscan::detail::ParamOverrideContributionOrigin::kCaptured,
-  });
-  state.semantic_digest =
-      holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded);
-  ASSERT_EQ(state.semantic_digest,
-            holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded));
-
-  CompileOptions options;
-  options.parameter_overrides = *decoded;
-  const ExecutionPlan plan = compile(graph, std::move(options));
   ASSERT_FALSE(plan.ok());
-  EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH")) << plan.json();
-  const auto* plan_state = holoscan::detail::ExecutionPlanAccess::state(plan);
-  ASSERT_NE(plan_state, nullptr);
-  ASSERT_EQ(plan_state->executable_factories.operators.size(), 1U);
-  const auto* retained = static_cast<const ConfigProvenancePairParams*>(
-      plan_state->executable_factories.operators.front().factory->initial_parameter_value());
-  ASSERT_NE(retained, nullptr);
-  EXPECT_EQ(retained->primary, 1U);
-  EXPECT_EQ(retained->secondary, 2U);
+  EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH"));
+  const auto* state = holoscan::detail::ExecutionPlanAccess::state(plan);
+  ASSERT_NE(state, nullptr);
+  EXPECT_TRUE(std::ranges::none_of(state->parameter_generation_zero_fields, [](const auto& field) {
+    return field.config_source.has_value();
+  }));
 }
 
-// REQ: COMPILE-072
-// REQ: PARAM-037
-// Graph: graph["config-rebind-evidence"]
-//   └─ op<PartialCodecOperator>("op")
-TEST(ParameterConfigProvenance, CompilerRejectsRebindEvidenceInCompileContextOverride) {
-  Graph graph{"config-rebind-evidence"};
+// REQ: PARAM-053
+// REQ: PARAM-048
+// REQ: COMPILE-073
+TEST(ParameterConfigProvenance, PreparedEvidenceRejectsZeroBaseRawSourceVersion) {
+  Graph graph{"prepared-zero-base-raw-version"};
   auto op = graph.op<PartialCodecOperator>("op");
-  const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
-  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
+  const config::Document source = parse_json(R"({"overlay":{"managed":"before"}})");
+  auto derived = source.try_replace("/overlay/managed", std::string{"configured"});
+  ASSERT_TRUE(derived.has_value());
+  ASSERT_FALSE(derived->digest().source.has_value());
+  ASSERT_TRUE(derived->digest().base_source.has_value());
+  auto decoded = try_decode<PartialCodecParams>(*derived, "/overlay");
   ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  const auto& source_evidence = holoscan::detail::PreparedParamsAccess::evidence(*decoded);
+  ASSERT_NE(source_evidence, nullptr);
+  auto evidence = std::make_shared<holoscan::detail::ParameterInputEvidenceState>(*source_evidence);
+  ASSERT_EQ(evidence->config_fields.size(), 1U);
+  ASSERT_TRUE(evidence->config_fields.front().document.has_base_raw_source);
+  evidence->config_fields.front().document.base_raw_algorithm_version = 0U;
+  auto forged = holoscan::detail::PreparedParamsAccess::make(
+      std::move(*decoded).take(),
+      std::shared_ptr<const holoscan::detail::ParameterInputEvidenceState>{std::move(evidence)});
+  op.set_params(std::move(forged));
 
-  auto& state = const_cast<holoscan::detail::ParamOverrideSetState&>(
-      holoscan::detail::ParamOverrideSetAccess::state(*decoded));
-  state.provenance.migrations.push_back(ParamRebindMigrationProvenance{
-      .from_schema_id = "source",
-      .from_schema_version = 1U,
-      .to_schema_id = "target",
-      .to_schema_version = 2U,
-  });
-  state.semantic_digest =
-      holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded);
-  ASSERT_EQ(state.semantic_digest,
-            holoscan::detail::ParamOverrideSetAccess::recompute_semantic_digest(*decoded));
+  const ExecutionPlan plan = compile(graph);
 
-  CompileOptions options;
-  options.parameter_overrides = *decoded;
-  const ExecutionPlan plan = compile(graph, std::move(options));
-  EXPECT_FALSE(plan.ok());
-  EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE"));
+  ASSERT_FALSE(plan.ok());
+  EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH"));
+  const auto* state = holoscan::detail::ExecutionPlanAccess::state(plan);
+  ASSERT_NE(state, nullptr);
+  EXPECT_TRUE(std::ranges::none_of(state->parameter_generation_zero_fields, [](const auto& field) {
+    return field.config_source.has_value();
+  }));
 }
 
-// REQ: COMPILE-072
-// REQ: PARAM-037
-// Graph: graph["config-actual-profile"]
+// REQ: PARAM-053
+// REQ: PARAM-048
+// REQ: COMPILE-073
+TEST(ParameterConfigProvenance, TransactionEvidenceRejectsZeroCurrentRawSourceVersion) {
+  Graph donor{"transaction-zero-current-raw-donor"};
+  auto donor_op = donor.op<ConfigProvenancePairOperator>("op");
+  const config::Document source = parse_json(R"({"input":{"primary":19}})");
+  auto staged = set_params(donor, source, {bind(donor_op, "/input")});
+  ASSERT_TRUE(staged.has_value()) << staged.error().token();
+  auto transaction = copy_parameter_transaction(donor);
+  ASSERT_NE(transaction, nullptr);
+  ASSERT_EQ(transaction->provenance.config_fields.size(), 1U);
+  ASSERT_TRUE(transaction->provenance.config_fields.front().document.has_raw_source);
+  transaction->provenance.config_fields.front().document.raw_algorithm_version = 0U;
+
+  Graph graph{"transaction-zero-current-raw-target"};
+  auto op = graph.op<ConfigProvenancePairOperator>("op");
+  op.set_params(ConfigProvenancePairParams{.primary = 3U, .secondary = 7U});
+  auto attached = holoscan::detail::ParameterInputAccess::attach_transaction(
+      graph,
+      std::shared_ptr<const holoscan::detail::ParameterTransactionState>{std::move(transaction)});
+  ASSERT_TRUE(attached.has_value()) << attached.error().message;
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_FALSE(plan.ok());
+  EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH"));
+  const ConfigProvenancePairParams* const resolved = compiled_pair_params(plan);
+  ASSERT_NE(resolved, nullptr);
+  EXPECT_EQ(resolved->primary, 3U);
+  EXPECT_EQ(resolved->secondary, 7U);
+}
+
+// REQ: PARAM-053
+// REQ: PARAM-048
+// REQ: COMPILE-073
+TEST(ParameterConfigProvenance, TransactionEvidenceRejectsZeroBaseRawSourceVersion) {
+  Graph donor{"transaction-zero-base-raw-donor"};
+  auto donor_op = donor.op<ConfigProvenancePairOperator>("op");
+  const config::Document source = parse_json(R"({"input":{"primary":19}})");
+  auto derived = source.try_replace("/input/primary", std::uint32_t{23U});
+  ASSERT_TRUE(derived.has_value());
+  ASSERT_FALSE(derived->digest().source.has_value());
+  ASSERT_TRUE(derived->digest().base_source.has_value());
+  auto staged = set_params(donor, *derived, {bind(donor_op, "/input")});
+  ASSERT_TRUE(staged.has_value()) << staged.error().token();
+  auto transaction = copy_parameter_transaction(donor);
+  ASSERT_NE(transaction, nullptr);
+  ASSERT_EQ(transaction->provenance.config_fields.size(), 1U);
+  ASSERT_TRUE(transaction->provenance.config_fields.front().document.has_base_raw_source);
+  transaction->provenance.config_fields.front().document.base_raw_algorithm_version = 0U;
+
+  Graph graph{"transaction-zero-base-raw-target"};
+  auto op = graph.op<ConfigProvenancePairOperator>("op");
+  op.set_params(ConfigProvenancePairParams{.primary = 3U, .secondary = 7U});
+  auto attached = holoscan::detail::ParameterInputAccess::attach_transaction(
+      graph,
+      std::shared_ptr<const holoscan::detail::ParameterTransactionState>{std::move(transaction)});
+  ASSERT_TRUE(attached.has_value()) << attached.error().message;
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_FALSE(plan.ok());
+  EXPECT_TRUE(has_diagnostic(plan, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH"));
+  const ConfigProvenancePairParams* const resolved = compiled_pair_params(plan);
+  ASSERT_NE(resolved, nullptr);
+  EXPECT_EQ(resolved->primary, 3U);
+  EXPECT_EQ(resolved->secondary, 7U);
+}
+
+// REQ: PARAM-053
+// Graph: graph["derived-config-provenance"]
 //   └─ op<PartialCodecOperator>("op")
-TEST(ParameterConfigProvenance, ConfigOverrideUsesTheActualValidCompileProfile) {
+TEST(ParameterConfigProvenance, DerivedConfigRetainsBaseButNotExactSourceIdentity) {
+  Graph graph{"derived-config-provenance"};
+  auto op = graph.op<PartialCodecOperator>("op");
+  const config::Document source = parse_json(R"({"overlay":{"managed":"before"}})");
+  const auto source_digest = source.digest();
+  ASSERT_TRUE(source_digest.source.has_value());
+
+  auto derived = source.try_replace("/overlay/managed", std::string{"configured"});
+  ASSERT_TRUE(derived);
+  ASSERT_FALSE(derived->digest().source.has_value());
+  ASSERT_EQ(derived->digest().base_source, source_digest.source);
+
+  auto decoded = try_decode<PartialCodecParams>(*derived, "/overlay");
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  op.set_params(std::move(*decoded));
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto* state = holoscan::detail::ExecutionPlanAccess::state(plan);
+  ASSERT_NE(state, nullptr);
+  const auto configured =
+      std::ranges::find_if(state->parameter_generation_zero_fields,
+                           [](const auto& field) { return field.config_source.has_value(); });
+  ASSERT_NE(configured, state->parameter_generation_zero_fields.end());
+  const auto& document = configured->config_source->document;
+  EXPECT_FALSE(document.has_raw_source);
+  EXPECT_TRUE(document.has_base_raw_source);
+  EXPECT_EQ(document.base_raw_algorithm_version, source_digest.source->algorithm_version);
+  EXPECT_EQ(document.base_raw_digest, source_digest.source->sha256);
+  EXPECT_EQ(document.base_raw_byte_size, source_digest.source->byte_size);
+}
+
+// REQ: COMPILE-073
+TEST(ParameterConfigProvenance, ConfigInputUsesTheActualValidCompileProfile) {
   Graph graph{"config-actual-profile"};
   auto op = graph.op<PartialCodecOperator>("op");
   const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
-  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
-  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  auto attached = set_params(graph, source, {bind(op, "/overlay")});
+  ASSERT_TRUE(attached.has_value()) << attached.error().token();
 
   CompileOptions standard;
-  standard.parameter_overrides = *decoded;
   const ExecutionPlan standard_plan = compile(graph, std::move(standard));
   ASSERT_TRUE(standard_plan.ok()) << standard_plan.json();
 
   CompileOptions research;
   research.profile = Profile::kResearch;
-  research.parameter_overrides = *decoded;
   const ExecutionPlan research_plan = compile(graph, std::move(research));
   EXPECT_TRUE(research_plan.ok()) << research_plan.json();
 }
 
 // REQ: COMPILE-072
 // REQ: PARAM-037
+// REQ: PARAM-039
 // Graph: graph["config-actual-deployment"]
 //   └─ partition["worker"]
 //      └─ op<PartialCodecOperator>("op")
-TEST(ParameterConfigProvenance, ConfigOverrideUsesTheActualDeployment) {
+TEST(ParameterConfigProvenance, ConfigInputUsesTheActualDeployment) {
   Graph graph{"config-actual-deployment"};
   auto op = graph.op<PartialCodecOperator>("op");
   graph.partition("worker").add(op);
   const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
-  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
-  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  auto attached = set_params(graph, source, {bind(op, "/overlay")});
+  ASSERT_TRUE(attached.has_value()) << attached.error().token();
 
   CompileOptions placed;
   placed.deployment.bind_thread_placement("worker", ThreadPlacement{});
-  placed.parameter_overrides = *decoded;
   const ExecutionPlan placed_plan = compile(graph, std::move(placed));
   EXPECT_TRUE(placed_plan.ok()) << placed_plan.json();
-  EXPECT_FALSE(has_diagnostic(placed_plan, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
 }
 
 // REQ: COMPILE-072
 // REQ: PARAM-037
+// REQ: PARAM-039
 // Graph: graph["config-actual-profile-rejection"]
 //   └─ op<PartialCodecOperator>("op")
-TEST(ParameterConfigProvenance, ActualProfileStillRejectsInvalidConfigOverride) {
+TEST(ParameterConfigProvenance, ActualProfileStillRejectsInvalidConfigInput) {
   Graph graph{"config-actual-profile-rejection"};
   auto op = graph.op<PartialCodecOperator>("op");
   const config::Document source = parse_json(R"({"overlay":{"managed":"configured"}})");
-  auto decoded = decode_overrides(source, {bind(op, "/overlay")});
-  ASSERT_TRUE(decoded.has_value()) << decoded.error().token();
+  auto attached = set_params(graph, source, {bind(op, "/overlay")});
+  ASSERT_TRUE(attached.has_value()) << attached.error().token();
 
   CompileOptions regulated;
   regulated.profile = Profile::kRegulated;
-  regulated.parameter_overrides = *decoded;
   const ExecutionPlan regulated_plan = compile(graph, std::move(regulated));
   EXPECT_FALSE(regulated_plan.ok());
   EXPECT_TRUE(has_diagnostic(regulated_plan, "PARAMETER_SCHEMA_INCOMPLETE"));
-  EXPECT_FALSE(has_diagnostic(regulated_plan, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
 }
 
+// REQ: PARAM-034
 // REQ: PARAM-037
+// REQ: PARAM-039
 // Graph: graph["config-field-failures"]
 //   └─ op<PartialCodecOperator>("op")
 // Two failure sub-cases: unknown field in load-time decode, and unauthorized field
@@ -540,7 +640,7 @@ TEST(ParameterConfigProvenance, UnknownAndUnauthorizedFieldsFailClosed) {
   Graph graph{"config-field-failures"};
   auto op = graph.op<PartialCodecOperator>("op");
   const config::Document unknown = parse_json(R"({"overlay":{"unknown":1}})");
-  auto unknown_result = decode_overrides(unknown, {bind(op, "/overlay")});
+  auto unknown_result = set_params(graph, unknown, {bind(op, "/overlay")});
   ASSERT_FALSE(unknown_result.has_value());
   EXPECT_EQ(unknown_result.error().token(), "PARAM_CONFIG_FIELD_UNKNOWN");
 

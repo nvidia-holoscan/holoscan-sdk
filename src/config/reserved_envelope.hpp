@@ -51,9 +51,9 @@ template <typename Integer>
     return tl::make_unexpected(failure("invalid scalar escape"));
   }
   if constexpr (std::is_same_v<Integer, std::int64_t>) {
-    return config::ConfigValue::signed_integer(value);
+    return config::ConfigValue::try_signed_integer(value);
   } else {
-    return config::ConfigValue::unsigned_integer(value);
+    return config::ConfigValue::try_unsigned_integer(value);
   }
 }
 
@@ -66,7 +66,7 @@ template <typename Integer>
       !std::isfinite(value) || !canonical_f64(text, value)) {
     return tl::make_unexpected(failure("invalid scalar escape"));
   }
-  return config::ConfigValue::floating(value);
+  return config::ConfigValue::try_floating(value);
 }
 
 [[nodiscard]] inline config::ConfigResult<config::ConfigValue> decode_scalar(
@@ -74,13 +74,13 @@ template <typename Integer>
   if (value.kind() != config::ConfigValueKind::kObject || value.size() != 2U) {
     return tl::make_unexpected(failure("malformed scalar escape"));
   }
-  auto kind = value.member("kind");
-  auto text = value.member("value");
+  auto kind = value.try_member("kind");
+  auto text = value.try_member("value");
   if (!kind || !text) {
     return tl::make_unexpected(failure("malformed scalar escape"));
   }
-  auto kind_text = kind->as_string();
-  auto value_text = text->as_string();
+  auto kind_text = kind->try_as_string();
+  auto value_text = text->try_as_string();
   if (!kind_text || !value_text) {
     return tl::make_unexpected(failure("scalar escape fields must be strings"));
   }
@@ -106,16 +106,16 @@ template <typename Integer>
   keys.reserve(value.size());
   values.reserve(value.size());
   for (std::size_t index = 0; index < value.size(); ++index) {
-    auto entry = value.element(index);
+    auto entry = value.try_element(index);
     if (!entry || entry->kind() != config::ConfigValueKind::kArray || entry->size() != 2U) {
       return tl::make_unexpected(failure("malformed literal-object entry"));
     }
-    auto key = entry->element(0);
-    auto item = entry->element(1);
+    auto key = entry->try_element(0);
+    auto item = entry->try_element(1);
     if (!key || !item) {
       return tl::make_unexpected(failure("malformed literal-object entry"));
     }
-    auto decoded_key = key->as_string();
+    auto decoded_key = key->try_as_string();
     if (!decoded_key) {
       return tl::make_unexpected(failure("literal-object key must be string"));
     }
@@ -127,7 +127,7 @@ template <typename Integer>
   for (std::size_t index = 0; index < keys.size(); ++index) {
     entries.push_back({keys[index], values[index]});
   }
-  return config::ConfigValue::object(entries, limits);
+  return config::ConfigValue::try_object(entries, limits);
 }
 
 }  // namespace reserved_envelope
@@ -138,8 +138,8 @@ template <typename Integer>
   if (view.size() != 1U) {
     return object;
   }
-  auto key = view.key(0);
-  auto value = view.element(0);
+  auto key = view.try_key(0);
+  auto value = view.try_element(0);
   if (!key || !value) {
     return object;
   }

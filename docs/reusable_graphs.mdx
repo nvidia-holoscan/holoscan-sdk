@@ -205,21 +205,29 @@ Two things to notice:
 - **The wiring is compile-checked.** `fusion->camera` is the child's typed
   `Input<std::uint32_t>`, so a payload or direction mismatch is a build error,
   not a runtime surprise.
-- **Extra arguments forward to the child's constructor**, under the same
-  ownership rules as `op<Op>()`: pass plainly *owning* configuration values
-  that remain valid inside the independently owned child. A `GraphHandle` is
-  explicitly rejected as a constructor capture — a child must not borrow
-  another instance's identity.
+- **Extra arguments forward once to the child's constructor.** Unlike an
+  operator factory, `embed<G>()` does not replay the child constructor, so it
+  can accept move-only ownership such as `std::unique_ptr<T>`. String views and
+  literals still normalize to owned strings. The same shallow checks reject
+  obvious top-level borrows and Graph authoring handles. Nested borrows cannot
+  be inspected: their referents must outlive every child or reconstructed
+  operator that uses them. A child remains independently owned by its parent
+  after construction.
 
 <Warning>
   **Embedding is not a cheap reference.** Each `embed<G>()` fully constructs
   its own child object, runs its `compose()`, and flattens the result into the
-  parent — there is no shared prototype and two instances never alias each
-  other's state. That per-instance isolation is what makes instances
-  deterministic and independent, but it means a large reusable body pays its
-  full construction and flattening cost at every instance and every nesting
-  level. Reach for `embed` because you want reuse and isolation, not to avoid
-  work.
+  parent. Each instance has its own Graph object and operator prototypes, but
+  captured application state follows ordinary C++ copy semantics. Passing the
+  same `std::shared_ptr<T>` to two children deliberately shares its pointee;
+  separate Graph ownership does not imply independent captured state. The
+  [capture lifetime rules](/holoscan/sdk-user-guide/getting-started/composing-a-graph)
+  also apply when children pass shared state into operator factories.
+
+  A large reusable body pays its full construction and flattening cost at
+  every instance and every nesting level. Reach for `embed` to reuse graph
+  structure with distinct child objects, and choose constructor captures to
+  express the intended application-state ownership.
 </Warning>
 
 ### Transactional publication
@@ -292,6 +300,103 @@ bind the inner instance's exported port to your own public port with the same
 `export_input()`/`export_output()` verbs. Unexported nested ports fail
 closed, exactly like unexported internal operator ports.
 
+## Assigning an instance to one thread partition
+
+Use the embedded handle directly to give an instance one serial execution owner:
+
+```cpp
+graph.partition("fusion-owner").add(fusion);
+graph.auto_partition_remaining();
+
+const auto plan = holoscan::compile(graph);
+if (plan.ok()) {
+  const auto owner = plan.partitions().lookup_named("fusion-owner");
+  // owner->graph_members(): selected instance roots, in the plan Graph's ID space.
+  // owner->operator_paths(): all resolved descendant Operators.
+}
+```
+
+Selecting `fusion` includes every Operator in its nested graph tree. Multiple
+independent sources share that owner and may progress independently. Chain
+`.add(other_instance)` or `.add(direct_operator)` to place additional work on
+the same owner. Use the accepted partition name with
+`CompileOptions::deployment.bind_thread_placement(...)` for CPU placement.
+
+The handle must name a live direct child of the partition's Graph. The selected
+subtree must contain Operators and must have no internal partition declarations,
+including empty declarations. Duplicate assignment, foreign or stale handles,
+and conflicts with `include_all()` reject atomically. A failed call preserves
+the previous membership and Graph identity; separate fluent calls are separate
+transactions.
+
+Without `auto_partition_remaining()`, named partitions must cover all Operators.
+The compiler preserves each selected Operator set exactly and still validates
+process, domain, readiness and topology constraints. Partitions containing only
+direct Operator handles retain their existing single-root restriction. Interface
+ports and existing external-topic attachment rules are preserved.
+
+The device-domain check applies to the whole selected partition, including any
+sibling instances and direct Operators added to it. Conflicting Tensor device
+bindings or a conflicting named Green Context placement reject with
+`PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE` in both complete-manual and
+automatic-remainder mode. Separate partitions can use different devices.
+`include_all()` retains its separate whole-application contract.
+
+`graph_members()` retains the explicitly selected roots; `members()` and
+`operator_paths()` show resolved executable membership. Match the selected IDs
+to `plan.graph().graphs()` for canonical instance paths. Retained partition views
+remain valid after the authoring Graph and original plan are destroyed.
+
+### Locating a rejected or unassigned instance
+
+An internal declaration rejection starts with
+`GRAPH_PARTITION_INTERNAL_DECLARATION` and includes the offending owner path and
+partition name. Path segments and names are percent-encoded; long fields end in
+`...`. The first declaration is selected by owner path and then partition name,
+independently of authoring order.
+
+To inspect complete names, retain a `GraphView` and join each partition's
+`graph` ID to `view.graphs()`. This helper prints paths as quoted segments, so a
+literal `/` in a name remains unambiguous:
+
+```cpp
+#include <algorithm>
+#include <iomanip>
+#include <ostream>
+#include <holoscan/core/graph.hpp>
+
+void print_partition_declarations(const holoscan::GraphView& view, std::ostream& out) {
+  for (const auto& declaration : view.partitions()) {
+    const auto owner =
+        std::ranges::find(view.graphs(), declaration.graph, &holoscan::GraphRecord::id);
+    if (owner == view.graphs().end())
+      continue;
+    out << "owner=[";
+    const auto& path = owner->path;
+    if (path) {
+      for (const auto& segment : path->segments())
+        out << std::quoted(segment) << ' ';
+    }
+    out << "] partition=" << std::quoted(declaration.name) << '\n';
+  }
+}
+```
+
+Call this helper with `graph.view()` **outside `compose()`**, after embedding
+the child and before attempting the selection, or after catching a failed
+selection made outside `compose()`. Do not observe a Graph during its active
+`compose()`. If selection failed inside `compose()`, composition is terminally
+failed; reproduce the embedding in a separate diagnostic Graph and inspect it
+before selecting the instance. An empty owner array denotes the root Graph.
+
+A complete manual cover that omits an embedded descendant reports
+`PARTITION_EMBEDDED_INSTANCE_UNASSIGNED`. Its `Diagnostic::source.graph` and
+`source.vertex` identify the first uncovered descendant in the canonical
+`plan.graph()` inventory. Assign its instance to a partition, or call
+`auto_partition_remaining()` to cover remaining Operators automatically. The
+older `PARTITION_MANUAL_EMBEDDED_GRAPH_UNSUPPORTED` token is historical;
+embedded instance selection is supported.
+
 ## Parent-applied policy across the boundary
 
 A parent can apply topology-level policy to an embedded child *as a whole*
@@ -302,6 +407,15 @@ flattened operator** of the embedded instance to a parent-authored region:
 region("critical").add(fusion)
     .constrain(holoscan::RegionConstraint::bounded_memory());
 ```
+
+<Warning>
+  **CUDA Graph regions are an exception.** A region created with
+  `add(GraphHandle)` cannot use `RegionConstraint::cuda_graph()`. CUDA Graph
+  regions currently must be declared in the root graph and may contain only
+  directly listed operators owned by that root graph. Regions declared inside
+  an embedded graph are also rejected. Capturing operators across reusable
+  graph boundaries is not supported in this release.
+</Warning>
 
 Lifecycle ordering across the boundary uses the same
 `lifecycle().before(a, b, holoscan::LifecycleStage::...)` vocabulary as
@@ -329,8 +443,9 @@ for the lifecycle stages themselves.
 - Instances have structured identities: `handle.path()` is a parent-relative
   `GraphInstancePath`; root-qualified paths come from the `GraphView`.
 - Nesting works level by level (re-export to widen visibility), and parents
-  apply regions and lifecycle ordering across the boundary through the
-  handle.
+  apply compatible regions and lifecycle ordering across the boundary through
+  the handle. CUDA Graph regions are currently restricted to directly listed
+  operators in the root graph.
 
 Next: connect your graph to the world outside the process with
 [external topics](/holoscan/sdk-user-guide/composing-applications/external-topics).

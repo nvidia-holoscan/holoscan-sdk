@@ -12,3 +12,4 @@ table Frame {
 }
 
 root_type Frame;
+file_identifier "3PFR";

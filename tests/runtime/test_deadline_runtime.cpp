@@ -442,6 +442,7 @@ TEST(DeadlineRuntimeTest, LateSafeDefaultAndEmitWitnessInvokeExactlyOnceWithFroz
 // REQ: RUNTIME-007
 // REQ: RUNTIME-028
 // REQ: RUNTIME-035
+// REQ: RUNTIME-054
 TEST(DeadlineRuntimeTest, LateFailRunConsumesCandidateWithoutInvokingCompute) {
   // Key setup: kFailRun action; clock advances to 6 ns which exceeds the 5 ns deadline.
   DeadlineRuntimeState::reset(6);

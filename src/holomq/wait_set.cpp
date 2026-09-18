@@ -98,7 +98,11 @@ auto WaitSet::wait_impl(const WaitStrategy& strategy) noexcept -> expected<WaitR
 
 auto WaitSet::wait_impl_assuming_no_ready(const WaitStrategy& strategy) noexcept
     -> expected<WaitResult, Error> {
-  auto waited = backend_->wait(strategy, false);
+  // Retained for ABI (public/ci/abi/holomq.exports.baseline.txt) with no callers left. Skipping the
+  // pre-block readiness scan is not sound for any caller: readiness can appear between a drain and
+  // the block. It now behaves exactly like the checked wait; remove the entry point on a branch
+  // that can absorb the export change.
+  auto waited = backend_->wait(strategy, true);
   if (!waited.has_value()) {
     return make_unexpected(Error{waited.error()});
   }

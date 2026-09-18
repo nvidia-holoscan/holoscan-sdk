@@ -192,10 +192,14 @@ Channel receive/materialization.
 
 ## Example
 
-From the repository root after building benchmarks:
+From the SDK source root after building benchmarks.
+`run launch` starts in the selected target's
+build directory, so the commands below use paths relative to that directory.
+Set `HOLOSCAN_BUILD_ARCH` consistently with the build if you selected a target
+explicitly.
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -205,7 +209,7 @@ From the repository root after building benchmarks:
 Run the same role loops with one shared runtime and concurrent threads:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -217,7 +221,7 @@ Run the same role loops with one shared runtime and concurrent threads:
 Run the Tensor sidecar path as a serialized 1:1 baseline:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -229,7 +233,7 @@ Run the Tensor sidecar path as a serialized 1:1 baseline:
 Run a low-queueing, paced Tensor latency row:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -243,7 +247,7 @@ Run a low-queueing, paced Tensor latency row:
 Tensor BufferHandle mode with default pinned-host storage:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -254,7 +258,7 @@ Tensor BufferHandle mode with default pinned-host storage:
 Tensor BufferHandle mode with pageable-host storage:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -265,7 +269,7 @@ Tensor BufferHandle mode with pageable-host storage:
 Tensor device BufferHandle mode:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -276,7 +280,7 @@ Tensor device BufferHandle mode:
 Tensor device mode with asynchronous S0/S1 work:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -288,7 +292,7 @@ Tensor device mode with asynchronous S0/S1 work:
 Image schema plus Tensor BufferHandle mode with default pinned-host storage:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -299,7 +303,7 @@ Image schema plus Tensor BufferHandle mode with default pinned-host storage:
 Image schema plus device Tensor BufferHandle mode:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -310,7 +314,7 @@ Image schema plus device Tensor BufferHandle mode:
 Paced one-way latency mode with minimal queue residency:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -340,14 +344,14 @@ transport changes.
 The host-prep helper is metadata-only by default:
 
 ```bash
-./public/benchmark/channel_interprocess/prepare_benchmark_host.sh
+./benchmark/channel_interprocess/prepare_benchmark_host.sh
 ```
 
 It records the branch, commit, dirty status, CPU topology, CUDA tooling, GPU
 state, and current CPU governors under:
 
 ```text
-public/build/channel-interprocess-host-prep-<timestamp>/
+build/channel-interprocess-host-prep-<timestamp>/
 ```
 
 Keep this directory with benchmark results so later comparisons can explain
@@ -360,7 +364,7 @@ CPU-frequency policies to the performance governor and disables idle states
 whose reported exit latency is at least 1 us:
 
 ```bash
-sudo ./public/benchmark/configure_cpu_performance.sh \
+sudo ./benchmark/configure_cpu_performance.sh \
   apply /tmp/holoscan-cpu-performance.state
 ```
 
@@ -377,7 +381,7 @@ enough state for a publishable restoration workflow:
 
 ```bash
 APPLY=1 SET_NVP_MODEL=1 NVP_MODEL=0 \
-  ./public/benchmark/channel_interprocess/prepare_benchmark_host.sh
+  ./benchmark/channel_interprocess/prepare_benchmark_host.sh
 ```
 
 Use the same `nvpmodel` mode across all compared runs.
@@ -415,7 +419,7 @@ possible because it often handles more kernel and interrupt activity.
 Run a short smoke first:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -439,7 +443,7 @@ result as JSON, writes role logs under each row directory, records the exact
 commands in `commands.sh`, and writes a deduplicated `summary.md`.
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark_matrix.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \
@@ -453,7 +457,7 @@ commands in `commands.sh`, and writes a deduplicated `summary.md`.
 Run the bounded fanout matrix with distinct pinned subscriber CPUs:
 
 ```bash
-./public/run launch build-cu13-x86_64 --run-cmd \
+./run launch --run-cmd \
   "cmake --build . --target channel_interprocess_benchmark -j 8 && \
    python3 ../benchmark/channel_interprocess/run_channel_benchmark_matrix.py \
      ./benchmark/channel_interprocess/channel_interprocess_benchmark \

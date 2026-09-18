@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -73,6 +74,10 @@ static_assert(
 static_assert(noexcept(std::declval<const ExecutionContext&>().activation_time()));
 static_assert(std::same_as<decltype(std::declval<const ExecutionContext&>().clock()), ClockRef>);
 static_assert(noexcept(std::declval<const ExecutionContext&>().clock()));
+// REQ: OPERATOR-050
+static_assert(std::same_as<decltype(std::declval<const ExecutionContext&>().operator_path()),
+                           std::string_view>);
+static_assert(noexcept(std::declval<const ExecutionContext&>().operator_path()));
 static_assert(std::same_as<decltype(std::declval<const ExecutionContext&>().cancellation()),
                            CancellationView>);
 static_assert(noexcept(std::declval<const ExecutionContext&>().cancellation()));
@@ -150,6 +155,26 @@ TEST(ExecutionContextValues, ActivationStatusDefaultsToNominalEmitWitness) {
   EXPECT_EQ(nominal.reason, ActivationReason::kNominal);
   EXPECT_EQ(default_status.reason, ActivationReason::kNominal);
   EXPECT_EQ(default_status.policy, OnViolation::kEmitWitness);
+}
+
+class OperatorPathProbeOperator final : public Operator<> {
+ public:
+  expected<void, Error> compute(ExecutionContext& context) override {
+    observed_empty = context.operator_path().empty();
+    return {};
+  }
+
+  bool observed_empty{};
+};
+
+// REQ: OPERATOR-050
+TEST(ExecutionContextValues, OperatorPathIsEmptyForUnboundContext) {
+  OperatorPathProbeOperator op;
+  test::SyntheticOperatorFixture fixture{op};
+  ASSERT_TRUE(fixture.declare_ports());
+
+  ASSERT_TRUE(fixture.invoke_once());
+  EXPECT_TRUE(op.observed_empty);
 }
 
 // Operator that calls request_restart() from compute(), recording the outcome in 'receipt' and

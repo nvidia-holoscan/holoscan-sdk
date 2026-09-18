@@ -453,6 +453,98 @@ TEST(DispatcherBindingTest, SourceCreditPreflightPreservesPendingSingleCreditIng
   EXPECT_EQ(unknown.error().code, ErrorCode::kNotFound);
 }
 
+// REQ: RUNTIME-007
+// REQ: RUNTIME-043
+// Two non-trigger freshness prefixes fence only their common owner. The globally earlier witness
+// from an unrelated owner must still run first, while each fenced input contributes only its
+// oldest source-sequence arrival even when its capture/reference coordinates move backwards.
+TEST(DispatcherBindingTest, InputFencesPreserveGlobalOrderAndEachSourcePrefix) {
+  auto first_input = source_binding(0U, detail::RuntimeEventKind::kInputArrival, 3U);
+  auto second_input = source_binding(1U, detail::RuntimeEventKind::kInputArrival);
+  second_input.vertex = first_input.vertex;
+  second_input.receiver_index = first_input.receiver_index;
+  auto fenced_trigger = source_binding(2U, detail::RuntimeEventKind::kClockTick);
+  fenced_trigger.vertex = first_input.vertex;
+  fenced_trigger.receiver_index = first_input.receiver_index;
+  auto unrelated = source_binding(3U, detail::RuntimeEventKind::kClockTick);
+  unrelated.vertex = VertexId{2U};
+  unrelated.receiver_index = 1U;
+  const std::array sources{first_input, second_input, fenced_trigger, unrelated};
+  auto coordinator = detail::RuntimeCandidateCoordinator::create(sources, 2U, 6U);
+  ASSERT_TRUE(coordinator);
+
+  detail::BoundedEventPortBinding first_binding{3U, first_input.source};
+  detail::BoundedEventPortBinding second_binding{1U, second_input.source};
+  detail::BoundedEventPortBinding trigger_binding{1U, fenced_trigger.source};
+  detail::BoundedEventPortBinding unrelated_binding{1U, unrelated.source};
+  ASSERT_TRUE(first_binding.push(runtime_event(first_input, 1U, 100)));
+  ASSERT_TRUE(first_binding.push(runtime_event(first_input, 2U, 5)));
+  auto terminal = runtime_event(first_input, 3U, 0);
+  terminal.kind = detail::RuntimeEventKind::kInputEndOfStream;
+  ASSERT_TRUE(first_binding.push(terminal));
+  ASSERT_TRUE(second_binding.push(runtime_event(second_input, 1U, 50)));
+  ASSERT_TRUE(trigger_binding.push(runtime_event(fenced_trigger, 1U, 1)));
+  ASSERT_TRUE(unrelated_binding.push(runtime_event(unrelated, 1U, 10)));
+  ASSERT_EQ(coordinator->ingest(first_binding), 3U);
+  ASSERT_EQ(coordinator->ingest(second_binding), 1U);
+  ASSERT_EQ(coordinator->ingest(trigger_binding), 1U);
+  ASSERT_EQ(coordinator->ingest(unrelated_binding), 1U);
+
+  const std::array fences{
+      detail::RuntimeCandidateInputFence{first_input.vertex, first_input.source, first_input.port},
+      detail::RuntimeCandidateInputFence{
+          second_input.vertex, second_input.source, second_input.port},
+  };
+  auto freeze_constrained = [&]() { return coordinator->freeze_next_constrained(fences); };
+
+  auto frozen = freeze_constrained();
+  ASSERT_TRUE(frozen);
+  EXPECT_EQ(frozen->witness.source, unrelated.source);
+  EXPECT_EQ(frozen->witness.reference_time.timestamp_ns, 10);
+  ASSERT_TRUE(coordinator->retire(*frozen));
+
+  frozen = freeze_constrained();
+  ASSERT_TRUE(frozen);
+  EXPECT_EQ(frozen->witness.source, second_input.source);
+  EXPECT_EQ(frozen->witness.reference_time.timestamp_ns, 50);
+  ASSERT_TRUE(coordinator->retire(*frozen));
+
+  frozen = freeze_constrained();
+  ASSERT_TRUE(frozen);
+  EXPECT_EQ(frozen->witness.source, first_input.source);
+  EXPECT_EQ(frozen->witness.source_sequence, 1U);
+  EXPECT_EQ(frozen->witness.reference_time.timestamp_ns, 100);
+  ASSERT_TRUE(coordinator->retire(*frozen));
+
+  frozen = freeze_constrained();
+  ASSERT_TRUE(frozen);
+  EXPECT_EQ(frozen->witness.source, first_input.source);
+  EXPECT_EQ(frozen->witness.source_sequence, 2U);
+  EXPECT_EQ(frozen->witness.reference_time.timestamp_ns, 5);
+  ASSERT_TRUE(coordinator->retire(*frozen));
+
+  // EOS shares the input prefix but is not a refill prerequisite. It cannot overtake either
+  // arrival, and remains pending with the owner's trigger while the input fence is active.
+  const auto fenced_terminal = freeze_constrained();
+  ASSERT_FALSE(fenced_terminal);
+  EXPECT_EQ(fenced_terminal.error().code, ErrorCode::kNotReady);
+
+  auto end_of_stream = coordinator->freeze_next();
+  ASSERT_TRUE(end_of_stream);
+  EXPECT_EQ(end_of_stream->witness.kind, detail::RuntimeEventKind::kInputEndOfStream);
+  EXPECT_EQ(end_of_stream->witness.source_sequence, 3U);
+  EXPECT_EQ(end_of_stream->witness.reference_time.timestamp_ns, 0);
+  ASSERT_TRUE(coordinator->retire(*end_of_stream));
+
+  // Key assertion: the fenced owner's trigger remained pending until both input prefixes and EOS
+  // were drained. Removing the fences restores its ordinary eligibility without losing identity.
+  auto trigger = coordinator->freeze_next();
+  ASSERT_TRUE(trigger);
+  EXPECT_EQ(trigger->witness.source, fenced_trigger.source);
+  EXPECT_EQ(trigger->witness.reference_time.timestamp_ns, 1);
+  ASSERT_TRUE(coordinator->retire(*trigger));
+}
+
 TEST(DispatcherBindingTest, TriggerWitnessReferenceExcludesTerminalButPreservesData) {
   auto source = source_binding(0U, detail::RuntimeEventKind::kInputArrival, 2U);
   source.port = {};
@@ -1228,6 +1320,18 @@ TEST(DispatcherBindingTest, PlanBackedScalarAndDrainSelectorsCommitOnlyAcceptedC
   ASSERT_EQ(held_latest->selected().size(), 1U);
   EXPECT_EQ(held_latest->selected().front(), temporal_sample(50, 1U, 1U));
   ASSERT_TRUE(held_latest->finish(true));
+  // A newer cache candidate can be too old for LatestWithin while the independent fallback
+  // reaches its own inclusive age boundary. Reusing it must not renew that boundary.
+  ASSERT_TRUE(reuse_latest->push(temporal_sample(80, 2U, 2U)));
+  auto boundary_reuse = reuse_latest->begin(TimePoint{100, kRuntimeClock}, 3U, 1U);
+  ASSERT_TRUE(boundary_reuse);
+  EXPECT_EQ(boundary_reuse->selection().state, InputState::kReused);
+  ASSERT_TRUE(boundary_reuse->finish(true));
+  auto expired_reuse = reuse_latest->begin(TimePoint{101, kRuntimeClock}, 4U, 1U);
+  ASSERT_TRUE(expired_reuse);
+  EXPECT_EQ(expired_reuse->selection().state, InputState::kAbsent);
+  EXPECT_TRUE(expired_reuse->selected().empty());
+  ASSERT_TRUE(expired_reuse->finish(false));
 
   auto drain_plan = selection_plan(InputSelectorKind::kDrainAll, PortId{2U}, 3U, 3U);
   auto drain = detail::RuntimeInputSelectionState::create(drain_plan);
@@ -1529,6 +1633,35 @@ TEST(DispatcherBindingTest, ReuseReplacementTransactionFencesSelectionAndRestore
   auto committed = state->copy_payload_claims(claims);
   ASSERT_TRUE(committed);
   EXPECT_EQ(*committed, 0U);
+}
+
+// REQ: RUNTIME-050
+TEST(DispatcherBindingTest, CacheReplacementTransactionRestoresOrCommitsOneExactRecord) {
+  auto plan = selection_plan(InputSelectorKind::kLatestWithin, PortId{1U}, 1U, 1U);
+  plan.max_age_ns = 1000;
+  auto state = detail::RuntimeInputSelectionState::create(plan);
+  ASSERT_TRUE(state);
+  const auto retained = temporal_sample(10, 1U, 1U);
+  ASSERT_TRUE(state->push(retained));
+
+  {
+    auto replacement = state->reserve_cache_replacement(retained);
+    ASSERT_TRUE(replacement);
+    auto concurrent = state->begin(TimePoint{11, kRuntimeClock}, 1U, 1U);
+    ASSERT_FALSE(concurrent);
+    EXPECT_EQ(concurrent.error().code, ErrorCode::kBackpressured);
+  }
+  std::array<detail::TemporalSampleRecord, 1U> claims{};
+  auto restored = state->copy_payload_claims(claims);
+  ASSERT_TRUE(restored);
+  ASSERT_EQ(*restored, 1U);
+  EXPECT_EQ(claims.front(), retained);
+
+  auto replacement = state->reserve_cache_replacement(retained);
+  ASSERT_TRUE(replacement);
+  replacement->commit();
+  EXPECT_EQ(state->retained_count(), 0U);
+  EXPECT_TRUE(state->push(temporal_sample(20, 2U, 2U)));
 }
 
 // REQ: RUNTIME-043

@@ -22,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/graph.hpp>
@@ -112,10 +113,10 @@ struct ChannelPodLayout<GraphTailPod> {
 };
 
 // Alias/compatibility family for POD type-identity tests:
-//   AliasA  — canonical type (identity: GraphPodAlias v1, single "value" field).
-//   AliasB  — same identity as AliasA but different field layout (conflict on import).
-//   CompatibleB — same identity AND layout as AliasA (accepted downstream).
-//   DifferentB  — completely distinct identity; causes a port-type-mismatch on add_flow.
+//   AliasA      - canonical type (identity: GraphPodAlias v1, single "value" field).
+//   AliasB      - same identity as AliasA but different field layout (conflict on import).
+//   CompatibleB - same identity and layout as AliasA (accepted downstream).
+//   DifferentB  - completely distinct identity; causes a port-type mismatch on add_flow.
 // Representative test: DistinctCppPodTypesInteroperateOnlyByCompleteContract.
 struct GraphPodAliasB {
   std::uint16_t first{};
@@ -169,6 +170,7 @@ using namespace test::graph_support;
 // A value of 11 causes ParamOp to declare an extra "extra" output, changing the port shape
 // and enabling ParameterReplacementRemapsPortsAtomicallyAndFlowHandlesResolveAgain to
 // probe the port-shape-change rejection.
+// Representative test: ParameterReplacementRemapsPortsAtomicallyAndFlowHandlesResolveAgain.
 struct GraphParams {
   std::uint32_t value{};
 };
@@ -177,11 +179,15 @@ struct GraphParams {
   return value % 2U == 0U;
 }
 
+// Carries bounded and custom-validated fields for redacted replacement diagnostics.
+// Representative test: ParameterReplacementReportsBoundedValidationIdentityWithoutValues.
 struct ValidatedGraphParams {
   std::uint32_t bounded{2U};
   std::uint32_t even{2U};
 };
 
+// Carries a field with a long Unicode validator identity for safe diagnostic truncation.
+// Representative test: ParameterValidationIdentityTruncationPreservesUtf8.
 struct Utf8ValidatedGraphParams {
   std::uint32_t even{2U};
 };
@@ -200,6 +206,7 @@ static_assert(kLongUtf8ValidatorId.size() == 97U);
 // EnumChangingParamOp switches output between them based on params, so that
 // ParameterReplacementPreservesExactLocalPortType can assert that a type change
 // is rejected atomically without mutating the accepted graph.
+// Representative test: ParameterReplacementPreservesExactLocalPortType.
 enum class GraphEnumA : std::uint8_t {
   kValue,
 };
@@ -219,16 +226,16 @@ static_assert(!ImportableGraphTopic<GraphEnumA>);
 // Representative test: ExternalTopicProvenanceParticipatesInCanonicalHash.
 constexpr SchemaIdentity kBoundarySchemaA{
     .canonical_name = "nvidia.holoscan.test.BoundarySchemaA",
-    .version = 1,
-    .schema_sha256 = {std::byte{0x11}},
-    .id = SchemaId{.value = {std::byte{0x21}}},
+    .compatibility_epoch = 1U,
+    .family_id = derive_schema_family_id("nvidia.holoscan.test.BoundarySchemaA", 1U),
+    .file_identifier = make_flatbuffer_file_identifier("BDAA"),
 };
 
 constexpr SchemaIdentity kBoundarySchemaB{
     .canonical_name = "nvidia.holoscan.test.BoundarySchemaB",
-    .version = 1,
-    .schema_sha256 = {std::byte{0x12}},
-    .id = SchemaId{.value = {std::byte{0x22}}},
+    .compatibility_epoch = 1U,
+    .family_id = derive_schema_family_id("nvidia.holoscan.test.BoundarySchemaB", 1U),
+    .file_identifier = make_flatbuffer_file_identifier("BDBB"),
 };
 
 HOLOSCAN_PARAM_SCHEMA(GraphParams, holoscan::param_schema("nvidia.holoscan.test.GraphParams", 1),
@@ -313,6 +320,24 @@ class SideEffectOp : public Operator<> {
   static inline std::atomic<int> constructor_calls{};
 };
 
+struct SharedCaptureState {
+  std::size_t constructions{};
+};
+
+class SharedCaptureOp final : public Operator<> {
+ public:
+  explicit SharedCaptureOp(std::shared_ptr<SharedCaptureState> state) : state_(std::move(state)) {
+    ++state_->constructions;
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  [[nodiscard]] const std::shared_ptr<SharedCaptureState>& state() const noexcept { return state_; }
+
+ private:
+  std::shared_ptr<SharedCaptureState> state_;
+};
+
 // Declares a ReadableSource (deployment-selected wake) and a SpinSource (busy-poll wake).
 // Used to verify readiness snapshot provenance and wake-requirement propagation.
 // Representative test: ReadinessSnapshotCarriesStableProvenanceAndWakeRequirement.
@@ -346,6 +371,7 @@ class CountedReadinessOp : public Operator<> {
 
 // Combines a POD output with a ReadableSource to exercise the multi-port allocation
 // rollback path in CompoundMutationFaultsRollbackEveryLogicalCommit.
+// Representative test: CompoundMutationFaultsRollbackEveryLogicalCommit.
 class PodReadinessOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -380,6 +406,7 @@ class ParamOp : public Operator<GraphParams> {
 
 // Declares the derived output before its followed input so Graph capture must canonicalize the
 // complete owner-local declaration set rather than depend on setup declaration order.
+// Representative test: RateCaptureCanonicalizesOutputFirstFollowsAndPreservesDepthPresence.
 class OutputFirstRateOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -396,6 +423,7 @@ class OutputFirstRateOp : public Operator<> {
 // Rate metadata is authored through the same declarations in several equivalent forms. The
 // graph snapshot must retain normalized values and canonical declaration IDs rather than the
 // source spelling or setup order.
+// Representative test: RateMetadataCanonicalizesEquivalentFormsAndHashesSemanticChanges.
 class RateIdentityOp : public Operator<> {
  public:
   explicit RateIdentityOp(bool output_first = false, bool noncanonical = false,
@@ -435,6 +463,7 @@ class RateIdentityOp : public Operator<> {
 
 // Reusable embedded graph for verifying that a follows declaration is canonicalized to the
 // child-local PortId even though the authoring reference is a C++ declaration pointer.
+// Representative test: EmbeddedRateInstancesCanonicalizeFollowsReferencesAndOrder.
 class EmbeddedRateGraph : public Graph {
  protected:
   void compose() override { (void)op<RateIdentityOp>("rate"); }
@@ -442,6 +471,7 @@ class EmbeddedRateGraph : public Graph {
 
 // Deliberately follows a declaration outside this Operator so Graph capture can reject the raw
 // authoring reference before any pointer escapes into an immutable snapshot.
+// Representative test: RateCaptureRejectsForeignFollowsReferenceWithoutPublishingState.
 class ForeignRateReferenceOp : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -520,6 +550,26 @@ class EnumATargetOp : public Operator<> {
   Input<GraphEnumA> input;
 };
 
+class CaptureEligibleOp : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.cuda_graph_capture_eligible(); }
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+class OrdinaryNoPortOp : public Operator<> {
+ public:
+  void setup(OperatorSpec&) override {}
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+class EligibilityChangingParamOp : public Operator<GraphParams> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.cuda_graph_capture_eligible(params().value == 0U);
+  }
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
 // Counts compose() invocations; used to assert exactly-once lazy composition and that
 // all subsequent view() calls share the result without re-entering compose().
 // Representative test: LazyCompositionRunsExactlyOnceAndSnapshotsAreIndependent.
@@ -537,6 +587,7 @@ class LazyGraph final : public Graph {
 
 // Supplies one embedded Operator so include_all authoring can prove that it retains a late
 // expansion directive instead of capturing only the root members present at the call site.
+// Representative test: IncludeAllRetainsLateRootExpansionMetadataAndCanonicalIdentity.
 class SinglePassGraph final : public Graph {
  protected:
   void compose() override { (void)op<PassOp>("embedded"); }
@@ -544,12 +595,14 @@ class SinglePassGraph final : public Graph {
 
 // Attempts to carry a child-local include_all directive across an embed boundary. Only the
 // compile root may own that directive, so parent publication must reject the child atomically.
+// Representative test: IncludeAllAndAutomaticRemainderConflictsAreTransactional.
 class IncludeAllChildGraph final : public Graph {
  protected:
   void compose() override { partition("child-all").include_all(); }
 };
 
 // Attempts to carry compile-root automatic-remainder intent across an embed boundary.
+// Representative test: IncludeAllAndAutomaticRemainderConflictsAreTransactional.
 class AutomaticRemainderChildGraph final : public Graph {
  protected:
   void compose() override { auto_partition_remaining(); }
@@ -557,6 +610,7 @@ class AutomaticRemainderChildGraph final : public Graph {
 
 // Supplies an ordinary child-local manual partition. A root include_all directive cannot coexist
 // with that second composed declaration even though neither child directive is include_all.
+// Representative test: IncludeAllAndAutomaticRemainderConflictsAreTransactional.
 class ManualPartitionChildGraph final : public Graph {
  protected:
   void compose() override {
@@ -752,27 +806,43 @@ void expect_external_scalar_kind(ScalarIdentityKind expected_kind) {
 }
 
 // REQ: GRAPH-001
-// REQ: GRAPH-003
-static_assert(detail::GraphOwnedCapture<std::string>);
-static_assert(detail::GraphOwnedCapture<std::string_view>);
-static_assert(!detail::GraphOwnedCapture<int*>);
-static_assert(!detail::GraphOwnedCapture<std::span<const int>>);
-static_assert(!detail::GraphOwnedCapture<std::shared_ptr<int>>);
-static_assert(!detail::GraphOwnedCapture<std::weak_ptr<int>>);
-static_assert(!detail::GraphOwnedCapture<std::unique_ptr<int>>);
-static_assert(!detail::GraphOwnedCapture<std::reference_wrapper<int>>);
-static_assert(!detail::GraphOwnedCapture<std::initializer_list<int>>);
-static_assert(!detail::GraphOwnedCapture<std::function<void()>>);
-static_assert(!detail::GraphOwnedCapture<std::ranges::ref_view<std::string>>);
+// REQ: GRAPH-036
+static_assert(detail::ReplayableCapture<std::string>);
+static_assert(detail::ReplayableCapture<std::string_view>);
+static_assert(detail::ReplayableCapture<std::shared_ptr<int>>);
+static_assert(detail::ReplayableCapture<std::weak_ptr<int>>);
+static_assert(detail::ReplayableCapture<std::function<void()>>);
+static_assert(detail::ReplayableCapture<void (*)()>);
+static_assert(detail::ReplayableCapture<std::vector<int*>>);
+static_assert(detail::ReplayableCapture<GraphView>);
+static_assert(!detail::ReplayableCapture<int*>);
+static_assert(!detail::ReplayableCapture<void*>);
+static_assert(!detail::ReplayableCapture<std::span<const int>>);
+static_assert(!detail::ReplayableCapture<std::unique_ptr<int>>);
+static_assert(!detail::ReplayableCapture<std::reference_wrapper<int>>);
+static_assert(!detail::ReplayableCapture<std::initializer_list<int>>);
+static_assert(!detail::ReplayableCapture<std::ranges::ref_view<std::string>>);
+static_assert(!detail::ReplayableCapture<OperatorHandle<PassOp>>);
+static_assert(!detail::ReplayableCapture<OperatorPortProxy<PassOp>>);
+static_assert(!detail::ReplayableCapture<FlowHandle<std::uint32_t>>);
+static_assert(!detail::ReplayableCapture<InputPortConfigurator<std::uint32_t>>);
+static_assert(!detail::ReplayableCapture<OutputPortConfigurator<std::uint32_t>>);
+static_assert(!detail::ReplayableCapture<TensorOutputPortConfigurator>);
+static_assert(!detail::ReplayableCapture<FlowConfigurator<std::uint32_t>>);
+static_assert(!detail::ReplayableCapture<RegionHandle>);
+static_assert(!detail::ReplayableCapture<PartitionHandle>);
+static_assert(!detail::ReplayableCapture<GraphLifecycleBuilder>);
+static_assert(!detail::ReplayableCapture<ImportedTopic<std::uint32_t>>);
+static_assert(!detail::ReplayableCapture<ExportedTopic<std::uint32_t>>);
 
 // Move-only type used in a static_assert to confirm that move-only types are not
-// GraphOwnedCapture; types that cannot be cheaply copied must not be captured by value.
+// ReplayableCapture; types that cannot be copied cannot be replayed by value.
 struct MoveOnlyCapture {
   MoveOnlyCapture() = default;
   MoveOnlyCapture(const MoveOnlyCapture&) = delete;
   MoveOnlyCapture(MoveOnlyCapture&&) = default;
 };
-static_assert(!detail::GraphOwnedCapture<MoveOnlyCapture>);
+static_assert(!detail::ReplayableCapture<MoveOnlyCapture>);
 
 // Concepts used below to assert that Graph does not expose GXF-style lifecycle methods
 // (compile, run, run_async, start, stop, restart, request_restart, or scheduler).
@@ -821,12 +891,16 @@ static_assert(HasTypedFlow<Output<GraphPodAliasA>, Input<GraphPodAliasB>>);
 static_assert(HasTypedFlow<Output<GraphPodAliasA>, Input<GraphPodDifferentB>>);
 // REQ: GRAPH-002
 // REQ: GRAPH-009
+//   root
+//   `-- lazy(PassOp)
 TEST(GraphComposition, LazyCompositionRunsExactlyOnceAndSnapshotsAreIndependent) {
+  // Key setup: Observe a lazy Graph twice, mutate it, and observe it again.
   LazyGraph graph{"root"};
 
   const GraphView first = graph.view();
   const GraphView second = graph.view();
 
+  // Key assertion: Composition runs once and prior snapshots remain immutable after mutation.
   EXPECT_EQ(graph.compose_calls, 1);
   ASSERT_EQ(first.vertices().size(), 1);
   EXPECT_EQ(first.vertices()[0].name, "lazy");
@@ -839,24 +913,98 @@ TEST(GraphComposition, LazyCompositionRunsExactlyOnceAndSnapshotsAreIndependent)
   EXPECT_GT(third.generation(), first.generation());
 }
 
+// REQ: GRAPH-035
+//   lazy-root
+//   `-- lazy(PassOp)
+//
+//   root
+//   |-- param(ParamOp)
+//   `-- child(EmbeddedRateGraph)
+//       `-- rate(RateIdentityOp)
+TEST(GraphComposition, TypedOperatorLookupIsReadOnlyRootLocalAndReconstructionSafe) {
+  // Key setup: Probe lookup around lazy composition, then resolve and mutate one root ParamOp.
+  LazyGraph lazy{"lazy-root"};
+  const Error before_composition = graph_error_from([&] { (void)lazy.handle<PassOp>("lazy"); });
+  const int compose_calls_before_view = lazy.compose_calls;
+  (void)lazy.view();
+  const auto lazy_handle = lazy.handle<PassOp>("lazy");
+
+  Graph graph{"root"};
+  auto creation = graph.op<ParamOp>("param");
+  auto looked_up = graph.handle<ParamOp>("param");
+  creation.set_params(GraphParams{.value = 7U});
+  const std::uint32_t looked_up_value = looked_up->params().value;
+  looked_up.set_params(GraphParams{.value = 9U});
+  const std::uint32_t creation_value = creation->params().value;
+
+  const Error missing = graph_error_from([&] { (void)graph.handle<ParamOp>("missing"); });
+  const Error mismatch = graph_error_from([&] { (void)graph.handle<PassOp>("param"); });
+  (void)graph.embed<EmbeddedRateGraph>("child");
+  const Error embedded = graph_error_from([&] { (void)graph.handle<RateIdentityOp>("rate"); });
+
+  // Key assertion: Lookup is read-only, exact-type, root-local, and reconstruction-safe.
+  EXPECT_EQ(before_composition.code, ErrorCode::kNotFound);
+  EXPECT_EQ(before_composition.message, "GRAPH_OPERATOR_NOT_FOUND");
+  EXPECT_EQ(compose_calls_before_view, 0);
+  EXPECT_TRUE(lazy_handle.graph_valid());
+  EXPECT_EQ(looked_up.name(), creation.name());
+  EXPECT_EQ(looked_up_value, 7U);
+  EXPECT_EQ(creation_value, 9U);
+  EXPECT_TRUE(creation.graph_valid());
+  EXPECT_TRUE(looked_up.graph_valid());
+  EXPECT_EQ(missing.code, ErrorCode::kNotFound);
+  EXPECT_EQ(missing.message, "GRAPH_OPERATOR_NOT_FOUND");
+  EXPECT_EQ(mismatch.code, ErrorCode::kIncompatible);
+  EXPECT_EQ(mismatch.message, "GRAPH_OPERATOR_TYPE_MISMATCH");
+  EXPECT_EQ(embedded.code, ErrorCode::kNotFound);
+  EXPECT_EQ(embedded.message, "GRAPH_OPERATOR_NOT_FOUND");
+}
+
+// REQ: GRAPH-035
+//   retired
+//   `-- param(ParamOp)
+TEST(GraphComposition, TypedOperatorLookupHandleFailsClosedAfterGraphRetirement) {
+  // Key setup: Retain a typed lookup handle after its owning Graph is destroyed.
+  auto stale = [] {
+    Graph graph{"retired"};
+    (void)graph.op<ParamOp>("param");
+    return graph.handle<ParamOp>("param");
+  }();
+
+  const Error error = graph_error_from([&] { stale.set_params(GraphParams{.value = 7U}); });
+
+  // Key assertion: The retired handle fails closed before exposing or mutating Operator state.
+  EXPECT_FALSE(stale.graph_valid());
+  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(error.message, "GRAPH_HANDLE_INVALID");
+}
+
 // REQ: GRAPH-002
+//   reentrant(ReentrantGraph)
+//   `-- compose() -> view() [rejected]
 TEST(GraphComposition, ReentrantObservationFailsAndTheFailureIsSticky) {
+  // Key setup: Observe a Graph whose compose() recursively requests a view.
   ReentrantGraph graph{"reentrant"};
   const Error first = graph_error_from([&] { (void)graph.view(); });
   const Error second = graph_error_from([&] { (void)graph.view(); });
+
+  // Key assertion: Reentrant observation fails with the same terminal error on every retry.
   EXPECT_EQ(first.code, ErrorCode::kInvalidArgument);
   EXPECT_EQ(first.message, "GRAPH_COMPOSE_REENTRANT");
   EXPECT_EQ(second.message, first.message);
 }
 
 // REQ: GRAPH-002
+// REQ: GRAPH-039
+//   graph(PartialFailureGraph)
+//   `-- partial(CountingOp) [discarded]
 TEST(GraphComposition, FailedCompositionDiscardsItsPartialDraftBeforeReturning) {
-  // Key setup: CountingOp::live_count is zeroed so any leaked operator is detectable.
+  // Key setup: Compose a Graph that creates a counted Operator before throwing.
   CountingOp::live_count = 0;
   PartialFailureGraph graph;
   const Error first = graph_error_from([&] { (void)graph.view(); });
-  EXPECT_EQ(first.message, "GRAPH_COMPOSE_EXCEPTION");
-  // Key assertion: live_count must be zero both times — the partial draft was fully destroyed.
+  EXPECT_TRUE(first.message.starts_with("GRAPH_COMPOSE_EXCEPTION"));
+  // Key assertion: The partial draft is destroyed and its contextual failure remains sticky.
   EXPECT_EQ(CountingOp::live_count.load(), 0);
   const Error second = graph_error_from([&] { (void)graph.view(); });
   EXPECT_EQ(second.message, first.message);
@@ -869,7 +1017,8 @@ TEST(GraphComposition, FailedCompositionDiscardsItsPartialDraftBeforeReturning) 
     return;
   }
   EXPECT_EQ(first_diagnostic->primary.code, ErrorCode::kFailure);
-  EXPECT_EQ(first_diagnostic->primary.message, "GRAPH_COMPOSE_EXCEPTION");
+  EXPECT_TRUE(first_diagnostic->primary.message.starts_with("GRAPH_COMPOSE_EXCEPTION"));
+  EXPECT_NE(first_diagnostic->primary.message.find("compose failure detail"), std::string::npos);
   EXPECT_FALSE(first_diagnostic->cause);
   EXPECT_EQ(first_diagnostic->context, "compose failure detail");
   EXPECT_LE(first_diagnostic->context.size(), 160U);
@@ -879,12 +1028,16 @@ TEST(GraphComposition, FailedCompositionDiscardsItsPartialDraftBeforeReturning) 
 }
 
 // REQ: GRAPH-002
+//   typed(TypedFailureGraph)       unknown(UnknownFailureGraph)
+//   `-- duplicate(PassOp) x2      `-- throw 7
 TEST(GraphComposition, TypedAndUnknownComposeFailuresUseStableStickyTokens) {
+  // Key setup: Trigger typed duplicate-name and unknown-exception compose failures.
   TypedFailureGraph typed;
   const Error typed_first = graph_error_from([&] { (void)typed.view(); });
   const Error typed_second = graph_error_from([&] { (void)typed.view(); });
   EXPECT_EQ(typed_first.code, ErrorCode::kFailure);
-  EXPECT_EQ(typed_first.message, "GRAPH_COMPOSE_FAILED");
+  EXPECT_TRUE(typed_first.message.starts_with("GRAPH_COMPOSE_FAILED"));
+  EXPECT_NE(typed_first.message.find("GRAPH_OPERATOR_NAME_DUPLICATE"), std::string::npos);
   EXPECT_EQ(typed_second.message, typed_first.message);
   const auto typed_diagnostic = detail::GraphCompilerAccess::composition_diagnostic(typed);
   const auto typed_replay = detail::GraphCompilerAccess::composition_diagnostic(typed);
@@ -893,7 +1046,7 @@ TEST(GraphComposition, TypedAndUnknownComposeFailuresUseStableStickyTokens) {
     return;
   }
   EXPECT_EQ(typed_diagnostic->primary.code, ErrorCode::kFailure);
-  EXPECT_EQ(typed_diagnostic->primary.message, "GRAPH_COMPOSE_FAILED");
+  EXPECT_EQ(typed_diagnostic->primary.message, typed_first.message);
   EXPECT_EQ(typed_diagnostic->cause->code, ErrorCode::kDuplicateName);
   EXPECT_EQ(typed_diagnostic->cause->message, "GRAPH_OPERATOR_NAME_DUPLICATE");
   EXPECT_EQ(typed_replay->primary.code, typed_diagnostic->primary.code);
@@ -904,17 +1057,22 @@ TEST(GraphComposition, TypedAndUnknownComposeFailuresUseStableStickyTokens) {
 
   UnknownFailureGraph unknown;
   const Error unknown_error = graph_error_from([&] { (void)unknown.view(); });
+
+  // Key assertion: Both failure categories publish stable, appropriately distinct tokens.
   EXPECT_EQ(unknown_error.code, ErrorCode::kFailure);
   EXPECT_EQ(unknown_error.message, "GRAPH_COMPOSE_UNKNOWN_EXCEPTION");
 }
 
 // REQ: GRAPH-002
+//   graph(LongContextFailureGraph)
+//   `-- throw long multiline context
 TEST(GraphComposition, ExceptionContextIsSanitizedBoundedAndSticky) {
+  // Key setup: Observe twice a compose failure with long multiline exception context.
   LongContextFailureGraph graph;
   const Error first = graph_error_from([&] { (void)graph.view(); });
   const Error second = graph_error_from([&] { (void)graph.view(); });
   EXPECT_EQ(first.code, ErrorCode::kFailure);
-  EXPECT_EQ(first.message, "GRAPH_COMPOSE_EXCEPTION");
+  EXPECT_TRUE(first.message.starts_with("GRAPH_COMPOSE_EXCEPTION"));
   EXPECT_EQ(second.code, first.code);
   EXPECT_EQ(second.message, first.message);
 
@@ -924,6 +1082,8 @@ TEST(GraphComposition, ExceptionContextIsSanitizedBoundedAndSticky) {
     FAIL() << "bounded composition context was not retained";
     return;
   }
+
+  // Key assertion: Stored context is bounded, sanitized, and identical on replay.
   EXPECT_EQ(diagnostic->context.size(), 160U);
   EXPECT_EQ(diagnostic->context[17], '?');
   EXPECT_EQ(replay->context, diagnostic->context);
@@ -932,25 +1092,36 @@ TEST(GraphComposition, ExceptionContextIsSanitizedBoundedAndSticky) {
 
 // REQ: GRAPH-002
 // REQ: GRAPH-003
+//   operator_graph / boundary_graph
+//   `-- compose failure before requested object construction
 TEST(GraphComposition, LazyComposeFinishesBeforeRequestedFactoryOrBoundaryConstruction) {
+  // Key setup: Request an Operator and an imported topic from Graphs that fail compose first.
   SideEffectOp::constructor_calls = 0;
   FailBeforeFactoryGraph operator_graph;
   const Error operator_error =
       graph_error_from([&] { (void)operator_graph.op<SideEffectOp>("never"); });
-  EXPECT_EQ(operator_error.message, "GRAPH_COMPOSE_EXCEPTION");
+  EXPECT_TRUE(operator_error.message.starts_with("GRAPH_COMPOSE_EXCEPTION"));
   EXPECT_EQ(SideEffectOp::constructor_calls.load(), 0);
 
   FailBeforeFactoryGraph boundary_graph;
   const Error boundary_error =
       graph_error_from([&] { (void)boundary_graph.import_topic<std::uint32_t>("holomq://never"); });
-  EXPECT_EQ(boundary_error.message, "GRAPH_COMPOSE_EXCEPTION");
+
+  // Key assertion: Composition failure precedes both requested factory and boundary creation.
+  EXPECT_TRUE(boundary_error.message.starts_with("GRAPH_COMPOSE_EXCEPTION"));
 }
 
 // REQ: GRAPH-002
 // REQ: GRAPH-011
+//   graph(ExternalHandleFailureGraph)
+//   `-- import holomq://partial [discarded]
 TEST(GraphComposition, FailedCompositionInvalidatesExternalHandlesWithoutDanglingPointers) {
+  // Key setup: Let an imported-topic handle escape a composition that then fails.
   ExternalHandleFailureGraph graph;
-  EXPECT_EQ(graph_error_from([&] { (void)graph.view(); }).message, "GRAPH_COMPOSE_EXCEPTION");
+  EXPECT_TRUE(
+      graph_error_from([&] { (void)graph.view(); }).message.starts_with("GRAPH_COMPOSE_EXCEPTION"));
+
+  // Key assertion: The escaped boundary handle is tombstoned and fails closed.
   ASSERT_TRUE(graph.topic.has_value());
   // GoogleTest assertions establish this invariant, but clang-tidy does not model the macro.
   // NOLINTBEGIN(bugprone-unchecked-optional-access)
@@ -961,10 +1132,14 @@ TEST(GraphComposition, FailedCompositionInvalidatesExternalHandlesWithoutDanglin
 
 // REQ: GRAPH-002
 // REQ: GRAPH-011
+//   graph(EscapedDraftHandleFailureGraph)
+//   |-- source(PassOp) --[output -> input]--> target(PassOp)
+//   `-- tensor(TensorOp) [all discarded]
 TEST(GraphComposition, FailedCompositionInvalidatesFlowAndRetainsConfiguratorStorage) {
+  // Key setup: Escape Operator, flow, and Tensor configurator handles before compose fails.
   EscapedDraftHandleFailureGraph graph;
   const Error failure = graph_error_from([&] { (void)graph.view(); });
-  EXPECT_EQ(failure.message, "GRAPH_COMPOSE_EXCEPTION");
+  EXPECT_TRUE(failure.message.starts_with("GRAPH_COMPOSE_EXCEPTION"));
   if (!graph.flow) {
     FAIL() << "failed composition did not retain the escaped flow tombstone";
     return;
@@ -979,14 +1154,17 @@ TEST(GraphComposition, FailedCompositionInvalidatesFlowAndRetainsConfiguratorSto
   const Error handle_error = graph_error_from([&] { (void)operator_handle->input; });
   EXPECT_EQ(handle_error.code, ErrorCode::kInvalidArgument);
   EXPECT_EQ(handle_error.message, "GRAPH_HANDLE_INVALID");
+
+  // Key assertion: Handles fail closed while configurator storage remains safely addressable.
   ASSERT_NE(graph.tensor_configurator, nullptr);
   EXPECT_THROW(graph.tensor_configurator->max_emits_per_compute(1), RuntimeError);
 }
 
 // REQ: GRAPH-002
+//   graph(BlockingGraph)
+//   `-- only(PassOp)
 TEST(GraphComposition, ConcurrentObserversShareOneComposerAndWaitForTerminalSuccess) {
-  // Key setup: BlockingGraph holds compose() in a controlled wait until release fires;
-  //            two async threads call view() concurrently while compose() is in-flight.
+  // Key setup: Observe one blocked composition concurrently from two threads.
   std::promise<void> release;
   BlockingGraph graph{release.get_future().share()};
   auto started = graph.compose_started.get_future();
@@ -1003,14 +1181,16 @@ TEST(GraphComposition, ConcurrentObserversShareOneComposerAndWaitForTerminalSucc
   release.set_value();
   EXPECT_EQ(first.get().vertices().size(), 1);
   EXPECT_EQ(second.get().vertices().size(), 1);
-  // Key assertion: compose_calls == 1 confirms exactly one compose() ran despite two callers.
+
+  // Key assertion: Both observers wait for and share exactly one successful composition.
   EXPECT_EQ(graph.compose_calls.load(), 1);
 }
 
 // REQ: GRAPH-002
+//   graph(BlockingAllocationFailureGraph)
+//   `-- diagnostic allocation failure during compose
 TEST(GraphComposition, DiagnosticAllocationFailureStillPublishesTerminalFailure) {
-  // Key setup: fail_composition_diagnostic_capture() pre-arms allocation failure so that
-  //            the diagnostic-capture step inside compose() itself throws bad_alloc.
+  // Key setup: Observe a blocked compose whose diagnostic capture is pre-armed to fail.
   std::promise<void> release;
   BlockingAllocationFailureGraph graph{release.get_future().share()};
   detail::GraphCompilerAccess::fail_composition_diagnostic_capture(graph);
@@ -1038,8 +1218,8 @@ TEST(GraphComposition, DiagnosticAllocationFailureStillPublishesTerminalFailure)
   ASSERT_EQ(second.wait_for(std::chrono::seconds{1}), std::future_status::ready);
   const Error first_error = first.get();
   const Error second_error = second.get();
-  // Key assertion: even when diagnostic capture fails, a kFailure with empty message is
-  //                published so that waiting observers are unblocked with a terminal status.
+
+  // Key assertion: Diagnostic allocation failure still publishes one terminal result to waiters.
   EXPECT_EQ(first_error.code, ErrorCode::kFailure);
   EXPECT_TRUE(first_error.message.empty());
   EXPECT_EQ(second_error.code, first_error.code);
@@ -1058,12 +1238,16 @@ TEST(GraphComposition, DiagnosticAllocationFailureStillPublishesTerminalFailure)
 
 // REQ: GRAPH-003
 // REQ: GRAPH-004
+//   root
+//   `-- pass(PassOp)
 TEST(GraphComposition, OperatorCaptureIsOwnedAndHandlesDoNotInventPlanIdentity) {
+  // Key setup: Capture a string_view argument, then mutate its backing source string.
   Graph graph{"root"};
   std::string source = "owned";
   auto handle = graph.op<PassOp>("pass", std::string_view{source});
   source.assign("changed");
 
+  // Key assertion: Capture owns its value while the authoring handle has no plan identity.
   ASSERT_TRUE(handle);
   ASSERT_NE(handle.operator->().operator->(), nullptr);
   EXPECT_EQ(handle->label_, "owned");
@@ -1074,8 +1258,49 @@ TEST(GraphComposition, OperatorCaptureIsOwnedAndHandlesDoNotInventPlanIdentity) 
   EXPECT_EQ(handle.plan_generation(), 0);
 }
 
+// REQ: GRAPH-036
+TEST(GraphComposition, SharedCaptureRetainsIdentityAcrossPlanFactoryReplays) {
+  std::weak_ptr<SharedCaptureState> observed;
+  detail::ExecutableFactoryInventory factories;
+  {
+    auto state = std::make_shared<SharedCaptureState>();
+    observed = state;
+    Graph graph{"root"};
+    auto handle = graph.op<SharedCaptureOp>("shared", state);
+    ASSERT_EQ(handle->state(), state);
+    EXPECT_EQ(state->constructions, 1U);
+
+    const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+    factories = detail::GraphCompilerAccess::executable_factories(graph, *snapshot);
+    state.reset();
+    EXPECT_FALSE(observed.expired());
+  }
+
+  EXPECT_FALSE(observed.expired());
+  ASSERT_EQ(factories.operators.size(), 1U);
+  auto first = factories.operators.front().factory->create(nullptr);
+  auto second = factories.operators.front().factory->create(nullptr);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  const auto* first_op = dynamic_cast<const SharedCaptureOp*>(first->get());
+  const auto* second_op = dynamic_cast<const SharedCaptureOp*>(second->get());
+  ASSERT_NE(first_op, nullptr);
+  ASSERT_NE(second_op, nullptr);
+  EXPECT_EQ(first_op->state(), second_op->state());
+  EXPECT_EQ(first_op->state()->constructions, 3U);
+
+  factories = {};
+  first->reset();
+  EXPECT_FALSE(observed.expired());
+  second->reset();
+  EXPECT_TRUE(observed.expired());
+}
+
 // REQ: GRAPH-004
+//   root
+//   `-- pass(PassOp)
 TEST(GraphComposition, OperatorHandleChainedAccessFailsClosedAfterGraphRetirement) {
+  // Key setup: Retain an Operator handle after its owning Graph is destroyed.
   std::optional<OperatorHandle<PassOp>> handle;
   {
     Graph graph{"root"};
@@ -1084,6 +1309,8 @@ TEST(GraphComposition, OperatorHandleChainedAccessFailsClosedAfterGraphRetiremen
   }
 
   ASSERT_TRUE(handle.has_value());
+
+  // Key assertion: Chained access through the retired handle fails closed.
   EXPECT_FALSE(handle->graph_valid());
   const Error error = graph_error_from([&] { (void)handle.value()->input; });
   EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
@@ -1091,8 +1318,9 @@ TEST(GraphComposition, OperatorHandleChainedAccessFailsClosedAfterGraphRetiremen
 }
 
 // REQ: GRAPH-006
-//   source(PassOp) --[output→input]--> target(PassOp)
+//   source(PassOp) --[output -> input]--> target(PassOp)
 TEST(GraphComposition, TypedFlowRetainsSeparateSetupAndGraphOverrideLayers) {
+  // Key setup: Apply setup, add_flow, port, and flow options to one typed connection.
   Graph graph{"root"};
   auto source = graph.op<PassOp>("source");
   auto target = graph.op<PassOp>("target");
@@ -1105,6 +1333,8 @@ TEST(GraphComposition, TypedFlowRetainsSeparateSetupAndGraphOverrideLayers) {
   graph.configure(flow).queue_depth(1).topic_name("override");
 
   const GraphView view = graph.view();
+
+  // Key assertion: The snapshot retains setup and Graph override layers independently.
   ASSERT_EQ(view.edges().size(), 1);
   EXPECT_EQ(view.edges()[0].add_flow_options.queue_policy, QueuePolicy::kDropOldest);
   EXPECT_EQ(view.edges()[0].add_flow_options.queue_depth, 2);
@@ -1122,7 +1352,10 @@ TEST(GraphComposition, TypedFlowRetainsSeparateSetupAndGraphOverrideLayers) {
 }
 
 // REQ: GRAPH-033
+//   root
+//   `-- rate(OutputFirstRateOp)
 TEST(GraphComposition, RateCaptureCanonicalizesOutputFirstFollowsAndPreservesDepthPresence) {
+  // Key setup: Capture a follows-output declared before its expected-rate input.
   Graph graph{"root"};
   (void)graph.op<OutputFirstRateOp>("rate");
 
@@ -1134,6 +1367,7 @@ TEST(GraphComposition, RateCaptureCanonicalizesOutputFirstFollowsAndPreservesDep
   ASSERT_NE(input, view.ports().end());
   ASSERT_NE(output, view.ports().end());
 
+  // Key assertion: Capture resolves the input reference without inventing queue-depth presence.
   EXPECT_FALSE(input->setup.queue_depth.has_value());
   EXPECT_EQ(input->setup.rate_kind, PortRateKind::kExpectedInput);
   EXPECT_EQ(input->setup.declared_expected_rate, Rate::hz(240U));
@@ -1144,16 +1378,17 @@ TEST(GraphComposition, RateCaptureCanonicalizesOutputFirstFollowsAndPreservesDep
 
 // REQ: GRAPH-009
 // REQ: GRAPH-033
-// Equivalent rate spellings and owner-local declaration order must produce one semantic graph
-// identity. A changed rate or authored queue depth is semantic and must change that identity.
+//   each Graph
+//   `-- rate(RateIdentityOp)
 TEST(GraphComposition, RateMetadataCanonicalizesEquivalentFormsAndHashesSemanticChanges) {
+  // Key setup: Compare equivalent rate spellings with changed rate and queue-depth variants.
   Graph normalized{"rate-identity"};
   (void)normalized.op<RateIdentityOp>("rate");
 
   Graph equivalent_spelling{"rate-identity"};
   (void)equivalent_spelling.op<RateIdentityOp>("rate", true, true);
 
-  // Key assertion: reduced rates/ratios and declaration order are not part of the identity.
+  // Key assertion: Equivalent metadata hashes alike while semantic rate or depth changes do not.
   EXPECT_EQ(normalized.view().identity().hash, equivalent_spelling.view().identity().hash);
 
   Graph changed_rate{"rate-identity"};
@@ -1167,9 +1402,13 @@ TEST(GraphComposition, RateMetadataCanonicalizesEquivalentFormsAndHashesSemantic
 
 // REQ: GRAPH-009
 // REQ: GRAPH-033
-// Embedded instances are keyed by decoded graph paths, while follows references are rewritten to
-// canonical child-local IDs. Reversing instance declaration order must not perturb the hash.
+//   each parent
+//   |-- a(EmbeddedRateGraph)
+//   |   `-- rate(RateIdentityOp)
+//   `-- z(EmbeddedRateGraph)
+//       `-- rate(RateIdentityOp)
 TEST(GraphComposition, EmbeddedRateInstancesCanonicalizeFollowsReferencesAndOrder) {
+  // Key setup: Embed identical rate Graphs in opposite declaration orders.
   Graph first{"embedded-rate-identity"};
   (void)first.embed<EmbeddedRateGraph>("z");
   (void)first.embed<EmbeddedRateGraph>("a");
@@ -1178,6 +1417,7 @@ TEST(GraphComposition, EmbeddedRateInstancesCanonicalizeFollowsReferencesAndOrde
   (void)second.embed<EmbeddedRateGraph>("a");
   (void)second.embed<EmbeddedRateGraph>("z");
 
+  // Key assertion: Canonical paths and child-local follows IDs make both snapshots identical.
   EXPECT_EQ(first.view().identity().hash, second.view().identity().hash);
 
   const GraphView view = first.view();
@@ -1191,13 +1431,18 @@ TEST(GraphComposition, EmbeddedRateInstancesCanonicalizeFollowsReferencesAndOrde
 }
 
 // REQ: GRAPH-033
+//   root
+//   `-- bad(ForeignRateReferenceOp) [rejected]
 TEST(GraphComposition, RateCaptureRejectsForeignFollowsReferenceWithoutPublishingState) {
+  // Key setup: Author a follows declaration against an input owned outside the Operator.
   Graph graph{"root"};
   Input<std::uint32_t> foreign{"foreign"};
   ForeignRateReferenceOp::foreign = &foreign;
 
   const Error error = graph_error_from([&] { (void)graph.op<ForeignRateReferenceOp>("bad"); });
   ForeignRateReferenceOp::foreign = nullptr;
+
+  // Key assertion: The foreign reference rejects without publishing any port state.
   EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
   EXPECT_EQ(error.message, "PORT_RATE_REFERENCE_INVALID");
   EXPECT_TRUE(graph.view().ports().empty());
@@ -1205,7 +1450,10 @@ TEST(GraphComposition, RateCaptureRejectsForeignFollowsReferenceWithoutPublishin
 
 // REQ: GRAPH-027
 // REQ: GRAPH-028
+//   each root
+//   `-- source(PassOp) --[drop-oldest]--> target(PassOp)
 TEST(GraphComposition, DropOldestQueuePolicyRetainsAuthoredDepthAndIdentity) {
+  // Key setup: Build drop-oldest flows with distinct depths, then try an invalid policy value.
   static_assert(static_cast<std::uint8_t>(QueuePolicy::kBlocking) == 0U);
   static_assert(static_cast<std::uint8_t>(QueuePolicy::kDropOldest) == 1U);
 
@@ -1227,6 +1475,7 @@ TEST(GraphComposition, DropOldestQueuePolicyRetainsAuthoredDepthAndIdentity) {
   const GraphView depth_one_view = depth_one.view();
   const GraphView depth_many_view = depth_many.view();
 
+  // Key assertion: Authored depths affect identity and invalid closed-enum values reject.
   ASSERT_EQ(depth_one_view.edges().size(), 1U);
   EXPECT_EQ(depth_one_view.edges().front().add_flow_options.queue_policy, QueuePolicy::kDropOldest);
   EXPECT_EQ(depth_one_view.edges().front().add_flow_options.queue_depth, 1U);
@@ -1248,8 +1497,9 @@ TEST(GraphComposition, DropOldestQueuePolicyRetainsAuthoredDepthAndIdentity) {
 }
 
 // REQ: GRAPH-008
-//   source(PassOp) --[output→input]--> target(PassOp)
+//   source(PassOp) --[output -> input]--> target(PassOp)
 TEST(GraphComposition, NonTensorTryConfigurePreservesPortAndFlowOverrides) {
+  // Key setup: Configure both ports and their flow, then probe them from a foreign Graph.
   Graph graph{"root"};
   auto source = graph.op<PassOp>("source");
   auto target = graph.op<PassOp>("target");
@@ -1282,6 +1532,8 @@ TEST(GraphComposition, NonTensorTryConfigurePreservesPortAndFlowOverrides) {
   EXPECT_EQ(foreign_flow.error().code, ErrorCode::kInvalidArgument);
 
   const GraphView view = graph.view();
+
+  // Key assertion: Local overrides persist and foreign configuration attempts fail closed.
   ASSERT_EQ(view.edges().size(), 1);
   const EdgeRecord& edge = view.edges()[0];
   EXPECT_EQ(edge.graph_override.queue_policy, QueuePolicy::kDropOldest);
@@ -1308,15 +1560,17 @@ TEST(GraphComposition, NonTensorTryConfigurePreservesPortAndFlowOverrides) {
 
 // REQ: GRAPH-006
 // REQ: GRAPH-010
-//   source(AliasA) --[output→input]--> compatible(CompatibleB)  [accepted]
+//   source(AliasA) --[output -> input]--> compatible(CompatibleB)  [accepted]
 //   source(AliasA) --X [GRAPH_PORT_TYPE_MISMATCH]--> different(DifferentB)
 //   incompatible(AliasB)  [GRAPH_POD_IDENTITY_CONFLICT on op construction]
 TEST(GraphComposition, DistinctCppPodTypesInteroperateOnlyByCompleteContract) {
+  // Key setup: Connect compatible POD identities, then try mismatched and conflicting types.
   Graph graph{"root"};
   auto source = graph.op<PodSourceOp>("source");
   auto compatible = graph.op<CompatiblePodTargetOp>("compatible");
   auto flow = graph.add_flow(source->output, compatible->input);
 
+  // Key assertion: Only complete identity-and-layout compatibility is accepted.
   EXPECT_TRUE(flow.graph_valid());
   EXPECT_EQ(&flow.source(), &source->output);
   EXPECT_EQ(&flow.target(), &compatible->input);
@@ -1325,7 +1579,9 @@ TEST(GraphComposition, DistinctCppPodTypesInteroperateOnlyByCompleteContract) {
   auto different = graph.op<DifferentPodTargetOp>("different");
   const Error mismatch =
       graph_error_from([&] { (void)graph.add_flow(source->output, different->input); });
-  EXPECT_EQ(mismatch.message, "GRAPH_PORT_TYPE_MISMATCH");
+  EXPECT_TRUE(mismatch.message.starts_with("GRAPH_PORT_TYPE_MISMATCH"));
+  EXPECT_NE(mismatch.message.find("source.output"), std::string::npos);
+  EXPECT_NE(mismatch.message.find("different.input"), std::string::npos);
   EXPECT_EQ(graph.view().edges().size(), 1);
 
   const Error catalog_conflict =
@@ -1335,9 +1591,9 @@ TEST(GraphComposition, DistinctCppPodTypesInteroperateOnlyByCompleteContract) {
 }
 
 // REQ: GRAPH-005
-//   source(ParamOp) --[output→input]--> target(ParamOp)
-//   Both operators undergo parameter replacement; flow handles must re-resolve to new ports.
+//   source(ParamOp) --[output -> input]--> target(ParamOp)
 TEST(GraphComposition, ParameterReplacementRemapsPortsAtomicallyAndFlowHandlesResolveAgain) {
+  // Key setup: Replace both connected Operators, then attempt a port-shape-changing replacement.
   Graph graph{"root"};
   auto source = graph.op<ParamOp>("source");
   auto target = graph.op<ParamOp>("target");
@@ -1347,6 +1603,8 @@ TEST(GraphComposition, ParameterReplacementRemapsPortsAtomicallyAndFlowHandlesRe
 
   source.set_params(GraphParams{.value = 7});
   target.set_params(GraphParams{.value = 9});
+
+  // Key assertion: Flow handles remap on success and remain valid after atomic rejection.
   EXPECT_NE(&flow.source(), old_source);
   EXPECT_NE(&flow.target(), old_target);
   EXPECT_EQ(source->params().value, 7);
@@ -1361,23 +1619,33 @@ TEST(GraphComposition, ParameterReplacementRemapsPortsAtomicallyAndFlowHandlesRe
 }
 
 // REQ: GRAPH-005
+//   graph
+//   `-- counted(CountingParamOp)
 TEST(GraphComposition, ParameterReplacementConstructsExactlyOneCandidate) {
+  // Key setup: Count construction while replacing one Operator's parameters.
   CountingParamOp::constructor_calls = 0;
   Graph graph;
   auto op = graph.op<CountingParamOp>("counted");
   const int before = CountingParamOp::constructor_calls.load();
   op.set_params(GraphParams{.value = 7});
+
+  // Key assertion: Replacement constructs exactly one candidate and publishes its value.
   EXPECT_EQ(CountingParamOp::constructor_calls.load(), before + 1);
   EXPECT_EQ(op->params().value, 7);
 }
 
 // REQ: PARAM-005
+//   graph
+//   `-- validated(ValidatedParamOp)
 TEST(GraphComposition, ParameterReplacementReportsBoundedValidationIdentityWithoutValues) {
+  // Key setup: Submit out-of-range and custom-validator failures to one parameterized Operator.
   Graph graph;
   auto op = graph.op<ValidatedParamOp>("validated");
 
   const Error range_error =
       graph_error_from([&] { op.set_params(ValidatedGraphParams{.bounded = 9U, .even = 2U}); });
+
+  // Key assertion: Diagnostics identify constraints without exposing values or mutating params.
   EXPECT_EQ(range_error.code, ErrorCode::kInvalidArgument);
   EXPECT_NE(range_error.message.find("PARAM_VALIDATION_FAILED category=out_of_range"),
             std::string::npos);
@@ -1396,12 +1664,17 @@ TEST(GraphComposition, ParameterReplacementReportsBoundedValidationIdentityWitho
 }
 
 // REQ: PARAM-005
+//   graph
+//   `-- validated_utf8(Utf8ValidatedParamOp)
 TEST(GraphComposition, ParameterValidationIdentityTruncationPreservesUtf8) {
+  // Key setup: Trigger a validator whose Unicode identity exceeds the diagnostic limit.
   Graph graph;
   auto op = graph.op<Utf8ValidatedParamOp>("validated_utf8");
 
   const Error validator_error =
       graph_error_from([&] { op.set_params(Utf8ValidatedGraphParams{.even = 3U}); });
+
+  // Key assertion: Truncation preserves UTF-8 and includes stable size and digest evidence.
   EXPECT_EQ(validator_error.code, ErrorCode::kInvalidArgument);
   EXPECT_TRUE(detail::valid_utf8(validator_error.message));
   EXPECT_NE(validator_error.message.find("validator_id=x"), std::string::npos);
@@ -1411,9 +1684,29 @@ TEST(GraphComposition, ParameterValidationIdentityTruncationPreservesUtf8) {
 
 // REQ: GRAPH-005
 // REQ: GRAPH-006
-//   source(EnumChangingParamOp.enum_a) --[→input]--> target(EnumATargetOp)
+// REQ: GRAPH-042
+//   source(EnumChangingParamOp) --[enum_a -> input]--> target(EnumATargetOp)
+//   set_params(value=0) keeps the enum_a output; the flow stays valid.
+TEST(GraphComposition, ParameterReplacementPreservesUnchangedLocalEnumType) {
+  // Key setup: Connect a local-enum flow, then reapply params that retain its exact port type.
+  Graph graph{"root"};
+  auto source = graph.op<EnumChangingParamOp>("source");
+  auto target = graph.op<EnumATargetOp>("target");
+  graph.add_flow(source->enum_a, target->input);
+
+  // Key assertion: Replacement keeps the flow and does not enable generic payload loans.
+  EXPECT_NO_THROW(source.set_params(GraphParams{.value = 0}));
+  EXPECT_EQ(source->params().value, 0U);
+  ASSERT_EQ(graph.view().edges().size(), 1U);
+  EXPECT_FALSE(graph.view().ports()[0].generic_loan_supported);
+  EXPECT_EQ(graph.view().ports()[0].generic_loan_slot_size_bytes, 0U);
+}
+
+// REQ: GRAPH-036
+//   source(EnumChangingParamOp) --[enum_a -> input]--> target(EnumATargetOp)
 //   set_params(value=1) would switch source to enum_b output; rejected to protect flow.
 TEST(GraphComposition, ParameterReplacementPreservesExactLocalPortType) {
+  // Key setup: Connect an enum output, then request params that would change its local enum type.
   Graph graph{"root"};
   auto source = graph.op<EnumChangingParamOp>("source");
   auto target = graph.op<EnumATargetOp>("target");
@@ -1426,9 +1719,12 @@ TEST(GraphComposition, ParameterReplacementPreservesExactLocalPortType) {
   ASSERT_TRUE(scalar);
   if (scalar) {
     EXPECT_EQ(scalar->kind, ScalarIdentityKind::kLocalEnum);
+    EXPECT_EQ(scalar->native_object_size, sizeof(GraphEnumA));
   }
 
   const Error mismatch = graph_error_from([&] { source.set_params(GraphParams{.value = 1}); });
+
+  // Key assertion: Exact type mismatch rejects without changing topology, params, or flow handles.
   EXPECT_EQ(mismatch.code, ErrorCode::kIncompatible);
   EXPECT_EQ(mismatch.message, "GRAPH_PARAMETER_PORT_SHAPE_CHANGED");
   EXPECT_EQ(graph.view().identity(), before.identity());
@@ -1438,18 +1734,21 @@ TEST(GraphComposition, ParameterReplacementPreservesExactLocalPortType) {
 }
 
 // REQ: GRAPH-006
-//   a --[output→input]--> b --[output→input]--> c
+//   a --[output -> input]--> b --[output -> input]--> c
 //   c --X [GRAPH_INPUT_FANIN_UNSUPPORTED]--> b   (b already has a source)
-//   c --X [GRAPH_DIRECT_CYCLE]--> a              (would close a→b→c→a loop)
+//   c --X [GRAPH_DIRECT_CYCLE]--> a              (would close a -> b -> c -> a)
 //   a --X [GRAPH_CROSS_GRAPH_PORT]--> outsider   (ports from different Graph instances)
 TEST(GraphComposition, RejectsFaninCyclesAndCrossGraphPorts) {
+  // Key setup: Attempt fan-in, a direct cycle, and a cross-Graph flow around one valid chain.
   Graph graph{"root"};
   auto a = graph.op<PassOp>("a");
   auto b = graph.op<PassOp>("b");
   auto c = graph.op<PassOp>("c");
   (void)graph.add_flow(a->output, b->input);
   const Error fanin = graph_error_from([&] { (void)graph.add_flow(c->output, b->input); });
-  EXPECT_EQ(fanin.message, "GRAPH_INPUT_FANIN_UNSUPPORTED");
+  EXPECT_TRUE(fanin.message.starts_with("GRAPH_INPUT_FANIN_UNSUPPORTED"));
+  EXPECT_NE(fanin.message.find("c.output"), std::string::npos);
+  EXPECT_NE(fanin.message.find("b.input"), std::string::npos);
   (void)graph.add_flow(b->output, c->input);
   const Error cycle = graph_error_from([&] { (void)graph.add_flow(c->output, a->input); });
   EXPECT_EQ(cycle.message, "GRAPH_DIRECT_CYCLE");
@@ -1458,13 +1757,16 @@ TEST(GraphComposition, RejectsFaninCyclesAndCrossGraphPorts) {
   auto outsider = other.op<PassOp>("outside");
   const Error cross_graph =
       graph_error_from([&] { (void)graph.add_flow(a->output, outsider->input); });
-  EXPECT_EQ(cross_graph.message, "GRAPH_CROSS_GRAPH_PORT");
+
+  // Key assertion: Each invalid relationship retains its graph error and endpoint context.
+  EXPECT_TRUE(cross_graph.message.starts_with("GRAPH_CROSS_GRAPH_PORT"));
+  EXPECT_NE(cross_graph.message.find("a.output"), std::string::npos);
 }
 
 // REQ: GRAPH-007
 //   public_input =[export_input alias]=> op(inside) =[export_output alias]=> public_output
-//   Interface bindings are directional aliases, not data-copy queue edges.
 TEST(GraphComposition, SameDirectionBindingsAreAliasesRatherThanQueueEdges) {
+  // Key setup: Export both directions of one internal Operator as public interface aliases.
   Graph graph{"root"};
   auto op = graph.op<PassOp>("inside");
   const Input<std::uint32_t> public_input{"public_input"};
@@ -1474,6 +1776,8 @@ TEST(GraphComposition, SameDirectionBindingsAreAliasesRatherThanQueueEdges) {
   graph.export_output(public_output, op->output);
 
   const GraphView view = graph.view();
+
+  // Key assertion: Interface aliases retain direction without creating queue edges.
   EXPECT_TRUE(view.edges().empty());
   ASSERT_EQ(view.interface_bindings().size(), 2);
   EXPECT_EQ(view.interface_bindings()[0].direction, PortDirection::kInput);
@@ -1482,8 +1786,8 @@ TEST(GraphComposition, SameDirectionBindingsAreAliasesRatherThanQueueEdges) {
 
 // REQ: GRAPH-007
 //   public_input --[add_flow]--> op(inside) --[add_flow]--> public_output
-//   Order matters: internal-then-boundary direction must be respected; foreign ports rejected.
 TEST(GraphComposition, RawInterfaceAliasesEnforceOrderAndGraphOwnership) {
+  // Key setup: Add correctly ordered aliases, then try reversed and foreign-Graph variants.
   Graph graph{"root"};
   auto op = graph.op<PassOp>("inside");
   const Input<std::uint32_t> public_input{"public_input"};
@@ -1505,14 +1809,20 @@ TEST(GraphComposition, RawInterfaceAliasesEnforceOrderAndGraphOwnership) {
   auto foreign_op = foreign.op<PassOp>("inside");
   EXPECT_THROW(foreign.add_flow(public_input, foreign_op->input), RuntimeError);
   EXPECT_THROW(foreign.add_flow(foreign_op->output, public_output), RuntimeError);
+
+  // Key assertion: Direction and ownership errors leave the affected interface sets empty.
   EXPECT_TRUE(foreign.view().interface_bindings().empty());
 }
 
 // REQ: GRAPH-003
+//   graph
+//   `-- aliased(PassOp)
 TEST(GraphComposition, AddOperatorForwardsToTypedOperatorAuthoring) {
+  // Key setup: Author a captured PassOp through the add_operator alias.
   Graph graph;
   auto op = graph.add_operator<PassOp>("aliased", std::string{"capture"});
 
+  // Key assertion: The alias forwards capture and naming to typed Operator authoring.
   EXPECT_EQ(op->label_, "capture");
   const GraphView view = graph.view();
   ASSERT_EQ(view.vertices().size(), 1);
@@ -1520,20 +1830,28 @@ TEST(GraphComposition, AddOperatorForwardsToTypedOperatorAuthoring) {
 }
 
 // REQ: GRAPH-007
+//   root
+//   `-- inside(PassOp) =[shared aliases]=> public interface
 TEST(GraphComposition, InterfaceNamesAreUniqueAcrossBothDirections) {
+  // Key setup: Reuse one public name for input and output aliases.
   Graph graph{"root"};
   auto op = graph.op<PassOp>("inside");
   const Input<std::uint32_t> public_input{"shared"};
   const Output<std::uint32_t> public_output{"shared"};
   graph.export_input(public_input, op->input);
   const Error error = graph_error_from([&] { graph.export_output(public_output, op->output); });
+
+  // Key assertion: Interface names form one namespace across both directions.
   EXPECT_EQ(error.code, ErrorCode::kDuplicateName);
   EXPECT_EQ(error.message, "GRAPH_INTERFACE_NAME_DUPLICATE");
 }
 
 // REQ: GRAPH-010
 // REQ: GRAPH-011
+//   root
+//   `-- import holomq://valid (declaration ordinal 1)
 TEST(GraphComposition, InvalidBoundaryConsumesItsDeterministicDeclarationOrdinal) {
+  // Key setup: Reject one invalid import before authoring a valid imported topic.
   Graph graph{"root"};
   TopicOptions invalid;
   invalid.endpoint_name = " invalid";
@@ -1546,6 +1864,8 @@ TEST(GraphComposition, InvalidBoundaryConsumesItsDeterministicDeclarationOrdinal
   ASSERT_TRUE(topic);
 
   const GraphView view = graph.view();
+
+  // Key assertion: The failed declaration consumes ordinal zero without publishing a boundary.
   ASSERT_EQ(view.external_topics().size(), 1);
   EXPECT_TRUE(view.external_topics()[0].imported);
   EXPECT_EQ(view.external_topics()[0].declaration_ordinal, 1);
@@ -1556,12 +1876,12 @@ TEST(GraphComposition, InvalidBoundaryConsumesItsDeterministicDeclarationOrdinal
             ScalarIdentityKind::kUInt32);
 }
 // REQ: GRAPH-010
+//   coverage
+//   |-- malformed erased POD imports [rejected]
+//   `-- valid AliasA import -> POD identity catalog
 TEST(GraphComposition, PodCoverageAndGraphWideIdentityCatalogFailClosed) {
-  // Malformed erased POD record --> imported boundary (rejected before publication)
-  // Valid PodAliasA record ------> imported boundary --> catalog
   Graph coverage;
-  // Key setup: inject pointer-free records that simulate untrusted artifacts; public typed
-  //            authoring rejects these C++ contracts at compile time.
+  // Key setup: Inject malformed erased POD layouts, then import conflicting typed POD identities.
   auto gap_identity = detail::operator_spec_payload_identity<GraphPodPayload>();
   PodIdentityRecord gap_pod{
       .canonical_name = std::string{ChannelTypeIdentity<GraphGapPod>::name},
@@ -1583,8 +1903,7 @@ TEST(GraphComposition, PodCoverageAndGraphWideIdentityCatalogFailClosed) {
   auto gap = detail::GraphCompilerAccess::register_import_with_payload_identity<GraphPodPayload>(
       coverage, std::move(gap_identity));
   ASSERT_FALSE(gap);
-  // Key assertion: runtime validation remains fail-closed for malformed records that do not pass
-  //                through the public typed API.
+  // Key assertion: Runtime records and the graph-wide POD catalog both reject incompatibility.
   EXPECT_EQ(gap.error().message, "GRAPH_POD_LAYOUT_INVALID");
 
   auto tail_identity = detail::operator_spec_payload_identity<GraphPodPayload>();
@@ -1620,11 +1939,16 @@ TEST(GraphComposition, PodCoverageAndGraphWideIdentityCatalogFailClosed) {
 }
 
 // REQ: GRAPH-010
+//   graph
+//   `-- import holomq://array-a(GraphArrayPodA)
 TEST(GraphComposition, PodFixedArraysRetainElementCountsAndConflictByLayout) {
+  // Key setup: Import a fixed-array POD, then try the same identity with a different layout.
   Graph graph;
   (void)graph.import_topic<GraphArrayPodA>("holomq://array-a");
 
   const GraphView accepted = graph.view();
+
+  // Key assertion: Element counts are retained and participate in identity conflict detection.
   ASSERT_EQ(accepted.external_topics().size(), 1);
   const auto& pod = accepted.external_topics()[0].payload_identity.pod;
   if (!pod) {
@@ -1643,8 +1967,13 @@ TEST(GraphComposition, PodFixedArraysRetainElementCountsAndConflictByLayout) {
 }
 
 // REQ: GRAPH-012
+//   graph
+//   `-- imported topic boundary [invalid variants]
 TEST(GraphComposition, ExternalUrisAndGeneratedEndpointNamespaceAreCanonical) {
+  // Key setup: Try invalid URI schemes, empty topics, and reserved endpoint namespaces.
   Graph graph;
+
+  // Key assertion: Every non-canonical boundary spelling is rejected before publication.
   EXPECT_EQ(
       graph_error_from([&] { (void)graph.import_topic<std::uint32_t>("other://topic"); }).message,
       "GRAPH_TOPIC_URI_INVALID");
@@ -1666,7 +1995,10 @@ TEST(GraphComposition, ExternalUrisAndGeneratedEndpointNamespaceAreCanonical) {
 }
 
 // REQ: GRAPH-012
+//   each same
+//   `-- import holomq://provenance(Tensor)
 TEST(GraphComposition, ExternalTopicProvenanceParticipatesInCanonicalHash) {
+  // Key setup: Compare one topic against attach, capture-clock, and schema provenance changes.
   TopicOptions options;
   options.schema = kBoundarySchemaA;
   options.capture_time = RequireCaptureTime{.clock = ClockKey::named("capture_clock")};
@@ -1695,7 +2027,8 @@ TEST(GraphComposition, ExternalTopicProvenanceParticipatesInCanonicalHash) {
   ASSERT_TRUE(topic.schema);
   if (topic.schema) {
     EXPECT_EQ(topic.schema->canonical_name, kBoundarySchemaA.canonical_name);
-    EXPECT_EQ(topic.schema->version, kBoundarySchemaA.version);
+    EXPECT_EQ(topic.schema->compatibility_epoch, kBoundarySchemaA.compatibility_epoch);
+    EXPECT_EQ(topic.schema->family_id, kBoundarySchemaA.family_id);
   }
 
   TopicOptions changed_attach = options;
@@ -1704,12 +2037,18 @@ TEST(GraphComposition, ExternalTopicProvenanceParticipatesInCanonicalHash) {
   changed_capture.capture_time = RequireCaptureTime{.clock = ClockKey::named("other_clock")};
   TopicOptions changed_schema = options;
   changed_schema.schema = kBoundarySchemaB;
+
+  // Key assertion: Authored provenance is retained and each semantic change alters the hash.
   EXPECT_NE(hash_for(options), hash_for(changed_attach));
   EXPECT_NE(hash_for(options), hash_for(changed_capture));
   EXPECT_NE(hash_for(options), hash_for(changed_schema));
 }
 // REQ: GRAPH-010
+//   each helper Graph
+//   `-- import holomq://scalar-kind(T)
 TEST(GraphComposition, ExternalScalarKindsCoverThePortableFamily) {
+  // Key setup: Import every supported portable scalar through the shared helper.
+  // Key assertion: Each helper invocation verifies the boundary's retained scalar identity kind.
   expect_external_scalar_kind<bool>(ScalarIdentityKind::kBoolean);
   expect_external_scalar_kind<std::uint8_t>(ScalarIdentityKind::kUInt8);
   expect_external_scalar_kind<std::int8_t>(ScalarIdentityKind::kInt8);
@@ -1726,7 +2065,12 @@ TEST(GraphComposition, ExternalScalarKindsCoverThePortableFamily) {
 // REQ: GRAPH-012
 // REQ: GRAPH-018
 // REQ: GRAPH-031
+//   root
+//   |-- source(PassOp) --[invalid policy]--> target(PassOp)
+//   |-- tensor(TensorPassOp)
+//   `-- invalid_inline_policy(InvalidInlineOptionsOp) [rejected]
 TEST(GraphComposition, RejectsUnicodeEdgeWhitespaceAndInvalidClosedEnumValues) {
+  // Key setup: Exercise invalid boundary text and fabricated closed-enum values across APIs.
   Graph graph{"root"};
   TopicOptions options;
   options.endpoint_name = std::string_view{"\xE3\x80\x80name"};
@@ -1745,8 +2089,6 @@ TEST(GraphComposition, RejectsUnicodeEdgeWhitespaceAndInvalidClosedEnumValues) {
   EXPECT_THROW(graph.lifecycle().before(source, target, static_cast<LifecycleStage>(0xFF)),
                RuntimeError);
 
-  // Key setup: exercise the Tensor-spec enum validator through ports whose Operator setup
-  // explicitly admitted Tensor configuration.
   auto tensor = graph.op<TensorPassOp>("tensor");
   const Error invalid_input_memory = graph_error_from([&] {
     graph.configure(tensor->input)
@@ -1758,8 +2100,7 @@ TEST(GraphComposition, RejectsUnicodeEdgeWhitespaceAndInvalidClosedEnumValues) {
         .produces_tensor(
             TensorOutputSpec{.representation = {.memory_kind = static_cast<MemoryKind>(0xFF)}});
   });
-  // Key assertion: both directions reject the fabricated closed-enum value at the Tensor-spec
-  // boundary with the exact diagnostic.
+  // Key assertion: Every invalid value rejects at its exact boundary without partial admission.
   EXPECT_EQ(invalid_input_memory.message, "GRAPH_TENSOR_ENUM_INVALID");
   EXPECT_EQ(invalid_output_memory.message, "GRAPH_TENSOR_ENUM_INVALID");
   const Error invalid_input_dtype_code = graph_error_from([&] {
@@ -1775,8 +2116,6 @@ TEST(GraphComposition, RejectsUnicodeEdgeWhitespaceAndInvalidClosedEnumValues) {
     graph.configure(tensor->input)
         .expects_tensor(TensorInputSpec{.representation = {.dtype = DLDataType{kDLUInt, 8, 0}}});
   });
-  // Key assertion: every malformed dtype reaches the dtype validator rather than an earlier
-  // Tensor-carrier rejection.
   EXPECT_EQ(invalid_input_dtype_code.message, "GRAPH_TENSOR_DTYPE_INVALID");
   EXPECT_EQ(invalid_output_dtype_bits.message, "GRAPH_TENSOR_DTYPE_INVALID");
   EXPECT_EQ(invalid_input_dtype_lanes.message, "GRAPH_TENSOR_DTYPE_INVALID");
@@ -1784,7 +2123,11 @@ TEST(GraphComposition, RejectsUnicodeEdgeWhitespaceAndInvalidClosedEnumValues) {
   // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
 }
 // REQ: GRAPH-014
+//   root
+//   |-- import holomq://ordinary
+//   `-- import holomq://monitored [clock-health contract]
 TEST(GraphComposition, ClockHealthOrdinaryAndMonitoredContractsFailClosed) {
+  // Key setup: Author ordinary and monitored topics, then probe invalid health contracts.
   Graph graph{"root"};
   (void)graph.import_topic<std::uint32_t>("holomq://ordinary");
 
@@ -1797,6 +2140,8 @@ TEST(GraphComposition, ClockHealthOrdinaryAndMonitoredContractsFailClosed) {
   (void)graph.import_topic<std::uint32_t>("holomq://monitored", monitored);
 
   const GraphView view = graph.view();
+
+  // Key assertion: Valid contracts persist while incomplete, inconsistent, and unknown values fail.
   ASSERT_EQ(view.external_topics().size(), 2);
   EXPECT_EQ(view.external_topics()[0].clock_health.capability, ClockHealthCapability::kUnavailable);
   EXPECT_EQ(view.external_topics()[0].clock_health.requirement,
@@ -1880,7 +2225,11 @@ TEST(GraphComposition, ClockHealthOrdinaryAndMonitoredContractsFailClosed) {
 }
 
 // REQ: GRAPH-013
+//   root
+//   |-- import holomq://import [wrong peer bounds]
+//   `-- export holomq://export [wrong peer bounds]
 TEST(GraphComposition, ExternalEndpointBoundsAreValidatedByPeerRole) {
+  // Key setup: Apply subscriber bounds to an import and publisher bounds to an export.
   Graph graph{"root"};
   TopicOptions import_wrong;
   import_wrong.bounds.subscriber = SubscriberEndpointBounds{.queue_depth = 1};
@@ -1889,12 +2238,17 @@ TEST(GraphComposition, ExternalEndpointBoundsAreValidatedByPeerRole) {
 
   TopicOptions export_wrong;
   export_wrong.bounds.publisher = PublisherEndpointBounds{.max_loaned_samples = 1};
+
+  // Key assertion: Each boundary rejects bounds authored for the opposite peer role.
   EXPECT_THROW((void)graph.export_topic<std::uint32_t>("holomq://export", export_wrong),
                RuntimeError);
 }
 
 // REQ: GRAPH-013
+//   root
+//   `-- external topic boundaries [zero-bound variants rejected]
 TEST(GraphComposition, ExternalEndpointBoundsRejectZeroValues) {
+  // Key setup: Try zero publisher, subscriber queue, and subscriber borrow capacities.
   Graph graph{"root"};
 
   TopicOptions publisher_zero;
@@ -1920,14 +2274,19 @@ TEST(GraphComposition, ExternalEndpointBoundsRejectZeroValues) {
             }).message,
             "GRAPH_TOPIC_SUBSCRIBER_BOUND_INVALID");
 
+  // Key assertion: Zero capacity is invalid and no rejected boundary is published.
   EXPECT_TRUE(graph.view().external_topics().empty());
 }
 // REQ: GRAPH-015
+// REQ: GRAPH-038
 // REQ: GRAPH-016
 // REQ: GRAPH-017
-//   a(PassOp) and b(PassOp) grouped in region "critical" [bounded-memory, real-time]
-//   lifecycle: a must start before b; clock "capture" set as default
+//   root
+//   |-- a(PassOp) --[start-before]--> b(PassOp)
+//   |   `-- region critical [bounded-memory, real-time]
+//   `-- clock capture [default]
 TEST(GraphComposition, RegionsLifecycleAndClocksRemainPointerFreeSnapshotRecords) {
+  // Key setup: Author a region, lifecycle dependency and permission, and default clock.
   Graph graph{"root"};
   auto a = graph.op<PassOp>("a");
   auto b = graph.op<PassOp>("b");
@@ -1941,6 +2300,8 @@ TEST(GraphComposition, RegionsLifecycleAndClocksRemainPointerFreeSnapshotRecords
   graph.set_default_clock(clock);
 
   const GraphView view = graph.view();
+
+  // Key assertion: The snapshot deep-owns canonical records for every auxiliary declaration.
   ASSERT_EQ(view.regions().size(), 1);
   EXPECT_EQ(view.regions()[0].members.size(), 2);
   EXPECT_EQ(view.regions()[0].profile, Profile::kRealTime);
@@ -1953,12 +2314,50 @@ TEST(GraphComposition, RegionsLifecycleAndClocksRemainPointerFreeSnapshotRecords
   EXPECT_TRUE(view.clocks()[0].is_default);
 }
 
+// REQ: OPERATOR-051
+TEST(GraphComposition, CudaGraphCaptureEligibilityIsFrozenAndAffectsCanonicalIdentity) {
+  Graph eligible_graph{"capture-eligibility"};
+  (void)eligible_graph.op<CaptureEligibleOp>("op");
+  const GraphView eligible_view = eligible_graph.view();
+  ASSERT_EQ(eligible_view.vertices().size(), 1U);
+  EXPECT_TRUE(eligible_view.vertices().front().cuda_graph_capture_eligible);
+
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(eligible_graph);
+  ASSERT_EQ(snapshot->vertices.size(), 1U);
+  EXPECT_TRUE(snapshot->vertices.front().cuda_graph_capture_eligible);
+  const auto factories =
+      detail::GraphCompilerAccess::executable_factories(eligible_graph, *snapshot);
+  ASSERT_EQ(factories.operators.size(), 1U);
+  EXPECT_TRUE(factories.operators.front().cuda_graph_capture_eligible);
+
+  Graph ordinary_graph{"capture-eligibility"};
+  (void)ordinary_graph.op<OrdinaryNoPortOp>("op");
+  EXPECT_FALSE(ordinary_graph.view().vertices().front().cuda_graph_capture_eligible);
+  EXPECT_NE(eligible_view.identity().hash, ordinary_graph.view().identity().hash);
+}
+
+// REQ: OPERATOR-051
+TEST(GraphComposition, ParameterReplacementCannotChangeCudaGraphCaptureEligibility) {
+  Graph graph;
+  auto op = graph.op<EligibilityChangingParamOp>("op");
+  const GraphView before = graph.view();
+
+  const Error error = graph_error_from([&] { op.set_params(GraphParams{.value = 1U}); });
+  EXPECT_EQ(error.code, ErrorCode::kIncompatible);
+  EXPECT_EQ(error.message, "GRAPH_PARAMETER_OPERATOR_SPEC_CHANGED");
+  EXPECT_EQ(graph.view().identity(), before.identity());
+}
+
 // REQ: GRAPH-009
 // REQ: GRAPH-015
-//   first: region{b, a} (insertion order reversed from second)
-//   second: region{a, b}
-//   Members are sorted before hashing; canonical hash must be equal across both graphs.
+// REQ: GRAPH-038
+//   each Graph
+//   |-- a(PassOp)
+//   `-- b(PassOp)
+//       `-- region [a, b]
+//   The first adds {b, a}; the second adds {a, b}; canonical membership and hash are equal.
 TEST(GraphComposition, RegionsAreOrderInvariantAndProfileMayBeAuthoredOnlyOnce) {
+  // Key setup: Author equivalent regions in opposite orders, then duplicate a profile choice.
   Graph first;
   auto first_a = first.op<PassOp>("a");
   auto first_b = first.op<PassOp>("b");
@@ -1968,7 +2367,7 @@ TEST(GraphComposition, RegionsAreOrderInvariantAndProfileMayBeAuthoredOnlyOnce) 
       .constrain(RegionConstraint::latency_budget(std::chrono::milliseconds{2}))
       .constrain(RegionConstraint::static_topology())
       .constrain(RegionConstraint::bounded_memory())
-      .optimize(OptimizationHint::kCudaGraphFusion)
+      .constrain(RegionConstraint::cuda_graph())
       .profile(Profile::kStandard);
   const GraphView first_view = first.view();
   ASSERT_EQ(first_view.regions().size(), 1);
@@ -1984,15 +2383,20 @@ TEST(GraphComposition, RegionsAreOrderInvariantAndProfileMayBeAuthoredOnlyOnce) 
       .constrain(RegionConstraint::bounded_memory())
       .constrain(RegionConstraint::static_topology())
       .constrain(RegionConstraint::latency_budget(std::chrono::milliseconds{2}))
-      .optimize(OptimizationHint::kCudaGraphFusion)
+      .constrain(RegionConstraint::cuda_graph())
       .profile(Profile::kStandard);
   const GraphView second_view = second.view();
+
+  // Key assertion: Canonical ordering is hash-stable and a second profile authorship rejects.
   EXPECT_EQ(first_view.identity().hash, second_view.identity().hash);
-  ASSERT_EQ(first_view.regions()[0].constraints.size(), 3);
+  ASSERT_EQ(first_view.regions()[0].constraints.size(), 4);
   EXPECT_LT(static_cast<std::uint8_t>(first_view.regions()[0].constraints[0].kind()),
             static_cast<std::uint8_t>(first_view.regions()[0].constraints[1].kind()));
   EXPECT_LT(static_cast<std::uint8_t>(first_view.regions()[0].constraints[1].kind()),
             static_cast<std::uint8_t>(first_view.regions()[0].constraints[2].kind()));
+  EXPECT_LT(static_cast<std::uint8_t>(first_view.regions()[0].constraints[2].kind()),
+            static_cast<std::uint8_t>(first_view.regions()[0].constraints[3].kind()));
+  EXPECT_EQ(first_view.regions()[0].constraints[3].kind(), RegionConstraintKind::kCudaGraph);
 
   auto duplicate = first.region("duplicate-profile");
   duplicate.profile(Profile::kStandard);
@@ -2001,7 +2405,12 @@ TEST(GraphComposition, RegionsAreOrderInvariantAndProfileMayBeAuthoredOnlyOnce) 
   EXPECT_EQ(error.message, "GRAPH_REGION_PROFILE_DUPLICATE");
 }
 
+//   each root
+//   |-- a(PassOp)
+//   `-- b(PassOp)
+//       `-- partition serial [a, b]
 TEST(GraphComposition, PartitionsRemainDeepOwnedCanonicalSnapshotRecords) {
+  // Key setup: Author equivalent partitions in opposite orders and retain the first snapshot.
   Graph first{"root"};
   auto first_a = first.op<PassOp>("a");
   auto first_b = first.op<PassOp>("b");
@@ -2009,6 +2418,8 @@ TEST(GraphComposition, PartitionsRemainDeepOwnedCanonicalSnapshotRecords) {
   first_partition.add(first_b).add(first_a);
 
   const GraphView retained = first.view();
+
+  // Key assertion: Partition records are canonical, deep-owned, and stable after Graph mutation.
   ASSERT_EQ(retained.partitions().size(), 1);
   EXPECT_TRUE(retained.partitions()[0].id);
   EXPECT_EQ(retained.partitions()[0].graph, retained.graphs()[0].id);
@@ -2027,7 +2438,13 @@ TEST(GraphComposition, PartitionsRemainDeepOwnedCanonicalSnapshotRecords) {
 }
 
 // REQ: GRAPH-032
+//   root
+//   |-- first(PassOp)
+//   |-- second(PassOp)
+//   `-- third(PassOp)
+//       `-- partition serial [first, second, third]
 TEST(GraphComposition, PartitionVariadicAddCommitsTheCompleteBatchAtomically) {
+  // Key setup: Add a batch, then try foreign, duplicate, allocation-failing, and stale batches.
   Graph graph{"root"};
   auto first = graph.op<PassOp>("first");
   auto second = graph.op<PassOp>("second");
@@ -2036,6 +2453,8 @@ TEST(GraphComposition, PartitionVariadicAddCommitsTheCompleteBatchAtomically) {
 
   partition.add(first, second, third);
   const GraphView accepted = graph.view();
+
+  // Key assertion: Valid batches commit completely and every invalid batch leaves identity intact.
   ASSERT_EQ(accepted.partitions().size(), 1);
   ASSERT_EQ(accepted.partitions()[0].members.size(), 3);
 
@@ -2080,7 +2499,11 @@ TEST(GraphComposition, PartitionVariadicAddCommitsTheCompleteBatchAtomically) {
 }
 
 // REQ: GRAPH-032
+//   each root
+//   |-- a(PassOp) [anchor partition]
+//   `-- b(PassOp) [automatic remainder]
 TEST(GraphComposition, AutomaticRemainderDirectiveIsIdempotentOrderIndependentAndHashed) {
+  // Key setup: Author automatic remainder repeatedly, in different orders, and omit it once.
   Graph first{"root"};
   auto first_a = first.op<PassOp>("a");
   (void)first.op<PassOp>("b");
@@ -2105,12 +2528,20 @@ TEST(GraphComposition, AutomaticRemainderDirectiveIsIdempotentOrderIndependentAn
   auto manual_a = manual.op<PassOp>("a");
   (void)manual.op<PassOp>("b");
   manual.partition("anchor").add(manual_a);
+
+  // Key assertion: The directive is idempotent and order-independent but remains semantic.
   EXPECT_FALSE(manual.view().automatic_partition_remaining());
   EXPECT_NE(first.view().identity().hash, manual.view().identity().hash);
 }
 
 // REQ: GRAPH-032
+//   root
+//   |-- root-op(PassOp)
+//   `-- child(SinglePassGraph)
+//       `-- embedded(PassOp)
+//   partition application [include all]
 TEST(GraphComposition, IncludeAllRetainsLateRootExpansionMetadataAndCanonicalIdentity) {
+  // Key setup: Author include_all before and after identical root and embedded Operators.
   Graph first{"root"};
   auto all = first.partition("application");
   all.include_all().include_all();
@@ -2127,11 +2558,17 @@ TEST(GraphComposition, IncludeAllRetainsLateRootExpansionMetadataAndCanonicalIde
   (void)second.op<PassOp>("root-op");
   (void)second.embed<SinglePassGraph>("child");
   second.partition("application").include_all();
+
+  // Key assertion: Late expansion metadata is idempotent and independent of authoring order.
   EXPECT_EQ(first.view().identity().hash, second.view().identity().hash);
 }
 
 // REQ: GRAPH-032
+//   candidate roots
+//   |-- op(PassOp)
+//   `-- partition directives [conflicting variants]
 TEST(GraphComposition, IncludeAllAndAutomaticRemainderConflictsAreTransactional) {
+  // Key setup: Combine include_all with explicit, automatic, multiple, and embedded declarations.
   Graph explicit_members{"explicit"};
   auto op = explicit_members.op<PassOp>("op");
   auto explicit_partition = explicit_members.partition("application");
@@ -2190,10 +2627,16 @@ TEST(GraphComposition, IncludeAllAndAutomaticRemainderConflictsAreTransactional)
               (void)all_parent.embed<ManualPartitionChildGraph>("manual-child");
             }).message,
             "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT");
+
+  // Key assertion: Every conflict rejects without changing the previously accepted snapshot.
   EXPECT_EQ(all_parent.view().identity(), before_child_manual.identity());
 }
 
+//   root
+//   `-- first(PassOp)
+//       `-- partition serial [first]
 TEST(GraphComposition, PartitionAuthoringRejectsInvalidNamesAndHandlesTransactionally) {
+  // Key setup: Probe invalid names, duplicate membership, foreign members, and stale handles.
   Graph graph{"root"};
   auto first = graph.op<PassOp>("first");
   auto partition = graph.partition("serial");
@@ -2230,19 +2673,24 @@ TEST(GraphComposition, PartitionAuthoringRejectsInvalidNamesAndHandlesTransactio
     auto authored = owner->partition("partition");
     return std::pair{std::move(authored), std::move(op)};
   }();
+
+  // Key assertion: Invalid authoring is transactional and stale partition handles fail closed.
   EXPECT_EQ(graph_error_from([&] { stale.first.add(stale.second); }).message,
             "GRAPH_PARTITION_HANDLE_INVALID");
 }
 
 // REQ: GRAPH-016
-//   a, b, c(PassOp) — no data edges; lifecycle edges only
-//   permissions: a(self+external), b→a restart request
+//   a, b, c(PassOp) -- no data edges; lifecycle edges only
+//   permissions: a(self+external), b -> a restart request
 //   ordering:    a before b@kStart; b before a@kConfigure (different stage, not a cycle)
 TEST(GraphComposition, LifecyclePermissionsAndOrderingAreIndependentAndDenyByDefault) {
+  // Key setup: Author restart permissions and per-stage ordering, then try invalid relationships.
   Graph graph;
   auto a = graph.op<PassOp>("a");
   auto b = graph.op<PassOp>("b");
   auto c = graph.op<PassOp>("c");
+
+  // Key assertion: Permissions deny by default and ordering cycles are evaluated per stage.
   EXPECT_TRUE(graph.view().lifecycle_restart_permissions().empty());
 
   auto lifecycle = graph.lifecycle();
@@ -2269,12 +2717,14 @@ TEST(GraphComposition, LifecyclePermissionsAndOrderingAreIndependentAndDenyByDef
 }
 
 // REQ: GRAPH-009
+// REQ: GRAPH-033
 // REQ: GRAPH-016
 // REQ: GRAPH-017
-//   a, b, c(PassOp); clock_a --[off=1]--> clock_b; clock_a --[off=2]--> clock_c
-//   "first" authors lifecycle/clock in forward order; "second" reverses both orderings.
-//   The canonical hash must be equal, confirming declaration order is irrelevant.
+//   each same
+//   |-- a(PassOp) --[start-before]--> b(PassOp), c(PassOp)
+//   `-- clock_a --[off=1]--> clock_b; --[off=2]--> clock_c
 TEST(GraphComposition, AuxiliaryDeclarationOrderDoesNotChangeCanonicalHash) {
+  // Key setup: Author equivalent lifecycle and clock declarations in opposite orders.
   const auto author = [](Graph& graph, bool reverse) {
     auto a = graph.op<PassOp>("a");
     auto b = graph.op<PassOp>("b");
@@ -2306,39 +2756,39 @@ TEST(GraphComposition, AuxiliaryDeclarationOrderDoesNotChangeCanonicalHash) {
   author(first, false);
   Graph second{"same"};
   author(second, true);
+
+  // Key assertion: Auxiliary declaration order does not change canonical identity.
   EXPECT_EQ(first.view().identity().hash, second.view().identity().hash);
 }
 
 // REQ: GRAPH-002
 // REQ: GRAPH-009
 // REQ: GRAPH-020
-//   Each sub-block injects a simulated allocation fault at successive checkpoints and
-//   verifies the graph is completely unchanged, then accepts the same mutation on retry.
 //   Sub-topologies exercised:
 //     operator:              candidate(PassOp)
 //     operator+readiness:    candidate(PodReadinessOp)
 //     params:                candidate(ParamOp) + set_params rollback
 //     interface:             op(PassOp) + export_input/export_output
-//     flow:                  source --[output→input]--> target (PassOp×2)
-//     tensor-output-layout:  source(TensorOp) --> first, second (TensorPassOp×2)
-//     tensor-input-layout:   source(TensorOp) --[output→input]--> target(TensorPassOp)
-//     tensor-payload:        source(TensorOp) --[output→input]--> target(TensorPassOp)
+//     flow:                  source --[output -> input]--> target (PassOp x2)
+//     tensor-output-layout:  source(TensorOp) --> first, second (TensorPassOp x2)
+//     tensor-input-layout:   source(TensorOp) --[output -> input]--> target(TensorPassOp)
+//     tensor-payload:        source(TensorOp) --[output -> input]--> target(TensorPassOp)
 //     external:              import_topic<GraphPodPayload>
 //     region:                region.contains / constrain / optimize
 //     clock:                 add_clock / bind_shared_clock / set_default_clock
 TEST(GraphComposition, CompoundMutationFaultsRollbackEveryLogicalCommit) {
+  // Key setup: Inject allocation failure at each compound-mutation checkpoint, then retry it.
   const auto expect_unchanged = [](const GraphView& before, const GraphView& after) {
     EXPECT_EQ(after.generation(), before.generation());
     EXPECT_EQ(after.identity(), before.identity());
   };
 
-  // Key setup: fail_mutation_after(graph, N) injects a std::bad_alloc at the Nth internal
-  //            allocation checkpoint, then verifies both generation and identity are stable.
   for (std::size_t checkpoint = 0; checkpoint < 9; ++checkpoint) {
     Graph graph{"operator"};
     const GraphView before = graph.view();
-    // Key assertion: expect_unchanged confirms rollback leaves generation and hash intact.
     detail::GraphCompilerAccess::fail_mutation_after(graph, checkpoint);
+
+    // Key assertion: Every failed mutation preserves identity before retry succeeds.
     EXPECT_THROW((void)graph.op<PassOp>("candidate"), std::bad_alloc);
     expect_unchanged(before, graph.view());
     EXPECT_NO_THROW((void)graph.op<PassOp>("candidate"));
@@ -2486,11 +2936,11 @@ TEST(GraphComposition, CompoundMutationFaultsRollbackEveryLogicalCommit) {
     expect_unchanged(before_constraint, graph.view());
     EXPECT_NO_THROW(region.constrain(RegionConstraint::bounded_memory()));
 
-    const GraphView before_hint = graph.view();
+    const GraphView before_cuda_graph = graph.view();
     detail::GraphCompilerAccess::fail_mutation_after(graph, 0);
-    EXPECT_THROW(region.optimize(OptimizationHint::kCudaGraphFusion), std::bad_alloc);
-    expect_unchanged(before_hint, graph.view());
-    EXPECT_NO_THROW(region.optimize(OptimizationHint::kCudaGraphFusion));
+    EXPECT_THROW(region.constrain(RegionConstraint::cuda_graph()), std::bad_alloc);
+    expect_unchanged(before_cuda_graph, graph.view());
+    EXPECT_NO_THROW(region.constrain(RegionConstraint::cuda_graph()));
   }
 
   {
@@ -2545,11 +2995,18 @@ TEST(GraphComposition, CompoundMutationFaultsRollbackEveryLogicalCommit) {
 
 // REQ: GRAPH-009
 // REQ: GRAPH-019
+//   graph
+//   `-- ready(ReadinessOp)
+//       |-- readable(ReadableSource)
+//       `-- spin(SpinSource)
 TEST(GraphComposition, ReadinessSnapshotCarriesStableProvenanceAndWakeRequirement) {
+  // Key setup: Capture deployment-selected and busy-poll readiness sources from one Operator.
   Graph graph;
   auto op = graph.op<ReadinessOp>("ready");
   (void)op;
   const GraphView view = graph.view();
+
+  // Key assertion: Snapshot order, ownership, ordinals, and wake requirements remain explicit.
   ASSERT_EQ(view.readiness_sources().size(), 2);
   EXPECT_EQ(view.readiness_sources()[0].owner, view.readiness_sources()[1].owner);
   EXPECT_EQ(view.readiness_sources()[0].declaration_ordinal, 0);
@@ -2562,13 +3019,20 @@ TEST(GraphComposition, ReadinessSnapshotCarriesStableProvenanceAndWakeRequiremen
 
 // REQ: GRAPH-009
 // REQ: GRAPH-019
+//   graph
+//   `-- counted(CountedReadinessOp)
+//       |-- notification(NotificationSource)
+//       `-- doorbell(DoorbellSource)
 TEST(GraphComposition, CountedReadinessSnapshotRetainsCapacityAndClockProvenance) {
+  // Key setup: Capture counted readiness sources with capacities and named clocks.
   Graph graph;
   (void)graph.op<CountedReadinessOp>("counted");
   const GraphView view = graph.view();
   ASSERT_EQ(view.readiness_sources().size(), 2);
 
   const auto& notification = view.readiness_sources()[0];
+
+  // Key assertion: Each source retains its kind, limits, clock provenance, and wake policy.
   EXPECT_EQ(notification.kind, ReadinessSourceKind::kNotification);
   EXPECT_EQ(notification.name, "notification");
   EXPECT_EQ(notification.requested_capacity, 4);
@@ -2588,11 +3052,18 @@ TEST(GraphComposition, CountedReadinessSnapshotRetainsCapacityAndClockProvenance
 }
 
 // REQ: GRAPH-009
+// REQ: GRAPH-034
+// REQ: GRAPH-036
+//   each same
+//   `-- pass(PassOp)
 TEST(GraphComposition, AuthoringIdentitySeparatesInstanceVersionAndCanonicalContent) {
+  // Key setup: Compare repeat views, equivalent Graph instances, and one mutated instance.
   Graph first{"same"};
   (void)first.op<PassOp>("pass");
   const GraphView first_view = first.view();
   const GraphView first_repeat = first.view();
+
+  // Key assertion: Instance identity and version differ from canonical content identity.
   EXPECT_EQ(first_view.identity(), first_repeat.identity());
   EXPECT_EQ(first_view.identity().version, first_view.generation());
 
@@ -2611,9 +3082,8 @@ TEST(GraphComposition, AuthoringIdentitySeparatesInstanceVersionAndCanonicalCont
 
 // REQ: GRAPH-017
 //   owned(ManualClock) --[affine: scale=1/1, offset=7ns]--> shared(ManualClock)
-//   Idempotent re-registration with equivalent scale accepted; conflicting offset rejected.
-//   ThrowingClock factory failure is wrapped and the internal detail is not surfaced.
 TEST(GraphComposition, ClockOwnershipConversionsAndFactoryFailuresAreExplicit) {
+  // Key setup: Mix owned/shared clocks, equivalent/conflicting conversions, and a throwing factory.
   Graph graph{"root"};
   const ClockKey owned = graph.add_clock<ManualClock>("owned", std::int64_t{12});
   auto shared_clock = std::make_shared<ManualClock>(std::int64_t{13});
@@ -2647,11 +3117,11 @@ TEST(GraphComposition, ClockOwnershipConversionsAndFactoryFailuresAreExplicit) {
     FAIL() << "throwing user factory was accepted";
   } catch (const RuntimeError& error) {
     // Key assertion: the error token is GRAPH_CLOCK_CONSTRUCTION_FAILED and the internal
-    //                constructor detail string is not leaked into the public what() message.
+    //                constructor detail string remains available in the public what() message.
     EXPECT_EQ(error.code(), ErrorCode::kFailure);
     EXPECT_NE(std::string_view{error.what()}.find("GRAPH_CLOCK_CONSTRUCTION_FAILED"),
               std::string_view::npos);
-    EXPECT_EQ(std::string_view{error.what()}.find("private clock construction detail"),
+    EXPECT_NE(std::string_view{error.what()}.find("private clock construction detail"),
               std::string_view::npos);
   }
 
@@ -2668,8 +3138,13 @@ TEST(GraphComposition, ClockOwnershipConversionsAndFactoryFailuresAreExplicit) {
 }
 
 // REQ: GRAPH-017
+//   graph
+//   `-- default/shared clock declarations [invalid variants]
 TEST(GraphComposition, DefaultAndSharedClockRejectionsAreExplicit) {
+  // Key setup: Try reserved, empty, missing, and null default/shared clock declarations.
   Graph graph;
+
+  // Key assertion: Invalid clock declarations report specific errors and publish no clocks.
   EXPECT_EQ(graph.default_clock(), ClockKey::default_clock());
 
   EXPECT_EQ(graph_error_from([&] { graph.set_default_clock(ClockKey::default_clock()); }).message,
@@ -2686,7 +3161,10 @@ TEST(GraphComposition, DefaultAndSharedClockRejectionsAreExplicit) {
 }
 
 // REQ: GRAPH-015
+// REQ: GRAPH-038
 TEST(GraphComposition, LatencyBudgetRequiresPositiveDuration) {
+  // Key setup: Construct zero, negative, and minimally positive latency budgets.
+  // Key assertion: Only a strictly positive duration is accepted and retained.
   EXPECT_EQ(graph_error_from([] {
               (void)RegionConstraint::latency_budget(std::chrono::nanoseconds::zero());
             }).message,
@@ -2699,14 +3177,31 @@ TEST(GraphComposition, LatencyBudgetRequiresPositiveDuration) {
             std::chrono::nanoseconds{1});
 }
 
+// REQ: GRAPH-015
+// REQ: GRAPH-038
+TEST(GraphComposition, CudaGraphRegionConstraintMayBeDeclaredOnlyOnce) {
+  Graph graph;
+  auto op = graph.op<PassOp>("op");
+  auto region = graph.region("cuda-graph");
+  region.add(op).constrain(RegionConstraint::cuda_graph());
+
+  const Error error = graph_error_from([&] { region.constrain(RegionConstraint::cuda_graph()); });
+  EXPECT_EQ(error.code, ErrorCode::kDuplicateName);
+  EXPECT_EQ(error.message, "GRAPH_REGION_CONSTRAINT_DUPLICATE");
+}
+
 // REQ: GRAPH-017
+//   graph
+//   `-- counted(CountingClock)
 TEST(GraphComposition, ClockFactoryValidationConstructsAndDiscardsOneInstance) {
+  // Key setup: Add a counted clock factory and observe the resulting Graph.
   CountingClock::constructor_calls = 0;
   CountingClock::live_count = 0;
 
   Graph graph;
   const ClockKey key = graph.add_clock<CountingClock>("counted");
 
+  // Key assertion: Validation constructs and discards exactly one instance before snapshotting.
   EXPECT_EQ(key, ClockKey::named("counted"));
   EXPECT_EQ(CountingClock::constructor_calls, 1);
   EXPECT_EQ(CountingClock::live_count, 0);
@@ -2718,6 +3213,7 @@ TEST(GraphComposition, ClockFactoryValidationConstructsAndDiscardsOneInstance) {
 // REQ: GRAPH-017
 //   a --[conv]--> b --[conv]--> c --X [GRAPH_CLOCK_CONVERSION_CYCLE]--> a
 TEST(GraphComposition, ClockConversionGraphRejectsDirectedCycles) {
+  // Key setup: Build a two-edge conversion chain and attempt to close its directed cycle.
   Graph graph;
   const ClockKey a = graph.add_clock<ManualClock>("a", std::int64_t{0});
   const ClockKey b = graph.add_clock<ManualClock>("b", std::int64_t{0});
@@ -2726,17 +3222,21 @@ TEST(GraphComposition, ClockConversionGraphRejectsDirectedCycles) {
   graph.add_clock_conversion(a, b, identity);
   graph.add_clock_conversion(b, c, identity);
   const Error error = graph_error_from([&] { graph.add_clock_conversion(c, a, identity); });
+
+  // Key assertion: The closing conversion is rejected as a directed cycle.
   EXPECT_EQ(error.code, ErrorCode::kIncompatible);
   EXPECT_EQ(error.message, "GRAPH_CLOCK_CONVERSION_CYCLE");
 }
 
 TEST(ClockHealthReport, FactoriesPairAssessmentsWithReasons) {
+  // Key setup: Construct healthy, degraded, and unhealthy reports through their factories.
   constexpr ClockHealthReport healthy = ClockHealthReport::healthy();
   constexpr ClockHealthReport degraded =
       ClockHealthReport::degraded(ClockHealthReason::kCalibrationExpired);
   constexpr ClockHealthReport unhealthy =
       ClockHealthReport::unhealthy(ClockHealthReason::kClockStalled);
 
+  // Key assertion: Each factory pairs its assessment with the required reason category.
   EXPECT_EQ(healthy.assessment, ClockHealthAssessment::kHealthy);
   EXPECT_EQ(healthy.reason, ClockHealthReason::kNone);
   EXPECT_EQ(degraded.assessment, ClockHealthAssessment::kDegraded);

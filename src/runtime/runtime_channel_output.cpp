@@ -118,6 +118,14 @@ void RuntimeChannelSession::Impl::OutputState::mark_emit_nvtx(
                                                                payload_data);
 }
 
+void RuntimeChannelSession::Impl::OutputState::record_emit() noexcept {
+  // Record an accepted emit, or one that may have reached a receiver. Its sequence is never reused,
+  // including after partial or uncertain delivery. Rejected attempts are safe to retry unchanged.
+  mark_emit_nvtx(next_sequence);
+  ++next_sequence;
+  ++emitted_this_activation;
+}
+
 RuntimeChannelSession::Impl::OutputState::~OutputState() {
   for (LoanControl* loan : loans) {
     loan->owner = nullptr;
@@ -135,9 +143,35 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
   if (!submitted) {
     return make_unexpected(std::move(refreshed).error());
   }
-  ++next_sequence;
-  ++emitted_this_activation;
+  record_emit();
   return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
+}
+
+template <typename RetainOperation>
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::OutputState::commit_direct_publication(
+    OutputState& state, SubscriberState& subscriber, const std::uint64_t publication_sequence,
+    RetainOperation&& retain) noexcept {
+  const bool capture_continuation = state.direct_continuation_capture;
+  const bool signal_progress = state.session->owner_progress_wake_enabled();
+  const bool observe_readiness = capture_continuation || signal_progress;
+  const std::uint64_t prior_revision =
+      observe_readiness ? subscriber.input->readiness_revision.load(std::memory_order_acquire) : 0U;
+  auto stored = std::forward<RetainOperation>(retain)(subscriber);
+  if (!stored) {
+    return make_unexpected(std::move(stored).error());
+  }
+  const std::uint64_t destination_revision =
+      observe_readiness ? subscriber.input->readiness_revision.load(std::memory_order_acquire) : 0U;
+  if (signal_progress && destination_revision != prior_revision) {
+    state.session->signal_owner_progress(subscriber.owner);
+  }
+  if (capture_continuation) {
+    state.session->note_direct_continuation_publication(
+        state, subscriber, publication_sequence, prior_revision, destination_revision);
+  }
+  state.record_emit();
+  return {};
 }
 
 // Preserve direct and transported publication authority, accounting, and terminal ordering.
@@ -198,29 +232,13 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
   if (auto stamped = session->stamp_publication_coordinate(metadata); !stamped) {
     return make_unexpected(std::move(stamped).error());
   }
-  mark_emit_nvtx(metadata.sequence);
   if (direct_subscriber != nullptr) {
-    const bool capture_direct_continuation = direct_continuation_capture;
-    const std::uint64_t prior_revision =
-        capture_direct_continuation
-            ? direct_subscriber->input->readiness_revision.load(std::memory_order_acquire)
-            : 0U;
     const std::span<const std::byte> retained_payload =
         process_local_schema_identity ? process_local_schema_payload : payload;
-    auto stored =
-        session->store_direct_inline_payload(*direct_subscriber, retained_payload, metadata);
-    if (!stored) {
-      return make_unexpected(std::move(stored).error());
-    }
-    if (capture_direct_continuation) {
-      const std::uint64_t destination_revision =
-          direct_subscriber->input->readiness_revision.load(std::memory_order_acquire);
-      session->note_direct_continuation_publication(
-          *this, *direct_subscriber, metadata.sequence, prior_revision, destination_revision);
-    }
-    ++next_sequence;
-    ++emitted_this_activation;
-    return {};
+    return commit_direct_publication(
+        *this, *direct_subscriber, metadata.sequence, [&](SubscriberState& subscriber) noexcept {
+          return session->retain_direct_inline_payload(subscriber, retained_payload, metadata);
+        });
   }
   if (endpoints.empty()) {
     return make_unexpected(Error{ErrorCode::kNotReady});
@@ -230,6 +248,10 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
   // This keeps a deterministic plan/catalog identity error on the pre-submit side even when
   // the same Output also fans out to internal recipients earlier in endpoint order.
   for (auto& endpoint : endpoints) {
+    if (endpoint.process_local_schema_envelope && process_local_schema_payload.empty() &&
+        !direct_encode) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
     if (!endpoint.refresh_before_emit) {
       continue;
     }
@@ -279,9 +301,6 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
     channel_internal::InlinePublicationResult published;
     const std::span<const std::byte> endpoint_payload =
         endpoint.process_local_schema_envelope ? process_local_schema_payload : payload;
-    if (endpoint_payload.empty() && !direct_encode) {
-      return make_unexpected(Error{ErrorCode::kProtocolError});
-    }
     ProcessLocalPublicationScope publication{*session, endpoint.process_local_transport};
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     try {
@@ -294,8 +313,7 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
               : endpoint.publisher->emit_phase(endpoint_payload, endpoint_metadata);
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     } catch (...) {
-      ++next_sequence;
-      ++emitted_this_activation;
+      record_emit();
       return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
     }
 #endif
@@ -305,8 +323,7 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
         endpoint.terminal_obligated |= published.recipient_count != 0U;
         if (published.recipient_count != endpoint.expected_recipient_count &&
             (endpoint.peer_required || published.recipient_count != 0U)) {
-          ++next_sequence;
-          ++emitted_this_activation;
+          record_emit();
           if (published.recipient_count < endpoint.expected_recipient_count) {
             return make_unexpected(make_publication_partial_error(
                 published.recipient_count, endpoint.expected_recipient_count));
@@ -321,8 +338,7 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
         break;
       case channel_internal::InlinePublicationPhase::kPostSubmitUncertain:
         publication.invalidate();
-        ++next_sequence;
-        ++emitted_this_activation;
+        record_emit();
         if (publication_error_consumes_authority(published.error.code) ||
             published.error.code == ErrorCode::kProtocolError ||
             published.error.code == ErrorCode::kInvalidArgument) {
@@ -339,8 +355,7 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
         if (!submitted) {
           return make_unexpected(published.error);
         }
-        ++next_sequence;
-        ++emitted_this_activation;
+        record_emit();
         return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
       default:
         // A malformed private phase is never equivalent to the proven no-peer rejection
@@ -349,8 +364,7 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
         if (!submitted) {
           return make_unexpected(Error{ErrorCode::kProtocolError});
         }
-        ++next_sequence;
-        ++emitted_this_activation;
+        record_emit();
         return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
     }
   }
@@ -358,8 +372,7 @@ RuntimeChannelSession::Impl::OutputState::classify_connection_refresh(
                           RuntimePhaseTracePoint::kInlinePayloadTransportPublicationReturned,
                           port,
                           next_sequence);
-  ++next_sequence;
-  ++emitted_this_activation;
+  record_emit();
   return {};
 }
 
@@ -390,13 +403,11 @@ RuntimeChannelSession::Impl::OutputState::classify_tensor_publication(
 RuntimeChannelSession::Impl::OutputState::classify_tensor_failure(OutputState& state, Error error,
                                                                   const bool submitted) noexcept {
   if (publication_error_consumes_authority(error.code)) {
-    ++state.next_sequence;
-    ++state.emitted_this_activation;
+    state.record_emit();
     return make_unexpected(std::move(error));
   }
   if (submitted) {
-    ++state.next_sequence;
-    ++state.emitted_this_activation;
+    state.record_emit();
     return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
   }
   // Manual Tensor publishers report bounded HoloMQ loan/callback capacity as
@@ -617,8 +628,7 @@ RuntimeChannelSession::Impl::OutputState::emit_catalog_tensor_endpoint(
                             RuntimePhaseTracePoint::kTensorTransportPublicationReturned,
                             state.port,
                             normalized_metadata.sequence);
-    ++state.next_sequence;
-    ++state.emitted_this_activation;
+    state.record_emit();
     return {};
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   } catch (...) {
@@ -628,13 +638,40 @@ RuntimeChannelSession::Impl::OutputState::emit_catalog_tensor_endpoint(
       state.session->invalidate_process_local_progress();
     }
     if (submitted) {
-      ++state.next_sequence;
-      ++state.emitted_this_activation;
+      state.record_emit();
       return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
     }
     return make_unexpected(Error{ErrorCode::kFailure});
   }
 #endif
+}
+
+void RuntimeChannelSession::Impl::OutputState::capture_tensor_rejection(
+    const Tensor& tensor, const TensorAccessSnapshot& snapshot, bool native_contract_matches,
+    bool port_contract_matches) noexcept {
+  if (tensor_failure == nullptr || tensor_failure->port) {
+    return;
+  }
+  TensorContractMismatchCapture mismatch;
+  if (!native_contract_matches) {
+    static_cast<void>(tensor_snapshot_matches_plan(
+        snapshot, tensor_max_byte_span, tensor_memory_kind, tensor_device, &mismatch));
+  } else if (!port_contract_matches && tensor_contract.has_value()) {
+    static_cast<void>(tensor_matches_port_contract(tensor, snapshot, *tensor_contract, &mismatch));
+  } else if (!snapshot.initialized || !snapshot.valid) {
+    capture_tensor_mismatch(&mismatch, "snapshot", "invalid", "initialized and valid");
+  } else if (catalog_tensor_requirements.has_value()) {
+    const auto& requirements = *catalog_tensor_requirements;
+    if (!requirements.max_byte_span.has_value() ||
+        snapshot.byte_span > *requirements.max_byte_span) {
+      capture_tensor_mismatch(
+          &mismatch, "max_byte_span", snapshot.byte_span, requirements.max_byte_span.value_or(0U));
+    } else {
+      static_cast<void>(tensor_matches_logical_requirements(tensor, requirements, &mismatch));
+    }
+  }
+  mismatch.port = port;
+  *tensor_failure = mismatch;
 }
 
 [[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::OutputState::emit_tensor_sample(
@@ -648,7 +685,6 @@ RuntimeChannelSession::Impl::OutputState::emit_catalog_tensor_endpoint(
     return make_unexpected(Error{ErrorCode::kNotReady});
   }
   const std::uint64_t emitted_sequence = state.next_sequence;
-  state.mark_emit_nvtx(emitted_sequence);
   trace_output_emit_phase(state.phase_counters,
                           RuntimePhaseTracePoint::kTensorEmitStarted,
                           state.port,
@@ -673,6 +709,8 @@ RuntimeChannelSession::Impl::OutputState::emit_catalog_tensor_endpoint(
          snapshot.byte_span <= *state.catalog_tensor_requirements->max_byte_span &&
          tensor_matches_logical_requirements(supplied.data, *state.catalog_tensor_requirements));
     if (!native_contract_matches || !port_contract_matches || !catalog_contract_matches) {
+      state.capture_tensor_rejection(
+          supplied.data, snapshot, native_contract_matches, port_contract_matches);
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
     Sample<Tensor> normalized{supplied};
@@ -692,13 +730,16 @@ RuntimeChannelSession::Impl::OutputState::emit_catalog_tensor_endpoint(
       if (!state.tensor_endpoints.empty() || !state.catalog_tensor_endpoints.empty()) {
         return make_unexpected(Error{ErrorCode::kProtocolError});
       }
-      auto stored = state.session->store_direct_tensor_sample(*state.direct_subscriber,
-                                                              std::move(normalized));
+      auto stored = commit_direct_publication(state,
+                                              *state.direct_subscriber,
+                                              emitted_sequence,
+                                              [&](SubscriberState& subscriber) noexcept {
+                                                return state.session->retain_direct_tensor_sample(
+                                                    subscriber, std::move(normalized));
+                                              });
       if (!stored) {
         return stored;
       }
-      ++state.next_sequence;
-      ++state.emitted_this_activation;
       trace_output_emit_phase(state.phase_counters,
                               RuntimePhaseTracePoint::kTensorEmitCompleted,
                               state.port,
@@ -755,16 +796,19 @@ RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_fanout(
   bool submitted = false;
   bool destination_has_shared_encoding = false;
   std::size_t shared_encoded_size = 0U;
+  for (const auto& endpoint : state.tensor_schema_endpoints) {
+    if (endpoint.refresh_before_emit &&
+        (endpoint.plan_capture_clock.valid() != endpoint.catalog_capture_clock.valid() ||
+         (endpoint.plan_capture_clock.valid() &&
+          metadata.source_clock_id != endpoint.plan_capture_clock) ||
+         (!endpoint.plan_capture_clock.valid() &&
+          (metadata.source_clock_id.valid() || metadata.capture_timestamp_ns != 0)))) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+  }
   for (auto& endpoint : state.tensor_schema_endpoints) {
     SampleMetadata endpoint_metadata = metadata;
     if (endpoint.refresh_before_emit) {
-      if (endpoint.plan_capture_clock.valid() != endpoint.catalog_capture_clock.valid() ||
-          (endpoint.plan_capture_clock.valid() &&
-           endpoint_metadata.source_clock_id != endpoint.plan_capture_clock) ||
-          (!endpoint.plan_capture_clock.valid() && (endpoint_metadata.source_clock_id.valid() ||
-                                                    endpoint_metadata.capture_timestamp_ns != 0))) {
-        return make_unexpected(Error{ErrorCode::kInvalidArgument});
-      }
       auto refreshed =
           state.classify_connection_refresh(endpoint.publisher->update_connections(), submitted);
       if (!refreshed) {
@@ -792,7 +836,10 @@ RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_fanout(
     if (endpoint.refresh_before_emit || !destination_has_shared_encoding) {
       auto encoded = encode_payload(endpoint_metadata, endpoint_generation);
       if (!encoded) {
-        return make_unexpected(std::move(encoded).error());
+        if (!submitted) {
+          return make_unexpected(std::move(encoded).error());
+        }
+        return classify_tensor_failure(state, std::move(encoded).error(), true);
       }
       encoded_size = *encoded;
       destination_has_shared_encoding = !endpoint.refresh_before_emit;
@@ -838,8 +885,7 @@ RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_fanout(
     publication.accept(*published, endpoint.activation_cut_subscribers);
     endpoint.terminal_obligated |= *published != 0U;
     if (*published != endpoint.expected_recipient_count) {
-      ++state.next_sequence;
-      ++state.emitted_this_activation;
+      state.record_emit();
       if (*published < endpoint.expected_recipient_count) {
         return make_unexpected(
             make_publication_partial_error(*published, endpoint.expected_recipient_count));
@@ -849,8 +895,7 @@ RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_fanout(
     }
     submitted = true;
   }
-  ++state.next_sequence;
-  ++state.emitted_this_activation;
+  state.record_emit();
   return {};
 }
 
@@ -930,8 +975,7 @@ RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_direct_loan(
       return make_unexpected(std::move(refreshed).error());
     }
     if (!endpoint.peer_required && !endpoint.publisher->has_subscribers()) {
-      ++state.next_sequence;
-      ++state.emitted_this_activation;
+      state.record_emit();
       return {};
     }
     // Output activation serialization is the sole writer for this endpoint, so this peek
@@ -979,15 +1023,13 @@ RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_direct_loan(
   publication.accept(*published, endpoint.activation_cut_subscribers);
   endpoint.terminal_obligated |= *published != 0U;
   if (*published != endpoint.expected_recipient_count) {
-    ++state.next_sequence;
-    ++state.emitted_this_activation;
+    state.record_emit();
     return make_unexpected(
         *published < endpoint.expected_recipient_count
             ? make_publication_partial_error(*published, endpoint.expected_recipient_count)
             : Error{ErrorCode::kProtocolError, "RUNTIME_PUBLICATION_RECIPIENT_COUNT_EXCESS"});
   }
-  ++state.next_sequence;
-  ++state.emitted_this_activation;
+  state.record_emit();
   return {};
 }
 
@@ -1001,8 +1043,6 @@ RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_value(
   if (!authority) {
     return authority;
   }
-  const std::uint64_t emitted_sequence = state.next_sequence;
-  state.mark_emit_nvtx(emitted_sequence);
   const std::size_t tensor_count = state.type_ops->descriptor_tensor_static_count;
   if ((state.direct_subscriber == nullptr && state.tensor_schema_endpoints.empty()) ||
       state.encode_scratch.data() == nullptr || tensor_count == 0U ||
@@ -1090,13 +1130,17 @@ RuntimeChannelSession::Impl::OutputState::emit_tensor_schema_value(
   if (!state.tensor_schema_endpoints.empty()) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
-  auto retained = state.session->store_direct_tensor_schema_sample(
-      *state.direct_subscriber, destination.first(*encoded), tensors);
+  auto retained =
+      commit_direct_publication(state,
+                                *state.direct_subscriber,
+                                normalized.sequence,
+                                [&](SubscriberState& subscriber) noexcept {
+                                  return state.session->retain_direct_tensor_schema_sample(
+                                      subscriber, destination.first(*encoded), tensors);
+                                });
   if (!retained) {
     return retained;
   }
-  ++state.next_sequence;
-  ++state.emitted_this_activation;
   return {};
 }
 

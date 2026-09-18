@@ -25,5 +25,5 @@ endif()
 
 install(TARGETS errors_as_values
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/errors_as_values/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

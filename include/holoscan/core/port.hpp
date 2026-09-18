@@ -307,6 +307,8 @@ struct RuntimePortTypeOps {
   std::size_t payload_alignment{};
   /// Maximum canonical encoded payload size in bytes.
   std::size_t wire_capacity{};
+  /// Exact generated Holoscan carriage-profile tag, or zero for ordinary payloads.
+  std::uint32_t transport_profile_tag{};
   /// Native `Sample<T>` object size in bytes.
   std::size_t sample_size{};
   /// Native `Sample<T>` object alignment in bytes.
@@ -1756,6 +1758,13 @@ template <PublishedPayload T>
         .payload_size = sizeof(T),
         .payload_alignment = alignof(T),
         .wire_capacity = kWireCapacity,
+        .transport_profile_tag =
+            [] {
+              if constexpr (kRuntimeGeneratedSchemaPayload<T>) {
+                return schema_transport_profile_tag(schema_package<T>().transport_profile());
+              }
+              return std::uint32_t{0U};
+            }(),
         .sample_size = sizeof(Sample<T>),
         .sample_alignment = alignof(Sample<T>),
         .predicate_view_size = sizeof(PredicateInputView<T>),

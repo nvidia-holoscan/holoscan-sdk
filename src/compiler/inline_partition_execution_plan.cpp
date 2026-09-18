@@ -163,7 +163,7 @@ namespace {
       descriptor_tensor_payload_equal(source.payload_identity, edge.payload_identity) &&
       descriptor_tensor_payload_equal(target.payload_identity, edge.payload_identity) &&
       source.serialized_payload_capacity_bytes != 0U &&
-      source.serialized_payload_capacity_bytes == target.serialized_payload_capacity_bytes;
+      source.serialized_payload_capacity_bytes <= target.serialized_payload_capacity_bytes;
   return pod || schema || tensor || descriptor_tensor;
 }
 

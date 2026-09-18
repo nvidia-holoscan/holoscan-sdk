@@ -26,7 +26,8 @@ namespace {
 using Native = app3p::MultiDescriptorFrameT;
 using Root = app3p::MultiDescriptorFrame;
 using Payload = holoscan::schema::DescriptorFlatBufferPayloadFor<Root>;
-static_assert(Payload::metadata_capacity == app3p::multi_order_package::kMetadataCapacity);
+static_assert(Payload::metadata_capacity ==
+              holoscan::DescriptorTensorSchemaNativeTraits<Native>::metadata_capacity);
 static_assert(Payload::max_tensors == 3U);
 
 struct Envelope {
@@ -106,7 +107,7 @@ std::vector<std::byte> hand_encode(const Native& value) {
   root_builder.add_exposure(value.exposure);
   root_builder.add_third(*third);
   root_builder.add_header(header);
-  builder.Finish(root_builder.Finish());
+  app3p::FinishMultiDescriptorFrameBuffer(builder, root_builder.Finish());
   const auto bytes =
       std::as_bytes(std::span<const std::uint8_t>{builder.GetBufferPointer(), builder.GetSize()});
   return {bytes.begin(), bytes.end()};
@@ -115,7 +116,7 @@ std::vector<std::byte> hand_encode(const Native& value) {
 holoscan::PayloadDescriptor make_descriptor(const std::uint64_t token) {
   return holoscan::PayloadDescriptor{
       .payload_kind = holoscan::ChannelPayloadKind::kLocalBufferDescriptor,
-      .schema_id = Payload::expected_schema_id,
+      .schema_id = Payload::expected_schema_family_id,
       .local =
           holoscan::LocalPayloadReference{
               .process_id = 1U,
@@ -140,8 +141,7 @@ bool metadata_has_no_data(const std::span<const std::byte> bytes) {
 
 }  // namespace
 
-// REQ: CHAN-124
-// REQ: CHAN-125
+// REQ: CHAN-145
 // REQ: OPERATOR-035
 int main() {
   // Key setup: encode three generated Tensor fields in canonical field-id order through the

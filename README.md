@@ -71,7 +71,7 @@ The repository is organized as such:
 - `data/`: created during the build when dataset download is enabled
 - `examples/`: source code for the examples
 - `include/`: source code for the holoscan SDK core
-- `modules/`: source code for optional SDK modules (currently HoloMQ)
+- `modules/`: source code for optional SDK modules, including Inference, Vision, and Visualization
 - `patches/`: patch files applied to dependencies
 - `python/`: python bindings for the holoscan SDK
 - `scripts/`: utility scripts

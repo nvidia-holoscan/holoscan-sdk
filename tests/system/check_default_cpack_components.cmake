@@ -7,6 +7,30 @@ endif()
 
 include("${HOLOSCAN_CPACK_CONFIG}")
 
+set(_holoscan_external_install_components iceoryx2-lib dev bin)
+foreach(component IN LISTS CPACK_COMPONENTS_ALL)
+    list(FIND _holoscan_external_install_components "${component}" external_component_index)
+    if(NOT component MATCHES "^holoscan(-|$)" AND external_component_index EQUAL -1)
+        message(FATAL_ERROR
+            "The default SDK package has an unowned install component: ${component}")
+    endif()
+endforeach()
+
+foreach(required_component IN ITEMS holoscan-core holoscan-holomq)
+    list(FIND CPACK_COMPONENTS_ALL "${required_component}" component_index)
+    if(component_index EQUAL -1)
+        message(FATAL_ERROR "The default SDK package must include ${required_component}")
+    endif()
+endforeach()
+
+foreach(removed_sdk_component IN ITEMS holomq holoscan-examples)
+    list(FIND CPACK_COMPONENTS_ALL "${removed_sdk_component}" component_index)
+    if(NOT component_index EQUAL -1)
+        message(FATAL_ERROR
+            "The default SDK package must not use legacy SDK component ${removed_sdk_component}")
+    endif()
+endforeach()
+
 list(FIND CPACK_COMPONENTS_ALL "holoscan-graph-artifacts" graph_artifact_component_index)
 if(NOT graph_artifact_component_index EQUAL -1)
     message(FATAL_ERROR

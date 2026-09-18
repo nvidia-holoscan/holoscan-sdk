@@ -5,9 +5,9 @@
 
 #include <gtest/gtest.h>
 
-#include <holoviz/rhi/slang_compiler.hpp>
+#include <holoviz/slang_compiler.hpp>
 
-namespace holoviz::rhi {
+namespace holoviz {
 
 namespace {
 
@@ -341,4 +341,4 @@ TEST(SlangCompilerTest, RejectsTexture2DMultisample) {
       << result.error().message;
 }
 
-}  // namespace holoviz::rhi
+}  // namespace holoviz

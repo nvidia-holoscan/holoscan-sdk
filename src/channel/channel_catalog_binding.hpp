@@ -166,9 +166,10 @@ struct CatalogCanonicalPodPublisherBinding {
 enum class CatalogSchemaFrameCorruption : std::uint8_t {
   kMalformedEnvelope = 0,   ///< Replace the envelope header-size field with an invalid value.
   kSchemaId = 1,            ///< Replace the first compact schema-id byte.
-  kSchemaVersion = 2,       ///< Replace the exact semantic schema version.
+  kPayloadSize = 2,         ///< Replace the bounded serialized-payload size.
   kEndpointGeneration = 3,  ///< Replace the endpoint generation bound at attachment.
   kPayloadVerifier = 4,     ///< Preserve the envelope but corrupt the serialized payload.
+  kEnvelopeAbi = 5,         ///< Replace the exact envelope ABI version.
 };
 
 /// @brief Reach catalog Channel endpoint materialization without exposing backend handles.

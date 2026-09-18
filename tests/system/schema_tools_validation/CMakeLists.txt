@@ -28,19 +28,10 @@ set_target_properties(holoscan::fbs_tools PROPERTIES
 include("${HOLOSCAN_SCHEMA_TOOLS_MODULE}")
 
 set(common_schema_arguments
-    SCHEMAS valid.fbs
-    INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+    SCHEMA valid.fbs
 )
 set(common_traits_arguments
-    BFBS_EMBED
-    TRAITS_HEADER schema_tools_traits.hpp
-    TRAITS_ROOT_TYPE schema_tools::Root
-    TRAITS_NATIVE_TYPE schema_tools::RootT
-    TRAITS_BINARY_SCHEMA_TYPE schema_tools::RootBinarySchema
-    TRAITS_PACKAGE_NAMESPACE schema_tools::package
-    TRAITS_CANONICAL_NAME schema_tools.Root
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 128
+    MAX_SERIALIZED_SIZE 128
 )
 
 if(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL commented_include)
@@ -60,19 +51,68 @@ elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL non_embed)
         TARGET schema_tools_non_embed
         ${common_schema_arguments}
     )
+elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL embed)
+    holoscan_add_flatbuffer_schema(
+        TARGET schema_tools_embed
+        ${common_schema_arguments}
+        ${common_traits_arguments}
+        BFBS_EMBED
+    )
 elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL inferred_traits_schema)
     holoscan_add_flatbuffer_schema(
         TARGET schema_tools_inferred_traits_schema
         ${common_schema_arguments}
         ${common_traits_arguments}
     )
-elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL explicit_capacities)
+elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL conformance)
     holoscan_add_flatbuffer_schema(
-        TARGET schema_tools_explicit_capacities
+        TARGET schema_tools_conformance
         ${common_schema_arguments}
         ${common_traits_arguments}
-        TRAITS_INLINE_CAPACITY 64
-        TRAITS_DESCRIPTOR_METADATA_CAPACITY 96
+        CONFORMANCE_BASELINE valid.fbs
+    )
+elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL provenance)
+    holoscan_add_flatbuffer_schema(
+        TARGET schema_tools_provenance
+        ${common_schema_arguments}
+        ${common_traits_arguments}
+        PROVENANCE_FILE schema.provenance.json
+    )
+elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL incompatible_conformance)
+    holoscan_add_flatbuffer_schema(
+        TARGET schema_tools_incompatible_conformance
+        SCHEMAS incompatible_candidate.fbs
+        INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+        CONFORMANCE_BASELINE valid.fbs
+    )
+elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL multi_root_conformance)
+    holoscan_add_flatbuffer_schema(
+        TARGET schema_tools_multi_root_conformance
+        SCHEMAS valid.fbs other.fbs
+        INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+        CONFORMANCE_SCHEMA valid.fbs
+        CONFORMANCE_BASELINE valid.fbs
+    )
+elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL ambiguous_conformance_schema)
+    holoscan_add_flatbuffer_schema(
+        TARGET schema_tools_ambiguous_conformance_schema
+        SCHEMAS valid.fbs other.fbs
+        INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+        CONFORMANCE_BASELINE valid.fbs
+    )
+elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL nonmember_conformance_schema)
+    holoscan_add_flatbuffer_schema(
+        TARGET schema_tools_nonmember_conformance_schema
+        SCHEMAS valid.fbs other.fbs
+        INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
+        CONFORMANCE_SCHEMA incompatible_candidate.fbs
+        CONFORMANCE_BASELINE valid.fbs
+    )
+elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL implicit_ids)
+    holoscan_add_flatbuffer_schema(
+        TARGET schema_tools_implicit_ids
+        SCHEMAS implicit_ids.fbs
+        INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL unknown_argument)
     holoscan_add_flatbuffer_schema(
@@ -101,57 +141,13 @@ elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL traits_without_embed)
     holoscan_add_flatbuffer_schema(
         TARGET schema_tools_traits_without_embed
         ${common_schema_arguments}
-        TRAITS_HEADER schema_tools_traits.hpp
-    )
-elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL invalid_type)
-    holoscan_add_flatbuffer_schema(
-        TARGET schema_tools_invalid_type
-        ${common_schema_arguments}
-        BFBS_EMBED
-        TRAITS_HEADER schema_tools_traits.hpp
-        TRAITS_ROOT_TYPE Root
-        TRAITS_NATIVE_TYPE schema_tools::RootT
-        TRAITS_BINARY_SCHEMA_TYPE schema_tools::RootBinarySchema
-        TRAITS_PACKAGE_NAMESPACE schema_tools::package
-        TRAITS_CANONICAL_NAME schema_tools.Root
-        TRAITS_SCHEMA_VERSION 1
-        TRAITS_MAX_SERIALIZED_SIZE 128
+        MAX_SERIALIZED_SIZE 128
     )
 elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL invalid_capacity)
     holoscan_add_flatbuffer_schema(
         TARGET schema_tools_invalid_capacity
         ${common_schema_arguments}
-        BFBS_EMBED
-        TRAITS_HEADER schema_tools_traits.hpp
-        TRAITS_ROOT_TYPE schema_tools::Root
-        TRAITS_NATIVE_TYPE schema_tools::RootT
-        TRAITS_BINARY_SCHEMA_TYPE schema_tools::RootBinarySchema
-        TRAITS_PACKAGE_NAMESPACE schema_tools::package
-        TRAITS_CANONICAL_NAME schema_tools.Root
-        TRAITS_SCHEMA_VERSION 1
-        TRAITS_MAX_SERIALIZED_SIZE -1
-    )
-elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL zero_inline_capacity)
-    holoscan_add_flatbuffer_schema(
-        TARGET schema_tools_zero_inline_capacity
-        ${common_schema_arguments}
-        ${common_traits_arguments}
-        TRAITS_INLINE_CAPACITY 0
-    )
-elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL false_descriptor_capacity)
-    holoscan_add_flatbuffer_schema(
-        TARGET schema_tools_false_descriptor_capacity
-        ${common_schema_arguments}
-        ${common_traits_arguments}
-        TRAITS_DESCRIPTOR_METADATA_CAPACITY OFF
-    )
-elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL oversized_descriptor_capacity)
-    holoscan_add_flatbuffer_schema(
-        TARGET schema_tools_oversized_descriptor_capacity
-        ${common_schema_arguments}
-        ${common_traits_arguments}
-        DESCRIPTOR_TENSOR
-        TRAITS_DESCRIPTOR_METADATA_CAPACITY 65537
+        MAX_SERIALIZED_SIZE -1
     )
 elseif(HOLOSCAN_SCHEMA_TEST_CASE STREQUAL ambiguous_traits_schema)
     holoscan_add_flatbuffer_schema(

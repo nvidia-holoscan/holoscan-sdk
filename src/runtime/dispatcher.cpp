@@ -43,6 +43,27 @@ void RuntimeInputSelectionState::ReuseReplacementTransaction::commit() noexcept 
   owner_ = nullptr;
 }
 
+RuntimeInputSelectionState::CacheReplacementTransaction::CacheReplacementTransaction(
+    CacheReplacementTransaction&& other) noexcept
+    : owner_(other.owner_), retained_(other.retained_), index_(other.index_) {
+  other.owner_ = nullptr;
+}
+
+RuntimeInputSelectionState::CacheReplacementTransaction::~CacheReplacementTransaction() {
+  if (owner_ != nullptr) {
+    assert(owner_->transaction_active_);
+    owner_->restore_cache_replacement(retained_, index_);
+    owner_->transaction_active_ = false;
+  }
+}
+
+void RuntimeInputSelectionState::CacheReplacementTransaction::commit() noexcept {
+  assert(owner_ != nullptr);
+  assert(owner_->transaction_active_);
+  owner_->transaction_active_ = false;
+  owner_ = nullptr;
+}
+
 namespace {
 
 [[nodiscard]] constexpr std::uint8_t candidate_kind_order(RuntimeEventKind kind) noexcept {
@@ -717,6 +738,36 @@ RuntimeInputSelectionState::reserve_reuse_replacement(
   retained_.reset();
   transaction_active_ = true;
   return ReuseReplacementTransaction{this, retained};
+}
+
+expected<RuntimeInputSelectionState::CacheReplacementTransaction, Error>
+RuntimeInputSelectionState::reserve_cache_replacement(
+    const TemporalSampleRecord& retained) noexcept {
+  if (transaction_active_) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  if (bracketed_) {
+    return make_unexpected(Error{ErrorCode::kNotSupported});
+  }
+  const auto records = cache_.records();
+  const auto found = std::find(records.begin(), records.end(), retained);
+  if (found == records.end()) {
+    return make_unexpected(Error{ErrorCode::kNotFound});
+  }
+  const std::size_t index = static_cast<std::size_t>(std::distance(records.begin(), found));
+  auto evicted = cache_.evict(retained.arrival_sequence);
+  if (!evicted) {
+    return make_unexpected(std::move(evicted).error());
+  }
+  transaction_active_ = true;
+  return CacheReplacementTransaction{this, retained, index};
+}
+
+void RuntimeInputSelectionState::restore_cache_replacement(const TemporalSampleRecord& retained,
+                                                           const std::size_t index) noexcept {
+  assert(index <= cache_.samples_.size());
+  assert(cache_.samples_.size() < cache_.capacity_);
+  cache_.samples_.insert(cache_.samples_.begin() + static_cast<std::ptrdiff_t>(index), retained);
 }
 
 std::optional<TemporalSampleRecord> RuntimeInputSelectionState::reuse_retained_record()
@@ -1457,6 +1508,7 @@ RuntimeCandidateCoordinator::RuntimeCandidateCoordinator(
   }
   ingress_scratch_.resize(max_outstanding);
   pending_.reserve(max_outstanding);
+  input_fence_head_scratch_.reserve(max_outstanding);
 }
 
 expected<RuntimeCandidateCoordinator, Error> RuntimeCandidateCoordinator::create_with_tags(
@@ -1780,32 +1832,87 @@ expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_next
                         TagTime{logical_ns, microstep, 0U});
 }
 
-expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_input_prerequisite(
-    const VertexId owner, const PortId input, const TimePoint reference_time) noexcept {
-  if (!owner || !input || !reference_time.valid()) {
-    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_next_constrained(
+    const std::span<const RuntimeCandidateInputFence> input_fences) noexcept {
+  if (input_fences.empty()) {
+    return freeze_next();
   }
-  const auto selected = std::min_element(
-      pending_.begin(), pending_.end(), [&](const PendingEvent& lhs, const PendingEvent& rhs) {
-        const auto eligible = [&](const PendingEvent& pending) {
-          return pending.source_slot < sources_.size() &&
-                 sources_[pending.source_slot].binding.vertex == owner &&
-                 pending.event.kind == RuntimeEventKind::kInputArrival &&
-                 pending.event.port == input && pending.event.reference_time == reference_time;
-        };
-        const bool lhs_eligible = eligible(lhs);
-        const bool rhs_eligible = eligible(rhs);
-        return lhs_eligible != rhs_eligible
-                   ? lhs_eligible
-                   : lhs_eligible && lhs.event.source_sequence < rhs.event.source_sequence;
-      });
-  if (selected == pending_.end() || selected->source_slot >= sources_.size() ||
-      sources_[selected->source_slot].binding.vertex != owner ||
-      selected->event.kind != RuntimeEventKind::kInputArrival || selected->event.port != input ||
-      selected->event.reference_time != reference_time) {
+  if (pending_.empty()) {
     return make_unexpected(Error{ErrorCode::kNotReady});
   }
-  std::int64_t logical_ns = selected->event.reference_time.timestamp_ns;
+  constexpr std::size_t kNoCandidate = std::numeric_limits<std::size_t>::max();
+  std::size_t selected_index = kNoCandidate;
+  const auto precedes = [&](const PendingEvent& lhs, const PendingEvent& rhs) {
+    if (phase_counters_ != nullptr) {
+      phase_counters_->increment(RuntimePhaseCounter::kCandidateOrderComparisons);
+    }
+    const SourceState& lhs_source = sources_[lhs.source_slot];
+    const SourceState& rhs_source = sources_[rhs.source_slot];
+    return std::tuple{lhs.event.reference_time.timestamp_ns,
+                      candidate_kind_order(lhs.event.kind),
+                      lhs_source.binding.source_order,
+                      lhs.event.source_sequence} < std::tuple{rhs.event.reference_time.timestamp_ns,
+                                                              candidate_kind_order(rhs.event.kind),
+                                                              rhs_source.binding.source_order,
+                                                              rhs.event.source_sequence};
+  };
+  const auto consider = [&](const std::size_t index) {
+    if (index < pending_.size() &&
+        (selected_index == kNoCandidate || precedes(pending_[index], pending_[selected_index]))) {
+      selected_index = index;
+    }
+  };
+
+  input_fence_head_scratch_.assign(input_fences.size(), kNoCandidate);
+  for (const RuntimeCandidateInputFence& fence : input_fences) {
+    if (!fence.owner || !fence.source || !fence.input) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+  }
+
+  // Unfenced owners retain the ordinary candidate set. For a fenced owner, remember only the
+  // first admitted event on each named input. A preceding terminal therefore keeps later data
+  // hidden just as a preceding arrival does. This is one bounded pass over pending events; the
+  // fence count is fixed by the compiled graph, not by queue depth.
+  for (std::size_t index = 0U; index < pending_.size(); ++index) {
+    const PendingEvent& pending = pending_[index];
+    if (pending.source_slot >= sources_.size()) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    const VertexId owner = sources_[pending.source_slot].binding.vertex;
+    bool owner_fenced = false;
+    for (std::size_t fence_index = 0U; fence_index < input_fences.size(); ++fence_index) {
+      const RuntimeCandidateInputFence& fence = input_fences[fence_index];
+      if (fence.owner != owner) {
+        continue;
+      }
+      owner_fenced = true;
+      if (input_fence_head_scratch_[fence_index] == kNoCandidate &&
+          sources_[pending.source_slot].binding.source == fence.source &&
+          pending.event.port == fence.input &&
+          (pending.event.kind == RuntimeEventKind::kInputArrival ||
+           pending.event.kind == RuntimeEventKind::kInputEndOfStream)) {
+        input_fence_head_scratch_[fence_index] = index;
+      }
+    }
+    if (!owner_fenced) {
+      consider(index);
+    }
+  }
+
+  // Each fenced input contributes exactly its oldest admitted arrival.
+  for (const std::size_t head_index : input_fence_head_scratch_) {
+    if (head_index != kNoCandidate &&
+        pending_[head_index].event.kind == RuntimeEventKind::kInputArrival) {
+      consider(head_index);
+    }
+  }
+  if (selected_index == kNoCandidate) {
+    return make_unexpected(Error{ErrorCode::kNotReady});
+  }
+
+  const PendingEvent& selected = pending_[selected_index];
+  std::int64_t logical_ns = selected.event.reference_time.timestamp_ns;
   std::uint32_t microstep = 0U;
   if (tag_time_initialized_ && logical_ns <= last_logical_ns_) {
     if (last_microstep_ == std::numeric_limits<std::uint32_t>::max()) {
@@ -1814,8 +1921,7 @@ expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_inpu
     logical_ns = last_logical_ns_;
     microstep = last_microstep_ + 1U;
   }
-  return freeze_pending(static_cast<std::size_t>(std::distance(pending_.begin(), selected)),
-                        TagTime{logical_ns, microstep, 0U});
+  return freeze_pending(selected_index, TagTime{logical_ns, microstep, 0U});
 }
 
 expected<FrozenRuntimeCandidate, Error> RuntimeCandidateCoordinator::freeze_causal_next(

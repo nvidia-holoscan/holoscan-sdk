@@ -1823,6 +1823,7 @@ void expect_clock_input_plan_replays(const ExecutionPlan& plan, bool expect_pred
 // REQ: RUNTIME-034
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024
+// REQ: RUNTIME-052
 TEST(ChannelLifecycleRestart, PublishedRestartDiscardsOldIngressAndRearmsAfterStart) {
   ChannelRestartProbeState::reset(false);
   const ExecutionPlan plan = make_channel_restart_plan();
@@ -1871,7 +1872,7 @@ TEST(ChannelLifecycleRestart, PublishedRestartDiscardsOldIngressAndRearmsAfterSt
   // discards that bounded old-generation prefix; only the post-restart value is observable.
   // Key assertion: old-gen prefix [1-4] purged by restart; only post-restart value 5 arrives.
   EXPECT_EQ(ChannelRestartProbeState::values(), (std::vector<std::uint32_t>{5U}));
-  EXPECT_EQ(ChannelRestartProbeState::sequences(), (std::vector<std::uint64_t>{1U}));
+  EXPECT_EQ(ChannelRestartProbeState::sequences(), (std::vector<std::uint64_t>{5U}));
   EXPECT_EQ(
       ChannelRestartProbeState::observed_source_tags(),
       (std::vector<Tag>{{.sequence = 1U, .generation = 1U}, {.sequence = 1U, .generation = 2U}}));
@@ -2145,9 +2146,15 @@ TEST(ChannelLifecycleRestart, RolledBackRestartPreservesOldIngressAndPublishedGe
 
   EXPECT_TRUE(observed);
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
-  EXPECT_TRUE(session.diagnostics().empty())
-      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token) << " vertex="
-      << (session.diagnostics().empty() ? 0U : session.diagnostics().front().source.vertex.value);
+  ASSERT_EQ(session.diagnostics().size(), 1U);
+  EXPECT_EQ(session.diagnostics().front().severity, DiagnosticSeverity::kWarning);
+  const auto& failure_detail = session.diagnostics().front().detail;
+  if (!failure_detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(failure_detail->stage, LifecycleStage::kStart);
+  EXPECT_EQ(failure_detail->phase, LifecycleTransitionPhase::kRestartForward);
+  EXPECT_NE(failure_detail->transaction_id, 0U);
   EXPECT_TRUE(ChannelRestartProbeState::restart_accepted.load(std::memory_order_acquire));
   EXPECT_EQ(ChannelRestartProbeState::restart_error.load(std::memory_order_relaxed),
             ErrorCode::kSuccess);
@@ -2229,6 +2236,7 @@ TEST(ChannelLifecycleRestart, MultiMemberClosureFencesNonTargetChannelInput) {
 // REQ: RUNTIME-008
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024
+// REQ: RUNTIME-052
 TEST(ChannelLifecycleRestart, PendingWindowReprimesAcrossPublishedRestart) {
   ChannelWindowRestartProbeState::reset();
   const ExecutionPlan plan = make_channel_window_restart_plan();
@@ -2252,7 +2260,7 @@ TEST(ChannelLifecycleRestart, PendingWindowReprimesAcrossPublishedRestart) {
   EXPECT_EQ(ChannelWindowRestartProbeState::observed_values(),
             (std::vector<std::uint32_t>{105U, 110U, 115U, 120U, 125U}));
   EXPECT_EQ(ChannelWindowRestartProbeState::observed_sequences(),
-            (std::vector<std::uint64_t>{1U, 2U, 3U, 4U, 5U}));
+            (std::vector<std::uint64_t>{3U, 4U, 5U, 6U, 7U}));
 }
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024

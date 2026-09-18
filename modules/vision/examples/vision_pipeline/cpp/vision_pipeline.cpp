@@ -484,22 +484,21 @@ class MaskSink final : public holoscan::Operator<> {
 [[nodiscard]] holoscan::ExecutionPlan compile_pipeline() {
   holoscan::Graph graph{"vision-pipeline"};
   const auto source = graph.op<PipelineSource>("source");
-  auto resize = graph.op<holoscan::vision::ResizeOp>(
-      "resize",
-      holoscan::vision::VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
+  auto resize = graph.op<holoscan::vision::ResizeOp>("resize");
   resize.set_params(holoscan::vision::ResizeOpParams{
       .width = 4,
       .height = 4,
+      .max_batch_size = 1U,
       .interpolation = holoscan::vision::InterpolationMode::kNearest,
   });
-  auto crop = graph.op<holoscan::vision::CustomCropOp>(
-      "crop",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
-  crop.set_params(holoscan::vision::CustomCropOpParams{.x = 1, .y = 1, .width = 2, .height = 2});
-  auto border = graph.op<holoscan::vision::CopyMakeBorderOp>(
-      "border",
-      holoscan::vision::VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
+  auto crop = graph.op<holoscan::vision::CustomCropOp>("crop");
+  crop.set_params(holoscan::vision::CustomCropOpParams{
+      .x = 1, .y = 1, .width = 2, .height = 2, .max_batch_size = 1U});
+  auto border = graph.op<holoscan::vision::CopyMakeBorderOp>("border");
   border.set_params(holoscan::vision::CopyMakeBorderOpParams{
+      .max_width = 4,
+      .max_height = 4,
+      .max_batch_size = 1U,
       .top = 1,
       .bottom = 1,
       .left = 1,
@@ -507,12 +506,11 @@ class MaskSink final : public holoscan::Operator<> {
       .border_mode = holoscan::vision::BorderMode::kConstant,
       .border_value = {0.F},
   });
-  auto remap = graph.op<holoscan::vision::RemapOp>(
-      "remap",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto remap = graph.op<holoscan::vision::RemapOp>("remap");
   remap.set_params(holoscan::vision::RemapOpParams{
       .width = 2,
       .height = 2,
+      .max_batch_size = 1U,
       .input_interpolation = holoscan::vision::InterpolationMode::kNearest,
       .map_interpolation = holoscan::vision::InterpolationMode::kNearest,
       .map_value_mode = holoscan::vision::RemapMapValueMode::kAbsolute,
@@ -521,18 +519,14 @@ class MaskSink final : public holoscan::Operator<> {
       .border_value = {0.F},
       .map_synchronization = holoscan::vision::RemapMapSynchronizationMode::kLatest,
   });
-  auto convert = graph.op<holoscan::vision::ConvertToOp>(
-      "convert",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto convert = graph.op<holoscan::vision::ConvertToOp>("convert");
   convert.set_params(holoscan::vision::ConvertToOpParams{
       .output_type = holoscan::vision::VisionElementType::kF32,
       .alpha = 1.0,
       .beta = 0.0,
       .rounding = holoscan::vision::RoundingMode::kNearest,
   });
-  auto normalize = graph.op<holoscan::vision::NormalizeOp>(
-      "normalize",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto normalize = graph.op<holoscan::vision::NormalizeOp>("normalize");
   normalize.set_params(holoscan::vision::NormalizeOpParams{
       .base = {0.F, 10.F, 20.F},
       .scale = {1.F},
@@ -541,16 +535,13 @@ class MaskSink final : public holoscan::Operator<> {
       .epsilon = 0.F,
       .scale_is_stddev = false,
   });
-  auto reformat = graph.op<holoscan::vision::ReformatOp>(
-      "reformat",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto reformat = graph.op<holoscan::vision::ReformatOp>("reformat");
   reformat.set_params(holoscan::vision::ReformatOpParams{
       .mode = holoscan::vision::ReformatMode::kInterleavedToPlanar,
   });
-  auto nms = graph.op<holoscan::vision::NonMaximumSuppressionOp>(
-      "nms", holoscan::vision::NMSCapacity{.max_boxes = 3, .max_batch_size = 1U});
-  nms.set_params(holoscan::vision::NonMaximumSuppressionOpParams{.score_threshold = 0.F,
-                                                                 .iou_threshold = 0.5F});
+  auto nms = graph.op<holoscan::vision::NonMaximumSuppressionOp>("nms");
+  nms.set_params(holoscan::vision::NonMaximumSuppressionOpParams{
+      .max_boxes = 3, .max_batch_size = 1U, .score_threshold = 0.F, .iou_threshold = 0.5F});
   const auto image_sink = graph.op<ImageSink>("image-sink");
   const auto mask_sink = graph.op<MaskSink>("mask-sink");
 

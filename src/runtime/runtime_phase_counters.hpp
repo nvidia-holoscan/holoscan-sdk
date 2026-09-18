@@ -37,6 +37,7 @@ enum class RuntimePhaseCounter : std::uint8_t {
   kReadinessPollSkippedByCoordinatorBound,
   kReadinessPollSkippedBySourceCredit,
   kReadinessPollSkippedByNoTarget,
+  kReadinessPollContentionRetries,
   kDirectContinuationReceiptsAccepted,
   kDirectContinuationPollElisions,
   kDirectCompositeAttempts,

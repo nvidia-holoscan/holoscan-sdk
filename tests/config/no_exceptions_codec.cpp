@@ -4,6 +4,7 @@
  */
 
 #include <holoscan/config/codec.hpp>
+#include <holoscan/config/io.hpp>
 
 #include <tuple>
 
@@ -102,6 +103,15 @@ static_assert(!holoscan::config::ConfigCodable<holoscan::config::test::ThrowingV
 static_assert(!holoscan::config::ConfigCodable<holoscan::config::test::NothrowObject>);
 static_assert(!holoscan::config::ConfigCodable<holoscan::config::test::ThrowingDefaultObject>);
 static_assert(!holoscan::config::ConfigCodable<holoscan::config::test::ThrowingAssignmentObject>);
+
+// REQ: CONFIG-020
+[[maybe_unused]] void instantiate_throwing_header_forms(
+    const holoscan::config::Document& document) {
+  using holoscan::config::test::NothrowValue;
+  static_cast<void>(holoscan::config::decode_config<NothrowValue>(document.root()));
+  static_cast<void>(document.get<NothrowValue>(""));
+  static_cast<void>(document.replace("", NothrowValue{}));
+}
 
 int main() {
   return 0;

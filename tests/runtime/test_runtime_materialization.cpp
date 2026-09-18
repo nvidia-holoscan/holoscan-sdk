@@ -137,6 +137,31 @@ class LifecycleCandidateMaterializationTensorSink final : public Operator<> {
   Input<Tensor> input_;
 };
 
+class OutputFailureCapabilityTensorSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U,
+                               .strides = TensorStridePolicy::kContiguousOnly},
+            .bounds = tensor_bounds(64U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = std::chrono::seconds{1}});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<Tensor> output;
+};
+
 // Provides a clock-driven, Tensor-inactive operator whose assigned compute stream can be inspected
 // before callbacks run. Used by
 // RuntimeMaterializationTest.TensorInactiveGreenContextPartitionReceivesVerifiedStream.
@@ -500,7 +525,7 @@ template <typename Handle>
     if (record.factory == nullptr) {
       return make_unexpected(Error{ErrorCode::kFailure, "RUNTIME_OPERATOR_FACTORY_INVALID"});
     }
-    auto created = record.factory->create();
+    auto created = record.factory->create(nullptr);
     if (!created || created.value() == nullptr) {
       return make_unexpected(Error{ErrorCode::kFailure, "RUNTIME_OPERATOR_RECONSTRUCTION_FAILED"});
     }
@@ -696,6 +721,42 @@ TEST(RuntimeMaterializationTest, HostOnlyReconstructionKeepsCudaSelectionDisable
   }
 }
 
+// REQ: RUNTIME-054
+TEST(RuntimeMaterializationTest, ReconstructionRetainsOutputFailureCaptureCapability) {
+  // All endpoints use ordinary host placement. The input-only and portless operators cannot
+  // produce output rejection evidence; both POD and Tensor producers retain the reset path.
+  Graph graph{"runtime-output-failure-capability"};
+  graph.op<CudaGreenContextMaterializationProbeOperator>("portless");
+  const auto pod_source = graph.op<CudaGreenContextChannelSourceOperator>("pod-source");
+  const auto pod_sink = graph.op<CudaGreenContextChannelSinkOperator>("pod-sink");
+  graph.add_flow(pod_source->output, pod_sink->input);
+  const auto tensor_source = graph.op<OutputFailureCapabilityTensorSource>("tensor-source");
+  const auto tensor_sink = graph.op<LifecycleCandidateMaterializationTensorSink>("tensor-sink");
+  graph.add_flow(tensor_source->output, tensor_sink->input_);
+  graph.set_default_clock(graph.add_clock<test::RuntimeProbeClock>("runtime-test-clock"));
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto accepted = ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(accepted);
+
+  for (const auto generation : {17U, 18U}) {
+    RuntimeReplayMismatchDetail mismatch;
+    auto reconstructed =
+        GraphExec::reconstruct(accepted, RunGenerationId{generation}, {}, &mismatch);
+    ASSERT_TRUE(reconstructed) << reconstructed.error().message << "; replay category "
+                               << static_cast<unsigned>(mismatch.category);
+    ASSERT_EQ((*reconstructed)->operators().size(), 5U);
+    for (const RuntimeOperatorInstance& instance : (*reconstructed)->operators()) {
+      const auto vertex = std::ranges::find_if(
+          accepted->graph.vertices(), [&](const auto& row) { return row.id == instance.vertex; });
+      ASSERT_NE(vertex, accepted->graph.vertices().end());
+      EXPECT_EQ(instance.has_output_ports,
+                vertex->name == "pod-source" || vertex->name == "tensor-source")
+          << vertex->name << " in generation " << generation;
+    }
+  }
+}
+
 // A pinned-host descriptor schema carries a CUDA placement identity for its BufferHandle contract,
 // but its host-to-host staging does not require a CUDA service stream or zero-pool device resource.
 // REQ: CHAN-126
@@ -739,6 +800,7 @@ TEST(RuntimeMaterializationTest, PinnedDescriptorSchemaWithoutDeviceResourceMate
           PayloadIdentityRecord{
               .kind = PayloadIdentityKind::kSchema,
               .payload_kind = PayloadKind::kDescriptorBacked,
+              .transport_profile_tag = 1U,
           },
       .tensor_payload = true,
       .tensor_max_byte_span = 1024U,
@@ -1315,6 +1377,13 @@ TEST(RuntimeMaterializationTest, TeardownDiagnosticDoesNotReplacePrimaryCallback
   });
   ASSERT_NE(cleanup, diagnostics.end());
   EXPECT_GT(std::distance(diagnostics.begin(), cleanup), 0);
+  const auto& cleanup_evidence = cleanup->detail;
+  if (!cleanup_evidence.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(cleanup_evidence->role, DiagnosticFailureRole::kTeardown);
+  EXPECT_EQ(cleanup_evidence->operation, DiagnosticOperation::kRuntime);
+  EXPECT_EQ(cleanup_evidence->primary_diagnostic_index, 0U);
   const auto details = diagnostic_sink->details();
   const auto cleanup_detail = std::find_if(details.begin(), details.end(), [](const auto& row) {
     return row.cuda_execution.operation == "stream_quiesce";

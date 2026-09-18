@@ -81,8 +81,15 @@ struct PodCatalogIdentityRecord {
 /// service geometry from its local request.
 struct ResolvedServiceStaticRequirements {
   std::string id;  ///< Stable service identity referenced by endpoint records.
-  PayloadIdentityRecord payload_identity;             ///< Complete portable payload/wire identity.
-  std::uint64_t serialized_payload_capacity_bytes{};  ///< Positive schema serialized-byte bound.
+  PayloadIdentityRecord payload_identity;  ///< Complete portable payload/wire identity.
+  /// Positive service writer maximum for a serialized schema payload.
+  std::uint64_t schema_writer_max_serialized_bytes{};
+  /// Complete data-frame bytes required by the service writer maximum.
+  std::uint64_t required_data_frame_bytes{};
+  /// Exact rounded HoloMQ bucket selected by the catalog/compiler authority.
+  std::uint64_t selected_inline_bucket_bytes{};
+  /// Maximum serialized schema bytes usable within the selected bucket after framing.
+  std::uint64_t bucket_usable_serialized_bytes{};
   std::optional<PodCatalogIdentityRecord> pod_identity;  ///< Derived POD identity when applicable.
   std::optional<SchemaIdentityRecord>
       schema_identity;  ///< Complete schema identity when applicable.
@@ -119,13 +126,14 @@ struct ChannelEndpointRecord {
   std::optional<GeneratedEndpointNameRecord> generated_name;      ///< Generated-name evidence.
   PortId boundary_port{};  ///< Dense plan-local boundary port, never serialized.
   std::string service;     ///< Stable reference into the canonical service array.
-  QueuePolicy queue_policy{QueuePolicy::kBlocking};      ///< Frozen external service queue family.
-  std::uint32_t service_max_subscriber_depth{};          ///< Symmetric service queue maximum.
-  std::uint32_t service_max_subscriber_borrowed{};       ///< Symmetric service borrow maximum.
-  PayloadIdentityRecord payload_identity;                ///< Complete logical payload identity.
-  std::uint64_t serialized_payload_capacity_bytes{};     ///< Positive schema serialized-byte bound.
-  std::optional<PodCatalogIdentityRecord> pod_identity;  ///< Derived complete POD catalog facts.
-  std::optional<SchemaIdentityRecord> schema_identity;   ///< Effective complete schema identity.
+  QueuePolicy queue_policy{QueuePolicy::kBlocking};  ///< Frozen external service queue family.
+  std::uint32_t service_max_subscriber_depth{};      ///< Symmetric service queue maximum.
+  std::uint32_t service_max_subscriber_borrowed{};   ///< Symmetric service borrow maximum.
+  PayloadIdentityRecord payload_identity;            ///< Complete logical payload identity.
+  /// Positive catalog service writer maximum for a serialized schema payload.
+  std::uint64_t schema_writer_max_serialized_bytes{};
+  std::optional<PodCatalogIdentityRecord> pod_identity;     ///< Derived complete POD catalog facts.
+  std::optional<SchemaIdentityRecord> schema_identity;      ///< Effective complete schema identity.
   std::optional<MemoryConversionPolicy> memory_conversion;  ///< Normalized memory policy.
   std::optional<ClockKey> capture_time_clock;  ///< Required capture-time domain when present.
   ClockHealthOptions clock_health{};           ///< Explicit normalized ordinary or monitored mode.

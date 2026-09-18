@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PUBLIC_ROOT = Path(__file__).resolve().parents[1]
 RUN_SCRIPT = PUBLIC_ROOT / "run"
@@ -33,13 +34,27 @@ def copy_source_archive(destination: Path) -> Path:
     return destination / "run"
 
 
-def run_dryrun_command(command: str) -> subprocess.CompletedProcess[str]:
+def run_dryrun_command(command: str, *extra_arguments: str) -> subprocess.CompletedProcess[str]:
     """Run a CLI command without Docker or host-device dependencies."""
     with tempfile.TemporaryDirectory() as temporary_directory:
         fake_bin = Path(temporary_directory)
         fake_commands = {
+            "cat": """#!/bin/sh
+if [ "${1-}" = "/etc/group" ]; then
+    printf '%s' "${FAKE_ETC_GROUP-}"
+    exit 0
+fi
+exec /bin/cat "$@"
+""",
             "docker": """#!/bin/sh
 if [ "${1-}" = "inspect" ]; then
+    exit 0
+fi
+exit 99
+""",
+            "custom-docker": """#!/bin/sh
+if [ "${1-}" = "inspect" ]; then
+    printf '%s\n' custom-docker-inspect >&2
     exit 0
 fi
 exit 99
@@ -65,7 +80,14 @@ exit 99
         environment.pop("WAYLAND_DISPLAY", None)
 
         return subprocess.run(
-            [shutil.which("bash") or "bash", str(RUN_SCRIPT), command, "--dryrun", "--standalone"],
+            [
+                shutil.which("bash") or "bash",
+                str(RUN_SCRIPT),
+                command,
+                "--dryrun",
+                "--standalone",
+                *extra_arguments,
+            ],
             cwd=PUBLIC_ROOT,
             env=environment,
             check=False,
@@ -75,12 +97,17 @@ exit 99
 
 
 class RunScriptIntegrationTestCase(unittest.TestCase):
-    def assert_dryrun_command(self, command: str, *expected_fragments: str) -> None:
-        result = run_dryrun_command(command)
+    def dryrun_output(self, command: str, *extra_arguments: str) -> str:
+        result = run_dryrun_command(command, *extra_arguments)
         output = result.stdout + result.stderr
 
         assert result.returncode == 0, output
         assert "[dryrun]" in output
+        return output
+
+    def assert_dryrun_command(self, command: str, *expected_fragments: str) -> None:
+        output = self.dryrun_output(command)
+
         for fragment in expected_fragments:
             assert fragment in output
 
@@ -165,6 +192,50 @@ get_image_tag_flags holoscan-test
             "-w /workspace/holoscan-sdk/./build-x86_64",
             "            bash",
         )
+
+    def test_launch_keeps_a_leading_flag_out_of_the_working_directory(self) -> None:
+        output = self.dryrun_output("launch", "--cpus=8")
+
+        assert "-w /workspace/holoscan-sdk/./build-x86_64" in output
+        assert "--cpus=8" in output, "the flag must still reach docker run"
+        assert "/./--cpus=8" not in output
+
+    def test_launch_uses_a_leading_positional_working_directory(self) -> None:
+        output = self.dryrun_output("launch", "install-x86_64")
+
+        assert "-w /workspace/holoscan-sdk/./install-x86_64" in output
+
+    def test_launch_preserves_whitespace_in_path_arguments(self) -> None:
+        output = self.dryrun_output(
+            "launch", "build  directory", "--mount-point", "/tmp/source  directory"
+        )
+
+        assert "-v /tmp/source  directory:/workspace/holoscan-sdk" in output
+        assert "-w /workspace/holoscan-sdk/./build  directory" in output
+        assert "HOLOSCAN_LIB_PATH=/workspace/holoscan-sdk/./build  directory/lib" in output
+        assert 'export PATH="$PATH:/workspace/holoscan-sdk/./build  directory/bin";' in output
+
+    def test_launch_omits_missing_optional_groups(self) -> None:
+        output = self.dryrun_output("launch")
+
+        assert "--group-add" not in output
+
+    def test_launch_uses_configured_docker_executable_for_inspection(self) -> None:
+        with mock.patch.dict(os.environ, {"HOLOSCAN_DOCKER_EXE": "custom-docker"}):
+            output = self.dryrun_output("launch")
+
+        assert "custom-docker-inspect" in output
+        assert "custom-docker run" in output
+
+    def test_pass_through_arguments_keep_their_quoting(self) -> None:
+        # run_command echoes "$*", so the doubled space is the signal here: it survives only when
+        # the argument reaches docker as one element. If quoting is lost the argument is split and
+        # rejoined, collapsing the two spaces into one.
+        for command in ("build_image", "build", "test", "launch", "bench"):
+            with self.subTest(command=command):
+                output = self.dryrun_output(command, "--label=a  b")
+
+                assert "--label=a  b" in output
 
     def test_source_archive_outside_git_uses_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

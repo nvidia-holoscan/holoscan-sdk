@@ -27,7 +27,7 @@
 #include <holoscan/core/temporal_contract.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
-#include "stereo_frame_traits.hpp"
+#include "stereo_frame_schema_traits.hpp"
 
 namespace {
 

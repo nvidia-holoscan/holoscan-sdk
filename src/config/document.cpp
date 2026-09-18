@@ -13,6 +13,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -515,25 +516,25 @@ void append_json_quoted(std::string& output, std::string_view text) {
     case ConfigValueKind::kNull:
       return !json && retained_token == "~" ? std::string{"~"} : std::string{"null"};
     case ConfigValueKind::kBool: {
-      auto decoded = value.as_bool();
+      auto decoded = value.try_as_bool();
       return *decoded ? std::string{"true"} : std::string{"false"};
     }
     case ConfigValueKind::kSignedInteger: {
-      auto decoded = value.as_signed_integer();
+      auto decoded = value.try_as_signed_integer();
       envelope_kind = "i64";
       envelope_value = std::to_string(*decoded);
       result = envelope_value;
       break;
     }
     case ConfigValueKind::kUnsignedInteger: {
-      auto decoded = value.as_unsigned_integer();
+      auto decoded = value.try_as_unsigned_integer();
       envelope_kind = "u64";
       envelope_value = std::to_string(*decoded);
       result = envelope_value;
       break;
     }
     case ConfigValueKind::kFloating: {
-      auto decoded = value.as_floating();
+      auto decoded = value.try_as_floating();
       if (!decoded || !std::isfinite(*decoded)) {
         return tl::make_unexpected(lossless_edit_error(
             "floating replacement cannot be represented by retained scalar style"));
@@ -561,7 +562,7 @@ void append_json_quoted(std::string& output, std::string_view text) {
       break;
     }
     case ConfigValueKind::kString: {
-      auto decoded = value.as_string();
+      auto decoded = value.try_as_string();
       if (json || retained_token.starts_with('"')) {
         append_json_quoted(result, *decoded);
       } else if (retained_token.starts_with('\'')) {
@@ -631,7 +632,7 @@ struct LosslessReplacement {
     return tl::make_unexpected(lossless_edit_error(
         "lossless edits support only replacement of an existing non-root scalar leaf"));
   }
-  auto previous = document.at(edit.path());
+  auto previous = document.try_at(edit.path());
   if (!previous) {
     return tl::make_unexpected(previous.error());
   }
@@ -874,6 +875,17 @@ std::string format_error(const ConfigError& error) {
   return result;
 }
 
+ConfigException::ConfigException(ConfigError error)
+    : std::runtime_error(format_error(error)), error_(std::move(error)) {}
+
+ConfigException::~ConfigException() = default;
+
+static_assert(std::is_nothrow_copy_constructible_v<ConfigException>);
+
+[[noreturn]] void detail::throw_config_error(ConfigError error) {
+  throw ConfigException(std::move(error));
+}
+
 ConfigValue::ConfigValue() noexcept = default;
 ConfigValue::ConfigValue(std::shared_ptr<const ConfigNode> node) noexcept
     : node_(std::move(node)) {}
@@ -881,7 +893,10 @@ ConfigValue::ConfigValue(std::shared_ptr<const ConfigNode> node) noexcept
 ConfigValue ConfigValue::null() noexcept {
   return {};
 }
-ConfigResult<ConfigValue> ConfigValue::boolean(bool value) noexcept {
+ConfigValue ConfigValue::boolean(bool value) {
+  return detail::value_or_throw(try_boolean(value));
+}
+ConfigResult<ConfigValue> ConfigValue::try_boolean(bool value) noexcept {
   try {
     return ConfigValue{std::make_shared<const ConfigNode>(ConfigNode{value})};
   } catch (const std::bad_alloc&) {
@@ -889,7 +904,10 @@ ConfigResult<ConfigValue> ConfigValue::boolean(bool value) noexcept {
         ConfigError::make(ConfigErrorCode::kLimitExceeded, "configuration allocation failed"));
   }
 }
-ConfigResult<ConfigValue> ConfigValue::signed_integer(std::int64_t value) noexcept {
+ConfigValue ConfigValue::signed_integer(std::int64_t value) {
+  return detail::value_or_throw(try_signed_integer(value));
+}
+ConfigResult<ConfigValue> ConfigValue::try_signed_integer(std::int64_t value) noexcept {
   try {
     return ConfigValue{std::make_shared<const ConfigNode>(ConfigNode{value})};
   } catch (const std::bad_alloc&) {
@@ -897,7 +915,10 @@ ConfigResult<ConfigValue> ConfigValue::signed_integer(std::int64_t value) noexce
         ConfigError::make(ConfigErrorCode::kLimitExceeded, "configuration allocation failed"));
   }
 }
-ConfigResult<ConfigValue> ConfigValue::unsigned_integer(std::uint64_t value) noexcept {
+ConfigValue ConfigValue::unsigned_integer(std::uint64_t value) {
+  return detail::value_or_throw(try_unsigned_integer(value));
+}
+ConfigResult<ConfigValue> ConfigValue::try_unsigned_integer(std::uint64_t value) noexcept {
   try {
     return ConfigValue{std::make_shared<const ConfigNode>(ConfigNode{value})};
   } catch (const std::bad_alloc&) {
@@ -905,7 +926,10 @@ ConfigResult<ConfigValue> ConfigValue::unsigned_integer(std::uint64_t value) noe
         ConfigError::make(ConfigErrorCode::kLimitExceeded, "configuration allocation failed"));
   }
 }
-ConfigResult<ConfigValue> ConfigValue::floating(double value) noexcept {
+ConfigValue ConfigValue::floating(double value) {
+  return detail::value_or_throw(try_floating(value));
+}
+ConfigResult<ConfigValue> ConfigValue::try_floating(double value) noexcept {
   if (!std::isfinite(value)) {
     return tl::make_unexpected(
         ConfigError::make(ConfigErrorCode::kUnsupportedValue, "floating value must be finite"));
@@ -920,7 +944,11 @@ ConfigResult<ConfigValue> ConfigValue::floating(double value) noexcept {
         ConfigError::make(ConfigErrorCode::kLimitExceeded, "configuration allocation failed"));
   }
 }
-ConfigResult<ConfigValue> ConfigValue::string(std::string_view value, ConfigValueLimits limits) {
+ConfigValue ConfigValue::string(std::string_view value, ConfigValueLimits limits) {
+  return detail::value_or_throw(try_string(value, limits));
+}
+ConfigResult<ConfigValue> ConfigValue::try_string(std::string_view value,
+                                                  ConfigValueLimits limits) {
   if (!valid_utf8(value)) {
     return tl::make_unexpected(
         ConfigError::make(ConfigErrorCode::kInvalidUtf8, "configuration string is not UTF-8"));
@@ -937,8 +965,11 @@ ConfigResult<ConfigValue> ConfigValue::string(std::string_view value, ConfigValu
         ConfigError::make(ConfigErrorCode::kLimitExceeded, "configuration allocation failed"));
   }
 }
-ConfigResult<ConfigValue> ConfigValue::array(std::span<const ConfigValue> values,
-                                             ConfigValueLimits limits) {
+ConfigValue ConfigValue::array(std::span<const ConfigValue> values, ConfigValueLimits limits) {
+  return detail::value_or_throw(try_array(values, limits));
+}
+ConfigResult<ConfigValue> ConfigValue::try_array(std::span<const ConfigValue> values,
+                                                 ConfigValueLimits limits) {
   if (values.size() > limits.max_container_entries || limits.max_depth == 0 ||
       limits.max_nodes == 0 || limits.max_string_bytes == 0 || limits.max_container_entries == 0) {
     return tl::make_unexpected(
@@ -962,8 +993,12 @@ ConfigResult<ConfigValue> ConfigValue::array(std::span<const ConfigValue> values
         ConfigError::make(ConfigErrorCode::kLimitExceeded, "configuration allocation failed"));
   }
 }
-ConfigResult<ConfigValue> ConfigValue::object(std::span<const ConfigObjectEntry> entries,
-                                              ConfigValueLimits limits) {
+ConfigValue ConfigValue::object(std::span<const ConfigObjectEntry> entries,
+                                ConfigValueLimits limits) {
+  return detail::value_or_throw(try_object(entries, limits));
+}
+ConfigResult<ConfigValue> ConfigValue::try_object(std::span<const ConfigObjectEntry> entries,
+                                                  ConfigValueLimits limits) {
   if (entries.size() > limits.max_container_entries || limits.max_depth == 0 ||
       limits.max_nodes == 0 || limits.max_string_bytes == 0 || limits.max_container_entries == 0) {
     return tl::make_unexpected(
@@ -1025,7 +1060,10 @@ std::size_t ConfigView::size() const noexcept {
   }
   return 0;
 }
-ConfigResult<bool> ConfigView::as_bool() const noexcept {
+bool ConfigView::as_bool() const {
+  return detail::value_or_throw(try_as_bool());
+}
+ConfigResult<bool> ConfigView::try_as_bool() const noexcept {
   if (valid_) {
     if (const auto* value = std::get_if<bool>(&node_storage(node_))) {
       return *value;
@@ -1033,7 +1071,10 @@ ConfigResult<bool> ConfigView::as_bool() const noexcept {
   }
   return tl::make_unexpected(type_error("configuration value is not bool"));
 }
-ConfigResult<std::int64_t> ConfigView::as_signed_integer() const noexcept {
+std::int64_t ConfigView::as_signed_integer() const {
+  return detail::value_or_throw(try_as_signed_integer());
+}
+ConfigResult<std::int64_t> ConfigView::try_as_signed_integer() const noexcept {
   if (valid_) {
     if (const auto* value = std::get_if<std::int64_t>(&node_storage(node_))) {
       return *value;
@@ -1041,7 +1082,10 @@ ConfigResult<std::int64_t> ConfigView::as_signed_integer() const noexcept {
   }
   return tl::make_unexpected(type_error("configuration value is not signed integer"));
 }
-ConfigResult<std::uint64_t> ConfigView::as_unsigned_integer() const noexcept {
+std::uint64_t ConfigView::as_unsigned_integer() const {
+  return detail::value_or_throw(try_as_unsigned_integer());
+}
+ConfigResult<std::uint64_t> ConfigView::try_as_unsigned_integer() const noexcept {
   if (valid_) {
     if (const auto* value = std::get_if<std::uint64_t>(&node_storage(node_))) {
       return *value;
@@ -1049,7 +1093,10 @@ ConfigResult<std::uint64_t> ConfigView::as_unsigned_integer() const noexcept {
   }
   return tl::make_unexpected(type_error("configuration value is not unsigned integer"));
 }
-ConfigResult<double> ConfigView::as_floating() const noexcept {
+double ConfigView::as_floating() const {
+  return detail::value_or_throw(try_as_floating());
+}
+ConfigResult<double> ConfigView::try_as_floating() const noexcept {
   if (valid_) {
     if (const auto* value = std::get_if<double>(&node_storage(node_))) {
       return *value;
@@ -1057,7 +1104,10 @@ ConfigResult<double> ConfigView::as_floating() const noexcept {
   }
   return tl::make_unexpected(type_error("configuration value is not floating point"));
 }
-ConfigResult<std::string_view> ConfigView::as_string() const noexcept {
+std::string_view ConfigView::as_string() const {
+  return detail::value_or_throw(try_as_string());
+}
+ConfigResult<std::string_view> ConfigView::try_as_string() const noexcept {
   if (valid_) {
     if (const auto* value = std::get_if<std::string>(&node_storage(node_))) {
       return *value;
@@ -1065,7 +1115,10 @@ ConfigResult<std::string_view> ConfigView::as_string() const noexcept {
   }
   return tl::make_unexpected(type_error("configuration value is not string"));
 }
-ConfigResult<ConfigView> ConfigView::element(std::size_t index) const noexcept {
+ConfigView ConfigView::element(std::size_t index) const {
+  return detail::value_or_throw(try_element(index));
+}
+ConfigResult<ConfigView> ConfigView::try_element(std::size_t index) const noexcept {
   if (!valid_) {
     return tl::make_unexpected(type_error("invalid configuration view"));
   }
@@ -1086,7 +1139,10 @@ ConfigResult<ConfigView> ConfigView::element(std::size_t index) const noexcept {
   }
   return tl::make_unexpected(type_error("configuration value is not a container"));
 }
-ConfigResult<std::string_view> ConfigView::key(std::size_t index) const noexcept {
+std::string_view ConfigView::key(std::size_t index) const {
+  return detail::value_or_throw(try_key(index));
+}
+ConfigResult<std::string_view> ConfigView::try_key(std::size_t index) const noexcept {
   if (valid_) {
     if (const auto* object = std::get_if<ConfigObject>(&node_storage(node_))) {
       if (index < object->size()) {
@@ -1098,8 +1154,11 @@ ConfigResult<std::string_view> ConfigView::key(std::size_t index) const noexcept
   }
   return tl::make_unexpected(type_error("configuration value is not an object"));
 }
-ConfigResult<ConfigView> ConfigView::member(std::string_view key) const noexcept {
-  auto found = find_member(key);
+ConfigView ConfigView::member(std::string_view key) const {
+  return detail::value_or_throw(try_member(key));
+}
+ConfigResult<ConfigView> ConfigView::try_member(std::string_view key) const noexcept {
+  auto found = try_find_member(key);
   if (!found) {
     return tl::make_unexpected(found.error());
   }
@@ -1110,7 +1169,10 @@ ConfigResult<ConfigView> ConfigView::member(std::string_view key) const noexcept
   }
   return value;
 }
-ConfigResult<std::optional<ConfigView>> ConfigView::find_member(
+std::optional<ConfigView> ConfigView::find_member(std::string_view key) const {
+  return detail::value_or_throw(try_find_member(key));
+}
+ConfigResult<std::optional<ConfigView>> ConfigView::try_find_member(
     std::string_view key) const noexcept {
   if (!valid_) {
     return tl::make_unexpected(type_error("invalid configuration view"));
@@ -1128,7 +1190,11 @@ ConfigValue ConfigView::to_value() const noexcept {
   return ConfigValue{node_};
 }
 
-ConfigResult<Path> Path::parse(std::string_view text) {
+Path Path::parse(std::string_view text) {
+  return detail::value_or_throw(try_parse(text));
+}
+
+ConfigResult<Path> Path::try_parse(std::string_view text) try {
   Path result;
   if (text.empty()) {
     return result;
@@ -1168,6 +1234,9 @@ ConfigResult<Path> Path::parse(std::string_view text) {
     begin = end + 1U;
   }
   return result;
+} catch (const std::bad_alloc&) {
+  return tl::make_unexpected(
+      ConfigError::make(ConfigErrorCode::kLimitExceeded, "configuration path allocation failed"));
 }
 Path Path::root() noexcept {
   return {};
@@ -1192,10 +1261,14 @@ std::string Path::to_string() const {
   return result;
 }
 
+std::vector<std::byte> encode_semantic_value_v1(ConfigView value, SemanticEncodeOptions options) {
+  return detail::value_or_throw(try_encode_semantic_value_v1(std::move(value), options));
+}
+
 // The public value-semantic API deliberately takes a cheap owning view by value.
 // NOLINTNEXTLINE(performance-unnecessary-value-param)
-ConfigResult<std::vector<std::byte>> encode_semantic_value_v1(ConfigView value,
-                                                              SemanticEncodeOptions options) {
+ConfigResult<std::vector<std::byte>> try_encode_semantic_value_v1(
+    ConfigView value, SemanticEncodeOptions options) try {
   if (!value.valid() || options.max_output_bytes == 0) {
     return tl::make_unexpected(
         ConfigError::make(ConfigErrorCode::kInvalidArgument, "invalid semantic encoding input"));
@@ -1206,6 +1279,9 @@ ConfigResult<std::vector<std::byte>> encode_semantic_value_v1(ConfigView value,
     return tl::make_unexpected(encoded.error());
   }
   return result;
+} catch (const std::bad_alloc&) {
+  return tl::make_unexpected(
+      ConfigError::make(ConfigErrorCode::kLimitExceeded, "semantic encoding allocation failed"));
 }
 
 Edit::Edit(EditKind kind, Path path, ConfigValue value) noexcept
@@ -1213,19 +1289,80 @@ Edit::Edit(EditKind kind, Path path, ConfigValue value) noexcept
 Edit Edit::add(Path path, ConfigValue value) {
   return {EditKind::kAdd, std::move(path), std::move(value)};
 }
+Edit Edit::add(std::string_view path, ConfigValue value) {
+  return add(Path::parse(path), std::move(value));
+}
+Edit Edit::add(std::string_view path, ConfigView value) {
+  return add(path, value.to_value());
+}
+ConfigResult<Edit> Edit::try_add(std::string_view path, ConfigValue value) {
+  auto parsed = Path::try_parse(path);
+  if (!parsed) {
+    return tl::make_unexpected(parsed.error());
+  }
+  return add(std::move(*parsed), std::move(value));
+}
+ConfigResult<Edit> Edit::try_add(std::string_view path, ConfigView value) {
+  return try_add(path, value.to_value());
+}
 Edit Edit::replace(Path path, ConfigValue value) {
   return {EditKind::kReplace, std::move(path), std::move(value)};
+}
+Edit Edit::replace(std::string_view path, ConfigValue value) {
+  return replace(Path::parse(path), std::move(value));
+}
+Edit Edit::replace(std::string_view path, ConfigView value) {
+  return replace(path, value.to_value());
+}
+ConfigResult<Edit> Edit::try_replace(std::string_view path, ConfigValue value) {
+  auto parsed = Path::try_parse(path);
+  if (!parsed) {
+    return tl::make_unexpected(parsed.error());
+  }
+  return replace(std::move(*parsed), std::move(value));
+}
+ConfigResult<Edit> Edit::try_replace(std::string_view path, ConfigView value) {
+  return try_replace(path, value.to_value());
 }
 Edit Edit::remove(Path path) {
   return {EditKind::kRemove, std::move(path), ConfigValue::null()};
 }
+Edit Edit::remove(std::string_view path) {
+  return remove(Path::parse(path));
+}
+ConfigResult<Edit> Edit::try_remove(std::string_view path) {
+  auto parsed = Path::try_parse(path);
+  if (!parsed) {
+    return tl::make_unexpected(parsed.error());
+  }
+  return remove(std::move(*parsed));
+}
 Edit Edit::merge_object(Path path, ConfigValue object) {
   return {EditKind::kMergeObject, std::move(path), std::move(object)};
+}
+Edit Edit::merge_object(std::string_view path, ConfigValue object) {
+  return merge_object(Path::parse(path), std::move(object));
+}
+Edit Edit::merge_object(std::string_view path, ConfigView object) {
+  return merge_object(path, object.to_value());
+}
+ConfigResult<Edit> Edit::try_merge_object(std::string_view path, ConfigValue object) {
+  auto parsed = Path::try_parse(path);
+  if (!parsed) {
+    return tl::make_unexpected(parsed.error());
+  }
+  return merge_object(std::move(*parsed), std::move(object));
+}
+ConfigResult<Edit> Edit::try_merge_object(std::string_view path, ConfigView object) {
+  return try_merge_object(path, object.to_value());
 }
 
 Document::Document(std::shared_ptr<const detail::DocumentState> state) noexcept
     : state_(std::move(state)) {}
-ConfigResult<Document> Document::from_value(ConfigValue root) noexcept {
+Document Document::from_value(ConfigValue root) {
+  return detail::value_or_throw(try_from_value(std::move(root)));
+}
+ConfigResult<Document> Document::try_from_value(ConfigValue root) noexcept {
   try {
     auto state = std::make_shared<detail::DocumentState>();
     state->root = std::move(root.node_);
@@ -1243,7 +1380,10 @@ ConfigResult<Document> Document::from_value(ConfigValue root) noexcept {
 ConfigView Document::root() const noexcept {
   return ConfigView{state_->root};
 }
-ConfigResult<ConfigView> Document::at(const Path& path) const {
+ConfigView Document::at(const Path& path) const {
+  return detail::value_or_throw(try_at(path));
+}
+ConfigResult<ConfigView> Document::try_at(const Path& path) const {
   std::shared_ptr<const ConfigNode> current = state_->root;
   for (std::size_t depth = 0; depth < path.token_count(); ++depth) {
     const auto token = path.token(depth);
@@ -1252,8 +1392,8 @@ ConfigResult<ConfigView> Document::at(const Path& path) const {
       const auto found = std::find_if(
           object->begin(), object->end(), [&](const auto& item) { return item.first == token; });
       if (found == object->end()) {
-        return tl::make_unexpected(ConfigError::make(
-            ConfigErrorCode::kPathNotFound, "object member does not exist", path.to_string()));
+        return tl::make_unexpected(detail::make_path_error(
+            ConfigErrorCode::kPathNotFound, "object member does not exist", path));
       }
       current = found->second;
     } else if (const auto* array = std::get_if<ConfigArray>(&storage)) {
@@ -1263,21 +1403,27 @@ ConfigResult<ConfigView> Document::at(const Path& path) const {
       }
       current = (*array)[*index];
     } else {
-      return tl::make_unexpected(ConfigError::make(
-          ConfigErrorCode::kPathNotFound, "path traverses a scalar value", path.to_string()));
+      return tl::make_unexpected(detail::make_path_error(
+          ConfigErrorCode::kTypeMismatch, "path traverses a scalar value", path));
     }
   }
   return ConfigView{std::move(current)};
 }
-ConfigResult<ConfigView> Document::at(std::string_view path) const {
-  auto parsed = Path::parse(path);
+ConfigView Document::at(std::string_view path) const {
+  return detail::value_or_throw(try_at(path));
+}
+ConfigResult<ConfigView> Document::try_at(std::string_view path) const {
+  auto parsed = Path::try_parse(path);
   if (!parsed) {
     return tl::make_unexpected(parsed.error());
   }
-  return at(*parsed);
+  return try_at(*parsed);
 }
-ConfigResult<std::optional<ConfigView>> Document::find(const Path& path) const {
-  auto value = at(path);
+std::optional<ConfigView> Document::find(const Path& path) const {
+  return detail::value_or_throw(try_find(path));
+}
+ConfigResult<std::optional<ConfigView>> Document::try_find(const Path& path) const {
+  auto value = try_at(path);
   if (!value && value.error().code() == ConfigErrorCode::kPathNotFound) {
     return std::optional<ConfigView>{};
   }
@@ -1286,14 +1432,20 @@ ConfigResult<std::optional<ConfigView>> Document::find(const Path& path) const {
   }
   return std::optional<ConfigView>{*value};
 }
-ConfigResult<std::optional<ConfigView>> Document::find(std::string_view path) const {
-  auto parsed = Path::parse(path);
+std::optional<ConfigView> Document::find(std::string_view path) const {
+  return detail::value_or_throw(try_find(path));
+}
+ConfigResult<std::optional<ConfigView>> Document::try_find(std::string_view path) const {
+  auto parsed = Path::try_parse(path);
   if (!parsed) {
     return tl::make_unexpected(parsed.error());
   }
-  return find(*parsed);
+  return try_find(*parsed);
 }
-ConfigResult<Document> Document::patched(std::span<const Edit> edits) const {
+Document Document::patched(std::span<const Edit> edits) const {
+  return detail::value_or_throw(try_patched(edits));
+}
+ConfigResult<Document> Document::try_patched(std::span<const Edit> edits) const {
   try {
     if (!edits.empty() && state_->requires_lossless && state_->contains_yaml_alias) {
       return tl::make_unexpected(
@@ -1330,13 +1482,27 @@ ConfigResult<Document> Document::patched(std::span<const Edit> edits) const {
     }
     state->digest.semantic = *semantic;
 
+    if (!edits.empty() && !state->digest.base_source) {
+      state->digest.base_source = state->digest.source;
+    }
+
     if (!replacements.empty()) {
       auto rewritten = rewrite_lossless_source(*state, replacements);
       if (!rewritten) {
         return tl::make_unexpected(rewritten.error());
       }
-    } else {
-      state->lossless_available = state_->lossless_available;
+      auto exact_source = detail::raw_digest(*state->raw_source);
+      if (!exact_source) {
+        return tl::make_unexpected(exact_source.error());
+      }
+      state->digest.source = *exact_source;
+    } else if (!edits.empty()) {
+      state->digest.source.reset();
+      state->source_format.reset();
+      state->raw_source.reset();
+      state->scalar_spans.clear();
+      state->lossless_available = false;
+      state->contains_yaml_alias = false;
     }
     return Document{std::move(state)};
   } catch (const std::bad_alloc&) {
@@ -1348,8 +1514,12 @@ ConfigDigest Document::digest() const noexcept {
   return state_->digest;
 }
 
-ConfigResult<ConfigValue> merge_config_values(const ConfigValue& baseline,
-                                              const ConfigValue& patch) {
+ConfigValue merge_config_values(const ConfigValue& baseline, const ConfigValue& patch) {
+  return detail::value_or_throw(try_merge_config_values(baseline, patch));
+}
+
+ConfigResult<ConfigValue> try_merge_config_values(const ConfigValue& baseline,
+                                                  const ConfigValue& patch) {
   try {
     auto merged = merge_nodes(baseline.node_, patch.node_);
     if (!merged) {
@@ -1398,6 +1568,16 @@ const detail::DocumentState& ConfigIoAccess::state(const Document& document) noe
 }
 
 namespace detail {
+ConfigError make_path_error(ConfigErrorCode code, std::string_view message,
+                            const Path& path) noexcept {
+  try {
+    return ConfigError::make(code, message, path.to_string());
+  } catch (const std::bad_alloc&) {
+    return ConfigError::make(ConfigErrorCode::kLimitExceeded,
+                             "configuration path allocation failed");
+  }
+}
+
 ConfigResult<SemanticDigest> semantic_digest(
     const std::shared_ptr<const ConfigNode>& root) noexcept {
   try {

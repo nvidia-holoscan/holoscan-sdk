@@ -98,7 +98,7 @@ string #3: "schema greeting #3" (frame=3, degraded=no)
 time #4: time_ns-acqtime_ns=1000000
 string #4: "schema greeting #4" (frame=4, degraded=no)
 string #5: "schema greeting #5" (frame=5, degraded=yes)
-schema_payloads: StringT identity=holoscan.schema.String v1 bound=512 bytes
+schema_payloads: StringT identity=holoscan.schema.String epoch=1 bound=512 bytes
 schema_payloads: oversize emit rejected: kResourceExhausted: serialized schema exceeds bounded storage
 schema_payloads: strings=5 times=4 imus=4 degraded=1 oversize=kResourceExhausted termination=stopped
 ```
@@ -164,7 +164,7 @@ by construction.
 | Concern | HSDK 4.x | HSDK 5.x `schema_payloads` |
 |---|---|---|
 | Emitting a string/struct | `op_output.emit(value, "out")` type-erases into a GXF `Message`; any copyable type appears to work in-process | only admitted payload families compile; schema types are admitted by their generated package |
-| Wire contract | implicit — distributed apps needed a registered codec, and mismatches surfaced at runtime on the far side | explicit — identity, digest, verifier, codec, and serialized bound ship with the type |
+| Wire contract | implicit — distributed apps needed a registered codec, and mismatches surfaced at runtime on the far side | explicit — family identity, verifier, codec, and serialized bound ship with the type |
 | Size limits | none declared; a huge value grew buffers or failed deep in lower transport layers | package-declared bound, enforced at `emit` with `kResourceExhausted` |
 | Failure locality | serialization errors logged by the framework, often on the consumer side | the producer's own `emit` call returns the error as `expected<void, Error>` |
 
@@ -181,7 +181,7 @@ answered at the emit call.
 - [`examples/tensors_in_depth`](../tensors_in_depth/README.md) — device-side payloads
   with pooled allocation and stream-ordered publication (Wave 3,
   CUDA-gated).
-- Guide deep-dive: data-and-payloads/schema-payloads (package evidence and
+- Guide deep-dive: data-and-payloads/schema-payloads (generated packages and
   identity model) and data-and-payloads/payload-type-rules (which payload
   family to choose when).
 

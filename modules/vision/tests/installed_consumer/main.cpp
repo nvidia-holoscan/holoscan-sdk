@@ -11,7 +11,6 @@
 #include <holoscan/vision/reformat_op.hpp>
 #include <holoscan/vision/remap_op.hpp>
 #include <holoscan/vision/resize_op.hpp>
-#include <holoscan/vision/vision_types.hpp>
 
 static_assert(std::derived_from<holoscan::vision::ResizeOp,
                                 holoscan::Operator<holoscan::vision::ResizeOpParams>>);
@@ -32,17 +31,14 @@ static_assert(
                       holoscan::Operator<holoscan::vision::NonMaximumSuppressionOpParams>>);
 
 int main() {
-  constexpr holoscan::vision::VisionImageCapacity kImageCapacity{
-      .max_width = 1, .max_height = 1, .max_batch_size = 1U};
-  holoscan::vision::ResizeOp resize{kImageCapacity};
-  holoscan::vision::CustomCropOp crop{kImageCapacity};
-  holoscan::vision::CopyMakeBorderOp border{kImageCapacity};
-  holoscan::vision::RemapOp remap{kImageCapacity};
-  holoscan::vision::NormalizeOp normalize{kImageCapacity};
-  holoscan::vision::ConvertToOp convert{kImageCapacity};
-  holoscan::vision::ReformatOp reformat{kImageCapacity};
-  holoscan::vision::NonMaximumSuppressionOp nms{
-      holoscan::vision::NMSCapacity{.max_boxes = 1, .max_batch_size = 1U}};
+  holoscan::vision::ResizeOp resize;
+  holoscan::vision::CustomCropOp crop;
+  holoscan::vision::CopyMakeBorderOp border;
+  holoscan::vision::RemapOp remap;
+  holoscan::vision::NormalizeOp normalize;
+  holoscan::vision::ConvertToOp convert;
+  holoscan::vision::ReformatOp reformat;
+  holoscan::vision::NonMaximumSuppressionOp nms;
   const bool ports_are_available =
       resize.input.name() == "input" && crop.output.name() == "output" &&
       border.input.name() == "input" && remap.map.name() == "map" &&

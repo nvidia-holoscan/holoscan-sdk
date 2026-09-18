@@ -48,6 +48,27 @@ namespace {
 
 }  // namespace
 
+expected<void, Error> validate_authored_partition_device_domain(
+    std::span<const PartitionVertexView> vertices, std::span<const VertexIndex> members) {
+  // Fold the whole authored partition in both cover modes. A conflict cannot be repaired by
+  // splitting an explicitly selected instance or ignoring its mixed direct-Operator members.
+  std::optional<std::int32_t> device;
+  for (const VertexIndex member : members) {
+    if (member >= vertices.size()) {
+      return validation_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
+    }
+    const auto obligations = vertices[member].device_obligations;
+    if (obligations.size() > 1U ||
+        (!obligations.empty() && device.has_value() && *device != obligations.front())) {
+      return validation_error(ErrorCode::kIncompatible, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE");
+    }
+    if (!obligations.empty()) {
+      device = obligations.front();
+    }
+  }
+  return {};
+}
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
     const PartitionProblem& problem, const PartitionPlannerDescriptor& selected_planner,
@@ -198,19 +219,9 @@ expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
                               "PARTITION_PROPOSAL_CONSTRAINT_VIOLATION");
     }
 
-    // Independently fold the exact device obligations inside every authored anchor. Empty means
-    // unconstrained, while either one conflicting vertex or two distinct exact devices makes the
-    // anchor impossible without changing its membership.
-    std::optional<std::int32_t> anchor_device;
-    for (const VertexIndex member : constraint.members) {
-      const auto obligations = problem.vertices[member].device_obligations;
-      if (obligations.size() > 1U || (!obligations.empty() && anchor_device.has_value() &&
-                                      *anchor_device != obligations.front())) {
-        return validation_error(ErrorCode::kIncompatible, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE");
-      }
-      if (!obligations.empty()) {
-        anchor_device = obligations.front();
-      }
+    auto domain = validate_authored_partition_device_domain(problem.vertices, constraint.members);
+    if (!domain) {
+      return make_unexpected(std::move(domain.error()));
     }
   }
   if (std::any_of(decision_by_vertex.begin(), decision_by_vertex.end(), [](const auto* decision) {

@@ -5,6 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <holoscan/core/diagnostic.hpp>
+
+#include <tuple>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -35,7 +39,6 @@
 #include "compiler/artifact_emitter_test_access.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "compiler/plan_artifact_serialization.hpp"
-#include "core/parameter_override_set_internal.hpp"
 
 // GTest fatal assertions establish optional preconditions that clang-tidy does not model.
 // NOLINTBEGIN(bugprone-unchecked-optional-access)
@@ -1379,7 +1382,7 @@ TEST(ExecutionPlanPartitionsView,
 }
 
 // REQ: COMPILE-058
-TEST(CompilePartitionAuthoring, RejectsManualPartitionsWithEmbeddedGraphs) {
+TEST(CompilePartitionAuthoring, RejectsManualPartitionsWithUncoveredEmbeddedGraphs) {
   Graph graph{"manual-embedded"};
   test::add_compile_test_default_clock(graph);
   const auto root = graph.op<test::CompileTestOperator>("root");
@@ -1388,7 +1391,7 @@ TEST(CompilePartitionAuthoring, RejectsManualPartitionsWithEmbeddedGraphs) {
 
   const ExecutionPlan plan = compile(graph);
   EXPECT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_MANUAL_EMBEDDED_GRAPH_UNSUPPORTED"));
+  EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_EMBEDDED_INSTANCE_UNASSIGNED"));
 }
 
 TEST(CompilePartitionAuthoring, AttachesOnlyUnambiguousSyntheticBoundaryVertices) {
@@ -1476,30 +1479,7 @@ TEST(CompileEntryPoint, RejectedCompileStillReturnsInspectableNonRunnablePlan) {
   EXPECT_FALSE(plan.lifecycle_restart_targets().front().effective_profile.has_value());
 }
 
-//   [operator]  (inline-only storage mode; opaque override contribution rejected)
 // REQ: COMPILE-001
-TEST(CompileEntryPoint, AppliesInertParameterPolicyAndRejectsOpaqueOverrideContribution) {
-  Graph graph{"unsupported-parameter-inputs"};
-  (void)graph.op<test::CompileTestOperator>("operator");
-
-  // Key setup: kInlineOnly disables runtime updates; opaque ParamOverrideSet triggers rejection.
-  CompileOptions configured;
-  configured.parameters.storage = ParamStorageMode::kInlineOnly;
-  const ExecutionPlan configured_plan = compile(graph, configured);
-  EXPECT_TRUE(configured_plan.ok()) << configured_plan.json();
-  ASSERT_TRUE(configured_plan.parameter_runtime_capacity().has_value());
-  EXPECT_FALSE(configured_plan.parameter_runtime_capacity()->runtime_updates_enabled);
-
-  CompileOptions overridden;
-  overridden.parameter_overrides = detail::ParamOverrideSetAccess::make();
-  const ExecutionPlan overridden_plan = compile(graph, std::move(overridden));
-  // Key assertion: opaque override plan fails with PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE.
-  EXPECT_FALSE(overridden_plan.ok());
-  EXPECT_TRUE(
-      test::has_diagnostic(overridden_plan, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE"));
-}
-
-//   [LifecycleCapacityOperator]  (each lifecycle resource dimension validated independently)
 // REQ: COMPILE-010
 TEST(CompileEntryPoint, CrossValidatesAllLifecycleResourcesForRepeatedParameterSubmissions) {
   Graph graph{"parameter-lifecycle-capacity"};
@@ -2326,6 +2306,127 @@ TEST(ExecutionPlanArtifacts, MapsFilesystemExceptionsToTypedFailure) {
   EXPECT_EQ(failed.error().code, ErrorCode::kFailure);
   EXPECT_EQ(failed.error().message, "ARTIFACT_FILESYSTEM_EXCEPTION");
   EXPECT_FALSE(std::filesystem::exists(root));
+}
+
+// REQ: COMPILE-007
+// REQ: COMPILE-025
+// REQ: COMPILE-078
+// REQ: EXPECTED-030
+TEST(ExecutionPlanArtifacts, AdmittedWarningDetailDoesNotChangeAnyPortableFile) {
+  ExecutionPlan plan;
+  {
+    // This is the real admitted warning fixture from
+    // CompileLowering.CanonicalizesTopologyReadinessAndClockDomains. No rejected plan
+    // is promoted and no severity, structural diagnostic, or admission field is changed.
+    Graph graph{"warning-detail-artifacts"};
+    (void)graph.op<test::CompileReadinessOperator>("ready");
+    const ClockKey notification =
+        graph.add_clock<ManualClock>("notification_clock", std::int64_t{0});
+    const ClockKey doorbell = graph.add_clock<ManualClock>("doorbell_clock", std::int64_t{0});
+    graph.set_default_clock(notification);
+    graph.add_clock_conversion(notification, doorbell, AffineClockConversion{.offset_ns = 3});
+    plan = compile(graph);
+  }
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto rows = plan.diagnostics();
+  ASSERT_FALSE(rows.empty());
+  EXPECT_TRUE(std::ranges::all_of(
+      rows, [](const auto& row) { return row.severity == DiagnosticSeverity::kWarning; }));
+  const auto warning = std::ranges::find(rows, "READINESS_SOURCE_UNUSED", &Diagnostic::token);
+  ASSERT_NE(warning, rows.end());
+  EXPECT_EQ(warning->severity, DiagnosticSeverity::kWarning);
+  const auto index = static_cast<std::size_t>(warning - rows.begin());
+  const std::string original_warning_report = format_diagnostic(*warning, {});
+  const auto* state = detail::ExecutionPlanAccess::state(plan);
+  ASSERT_NE(state, nullptr);
+  ASSERT_TRUE(state->admitted);
+
+  const auto structural_key = [](const Diagnostic& row) {
+    return std::tuple{row.id.value,
+                      row.severity,
+                      row.token,
+                      row.source.graph_generation,
+                      row.source.graph.value,
+                      row.source.vertex.value,
+                      row.source.port.value(),
+                      row.service,
+                      row.endpoint,
+                      row.json_pointer,
+                      row.required,
+                      row.provided,
+                      row.cause_id};
+  };
+  const ScopedArtifactRoot baseline_root = unique_artifact_root();
+  const auto baseline = emit_artifacts(
+      plan, ArtifactEmitOptions{.root = baseline_root.path(), .deployment_id = "detail-only"});
+  ASSERT_TRUE(baseline) << baseline.error().message;
+  ASSERT_TRUE(std::filesystem::is_regular_file(baseline->manifest_path));
+  const auto baseline_directory = baseline->manifest_path.parent_path();
+  constexpr std::array<std::string_view, 3U> kPortableFiles{
+      "execution-plan.json", "endpoint-catalog.json", "profile-manifest.json"};
+  std::array<std::string, 3U> baseline_bytes;
+  for (std::size_t file = 0U; file < kPortableFiles.size(); ++file) {
+    const auto path = baseline_directory / kPortableFiles[file];
+    ASSERT_TRUE(std::filesystem::is_regular_file(path));
+    baseline_bytes[file] = read_artifact(path);
+    ASSERT_FALSE(baseline_bytes[file].empty());
+    EXPECT_EQ(baseline_bytes[file].size(), std::filesystem::file_size(path));
+  }
+  EXPECT_EQ(baseline_bytes.front(), plan.json());
+
+  // Both controls remain genuinely admitted and retain exactly the same structural warning.
+  // These context-only public detail values are test mutations, not claims about a producer.
+  for (const std::string marker : {"nonsemantic-detail-alpha", "nonsemantic-detail-beta"}) {
+    SCOPED_TRACE(marker);
+    auto changed = std::make_shared<detail::ExecutionPlanState>(*state);
+    changed->diagnostics[index].detail = DiagnosticDetail{
+        .operation = DiagnosticOperation::kCompile,
+        .error = Error{ErrorCode::kSuccess},
+        .operator_path = "ready",
+        .mismatches = {DiagnosticMismatch{.field = "schema_path", .provided = marker}},
+        .truncated = marker == "nonsemantic-detail-beta"};
+    ASSERT_EQ(changed->diagnostics.size(), rows.size());
+    for (std::size_t row = 0U; row < rows.size(); ++row) {
+      EXPECT_EQ(structural_key(changed->diagnostics[row]), structural_key(rows[row]));
+    }
+    const auto serialized = detail::finalize_plan_artifact(*changed);
+    ASSERT_TRUE(serialized) << serialized.error().message;
+    EXPECT_TRUE(changed->admitted);
+    EXPECT_EQ(changed->json, plan.json());
+    EXPECT_EQ(changed->digest, plan.digest());
+    const ExecutionPlan changed_plan = detail::ExecutionPlanAccess::make(changed);
+    ASSERT_TRUE(changed_plan.ok());
+    EXPECT_NE(format_diagnostic(changed_plan.diagnostics()[index], {}).find(marker),
+              std::string::npos);
+    EXPECT_EQ(format_diagnostic(plan.diagnostics()[index], {}), original_warning_report);
+
+    const ScopedArtifactRoot changed_root = unique_artifact_root();
+    const auto emitted = emit_artifacts(
+        changed_plan,
+        ArtifactEmitOptions{.root = changed_root.path(), .deployment_id = "detail-only"});
+    ASSERT_TRUE(emitted) << emitted.error().message;
+    EXPECT_TRUE(emitted->changed);
+    ASSERT_TRUE(std::filesystem::is_regular_file(emitted->manifest_path));
+    EXPECT_EQ(emitted->catalog_digest, baseline->catalog_digest);
+    const auto directory = emitted->manifest_path.parent_path();
+    for (std::size_t file = 0U; file < kPortableFiles.size(); ++file) {
+      SCOPED_TRACE(kPortableFiles[file]);
+      const auto path = directory / kPortableFiles[file];
+      ASSERT_TRUE(std::filesystem::is_regular_file(path));
+      const std::string actual = read_artifact(path);
+      ASSERT_FALSE(actual.empty());
+      EXPECT_EQ(actual.size(), std::filesystem::file_size(path));
+      // Compare actual file contents. No JSON normalization, field removal, regenerated
+      // expected fixture, or comparison of the path names substitutes for these bytes.
+      EXPECT_EQ(actual, baseline_bytes[file]);
+      EXPECT_EQ(actual.find("nonsemantic-detail-alpha"), std::string::npos);
+      EXPECT_EQ(actual.find("nonsemantic-detail-beta"), std::string::npos);
+      EXPECT_EQ(actual.find("private projector implementation detail"), std::string::npos);
+      EXPECT_EQ(actual.find("implementation_token"), std::string::npos);
+    }
+    // artifact-manifest.json is the publication commit marker and carries per-file times.
+    // It must exist, but its timestamp-bearing bytes are not a portable-plan identity claim.
+  }
 }
 
 }  // namespace

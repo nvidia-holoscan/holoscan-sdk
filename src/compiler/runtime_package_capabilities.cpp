@@ -106,7 +106,7 @@ void canonicalize_runtime_package_collections(RuntimePackageCapabilityManifest& 
   RuntimePackageCapabilityManifest manifest;
   manifest.package_id = "holoscan-core";
   manifest.build_id = "holoscan-core-5.0";
-  manifest.supported_plan_schemas = {"holoscan.execution_plan.private.v4"};
+  manifest.supported_plan_schemas = {"holoscan.execution_plan.private.v6"};
   manifest.profile_policies = {profile_policy_id_v1()};
   manifest.runtime_abi_versions = {"holoscan.runtime_abi.v1"};
   manifest.target_triples = {std::string{compile_target_triple()}};

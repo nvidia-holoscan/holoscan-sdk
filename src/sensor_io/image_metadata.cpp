@@ -17,7 +17,6 @@
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -27,7 +26,7 @@
 
 #include "core/domain/tensor_layout_validation.hpp"
 #include "header_generated.h"
-#include "holoscan/schema/flatbuffer_schema_package.hpp"
+#include "holoscan/schema/bounded_span_allocator.hpp"
 #include "holoscan/schema/tensor_materialization.hpp"
 #include "holoscan/sensor_io/sensor_schema_package.hpp"
 #include "tensor_generated.h"
@@ -957,9 +956,8 @@ expected<std::vector<std::byte>, Error> build_image_metadata(const holoscan::Ten
   image.exposure_time_ns = options.exposure_time_ns;
   image.gain = options.gain;
 
-  alignas(std::max_align_t)
-      std::array<std::byte, flatbuffer_default_descriptor_metadata_capacity_v<Image>>
-          storage{};
+  alignas(std::max_align_t) std::array<std::byte, flatbuffer_descriptor_metadata_capacity_v<Image>>
+      storage{};
   auto encoded = detail::encode_image_metadata(image, storage);
   if (!encoded) {
     return make_unexpected(std::move(encoded).error());

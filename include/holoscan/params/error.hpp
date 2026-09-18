@@ -82,6 +82,31 @@ class HOLOSCAN_PARAMS_EXPORT ParamToolError {
   std::optional<config::ConfigError> config_;
 };
 
+/// @brief Carry one complete structured Parameter tooling failure through an exception boundary.
+///
+/// `what()` is the result of `format_error(error())`. Constructing the exception can allocate;
+/// callers that need explicit failure handling use the corresponding result-returning API.
+class HOLOSCAN_PARAMS_EXPORT ParamException : public RuntimeError {
+ public:
+  /// @brief Construct an exception while preserving the complete structured error.
+  /// @param error Owning Parameter tooling failure to retain.
+  explicit ParamException(ParamToolError error);
+
+  /// @brief Destroy the exception through its exported shared-library implementation.
+  ~ParamException() override;
+
+  /// @brief Copy an exception without changing its structured failure.
+  ParamException(const ParamException&) = default;
+  /// @brief Replace an exception with a copy of another structured failure.
+  ParamException& operator=(const ParamException&) = default;
+
+  /// @brief Return the retained structured Parameter tooling failure.
+  [[nodiscard]] const ParamToolError& error() const noexcept { return error_; }
+
+ private:
+  ParamToolError error_;
+};
+
 /// @brief Render a parameter tooling error as a single line for logs and diagnostics.
 ///
 /// The result begins with the stable tooling token and includes any preserved Core or Config

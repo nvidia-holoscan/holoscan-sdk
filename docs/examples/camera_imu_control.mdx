@@ -306,11 +306,17 @@ graph-only/deployment launcher for this three-process recipe.
 ./sensor_daemon <catalog.json> <endpoint> [count] [period-ms] [first-value]
 
 # Record control results:
-./result_recorder <catalog.json> <endpoint>
+./result_recorder <catalog.json> baseline.camera_imu.control 1
 ```
 
 The sensor daemon's optional arguments default to `64`, `5`, and `1`,
-respectively.
+respectively. The final recorder argument is a positive sample limit. This
+graph's camera remains active on its independent clock after the finite IMU
+publisher closes, so its control export does not reach remote EOS. The limit
+lets the recorder consume one representative control result and then close its
+local subscriber without claiming graph completion. Omit the limit when using
+the recorder with a finite input-driven graph to wait for data followed by
+remote `kClosed`.
 
 <Tip>
   The sensor daemon and recorder are ordinary programs — no operator base

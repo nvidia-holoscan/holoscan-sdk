@@ -35,5 +35,5 @@ endif()
 
 install(TARGETS time_and_clocks
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/time_and_clocks/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

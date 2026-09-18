@@ -26,6 +26,12 @@ constexpr TensorRepresentation kCudaTensorRepresentation{
     .memory_kind = MemoryKind::kCudaDevice,
 };
 
+[[nodiscard]] expected<std::uint64_t, Error> border_output_byte_span(
+    const CopyMakeBorderOpParams& params) noexcept {
+  return detail::projected_image_output_byte_span(
+      params.max_width, params.max_height, params.max_batch_size, sizeof(float));
+}
+
 [[nodiscard]] auto failure(ErrorCode code, std::string message) {
   return make_unexpected(Error{code, std::move(message)});
 }
@@ -69,8 +75,7 @@ class CopyMakeBorderOp::Impl {
   std::unique_ptr<cvcuda::CopyMakeBorder> operation;
 };
 
-CopyMakeBorderOp::CopyMakeBorderOp(VisionImageCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+CopyMakeBorderOp::CopyMakeBorderOp() : impl_(std::make_unique<Impl>()) {}
 
 CopyMakeBorderOp::~CopyMakeBorderOp() = default;
 
@@ -80,7 +85,7 @@ void CopyMakeBorderOp::setup(OperatorSpec& spec) {
       1LL + static_cast<std::int64_t>(configuration.left) + configuration.right;
   const std::int64_t minimum_height =
       1LL + static_cast<std::int64_t>(configuration.top) + configuration.bottom;
-  if (minimum_width > capacity_.max_width || minimum_height > capacity_.max_height) {
+  if (minimum_width > configuration.max_width || minimum_height > configuration.max_height) {
     throw RuntimeError(ErrorCode::kInvalidArgument,
                        "CopyMakeBorderOp parameters exceed the authored output-pool capacity");
   }
@@ -88,11 +93,16 @@ void CopyMakeBorderOp::setup(OperatorSpec& spec) {
     throw RuntimeError(ErrorCode::kInvalidArgument,
                        "CopyMakeBorderOp border_value must not be empty");
   }
-  auto byte_span = detail::maximum_output_byte_span(
-      capacity_.max_width, capacity_.max_height, capacity_.max_batch_size, sizeof(float));
-  if (!byte_span) {
-    throw RuntimeError(byte_span.error());
+  const auto projected_capacity = border_output_byte_span(configuration);
+  if (!projected_capacity) {
+    throw RuntimeError(projected_capacity.error().code,
+                       "CopyMakeBorderOp output capacity exceeds CV-CUDA's 32-bit tensor limit");
   }
+  const auto capacity = parameter_projected_byte_span<&border_output_byte_span>(
+      "holoscan.vision.CopyMakeBorderOp.output-max-byte-span.v1",
+      param_ref<&CopyMakeBorderOpParams::max_width>(),
+      param_ref<&CopyMakeBorderOpParams::max_height>(),
+      param_ref<&CopyMakeBorderOpParams::max_batch_size>());
 
   spec.input(input, "input")
       .queue_depth(1U)
@@ -101,16 +111,14 @@ void CopyMakeBorderOp::setup(OperatorSpec& spec) {
           .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
       });
   spec.output(output, "output")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = detail::ImageTensorView::kMaxRank,
-                  .max_byte_span = *byte_span,
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          capacity);
 }
 
 Contract CopyMakeBorderOp::contract() const {
@@ -151,7 +159,7 @@ expected<void, Error> CopyMakeBorderOp::compute(ExecutionContext& context) {
     return make_unexpected(std::move(sample).error());
   }
   auto input_view = detail::describe_image_tensor(
-      sample->data, detail::TensorOperation::kCopyMakeBorder, capacity_.max_batch_size);
+      sample->data, detail::TensorOperation::kCopyMakeBorder, configuration.max_batch_size);
   if (!input_view) {
     return make_unexpected(std::move(input_view).error());
   }
@@ -162,7 +170,7 @@ expected<void, Error> CopyMakeBorderOp::compute(ExecutionContext& context) {
 
   const std::int64_t output_width = input_view->width + configuration.left + configuration.right;
   const std::int64_t output_height = input_view->height + configuration.top + configuration.bottom;
-  if (output_width > capacity_.max_width || output_height > capacity_.max_height) {
+  if (output_width > configuration.max_width || output_height > configuration.max_height) {
     return failure(ErrorCode::kInvalidArgument,
                    "CopyMakeBorderOp output exceeds the authored output-pool capacity");
   }
@@ -200,7 +208,7 @@ expected<void, Error> CopyMakeBorderOp::compute(ExecutionContext& context) {
                                                    input_view->dtype,
                                                    DLDevice{kDLCUDA, loan->device_id().value},
                                                    detail::TensorOperation::kCopyMakeBorder,
-                                                   capacity_.max_batch_size);
+                                                   configuration.max_batch_size);
   if (!output_view) {
     return make_unexpected(std::move(output_view).error());
   }

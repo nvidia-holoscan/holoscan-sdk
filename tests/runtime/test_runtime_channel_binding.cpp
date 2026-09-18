@@ -28,6 +28,7 @@
 
 #include <holoscan/core/compile.hpp>
 #include <holoscan/core/graph.hpp>
+#include <holoscan/profiler/nvtx3.hpp>
 #include <holoscan/time/manual_clock.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
@@ -39,12 +40,20 @@
 #include "runtime/endpoint_clock_health_runtime.hpp"
 #include "runtime/graph_exec.hpp"
 #include "runtime/runtime_channel_binding.hpp"
+#include "runtime/runtime_channel_plan_binding.hpp"
 #include "runtime/runtime_channel_storage.hpp"
 #include "runtime/runtime_phase_counters.hpp"
 #include "runtime/runtime_rate_state.hpp"
 #include "time/clock_registry_internal.hpp"
 
 #include "runtime_channel_binding_test_support.hpp"
+
+namespace holoscan::test::nvtx_emit_marker_capture {
+
+bool reset(std::string_view label);
+std::size_t emitted() noexcept;
+
+}  // namespace holoscan::test::nvtx_emit_marker_capture
 
 namespace holoscan::detail {
 namespace {
@@ -110,6 +119,8 @@ struct MixedDomainRelayFixture {
             .service_id = local_service,
             .payload_identity = relay_output_port.payload_identity,
             .payload_size_bytes = sizeof(std::int32_t),
+            .selected_inline_bucket_bytes =
+                *channel_internal::inline_payload_bucket_size(sizeof(std::int32_t)),
             .queue_policy = QueuePolicy::kBlocking,
             .max_subscribers = 1U,
             .max_subscriber_queue_depth = 1U,
@@ -512,6 +523,14 @@ TEST(RuntimeChannelBinding, RejectsMalformedProcessLocalAndExternalPlansBeforeBa
       RuntimeChannelSession::create(process_local.plan, process_local.replay);
   ASSERT_FALSE(malformed_process_local);
   EXPECT_EQ(malformed_process_local.error().code, ErrorCode::kInvalidArgument);
+
+  SessionFixture unbucketed_process_local;
+  auto& unbucketed_service = unbucketed_process_local.plan.process_local_channel_services.front();
+  unbucketed_service.payload_size_bytes = std::numeric_limits<std::uint64_t>::max();
+  unbucketed_service.selected_inline_bucket_bytes = 0U;
+  auto malformed_bucket = process_local_service_options(unbucketed_service);
+  ASSERT_FALSE(malformed_bucket);
+  EXPECT_EQ(malformed_bucket.error().code, ErrorCode::kInvalidArgument);
 
   SessionFixture unresolved_interface;
   unresolved_interface.plan.ports.front().owner_kind = PortOwnerKind::kGraphInterface;
@@ -2265,6 +2284,42 @@ TEST(RuntimeChannelBinding,
   }
 }
 
+// A consumed ReuseLast fallback is private temporal retention, not unread delivery capacity.
+// A depth-one DropOldest input must admit one typed successor beside that fallback.
+// REQ: CHAN-146
+// REQ: CHAN-131
+TEST(RuntimeChannelBinding, DirectDropOldestAdmitsTypedSampleBesideReuseLastFallback) {
+  SessionFixture fixture;
+  fixture.use_one_slot_drop_oldest_queue();
+  fixture.use_direct_retained_delivery();
+  fixture.enable_reuse_last();
+  fixture.plan.input_selections.front().selector = InputSelectorKind::kLatestWithin;
+  fixture.plan.input_selections.front().max_age_ns = 100;
+  fixture.plan.input_selections.front().cache_capacity = 1U;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{11}));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_single_occupied_claim_state(
+      **session, PortId{2U}, false, true, true, false));
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{22}));
+
+  const auto state = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(state) << runtime_error_message(state.error());
+  EXPECT_EQ(state->occupied_samples, 2U);
+  EXPECT_EQ(state->pending_direct_ingress_samples, 0U);
+  EXPECT_TRUE(state->reuse_retained);
+  EXPECT_TRUE(state->temporal_retained);
+  EXPECT_EQ(state->next_arrival_sequence, 3U);
+
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  (*session)->cancel();
+  EXPECT_TRUE((*session)->join());
+}
+
 // Direct retention and HoloMQ must keep the same newest survivor when a selected typed sample
 // remains protected while the producer continues publishing.
 // REQ: CHAN-116
@@ -2519,6 +2574,97 @@ TEST(RuntimeChannelBinding, DropOldestStagedReservationDefersToNewerTypedOvertak
   ASSERT_TRUE(received) << runtime_error_message(received.error());
   EXPECT_EQ(received->data, 22);
   EXPECT_EQ(received->metadata.sequence, 2U);
+  ASSERT_TRUE((*binding)->retire(event.source_sequence));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 1U, true));
+  ASSERT_TRUE((*session)->retire_samples(PortId{2U}, selection.front().samples));
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
+// A committed freshness target is an ordering fence, so a newer unclaimed typed row cannot
+// discard it during the same staged-reservation commit retry.
+// REQ: CHAN-128
+// REQ: RUNTIME-043
+TEST(RuntimeChannelBinding, CommittedRefillTargetWinsNewerTypedOvertake) {
+  SessionFixture fixture;
+  fixture.use_one_slot_drop_oldest_queue();
+  fixture.use_direct_retained_delivery();
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+
+  const auto inject = [&](const std::int32_t value, const std::uint64_t sequence) {
+    return RuntimeChannelSessionTestAccess::inject_direct_inline_payload(
+        **session,
+        PortId{2U},
+        std::as_bytes(std::span{&value, 1U}),
+        SampleMetadata{
+            .sequence = sequence,
+            .byte_size = sizeof(value),
+            .payload_kind = PayloadKind::kInlineTyped,
+        });
+  };
+  ASSERT_TRUE(inject(11, 1U));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_single_occupied_claim_state(
+      **session, PortId{2U}, false, false, true, false));
+  ASSERT_TRUE(inject(22, 2U));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::make_staged_sample_older_than_typed_sample(
+      **session, PortId{2U}));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_single_occupied_claim_state(
+      **session, PortId{2U}, false, false, false, false));
+
+  const auto counters = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(counters) << runtime_error_message(counters.error());
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_arrival_counters(
+      **session,
+      PortId{2U},
+      counters->next_arrival_sequence,
+      std::numeric_limits<std::uint64_t>::max()));
+  auto exhausted =
+      RuntimeChannelSessionTestAccess::commit_staged_reservation_after_newer_typed_overtake(
+          **session, PortId{2U}, true);
+  ASSERT_FALSE(exhausted);
+  EXPECT_EQ(exhausted.error().code, ErrorCode::kResourceExhausted);
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_arrival_counters(
+      **session, PortId{2U}, counters->next_arrival_sequence, counters->next_global_arrival_order));
+
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::commit_staged_reservation_after_newer_typed_overtake(
+      **session, PortId{2U}, true));
+  const auto retained = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(retained) << runtime_error_message(retained.error());
+  EXPECT_EQ(retained->occupied_samples, 1U);
+  EXPECT_EQ(retained->pending_direct_ingress_samples, 0U);
+
+  auto binding =
+      (*session)->create_readiness_binding(VertexId{2U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(1U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 1U,
+                                           });
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*binding)->poll(TimePoint{1, ClockId{1U}}));
+  RuntimeEvent event;
+  auto drained = (*binding)->drain(std::span<RuntimeEvent>{&event, 1U});
+  ASSERT_TRUE(drained) << runtime_error_message(drained.error());
+  ASSERT_EQ(*drained, 1U);
+  auto record = (*session)->temporal_sample(event.port, event.source_sequence);
+  ASSERT_TRUE(record) << runtime_error_message(record.error());
+  EXPECT_EQ(record->source_sequence, 1U);
+  const std::array selection{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = {InputState::kSelected, SelectionReason::kNone},
+      .samples = std::span<const TemporalSampleRecord>{&*record, 1U},
+      .destructive = true,
+  }};
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, selection));
+  auto received = fixture.sink.input.receive();
+  ASSERT_TRUE(received) << runtime_error_message(received.error());
+  EXPECT_EQ(received->data, 11);
+  EXPECT_EQ(received->metadata.sequence, 1U);
   ASSERT_TRUE((*binding)->retire(event.source_sequence));
   ASSERT_TRUE((*session)->retire_activation(VertexId{2U}, 1U, true));
   ASSERT_TRUE((*session)->retire_samples(PortId{2U}, selection.front().samples));
@@ -3861,8 +4007,14 @@ TEST(RuntimeChannelBinding, PublishesAConstructedGenericLoan) {
 // the same authority again during the same activation.
 // REQ: RUNTIME-019
 TEST(RuntimeChannelBinding, PreservesGenericLoanAcrossPreSubmitBackpressure) {
+  Graph graph;
   SessionFixture fixture;
+  (void)graph.add_operator<SourceOperator>("source");
+  (void)graph.add_operator<SinkOperator>("sink");
+  fixture.plan.graph = graph.view();
   fixture.plan.generic_output_loans.front().max_live_loans = 1U;
+  (void)profiler::operator_profile_domain();
+  ASSERT_TRUE(test::nvtx_emit_marker_capture::reset("source.output:emit"));
   auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
   ASSERT_TRUE(session) << runtime_error_message(session.error());
   auto publisher = std::make_unique<ScriptedInlinePublisher>(
@@ -3891,17 +4043,66 @@ TEST(RuntimeChannelBinding, PreservesGenericLoanAcrossPreSubmitBackpressure) {
   auto rejected = fixture.source.output.emit(std::move(*loan));
   ASSERT_FALSE(rejected);
   EXPECT_EQ(rejected.error().code, ErrorCode::kBackpressured);
+  EXPECT_EQ(test::nvtx_emit_marker_capture::emitted(), 0U);
   auto still_held = fixture.source.output.allocate();
   ASSERT_FALSE(still_held);
   EXPECT_EQ(still_held.error().code, ErrorCode::kResourceExhausted);
 
   ASSERT_TRUE(fixture.source.output.emit(std::move(*loan)));
+  EXPECT_EQ(test::nvtx_emit_marker_capture::emitted(), 1U);
   auto replacement = fixture.source.output.allocate();
   ASSERT_TRUE(replacement) << runtime_error_message(replacement.error());
   replacement->cancel();
   ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
   EXPECT_EQ(observed->sequences, (std::vector<std::uint64_t>{1U, 1U}));
   EXPECT_EQ(observed->values, (std::vector<std::int32_t>{22, 22}));
+}
+
+// Nonconsuming and consuming outcomes retain their existing accounting across a legal cutover.
+// REQ: RUNTIME-052
+TEST(RuntimeChannelBinding, PublicationOutcomeAccountingSurvivesRestart) {
+  // Key setup: source.output -> scripted publisher; reject, consume uncertain authority, then
+  // accept, with a committed restart between each publication attempt.
+  // Key assertion: observed sequences are 1, 1, 2 and next is 3; only consuming outcomes advance.
+  SessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session);
+  auto publisher = std::make_unique<ScriptedInlinePublisher>(
+      std::vector<channel_internal::InlinePublicationResult>{
+          {.phase = channel_internal::InlinePublicationPhase::kPreSubmitRejected,
+           .recipient_count = 0U,
+           .error = Error{ErrorCode::kBackpressured}},
+          {.phase = channel_internal::InlinePublicationPhase::kPostSubmitUncertain,
+           .recipient_count = 0U,
+           .error = Error{ErrorCode::kPublicationIndeterminate}},
+          {.phase = channel_internal::InlinePublicationPhase::kAccepted,
+           .recipient_count = 1U,
+           .error = Error{ErrorCode::kSuccess}},
+      });
+  auto* const observed = publisher.get();
+  std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+  publishers.push_back(std::move(publisher));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
+      **session, PortId{1U}, std::move(publishers)));
+  for (const std::uint64_t generation : {1U, 2U, 3U}) {
+    ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, generation, {}));
+    auto emitted = fixture.source.output.emit(std::int32_t{31});
+    if (generation < 3U) {
+      ASSERT_FALSE(emitted);
+      EXPECT_EQ(
+          emitted.error().code,
+          generation == 1U ? ErrorCode::kBackpressured : ErrorCode::kPublicationIndeterminate);
+    } else {
+      ASSERT_TRUE(emitted);
+    }
+    ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, generation, true));
+    const std::array affected{VertexId{1U}, VertexId{2U}};
+    ASSERT_TRUE((*session)->commit_restart(VertexId{1U}, affected));
+  }
+  EXPECT_EQ(observed->sequences, (std::vector<std::uint64_t>{1U, 1U, 2U}));
+  auto counter = RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+  ASSERT_TRUE(counter);
+  EXPECT_EQ(*counter, 3U);
 }
 
 // A pre-submit refresh failure owns no close authority; retry publishes one terminal operation.
@@ -3961,39 +4162,342 @@ TEST(RuntimeChannelBinding, NonLocalPreSubmitResourceExhaustionRemainsRetryable)
 
 // A retry preserves every accepted fanout arm and submits only the still-unresolved suffix.
 // REQ: CHAN-136
+// REQ: RUNTIME-052
 TEST(RuntimeChannelBinding, CloseOwnerOutputsCompletesAfterPartialFanoutRetry) {
+  // Key setup: source.output --+-> accepting arm
+  //                          +-> backpressured-then-accepting arm
+  // Start at one and at UINT64_MAX - 1; retry the partially completed fanout.
+  // Key assertion: the resolved arm is never refreshed or closed again, and final completion
+  // charges one coordinate while subsequent completed closes remain idempotent at exhaustion.
+  for (const std::uint64_t sequence :
+       {std::uint64_t{1U}, std::numeric_limits<std::uint64_t>::max() - 1U}) {
+    SCOPED_TRACE(sequence);
+    SessionFixture fixture;
+    auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+    ASSERT_TRUE(session) << runtime_error_message(session.error());
+    ASSERT_TRUE(
+        RuntimeChannelSessionTestAccess::set_output_next_sequence(**session, PortId{1U}, sequence));
+    auto first = std::make_unique<ScriptedInlinePublisher>(
+        std::vector<channel_internal::InlinePublicationResult>{},
+        std::vector{ErrorCode::kSuccess, ErrorCode::kProtocolError},
+        std::vector{ErrorCode::kSuccess, ErrorCode::kClosed});
+    auto second = std::make_unique<ScriptedInlinePublisher>(
+        std::vector<channel_internal::InlinePublicationResult>{},
+        std::vector{ErrorCode::kSuccess, ErrorCode::kSuccess},
+        std::vector{ErrorCode::kBackpressured, ErrorCode::kSuccess});
+    auto* const first_observed = first.get();
+    auto* const second_observed = second.get();
+    std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+    publishers.push_back(std::move(first));
+    publishers.push_back(std::move(second));
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
+        **session, PortId{1U}, std::move(publishers), {}, true));
+
+    auto pressured = (*session)->close_owner_outputs(VertexId{1U});
+    ASSERT_FALSE(pressured);
+    EXPECT_EQ(pressured.error().code, ErrorCode::kBackpressured);
+    EXPECT_EQ(first_observed->close_count, 1U);
+    EXPECT_EQ(second_observed->close_count, 1U);
+
+    ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
+    EXPECT_EQ(first_observed->close_count, 1U);
+    EXPECT_EQ(second_observed->close_count, 2U);
+
+    ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
+    EXPECT_EQ(first_observed->close_count, 1U);
+    EXPECT_EQ(second_observed->close_count, 2U);
+    auto counter = RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+    ASSERT_TRUE(counter);
+    EXPECT_EQ(*counter, sequence + 1U);
+  }
+}
+
+// Observe cold terminal accounting without conflating arm resolution with published EOS.
+// Representative caller: ExhaustedOptionalNoPeerCloseResolvesLocally.
+void expect_output_close_state(const RuntimeChannelSession& session,
+                               const std::uint64_t next_sequence, const std::size_t resolved_arms) {
+  auto sequence = RuntimeChannelSessionTestAccess::output_next_sequence(session, PortId{1U});
+  ASSERT_TRUE(sequence) << runtime_error_message(sequence.error());
+  EXPECT_EQ(*sequence, next_sequence);
+  auto resolved =
+      RuntimeChannelSessionTestAccess::resolved_output_terminal_arms(session, PortId{1U});
+  ASSERT_TRUE(resolved) << runtime_error_message(resolved.error());
+  EXPECT_EQ(*resolved, resolved_arms);
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(RuntimeChannelBinding, ExhaustedOptionalNoPeerCloseResolvesLocally) {
+  // Key setup: an optional exported arm has neither a peer nor accepted recipient data.
+  // Fixture topology: source.output -> scripted optional export (no receiver).
+  for (const std::uint64_t sequence :
+       {std::uint64_t{1U}, std::numeric_limits<std::uint64_t>::max()}) {
+    SCOPED_TRACE(sequence);
+    SessionFixture fixture;
+    auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+    ASSERT_TRUE(session);
+    auto publisher = std::make_unique<ScriptedInlinePublisher>(
+        std::vector<channel_internal::InlinePublicationResult>{});
+    auto* const observed = publisher.get();
+    observed->subscribers_present = false;
+    std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+    publishers.push_back(std::move(publisher));
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
+        **session, PortId{1U}, std::move(publishers), {}, true, false));
+    ASSERT_TRUE(
+        RuntimeChannelSessionTestAccess::set_output_next_sequence(**session, PortId{1U}, sequence));
+
+    // Key assertion: local completion resolves the arm without EOS or sequence consumption,
+    // even when the next counter is exhausted; a repeated completed close performs no work.
+    ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
+    EXPECT_EQ(observed->refresh_count, 1U);
+    EXPECT_EQ(observed->close_count, 0U);
+    expect_output_close_state(**session, sequence, 1U);
+    ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
+    EXPECT_EQ(observed->refresh_count, 1U);
+    EXPECT_EQ(observed->close_count, 0U);
+    expect_output_close_state(**session, sequence, 1U);
+    auto reset = (*session)->reset();
+    ASSERT_FALSE(reset);
+    EXPECT_EQ(reset.error().code, ErrorCode::kClosed);
+  }
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+// REQ: CHAN-144
+TEST(RuntimeChannelBinding, ExhaustedRequiredExportAbandonmentReturnsClosed) {
+  // Key setup: source.output -> required export -> recipient; accept data before the
+  // recipient disappears at terminal refresh, with the Runtime next counter exhausted.
   SessionFixture fixture;
   auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
-  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  ASSERT_TRUE(session);
+  auto publisher = std::make_unique<ScriptedInlinePublisher>(
+      std::vector<channel_internal::InlinePublicationResult>{});
+  auto* const observed = publisher.get();
+  std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+  publishers.push_back(std::move(publisher));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
+      **session, PortId{1U}, std::move(publishers), {}, true));
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{41}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_EQ(observed->sequences, (std::vector<std::uint64_t>{1U}));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+      **session, PortId{1U}, std::numeric_limits<std::uint64_t>::max()));
+  const auto refreshes = observed->refresh_count;
+  observed->remove_subscribers_on_refresh = true;
+
+  // Key assertion: abandonment resolves the arm with kClosed, not exhaustion, and never
+  // submits/counts EOS. Neither reset nor a close retry can reopen the abandoned arm.
+  auto closed = (*session)->close_owner_outputs(VertexId{1U});
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code, ErrorCode::kClosed);
+  EXPECT_EQ(observed->refresh_count, refreshes + 1U);
+  EXPECT_EQ(observed->close_count, 0U);
+  expect_output_close_state(**session, std::numeric_limits<std::uint64_t>::max(), 1U);
+  auto reset = (*session)->reset();
+  ASSERT_FALSE(reset);
+  EXPECT_EQ(reset.error().code, ErrorCode::kClosed);
+  ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
+  EXPECT_EQ(observed->refresh_count, refreshes + 1U);
+  EXPECT_EQ(observed->close_count, 0U);
+  expect_output_close_state(**session, std::numeric_limits<std::uint64_t>::max(), 1U);
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(RuntimeChannelBinding, ExhaustedOptionalAcceptedRecipientRemainsObligated) {
+  // Key setup: source.output -> optional export -> recipient; accept data before the
+  // recipient disappears at terminal refresh, with the Runtime next counter exhausted.
+  SessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session);
+  auto publisher = std::make_unique<ScriptedInlinePublisher>(
+      std::vector<channel_internal::InlinePublicationResult>{});
+  auto* const observed = publisher.get();
+  std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+  publishers.push_back(std::move(publisher));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
+      **session, PortId{1U}, std::move(publishers), {}, true, false));
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{41}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_EQ(observed->sequences, (std::vector<std::uint64_t>{1U}));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+      **session, PortId{1U}, std::numeric_limits<std::uint64_t>::max()));
+  const auto refreshes = observed->refresh_count;
+  observed->remove_subscribers_on_refresh = true;
+
+  // Key assertion: accepted recipient data preserves the optional arm's terminal obligation;
+  // losing that peer cannot turn exhausted EOS into successful local resolution.
+  auto closed = (*session)->close_owner_outputs(VertexId{1U});
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code, ErrorCode::kResourceExhausted);
+  EXPECT_EQ(observed->refresh_count, refreshes + 1U);
+  EXPECT_EQ(observed->close_count, 0U);
+  expect_output_close_state(**session, std::numeric_limits<std::uint64_t>::max(), 0U);
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(RuntimeChannelBinding, ExhaustedClosePreservesRefreshFailure) {
+  // Key setup: source.output -> scripted connected export; terminal refresh fails before
+  // the exhausted output can classify its recipient.
+  SessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session);
+  auto publisher = std::make_unique<ScriptedInlinePublisher>(
+      std::vector<channel_internal::InlinePublicationResult>{},
+      std::vector{ErrorCode::kBackpressured});
+  auto* const observed = publisher.get();
+  std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+  publishers.push_back(std::move(publisher));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
+      **session, PortId{1U}, std::move(publishers), {}, true));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+      **session, PortId{1U}, std::numeric_limits<std::uint64_t>::max()));
+  // Key assertion: the existing refresh error survives without EOS or terminal resolution.
+  auto closed = (*session)->close_owner_outputs(VertexId{1U});
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code, ErrorCode::kBackpressured);
+  EXPECT_EQ(observed->refresh_count, 1U);
+  EXPECT_EQ(observed->close_count, 0U);
+  expect_output_close_state(**session, std::numeric_limits<std::uint64_t>::max(), 0U);
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(RuntimeChannelBinding, ExhaustedClosePreservesEarlierLocalResolution) {
+  // Key setup: source.output -> optional absent arm
+  //                         -> optional connected arm requiring EOS.
+  SessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session);
   auto first = std::make_unique<ScriptedInlinePublisher>(
-      std::vector<channel_internal::InlinePublicationResult>{},
-      std::vector{ErrorCode::kSuccess, ErrorCode::kProtocolError},
-      std::vector{ErrorCode::kSuccess, ErrorCode::kClosed});
+      std::vector<channel_internal::InlinePublicationResult>{});
   auto second = std::make_unique<ScriptedInlinePublisher>(
-      std::vector<channel_internal::InlinePublicationResult>{},
-      std::vector{ErrorCode::kSuccess, ErrorCode::kSuccess},
-      std::vector{ErrorCode::kBackpressured, ErrorCode::kSuccess});
-  auto* const first_observed = first.get();
-  auto* const second_observed = second.get();
+      std::vector<channel_internal::InlinePublicationResult>{});
+  auto* const local = first.get();
+  auto* const connected = second.get();
+  local->subscribers_present = false;
   std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
   publishers.push_back(std::move(first));
   publishers.push_back(std::move(second));
   ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
+      **session, PortId{1U}, std::move(publishers), {}, true, false));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+      **session, PortId{1U}, std::numeric_limits<std::uint64_t>::max()));
+  // Key assertion: exhaustion on the connected arm preserves the earlier local resolution;
+  // retries skip that resolved arm and neither arm submits EOS.
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    auto closed = (*session)->close_owner_outputs(VertexId{1U});
+    ASSERT_FALSE(closed);
+    EXPECT_EQ(closed.error().code, ErrorCode::kResourceExhausted);
+    EXPECT_EQ(local->refresh_count, 1U);
+    EXPECT_EQ(local->close_count, 0U);
+    EXPECT_EQ(connected->close_count, 0U);
+    expect_output_close_state(**session, std::numeric_limits<std::uint64_t>::max(), 1U);
+  }
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(RuntimeChannelBinding, TerminalCompletionRetryRemembersConsumedAuthority) {
+  // Key setup: source.output --+-> optional accepting arm (second scenario only)
+  //                          +-> authority-consuming uncertain arm
+  // Exercise uncertainty alone and after an accepted arm so either can establish accounting.
+  for (const bool accepted_prefix : {false, true}) {
+    SCOPED_TRACE(accepted_prefix);
+    SessionFixture fixture;
+    auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+    ASSERT_TRUE(session);
+    auto publisher = std::make_unique<ScriptedInlinePublisher>(
+        std::vector<channel_internal::InlinePublicationResult>{},
+        std::vector<ErrorCode>{},
+        std::vector{ErrorCode::kPublicationIndeterminate});
+    auto* const observed = publisher.get();
+    std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+    auto accepted = std::make_unique<ScriptedInlinePublisher>(
+        std::vector<channel_internal::InlinePublicationResult>{});
+    auto* const first = accepted.get();
+    if (accepted_prefix) {
+      publishers.push_back(std::move(accepted));
+    }
+    publishers.push_back(std::move(publisher));
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
+        **session, PortId{1U}, std::move(publishers), {}, true));
+    const auto last_sequence = std::numeric_limits<std::uint64_t>::max() - 1U;
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+        **session, PortId{1U}, last_sequence));
+    auto uncertain = (*session)->close_owner_outputs(VertexId{1U});
+    ASSERT_FALSE(uncertain);
+    EXPECT_EQ(uncertain.error().code, ErrorCode::kPublicationIndeterminate);
+    expect_output_close_state(**session, last_sequence, accepted_prefix ? 2U : 1U);
+    // Key assertion: a retry which submits no EOS still charges the earlier consumed operation
+    // exactly once; a completed retry at exhaustion remains idempotent.
+    ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
+    ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
+    if (accepted_prefix) {
+      EXPECT_EQ(first->close_count, 1U);
+    }
+    EXPECT_EQ(observed->close_count, 1U);
+    expect_output_close_state(
+        **session, std::numeric_limits<std::uint64_t>::max(), accepted_prefix ? 2U : 1U);
+  }
+}
+
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(RuntimeChannelBinding, ExhaustedDirectCloseDoesNotStoreEndOfStream) {
+  // Key setup: source.output -> direct-retained sink.input, with exhausted output capacity.
+  // Key assertion: no terminal storage, delivery count, or sequence changes on repeated close.
+  SessionFixture fixture;
+  fixture.use_direct_retained_delivery();
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session);
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+      **session, PortId{1U}, std::numeric_limits<std::uint64_t>::max()));
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    auto closed = (*session)->close_owner_outputs(VertexId{1U});
+    ASSERT_FALSE(closed);
+    EXPECT_EQ(closed.error().code, ErrorCode::kResourceExhausted);
+    expect_output_close_state(**session, std::numeric_limits<std::uint64_t>::max(), 0U);
+    auto input = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+    ASSERT_TRUE(input);
+    EXPECT_FALSE(input->end_of_stream_received);
+    auto progress = RuntimeChannelSessionTestAccess::process_local_progress_state(**session);
+    ASSERT_TRUE(progress);
+    EXPECT_EQ(progress->published_deliveries, 0U);
+    EXPECT_EQ(progress->publications_in_flight, 0U);
+  }
+}
+
+// A newly exhausted close may refresh its recipient but must not submit EOS.
+// REQ: RUNTIME-052
+TEST(RuntimeChannelBinding, ExhaustedCloseDoesNotSubmitEndOfStream) {
+  // Key setup: source.output -> scripted connected export; refresh succeeds at exhaustion.
+  SessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session);
+  auto publisher = std::make_unique<ScriptedInlinePublisher>(
+      std::vector<channel_internal::InlinePublicationResult>{}, std::vector{ErrorCode::kSuccess});
+  auto* const observed = publisher.get();
+  std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+  publishers.push_back(std::move(publisher));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
       **session, PortId{1U}, std::move(publishers), {}, true));
-
-  auto pressured = (*session)->close_owner_outputs(VertexId{1U});
-  ASSERT_FALSE(pressured);
-  EXPECT_EQ(pressured.error().code, ErrorCode::kBackpressured);
-  EXPECT_EQ(first_observed->close_count, 1U);
-  EXPECT_EQ(second_observed->close_count, 1U);
-
-  ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
-  EXPECT_EQ(first_observed->close_count, 1U);
-  EXPECT_EQ(second_observed->close_count, 2U);
-
-  ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
-  EXPECT_EQ(first_observed->close_count, 1U);
-  EXPECT_EQ(second_observed->close_count, 2U);
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+      **session, PortId{1U}, std::numeric_limits<std::uint64_t>::max()));
+  auto closed = (*session)->close_owner_outputs(VertexId{1U});
+  // Key assertion: classification refresh runs, but exhausted EOS consumes no authority.
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code, ErrorCode::kResourceExhausted);
+  EXPECT_EQ(observed->close_count, 0U);
+  EXPECT_EQ(observed->refresh_count, 1U);
+  EXPECT_TRUE(observed->sequences.empty());
+  expect_output_close_state(**session, std::numeric_limits<std::uint64_t>::max(), 0U);
 }
 
 // Terminal authority is monotonic within one session; an administrative reset cannot reopen an

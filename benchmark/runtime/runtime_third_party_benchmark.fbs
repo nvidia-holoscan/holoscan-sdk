@@ -6,11 +6,11 @@ namespace task30_benchmark;
 // A benchmark-owned application schema exercises the public third-party package path without
 // SDK-owned schema traits or Tensor descriptor extensions.
 table Telemetry {
-  sequence:ulong;
-  source_id:uint;
-  status:ushort;
-  valid:bool;
-  reading:double;
+  sequence:ulong (id: 0);
+  source_id:uint (id: 1);
+  status:ushort (id: 2);
+  valid:bool (id: 3);
+  reading:double (id: 4);
 }
 
 root_type Telemetry;

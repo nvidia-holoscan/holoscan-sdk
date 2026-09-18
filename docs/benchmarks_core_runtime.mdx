@@ -200,26 +200,31 @@ may include that background load.
 
 ### Reproducing the tables
 
-From the repository root, first save the current CPU configuration and apply
-the benchmark controls:
+Run from the SDK source root on a native Linux x86_64 benchmark host. Measurements
+on other hardware need their own provenance. First save the current CPU
+configuration and apply the benchmark controls:
 
 ```bash
-sudo ./public/benchmark/configure_cpu_performance.sh \
+sudo ./benchmark/configure_cpu_performance.sh \
   apply /tmp/holoscan-cpu-performance.state
 ```
 
-Then run exactly the rows used by this page in the SDK development container:
+Then run the rows used by this page in the SDK build container. `launch` starts
+in the selected target's build directory, so the benchmark uses `--build-dir .`.
+The explicit x86_64 target matches the `setarch` command and published hardware:
 
 ```bash
-QA_CPUS=$(./public/benchmark/configure_cpu_performance.sh recommend 8)
-HOLOSCAN_CUDA_MAJOR_VERSION=13 ./public/run launch build-cu13-x86_64 \
+QA_CPUS=$(./benchmark/configure_cpu_performance.sh recommend 8)
+RESULTS_DIR="transport-suite-docs-core-runtime-$(date +%Y%m%d-%H%M%S)"
+
+./run launch --arch x86_64 \
   --security-opt=seccomp=unconfined \
   --run-cmd "setarch x86_64 -R \
     python3 ../benchmark/run_transport_benchmark_suite.py \
     --build-dir . \
-    --output-dir transport-suite-docs-core-runtime-$(date +%Y%m%d-%H%M%S) \
+    --output-dir '${RESULTS_DIR}' \
     --preset docs-core-runtime \
-    --cpus $QA_CPUS"
+    --cpus ${QA_CPUS}"
 ```
 
 <Note title="Reduced-core systems">
@@ -230,19 +235,21 @@ HOLOSCAN_CUDA_MAJOR_VERSION=13 ./public/run launch build-cu13-x86_64 \
   `--update-doc` still requires the complete eight-core, 42-row run.
 </Note>
 
-Generate the tables from the preserved artifacts, optionally updating this
-page in place:
+After the benchmark finishes, use the same host shell to generate the tables
+from the preserved artifacts and update this page in place. Query the directory
+for the same target instead of reconstructing its name:
 
 ```bash
-python3 public/benchmark/summarize_runtime_benchmarks.py \
-  public/build-cu13-x86_64/transport-suite-docs-core-runtime-<timestamp> \
-  --update-doc public/docs/benchmarks_core_runtime.mdx
+BUILD_DIR=$(./run get_build_dir --arch x86_64)
+python3 benchmark/summarize_runtime_benchmarks.py \
+  "${BUILD_DIR}/${RESULTS_DIR}" \
+  --update-doc docs/benchmarks_core_runtime.mdx
 ```
 
 Finally, restore the saved host CPU configuration:
 
 ```bash
-sudo ./public/benchmark/configure_cpu_performance.sh \
+sudo ./benchmark/configure_cpu_performance.sh \
   restore /tmp/holoscan-cpu-performance.state
 ```
 

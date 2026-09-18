@@ -129,8 +129,8 @@ Run through CTest when you want CI-style aggregation:
 ```
 
 For targeted local work, you can run custom build, test, or benchmark commands
-inside the standard SDK container with `launch --run-cmd`. From this `public`
-directory, use `./run`; from the repository root, use `./public/run`:
+inside the standard SDK container with `launch --run-cmd`. Run the commands
+below from the SDK source root:
 
 ```sh
 ./run launch --run-cmd "cmake --build . --target core_hello_benchmark && \
@@ -243,7 +243,7 @@ operator lanes active while waiting and therefore consume a CPU core.
 Run the all-core host setup before entering the development container:
 
 ```sh
-sudo ./public/benchmark/configure_cpu_performance.sh \
+sudo ./benchmark/configure_cpu_performance.sh \
   apply /tmp/holoscan-cpu-performance.state
 ```
 
@@ -251,7 +251,7 @@ Ask the helper for up to eight online logical CPUs backed by distinct physical
 cores on one socket:
 
 ```sh
-CPUS=$(./public/benchmark/configure_cpu_performance.sh recommend 8)
+CPUS=$(./benchmark/configure_cpu_performance.sh recommend 8)
 ```
 
 When `/sys/devices/system/cpu/isolated` is non-empty, the helper selects only
@@ -285,10 +285,12 @@ stream-ordered HoloMQ device row with per-message producer readiness, consumer
 wait, and deferred releases. The smoke preset keeps only that fully ordered
 HoloMQ row and a full-write Graph latency row as functional stress checks.
 The runner assigns the selected CPUs to publisher/operator lanes and Runtime
-support threads as each topology needs:
+support threads as each topology needs. Run from the host checkout; `launch`
+starts in the selected target's build directory, so `--build-dir .` refers to
+that directory. Use the same `HOLOSCAN_BUILD_ARCH` setting as the build:
 
-```sh
-HOLOSCAN_CUDA_MAJOR_VERSION=13 ./public/run launch build-cu13-x86_64 \
+```bash
+./run launch \
   --run-cmd "python3 ../benchmark/run_transport_benchmark_suite.py \
     --build-dir . \
     --output-dir transport-suite-\$(date +%Y%m%d-%H%M%S) \
@@ -319,8 +321,11 @@ backing again. `runtime_benchmark::MultiTensorMessageT` contains a `uint64`
 sequence plus two independent rank-1 `uint8` Tensor fields, `first` and
 `second`; each docs field is 1 MiB and has its own compiler-owned pool:
 
-```sh
-HOLOSCAN_CUDA_MAJOR_VERSION=13 ./public/run launch build-cu13-x86_64 \
+Run this controlled recipe on a native Linux x86_64 host. The explicit target
+matches `setarch x86_64`; `launch` resolves its build directory automatically.
+
+```bash
+./run launch --arch x86_64 \
   --security-opt=seccomp=unconfined \
   --run-cmd "setarch x86_64 -R \
     python3 ../benchmark/run_transport_benchmark_suite.py \
@@ -544,7 +549,7 @@ rows report `none`.
 Restore the exact host settings after the run:
 
 ```sh
-sudo ./public/benchmark/configure_cpu_performance.sh \
+sudo ./benchmark/configure_cpu_performance.sh \
   restore /tmp/holoscan-cpu-performance.state
 ```
 

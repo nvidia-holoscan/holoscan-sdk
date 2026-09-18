@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <array>
 #include <string>
 #include <utility>
 #include <vector>
@@ -92,11 +93,14 @@ void RunSessionState::worker_main() noexcept {
   terminalize_parameter_updates_at_run_end();
   RuntimeCudaExecutionDiagnostic cuda_diagnostic;
   if (auto released = release_execution_resources(&cuda_diagnostic); !released) {
-    const RuntimeDiagnosticDetail detail{
+    RuntimeDiagnosticDetail detail{
         .present = true,
-        .error = released.error(),
         .cuda_execution = std::move(cuda_diagnostic),
+        .operation = DiagnosticOperation::kRuntime,
+        .role = DiagnosticFailureRole::kTeardown,
     };
+    detail.capture.emplace();
+    detail.capture->append(released.error().code, released.error().message);
     append_diagnostic(
         registered_token_or(released.error().message, "CUDA_GREEN_CONTEXT_MATERIALIZATION_FAILED"),
         {},
@@ -288,10 +292,9 @@ template <bool TracksTerminalWork>
         Error{ErrorCode::kInvalidArgument, "RUNTIME_PARTITION_RUNNER_CONTEXT_INVALID"});
   }
   context.outcome = context.session->run_partition_owner<TracksTerminalWork>(context);
-  return context.outcome == RunTermination::kFailed
-             ? expected<void, Error>{make_unexpected(
-                   Error{ErrorCode::kFailure, "RUNTIME_PARTITION_RUNNER_FAILED"})}
-             : expected<void, Error>{};
+  // Execution failures already set group.failed and retain their runtime diagnostics. The lane
+  // task itself completed correctly; reserve its Error channel for invalid runner context.
+  return {};
 }
 
 RunSessionState::PendingStartupRateCandidate::~PendingStartupRateCandidate() {
@@ -393,7 +396,7 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
   if (stop_requested_.load(std::memory_order_acquire)) {
     outcome = RunTermination::kStopped;
   } else if (!exec.lifecycle_startup()) {
-    append_diagnostic(exec.lifecycle_failure_token());
+    append_lifecycle_diagnostics(exec);
     pending_rate_candidate.set_failure(
         Error{ErrorCode::kLifecycleStageFailed, std::string{exec.lifecycle_failure_token()}});
     outcome = RunTermination::kFailed;
@@ -497,22 +500,73 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
     }
   }
   RuntimeReplayMismatchDetail replay_mismatch;
-  auto reconstructed =
-      GraphExec::reconstruct(plan_, run_generation_, process_group_, &replay_mismatch);
+  RuntimeDiagnosticDetail reconstruction_failure;
+  auto reconstructed = [&]() -> expected<std::unique_ptr<GraphExec>, Error> {
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    try {
+#endif
+      return GraphExec::reconstruct(
+          plan_, run_generation_, process_group_, &replay_mismatch, &reconstruction_failure);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    } catch (...) {
+      if (!reconstruction_failure.capture || reconstruction_failure.capture->count == 0U) {
+        reconstruction_failure.capture.emplace();
+        reconstruction_failure.capture->capture_exception();
+        if (reconstruction_failure.operation == DiagnosticOperation::kUnknown) {
+          reconstruction_failure.operation = DiagnosticOperation::kRuntime;
+        }
+      } else {
+        reconstruction_failure.capture->truncated = true;
+        reconstruction_failure.component_path.clear();
+      }
+      reconstruction_failure.present = true;
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+#endif
+  }();
   if (!reconstructed) {
-    const std::string_view token =
-        registered_token_or(reconstructed.error().message, "RUNTIME_STARTUP_FAILED");
+    if (!reconstruction_failure.present && !replay_mismatch.present) {
+      reconstruction_failure.present = true;
+      reconstruction_failure.operation = DiagnosticOperation::kRuntime;
+      reconstruction_failure.capture.emplace();
+      reconstruction_failure.capture->append(reconstructed.error().code,
+                                             reconstructed.error().message);
+    }
+    const std::string_view fallback =
+        reconstruction_failure.operation == DiagnosticOperation::kSetup
+            ? "RUNTIME_OPERATOR_SETUP_FAILED"
+        : reconstruction_failure.operation == DiagnosticOperation::kContract
+            ? "RUNTIME_OPERATOR_CALLBACK_FAILED"
+        : reconstruction_failure.operation == DiagnosticOperation::kConstruct &&
+                reconstruction_failure.vertex
+            ? "RUNTIME_OPERATOR_RECONSTRUCTION_FAILED"
+        : reconstruction_failure.operation == DiagnosticOperation::kConstruct &&
+                reconstruction_failure.component_graph
+            ? "RUNTIME_CLOCK_RECONSTRUCTION_FAILED"
+            : "RUNTIME_STARTUP_FAILED";
+    const std::string_view token = registered_token_or(reconstructed.error().message, fallback);
     if (replay_mismatch.present) {
-      const std::string expected =
-          lowercase_hex_text(replay_mismatch.expected.value, HexPrefix::kSha256);
-      const std::string observed =
-          lowercase_hex_text(replay_mismatch.observed.value, HexPrefix::kSha256);
-      const RuntimeDiagnosticDetail detail{
-          .present = true,
-          .error = reconstructed.error(),
-          .operator_id = replay_mismatch.operator_id,
-          .replay_mismatch = replay_mismatch,
-      };
+      auto detail = std::move(reconstruction_failure);
+      detail.present = true;
+      detail.error = std::move(reconstructed.error());
+      detail.operator_id = replay_mismatch.operator_id;
+      detail.replay_mismatch = replay_mismatch;
+      std::string expected;
+      std::string observed;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+      try {
+#endif
+        expected = lowercase_hex_text(replay_mismatch.expected.value, HexPrefix::kSha256);
+        observed = lowercase_hex_text(replay_mismatch.observed.value, HexPrefix::kSha256);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+      } catch (...) {
+        if (!detail.capture) {
+          detail.capture.emplace();
+          detail.capture->append(detail.error.code, detail.error.message);
+        }
+        detail.capture->truncated = true;
+      }
+#endif
       append_diagnostic("RUNTIME_OPERATOR_REPLAY_FINGERPRINT_MISMATCH",
                         replay_mismatch.vertex,
                         {},
@@ -520,7 +574,10 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
                         expected,
                         observed);
     } else {
-      append_diagnostic(token);
+      append_diagnostic(token,
+                        reconstruction_failure.vertex,
+                        {},
+                        reconstruction_failure.present ? &reconstruction_failure : nullptr);
     }
     return RunTermination::kFailed;
   }
@@ -690,7 +747,7 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
       }
       count_phase(RuntimePhaseCounter::kPartitionControlBarriers);
       if (!process_pending_restarts(exec, ready_states)) {
-        append_diagnostic(exec.lifecycle_failure_token());
+        append_lifecycle_diagnostics(exec);
         outcome = RunTermination::kFailed;
         break;
       }
@@ -715,7 +772,7 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
     tensor_resources_->close();
   }
   if (!exec.lifecycle_shutdown()) {
-    append_diagnostic(exec.lifecycle_failure_token());
+    append_lifecycle_diagnostics(exec);
     outcome = RunTermination::kFailed;
   }
   if (!stop_lanes(shared_ready_resources.lanes.get())) {
@@ -739,6 +796,155 @@ void RunSessionState::finish(RunTermination outcome) noexcept {
     outcome = RunTermination::kFailed;
   }
   finish_after_terminal_participant(outcome);
+}
+
+// Callback identity stays compact on the activation path. Construct optional owning evidence only
+// here so the reserved cause capacity cannot introduce stack-page probes into successful dispatch.
+void RunSessionState::append_callback_diagnostic(std::string_view token, VertexId vertex,
+                                                 std::string_view service, const Error& error,
+                                                 const RuntimeCallbackIdentity& identity,
+                                                 std::string_view predicate_id,
+                                                 const RuntimeDeadlineMissDiagnostic* deadline,
+                                                 ::holoscan::DiagnosticSeverity severity) noexcept {
+  RuntimeDiagnosticDetail detail{
+      .present = true,
+      .error = Error{error.code},
+      .operator_id = identity.operator_id,
+      .source = identity.source,
+      .source_sequence = identity.source_sequence,
+      .tag = identity.tag,
+      .tag_time = identity.tag_time,
+      .reference_time = identity.reference_time,
+      .state_generation = identity.state_generation,
+  };
+  if (error.code != ErrorCode::kSuccess || !error.message.empty()) {
+    detail.capture.emplace();
+    detail.capture->append(error.code, error.message);
+  }
+  if (deadline != nullptr) {
+    detail.deadline_miss = *deadline;
+  }
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    detail.predicate_id.assign(predicate_id);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (...) {
+    if (detail.capture) {
+      detail.capture->truncated = true;
+    }
+  }
+#endif
+  append_diagnostic(token, vertex, service, &detail, {}, {}, severity);
+}
+
+// Keep the large owning failure snapshots off recurring dispatch stack frames. This translation
+// unit contains terminal publication; successful callbacks never call this function.
+void RunSessionState::append_compute_diagnostics(const RuntimeOperatorInstance& instance,
+                                                 const ComputeLaneInvocation& invocation,
+                                                 const Error& error,
+                                                 const RuntimeCallbackIdentity& identity) noexcept {
+  if (!invocation.callback_failed && !invocation.cuda_device_restore_failed) {
+    DiagnosticCapture dispatch_failure;
+    dispatch_failure.append(error.code, error.message);
+    const RuntimeDiagnosticDetail detail{
+        .present = true,
+        .error = Error{error.code},
+        .operator_id = instance.operator_id,
+        .capture = dispatch_failure,
+        .operation = DiagnosticOperation::kRuntime,
+    };
+    append_diagnostic("RUNTIME_COMPUTE_DISPATCH_FAILED", instance.vertex, {}, &detail);
+  }
+  if (invocation.callback_failed) {
+    const RuntimeDiagnosticDetail detail{
+        .present = true,
+        .error = Error{error.code},
+        .operator_id = instance.operator_id,
+        .source = identity.source,
+        .source_sequence = identity.source_sequence,
+        .tag = identity.tag,
+        .tag_time = identity.tag_time,
+        .reference_time = identity.reference_time,
+        .state_generation = identity.state_generation,
+        .capture = instance.failure_capture,
+        .tensor_failure = instance.tensor_failure,
+        .operation = DiagnosticOperation::kCompute,
+    };
+    append_diagnostic(
+        "RUNTIME_OPERATOR_CALLBACK_FAILED", instance.vertex, "operator_compute", &detail);
+  }
+  if (invocation.cuda_device_restore_failed) {
+    const RuntimeDiagnosticDetail detail{
+        .present = true,
+        .error = Error{ErrorCode::kNotSupported},
+        .operator_id = instance.operator_id,
+        .operation = DiagnosticOperation::kRuntime,
+        .role = invocation.callback_failed ? DiagnosticFailureRole::kTeardown
+                                           : DiagnosticFailureRole::kPrimary,
+        .follows_compute_failure = invocation.callback_failed,
+    };
+    append_diagnostic("RUNTIME_COMPUTE_CUDA_DEVICE_RESTORE_FAILED", instance.vertex, {}, &detail);
+  }
+}
+
+void RunSessionState::append_lifecycle_diagnostics(
+    const GraphExec& exec, ::holoscan::DiagnosticSeverity severity) noexcept {
+  const auto failures = exec.lifecycle_failures();
+  if (failures.empty()) {
+    if (severity != ::holoscan::DiagnosticSeverity::kError) {
+      return;
+    }
+    const auto* result = exec.lifecycle_result();
+    if (result == nullptr || result->disposition == LifecycleExecutionDisposition::kCompleted) {
+      append_diagnostic(exec.lifecycle_failure_token());
+      return;
+    }
+    constexpr std::array reasons{"completed",
+                                 "lifecycle transition was rolled back",
+                                 "invalid lifecycle state",
+                                 "invalid lifecycle restart stage",
+                                 "invalid lifecycle callback binding",
+                                 "lifecycle stage failed",
+                                 "lifecycle rollback failed",
+                                 "lifecycle capacity exhausted"};
+    const auto index = static_cast<std::size_t>(result->disposition);
+    RuntimeDiagnosticDetail detail{.present = true, .operation = DiagnosticOperation::kLifecycle};
+    detail.capture.emplace();
+    detail.capture->append(result->disposition == LifecycleExecutionDisposition::kCapacityExceeded
+                               ? ErrorCode::kResourceExhausted
+                               : ErrorCode::kLifecycleStageFailed,
+                           index < reasons.size() ? reasons[index] : "unknown lifecycle failure");
+    if (result->primary_failure.present) {
+      detail.stage = result->primary_failure.stage;
+      detail.phase = result->primary_failure.phase;
+      if (const auto* owner = exec.operator_by_id(result->primary_failure.node_id)) {
+        detail.vertex = owner->vertex;
+      }
+    }
+    append_diagnostic(exec.lifecycle_failure_token(), detail.vertex, "lifecycle", &detail);
+    return;
+  }
+  for (const auto& failure : failures) {
+    RuntimeDiagnosticDetail detail{
+        .present = true,
+        .capture = failure.capture,
+        .operation = DiagnosticOperation::kLifecycle,
+        .stage = failure.failure.stage,
+        .phase = failure.failure.phase,
+        .transaction_id = failure.transaction_id,
+    };
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    try {
+#endif
+      detail.component_path = failure.component_path;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    } catch (...) {
+      detail.capture->truncated = true;
+    }
+#endif
+    append_diagnostic(failure.token, failure.vertex, "lifecycle", &detail, {}, {}, severity);
+  }
 }
 
 void RunSessionState::finish_staged_start_failure() noexcept {
@@ -766,6 +972,10 @@ void RunSessionState::finish_after_terminal_participant(RunTermination outcome) 
     } else if ((termination_state & kRequestedCompletion) != 0U) {
       outcome = RunTermination::kRequestedCompleted;
     }
+  }
+  {
+    const std::lock_guard diagnostic_lock(diagnostic_mutex_);
+    diagnostic_buffer_.finalize();
   }
   if (plan_ != nullptr && plan_->runtime_diagnostic_sink != nullptr) {
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
@@ -808,7 +1018,7 @@ template <bool TracksTerminalWork>
       return RunTermination::kStopped;
     }
     if (!process_pending_restarts(exec, ready)) {
-      append_diagnostic(exec.lifecycle_failure_token());
+      append_lifecycle_diagnostics(exec);
       return RunTermination::kFailed;
     }
     if constexpr (TracksTerminalWork) {

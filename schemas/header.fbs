@@ -66,3 +66,4 @@ table Header {
 }
 
 root_type Header;
+file_identifier "HSHD";

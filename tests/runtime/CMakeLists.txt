@@ -30,8 +30,10 @@ add_executable(runtime_test
     ${holoscan_SOURCE_DIR}/src/compiler/partition_authority_validation.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/partition_runner_plan.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/process_local_channel_plan_validation.cpp
+    ${holoscan_SOURCE_DIR}/src/compiler/optional_input_plan_validation.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/profile_admission.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/runtime_package_capabilities.cpp
+    ${holoscan_SOURCE_DIR}/src/core/diagnostic_context.cpp
     ${holoscan_SOURCE_DIR}/src/core/parameter_catalog_digest_internal.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/dispatcher.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health.cpp
@@ -82,6 +84,7 @@ add_executable(runtime_test
     test_runtime_materialization.cpp
     test_runtime_notification_source.cpp
     test_runtime_rate_state.cpp
+    nvtx_emit_marker_capture.cpp
     runtime_channel_binding_test_support.cpp
     runtime_channel_binding_schema_tensor_test_support.cpp
     test_runtime_channel_binding.cpp
@@ -104,6 +107,7 @@ add_executable(runtime_test
     test_runtime_diagnostic_sink.cpp
     run_session_channel_execution_test_support.cpp
     test_run_session.cpp
+    test_optional_inputs.cpp
     test_run_session_channel_execution.cpp
     test_run_session_descriptor_output.cpp
     test_run_session_lane_evidence.cpp

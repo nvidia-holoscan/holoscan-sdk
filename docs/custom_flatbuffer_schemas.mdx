@@ -1,11 +1,13 @@
 Application-owned FlatBuffer schemas can use their generated object-API types directly on Holoscan
 Operator ports. The installed CMake package generates the FlatBuffers headers, schema identity,
-package evidence, native traits, and Runtime type-ops at build time. Application code works with
+bounded codec, native traits, and Runtime type-ops at build time. Application code works with
 `Input<MySchemaT>` and `Output<MySchemaT>` rather than serialized bytes or Channel publishers.
 
 <Note>
-  Generated third-party schema traits use exact-match identity and bounded serialized storage.
-  There is no runtime registry, version negotiation, or automatic schema evolution.
+  This early-access API supports applications rebuilt against the current schema set. Generated
+  traits use stable schema-family identity and bounded serialized storage, but there is no runtime
+  registry or version negotiation. Signatures and the compatibility baseline may change between
+  early-access releases.
 </Note>
 
 **Complete Operator/Graph example:** `public/examples/flatbuffer_schemas/custom_schema/cpp`
@@ -65,6 +67,7 @@ table CustomControl {
 }
 
 root_type CustomControl;
+file_identifier "ACCT";
 ```
 
 With `--gen-object-api`, `flatc` emits two relevant types:
@@ -77,39 +80,27 @@ Operator ports use the owning `...T` type.
 ## Generate the package traits
 
 The installed package exports `holoscan_add_flatbuffer_schema()`, the matching pinned `flatc`,
-and the schema tooling needed to emit a reproducible package:
+and the schema tooling needed to emit the generated package:
 
 ```cmake
 find_package(holoscan REQUIRED CONFIG)
 
-set(custom_schema_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
 holoscan_add_flatbuffer_schema(
   TARGET custom_control_generated
-  SCHEMAS custom_control.fbs
-  INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-  OUTPUT_DIR "${custom_schema_generated_dir}"
-  BFBS_EMBED
-  TRAITS_HEADER custom_control_schema_traits.hpp
-  TRAITS_SCHEMA custom_control.fbs
-  TRAITS_ROOT_TYPE app::CustomControl
-  TRAITS_NATIVE_TYPE app::CustomControlT
-  TRAITS_BINARY_SCHEMA_TYPE app::CustomControlBinarySchema
-  TRAITS_PACKAGE_NAMESPACE app::package
-  TRAITS_CANONICAL_NAME app.CustomControl
-  TRAITS_SCHEMA_VERSION 1
-  TRAITS_MAX_SERIALIZED_SIZE 512
+  SCHEMA custom_control.fbs
+  MAX_SERIALIZED_SIZE 512
 )
 
 add_executable(my_app main.cpp)
-add_dependencies(my_app custom_control_generated)
-target_include_directories(my_app PRIVATE "${custom_schema_generated_dir}")
-target_link_libraries(my_app PRIVATE holoscan::core holoscan::schema)
+target_link_libraries(my_app PRIVATE holoscan::core custom_control_generated)
 ```
 
 Schema tooling is part of the complete Core installation. A complete package defines the
 `flatbuffers::flatc` and `holoscan::fbs_tools` targets and
 `holoscan_add_flatbuffer_schema()`. Lightweight `config`-only installations do not define the
-Holoscan tools target or helper.
+Holoscan tools target or helper. Schema generation also requires Python 3.10 or newer on the build
+host; the helper finds a suitable interpreter and reports a configure-time error when none is
+available.
 
 The installed host tool is the default. A build environment that needs another executable may
 predeclare `flatbuffers::flatc` before `find_package()`:
@@ -134,14 +125,15 @@ Include the generated traits header wherever the native type is used as a port:
 The generator emits:
 
 - generated table and owning object-API types;
-- the embedded binary schema and its SHA-256-derived `SchemaId`;
-- `FlatBufferSchemaTraits`, `GeneratedSchemaNativeTraits`, and
-  `schema_identity<T>()` specializations;
-- a process-static `SchemaPackageDescriptor` with normalized compiler evidence; and
+- a stable family identity derived from the generated fully qualified root name and compatibility
+  epoch, plus the exact four-byte file identifier;
+- one `FlatBufferSchemaBinding<Root>` specialization; native identity and package access delegate
+  through the generated root association;
+- a process-static `SchemaPackageDescriptor` with bounded codecs; and
 - the fixed Runtime type-ops specialization used by typed ports.
 
-No application codec, registry callback, FlatBuffers target discovery, or manually pinned digest
-header is required for this ordinary generated-schema path.
+No application codec, registry callback, FlatBuffers target discovery, or manually maintained
+identity header is required for this ordinary generated-schema path.
 
 ## Keep application policy explicit
 
@@ -149,23 +141,144 @@ The `.fbs` file defines the data shape, but it does not contain all Runtime poli
 
 | CMake argument | Purpose |
 |---|---|
-| `TRAITS_CANONICAL_NAME` | Stable globally scoped schema name |
-| `TRAITS_SCHEMA_VERSION` | Nonzero semantic version used in exact identity |
-| `TRAITS_MAX_SERIALIZED_SIZE` | Hard per-value wire-size bound |
-| `TRAITS_PACKAGE_NAMESPACE` | C++ namespace for generated package constants |
-| Root/native/binary type arguments | Explicitly bind reflected schema types to the generated package |
+| `MAX_SERIALIZED_SIZE` | Complete ordinary payload, or descriptor-Tensor metadata, in bytes |
+| `COMPATIBILITY_EPOCH` | Positive family boundary for an intentional incompatible change; defaults to 1 |
 
-`TRAITS_MAX_SERIALIZED_SIZE` is a bound, not an initial allocation hint. An encoded value that
+`MAX_SERIALIZED_SIZE` is a bound, not an initial allocation hint. An encoded value that
 exceeds it fails with a typed error at emit time rather than causing unbounded transport
 allocation. Size it for the largest valid message admitted by the application contract.
 
-Changing schema semantics requires a deliberate version update and coordinated producer/consumer
-deployment. The binary-schema digest and compact ID are regenerated from the current `.fbs`
-closure; do not hand-edit them.
+`InlineFlatBufferPayloadFor<Root>` is available only for ordinary self-contained roots. A
+descriptor-Tensor root uses `DescriptorFlatBufferPayloadFor<Root>` so its metadata and Tensor
+descriptors retain the generated carriage profile. Tensor bytes are never counted in or copied
+into the metadata bound.
 
-The helper registers each schema and its discovered include closure as configure dependencies.
-Editing an existing file regenerates its outputs; adding or removing an `include` causes CMake to
-reconfigure first so it can rebuild the exact dependency closure.
+Every generated table field must have an explicit `id`, and every generated root must declare an
+exactly four-byte `file_identifier`. The identifier is a cheap independent in-buffer type check:
+allocate it deliberately and keep it stable for a compatible family. Four bytes are not collision
+resistance or authentication, and a sender can stamp them, so do not use the identifier as a trust
+boundary.
+
+The helper emits a build-system dependency file for the complete schema include graph. Editing a
+schema or adding or removing an `include` regenerates the affected outputs on the next build; no
+manual CMake reconfigure is required.
+
+## Evolve a schema deliberately
+
+A compatible edit retains the fully qualified root name, compatibility epoch, file identifier, and
+existing field IDs. Adding an optional field or deprecating an existing field can then retain family
+identity, subject to the serialized-size bound and any Holoscan descriptor policy.
+
+Renaming a field while preserving its ID and type can retain its FlatBuffers wire layout, but it
+changes the generated C++ API and requires rebuilding affected application code.
+
+Treat the following as incompatible:
+
+- removing and reusing a field ID, changing an existing field's type or default, or adding/removing
+  `required`;
+- changing a struct layout—FlatBuffers structs are fixed and do not evolve;
+- renumbering or reusing enum or union discriminants, or adding a shape unsupported by the
+  descriptor-Tensor codec;
+- adding or removing a direct `holoscan.schema.Tensor` field, which changes the generated carriage
+  profile and typed port surface; and
+- renaming the root or otherwise changing its wire contract intentionally.
+
+Readers must tolerate unknown enum values when a family permits later enum additions. Do not write
+an exhaustive switch that treats every unknown numeric value as impossible. Required fields are a
+closed-world constraint: decide them before freezing the baseline, because changing requiredness is
+not compatible. The pinned FlatBuffers 25.12.19 `--conform` implementation does not compare the
+`required` attribute, so schema review must check that policy explicitly. Union evolution needs
+special care to preserve discriminants and reader behavior; the generated descriptor-Tensor path
+currently rejects unions entirely.
+
+For an intentional incompatible edit, increment `COMPATIBILITY_EPOCH` or define a new root
+family, allocate a new file identifier, and rebuild all early-access participants together. Before
+the first supported cross-release lineage is frozen, a reviewed baseline may be replaced
+deliberately; doing so resets the pre-release lineage and does not imply migration support for old
+EA buffers. Once a release baseline is frozen, update it only through the release compatibility
+process.
+
+### Freeze a supported evolution lineage
+
+When independently deployed or cross-release readers and writers must remain compatible, commit the
+oldest supported source schema and make conformance part of the build:
+
+```cmake
+holoscan_add_flatbuffer_schema(
+  TARGET custom_control_generated
+  SCHEMA custom_control.fbs
+  MAX_SERIALIZED_SIZE 512
+  CONFORMANCE_BASELINE baselines/custom_control.fbs
+)
+```
+
+`flatc --conform baselines/custom_control.fbs custom_control.fbs` must accept the maintained
+candidate. The advanced `CONFORMANCE_SCHEMA` option selects the candidate when `SCHEMAS` contains
+multiple roots. A
+source baseline tests compatibility with a published lineage; it is not an exact-artifact hash and
+is not needed merely to start using an application-owned schema.
+
+### Record exact build provenance only when needed
+
+Exact artifact fingerprints can help audit a build, reproduce code generation, detect stale
+generated output, or diagnose why two installations differ. They do not establish schema
+compatibility or authenticate a sender. Holoscan computes any requested evidence automatically; an
+application author should never calculate or copy a BFBS hash into source code. Request a
+build-side JSON manifest only when that evidence has a consumer:
+
+```cmake
+holoscan_add_flatbuffer_schema(
+  TARGET custom_control_generated
+  SCHEMA custom_control.fbs
+  MAX_SERIALIZED_SIZE 512
+  PROVENANCE_FILE custom_control.provenance.json
+)
+```
+
+The sidecar records exact BFBS/source hashes, the `flatc` build, and normalized generation flags.
+It is not compiled into generated traits or copied through Graph and execution-plan records.
+`BFBS_EMBED` is a separate opt-in for applications that actually need runtime dynamic-reflection
+bytes.
+
+### Embed reflection bytes for a dynamic reader
+
+Some consumers must describe a payload to a reader that was never compiled against the schema — a
+recorder that writes a self-describing log, or a bridge that walks fields by name. Those consumers
+need the schema's binary reflection (BFBS) bytes at runtime. Add `BFBS_EMBED` to opt in:
+
+```cmake
+holoscan_add_flatbuffer_schema(
+  TARGET custom_control_generated
+  SCHEMA custom_control.fbs
+  MAX_SERIALIZED_SIZE 512
+  BFBS_EMBED
+)
+```
+
+The generated traits then bind those bytes to the generated root, and `holoscan::binary_schema<T>()`
+returns the reflection for exactly that type:
+
+```cpp
+#include <holoscan/schema/binary_schema.hpp>
+
+const std::span<const std::byte> reflection = holoscan::binary_schema<app::CustomControlT>();
+```
+
+Reaching the bytes through the type is what keeps a recorder honest: one schema's reflection can
+never be published beside another schema's payloads, because both come from the same binding that
+supplies `holoscan::schema_package<T>()`. The bytes stay out of schema identity, family
+compatibility, hashing, plan and catalog records, and every wire format, so embedding them does not
+change how a schema is admitted or matched.
+
+Reflection bytes remain opt-in for application schemas. A generic consumer that must compile
+against schemas either way can branch on the `holoscan::HasBinarySchema<T>` concept instead of
+requiring every logged type to embed.
+
+Every SDK-owned schema that generates a binding embeds its reflection bytes, so
+`holoscan::binary_schema<T>()` is available for any built-in payload type without regenerating the
+`.fbs` yourself. The one exception is `holoscan.schema.Tensor`, whose binding is written by hand
+rather than generated; a descriptor-Tensor payload is described by its own metadata root, such as
+`holoscan.schema.Image`, rather than by `Tensor`.
 
 ## Use the generated type on Operator ports
 
@@ -261,7 +374,7 @@ fixture built from the same generated schema target.
 
 ## Generate a descriptor-Tensor schema
 
-A root with a direct Core Tensor member uses the explicit `DESCRIPTOR_TENSOR` mode:
+A root with a direct Core Tensor member automatically uses descriptor-Tensor generation:
 
 ```text
 include "tensor.fbs";
@@ -275,15 +388,18 @@ table DetectionFrame {
 }
 
 root_type DetectionFrame;
+file_identifier "ADFR";
 ```
 
-Add `DESCRIPTOR_TENSOR` to the generation call and set
-`TRAITS_DESCRIPTOR_METADATA_CAPACITY`. For the supported common case, the generator emits the
-Tensor-view/native traits, ordinary-field codec, and descriptor Runtime type-ops; no hand-written
-adapter is required. The metadata array has a 65,536-byte code-generation safety ceiling. That
-ceiling is not a transport promise: HoloMQ descriptor-schema endpoints currently impose a stricter
-32-KiB bound on the complete envelope, including all descriptors and metadata. Physical
-compilation applies the transport bound only to routes that select HoloMQ and rejects an oversized
+The helper infers this mode from the reflected direct Tensor field. `MAX_SERIALIZED_SIZE` then
+bounds only the serialized metadata; Tensor storage remains descriptor-backed. For the supported
+common case, the generator emits the Tensor-view/native traits, ordinary-field codec, and
+descriptor Runtime type-ops; no hand-written adapter is required. The metadata array has a
+65,536-byte code-generation
+safety ceiling. That ceiling is not a transport promise: HoloMQ descriptor-schema endpoints
+currently impose a stricter 32-KiB bound on the complete envelope, including all descriptors and
+metadata. Physical compilation applies the transport bound only to routes that select HoloMQ and
+rejects an oversized
 envelope before Runtime construction; direct-retained process-local routes do not use a HoloMQ
 payload bucket. Choose the smallest metadata bound that admits the ordinary schema fields rather
 than Tensor storage, which remains separately descriptor-backed.
@@ -297,10 +413,11 @@ Descriptor generation currently supports ordinary scalar, string, scalar/enum/st
 fixed-struct, and acyclic nested-table fields using the generated `RootT` and `std::shared_ptr`
 representation. Unsupported unions, recursive tables, table/struct vectors, nested Tensor fields,
 required reference fields, and custom native representations require a hand-written codec where
-the descriptor envelope contract otherwise permits the shape. File identifiers and structs aligned
-above 8 bytes are not supported by the current descriptor envelope. Generated receive storage
+the descriptor envelope contract otherwise permits the shape. File identifiers are mandatory and
+verified; structs aligned above 8 bytes are not supported by the current descriptor envelope.
+Generated receive storage
 grows strings, vectors, and optional nested objects only when incoming metadata contains them;
-`TRAITS_DESCRIPTOR_METADATA_CAPACITY` is a byte bound, not an element-reservation hint.
+`MAX_SERIALIZED_SIZE` is a metadata byte bound, not an element-reservation hint.
 
 Descriptor Tensor metadata accepts the DLPack scalar families supported by `holoscan::Tensor`:
 signed and unsigned integer, floating point, opaque handle, bfloat, complex, and boolean. Exact
@@ -411,16 +528,15 @@ belong to the standalone boundary—not inside an Operator.
 
 ## Compatibility and failure behavior
 
-Schema compatibility is exact identity:
+Runtime attachment uses the stable family name and compatibility epoch, the derived 16-byte family
+ID, and the independently checked file identifier. It does not compare a `.bfbs` digest, generated
+C++ spelling, schema revision counter, or `flatc` patch version. Descriptor-Tensor endpoints also
+require their exact generated carriage profile. Both paths retain exact envelope ABI, endpoint
+generation, selected rounded HoloMQ bucket, and directional capacity checks.
 
-- canonical name;
-- semantic version;
-- binary-schema digest and derived compact ID.
-
-There is no "compatible enough" additive evolution today. A mismatch fails before typed data is
-exposed. Package evidence records the matching `flatc` build, ordered flags, include closure, format
-versions, and local FlatBuffers Runtime ABI so plan diagnostics can explain independently generated
-package differences. Runtime ABI is local provenance, not peer wire-admission authority.
+Optional exact build evidence lives in the generated provenance sidecar, not runtime diagnostics.
+It does not enter family identity, peer admission, or semantic plan digests. A family, identifier,
+profile, bucket, ABI, generation, capacity, or verifier mismatch fails before typed data is exposed.
 
 Malformed or oversized ordinary-schema bytes are rejected before `receive_data()` returns an
 owning value. Descriptor schemas additionally verify that metadata contains no embedded Tensor
@@ -429,7 +545,9 @@ fields.
 
 ## Current limits
 
-- Exact-match identity only; no schema evolution or negotiation.
+- Early access supports only the latest schema set rebuilt together; cross-release N/N+1 endpoint
+  compatibility is not yet a supported deployment contract.
+- Compatible evolution is checked at build/release time; there is no runtime schema negotiation.
 - C++ generated object-API types only; no third-party Python, Rust, or C# port bindings.
 - Bounded serialized metadata; no unbounded wire allocation.
 - From 1 through 64 direct Tensor members structurally, further bounded by the selected endpoint's
@@ -441,12 +559,16 @@ fields.
 
 - Generate an application schema and its package traits with
   `holoscan_add_flatbuffer_schema()`.
+- Assign explicit field IDs and a stable four-byte file identifier.
 - Use the generated owning `...T` type directly on `Input<T>` and `Output<T>`.
 - Emit and receive owning values; Runtime owns serialization and verification.
 - Compose and execute the graph normally with `Graph::add_flow()`, `compile()`, and `run_async()`.
-- Keep semantic version and bounded size policy explicit.
-- Add `DESCRIPTOR_TENSOR` for a supported direct-Tensor root and use generated field selectors when
-  it contains multiple Tensor members.
+- Keep the compatibility epoch and bounded size policy explicit; move the epoch only for an
+  intentional incompatible family boundary.
+- Add a source conformance baseline when freezing a supported evolution lineage; keep exact build
+  provenance optional and separate from compatibility.
+- A supported direct-Tensor root selects descriptor generation automatically; use generated field
+  selectors when it contains multiple Tensor members.
 - Reserve manual Publisher/Subscriber APIs for standalone endpoint clients, never Operator
   internals.
 - Keep public examples focused on application code; detailed adapter, storage, exact-value, and

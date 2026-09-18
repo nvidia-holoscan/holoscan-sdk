@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import signal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -117,6 +118,54 @@ class TestRunnerValidation:
         assert publisher["role"] == "publisher"
         assert subscribers == [{"role": "subscriber"}]
         assert "--subscriber-cpu" not in observed_command
+
+
+class TestInterprocessDiagnostics:
+    def test_failure_reports_roles_exit_statuses_and_logs(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        class FakeProcess:
+            def __init__(self, command: list[str], stderr: object) -> None:
+                role = command[command.index("--role") + 1]
+                self.returncode = 6 if role == "publisher" else None
+                if role == "publisher":
+                    stderr.write("emit failed: injected failure\n")
+                    stderr.flush()
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def terminate(self) -> None:
+                if self.returncode is None:
+                    self.returncode = -signal.SIGTERM
+
+            def kill(self) -> None:
+                if self.returncode is None:
+                    self.returncode = -signal.SIGKILL
+
+        def popen(command: list[str], *, stdout: object, stderr: object, text: bool) -> FakeProcess:
+            del stdout, text
+            return FakeProcess(command, stderr)
+
+        monkeypatch.setattr(runner.subprocess, "Popen", popen)
+        monkeypatch.setattr(runner.time, "sleep", lambda _: None)
+        args = SimpleNamespace(
+            expected_subscribers=2,
+            publisher_cpu=-1,
+            skip_if_no_cuda=False,
+            timeout_sec=1.0,
+        )
+
+        with pytest.raises(RuntimeError) as error:
+            runner.run_interprocess(args, ["benchmark"], [-1, -1], tmp_path)
+
+        # Key assertion: the exception identifies the publisher as the real failure, distinguishes
+        # cleanup signals, and copies the otherwise ephemeral role logs into CTest output.
+        message = str(error.value)
+        assert "subscriber_0=signal 15 (SIGTERM) [harness cleanup]" in message
+        assert "subscriber_1=signal 15 (SIGTERM) [harness cleanup]" in message
+        assert "publisher=exit 6" in message
+        assert "--- publisher.log\nemit failed: injected failure" in message
 
 
 class TestCPUTopology:

@@ -6,15 +6,24 @@
 #include <gtest/gtest.h>
 
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <utility>
 
 #include <holoscan/time/manual_clock.hpp>
 
+#include "artifact_test_support.hpp"
 #include "compile_test_graph.hpp"
 #include "compiler/clock_readiness_lowering.hpp"
+#include "compiler/execution_plan_state.hpp"
+#include "compiler/plan_artifact_serialization.hpp"
 #include "compiler/plan_generation.hpp"
 #include "core/graph_compiler_access.hpp"
 
@@ -32,6 +41,17 @@ class DefaultClockReadinessOperator : public Operator<> {
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
 
   NotificationSource notification;
+};
+
+class CudaGraphCaptureEligibleOperator : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.cuda_graph_capture_eligible(); }
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = std::chrono::milliseconds{1}});
+    return result;
+  }
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
 };
 
 // Lightweight recursive-descent JSON validator; verifies plan.json() output is
@@ -457,6 +477,125 @@ TEST(CompileLowering, RejectsUnsupportedConverterDisableRatherThanIgnoringIt) {
   EXPECT_NE(defaults.clock_catalog().plan_generation, changed.clock_catalog().plan_generation);
   EXPECT_NE(defaults.digest(), changed.digest());
   EXPECT_NE(defaults.json(), changed.json());
+}
+
+// REQ: GRAPH-038
+TEST(CompileLowering, PublishesValidatedCUDAGraphCapturePlan) {
+  Graph graph{"cuda-graph-region"};
+  test::add_compile_test_default_clock(graph);
+  auto op = graph.op<CudaGraphCaptureEligibleOperator>("capture");
+  graph.region("capture").add(op).constrain(RegionConstraint::cuda_graph());
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "CUDA_GRAPH_EXECUTION_LOWERING_UNAVAILABLE"));
+  EXPECT_FALSE(test::has_diagnostic(plan, "CUDA_GRAPH_REGION_INVALID"));
+  EXPECT_FALSE(test::has_diagnostic(plan, "SPIN_UNPLACED"));
+  const auto* state = detail::ExecutionPlanAccess::state(plan);
+  ASSERT_NE(state, nullptr);
+  ASSERT_EQ(state->cuda_graph_capture_plans.size(), 1U);
+  const ExecutionGraphView plan_graph = plan.graph();
+  ASSERT_EQ(plan_graph.vertices().size(), 1U);
+  ASSERT_EQ(plan_graph.regions().size(), 1U);
+  EXPECT_TRUE(plan_graph.vertices().front().cuda_graph_capture_eligible);
+  ASSERT_EQ(plan_graph.regions().front().constraints.size(), 1U);
+  EXPECT_EQ(plan_graph.regions().front().constraints.front().kind(),
+            RegionConstraintKind::kCudaGraph);
+  EXPECT_TRUE(JsonValidator{plan.json()}.parse());
+}
+
+// REQ: GRAPH-038
+TEST(CompileLowering, CudaGraphDeclarationArtifactMatchesNormalizedBaseline) {
+  Graph graph{"cuda-graph-region"};
+  test::add_compile_test_default_clock(graph);
+  auto op = graph.op<CudaGraphCaptureEligibleOperator>("capture");
+  graph.region("capture").add(op).constrain(RegionConstraint::cuda_graph());
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_FALSE(plan.ok());
+  const auto accepted = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(accepted);
+  auto normalized = std::make_shared<detail::ExecutionPlanState>(*accepted);
+  detail::rebind_plan_generation(*normalized, PlanGenerationId{1U});
+  normalized->profile_manifest.target_triple = "normalized-target-triple";
+  const auto finalized = detail::finalize_plan_artifact(*normalized);
+  ASSERT_TRUE(finalized) << runtime_error_message(finalized.error());
+  const ExecutionPlan normalized_plan = detail::ExecutionPlanAccess::make(std::move(normalized));
+
+  const std::string golden_path =
+      std::string(HOLOSCAN_COMPILER_TEST_DATA_DIR) + "/cuda_graph_declaration.v6.normalized.json";
+  std::ifstream golden_stream{golden_path, std::ios::binary};
+  ASSERT_TRUE(golden_stream.is_open()) << golden_path;
+  const std::string golden{std::istreambuf_iterator<char>{golden_stream},
+                           std::istreambuf_iterator<char>{}};
+  ASSERT_TRUE(golden_stream.good() || golden_stream.eof()) << golden_path;
+
+  const std::string actual =
+      detail::artifact_test::normalized_artifact_json(normalized_plan.json());
+  EXPECT_EQ(actual, golden) << "review the complete artifact diff before updating " << golden_path;
+}
+
+// REQ: OPERATOR-051
+// REQ: GRAPH-038
+TEST(CompileLowering, CaptureEligibilityOutsideCudaGraphRegionKeepsOrdinaryExecution) {
+  Graph graph{"cuda-graph-eligible-ordinary-execution"};
+  test::add_compile_test_default_clock(graph);
+  (void)graph.op<CudaGraphCaptureEligibleOperator>("ordinary");
+
+  const ExecutionPlan plan = compile(graph);
+
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  EXPECT_TRUE(plan.diagnostics().empty());
+  const ExecutionGraphView plan_graph = plan.graph();
+  ASSERT_EQ(plan_graph.vertices().size(), 1U);
+  EXPECT_TRUE(plan_graph.vertices().front().cuda_graph_capture_eligible);
+  EXPECT_TRUE(plan_graph.regions().empty());
+}
+
+// REQ: GRAPH-038
+TEST(CompileLowering, IdentifiesEveryCudaGraphRegionAwaitingExecutionLowering) {
+  Graph graph{"multiple-cuda-graph-regions"};
+  test::add_compile_test_default_clock(graph);
+  auto first = graph.op<CudaGraphCaptureEligibleOperator>("first");
+  auto second = graph.op<CudaGraphCaptureEligibleOperator>("second");
+  graph.region("first-region").add(first).constrain(RegionConstraint::cuda_graph());
+  graph.region("second-region").add(second).constrain(RegionConstraint::cuda_graph());
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_FALSE(plan.ok());
+  const auto* state = detail::ExecutionPlanAccess::state(plan);
+  ASSERT_NE(state, nullptr);
+  const auto& capture_plans = state->cuda_graph_capture_plans;
+  ASSERT_EQ(capture_plans.size(), 2U);
+  EXPECT_LT(capture_plans[0].region.value, capture_plans[1].region.value);
+  std::size_t cuda_graph_diagnostics = 0U;
+  bool found_first = false;
+  bool found_second = false;
+  constexpr std::string_view kRequiredRule = "virtual_cuda_graph_operator_lowering";
+  for (const Diagnostic& diagnostic : plan.diagnostics()) {
+    if (diagnostic.token != "CUDA_GRAPH_EXECUTION_LOWERING_UNAVAILABLE") {
+      continue;
+    }
+    ++cuda_graph_diagnostics;
+    if (diagnostic.provided == "region_id=1,region_name=first-region") {
+      found_first = diagnostic.json_pointer == "/graphs/0/regions/0/constraints/cuda_graph" &&
+                    diagnostic.required == kRequiredRule;
+    } else if (diagnostic.provided == "region_id=2,region_name=second-region") {
+      found_second = diagnostic.json_pointer == "/graphs/0/regions/1/constraints/cuda_graph" &&
+                     diagnostic.required == kRequiredRule;
+    }
+  }
+  EXPECT_EQ(cuda_graph_diagnostics, 2U);
+  EXPECT_TRUE(found_first);
+  EXPECT_TRUE(found_second);
+
+  // Resolve both pointer indices against the canonical plan Graph instead of only comparing text.
+  const ExecutionGraphView plan_graph = plan.graph();
+  ASSERT_EQ(plan_graph.graphs().size(), 1U);
+  ASSERT_EQ(plan_graph.regions().size(), 2U);
+  EXPECT_EQ(plan_graph.graphs()[0].id.value, 1U);
+  EXPECT_EQ(plan_graph.regions()[0].id.value, 1U);
+  EXPECT_EQ(plan_graph.regions()[1].id.value, 2U);
 }
 
 // REQ: COMPILE-002

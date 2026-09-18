@@ -45,11 +45,26 @@ Two things are worth internalizing early:
   (see [Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator)).
   There are no string-keyed port lookups, so a misspelled port name is a
   C++ compile error, not a runtime surprise.
-- **Extra arguments are copied, not borrowed.** Anything you pass after the
-  name (`graph.op<BoundedSink>("sink", SinkConfig{...})`) is copied into a
+- **Extra arguments use ordinary C++ copy semantics.** Anything you pass after
+  the name (`graph.op<BoundedSink>("sink", SinkConfig{...})`) is copied into a
   replayable factory: the runtime constructs fresh operator instances from it
-  later. Pass plainly owning values — configuration structs, numbers,
-  strings — never pointers or references to your local state.
+  later. Values, strings, containers, copyable callables, and smart pointers
+  behave as they normally do in C++. In particular, `std::shared_ptr<T>` keeps
+  its process-local object alive in copies of the retained factory and in
+  operators reconstructed from it, including across sessions that reuse those
+  factories. `std::weak_ptr<T>` does not extend the object's lifetime.
+
+  Shared captures do not provide interprocess sharing. Independently composing
+  a graph in another process constructs that process's own captures. Partition
+  placement does not turn a C++ pointer into an interprocess connection or
+  guarantee a private pointee. Applications must synchronize shared mutation.
+
+  HSDK rejects obvious top-level borrows such as object pointers,
+  `std::reference_wrapper`, `std::span`, and range views. This is a guardrail,
+  not an ownership proof: C++ cannot inspect pointer elements inside a container,
+  fields inside your type, or a lambda's captures. Those lifetimes remain your
+  responsibility. Use a value for independent state and `std::shared_ptr` when
+  shared identity is intentional; no HSDK ownership wrapper is required.
 
 <Warning>
   **Handles are weak.** An `OperatorHandle` does not keep the `Graph` alive,

@@ -57,12 +57,7 @@ template <CatalogChannelPayload T>
     const SchemaIdentity identity = schema_identity<T>();
     result.kind = PayloadIdentityKind::kSchema;
     result.payload_kind = PayloadKind::kSerializedBytes;
-    result.schema = SchemaIdentityRecord{
-        .canonical_name = std::string(identity.canonical_name),
-        .version = identity.version,
-        .schema_sha256 = identity.schema_sha256,
-        .id = identity.id,
-    };
+    result.schema = make_schema_identity_record(identity);
   } else if constexpr (CatalogChannelPod<T>) {
     result.kind = PayloadIdentityKind::kPod;
     PodIdentityRecord pod{
@@ -124,23 +119,22 @@ template <CatalogChannelSchema T>
   }
   SchemaIdentity expected{
       .canonical_name = catalog_identity->canonical_name(),
-      .version = catalog_identity->version(),
-      .schema_sha256 = {},
-      .id = catalog_identity->id(),
+      .compatibility_epoch = catalog_identity->compatibility_epoch(),
+      .family_id = catalog_identity->family_id(),
+      .file_identifier = catalog_identity->file_identifier(),
   };
-  const auto digest = catalog_identity->schema_sha256();
-  std::copy(digest.begin(), digest.end(), expected.schema_sha256.begin());
   const auto& package = schema_package<T>();
   if (package.max_serialized_size() != generated_schema_max_serialized_size_v<T>) {
     return make_unexpected(
         Error{ErrorCode::kInvalidArgument, "generated schema package capacity evidence mismatch"});
   }
-  const auto catalog_capacity = endpoint.schema_max_serialized_size();
+  const auto catalog_capacity = endpoint.schema_writer_max_serialized_bytes();
   if (!catalog_capacity) {
     return make_unexpected(
         Error{ErrorCode::kIncompatible, "catalog schema serialized capacity is absent"});
   }
-  return validate_schema_package_for_attach(expected, package);
+  return validate_schema_package_for_attach(
+      expected, package, endpoint.schema_transport_profile_tag().value_or(0U));
 }
 }  // namespace channel_internal
 namespace detail {

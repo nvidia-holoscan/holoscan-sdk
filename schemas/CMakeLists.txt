@@ -3,10 +3,6 @@
 
 set(HOLOSCAN_SCHEMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(HOLOSCAN_SCHEMA_GENERATED_DIR "${holoscan_BINARY_DIR}/generated/holoscan/schemas")
-# Transport primitives only. The sensor payload types, image.fbs and imu.fbs, belong to
-# holoscan::sensor_io and are built from src/sensor_io/schemas; see the rationale there. geometry.fbs
-# and header.fbs stay because neither names a sensor: a rotation and a message header are meaningful
-# to any payload, and image.fbs and imu.fbs include header.fbs from here.
 set(HOLOSCAN_SCHEMA_FILES
     "${HOLOSCAN_SCHEMA_DIR}/geometry.fbs"
     "${HOLOSCAN_SCHEMA_DIR}/header.fbs"
@@ -25,31 +21,79 @@ set_target_properties(holoscan_fbs_tools PROPERTIES
         "${HOLOSCAN_SCHEMA_DIR}/flatbuffers/reflection.fbs"
 )
 
+# Every SDK-owned schema that generates a binding also embeds its reflection bytes, so a consumer
+# that must describe a payload to a reader compiled against no schema at all -- a recorder writing
+# a self-describing log, for instance -- can reach holoscan::binary_schema<T>() for any built-in
+# payload type rather than regenerating the .fbs itself and risking a second identity for the same
+# wire family. The bytes are diagnostic provenance only and never enter identity or the wire. They
+# live in an inline function, so a consumer that never calls the accessor pays nothing in its
+# binary. geometry.fbs and tensor.fbs are omitted because neither generates a binding to attach
+# them to: geometry contributes field types rather than a root, and Tensor's binding is written by
+# hand in flatbuffer_schema_package.hpp.
 holoscan_add_flatbuffer_schema(
-    TARGET holoscan_flatbuffer_schemas_generated
-    SCHEMAS ${HOLOSCAN_SCHEMA_FILES}
-    INCLUDE_DIRS "${HOLOSCAN_SCHEMA_DIR}"
+    TARGET holoscan_geometry_schema_generated
+    SCHEMA geometry.fbs
     OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+)
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_tensor_schema_generated
+    SCHEMA tensor.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+)
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_header_schema_generated
+    SCHEMA header.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+    MAX_SERIALIZED_SIZE 512
     BFBS_EMBED
 )
-set(HOLOSCAN_SCHEMA_GENERATED_HEADERS
-    ${holoscan_flatbuffer_schemas_generated_GENERATED_HEADERS}
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_string_schema_generated
+    SCHEMA string.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+    MAX_SERIALIZED_SIZE 512
+    BFBS_EMBED
 )
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_tensor_packet_schema_generated
+    SCHEMA tensor_packet.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+    MAX_SERIALIZED_SIZE 512
+    BFBS_EMBED
+)
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_time_schema_generated
+    SCHEMA time.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+    MAX_SERIALIZED_SIZE 512
+    BFBS_EMBED
+)
+add_custom_target(holoscan_flatbuffer_schemas_generated)
+add_dependencies(holoscan_flatbuffer_schemas_generated
+    holoscan_geometry_schema_generated
+    holoscan_header_schema_generated
+    holoscan_string_schema_generated
+    holoscan_tensor_packet_schema_generated
+    holoscan_tensor_schema_generated
+    holoscan_time_schema_generated
+)
+set(HOLOSCAN_SCHEMA_GENERATED_HEADERS
+)
+foreach(schema_target IN ITEMS
+        holoscan_geometry_schema_generated
+        holoscan_header_schema_generated
+        holoscan_string_schema_generated
+        holoscan_tensor_packet_schema_generated
+        holoscan_tensor_schema_generated
+        holoscan_time_schema_generated)
+    get_target_property(schema_headers
+        "${schema_target}" HOLOSCAN_FLATBUFFER_GENERATED_HEADERS)
+    list(APPEND HOLOSCAN_SCHEMA_GENERATED_HEADERS ${schema_headers})
+endforeach()
 
-# The image metadata helper and its port type ops moved to holoscan_sensor_io along with image.fbs.
-# Their definitions left this library with them, so a binary linked against the 5.0.0.1
-# libholoscan_schema.so.5 no longer resolves build_image_metadata, parse_image_metadata,
-# image_tensor_metadata, or runtime_port_type_ops<schema::ImageT> here. The mangled names are
-# unchanged: all four keep their holoscan::schema and holoscan::detail enclosing scopes, so this
-# relocates symbols between two DSOs of the same package rather than renaming or dropping them.
-# libholoscan_sensor_io.so defines them now, and a consumer changes one include and links
-# holoscan::sensor_io. SOVERSION below stays at PROJECT_VERSION_MAJOR, matching every other SDK
-# library: 5.x publishes no binary-compatibility guarantee across packages before its general
-# availability, so consumers rebuild against matching headers and libraries, and the release notes
-# carry that requirement the way an earlier 5.x queue-policy change did.
 add_library(holoscan_schema
+    "${holoscan_SOURCE_DIR}/src/schema/schema_package.cpp"
     "${holoscan_SOURCE_DIR}/src/schema/tensor_overrides.cpp"
-    "${holoscan_SOURCE_DIR}/src/schema/tensor_packet_port_type_ops.cpp"
 )
 add_library(${HOLOSCAN_PACKAGE_NAME}::schema ALIAS holoscan_schema)
 add_dependencies(holoscan_schema holoscan_flatbuffer_schemas_generated)

@@ -36,6 +36,8 @@ constexpr std::string_view kTensorFanoutInsufficient{
 constexpr std::string_view kTensorRankUnsupported{"PHYSICAL_TENSOR_RANK_UNSUPPORTED"};
 constexpr std::string_view kSchemaDescriptorEnvelopeCapacityExceeded{
     "CHANNEL_SCHEMA_DESCRIPTOR_ENVELOPE_CAPACITY_EXCEEDED"};
+constexpr std::string_view kLocalEnumCrossProcessUnsupported{
+    "CHANNEL_LOCAL_ENUM_CROSS_PROCESS_UNSUPPORTED"};
 constexpr std::uint32_t kCrossProcessTensorMaxRank = 8U;
 
 [[nodiscard]] std::string dtype_summary(const std::optional<DLDataType>& dtype) {
@@ -86,6 +88,44 @@ constexpr std::uint32_t kCrossProcessTensorMaxRank = 8U;
 
 [[nodiscard]] std::string interface_layout_summary(const TensorInterfacePoolPlanRecord& provider) {
   return boundary_layout_summary(provider.logical);
+}
+
+struct DescriptorTensorMemoryKindMismatch {
+  std::optional<std::uint16_t> field_id;
+  std::optional<TensorRepresentation> source;
+  std::optional<TensorRepresentation> target;
+};
+
+[[nodiscard]] std::optional<DescriptorTensorMemoryKindMismatch>
+find_descriptor_tensor_memory_kind_mismatch(const PortRecord& source,
+                                            const PortRecord& target) noexcept {
+  const auto port_source = resolved_layout(source);
+  const auto port_target = resolved_layout(target);
+  if (source.descriptor_tensor_field_count == 1U && target.descriptor_tensor_field_count == 1U &&
+      port_source && port_source->memory_kind && port_target && port_target->memory_kind &&
+      port_source->memory_kind != port_target->memory_kind) {
+    return DescriptorTensorMemoryKindMismatch{.source = port_source, .target = port_target};
+  }
+  for (const auto& target_field : target.setup.tensor_fields) {
+    const auto source_field =
+        std::find_if(source.setup.tensor_fields.begin(),
+                     source.setup.tensor_fields.end(),
+                     [&](const auto& candidate) {
+                       return candidate.field_id == target_field.field_id &&
+                              candidate.tensor_index == target_field.tensor_index;
+                     });
+    if (source_field != source.setup.tensor_fields.end() && source_field->tensor_layout &&
+        source_field->tensor_layout->memory_kind && target_field.tensor_layout &&
+        target_field.tensor_layout->memory_kind &&
+        source_field->tensor_layout->memory_kind != target_field.tensor_layout->memory_kind) {
+      return DescriptorTensorMemoryKindMismatch{
+          .field_id = target_field.field_id,
+          .source = source_field->tensor_layout,
+          .target = target_field.tensor_layout,
+      };
+    }
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] bool cross_process_service_compatible(
@@ -348,7 +388,18 @@ void canonicalize_channel_bindings(PhysicalPlanLoweringResult& result) {
       continue;
     }
     const bool cross_process_edge = *source_group != *target_group;
-    if (source->serialized_payload_capacity_bytes != target->serialized_payload_capacity_bytes) {
+    if (cross_process_edge && edge.payload_identity.kind == PayloadIdentityKind::kScalar &&
+        edge.payload_identity.scalar &&
+        edge.payload_identity.scalar->kind == ScalarIdentityKind::kLocalEnum) {
+      reject_physical_plan(result,
+                           kLocalEnumCrossProcessUnsupported,
+                           source_for(snapshot, source->owner, edge.source),
+                           port_pointer(edge.source, "/payload_identity/scalar_kind"),
+                           "process-local typed Graph edge",
+                           "kLocalEnum on a cross-process edge");
+      continue;
+    }
+    if (source->serialized_payload_capacity_bytes > target->serialized_payload_capacity_bytes) {
       reject_physical_plan(
           result, kProcessLocalChannelInvalid, source_for(snapshot, target->owner, edge.target));
       continue;
@@ -356,14 +407,28 @@ void canonicalize_channel_bindings(PhysicalPlanLoweringResult& result) {
     const auto payload_size = channel_payload_size_bytes(
         edge.payload_identity, source->serialized_payload_capacity_bytes, !cross_process_edge);
     if (!payload_size) {
-      // Pool-backed Tensor descriptors are materialized after Tensor pool
-      // admission. A local enum without fixed-width evidence remains
-      // ineligible for this fixed inline-payload service family.
+      // Pool-backed Tensor descriptors are materialized after Tensor pool admission.
       continue;
     }
     const bool descriptor_tensor_schema =
         edge.payload_identity.kind == PayloadIdentityKind::kSchema &&
         edge.payload_identity.payload_kind == PayloadKind::kDescriptorBacked;
+    if (descriptor_tensor_schema) {
+      if (const auto mismatch = find_descriptor_tensor_memory_kind_mismatch(*source, *target)) {
+        reject_physical_plan(
+            result,
+            kTensorLayoutMismatch,
+            source_for(snapshot, target->owner, edge.target),
+            port_pointer(
+                edge.target,
+                mismatch->field_id
+                    ? "/tensor_fields/" + std::to_string(*mismatch->field_id) + "/tensor_layout"
+                    : "/tensor_layout"),
+            layout_summary(mismatch->target),
+            layout_summary(mismatch->source));
+        continue;
+      }
+    }
     const auto delivery_kind =
         physical_process_local_delivery_kind(topology.holomq_activation_pairs,
                                              edge,
@@ -684,6 +749,7 @@ void lower_tensor_channel_services(
                                              *target,
                                              force_holomq_process_local_inline);
 
+    std::vector<DiagnosticMismatch> mismatches;
     const bool input_compatible =
         allocation != result.tensor_allocations.end()
             ? tensor_provider_satisfies_input(allocation->memory_kind,
@@ -691,18 +757,21 @@ void lower_tensor_channel_services(
                                               allocation->axes,
                                               allocation->layout,
                                               resolved_layout(*target),
-                                              resolved_tensor_contract(*target))
+                                              resolved_tensor_contract(*target),
+                                              &mismatches)
         : candidate_template != nullptr
             ? tensor_provider_satisfies_input(candidate_template->memory_kind,
                                               candidate_template->bounds,
                                               candidate_template->axes,
                                               candidate_template->layout,
                                               resolved_layout(*target),
-                                              resolved_tensor_contract(*target))
-        : boundary
-            ? tensor_interface_pool_satisfies_input(
-                  *interface_pool, resolved_layout(*target), resolved_tensor_contract(*target))
-            : true;
+                                              resolved_tensor_contract(*target),
+                                              &mismatches)
+        : boundary ? tensor_interface_pool_satisfies_input(*interface_pool,
+                                                           resolved_layout(*target),
+                                                           resolved_tensor_contract(*target),
+                                                           &mismatches)
+                   : true;
     if ((direct || boundary) && !input_compatible) {
       reject_physical_plan(
           result,
@@ -713,6 +782,10 @@ void lower_tensor_channel_services(
           allocation != result.tensor_allocations.end() ? allocation_layout_summary(*allocation)
           : candidate_template != nullptr ? template_layout_summary(*candidate_template)
                                           : interface_layout_summary(*interface_pool));
+      result.errors.back().detail =
+          physical_edge_detail(snapshot, source, target, std::move(mismatches));
+      // Omit the inadmissible service; rejected-plan artifacts retain diagnostics without requiring
+      // complete runtime-construction relations.
       continue;
     }
 

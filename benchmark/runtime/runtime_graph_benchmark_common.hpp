@@ -35,6 +35,7 @@
 #include <unistd.h>
 #endif
 
+#include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/errors.hpp>
 #include <holoscan/memory/memory_buffer.hpp>
@@ -549,6 +550,190 @@ inline void emit_support_thread_evidence(std::ostream& output,
              << json_escape(evidence.error_message) << "\"}";
     }
     output << '}';
+  }
+  output << ']';
+}
+
+[[nodiscard]] constexpr std::string_view diagnostic_severity_name(
+    const DiagnosticSeverity severity) noexcept {
+  switch (severity) {
+    case DiagnosticSeverity::kWarning:
+      return "warning";
+    case DiagnosticSeverity::kError:
+      return "error";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] constexpr std::string_view diagnostic_operation_name(
+    const DiagnosticOperation operation) noexcept {
+  switch (operation) {
+    case DiagnosticOperation::kUnknown:
+      return "unknown";
+    case DiagnosticOperation::kCompose:
+      return "compose";
+    case DiagnosticOperation::kConstruct:
+      return "construct";
+    case DiagnosticOperation::kSetup:
+      return "setup";
+    case DiagnosticOperation::kContract:
+      return "contract";
+    case DiagnosticOperation::kLifecycle:
+      return "lifecycle";
+    case DiagnosticOperation::kCompute:
+      return "compute";
+    case DiagnosticOperation::kRuntime:
+      return "runtime";
+    case DiagnosticOperation::kCompile:
+      return "compile";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] constexpr std::string_view diagnostic_failure_role_name(
+    const DiagnosticFailureRole role) noexcept {
+  switch (role) {
+    case DiagnosticFailureRole::kPrimary:
+      return "primary";
+    case DiagnosticFailureRole::kRollback:
+      return "rollback";
+    case DiagnosticFailureRole::kRestoration:
+      return "restoration";
+    case DiagnosticFailureRole::kTeardown:
+      return "teardown";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] constexpr std::string_view lifecycle_stage_name(const LifecycleStage stage) noexcept {
+  switch (stage) {
+    case LifecycleStage::kConfigure:
+      return "configure";
+    case LifecycleStage::kDiscover:
+      return "discover";
+    case LifecycleStage::kAllocate:
+      return "allocate";
+    case LifecycleStage::kWarmUp:
+      return "warm_up";
+    case LifecycleStage::kArm:
+      return "arm";
+    case LifecycleStage::kStart:
+      return "start";
+    case LifecycleStage::kStop:
+      return "stop";
+    case LifecycleStage::kRelease:
+      return "release";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] constexpr std::string_view lifecycle_transition_phase_name(
+    const LifecycleTransitionPhase phase) noexcept {
+  switch (phase) {
+    case LifecycleTransitionPhase::kNone:
+      return "none";
+    case LifecycleTransitionPhase::kStartupForward:
+      return "startup_forward";
+    case LifecycleTransitionPhase::kPreRestartTeardown:
+      return "pre_restart_teardown";
+    case LifecycleTransitionPhase::kRestartForward:
+      return "restart_forward";
+    case LifecycleTransitionPhase::kForwardRollback:
+      return "forward_rollback";
+    case LifecycleTransitionPhase::kRestoreOld:
+      return "restore_old";
+    case LifecycleTransitionPhase::kShutdownTeardown:
+      return "shutdown_teardown";
+  }
+  return "unknown";
+}
+
+inline void emit_diagnostic_source(std::ostream& output, const DiagnosticSource& source) {
+  output << "{\"graph_generation\":" << source.graph_generation
+         << ",\"graph\":" << source.graph.value << ",\"vertex\":" << source.vertex.value
+         << ",\"port\":" << source.port.value() << '}';
+}
+
+inline void emit_diagnostic_error(std::ostream& output, const Error& error) {
+  output << "{\"code\":\"" << error_code_name(error.code)
+         << "\",\"numeric_code\":" << static_cast<std::uint32_t>(error.code) << ",\"message\":\""
+         << json_escape(error.message) << "\"}";
+}
+
+/// Emit complete retained Runtime diagnostic evidence after a benchmark run has terminated.
+///
+/// This deliberately lives in result serialization rather than Runtime instrumentation. It adds
+/// no work, allocation, or branch to publication, delivery, scheduling, or callback hot paths.
+inline void emit_runtime_diagnostics(std::ostream& output,
+                                     const std::span<const Diagnostic> diagnostics) {
+  output << '[';
+  for (std::size_t index = 0U; index < diagnostics.size(); ++index) {
+    if (index != 0U) {
+      output << ',';
+    }
+    const Diagnostic& diagnostic = diagnostics[index];
+    output << "{\"id\":" << diagnostic.id.value << ",\"severity\":\""
+           << diagnostic_severity_name(diagnostic.severity) << "\",\"token\":\""
+           << json_escape(diagnostic.token) << "\",\"source\":";
+    emit_diagnostic_source(output, diagnostic.source);
+    output << ",\"service\":\"" << json_escape(diagnostic.service) << "\",\"endpoint\":\""
+           << json_escape(diagnostic.endpoint) << "\",\"json_pointer\":\""
+           << json_escape(diagnostic.json_pointer) << "\",\"required\":\""
+           << json_escape(diagnostic.required) << "\",\"provided\":\""
+           << json_escape(diagnostic.provided) << "\",\"cause_id\":";
+    if (diagnostic.cause_id.has_value()) {
+      output << diagnostic.cause_id->value;
+    } else {
+      output << "null";
+    }
+    output << ",\"detail\":";
+    if (!diagnostic.detail.has_value()) {
+      output << "null}";
+      continue;
+    }
+
+    const DiagnosticDetail& detail = *diagnostic.detail;
+    output << "{\"operation\":\"" << diagnostic_operation_name(detail.operation) << "\",\"error\":";
+    emit_diagnostic_error(output, detail.error);
+    output << ",\"stage\":";
+    if (detail.stage.has_value()) {
+      output << '\"' << lifecycle_stage_name(*detail.stage) << '\"';
+    } else {
+      output << "null";
+    }
+    output << ",\"phase\":\"" << lifecycle_transition_phase_name(detail.phase)
+           << "\",\"transaction_id\":" << detail.transaction_id << ",\"role\":\""
+           << diagnostic_failure_role_name(detail.role) << "\",\"operator_path\":\""
+           << json_escape(detail.operator_path) << "\",\"port_name\":\""
+           << json_escape(detail.port_name) << "\",\"related_source\":";
+    emit_diagnostic_source(output, detail.related_source);
+    output << ",\"related_operator_path\":\"" << json_escape(detail.related_operator_path)
+           << "\",\"related_port_name\":\"" << json_escape(detail.related_port_name)
+           << "\",\"mismatches\":[";
+    for (std::size_t mismatch_index = 0U; mismatch_index < detail.mismatches.size();
+         ++mismatch_index) {
+      if (mismatch_index != 0U) {
+        output << ',';
+      }
+      const DiagnosticMismatch& mismatch = detail.mismatches[mismatch_index];
+      output << "{\"field\":\"" << json_escape(mismatch.field) << "\",\"provided\":\""
+             << json_escape(mismatch.provided) << "\",\"required\":\""
+             << json_escape(mismatch.required) << "\"}";
+    }
+    output << "],\"causes\":[";
+    for (std::size_t cause_index = 0U; cause_index < detail.causes.size(); ++cause_index) {
+      if (cause_index != 0U) {
+        output << ',';
+      }
+      emit_diagnostic_error(output, detail.causes[cause_index]);
+    }
+    output << "],\"primary_diagnostic_index\":";
+    if (detail.primary_diagnostic_index.has_value()) {
+      output << *detail.primary_diagnostic_index;
+    } else {
+      output << "null";
+    }
+    output << ",\"truncated\":" << (detail.truncated ? "true" : "false") << "}}";
   }
   output << ']';
 }

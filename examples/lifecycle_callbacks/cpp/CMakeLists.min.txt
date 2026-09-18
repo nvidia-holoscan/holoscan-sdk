@@ -11,7 +11,7 @@ find_package(Threads REQUIRED)
 find_package(holoscan REQUIRED CONFIG
     PATHS
         "/workspace/holoscan-sdk/install"
-        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
 )
 
 add_executable(lifecycle_callbacks lifecycle_callbacks.cpp)

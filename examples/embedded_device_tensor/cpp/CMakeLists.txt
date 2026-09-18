@@ -50,5 +50,5 @@ endif()
 
 install(TARGETS embedded_device_tensor
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/embedded_device_tensor/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

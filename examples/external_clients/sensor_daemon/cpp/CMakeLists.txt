@@ -15,5 +15,5 @@ holoscan_configure_example_install(sensor_daemon)
 
 install(TARGETS sensor_daemon
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/external_clients/sensor_daemon/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

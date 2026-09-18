@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// TextRenderer: convenience per-frame text drawing on top of the RHI. The 5.0
-// implementation drives a private Dear ImGui context through ImGuiBackend
+// TextRenderer: convenience per-frame text drawing on top of HoloViz. The 5.0
+// implementation drives a private Dear ImGui context through imgui::Renderer
 // (create_text_renderer); the class itself is a handle over a pure-virtual
 // impl seam, so the push-constant monospace renderer (monospace_text_renderer.hpp,
 // create_monospace_text_renderer) slots in behind the same public API.
@@ -20,13 +20,13 @@
 
 #include <holoviz/holoviz_export.h>
 
+#include <holoviz/command_list.hpp>
+#include <holoviz/common.hpp>
 #include <holoviz/expected.hpp>
-#include <holoviz/rhi/command_list.hpp>
-#include <holoviz/rhi/common.hpp>
 
-namespace holoviz::rhi {
+namespace holoviz {
 class Device;
-}  // namespace holoviz::rhi
+}  // namespace holoviz
 
 namespace holoviz::text {
 
@@ -45,8 +45,8 @@ enum class Anchor : uint8_t {
 
 struct TextDesc {
   /// Anchor point in framebuffer pixels (origin top-left; HiDPI callers scale by
-  /// rhi::Window::content_scale() themselves).
-  rhi::float2 position;
+  /// Window::content_scale() themselves).
+  float2 position;
   /// Glyph height in pixels. Sizes above the rasterized atlas size scale bitmaps up and soften;
   /// see TextRendererDesc::base_font_size_px.
   float size_px = 16.0F;
@@ -58,11 +58,11 @@ struct TextDesc {
 
 struct TextRendererDesc {
   /// Stream all per-frame host-to-device copies and semaphore operations run on. Same contract
-  /// as ImGuiBackendDesc::stream: must be non-null (creation fails with kInvalidArgument
+  /// as imgui::RendererDesc::stream: must be non-null (creation fails with kInvalidArgument
   /// otherwise) and must belong to the device's CUDA context.
   CUstream stream = nullptr;
   /// Buffer ring depth; swapchain image count + 1 is a safe choice. Callers keep one
-  /// SubmitSyncToken per slot for begin_frame (see ImGuiBackend::begin_frame).
+  /// SubmitSyncToken per slot for begin_frame (see imgui::Renderer::begin_frame).
   uint32_t frames_in_flight = 4;
   /// Optional TTF font; nullptr keeps the ImGui default font (ProggyClean, rasterized at 13 px).
   const char* ttf_path = nullptr;
@@ -111,10 +111,10 @@ class TextRenderer {
   /// Start a frame in buffer slot `renderer_slot % frames_in_flight`. \p slot_last_use is the
   /// token returned by the submit that last consumed this renderer's draws for the same slot
   /// (a default token on the first lap) — keyed by the frame counter, NOT by swapchain image;
-  /// see ImGuiBackend::begin_frame for the exact contract.
-  [[nodiscard]] HOLOVIZ_EXPORT expected<void> begin_frame(rhi::Extent2D framebuffer_extent,
+  /// see imgui::Renderer::begin_frame for the exact contract.
+  [[nodiscard]] HOLOVIZ_EXPORT expected<void> begin_frame(Extent2D framebuffer_extent,
                                                           uint32_t renderer_slot,
-                                                          rhi::SubmitSyncToken slot_last_use);
+                                                          SubmitSyncToken slot_last_use);
 
   /// Queue one run of UTF-8 text for this frame. Host-side only; nothing touches the GPU until
   /// end_frame().
@@ -123,7 +123,7 @@ class TextRenderer {
 
   /// Finish the frame's text and start the asynchronous GPU upload. Add the returned token to
   /// the consuming SubmitDesc::wait_external_sync_tokens.
-  [[nodiscard]] HOLOVIZ_EXPORT expected<rhi::ExternalSyncToken> end_frame();
+  [[nodiscard]] HOLOVIZ_EXPORT expected<ExternalSyncToken> end_frame();
 
   /// Abandon an open frame: discard the draws queued since begin_frame() and close the frame
   /// without touching the GPU, so a later begin_frame() starts clean after a mid-frame error
@@ -133,8 +133,8 @@ class TextRenderer {
   /// Record this frame's draws. Must be called inside the caller's begin_render/end_render
   /// scope, after end_frame(). Sets viewport, scissor, pipeline, bindings, and push data —
   /// re-set any caller state afterwards.
-  [[nodiscard]] HOLOVIZ_EXPORT expected<void> record(rhi::CommandList& command_list,
-                                                     rhi::Extent2D framebuffer_extent);
+  [[nodiscard]] HOLOVIZ_EXPORT expected<void> record(CommandList& command_list,
+                                                     Extent2D framebuffer_extent);
 
   /// Backend-internal access; not part of the stable API surface.
   /// Precondition: the handle is non-empty.
@@ -146,8 +146,8 @@ class TextRenderer {
 };
 
 /// Create a text renderer that drives a private Dear ImGui context through an internal
-/// ImGuiBackend. The device must outlive the renderer and stay at a stable address.
+/// imgui::Renderer. The device must outlive the renderer and stay at a stable address.
 [[nodiscard]] HOLOVIZ_EXPORT expected<TextRenderer> create_text_renderer(
-    rhi::Device& device, const TextRendererDesc& desc);
+    Device& device, const TextRendererDesc& desc);
 
 }  // namespace holoviz::text

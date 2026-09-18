@@ -28,6 +28,7 @@ add_executable(runtime_channel_benchmark
     runtime_channel_benchmark.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/execution_plan_lookup.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/process_local_channel_plan_validation.cpp
+    ${holoscan_SOURCE_DIR}/src/compiler/optional_input_plan_validation.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health_runtime.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_activation.cpp
@@ -62,6 +63,7 @@ add_executable(runtime_payload_benchmark
     runtime_payload_benchmark.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/execution_plan_lookup.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/process_local_channel_plan_validation.cpp
+    ${holoscan_SOURCE_DIR}/src/compiler/optional_input_plan_validation.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health_runtime.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_activation.cpp
@@ -99,17 +101,8 @@ holoscan_add_flatbuffer_schema(
     SCHEMAS runtime_multi_tensor_benchmark.fbs
     INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_DIR "${RUNTIME_MULTI_TENSOR_BENCHMARK_GENERATED_DIR}"
-    BFBS_EMBED
-    DESCRIPTOR_TENSOR
     TRAITS_HEADER runtime_multi_tensor_benchmark_traits.hpp
-    TRAITS_ROOT_TYPE runtime_benchmark::MultiTensorMessage
-    TRAITS_NATIVE_TYPE runtime_benchmark::MultiTensorMessageT
-    TRAITS_BINARY_SCHEMA_TYPE runtime_benchmark::MultiTensorMessageBinarySchema
-    TRAITS_PACKAGE_NAMESPACE runtime_benchmark::package
-    TRAITS_CANONICAL_NAME runtime_benchmark.MultiTensorMessage
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 1536
-    TRAITS_DESCRIPTOR_METADATA_CAPACITY 512
+    MAX_SERIALIZED_SIZE 512
 )
 
 set(RUNTIME_THIRD_PARTY_BENCHMARK_GENERATED_DIR
@@ -119,15 +112,8 @@ holoscan_add_flatbuffer_schema(
     SCHEMAS runtime_third_party_benchmark.fbs
     INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_DIR "${RUNTIME_THIRD_PARTY_BENCHMARK_GENERATED_DIR}"
-    BFBS_EMBED
     TRAITS_HEADER runtime_third_party_benchmark_traits.hpp
-    TRAITS_ROOT_TYPE task30_benchmark::Telemetry
-    TRAITS_NATIVE_TYPE task30_benchmark::TelemetryT
-    TRAITS_BINARY_SCHEMA_TYPE task30_benchmark::TelemetryBinarySchema
-    TRAITS_PACKAGE_NAMESPACE task30_benchmark::package
-    TRAITS_CANONICAL_NAME task30_benchmark.Telemetry
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 128
+    MAX_SERIALIZED_SIZE 128
 )
 
 add_executable(runtime_graph_benchmark
@@ -1346,6 +1332,20 @@ if(BUILD_TESTING)
             FAIL_REGULAR_EXPRESSION "runtime Graph benchmark timeout"
     )
 
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME BENCHMARK_RUNTIME_GRAPH_FAILURE_DIAGNOSTIC_ARTIFACT
+            COMMAND ${Python3_EXECUTABLE}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/test_runtime_graph_failure_diagnostics.py"
+                    "$<TARGET_FILE:runtime_graph_benchmark>"
+        )
+        set_tests_properties(BENCHMARK_RUNTIME_GRAPH_FAILURE_DIAGNOSTIC_ARTIFACT
+            PROPERTIES
+                LABELS "benchmark;runtime;diagnostics"
+                TIMEOUT 10
+        )
+    endif()
+
     # Complete each logical sample only after all four transport-backed sinks receive it.
     add_test(
         NAME BENCHMARK_RUNTIME_GRAPH_POD_FANOUT
@@ -1886,52 +1886,55 @@ if(BUILD_TESTING)
             TIMEOUT 15
     )
 
-    # Key setup: exercise each one-deep shared-lane direct-retained Tensor payload shape.
-    foreach(TENSOR_ORDINARY_DISPATCH_SCENARIO IN ITEMS
+    # Key setup: exercise each one-deep shared-lane direct-retained Tensor payload shape with
+    # causal continuation enabled.
+    # REQ: RUNTIME-041
+    foreach(TENSOR_DIRECT_CONTINUATION_SCENARIO IN ITEMS
         tensor
         image
         multi_tensor_loan
         multi_tensor_staging
     )
         string(TOUPPER
-            "${TENSOR_ORDINARY_DISPATCH_SCENARIO}"
-            TENSOR_ORDINARY_DISPATCH_SCENARIO_UPPER
+            "${TENSOR_DIRECT_CONTINUATION_SCENARIO}"
+            TENSOR_DIRECT_CONTINUATION_SCENARIO_UPPER
         )
-        set(TENSOR_ORDINARY_DISPATCH_BULK_WORK_ARGUMENTS)
-        set(TENSOR_ORDINARY_DISPATCH_WARMUP 2)
-        if(TENSOR_ORDINARY_DISPATCH_SCENARIO STREQUAL "multi_tensor_loan")
-            set(TENSOR_ORDINARY_DISPATCH_WARMUP 8)
+        set(TENSOR_DIRECT_CONTINUATION_BULK_WORK_ARGUMENTS)
+        set(TENSOR_DIRECT_CONTINUATION_WARMUP 2)
+        if(TENSOR_DIRECT_CONTINUATION_SCENARIO STREQUAL "multi_tensor_loan")
+            set(TENSOR_DIRECT_CONTINUATION_WARMUP 8)
         endif()
-        if(NOT TENSOR_ORDINARY_DISPATCH_SCENARIO STREQUAL "tensor")
+        if(NOT TENSOR_DIRECT_CONTINUATION_SCENARIO STREQUAL "tensor")
             list(APPEND
-                TENSOR_ORDINARY_DISPATCH_BULK_WORK_ARGUMENTS
+                TENSOR_DIRECT_CONTINUATION_BULK_WORK_ARGUMENTS
                 --bulk-work-profile descriptor_only
             )
         endif()
         add_test(
-            NAME BENCHMARK_RUNTIME_GRAPH_${TENSOR_ORDINARY_DISPATCH_SCENARIO_UPPER}_NO_CONTINUATION_RECEIPT
+            NAME BENCHMARK_RUNTIME_GRAPH_${TENSOR_DIRECT_CONTINUATION_SCENARIO_UPPER}_CONTINUATION_ENABLED
             COMMAND ${Python3_EXECUTABLE}
                     "${CMAKE_CURRENT_SOURCE_DIR}/run_runtime_graph_benchmark.py"
                     "$<TARGET_FILE:runtime_graph_benchmark>"
                     --workload latency
-                    --scenario "${TENSOR_ORDINARY_DISPATCH_SCENARIO}"
+                    --scenario "${TENSOR_DIRECT_CONTINUATION_SCENARIO}"
                     --operator-lanes shared
                     --tensor-storage pageable_host
                     --tensor-bytes 64
                     --samples 8
-                    --warmup ${TENSOR_ORDINARY_DISPATCH_WARMUP}
+                    --warmup ${TENSOR_DIRECT_CONTINUATION_WARMUP}
                     --publisher-period-us 1000
                     --payload-validation all
-                    ${TENSOR_ORDINARY_DISPATCH_BULK_WORK_ARGUMENTS}
+                    ${TENSOR_DIRECT_CONTINUATION_BULK_WORK_ARGUMENTS}
                     --runtime-phase-counters
                     --repetitions 1
                     --session-timeout-ms 10000
         )
-        # Key assertion: the runner requires ordinary dispatch with no continuation receipts.
+        # Key assertion: the runner accepts continuation evidence while validating all Runtime
+        # phase-counter invariants for Tensor-backed delivery.
         set_tests_properties(
-            BENCHMARK_RUNTIME_GRAPH_${TENSOR_ORDINARY_DISPATCH_SCENARIO_UPPER}_NO_CONTINUATION_RECEIPT
+            BENCHMARK_RUNTIME_GRAPH_${TENSOR_DIRECT_CONTINUATION_SCENARIO_UPPER}_CONTINUATION_ENABLED
             PROPERTIES
-                LABELS "benchmark;runtime;tensor;ordinary-dispatch"
+                LABELS "benchmark;runtime;tensor;causal-continuation"
                 TIMEOUT 15
         )
     endforeach()

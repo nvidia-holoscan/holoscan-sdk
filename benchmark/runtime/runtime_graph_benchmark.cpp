@@ -57,7 +57,7 @@
 #include <holoscan/core/run.hpp>
 #include <holoscan/logger/logger.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
@@ -79,6 +79,7 @@ using BenchmarkClock = std::chrono::steady_clock;
 using benchmarking::benchmark_thread_identity;
 using benchmarking::BenchmarkSupportThreadControl;
 using benchmarking::emit_optional_cpu;
+using benchmarking::emit_runtime_diagnostics;
 using benchmarking::emit_runtime_thread_usage;
 using benchmarking::emit_support_thread_evidence;
 using benchmarking::json_escape;
@@ -5445,6 +5446,8 @@ void emit_phase_counters(std::ostream& output, const detail::RuntimePhaseCounter
       << ",\"candidates_selected\":" << value(detail::RuntimePhaseCounter::kCandidatesSelected)
       << ",\"readiness_poll_dispatches\":"
       << value(detail::RuntimePhaseCounter::kReadinessPollDispatches)
+      << ",\"readiness_poll_contention_retries\":"
+      << value(detail::RuntimePhaseCounter::kReadinessPollContentionRetries)
       << ",\"direct_continuation_receipts_accepted\":"
       << value(detail::RuntimePhaseCounter::kDirectContinuationReceiptsAccepted)
       << ",\"direct_continuation_poll_elisions\":"
@@ -5492,6 +5495,8 @@ void emit_phase_counters(std::ostream& output, const detail::RuntimePhaseCounter
       << value(detail::RuntimePhaseCounter::kChannelActivationCutMaterializations)
       << ",\"channel_receive_backpressured\":"
       << value(detail::RuntimePhaseCounter::kChannelReceiveBackpressured)
+      << ",\"channel_poll_incomplete\":"
+      << value(detail::RuntimePhaseCounter::kChannelPollIncomplete)
       << ",\"channel_direct_ingress_promotion_passes\":"
       << value(detail::RuntimePhaseCounter::kChannelDirectIngressPromotionPasses)
       << ",\"channel_direct_ingress_promotions\":"
@@ -5935,6 +5940,8 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
       value(detail::RuntimePhaseCounter::kChannelSamplesReceived);
   const std::uint64_t readiness_published =
       value(detail::RuntimePhaseCounter::kChannelReadinessPublished);
+  const std::uint64_t witnesses_retired =
+      value(detail::RuntimePhaseCounter::kChannelWitnessRetired);
   const std::uint64_t accepted_delivery_opportunities =
       expected_accepted_emits * subscribers_per_output(state.options());
   const bool retained_counts_valid = has_lossy_subscriber(state.options())
@@ -5943,6 +5950,16 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
                                                samples_received <= accepted_delivery_opportunities
                                          : samples_received == expected_input_operations &&
                                                readiness_published == expected_input_operations;
+  const bool witness_retirement_valid = has_lossy_subscriber(state.options())
+                                            ? expected_input_operations <= witnesses_retired &&
+                                                  witnesses_retired <= readiness_published
+                                            : witnesses_retired == expected_input_operations;
+  // Each readiness revision in the gated diagnostic either publishes a retired witness or is
+  // replaced before witness publication. Consumer reads count only selected payloads.
+  const bool diagnostic_retirement_valid =
+      !state.options().test_gate_pod_sink_for_pressure ||
+      witnesses_retired + value(detail::RuntimePhaseCounter::kChannelPreWitnessReplacements) ==
+          readiness_published;
   return value(detail::RuntimePhaseCounter::kChannelPrepareCalls) == expected_compute_dispatches &&
          value(detail::RuntimePhaseCounter::kChannelEmitAttempts) ==
              expected_source_emit_attempts + state.relay_callbacks() &&
@@ -5951,7 +5968,7 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
              state.backpressure_count() &&
          retained_counts_valid &&
          value(detail::RuntimePhaseCounter::kChannelInputReads) == expected_input_operations &&
-         value(detail::RuntimePhaseCounter::kChannelWitnessRetired) == expected_input_operations &&
+         witness_retirement_valid && diagnostic_retirement_valid &&
          value(detail::RuntimePhaseCounter::kChannelRetireCalls) == expected_compute_dispatches &&
          activation_cut_valid;
 }
@@ -6500,20 +6517,9 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
   }
   output << "},\n"
          << "  \"session\":{\"termination\":\"" << termination_name(session.termination())
-         << "\",\"diagnostics\":[";
-  bool first = true;
-  for (const Diagnostic& diagnostic : session.diagnostics()) {
-    if (!first) {
-      output << ',';
-    }
-    first = false;
-    output << "{\"token\":\"" << json_escape(diagnostic.token) << "\",\"service\":\""
-           << json_escape(diagnostic.service) << "\",\"endpoint\":\""
-           << json_escape(diagnostic.endpoint) << "\",\"required\":\""
-           << json_escape(diagnostic.required) << "\",\"provided\":\""
-           << json_escape(diagnostic.provided) << "\"}";
-  }
-  output << "]}\n}\n";
+         << "\",\"diagnostics\":";
+  emit_runtime_diagnostics(output, session.diagnostics());
+  output << "}\n}\n";
 }
 
 template <typename Integer>
@@ -7689,6 +7695,9 @@ void print_usage(std::ostream& output) {
               << " configured_offer_rate=" << state.options().offered_rate_hz
               << " start_ns=" << state.measured_start_ns() << " end_ns=" << state.measured_end_ns()
               << " termination=" << termination_name(session.termination()) << '\n';
+    if (!session.diagnostics().empty()) {
+      std::cerr << format_diagnostics(session.diagnostics(), plan.graph()) << '\n';
+    }
   }
   g_run_state = nullptr;
   return valid ? 0 : 1;

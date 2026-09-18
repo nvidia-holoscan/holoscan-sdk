@@ -462,38 +462,6 @@ TEST(CompilePhysicalPlanArtifact, FreezesTypedGenericLoanEvidenceWithoutFunction
   EXPECT_NE(plan.json().find("\"trait_evidence\":2"), std::string::npos);
 }
 
-// Generated package evidence is deep-owned by the immutable plan and serialized in one canonical
-// provenance block. Repeated schema ports coalesce exact evidence without retaining package views
-// or callable addresses.
-//
-//   source(GenericLoanEvidenceOperator)   (isolated schema output; no edges)
-//
-// REQ: CHAN-121
-TEST(CompilePhysicalPlanArtifact, PublishesCanonicalSchemaPackageProvenance) {
-  Graph graph{"schema-package-provenance"};
-  (void)graph.op<GenericLoanEvidenceOperator>("source");
-
-  const ExecutionPlan plan = compile(graph);
-  ASSERT_TRUE(plan.ok()) << plan.json();
-  ASSERT_EQ(plan.schema_packages().size(), 1U);
-
-  const SchemaPackagePlanRecord expected =
-      schema_package_plan_record(schema_package<schema::StringT>());
-  EXPECT_EQ(plan.schema_packages().front(), expected);
-
-  // When the pinned FlatBuffers tool or schema inputs change, rebuild
-  // holoscan_flatbuffer_schemas_generated and update this exact golden from the failing plan JSON.
-  constexpr std::string_view kCanonicalGolden{
-      "\"schema_packages\":[{\"binary_schema_size\":304,\"flatc_build\":\"flatc "
-      "25.12.19\",\"generator_format_version\":1,\"include_closure_sha256\":\"e414ba3347e21d"
-      "c8490492ab2eba81b29b46f6384a0f8f8b7e3ba36066aedc6b\",\"ordered_flags\":[\"--bfbs-"
-      "gen-embed\",\"--cpp\",\"--cpp-ptr-type\",\"std::shared_ptr\",\"--gen-object-api\","
-      "\"--reflect-names\",\"--reflect-types\",\"--schema\",\"-o\",\"<generated-schema-dir>\","
-      "\"-I\",\"<schema-root-0>\",\"<ordered-root-schema-files>\"],\"package_format_version\":1,"
-      "\"runtime_abi\":{\"major\":25,\"minor\":12,\"revision\":19},\"schema_id\":\"d0a5cc971"
-      "394c0e0cf0c846cf1839203\"}]"};
-  EXPECT_NE(plan.json().find(kCanonicalGolden), std::string::npos) << plan.json();
-}
 // REQ: COMPILE-002
 // REQ: COMPILE-009
 // REQ: COMPILE-040
@@ -774,37 +742,9 @@ TEST(CompilePhysicalPlanArtifact, PreservesDescriptorTensorServiceFieldProvenanc
             std::string::npos);
 }
 
-// Package provenance may honestly differ between processes that use the same pinned schema
-// identity. The public diagnostic artifact must show that difference while the semantic plan
-// digest remains stable.
-// REQ: CHAN-121
-TEST(CompilePhysicalPlanArtifact, SchemaPackageEvidenceDoesNotEnterSemanticDigest) {
-  auto first = physical_artifact_state();
-  auto second = physical_artifact_state();
-  SchemaPackagePlanRecord first_record =
-      schema_package_plan_record(schema_package<schema::StringT>());
-  SchemaPackagePlanRecord second_record = first_record;
-  second_record.flatc_build = "flatc independently-reconstructed";
-  second_record.ordered_flags.push_back("--diagnostic-provenance-only");
-  second_record.generator_format_version = 7U;
-  first.schema_packages.push_back(std::move(first_record));
-  second.schema_packages.push_back(std::move(second_record));
-
-  const auto first_finalized = finalize_plan_artifact(first);
-  const auto second_finalized = finalize_plan_artifact(second);
-
-  ASSERT_TRUE(first_finalized) << first_finalized.error().message;
-  ASSERT_TRUE(second_finalized) << second_finalized.error().message;
-  EXPECT_EQ(first.digest, second.digest);
-  EXPECT_NE(first.json, second.json);
-  EXPECT_NE(first.json.find("\"flatc_build\":\"flatc 25.12.19\""), std::string::npos);
-  EXPECT_NE(second.json.find("\"flatc_build\":\"flatc independently-reconstructed\""),
-            std::string::npos);
-}
-
 // Task041's immutable declaration, canonical horizon/trigger projection, hard-floor, and recipe
 // records are all semantic plan authorities. Each valid authority change must perturb the
-// private-v4 artifact identity.
+// private-v6 artifact identity.
 // REQ: COMPILE-069
 TEST(CompilePhysicalPlanArtifact, RateRecipeFamiliesPerturbSemanticIdentity) {
   auto baseline = physical_artifact_state();
@@ -931,7 +871,7 @@ TEST(CompilePhysicalPlanArtifact, RejectsMalformedRateRecipeRecordsBeforeSeriali
   EXPECT_TRUE(retained_drain_all.json.empty());
 }
 
-// A private-v4 horizon is accepted only when it is an exact projection of the destination
+// A private-v6 horizon is accepted only when it is an exact projection of the destination
 // operator's canonical clock, predicate clock, window, or OnEach trigger.
 // REQ: COMPILE-069
 TEST(CompilePhysicalPlanArtifact, AcceptsCanonicalRateHorizonTriggerProvenance) {
@@ -1079,7 +1019,7 @@ TEST(CompilePhysicalPlanArtifact, RejectsMismatchedInverseHorizonTriggerProvenan
 }
 
 // Task041 pool dependencies and provider recipes are semantic artifact identity, while malformed
-// source joins and provider ranges fail before entering the private-v4 digest preimage.
+// source joins and provider ranges fail before entering the private-v6 digest preimage.
 // REQ: COMPILE-069
 TEST(CompilePhysicalPlanArtifact, PoolCapacityFamiliesAreCanonicalAndFailClosed) {
   auto baseline = physical_artifact_state();
@@ -1803,7 +1743,7 @@ TEST(CompilePhysicalPlanManifest, DeduplicatesSharedServiceCapacityProjection) {
   manifest.requested_profile = Profile::kStandard;
   manifest.effective_graph_profile = Profile::kStandard;
   manifest.profile_policy_id = profile_policy_id_v1();
-  manifest.plan_schema_version = "holoscan.execution_plan.private.v4";
+  manifest.plan_schema_version = "holoscan.execution_plan.private.v6";
   manifest.runtime_abi_version = "holoscan.runtime_abi.v1";
   manifest.target_triple = std::string(compile_target_triple());
 

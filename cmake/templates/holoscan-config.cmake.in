@@ -117,22 +117,83 @@ macro(_holoscan_load_sensor_io_component)
   endif()
 endmacro()
 
+# ==================================================================================================
+# Module component loaders
+# ==================================================================================================
 # Module components are installed independently from Core but depend on Core targets already
-# loaded by the full package configuration. Add each module's loader in this section.
-# Holoscan Inference is one such module.
+# loaded by the full package configuration. These loaders must remain macros rather than functions:
+# find_dependency() and the component _FOUND variables rely on the caller's scope to propagate
+# dependency tracking to the consuming project.
+
+# Load the Holoscan Inference package and its transitive dependencies.
 macro(_holoscan_load_inference_component)
   if(TARGET holoscan::infer)
     set(holoscan_inference_FOUND TRUE)
   elseif(TARGET holoscan::core AND
          EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-inference-targets.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/holoscan-inference-targets.cmake")
-    if(TARGET holoscan::infer AND TARGET holoscan::op_inference)
-      set(holoscan_inference_FOUND TRUE)
-    else()
+    set(_holoscan_inference_private_archive
+        "${_holoscan_frontdoor_install_prefix}/@HOLOSCAN_INSTALL_LIB_DIR@/@CMAKE_STATIC_LIBRARY_PREFIX@holoscan_inference_yaml_private@CMAKE_STATIC_LIBRARY_SUFFIX@")
+    if(NOT @BUILD_SHARED_LIBS@ AND NOT EXISTS "${_holoscan_inference_private_archive}")
       set(holoscan_inference_FOUND FALSE)
+    else()
+      if(NOT @BUILD_SHARED_LIBS@ AND NOT TARGET holoscan::_inference_yaml_private)
+        add_library(holoscan::_inference_yaml_private STATIC IMPORTED)
+        set_target_properties(holoscan::_inference_yaml_private PROPERTIES
+            IMPORTED_LOCATION "${_holoscan_inference_private_archive}"
+        )
+      endif()
+      include("${CMAKE_CURRENT_LIST_DIR}/holoscan-inference-targets.cmake")
+      if(TARGET holoscan::infer AND TARGET holoscan::op_inference)
+        set(holoscan_inference_FOUND TRUE)
+      else()
+        set(holoscan_inference_FOUND FALSE)
+      endif()
     endif()
+    unset(_holoscan_inference_private_archive)
   else()
     set(holoscan_inference_FOUND FALSE)
+  endif()
+endmacro()
+
+# Load the Holoscan Vision package and its transitive dependencies.
+macro(_holoscan_load_vision_component)
+  if(TARGET holoscan::vision)
+    set(holoscan_vision_FOUND TRUE)
+  elseif(TARGET holoscan::core AND
+         EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-vision-targets.cmake")
+    if(NOT @BUILD_SHARED_LIBS@)
+      include(CMakeFindDependencyMacro)
+      # CV-CUDA's configuration consumes nvcv_types without discovering it.
+      find_dependency(nvcv_types
+        @HOLOSCAN_VISION_CVCUDA_VERSION_MIN@...<@HOLOSCAN_VISION_CVCUDA_VERSION_MAX@ CONFIG)
+      find_dependency(cvcuda
+        @HOLOSCAN_VISION_CVCUDA_VERSION_MIN@...<@HOLOSCAN_VISION_CVCUDA_VERSION_MAX@ CONFIG)
+    endif()
+    include("${CMAKE_CURRENT_LIST_DIR}/holoscan-vision-targets.cmake")
+    if(TARGET holoscan::vision)
+      set(holoscan_vision_FOUND TRUE)
+    else()
+      set(holoscan_vision_FOUND FALSE)
+    endif()
+  else()
+    set(holoscan_vision_FOUND FALSE)
+  endif()
+endmacro()
+
+# Load the Holoscan Visualization package and its transitive dependencies.
+macro(_holoscan_load_visualization_component)
+  if(TARGET holoscan::visualization::op_holoviz)
+    set(holoscan_visualization_FOUND TRUE)
+  elseif(TARGET holoscan::core AND
+         EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-visualization-targets.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/holoscan-visualization-targets.cmake")
+    if(TARGET holoscan::visualization::op_holoviz)
+      set(holoscan_visualization_FOUND TRUE)
+    else()
+      set(holoscan_visualization_FOUND FALSE)
+    endif()
+  else()
+    set(holoscan_visualization_FOUND FALSE)
   endif()
 endmacro()
 
@@ -211,6 +272,11 @@ unset(_holoscan_schema_dir)
 unset(_holoscan_schema_tools_path)
 
 include("${CMAKE_CURRENT_LIST_DIR}/HoloscanGraphArtifacts.cmake")
+# Whether this SDK shipped typing stubs. A module that ships py.typed while Core does not
+# makes type checkers report unresolved Core symbols in the consumer's own run, so modules
+# should default to Core's posture. A module may still override it deliberately.
+set(HOLOSCAN_PYTHON_STUBS "@HOLOSCAN_BUILD_PYTHON_STUBS@")
+include("${CMAKE_CURRENT_LIST_DIR}/HoloscanStubGeneration.cmake")
 if(TARGET holoscan::core)
   set(holoscan_core_FOUND TRUE)
 endif()
@@ -242,6 +308,12 @@ if(NOT _holoscan_requested_components)
   if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-inference-targets.cmake")
     _holoscan_load_inference_component()
   endif()
+  if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-vision-targets.cmake")
+    _holoscan_load_vision_component()
+  endif()
+  if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/holoscan-visualization-targets.cmake")
+    _holoscan_load_visualization_component()
+  endif()
 else()
   foreach(_holoscan_component IN LISTS _holoscan_requested_components)
     if(_holoscan_component STREQUAL "config")
@@ -258,6 +330,10 @@ else()
       _holoscan_load_sensor_io_component()
     elseif(_holoscan_component STREQUAL "inference")
       _holoscan_load_inference_component()
+    elseif(_holoscan_component STREQUAL "vision")
+      _holoscan_load_vision_component()
+    elseif(_holoscan_component STREQUAL "visualization")
+      _holoscan_load_visualization_component()
     elseif(TARGET "holoscan::${_holoscan_component}")
       set("holoscan_${_holoscan_component}_FOUND" TRUE)
     else()
@@ -275,3 +351,5 @@ unset(_holoscan_load_params_io_component)
 unset(_holoscan_load_experimental_params_web_tuner_component)
 unset(_holoscan_load_sensor_io_component)
 unset(_holoscan_load_inference_component)
+unset(_holoscan_load_vision_component)
+unset(_holoscan_load_visualization_component)

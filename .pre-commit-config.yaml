@@ -8,6 +8,11 @@
 default_language_version:
   python: python3
 
+# Published skill packages must remain byte-identical to their signed source.
+# Formatting, whitespace, spelling, or copyright fixes invalidate skill.oms.sig.
+# Exclude skill package subdirectories while linting top-level documentation.
+exclude: ^skills/[^/]+/
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
@@ -127,7 +132,7 @@ repos:
 
   # Codespell
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
       - id: codespell
         additional_dependencies:
@@ -221,6 +226,30 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      # Behavioral tests cannot prove this repository-wide negative source invariant. Keep the
+      # structural guard in lint, but run it only when its checked boundary or checker changes.
+      - id: check-subscriber-close-boundaries
+        name: Check external subscriber close boundaries
+        entry: python3 scripts/check_subscriber_close_boundaries.py --root .
+        language: system
+        pass_filenames: false
+        files: |
+          (?x)^(
+            src/runtime/.*\.(cpp|cu|cuh|hpp)|
+            include/holoscan/channel/(endpoint_interfaces|inline_endpoints|tensor_schema_endpoints)\.hpp|
+            src/channel/channel_tensor\.cpp|
+            scripts/check_subscriber_close_boundaries\.py
+          )$
+
+      - id: test-subscriber-close-boundaries
+        name: Test external subscriber close checker
+        entry: pytest scripts/test_subscriber_close_boundaries.py
+        language: python
+        additional_dependencies:
+          - pytest
+        pass_filenames: false
+        files: ^scripts/(check|test)_subscriber_close_boundaries\.py$
 
   # markdownlint
   - repo: https://github.com/igorshubovych/markdownlint-cli

@@ -276,3 +276,4 @@ table Image {
 }
 
 root_type Image;
+file_identifier "HSIG";

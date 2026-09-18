@@ -162,6 +162,9 @@ struct TopicOptions {
 template <PublishedPayload T>
 class ImportedTopic {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Return the Graph-side output used by typed `add_flow`.
   /// @return Dynamically resolved boundary declaration owned by the source Graph.
   /// @throws RuntimeError if the Graph was destroyed or failed composition, or
@@ -192,6 +195,9 @@ class ImportedTopic {
 template <PublishedPayload T>
 class ExportedTopic {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Return the Graph-side input used by typed `add_flow`.
   /// @return Dynamically resolved boundary declaration owned by the source Graph.
   /// @throws RuntimeError if the Graph was destroyed or failed composition, or

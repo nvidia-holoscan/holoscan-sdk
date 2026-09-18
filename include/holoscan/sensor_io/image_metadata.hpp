@@ -105,7 +105,7 @@ struct ImageTensorMetadata {
 /// @return Serialized FlatBuffer bytes on success, or Error for incompatible Tensor metadata.
 /// @note Tensor data bytes are never serialized by this helper, including while a
 /// \ref WithTensorMaterialization or \ref WithTensorGather scope is active. The returned metadata
-/// is bounded by \c flatbuffer_default_descriptor_metadata_capacity_v<Image>; an oversized frame
+/// is bounded by \c flatbuffer_descriptor_metadata_capacity_v<Image>; an oversized frame
 /// identifier or future metadata returns \c ErrorCode::kResourceExhausted.
 /// @note Returns \c ErrorCode::kInvalidArgument for a descriptor the schema gives no meaning to: a
 /// non-positive height or width, an \c encoding or \c color_space outside its enumeration, a
@@ -166,10 +166,5 @@ build_image_metadata(const holoscan::Tensor& tensor, const ImageMetadataOptions&
 /// so descriptor-backed paths cannot silently carry a second materialized payload representation.
 [[nodiscard]] HOLOSCAN_SENSOR_IO_EXPORT expected<ImageTensorMetadata, Error> image_tensor_metadata(
     const ImageMetadataView& view);
-
-/// @brief Decode the generated Image Tensor member through the common descriptor adapter.
-template <>
-struct DescriptorFlatBufferTensorViewTraits<Image>
-    : DescriptorFlatBufferTensorViewAdapter<Image, &Image::data> {};
 
 }  // namespace holoscan::schema

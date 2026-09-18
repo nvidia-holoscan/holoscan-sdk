@@ -13,6 +13,7 @@ include(GoogleTest)
 # test needs Core's own stage schedule to show that a withheld stage body coexists with a run that
 # terminated cleanly.
 add_executable(sensor_io_test
+    test_binary_schema.cpp
     test_clock_discipline.cpp
     test_descriptor_passthrough.cpp
     test_lifecycle_guards.cpp

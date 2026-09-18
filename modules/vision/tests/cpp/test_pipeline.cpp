@@ -10,6 +10,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 
 #include <cuda_runtime_api.h>
@@ -273,6 +274,70 @@ class ImageSink final : public Operator<> {
   ImageFixture fixture_;
 };
 
+[[nodiscard]] std::optional<std::uint64_t> allocation_byte_span(const ExecutionPlan& plan,
+                                                                std::string_view operator_path) {
+  const auto vertex =
+      std::ranges::find(plan.graph().vertices(), operator_path, &VertexRecord::name);
+  if (vertex == plan.graph().vertices().end()) {
+    return std::nullopt;
+  }
+  const auto port = std::ranges::find_if(plan.ports(), [&](const PortPlanRecord& candidate) {
+    return candidate.owner == vertex->id && candidate.direction == PortDirection::kOutput &&
+           candidate.local_name == "output";
+  });
+  if (port == plan.ports().end()) {
+    return std::nullopt;
+  }
+  const auto allocation =
+      std::ranges::find(plan.tensor_allocations(), port->id, &TensorAllocationPlanRecord::output);
+  if (allocation == plan.tensor_allocations().end()) {
+    return std::nullopt;
+  }
+  return allocation->bounds.max_byte_span;
+}
+
+[[nodiscard]] ExecutionPlan compile_input_derived_pipeline(VisionElementType output_type) {
+  Graph graph{"vision-input-derived-capacity-test"};
+  const auto source = graph.op<ImageSource>("source");
+  const auto normalize = graph.op<NormalizeOp>("normalize");
+  const auto reformat = graph.op<ReformatOp>("reformat");
+  auto convert = graph.op<ConvertToOp>("convert");
+  convert.set_params(ConvertToOpParams{.output_type = output_type});
+  graph.add_flow(source->output, normalize->input);
+  graph.add_flow(normalize->output, reformat->input);
+  graph.add_flow(reformat->output, convert->input);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-clock"));
+
+  CompileOptions options;
+  for (const char* operator_path : {"source", "normalize", "reformat", "convert"}) {
+    options.deployment.bind_tensor_output_device(TensorOutputDevicePlacement{
+        .operator_path = operator_path, .output_port = "output", .device = DeviceId{0}});
+  }
+  return compile(graph, std::move(options));
+}
+
+// REQ: COMPILE-067
+// REQ: COMPILE-077
+// REQ: VISION-002
+TEST(VisionPipeline, ShapePreservingCapacityTracksInputAndConvertedElementSize) {
+  // Key setup: compile the same bounded graph with one- and eight-byte ConvertTo output types.
+  //
+  //   source(U8, 16 B) -> normalize -> reformat -> convert(U8 or F64)
+  const ExecutionPlan u8 = compile_input_derived_pipeline(VisionElementType::kU8);
+  const ExecutionPlan f64 = compile_input_derived_pipeline(VisionElementType::kF64);
+  ASSERT_TRUE(u8.ok()) << u8.json();
+  ASSERT_TRUE(f64.ok()) << f64.json();
+
+  // Key assertion: shape/dtype-preserving operators inherit 16 bytes, while ConvertTo multiplies
+  // the producer bound by the selected output element size rather than sizeof(double) always.
+  EXPECT_EQ(allocation_byte_span(u8, "normalize"), 16U);
+  EXPECT_EQ(allocation_byte_span(u8, "reformat"), 16U);
+  EXPECT_EQ(allocation_byte_span(u8, "convert"), 16U);
+  EXPECT_EQ(allocation_byte_span(f64, "normalize"), 16U);
+  EXPECT_EQ(allocation_byte_span(f64, "reformat"), 16U);
+  EXPECT_EQ(allocation_byte_span(f64, "convert"), 128U);
+}
+
 TEST(VisionPipeline, ResizeUsesPlanOwnedCudaTensorAndForwardsMetadata) {
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0 ||
@@ -284,8 +349,7 @@ TEST(VisionPipeline, ResizeUsesPlanOwnedCudaTensorAndForwardsMetadata) {
   PipelineObservation::reset();
   Graph graph{"vision-resize-test"};
   const auto source = graph.op<ImageSource>("source");
-  auto resize = graph.op<ResizeOp>(
-      "resize", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto resize = graph.op<ResizeOp>("resize");
   resize.set_params(
       ResizeOpParams{.width = 2, .height = 2, .interpolation = InterpolationMode::kNearest});
   const auto sink = graph.op<ImageSink>("sink");
@@ -337,12 +401,10 @@ TEST(VisionPipeline, ChainsCubicResizeAndCustomCropWithoutStaging) {
   PipelineObservation::reset();
   Graph graph{"vision-chain-test"};
   const auto source = graph.op<ImageSource>("source");
-  auto resize = graph.op<ResizeOp>(
-      "resize", VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
+  auto resize = graph.op<ResizeOp>("resize");
   resize.set_params(
       ResizeOpParams{.width = 4, .height = 4, .interpolation = InterpolationMode::kCubic});
-  auto crop = graph.op<CustomCropOp>(
-      "crop", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto crop = graph.op<CustomCropOp>("crop");
   crop.set_params(CustomCropOpParams{.x = 1, .y = 1, .width = 2, .height = 2});
   const auto sink = graph.op<ImageSink>("sink");
   graph.add_flow(source->output, resize->input);
@@ -396,8 +458,7 @@ TEST(VisionPipeline, CustomCropProcessesTwoChannelInput) {
   PipelineObservation::reset();
   Graph graph{"vision-two-channel-crop-test"};
   const auto source = graph.op<ImageSource>("source", ImageFixture::kTwoChannel);
-  auto crop = graph.op<CustomCropOp>(
-      "crop", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto crop = graph.op<CustomCropOp>("crop");
   crop.set_params(CustomCropOpParams{.x = 1, .y = 1, .width = 2, .height = 2});
   const auto sink = graph.op<ImageSink>("sink", ImageFixture::kTwoChannel);
   graph.add_flow(source->output, crop->input);
@@ -684,19 +745,19 @@ class FullPipelineSource final : public Operator<> {
   std::size_t activation_count_{};
 };
 
+// REQ: COMPILE-077
+// REQ: VISION-001
 TEST(RemapOp, ExactMapSynchronizationCompilesToAlignedExactSelections) {
-  constexpr std::int32_t kMaxOutputWidth = 3;
-  constexpr std::int32_t kMaxOutputHeight = 5;
+  constexpr std::int32_t kOutputWidth = 2;
+  constexpr std::int32_t kOutputHeight = 2;
   constexpr std::uint32_t kMaxBatchSize = 2U;
   Graph graph{"vision-remap-exact-contract-test"};
   const auto source = graph.op<FullPipelineSource>("source");
-  auto remap = graph.op<RemapOp>("remap",
-                                 VisionImageCapacity{.max_width = kMaxOutputWidth,
-                                                     .max_height = kMaxOutputHeight,
-                                                     .max_batch_size = kMaxBatchSize});
+  auto remap = graph.op<RemapOp>("remap");
   remap.set_params(RemapOpParams{
-      .width = 2,
-      .height = 2,
+      .width = kOutputWidth,
+      .height = kOutputHeight,
+      .max_batch_size = kMaxBatchSize,
       .input_interpolation = InterpolationMode::kNearest,
       .map_interpolation = InterpolationMode::kNearest,
       .map_value_mode = RemapMapValueMode::kAbsolute,
@@ -736,8 +797,8 @@ TEST(RemapOp, ExactMapSynchronizationCompilesToAlignedExactSelections) {
       plan.tensor_allocations(), remap_output->id, &TensorAllocationPlanRecord::output);
   ASSERT_NE(remap_allocation, plan.tensor_allocations().end());
   EXPECT_EQ(remap_allocation->bounds.max_byte_span,
-            4U * static_cast<std::size_t>(kMaxOutputWidth) *
-                static_cast<std::size_t>(kMaxOutputHeight) * kMaxBatchSize);
+            4U * static_cast<std::size_t>(kOutputWidth) * static_cast<std::size_t>(kOutputHeight) *
+                kMaxBatchSize);
   ASSERT_EQ(plan.aligned_triggers().size(), 1U);
   const AlignedTriggerPlanRecord& aligned = plan.aligned_triggers().front();
   EXPECT_EQ(aligned.inclusive_window_ns, 0);
@@ -946,8 +1007,7 @@ TEST(RemapOp, LatestModeAdmitsANewerMapWhileReusingThePreviousMap) {
   RemapRefreshObservation::reset();
   Graph graph{"vision-remap-refresh-test"};
   const auto source = graph.op<RemapRefreshSource>("source");
-  auto remap = graph.op<RemapOp>(
-      "remap", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto remap = graph.op<RemapOp>("remap");
   remap.set_params(RemapOpParams{
       .width = 2,
       .height = 2,
@@ -1093,23 +1153,21 @@ TEST(VisionPipeline, ComposesAllCvCudaOperatorsAcrossImageAndDetectionBranches) 
   FullPipelineObservation::reset();
   Graph graph{"vision-full-pipeline-test"};
   const auto source = graph.op<FullPipelineSource>("source");
-  auto resize = graph.op<ResizeOp>(
-      "resize", VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
+  auto resize = graph.op<ResizeOp>("resize");
   resize.set_params(
       ResizeOpParams{.width = 4, .height = 4, .interpolation = InterpolationMode::kNearest});
-  auto crop = graph.op<CustomCropOp>(
-      "crop", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto crop = graph.op<CustomCropOp>("crop");
   crop.set_params(CustomCropOpParams{.x = 1, .y = 1, .width = 2, .height = 2});
-  auto border = graph.op<CopyMakeBorderOp>(
-      "border", VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
-  border.set_params(CopyMakeBorderOpParams{.top = 1,
+  auto border = graph.op<CopyMakeBorderOp>("border");
+  border.set_params(CopyMakeBorderOpParams{.max_width = 4,
+                                           .max_height = 4,
+                                           .top = 1,
                                            .bottom = 1,
                                            .left = 1,
                                            .right = 1,
                                            .border_mode = BorderMode::kConstant,
                                            .border_value = {0.F}});
-  auto remap = graph.op<RemapOp>(
-      "remap", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto remap = graph.op<RemapOp>("remap");
   remap.set_params(RemapOpParams{.width = 2,
                                  .height = 2,
                                  .input_interpolation = InterpolationMode::kNearest,
@@ -1119,26 +1177,23 @@ TEST(VisionPipeline, ComposesAllCvCudaOperatorsAcrossImageAndDetectionBranches) 
                                  .border_mode = BorderMode::kConstant,
                                  .border_value = {0.F},
                                  .map_max_age = 1s});
-  auto convert = graph.op<ConvertToOp>(
-      "convert", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto convert = graph.op<ConvertToOp>("convert");
   convert.set_params(ConvertToOpParams{.output_type = VisionElementType::kF32,
                                        .alpha = 1.0,
                                        .beta = 0.0,
                                        .rounding = RoundingMode::kNearest});
-  auto normalize = graph.op<NormalizeOp>(
-      "normalize", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto normalize = graph.op<NormalizeOp>("normalize");
   normalize.set_params(NormalizeOpParams{.base = {0.F, 10.F, 20.F},
                                          .scale = {1.F},
                                          .global_scale = 1.F,
                                          .shift = 0.F,
                                          .epsilon = 0.F,
                                          .scale_is_stddev = false});
-  auto reformat = graph.op<ReformatOp>(
-      "reformat", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto reformat = graph.op<ReformatOp>("reformat");
   reformat.set_params(ReformatOpParams{.mode = ReformatMode::kInterleavedToPlanar});
-  auto nms =
-      graph.op<NonMaximumSuppressionOp>("nms", NMSCapacity{.max_boxes = 3, .max_batch_size = 1U});
-  nms.set_params(NonMaximumSuppressionOpParams{.score_threshold = 0.F, .iou_threshold = 0.5F});
+  auto nms = graph.op<NonMaximumSuppressionOp>("nms");
+  nms.set_params(
+      NonMaximumSuppressionOpParams{.max_boxes = 3, .score_threshold = 0.F, .iou_threshold = 0.5F});
   const auto image_sink = graph.op<PlanarImageSink>("image-sink");
   const auto mask_sink = graph.op<MaskSink>("mask-sink");
 

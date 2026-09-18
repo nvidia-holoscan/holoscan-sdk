@@ -31,7 +31,7 @@
 
 #include <cuda.h>
 
-#include <holoviz/rhi.hpp>
+#include <holoviz/holoviz.hpp>
 #include <holoviz/text.hpp>
 
 #include "image_compare_test_util.hpp"
@@ -42,8 +42,6 @@
 
 namespace holoviz::text {
 namespace {
-
-namespace rhi = holoviz::rhi;
 
 using test_util::compare_images;
 using test_util::Draw;
@@ -169,7 +167,7 @@ class TextCompareTest : public ::testing::Test {
     return HOLOVIZ_TEST_MONO_TTF;
   }
 
-  rhi::Device device_;
+  Device device_;
   CUstream stream_ = nullptr;
 };
 
@@ -194,10 +192,10 @@ TEST_F(TextCompareTest, FactoryRejectsNullStream) {
 // deliberately tolerant of subpixel placement drift between the two layout
 // paths but fails on missing/garbled/misplaced text.
 constexpr float kBakeSizePx = 32.0F;
-constexpr rhi::Extent2D kCompareExtent{512, 128};
+constexpr Extent2D kCompareExtent{512, 128};
 constexpr Draw kCompareDraws[] = {
     {{.position = {16.0F, 16.0F}, .size_px = kBakeSizePx, .color = 0xFFFFFFFFu},
-     "Hello RHI 0123 !?"},
+     "Hello Viz 0123 !?"},
     {{.position = {16.0F, 72.0F}, .size_px = kBakeSizePx, .color = 0xFF4080FFu},
      "differential {test}"},
 };
@@ -313,7 +311,7 @@ TEST_F(TextCompareTest, MonospaceInkStaysInsideExpectedBox) {
   ASSERT_TRUE(renderer_result.has_value()) << renderer_result.error().message;
   TextRenderer renderer = std::move(*renderer_result);
 
-  const rhi::Extent2D extent{128, 128};
+  const Extent2D extent{128, 128};
   const Draw draws[] = {
       {{.position = {32.0F, 32.0F}, .size_px = kBakeSizePx, .color = 0xFFFFFFFFu}, "H"},
   };
@@ -356,7 +354,7 @@ TEST_F(TextCompareTest, ImGuiRendererRendersVisiblePixels) {
   ASSERT_TRUE(renderer_result.has_value()) << renderer_result.error().message;
   TextRenderer renderer = std::move(*renderer_result);
 
-  const rhi::Extent2D extent{256, 128};
+  const Extent2D extent{256, 128};
   const Draw draws[] = {
       {{.position = {20.0F, 20.0F}, .size_px = 64.0F, .color = 0xFFFFFFFFu}, "Hi"},
   };

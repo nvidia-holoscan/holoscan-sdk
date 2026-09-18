@@ -9,7 +9,6 @@ from ._core import (
     DLDevice,
     DLDeviceType,
     Tensor,
-    hello,
     is_tensor_like,
 )
 
@@ -19,6 +18,5 @@ __all__ = [
     "DLDevice",
     "DLDeviceType",
     "Tensor",
-    "hello",
     "is_tensor_like",
 ]

@@ -39,14 +39,16 @@ struct MoveOnlyGeneratedRoot {
 
 template <>
 consteval SchemaIdentity schema_identity<CopyableGeneratedRoot>() {
-  return SchemaIdentity{.canonical_name = "nvidia.holoscan.test.CopyableGeneratedRoot",
-                        .version = 1};
+  return make_schema_identity(
+      make_schema_family_identity("nvidia.holoscan.test.CopyableGeneratedRoot"),
+      make_flatbuffer_file_identifier("CPGR"));
 }
 
 template <>
 consteval SchemaIdentity schema_identity<MoveOnlyGeneratedRoot>() {
-  return SchemaIdentity{.canonical_name = "nvidia.holoscan.test.MoveOnlyGeneratedRoot",
-                        .version = 1};
+  return make_schema_identity(
+      make_schema_family_identity("nvidia.holoscan.test.MoveOnlyGeneratedRoot"),
+      make_flatbuffer_file_identifier("MOGR"));
 }
 
 namespace {

@@ -18,16 +18,16 @@
 #include <utility>
 #include <vector>
 
-#include <holoviz/imgui/imgui.h>
+#include <holoviz/imgui/vendor/imgui.h>
 
+#include <holoviz/adapter.hpp>
+#include <holoviz/buffer.hpp>
+#include <holoviz/descriptor.hpp>
+#include <holoviz/device.hpp>
+#include <holoviz/image.hpp>
 #include <holoviz/logger.hpp>
-#include <holoviz/rhi/adapter.hpp>
-#include <holoviz/rhi/buffer.hpp>
-#include <holoviz/rhi/descriptor.hpp>
-#include <holoviz/rhi/device.hpp>
-#include <holoviz/rhi/image.hpp>
-#include <holoviz/rhi/pipeline.hpp>
-#include <holoviz/rhi/slang_compiler.hpp>
+#include <holoviz/pipeline.hpp>
+#include <holoviz/slang_compiler.hpp>
 
 #include "text/detail/text_renderer_impl.hpp"
 #include "text/monospace_shader.hpp"
@@ -114,10 +114,9 @@ uint8_t to_drawable_ascii(char byte) {
 /// constants: no buffer uploads, no CUDA stream, no frames-in-flight ring.
 class MonospaceTextRendererImpl final : public TextRendererImpl {
  public:
-  MonospaceTextRendererImpl(rhi::Device& device, rhi::Image atlas_image, rhi::Buffer glyph_table,
-                            rhi::Pipeline pipeline, rhi::Descriptor descriptor,
-                            float bake_font_size_px, float advance_bake_px,
-                            uint32_t vertices_per_glyph, uint32_t max_glyphs)
+  MonospaceTextRendererImpl(Device& device, Image atlas_image, Buffer glyph_table,
+                            Pipeline pipeline, Descriptor descriptor, float bake_font_size_px,
+                            float advance_bake_px, uint32_t vertices_per_glyph, uint32_t max_glyphs)
       : device_(&device),
         atlas_image_(std::move(atlas_image)),
         glyph_table_(std::move(glyph_table)),
@@ -147,9 +146,9 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     return result;
   }
 
-  expected<void> begin_frame([[maybe_unused]] rhi::Extent2D framebuffer_extent,
+  expected<void> begin_frame([[maybe_unused]] Extent2D framebuffer_extent,
                              [[maybe_unused]] uint32_t renderer_slot,
-                             [[maybe_unused]] rhi::SubmitSyncToken slot_last_use) override {
+                             [[maybe_unused]] SubmitSyncToken slot_last_use) override {
     // Nothing per frame touches GPU memory, so the slot and reuse token are deliberately
     // unused.
     if (frame_open_) {
@@ -253,7 +252,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     return {};
   }
 
-  expected<rhi::ExternalSyncToken> end_frame() override {
+  expected<ExternalSyncToken> end_frame() override {
     if (!frame_open_) {
       return make_unexpected(Error{
           .code = ErrorCode::kInvalidState,
@@ -262,7 +261,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     }
     frame_open_ = false;
     // Nothing was uploaded: return the no-op token, which Device::submit() skips.
-    return rhi::ExternalSyncToken{};
+    return ExternalSyncToken{};
   }
 
   expected<void> cancel_frame() override {
@@ -272,7 +271,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     return {};
   }
 
-  expected<void> record(rhi::CommandList& command_list, rhi::Extent2D framebuffer_extent) override {
+  expected<void> record(CommandList& command_list, Extent2D framebuffer_extent) override {
     if (draws_.empty()) {
       return {};  // nothing was drawn this frame
     }
@@ -283,7 +282,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
       });
     }
 
-    const rhi::Rect2D full_extent{0, 0, framebuffer_extent.width, framebuffer_extent.height};
+    const Rect2D full_extent{0, 0, framebuffer_extent.width, framebuffer_extent.height};
     VIZ_FORWARD_ERROR(command_list.set_viewport(full_extent));
     VIZ_FORWARD_ERROR(command_list.set_scissor(full_extent));
     VIZ_FORWARD_ERROR(command_list.bind_pipeline(pipeline_));
@@ -307,11 +306,11 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     uint32_t char_count = 0;
   };
 
-  rhi::Device* device_ = nullptr;
-  rhi::Image atlas_image_;
-  rhi::Buffer glyph_table_;
-  rhi::Pipeline pipeline_;
-  rhi::Descriptor descriptor_;
+  Device* device_ = nullptr;
+  Image atlas_image_;
+  Buffer glyph_table_;
+  Pipeline pipeline_;
+  Descriptor descriptor_;
   float bake_font_size_px_ = 0.0F;
   float advance_bake_px_ = 0.0F;
   // 6 for the two-triangle path; 3 in fill-rectangle mode, where the first
@@ -325,7 +324,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
 
 }  // namespace detail
 
-expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
+expected<TextRenderer> create_monospace_text_renderer(Device& device,
                                                       const MonospaceTextRendererDesc& desc) {
   if (!(desc.atlas_glyph_height_px > 0.0F) || !std::isfinite(desc.atlas_glyph_height_px)) {
     return make_unexpected(Error{
@@ -337,7 +336,7 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
 
   // This renderer packs its whole per-draw payload into a 256-byte push-constant block —
   // NVIDIA's budget, above the 128-byte Vulkan minimum — so validate the assumption up front.
-  VIZ_UNWRAP(rhi::CapabilityReport, capabilities, device.capabilities());
+  VIZ_UNWRAP(CapabilityReport, capabilities, device.capabilities());
   if (capabilities.max_push_data_bytes < sizeof(detail::MonospacePushData)) {
     return make_unexpected(Error{
         .code = ErrorCode::kPushConstantOverflow,
@@ -427,10 +426,10 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
   }
   glyph_table_data[0] = {{advance, font->FontSize, font->Ascent, 0.0F}, {0, 0, 0, 0}};
 
-  const rhi::ImageDesc atlas_image_desc{
+  const ImageDesc atlas_image_desc{
       .extent = {static_cast<uint32_t>(atlas_width), static_cast<uint32_t>(atlas_height)},
-      .format = rhi::Format::kR8G8B8A8Unorm,
-      .usage = rhi::ImageUsage::kSampled,
+      .format = Format::kR8G8B8A8Unorm,
+      .usage = ImageUsage::kSampled,
       .debug_name = "monospace font atlas",
   };
   auto atlas_image = device.create_image(atlas_image_desc);
@@ -444,7 +443,7 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
 
   auto glyph_table = device.create_buffer({
       .size_bytes = sizeof(glyph_table_data),
-      .share = rhi::ShareMode::kPrivate,
+      .share = ShareMode::kPrivate,
       .debug_name = "monospace glyph table",
   });
   if (!glyph_table) {
@@ -459,13 +458,13 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
                               std::span{reinterpret_cast<const std::byte*>(glyph_table_data.data()),
                                         sizeof(glyph_table_data)}));
 
-  VIZ_UNWRAP(rhi::Backend, backend, device.backend());
-  VIZ_UNWRAP(rhi::ShaderBlob,
+  VIZ_UNWRAP(Backend, backend, device.backend());
+  VIZ_UNWRAP(ShaderBlob,
              shader_blob,
-             rhi::compile_slang_shader(backend,
-                                       detail::kMonospaceVertexEntryPoint,
-                                       detail::kMonospaceFragmentEntryPoint,
-                                       detail::kMonospaceSlangSource));
+             compile_slang_shader(backend,
+                                  detail::kMonospaceVertexEntryPoint,
+                                  detail::kMonospaceFragmentEntryPoint,
+                                  detail::kMonospaceSlangSource));
   // Guard the two layout invariants the design leans on: the std140 push block
   // size and the zero-attribute (vertex-buffer-less) input.
   if (shader_blob.push_constant_size != sizeof(detail::MonospacePushData)) {
@@ -487,19 +486,18 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
 
   // Text outputs straight (non-premultiplied) alpha; the BlendState defaults compose
   // premultiplied, so set the factors explicitly (same state as the ImGui pipeline).
-  const rhi::BlendState straight_alpha_blend{
+  const BlendState straight_alpha_blend{
       .enable = true,
-      .src_color = rhi::BlendFactor::kSrcAlpha,
-      .dst_color = rhi::BlendFactor::kOneMinusSrcAlpha,
-      .src_alpha = rhi::BlendFactor::kOne,
-      .dst_alpha = rhi::BlendFactor::kOneMinusSrcAlpha,
+      .src_color = BlendFactor::kSrcAlpha,
+      .dst_color = BlendFactor::kOneMinusSrcAlpha,
+      .src_alpha = BlendFactor::kOne,
+      .dst_alpha = BlendFactor::kOneMinusSrcAlpha,
   };
-  rhi::PipelineDesc pipeline_desc{
+  PipelineDesc pipeline_desc{
       .shader_blob = std::move(shader_blob),
-      .topology = rhi::PrimitiveTopology::kTriangleList,
-      .raster = {.cull = rhi::CullMode::kNone,
-                 .polygon_mode =
-                     fill_rectangle ? rhi::PolygonMode::kFillRectangle : rhi::PolygonMode::kFill},
+      .topology = PrimitiveTopology::kTriangleList,
+      .raster = {.cull = CullMode::kNone,
+                 .polygon_mode = fill_rectangle ? PolygonMode::kFillRectangle : PolygonMode::kFill},
       .depth = {.test = false, .write = false},
       .blend = straight_alpha_blend,
       .debug_name = desc.debug_name != nullptr ? desc.debug_name : "monospace text renderer",

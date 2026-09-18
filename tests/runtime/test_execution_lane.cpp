@@ -23,6 +23,7 @@
 
 #include "core/source_id_internal.hpp"
 #include "runtime/execution_lane.hpp"
+#include "runtime/runtime_callback_context.hpp"
 #include "runtime/runtime_phase_counters.hpp"
 #include "threading/thread_placement_contracts.hpp"
 
@@ -520,6 +521,86 @@ TEST(ExecutionLaneSet, ArchivesCompleteSuccessfulPlacementEvidenceAfterJoin) {
   EXPECT_EQ(archived[1].applied->policy, retained[1].applied->policy);
   EXPECT_EQ(archived[1].wake_mode, retained[1].wake_mode);
   EXPECT_EQ(archived[1].irq_isolation, retained[1].irq_isolation);
+}
+
+// REQ: RUNTIME-054
+TEST(ExecutionLaneSet, ContextOnlyScopesClearAndRestoreEveryIdentityField) {
+  const auto expect_identity = [](const RuntimeCallbackIdentity& expected) {
+    const auto actual = runtime_callback_identity();
+    EXPECT_EQ(actual.context, expected.context);
+    EXPECT_EQ(actual.operator_id, expected.operator_id);
+    EXPECT_EQ(actual.lifecycle_stage, expected.lifecycle_stage);
+    EXPECT_EQ(actual.lifecycle_phase, expected.lifecycle_phase);
+    EXPECT_EQ(actual.source, expected.source);
+    EXPECT_EQ(actual.source_sequence, expected.source_sequence);
+    EXPECT_EQ(actual.tag, expected.tag);
+    EXPECT_EQ(actual.tag_time, expected.tag_time);
+    EXPECT_EQ(actual.reference_time, expected.reference_time);
+    EXPECT_EQ(actual.state_generation, expected.state_generation);
+    EXPECT_EQ(runtime_callback_context_restricted(),
+              expected.context != RuntimeCallbackContext::kNone);
+  };
+  const auto original = runtime_callback_identity();
+  const RuntimeCallbackIdentity owner{
+      .context = RuntimeCallbackContext::kLifecycle,
+      .operator_id = 23U,
+      .lifecycle_stage = LifecycleStage::kStart,
+      .lifecycle_phase = LifecycleTransitionPhase::kRestoreOld,
+      .source = make_source_id(7U),
+      .source_sequence = 41U,
+      .tag = Tag{9U, 3U, 0U},
+      .tag_time = TagTime{77, 2U, 0U},
+      .reference_time = TimePoint{71, ClockId{5U}},
+      .state_generation = 3U,
+  };
+  for (const auto context : {RuntimeCallbackContext::kNone,
+                             RuntimeCallbackContext::kCompute,
+                             RuntimeCallbackContext::kLifecycle,
+                             RuntimeCallbackContext::kDispatcher}) {
+    SCOPED_TRACE(static_cast<unsigned>(context));
+    {
+      const RuntimeCallbackContextScope owner_scope{owner};
+      expect_identity(owner);
+      for (const auto input_context : {RuntimeCallbackContext::kNone,
+                                       RuntimeCallbackContext::kCompute,
+                                       RuntimeCallbackContext::kLifecycle,
+                                       RuntimeCallbackContext::kDispatcher}) {
+        SCOPED_TRACE(static_cast<unsigned>(input_context));
+        auto input = owner;
+        input.context = input_context;
+        auto expected = input;
+        if (expected.context == RuntimeCallbackContext::kNone) {
+          expected.context = context;
+        }
+        try {
+          const RuntimeCallbackContextScope fallback_scope{input, context};
+          input = {};
+          expect_identity(expected);
+          throw std::runtime_error{"unwind callback identity fallback"};
+        } catch (const std::runtime_error&) {
+          expect_identity(owner);
+        }
+      }
+      try {
+        const RuntimeCallbackContextScope context_scope{context};
+        expect_identity(RuntimeCallbackIdentity{.context = context});
+        {
+          auto nested = owner;
+          nested.operator_id = 29U;
+          const auto expected_nested = nested;
+          const RuntimeCallbackContextScope nested_scope{nested};
+          nested = {};
+          expect_identity(expected_nested);
+        }
+        expect_identity(RuntimeCallbackIdentity{.context = context});
+        throw std::runtime_error{"unwind context-only callback scope"};
+      } catch (const std::runtime_error&) {
+        expect_identity(owner);
+      }
+      expect_identity(owner);
+    }
+    expect_identity(original);
+  }
 }
 
 // REQ: RUNTIME-004

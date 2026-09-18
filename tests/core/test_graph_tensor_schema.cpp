@@ -21,7 +21,7 @@
 
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/graph.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "core/graph_compiler_access.hpp"
@@ -50,11 +50,6 @@ struct GraphInvalidSchemaPackage : schema::StringT {
   GraphInvalidSchemaPackage() = default;
 };
 
-// Owning schema aliases with identical wire identity and capacity but distinct local generator
-// provenance. Used to prove package evidence stays out of canonical Graph identity.
-struct GraphSchemaEvidenceFirst : schema::StringT {};
-struct GraphSchemaEvidenceSecond : schema::StringT {};
-
 // Three-field descriptor schema used by Tensor field declaration tests.
 // Representative tests: MultiTensorFieldsRetainCanonicalFieldContracts and
 // MultiTensorFieldsRejectInvalidSelectorsAndUnqualifiedContracts.
@@ -68,16 +63,24 @@ struct MultiTensorMissingFieldIds {};
 struct MultiTensorShortFieldIds {};
 struct MultiTensorOutOfRangeFieldIds {};
 
-// Legacy third-party singular descriptor schema whose traits predate canonical field inventories.
-struct LegacySingularDescriptorSchema {
-  std::shared_ptr<Tensor> tensor;
-};
-
 struct MultiTensorGraphFields {
   static constexpr TensorFieldSelector<MultiTensorGraphSchema> left{1U, 0U};
   static constexpr TensorFieldSelector<MultiTensorGraphSchema> right{3U, 1U};
   static constexpr TensorFieldSelector<MultiTensorGraphSchema> calibration{7U, 2U};
 };
+
+struct GraphMemoryKindParams {
+  MemoryKind memory_kind{MemoryKind::kHost};
+};
+
+HOLOSCAN_PARAM_SCHEMA(GraphMemoryKindParams,
+                      holoscan::param_schema("nvidia.holoscan.test.GraphMemoryKindParams", 1),
+                      holoscan::field<&GraphMemoryKindParams::memory_kind>("memory_kind")
+                          .enum_values({param_enum_value("host", MemoryKind::kHost),
+                                        param_enum_value("pinned_host", MemoryKind::kPinnedHost),
+                                        param_enum_value("cuda_device", MemoryKind::kCudaDevice),
+                                        param_enum_value("cuda_managed", MemoryKind::kCudaManaged)})
+                          .recompile_required());
 
 template <>
 consteval SchemaIdentity schema_identity<GraphSmallCapacitySchema>() {
@@ -100,13 +103,23 @@ consteval SchemaIdentity schema_identity<GraphInvalidSchemaPackage>() {
 }
 
 template <>
-consteval SchemaIdentity schema_identity<GraphSchemaEvidenceFirst>() {
-  return schema_identity<schema::StringT>();
+consteval SchemaFamilyIdentity schema_family_identity<GraphSmallCapacitySchema>() {
+  return schema_family_identity<schema::StringT>();
 }
 
 template <>
-consteval SchemaIdentity schema_identity<GraphSchemaEvidenceSecond>() {
-  return schema_identity<schema::StringT>();
+consteval SchemaFamilyIdentity schema_family_identity<GraphLargeCapacitySchema>() {
+  return schema_family_identity<schema::StringT>();
+}
+
+template <>
+consteval SchemaFamilyIdentity schema_family_identity<GraphOverflowCapacitySchema>() {
+  return schema_family_identity<schema::StringT>();
+}
+
+template <>
+consteval SchemaFamilyIdentity schema_family_identity<GraphInvalidSchemaPackage>() {
+  return schema_family_identity<schema::StringT>();
 }
 
 template <>
@@ -115,15 +128,10 @@ consteval SchemaIdentity schema_identity<MultiTensorGraphSchema>() {
 }
 
 template <>
-consteval SchemaIdentity schema_identity<LegacySingularDescriptorSchema>() {
-  return schema_identity<schema::ImageT>();
-}
-
-template <>
 struct DescriptorTensorSchemaNativeTraits<MultiTensorGraphSchema> {
   using root_type = schema::Image;
   static constexpr std::size_t metadata_capacity =
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<root_type>;
+      schema::flatbuffer_descriptor_metadata_capacity_v<root_type>;
   static constexpr std::size_t tensor_count = 3U;
   static constexpr std::array<std::uint16_t, 3U> tensor_field_ids{1U, 3U, 7U};
 
@@ -177,32 +185,10 @@ struct DescriptorTensorSchemaNativeTraits<MultiTensorOutOfRangeFieldIds> {
   }
 };
 
-template <>
-struct DescriptorTensorSchemaNativeTraits<LegacySingularDescriptorSchema> {
-  using root_type = schema::Image;
-  static constexpr std::size_t metadata_capacity =
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<root_type>;
-
-  [[nodiscard]] static const Tensor* tensor(const LegacySingularDescriptorSchema& value) noexcept {
-    return value.tensor.get();
-  }
-};
-
-namespace detail {
-
-template <>
-[[nodiscard]] const RuntimePortTypeOps*
-runtime_port_type_ops<LegacySingularDescriptorSchema>() noexcept {
-  return runtime_port_type_ops<schema::ImageT>();
-}
-
-}  // namespace detail
-
 static_assert(detail::HasDescriptorTensorSchemaNativeTraits<MultiTensorGraphSchema>);
 static_assert(!detail::HasDescriptorTensorSchemaNativeTraits<MultiTensorMissingFieldIds>);
 static_assert(!detail::HasDescriptorTensorSchemaNativeTraits<MultiTensorShortFieldIds>);
 static_assert(!detail::HasDescriptorTensorSchemaNativeTraits<MultiTensorOutOfRangeFieldIds>);
-static_assert(detail::HasDescriptorTensorSchemaNativeTraits<LegacySingularDescriptorSchema>);
 
 template <typename ContractT, typename SelectorT>
 concept AcceptsDescriptorTopicField =
@@ -239,21 +225,13 @@ struct GeneratedSchemaNativeTraits<GraphInvalidSchemaPackage> {
 };
 
 template <>
-struct GeneratedSchemaNativeTraits<GraphSchemaEvidenceFirst> {
-  using root_type = schema::String;
-  static constexpr std::size_t max_serialized_size =
-      GeneratedSchemaNativeTraits<schema::StringT>::max_serialized_size;
-};
-
-template <>
-struct GeneratedSchemaNativeTraits<GraphSchemaEvidenceSecond>
-    : GeneratedSchemaNativeTraits<GraphSchemaEvidenceFirst> {};
-
-template <>
 const SchemaPackageDescriptor<GraphSmallCapacitySchema>&
 schema_package<GraphSmallCapacitySchema>() noexcept {
   static const SchemaPackageDescriptor<GraphSmallCapacitySchema> package{
-      schema_identity<GraphSmallCapacitySchema>(), {}, {}, nullptr, 64U, nullptr, nullptr};
+      schema_identity<GraphSmallCapacitySchema>(),
+      {},
+      SchemaCodecCapacity{.max_serialized_size = 64U},
+      {}};
   return package;
 }
 
@@ -261,7 +239,10 @@ template <>
 const SchemaPackageDescriptor<GraphLargeCapacitySchema>&
 schema_package<GraphLargeCapacitySchema>() noexcept {
   static const SchemaPackageDescriptor<GraphLargeCapacitySchema> package{
-      schema_identity<GraphLargeCapacitySchema>(), {}, {}, nullptr, 128U, nullptr, nullptr};
+      schema_identity<GraphLargeCapacitySchema>(),
+      {},
+      SchemaCodecCapacity{.max_serialized_size = 128U},
+      {}};
   return package;
 }
 
@@ -271,53 +252,22 @@ schema_package<GraphOverflowCapacitySchema>() noexcept {
   static const SchemaPackageDescriptor<GraphOverflowCapacitySchema> package{
       schema_identity<GraphOverflowCapacitySchema>(),
       {},
-      {},
-      nullptr,
-      GeneratedSchemaNativeTraits<GraphOverflowCapacitySchema>::max_serialized_size,
-      nullptr,
-      nullptr};
+      SchemaCodecCapacity{
+          .max_serialized_size =
+              GeneratedSchemaNativeTraits<GraphOverflowCapacitySchema>::max_serialized_size},
+      {}};
   return package;
 }
 
 template <>
 const SchemaPackageDescriptor<GraphInvalidSchemaPackage>&
 schema_package<GraphInvalidSchemaPackage>() noexcept {
-  static const SchemaPackageDescriptor<GraphInvalidSchemaPackage> package = [] {
-    SchemaPackageEvidence evidence = schema_package<schema::StringT>().evidence();
-    evidence.flatc_build = {};
-    return schema::make_flatbuffer_native_package<GraphInvalidSchemaPackage,
-                                                  schema::String,
-                                                  schema::StringBinarySchema>(
-        schema_identity<GraphInvalidSchemaPackage>(), evidence);
-  }();
-  return package;
-}
-
-template <>
-const SchemaPackageDescriptor<GraphSchemaEvidenceFirst>&
-schema_package<GraphSchemaEvidenceFirst>() noexcept {
-  static const SchemaPackageDescriptor<GraphSchemaEvidenceFirst> package = [] {
-    SchemaPackageEvidence evidence = schema_package<schema::StringT>().evidence();
-    evidence.flatc_build = "flatc graph-evidence-first";
-    return schema::make_flatbuffer_native_package<GraphSchemaEvidenceFirst,
-                                                  schema::String,
-                                                  schema::StringBinarySchema>(
-        schema_identity<GraphSchemaEvidenceFirst>(), evidence);
-  }();
-  return package;
-}
-
-template <>
-const SchemaPackageDescriptor<GraphSchemaEvidenceSecond>&
-schema_package<GraphSchemaEvidenceSecond>() noexcept {
-  static const SchemaPackageDescriptor<GraphSchemaEvidenceSecond> package = [] {
-    SchemaPackageEvidence evidence = schema_package<schema::StringT>().evidence();
-    evidence.flatc_build = "flatc graph-evidence-second";
-    return schema::make_flatbuffer_native_package<GraphSchemaEvidenceSecond,
-                                                  schema::String,
-                                                  schema::StringBinarySchema>(
-        schema_identity<GraphSchemaEvidenceSecond>(), evidence);
-  }();
+  static const SchemaPackageDescriptor<GraphInvalidSchemaPackage> package{
+      schema_identity<GraphInvalidSchemaPackage>(),
+      {},
+      SchemaCodecCapacity{.max_serialized_size = 64U},
+      SchemaTransportProfile{},
+  };
   return package;
 }
 
@@ -328,7 +278,7 @@ const RuntimePortTypeOps* runtime_port_type_ops<MultiTensorGraphSchema>() noexce
   static const RuntimePortTypeOps ops = schema::make_descriptor_tensor_port_type_ops<
       MultiTensorGraphSchema,
       schema::Image,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>(
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>>(
       [](void*) noexcept -> expected<void, Error> {
         return make_unexpected(Error{ErrorCode::kNotImplemented});
       },
@@ -371,6 +321,27 @@ class DerivedTensorOutputOp final : public Operator<> {
 
  private:
   std::uint64_t bytes_;
+};
+
+class DerivedMemoryKindOutputOp final : public Operator<GraphMemoryKindParams> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .produces_tensor(
+            TensorOutputSpec{
+                .representation = {.rank = 1U},
+                .bounds = tensor_bounds(4096U),
+                .storage = TensorOutputStorage::kRuntimePool,
+            },
+            TensorOutputDerivations{
+                .memory_kind =
+                    parameter_memory_kind(param_ref<&GraphMemoryKindParams::memory_kind>()),
+            });
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<Tensor> output;
 };
 
 // Authors field-scoped derived capacities for a two-Tensor descriptor schema.
@@ -886,16 +857,6 @@ class InvalidSchemaPackageOp : public Operator<> {
   Output<GraphInvalidSchemaPackage> output;
 };
 
-// Declares one owning schema output whose local package provenance varies by Payload type.
-// Representative test: SchemaPackageEvidenceDoesNotEnterCanonicalGraphIdentity.
-template <typename Payload>
-class SchemaEvidenceOutputOp final : public Operator<> {
- public:
-  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
-  expected<void, Error> compute(ExecutionContext&) override { return {}; }
-  Output<Payload> output;
-};
-
 // Carries GraphSchemaPayload alongside a Tensor sidecar using an inline-host emit policy.
 // Exercises schema-carrier payload-option normalization through a typed schema port.
 // Representative test: TensorBearingSchemaCarrierPreservesExactPayloadOptions.
@@ -1160,6 +1121,7 @@ TEST(RuntimePortBindingAccess, TensorShapeRequestsRejectUnpinnedFieldDtype) {
 // Graph topology:
 //   holomq://schema --> imported schema port
 //   exported POD port --> holomq://pod
+// REQ: GRAPH-034
 TEST(GraphComposition, SnapshotsDeepOwnNamesSchemaAndPodIdentityAfterGraphDestruction) {
   GraphView saved;
   {
@@ -1206,9 +1168,9 @@ TEST(GraphComposition, ExternalSchemaCapacityParticipatesInCanonicalHash) {
   ASSERT_TRUE(large_view.external_topics().front().payload_identity.schema);
   // GTest's fatal assertions establish engagement, but clang-tidy does not model that macro edge.
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-  EXPECT_EQ(small_view.external_topics().front().payload_identity.schema->id,
+  EXPECT_EQ(small_view.external_topics().front().payload_identity.schema->family_id,
             // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-            large_view.external_topics().front().payload_identity.schema->id);
+            large_view.external_topics().front().payload_identity.schema->family_id);
   EXPECT_EQ(small_view.external_topics().front().serialized_payload_capacity_bytes, 64U);
   EXPECT_EQ(large_view.external_topics().front().serialized_payload_capacity_bytes, 128U);
   EXPECT_NE(small_view.identity().hash, large_view.identity().hash);
@@ -1397,78 +1359,6 @@ TEST(GraphComposition, ExternalSingularDescriptorTensorUsesTheSameFieldInventory
 
 // REQ: GRAPH-012
 // REQ: EXTERNAL-010
-// Graph topology:
-//   holomq://legacy-image --> imported singular descriptor port
-TEST(GraphComposition, ExternalLegacySingularDescriptorAcceptsCanonicalFieldIdZero) {
-  constexpr TensorFieldSelector<LegacySingularDescriptorSchema> kImageData{0U, 0U};
-  DescriptorTensorTopicContract<LegacySingularDescriptorSchema> tensors;
-  tensors.field(kImageData,
-                TensorBoundaryContract{
-                    .representation = {.memory_kind = MemoryKind::kHost,
-                                       .dtype = DLDataType{kDLUInt, 8U, 1U},
-                                       .rank = 3U},
-                    .bounds = TensorBounds{.max_rank = 3U, .max_byte_span = 4096U},
-                });
-
-  // Key setup: use the legacy singular descriptor schema's canonical field ID zero, which must
-  // remain a valid authored selector rather than being mistaken for an unset sentinel.
-  Graph graph;
-  (void)graph.import_topic<LegacySingularDescriptorSchema>(
-      "holomq://legacy-image", TopicOptions{}, std::move(tensors));
-
-  // Key assertion: field ID zero is preserved and the singular contract is also projected into
-  // the legacy port layout, allocation, and payload-option records.
-  const GraphView view = graph.view();
-  ASSERT_EQ(view.external_topics().size(), 1U);
-  const auto& topic = view.external_topics().front();
-  ASSERT_EQ(topic.tensor_fields.size(), 1U);
-  EXPECT_EQ(topic.tensor_fields.front().field_id, kImageData.field_id);
-  EXPECT_EQ(topic.tensor_fields.front().tensor_index, 0U);
-  EXPECT_EQ(topic.tensor_fields.front().tensor.max_byte_span, 4096U);
-  const auto& port = view.ports().front();
-  EXPECT_TRUE(port.setup.tensor_fields.empty());
-  ASSERT_TRUE(port.setup.tensor_layout);
-  EXPECT_EQ(port.setup.tensor_layout->memory_kind, MemoryKind::kHost);
-  EXPECT_EQ(port.setup.tensor_layout->rank, 3U);
-  ASSERT_TRUE(port.setup.tensor_allocation);
-  EXPECT_EQ(port.setup.tensor_allocation->max_rank, 3U);
-  EXPECT_EQ(port.setup.tensor_allocation->max_byte_span, 4096U);
-  ASSERT_TRUE(port.setup.payload_options);
-  EXPECT_EQ(port.setup.payload_options->max_tensor_byte_span, 4096U);
-}
-
-// REQ: GRAPH-012
-// REQ: EXTERNAL-010
-// Graph topology:
-//   holomq://legacy-image-invalid -X-> imported singular descriptor port
-TEST(GraphComposition, ExternalLegacySingularDescriptorRejectsNoncanonicalFieldId) {
-  constexpr TensorFieldSelector<LegacySingularDescriptorSchema> kNoncanonicalImageData{9U, 0U};
-  DescriptorTensorTopicContract<LegacySingularDescriptorSchema> tensors;
-  tensors.field(kNoncanonicalImageData,
-                TensorBoundaryContract{
-                    .representation = {.memory_kind = MemoryKind::kHost,
-                                       .dtype = DLDataType{kDLUInt, 8U, 1U},
-                                       .rank = 3U},
-                    .bounds = TensorBounds{.max_rank = 3U, .max_byte_span = 4096U},
-                });
-
-  // Key setup: present a noncanonical selector for a legacy singular descriptor schema whose
-  // only valid Tensor field is ID zero.
-  Graph graph;
-  const Error error = graph_error_from([&] {
-    (void)graph.import_topic<LegacySingularDescriptorSchema>(
-        "holomq://legacy-image-invalid", TopicOptions{}, std::move(tensors));
-  });
-
-  // Key assertion: authoring rejects the exact field/index mismatch without mutating graph state.
-  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
-  EXPECT_EQ(error.message,
-            "GRAPH_DESCRIPTOR_TENSOR_TOPIC_SELECTOR_INVALID (field_id=9, tensor_index=0)");
-  EXPECT_TRUE(graph.view().external_topics().empty());
-}
-
-// REQ: GRAPH-012
-// REQ: EXTERNAL-010
 // Graph topologies:
 //   holomq://missing -X-> incomplete imported descriptor port
 //   duplicate exported descriptor port -X-> holomq://duplicate
@@ -1548,7 +1438,7 @@ TEST(GraphComposition, CommonTensorContractsNormalizeIntoOwnedPortRecords) {
         });
   });
   EXPECT_EQ(conflict.code, ErrorCode::kIncompatible);
-  EXPECT_EQ(conflict.message, "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT");
+  EXPECT_TRUE(conflict.message.starts_with("GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT"));
   EXPECT_EQ(graph.view().identity().hash, accepted_hash);
   EXPECT_TRUE(flow.graph_valid());
 }
@@ -1595,6 +1485,7 @@ TEST(GraphComposition, TensorLogicalBoundsAcceptContiguousEvidenceAndRejectIncom
 
 // REQ: GRAPH-006
 // REQ: GRAPH-012
+// REQ: GRAPH-039
 //   producer(TensorOp) --[output→boundary.input()]--> holomq://tensor-export
 //   Boundary sets inline-host emit policy; conflicting producer policy is rejected.
 TEST(GraphComposition, TensorPayloadPolicyIsNormalizedAcrossProducerAndBoundary) {
@@ -1635,7 +1526,11 @@ TEST(GraphComposition, TensorPayloadPolicyIsNormalizedAcrossProducerAndBoundary)
   const Error conflict =
       graph_error_from([&] { graph.configure(producer->output).payload_options(conflicting); });
   EXPECT_EQ(conflict.code, ErrorCode::kIncompatible);
-  EXPECT_EQ(conflict.message, "GRAPH_TENSOR_PAYLOAD_POLICY_CONFLICT");
+  EXPECT_TRUE(conflict.message.starts_with("GRAPH_TENSOR_PAYLOAD_POLICY_CONFLICT"));
+  EXPECT_NE(conflict.message.find("provided="), std::string::npos);
+  EXPECT_NE(conflict.message.find("required="), std::string::npos);
+  EXPECT_EQ(conflict.message.find("source spec="), std::string::npos);
+  EXPECT_EQ(conflict.message.find("target spec="), std::string::npos);
   const GraphView after_conflict = graph.view();
   ASSERT_TRUE(after_conflict.edges()[0].effective_tensor_payload);
   EXPECT_EQ(after_conflict.edges()[0].effective_tensor_payload.value().interface_tensor_emit_policy,
@@ -1737,6 +1632,7 @@ TEST(GraphComposition, TensorLayoutMutationRecomputesEdgesAndRejectsNonTensorMut
 //   producer(TensorOp) --[output→input]--> consumer(TensorPassOp)
 //   Conflicting layout on consumer input (memory/dtype/rank/strides) is rejected atomically; the
 //   accepted graph identity and edge count are unchanged after the rejection.
+// REQ: GRAPH-039
 TEST(GraphComposition, TensorEdgeLayoutsRejectRepresentationConflictsAtomically) {
   constexpr std::array bounded_axes{
       TensorAxisBounds{.max_extent = 16U, .max_abs_stride_bytes = 1U}};
@@ -1772,7 +1668,11 @@ TEST(GraphComposition, TensorEdgeLayoutsRejectRepresentationConflictsAtomically)
     // Key assertion: conflicting layout is rejected with GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT
     //                and the graph identity is unchanged after the failed mutation.
     EXPECT_EQ(mutation_error.code, ErrorCode::kIncompatible);
-    EXPECT_EQ(mutation_error.message, "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT");
+    EXPECT_TRUE(mutation_error.message.starts_with("GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT"));
+    EXPECT_NE(mutation_error.message.find("producer.output"), std::string::npos);
+    EXPECT_NE(mutation_error.message.find("consumer.input"), std::string::npos);
+    EXPECT_NE(mutation_error.message.find("source spec=graph override, target spec=graph override"),
+              std::string::npos);
     EXPECT_EQ(graph.view().identity().hash, accepted_identity.hash);
     EXPECT_TRUE(flow.graph_valid());
 
@@ -1785,7 +1685,11 @@ TEST(GraphComposition, TensorEdgeLayoutsRejectRepresentationConflictsAtomically)
     const Error flow_error = graph_error_from(
         [&] { (void)rejected.add_flow(rejected_producer->output, rejected_consumer->input); });
     EXPECT_EQ(flow_error.code, ErrorCode::kIncompatible);
-    EXPECT_EQ(flow_error.message, "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT");
+    EXPECT_NE(flow_error.message.find("GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT"), std::string::npos);
+    EXPECT_NE(flow_error.message.find("producer.output"), std::string::npos) << flow_error.message;
+    EXPECT_NE(flow_error.message.find("consumer.input"), std::string::npos) << flow_error.message;
+    EXPECT_NE(flow_error.message.find("provided"), std::string::npos) << flow_error.message;
+    EXPECT_NE(flow_error.message.find("required"), std::string::npos) << flow_error.message;
     const GraphView after_flow = rejected.view();
     EXPECT_EQ(after_flow.identity().hash, before_flow.hash);
     EXPECT_TRUE(after_flow.edges().empty());
@@ -1828,7 +1732,7 @@ TEST(GraphComposition, TensorEdgesRejectProducerBoundsAboveConsumerRequirements)
     const Error error =
         graph_error_from([&] { (void)graph.add_flow(producer->output, consumer->input); });
     EXPECT_EQ(error.code, ErrorCode::kIncompatible);
-    EXPECT_EQ(error.message, "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT");
+    EXPECT_TRUE(error.message.starts_with("GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT"));
     EXPECT_TRUE(graph.view().edges().empty());
   };
   const TensorRepresentation rank_one{
@@ -1914,34 +1818,16 @@ TEST(GraphComposition, TensorEdgesRejectProducerBoundsAboveConsumerRequirements)
 // REQ: CHAN-075
 //   invalid(InvalidSchemaPackageOp) --X [package validation]--> graph admission
 TEST(GraphComposition, RejectsInvalidGeneratedPackageDuringOperatorSetup) {
-  // Key setup: the operator's generated owning type advertises an otherwise valid String package
-  // whose required flatc-build provenance is deliberately absent.
+  // Key setup: the operator's generated owning type advertises an incomplete String codec.
   Graph graph;
   const Error error = graph_error_from([&] { (void)graph.op<InvalidSchemaPackageOp>("invalid"); });
 
   // Key assertion: setup returns the precise package validation error and publishes no vertex.
   EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
-  EXPECT_EQ(error.message, "generated schema package evidence is incomplete");
+  EXPECT_TRUE(error.message.starts_with("generated schema codec/profile contract is invalid"));
+  EXPECT_NE(error.message.find("operator=invalid"), std::string::npos);
   EXPECT_TRUE(graph.view().vertices().empty());
   EXPECT_TRUE(graph.view().ports().empty());
-}
-
-// Local package provenance is diagnostic-only and must not alter rendezvous identity.
-//
-//   source(SchemaEvidenceOutputOp<First>)     (first graph)
-//   source(SchemaEvidenceOutputOp<Second>)    (second graph)
-//
-// REQ: CHAN-121
-TEST(GraphComposition, SchemaPackageEvidenceDoesNotEnterCanonicalGraphIdentity) {
-  // Key setup: author structurally identical graphs whose schema packages differ only in the
-  // locally reported flatc build string.
-  Graph first{"schema-evidence-identity"};
-  (void)first.op<SchemaEvidenceOutputOp<GraphSchemaEvidenceFirst>>("source");
-  Graph second{"schema-evidence-identity"};
-  (void)second.op<SchemaEvidenceOutputOp<GraphSchemaEvidenceSecond>>("source");
-
-  // Key assertion: diagnostic package provenance does not perturb canonical Graph identity.
-  EXPECT_EQ(first.view().identity().hash, second.view().identity().hash);
 }
 
 // REQ: CHAN-099
@@ -1969,7 +1855,7 @@ TEST(GraphComposition, DescriptorTensorImageComposesAsTypedGraphFlow) {
       ADD_FAILURE() << "typed Image port lost its schema identity";
       continue;
     }
-    EXPECT_EQ(identity->id, schema_identity<schema::ImageT>().id);
+    EXPECT_EQ(identity->family_id, schema_identity<schema::ImageT>().family_id);
   }
   EXPECT_TRUE(flow.graph_valid());
 }
@@ -2198,6 +2084,29 @@ TEST(GraphComposition, MultiTensorAggregateContractsCanonicalizeAuthoredOrder) {
   EXPECT_TRUE(flow.graph_valid());
 }
 
+// REQ: GRAPH-039
+//   producer(MultiTensorContractPassOp) --[rank-0 calibration]--X
+//       consumer(MultiTensorAggregateContractPassOp) expects rank-1 calibration.
+TEST(GraphComposition, TensorFieldConflictDoesNotClaimPortContractProvenance) {
+  Graph graph;
+  auto producer = graph.op<MultiTensorContractPassOp>("producer");
+  auto consumer = graph.op<MultiTensorAggregateContractPassOp>("consumer");
+  const auto before = graph.view().identity();
+
+  const Error conflict =
+      graph_error_from([&] { (void)graph.add_flow(producer->output, consumer->input); });
+
+  EXPECT_EQ(conflict.code, ErrorCode::kIncompatible);
+  EXPECT_TRUE(conflict.message.starts_with("GRAPH_TENSOR_FIELD_LAYOUT_EDGE_CONFLICT"));
+  EXPECT_NE(conflict.message.find("producer.output"), std::string::npos);
+  EXPECT_NE(conflict.message.find("consumer.input"), std::string::npos);
+  EXPECT_NE(conflict.message.find("field[7].tensor[2].rank"), std::string::npos);
+  EXPECT_EQ(conflict.message.find("source spec="), std::string::npos);
+  EXPECT_EQ(conflict.message.find("target spec="), std::string::npos);
+  EXPECT_EQ(graph.view().identity().hash, before.hash);
+  EXPECT_TRUE(graph.view().edges().empty());
+}
+
 struct InvalidMultiTensorDeclarationCase {
   InvalidMultiTensorDeclarationKind kind;
   const char* name;
@@ -2400,8 +2309,8 @@ TEST(TensorOperatorSpec, DescriptorOutputPreservesSchemaOptionsAcrossContractAut
   ASSERT_TRUE(metadata.payload_options->schema);
   EXPECT_EQ(metadata.payload_options->schema->canonical_name,
             schema_identity<GraphSchemaPayload>().canonical_name);
-  EXPECT_EQ(metadata.payload_options->schema->version,
-            schema_identity<GraphSchemaPayload>().version);
+  EXPECT_EQ(metadata.payload_options->schema->compatibility_epoch,
+            schema_identity<GraphSchemaPayload>().compatibility_epoch);
 }
 
 TEST(TensorOperatorSpec, DescriptorOutputCombinesSchemaOptionsWithContractTransferPolicy) {
@@ -2507,6 +2416,29 @@ TEST(GraphComposition, TensorConfiguratorPreservesDerivedAllocationForPassThroug
   ASSERT_TRUE(after.ports()[0].graph_override.tensor_contract->transfer);
   EXPECT_EQ(after.ports()[0].graph_override.tensor_contract->transfer->max_staging_byte_span, 512U);
   EXPECT_FALSE(after.ports()[0].graph_override.tensor_allocation);
+}
+
+// REQ: COMPILE-076
+// Graph topology:
+//   source (isolated Parameter-derived memory-kind output)
+TEST(GraphComposition, TensorConfiguratorCannotReplaceDerivedMemoryKind) {
+  Graph graph{"derived-memory-kind-override"};
+  const auto source = graph.op<DerivedMemoryKindOutputOp>("source");
+
+  const Error error = graph_error_from([&] {
+    graph.configure(source->output)
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost},
+            .storage = TensorOutputStorage::kPassThrough,
+        });
+  });
+
+  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(error.message, "GRAPH_TENSOR_MEMORY_KIND_SOURCE_CONFLICT");
+  const GraphView view = graph.view();
+  ASSERT_EQ(view.ports().size(), 1U);
+  EXPECT_TRUE(view.ports().front().setup.tensor_memory_kind_expression);
+  EXPECT_FALSE(view.ports().front().graph_override.tensor_contract);
 }
 
 // REQ: COMPILE-067
@@ -2665,8 +2597,8 @@ TEST(GraphComposition, CommonContractTightensSingularDescriptorAllocation) {
   EXPECT_EQ(source->graph_override.tensor_allocation->max_rank, 2U);
   EXPECT_EQ(source->graph_override.tensor_allocation->max_byte_span, 2048U);
   EXPECT_EQ(source->graph_override.payload_options->max_tensor_byte_span, 1024U);
-  EXPECT_EQ(source->graph_override.payload_options->schema->id,
-            schema_identity<schema::ImageT>().id);
+  EXPECT_EQ(source->graph_override.payload_options->schema->family_id,
+            schema_identity<schema::ImageT>().family_id);
   EXPECT_TRUE(flow.graph_valid());
 }
 

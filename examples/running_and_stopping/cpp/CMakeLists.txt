@@ -24,5 +24,5 @@ endif()
 
 install(TARGETS running_and_stopping
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/running_and_stopping/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

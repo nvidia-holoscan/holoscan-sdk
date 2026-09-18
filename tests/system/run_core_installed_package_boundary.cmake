@@ -22,8 +22,8 @@ if(NOT HOLOSCAN_EXPECT_SHARED)
 endif()
 set(sdk_build_command
     "${CMAKE_COMMAND}" --build "${HOLOSCAN_BUILD_DIR}" --target ${sdk_build_targets} --parallel 4)
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND sdk_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(COMMAND ${sdk_build_command} RESULT_VARIABLE sdk_build_result)
 if(NOT sdk_build_result EQUAL 0)
@@ -35,15 +35,15 @@ foreach(component IN ITEMS
         holoscan-dependencies
         iceoryx2-lib
         dev
-        holomq
+        holoscan-holomq
         holoscan-core
         holoscan-sensor-io)
     set(install_command
         "${CMAKE_COMMAND}" --install "${HOLOSCAN_BUILD_DIR}"
         --prefix "${install_prefix}"
         --component "${component}")
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND install_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(COMMAND ${install_command} RESULT_VARIABLE install_result)
     if(NOT install_result EQUAL 0)

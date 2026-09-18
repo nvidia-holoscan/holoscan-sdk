@@ -30,8 +30,8 @@
 #include <holoscan/memory/allocator.hpp>
 #include <holoscan/memory/unbounded_allocator.hpp>
 #include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
 #include <holoscan/schema/inline_flatbuffer_payload.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/image_metadata.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 
@@ -47,7 +47,6 @@
 namespace {
 
 using ImuPayload = holoscan::schema::InlineFlatBufferPayloadFor<holoscan::schema::Imu>;
-using ImagePayload = holoscan::schema::InlineFlatBufferPayloadFor<holoscan::schema::Image>;
 using DescriptorBackedImagePayload =
     holoscan::schema::DescriptorFlatBufferPayloadFor<holoscan::schema::Image>;
 using holoscan::benchmarking::benchmark_cpu;
@@ -144,14 +143,17 @@ struct HoloMQSchemaBufferFixture {
   const holoscan::schema::Quaternionf orientation{0.0F, 0.0F, 0.0F, 1.0F};
   const holoscan::schema::Vector3f angular_velocity{0.1F, 0.2F, 0.3F};
   const holoscan::schema::Vector3f linear_acceleration{9.8F, 0.0F, -0.1F};
-  builder.Finish(holoscan::schema::CreateImu(
-      builder, header, &orientation, &angular_velocity, &linear_acceleration));
+  holoscan::schema::FinishImuBuffer(
+      builder,
+      holoscan::schema::CreateImu(
+          builder, header, &orientation, &angular_velocity, &linear_acceleration));
   return builder;
 }
 
 [[nodiscard]] flatbuffers::FlatBufferBuilder make_time_builder() {
   flatbuffers::FlatBufferBuilder builder;
-  builder.Finish(holoscan::schema::CreateTime(builder, 123456789, 123456799));
+  holoscan::schema::FinishTimeBuffer(builder,
+                                     holoscan::schema::CreateTime(builder, 123456789, 123456799));
   return builder;
 }
 
@@ -175,9 +177,9 @@ struct TimeProcessLocalFrame {
       holoscan::schema_identity<holoscan::schema::TimeT>();
   return {
       .canonical_name = std::string{kIdentity.canonical_name},
-      .version = kIdentity.version,
-      .schema_sha256 = kIdentity.schema_sha256,
-      .id = kIdentity.id,
+      .compatibility_epoch = kIdentity.compatibility_epoch,
+      .family_id = kIdentity.family_id,
+      .file_identifier = kIdentity.file_identifier,
   };
 }
 
@@ -313,7 +315,7 @@ void run_channel_schema_concurrent_publisher_send(benchmark::State& state) {
           break;
         }
         received_any = true;
-        if (received->payload_size != frame->canonical_size ||
+        if (received->payload_size != frame->frame().size() ||
             received->metadata.byte_size != frame->canonical_size ||
             received->metadata.payload_kind != holoscan::PayloadKind::kSerializedBytes ||
             !holoscan::channel_internal::decode_schema_envelope(
@@ -424,26 +426,6 @@ void run_channel_schema_concurrent_publisher_send(benchmark::State& state) {
   return holoscan::Tensor(std::move(context));
 }
 
-[[nodiscard]] ImagePayload make_image_metadata_payload() {
-  const holoscan::Tensor tensor = make_strided_cpu_tensor_3x2();
-  const holoscan::schema::ImageMetadataOptions metadata_options{
-      .height = 3,
-      .width = 2,
-      .encoding = holoscan::schema::ImageEncoding_MONO32F,
-      .capture_timestamp_ns = 987654321,
-      .frame_id = "camera_frame"};
-  auto metadata = holoscan::schema::build_image_metadata(tensor, metadata_options);
-  if (!metadata) {
-    return {};
-  }
-  auto payload = ImagePayload::copy_from(
-      std::span<const std::byte>(metadata->data(), metadata->size()), kBenchmarkEndpointGeneration);
-  if (!payload) {
-    return {};
-  }
-  return payload.value();
-}
-
 [[nodiscard]] std::vector<std::byte> make_image_metadata_bytes(
     const holoscan::Tensor& tensor, const char* const frame_id, const std::int32_t height = 3,
     const std::int32_t width = 2,
@@ -500,7 +482,7 @@ template <typename Publisher>
       .process_id = benchmark_process_id(),
       .sidecar_token = 0x7000U + sequence,
       .generation = 0x9000U + sequence,
-      .schema_id = holoscan::schema_identity<holoscan::schema::Tensor>().id,
+      .schema_id = holoscan::schema_identity<holoscan::schema::Tensor>().family_id,
       .sequence = sequence,
       .byte_size = static_cast<std::uint64_t>(tensor.nbytes()),
   };
@@ -520,9 +502,11 @@ template <typename Publisher>
   }
   // The descriptor is fabricated for the current benchmark slice. It measures metadata + descriptor
   // transport only; no TensorSidecarStore record is minted or resolved yet.
+  const auto payload_descriptor =
+      holoscan::payload_descriptor_from_descriptor(make_tensor_data_descriptor(tensor));
   auto payload = DescriptorBackedImagePayload::copy_from(
       std::span<const std::byte>(metadata->data(), metadata->size()),
-      make_tensor_data_descriptor(tensor),
+      payload_descriptor,
       kBenchmarkEndpointGeneration);
   if (!payload) {
     return {};
@@ -581,7 +565,7 @@ template <typename Publisher>
 
   const holoscan::PayloadDescriptor descriptor{
       .payload_kind = holoscan::ChannelPayloadKind::kBufferHandle,
-      .schema_id = holoscan::schema_identity<holoscan::schema::Image>().id,
+      .schema_id = holoscan::schema_identity<holoscan::schema::Image>().family_id,
       .sequence = 1U,
       .byte_size = kHoloMQSchemaTensorBytes,
       .buffer = holoscan::channel_internal::make_holomq_payload_reference(*handle)};
@@ -626,7 +610,7 @@ template <typename Payload>
 [[nodiscard]] std::uint64_t checksum_payload(const Payload& payload) noexcept {
   const auto bytes = payload.bytes();
   std::uint64_t checksum =
-      checksum_schema_id(payload.schema_id) ^ static_cast<std::uint64_t>(bytes.size());
+      checksum_schema_id(payload.schema_family_id) ^ static_cast<std::uint64_t>(bytes.size());
   if constexpr (requires { payload.endpoint_generation; }) {
     checksum ^= payload.endpoint_generation;
   }
@@ -1073,13 +1057,6 @@ void BM_ChannelSchema_ImuFlatBuffer_Fanout_DropOldestDepthOne(benchmark::State& 
       1U);
 }
 
-void BM_ChannelSchema_ImageMetadataFlatBuffer_OneToOne_Blocking(benchmark::State& state) {
-  run_channel_schema_pubsub_polling<ImagePayload, 1>(state,
-                                                     holoscan::ChannelQueuePolicy::kBlocking,
-                                                     "schema_image_metadata_1to1_blocking",
-                                                     make_image_metadata_payload());
-}
-
 void BM_ChannelSchema_DescriptorBackedImageFlatBuffer_OneToOne_Blocking(benchmark::State& state) {
   run_channel_schema_pubsub_polling<DescriptorBackedImagePayload, 1>(
       state,
@@ -1154,7 +1131,6 @@ BENCHMARK_TEMPLATE(BM_ChannelSchema_ImuFlatBuffer_Fanout_Blocking, 8)->UseRealTi
 BENCHMARK_TEMPLATE(BM_ChannelSchema_ImuFlatBuffer_Fanout_DropOldestDepthOne, 2)->UseRealTime();
 BENCHMARK_TEMPLATE(BM_ChannelSchema_ImuFlatBuffer_Fanout_DropOldestDepthOne, 4)->UseRealTime();
 BENCHMARK_TEMPLATE(BM_ChannelSchema_ImuFlatBuffer_Fanout_DropOldestDepthOne, 8)->UseRealTime();
-BENCHMARK(BM_ChannelSchema_ImageMetadataFlatBuffer_OneToOne_Blocking)->UseRealTime();
 BENCHMARK(BM_ChannelSchema_DescriptorBackedImageFlatBuffer_OneToOne_Blocking)->UseRealTime();
 BENCHMARK(BM_ChannelSchema_DescriptorBackedImageFlatBuffer_OneToOne_DropOldestDepthOne)
     ->UseRealTime();

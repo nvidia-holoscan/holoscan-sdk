@@ -27,5 +27,5 @@ endif()
 
 install(TARGETS hello_schema
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/hello_schema/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

@@ -71,9 +71,8 @@ HOLOSCAN_PARAM_SCHEMA(
 /// include padding. Output storage is contiguous.
 class HOLOSCAN_VISION_EXPORT NormalizeOp final : public Operator<NormalizeOpParams> {
  public:
-  /// @brief Construct an operator with fixed output-pool capacity.
-  /// @param capacity Maximum admitted image width, image height, and batch size.
-  explicit NormalizeOp(VisionImageCapacity capacity);
+  /// @brief Construct an operator whose output capacity follows its connected input.
+  NormalizeOp();
 
   /// @brief Destroy the operator and its retained CV-CUDA resource after runtime quiescence.
   ~NormalizeOp() override;
@@ -103,7 +102,6 @@ class HOLOSCAN_VISION_EXPORT NormalizeOp final : public Operator<NormalizeOpPara
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;
-  VisionImageCapacity capacity_;
 };
 
 static_assert(param_schema_availability<NormalizeOpParams>() == ParamSchemaAvailability::kDeclared,

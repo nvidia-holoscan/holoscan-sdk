@@ -59,6 +59,22 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
   /// repeated attachment, or another checked backend setup error.
   [[nodiscard]] virtual expected<std::uint64_t, Error> attach_wait_set(void* wait_set) = 0;
 
+  /// @brief Detach this subscriber from its current opaque backend wait set.
+  /// @return Success after the attachment is retired, including when none was created.
+  /// @note A readiness pump or waiter must be joined before this cold lifecycle operation.
+  [[nodiscard]] virtual expected<void, Error> detach_wait_set() noexcept { return {}; }
+
+  /// @brief Retire source-private local endpoint resources before owner destruction.
+  /// @return Success, or the allocation-free code of the first detach failure.
+  /// @note This operation is local consumer teardown. It publishes no producer operation or EOS.
+  [[nodiscard]] virtual expected<void, Error> close_local_endpoint() noexcept {
+    auto detached = detach_wait_set();
+    if (!detached) {
+      return make_unexpected(Error{detached.error().code});
+    }
+    return {};
+  }
+
   /// @brief Query pending samples without consuming one.
   /// @return Readiness, or a checked backend query error.
   /// @note Readiness is a snapshot hint. A following receive may still report
@@ -148,6 +164,25 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
   /// this exported class has the same layout and the same behaviour in every configuration.
   std::atomic_flag waiting_;
 };
+
+/// @brief Consume and retire one source-private subscriber owner.
+/// @tparam Subscriber Concrete endpoint type derived from @ref WaitSetSubscriber.
+/// @param subscriber Owning endpoint pointer; null on return, including after a retirement error.
+/// @return Success, @ref ErrorCode::kClosed when already consumed, or a code-only cleanup error.
+/// @note Existing endpoint destruction remains the sole authority for staged and backend cleanup.
+template <typename Subscriber>
+[[nodiscard]] expected<void, Error> close_local_subscriber(
+    std::unique_ptr<Subscriber>& subscriber) noexcept {
+  if (!subscriber) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  auto retiring = std::move(subscriber);
+  auto closed = retiring->close_local_endpoint();
+  if (!closed) {
+    return make_unexpected(Error{closed.error().code});
+  }
+  return {};
+}
 
 /// @brief Return a borrowed stop-token pointer for \ref WaitSetSubscriber::wait_for_readiness.
 ///

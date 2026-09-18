@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <string_view>
 #include <type_traits>
 
 #include <holoscan/holoscan_core_export.h>
@@ -93,6 +94,13 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   /// @note This identity lets fixed compute-originated control records name their own Operator
   /// without retaining an authoring handle or a runtime object address.
   [[nodiscard]] OperatorRef self() const noexcept;
+
+  /// @brief Return the canonical path of the Operator executing this callback.
+  /// @return Nonempty canonical percent-encoded path with no leading slash for a Runtime-bound
+  /// callback, or an empty view when the context is inert or otherwise unbound.
+  /// @warning The returned view is valid only for the active \c compute() callback and must not be
+  /// retained after callback return.
+  [[nodiscard]] std::string_view operator_path() const noexcept;
 
   /// @brief Return the immutable parameter aggregate pinned for this callback.
   /// @tparam ParamsT Exact unqualified aggregate type declared by the Operator.

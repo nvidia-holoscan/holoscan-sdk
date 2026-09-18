@@ -172,6 +172,7 @@ struct LifecycleKernelState {
   std::vector<bool> rollback_visited;
   LifecycleLogSink log_sink{};
   void* log_state{};
+  bool defer_failure_report{};
 };
 
 [[nodiscard]] LifecycleKernelState make_lifecycle_kernel_state(const LifecycleStageGraph& graph);

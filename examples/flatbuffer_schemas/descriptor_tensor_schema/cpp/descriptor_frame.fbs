@@ -27,3 +27,4 @@ table DescriptorFrame {
 }
 
 root_type DescriptorFrame;
+file_identifier "ADFR";

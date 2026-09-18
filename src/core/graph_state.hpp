@@ -22,6 +22,7 @@
 #include <holoscan/core/graph.hpp>
 
 #include "graph_snapshot.hpp"
+#include "parameter_input_internal.hpp"
 
 namespace holoscan::detail {
 
@@ -51,7 +52,6 @@ struct PortStorage {
   const void* local_type_token{};
   std::optional<std::size_t> operator_index;
   std::optional<TensorPoolBounds> setup_tensor_allocation;
-  std::optional<SchemaPackagePlanRecord> schema_package;
 };
 
 struct OperatorStorage {
@@ -59,6 +59,7 @@ struct OperatorStorage {
   const void* operator_type_token{};
   std::shared_ptr<OperatorFactoryBase> factory;
   std::unique_ptr<OperatorBase> prototype;
+  std::shared_ptr<const ParameterInputEvidenceState> parameter_input_evidence;
   VertexId vertex{};
   std::vector<GraphPortId> ports;
   OperatorRef plan_ref{};
@@ -82,6 +83,7 @@ struct EmbeddedOperatorMapping {
   std::size_t source_index{};
   VertexId vertex{};
   std::shared_ptr<OperatorFactoryBase> factory;
+  std::shared_ptr<const ParameterInputEvidenceState> parameter_input_evidence;
 };
 
 struct EmbeddedGraphStorage {
@@ -166,6 +168,7 @@ class GraphState {
   std::vector<GraphRecord> embedded_graph_records_;
   std::vector<EmbeddedGraphStorage> embedded_graphs_;
   std::vector<EmbeddedOperatorMapping> embedded_operator_mappings_;
+  std::shared_ptr<const ParameterTransactionState> parameter_transaction_;
   std::vector<const void*> embedding_ancestry_;
   std::deque<OperatorStorage> operators_;
   std::vector<std::vector<std::size_t>> vertex_adjacency_;

@@ -337,6 +337,7 @@ void emit_robotics_critical_records(const GraphSnapshotData& snapshot,
           break;
         case RegionConstraintKind::kStaticTopology:
         case RegionConstraintKind::kDeviceCompatibleOperators:
+        case RegionConstraintKind::kCudaGraph:
           continue;
       }
       const std::string reason = "holoscan.profile.robotics_critical." + std::string{suffix};
@@ -449,7 +450,7 @@ ProfileAdmissionResult resolve_profile_admission(const GraphSnapshotData& snapsh
   ProfileAdmissionResult result;
   ProfileManifest& manifest = result.manifest;
   manifest.profile_policy_id = make_policy_id();
-  manifest.plan_schema_version = "holoscan.execution_plan.private.v4";
+  manifest.plan_schema_version = "holoscan.execution_plan.private.v6";
   result.effective_vertex_profiles.resize(snapshot.vertices.size());
   result.contributing_regions_by_vertex.resize(snapshot.vertices.size());
 

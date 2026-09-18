@@ -10,6 +10,7 @@
 #include <span>
 
 #include <holoscan/core/compile.hpp>
+#include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/expected.hpp>
 #include <holoscan/core/graph.hpp>
@@ -27,7 +28,8 @@ struct TensorDeviceBindingRecord;
     std::span<const std::optional<Profile>> effective_profiles,
     bool removed_environment_selector_present,
     std::span<const std::uint32_t> process_group_by_vertex, const DeploymentBinding& deployment,
-    std::span<const TensorDeviceBindingRecord> tensor_device_bindings, ExecutionPlanState& output);
+    std::span<const TensorDeviceBindingRecord> tensor_device_bindings, ExecutionPlanState& output,
+    DiagnosticSource* failure_source = nullptr);
 
 /// Validate the published partition cover against the temporal sources selected by contracts.
 ///

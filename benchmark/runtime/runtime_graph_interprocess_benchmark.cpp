@@ -44,7 +44,7 @@
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/run_session.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
@@ -71,6 +71,7 @@ using benchmarking::BenchmarkMonotonicClock;
 using benchmarking::BenchmarkSupportThreadControl;
 using benchmarking::emit_cpu_list;
 using benchmarking::emit_optional_cpu;
+using benchmarking::emit_runtime_diagnostics;
 using benchmarking::emit_runtime_thread_usage;
 using benchmarking::emit_support_thread_evidence;
 using benchmarking::json_escape;
@@ -3483,8 +3484,10 @@ void emit_result(std::ostream& output, const RunState& state, const ExecutionPla
   output << ",\n"
          << "  \"termination\":\""
          << (session.termination() == RunTermination::kStopped ? "stopped" : "other") << "\",\n"
-         << "  \"diagnostic_count\":" << session.diagnostics().size() << "\n"
-         << "}\n";
+         << "  \"diagnostic_count\":" << session.diagnostics().size() << ",\n"
+         << "  \"diagnostics\":";
+  emit_runtime_diagnostics(output, session.diagnostics());
+  output << "\n}\n";
 }
 
 [[nodiscard]] bool parse_unsigned(const std::string_view text, std::uint64_t& result) noexcept {
@@ -4165,6 +4168,9 @@ void print_help(std::ostream& output) {
       std::cerr << diagnostic.token << ' ';
     }
     std::cerr << '\n';
+    if (!session.diagnostics().empty()) {
+      std::cerr << format_diagnostics(session.diagnostics(), plan.graph()) << '\n';
+    }
   }
   g_run_state = nullptr;
   return valid ? 0 : 1;

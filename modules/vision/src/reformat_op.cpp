@@ -36,18 +36,11 @@ class ReformatOp::Impl {
   std::unique_ptr<cvcuda::Reformat> operation;
 };
 
-ReformatOp::ReformatOp(VisionImageCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+ReformatOp::ReformatOp() : impl_(std::make_unique<Impl>()) {}
 
 ReformatOp::~ReformatOp() = default;
 
 void ReformatOp::setup(OperatorSpec& spec) {
-  auto byte_span = detail::maximum_output_byte_span(
-      capacity_.max_width, capacity_.max_height, capacity_.max_batch_size, sizeof(double));
-  if (!byte_span) {
-    throw RuntimeError(byte_span.error());
-  }
-
   spec.input(input, "input")
       .queue_depth(1U)
       .expects_tensor(TensorInputSpec{
@@ -55,16 +48,14 @@ void ReformatOp::setup(OperatorSpec& spec) {
           .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
       });
   spec.output(output, "output")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = detail::ImageTensorView::kMaxRank,
-                  .max_byte_span = *byte_span,
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          input_max_byte_span(input));
 }
 
 Contract ReformatOp::contract() const {
@@ -112,13 +103,9 @@ expected<void, Error> ReformatOp::compute(ExecutionContext& context) {
                                                       ? detail::ImageTensorLayout::kPlanar
                                                       : detail::ImageTensorLayout::kInterleaved;
   auto input_view = detail::describe_image_tensor(
-      sample->data, detail::TensorOperation::kReformat, capacity_.max_batch_size, input_layout);
+      sample->data, detail::TensorOperation::kReformat, kMaximumBatchSize, input_layout);
   if (!input_view) {
     return make_unexpected(std::move(input_view).error());
-  }
-  if (input_view->width > capacity_.max_width || input_view->height > capacity_.max_height) {
-    return failure(ErrorCode::kInvalidArgument,
-                   "ReformatOp output exceeds the authored output-pool capacity");
   }
 
   std::array<std::int64_t, detail::ImageTensorView::kMaxRank> output_shape{};
@@ -170,7 +157,7 @@ expected<void, Error> ReformatOp::compute(ExecutionContext& context) {
                                                    input_view->dtype,
                                                    DLDevice{kDLCUDA, loan->device_id().value},
                                                    detail::TensorOperation::kReformat,
-                                                   capacity_.max_batch_size,
+                                                   kMaximumBatchSize,
                                                    output_layout);
   if (!output_view) {
     return make_unexpected(std::move(output_view).error());

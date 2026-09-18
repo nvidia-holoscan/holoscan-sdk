@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// REQ: SCHEMA-005
+
 // Standalone smoke test for the HoloMQ Channel schema layer — no GTest harness.
 // Exercises five end-to-end scenarios that together cover the public install-tree API:
 // custom-POD catalogs, generated FlatBuffers schema packages, Tensor loan/emit/EOS,
@@ -37,7 +39,7 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/run.hpp>
 // Provides generated owning types and schema-trait specializations.
-#include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
+#include <holoscan/schema/sdk_schemas.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/time/realtime_clock.hpp>
 
 namespace {
@@ -285,6 +287,19 @@ template <typename Subscriber>
   return Result{holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kTimeout})};
 }
 
+template <typename Subscriber>
+[[nodiscard]] bool close_local_subscriber(Subscriber& subscriber, const std::string_view label) {
+  auto closed = subscriber.close();
+  auto after_close = subscriber.receive_sample();
+  auto repeated = subscriber.close();
+  if (!closed || after_close || after_close.error().code != holoscan::ErrorCode::kClosed ||
+      repeated || repeated.error().code != holoscan::ErrorCode::kClosed) {
+    std::cerr << label << " local subscriber close contract failed\n";
+    return false;
+  }
+  return true;
+}
+
 // This is the readable public-only workflow that an installed application can copy: an external
 // custom-POD publisher attaches by the immutable compiled catalog, feeds one Graph Operator, and
 // an external generated-schema subscriber receives the transformed sample from a Graph export.
@@ -346,8 +361,15 @@ template <typename Subscriber>
       external_runtime->create_publisher<ControlPod>(plan.endpoint_catalog(), import_name);
   auto subscriber = external_runtime->create_subscriber<Payload>(*export_endpoint);
   if (!publisher || !subscriber) {
-    const auto& error = !publisher ? publisher.error() : subscriber.error();
-    std::cerr << "graph workflow attach: " << holoscan::runtime_error_message(error) << '\n';
+    if (!publisher) {
+      std::cerr << "graph workflow publisher attach: "
+                << holoscan::runtime_error_message(publisher.error()) << '\n';
+    }
+    if (!subscriber) {
+      std::cerr << "graph workflow subscriber attach: "
+                << holoscan::runtime_error_message(subscriber.error()) << '\n';
+    }
+    std::cerr << plan.json() << '\n';
     return false;
   }
 
@@ -402,6 +424,7 @@ template <typename Subscriber>
   session.wait();
   if (!sample_matches || !closed || closed_twice ||
       closed_twice.error().code != holoscan::ErrorCode::kClosed ||
+      !close_local_subscriber(*subscriber, "graph workflow") ||
       session.termination() != holoscan::RunTermination::kStopped ||
       !session.diagnostics().empty()) {
     std::cerr << "graph workflow metadata, EOS, or teardown contract failed\n";
@@ -456,9 +479,11 @@ template <typename Subscriber>
     return false;
   }
   auto received = receive_sample_until(*subscriber);
-  return received && received->data == expected && received->metadata.frame_id == 91U &&
-         received->metadata.trace_id == kTrace.trace_id && received->metadata.degraded() &&
-         received->metadata.byte_size == sizeof(ControlPod);
+  const bool matches =
+      received && received->data == expected && received->metadata.frame_id == 91U &&
+      received->metadata.trace_id == kTrace.trace_id && received->metadata.degraded() &&
+      received->metadata.byte_size == sizeof(ControlPod);
+  return matches && close_local_subscriber(*subscriber, "catalog POD");
 }
 
 // Attachment is always finite and catalog-authoritative. Optional peers return without waiting,
@@ -651,10 +676,12 @@ template <typename Subscriber>
               << '\n';
     return false;
   }
-  return received && received->data.data == expected.data && received->metadata.frame_id == 92U &&
-         received->metadata.trace_id == kTrace.trace_id && received->metadata.degraded() &&
-         received->metadata.payload_kind == holoscan::PayloadKind::kSerializedBytes &&
-         received->metadata.byte_size == *encoded;
+  const bool matches =
+      received && received->data.data == expected.data && received->metadata.frame_id == 92U &&
+      received->metadata.trace_id == kTrace.trace_id && received->metadata.degraded() &&
+      received->metadata.payload_kind == holoscan::PayloadKind::kSerializedBytes &&
+      received->metadata.byte_size == *encoded;
+  return matches && close_local_subscriber(*subscriber, "generated schema");
 }
 
 // Diagnostic helpers: print a "catalog Tensor <stage>: <detail>" prefix and return false
@@ -750,7 +777,12 @@ template <typename Publisher, typename Subscriber>
   if (repeated_close.error().code != holoscan::ErrorCode::kClosed) {
     return fail_catalog_tensor_error("repeated close", repeated_close.error());
   }
-  return true;
+  if (!close_local_subscriber(subscriber, "catalog Tensor")) {
+    return false;
+  }
+  // The returned Tensor retains its imported backing independently of the consumed endpoint.
+  return received->data.data() != nullptr &&
+         *static_cast<const std::byte*>(received->data.data()) == std::byte{1U};
 }
 
 // Tensor smoke: builds host-memory Tensor catalogs with explicit layout bounds, attaches a
@@ -840,6 +872,7 @@ template <typename Publisher, typename Subscriber>
 // REQ: CHAN-074
 // REQ: CHAN-075
 // REQ: CHAN-120
+// REQ: CHAN-143
 // REQ: EXTERNAL-001
 // REQ: EXTERNAL-002
 // REQ: EXTERNAL-003

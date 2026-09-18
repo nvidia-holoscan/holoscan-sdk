@@ -4,6 +4,7 @@
  */
 
 #include <algorithm>
+#include <chrono>
 #include <concepts>
 #include <cstdint>
 #include <filesystem>
@@ -24,11 +25,79 @@
 #include <holoscan/channel/tensor_loan.hpp>
 #include <holoscan/channel/types.hpp>
 #include <holoscan/core/compile.hpp>
+#include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/execution_plan.hpp>
+#include <holoscan/core/run.hpp>
 #include <holoscan/core/temporal_plan.hpp>
 #include <holoscan/time/manual_clock.hpp>
 
 namespace {
+
+// REQ: CONTRACT-022
+// REQ: COMPILE-080
+// REQ: RUNTIME-055
+// Checks unwired selection and accessor errors using only installed public APIs.
+// Representative test: COMPILE.installed_package_consumer via validate_installed_optional_input.
+class InstalledOptionalInputOperator final : public holoscan::Operator<> {
+ public:
+  explicit InstalledOptionalInputOperator(bool permitted) : permitted_(permitted) {}
+  void setup(holoscan::OperatorSpec& spec) override {
+    auto& declaration = spec.input(input, "input");
+    if (permitted_) {
+      declaration.optional().optional();
+    }
+  }
+  holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnClock{.period = std::chrono::milliseconds{1}})
+        .input(input, holoscan::Exact{})
+        .on_missing(input, holoscan::SafeDefault{});
+    return result;
+  }
+  holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& context) override {
+    const auto scalar = input.receive();
+    const auto batch = input.selected_batch();
+    if (input.selection().state != holoscan::InputState::kSafeDefault ||
+        input.selection().reason != holoscan::SelectionReason::kNotConnected || scalar || batch ||
+        scalar.error().code != holoscan::ErrorCode::kInputEmpty ||
+        batch.error().code != holoscan::ErrorCode::kInputSelectionCardinalityMismatch) {
+      return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kProtocolError});
+    }
+    context.request_completion();
+    return {};
+  }
+  holoscan::Input<std::uint32_t> input;
+
+ private:
+  bool permitted_{};
+};
+
+static_assert(noexcept(std::declval<holoscan::InputSpecBuilder&>().optional()));
+static_assert(std::same_as<decltype(std::declval<holoscan::InputSpecBuilder&>().optional()),
+                           holoscan::InputSpecBuilder&>);
+
+// Exercises explicit optional permission in COMPILE.installed_package_consumer.
+//   ManualClock --[trigger]--> target (InstalledOptionalInputOperator)
+//                             input <-- (unwired)
+bool validate_installed_optional_input() {
+  // Key setup: Compile the same clock-driven unwired input with permission disabled and enabled.
+  // Key assertion: Only the optional declaration compiles and runs with the expected empty read.
+  for (const bool permitted : {false, true}) {
+    holoscan::Graph graph{"installed-optional-input"};
+    (void)graph.op<InstalledOptionalInputOperator>("target", permitted);
+    graph.set_default_clock(graph.add_clock<holoscan::ManualClock>("clock", std::int64_t{0}));
+    const auto plan = holoscan::compile(graph);
+    if (plan.ok() != permitted) {
+      return false;
+    }
+    if (permitted && (plan.input_selections().size() != 1U ||
+                      !plan.input_selections().front().unwired_safe_default ||
+                      holoscan::run(plan, holoscan::RunSignalPolicy::kCallerManaged) != 0)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 class InstalledCompileOperator final : public holoscan::Operator<> {
  public:
@@ -37,6 +106,24 @@ class InstalledCompileOperator final : public holoscan::Operator<> {
     return {};
   }
   holoscan::Output<std::uint32_t> output;
+};
+
+class InstalledCudaGraphOperator final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.cuda_graph_capture_eligible().spin_source(ready, "ready");
+  }
+  holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnSpin{ready});
+    return result;
+  }
+  holoscan::expected<void, holoscan::Error> compute(
+      [[maybe_unused]] holoscan::ExecutionContext& context) override {
+    return {};
+  }
+
+  holoscan::SpinSource ready;
 };
 
 class InstalledClockImportGraph final : public holoscan::Graph {
@@ -279,16 +366,19 @@ static_assert(std::same_as<decltype(std::declval<const holoscan::ExecutionPlan&>
 static_assert(
     std::same_as<decltype(std::declval<const holoscan::ExecutionPlan&>().cuda_compute_streams()),
                  std::span<const holoscan::CudaComputeStreamPlanRecord>>);
-
 }  // namespace
 
 // REQ: COMPILE-009
 // REQ: COMPILE-025
 // REQ: CHAN-069
+// REQ: CHAN-143
 // REQ: GRAPH-026
 // REQ: COMPILE-053
 // REQ: COMPILE-068
 int main() {
+  if (!validate_installed_optional_input()) {
+    return 1;
+  }
   // The installed consumer checks canonical public evidence rather than depending on the private
   // health-control encoding used to transport the corresponding enum values.
   constexpr std::string_view kClockHealthReasonSchema =
@@ -315,6 +405,8 @@ int main() {
       &holoscan::ChannelPublisher<holoscan::Tensor>::report_clock_health;
   const auto update_connections = &holoscan::ChannelPublisher<holoscan::Tensor>::update_connections;
   const auto has_subscribers = &holoscan::ChannelPublisher<holoscan::Tensor>::has_subscribers;
+  const auto close_scalar_subscriber = &holoscan::ChannelSubscriber<std::uint32_t>::close;
+  const auto close_tensor_subscriber = &holoscan::ChannelSubscriber<holoscan::Tensor>::close;
   const auto write = &holoscan::TensorPublishLoan::write;
   const auto write_host = &holoscan::TensorPublishLoan::write_host;
   const auto cancel = &holoscan::TensorPublishLoan::cancel;
@@ -331,6 +423,8 @@ int main() {
   (void)report_clock_health;
   (void)update_connections;
   (void)has_subscribers;
+  (void)close_scalar_subscriber;
+  (void)close_tensor_subscriber;
   (void)write;
   (void)write_host;
   (void)cancel;
@@ -465,6 +559,31 @@ int main() {
   hybrid_graph.partition("anchor").add(hybrid_source);
   hybrid_graph.auto_partition_remaining();
   if (!hybrid_graph.view().automatic_partition_remaining()) {
+    return 1;
+  }
+
+  holoscan::Graph cuda_graph{"installed-cuda-graph-declarations"};
+  const holoscan::ClockKey cuda_clock =
+      cuda_graph.add_clock<holoscan::ManualClock>("cuda_graph_clock", std::int64_t{0});
+  cuda_graph.set_default_clock(cuda_clock);
+  auto cuda_op = cuda_graph.op<InstalledCudaGraphOperator>("capture");
+  cuda_graph.region("capture").add(cuda_op).constrain(holoscan::RegionConstraint::cuda_graph());
+  const holoscan::GraphView cuda_view = cuda_graph.view();
+  if (cuda_view.vertices().size() != 1U ||
+      !cuda_view.vertices().front().cuda_graph_capture_eligible ||
+      cuda_view.regions().size() != 1U || cuda_view.regions().front().constraints.size() != 1U ||
+      cuda_view.regions().front().constraints.front().kind() !=
+          holoscan::RegionConstraintKind::kCudaGraph) {
+    return 1;
+  }
+  const holoscan::ExecutionPlan cuda_plan = holoscan::compile(cuda_graph);
+  if (cuda_plan.ok() ||
+      cuda_plan.json().find("CUDA_GRAPH_EXECUTION_LOWERING_UNAVAILABLE") ==
+          std::string_view::npos ||
+      cuda_plan.json().find("\"cuda_graph_capture_eligible_operators\"") ==
+          std::string_view::npos ||
+      cuda_plan.json().find("\"cuda_graph_regions\"") == std::string_view::npos ||
+      cuda_plan.json().find("\"cuda_graph_capture_plans\"") == std::string_view::npos) {
     return 1;
   }
 

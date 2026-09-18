@@ -191,13 +191,32 @@ template <typename Impl>
 expected<void, Error> RuntimeChannelSessionTestAccess::replace_output_publishers(
     RuntimeChannelSession& session, const PortId output,
     std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers,
-    const std::span<const std::uint32_t> expected_recipient_counts,
-    const bool refresh_before_emit) noexcept {
+    const std::span<const std::uint32_t> expected_recipient_counts, const bool refresh_before_emit,
+    const bool peer_required) noexcept {
   if (!session.impl_) {
     return make_unexpected(Error{ErrorCode::kClosed});
   }
   return session.impl_->replace_output_publishers_for_test(
-      output, std::move(publishers), expected_recipient_counts, refresh_before_emit);
+      output, std::move(publishers), expected_recipient_counts, refresh_before_emit, peer_required);
+}
+
+expected<std::size_t, Error> RuntimeChannelSessionTestAccess::resolved_output_terminal_arms(
+    const RuntimeChannelSession& session, const PortId output) noexcept {
+  auto current = output_next_sequence(session, output);
+  if (!current) {
+    return make_unexpected(std::move(current).error());
+  }
+  const auto found = std::find_if(session.impl_->outputs_.begin(),
+                                  session.impl_->outputs_.end(),
+                                  [&](const auto& candidate) { return candidate->port == output; });
+  const auto resolved = [](const auto& endpoints) {
+    return std::ranges::count_if(endpoints,
+                                 [](const auto& endpoint) { return endpoint.terminal_resolved; });
+  };
+  const auto& state = **found;
+  return static_cast<std::size_t>(resolved(state.endpoints) + resolved(state.tensor_endpoints) +
+                                  resolved(state.catalog_tensor_endpoints) +
+                                  resolved(state.tensor_schema_endpoints));
 }
 
 expected<void, Error>
@@ -670,6 +689,35 @@ expected<std::optional<std::uint64_t>, Error> RuntimeChannelSessionTestAccess::s
   return staged ? std::optional<std::uint64_t>{staged->sequence} : std::nullopt;
 }
 
+expected<void, Error> RuntimeChannelSessionTestAccess::discard_staged_data_head(
+    RuntimeChannelSession& session, const PortId input) noexcept {
+  if (!session.impl_ || !input) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  auto subscriber = cold_input_subscriber(*session.impl_, input);
+  if (!subscriber) {
+    return make_unexpected(std::move(subscriber).error());
+  }
+  auto& state = **subscriber;
+  const std::scoped_lock transport_lock{state.transport_mutex};
+  if (!state.process_local_transport || state.externally_driven_import ||
+      state.endpoint == nullptr || !state.staged_data_state()) {
+    return make_unexpected(Error{ErrorCode::kNotReady});
+  }
+  auto discarded = state.discard_one_process_local_transport(nullptr);
+  if (!discarded) {
+    return make_unexpected(std::move(discarded).error());
+  }
+  session.impl_->record_process_local_receive();
+  // Inline HoloMQ materializes staged identity lazily. Rejecting data stages the next exact head
+  // without consuming it, still under the serialization boundary that discarded its predecessor.
+  auto next = state.endpoint->receive_borrowed_if_data_accepted(false);
+  if (next || next.error().code != ErrorCode::kBackpressured || !state.staged_data_state()) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  return {};
+}
+
 expected<void, Error> RuntimeChannelSessionTestAccess::fail_next_freshness_handoff_retry(
     RuntimeChannelSession& session) noexcept {
   if (!session.impl_) {
@@ -855,6 +903,7 @@ expected<void, Error> RuntimeChannelSessionTestAccess::make_staged_sample_older_
   if (typed == nullptr || staged == nullptr || typed->event_emitted || staged->event_emitted ||
       typed->typed_ingress_reserved || staged->typed_ingress_reserved ||
       staged->staged_arrival_evidence || staged->refill_reserved ||
+      staged->refill_prefix_reserved ||
       typed->temporal.producer_epoch != staged->temporal.producer_epoch ||
       !is_strictly_newer_sample(staged->temporal, typed->temporal)) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
@@ -871,7 +920,8 @@ expected<void, Error> RuntimeChannelSessionTestAccess::make_staged_sample_older_
 
 expected<void, Error>
 RuntimeChannelSessionTestAccess::commit_staged_reservation_after_newer_typed_overtake(
-    RuntimeChannelSession& session, const PortId input) noexcept {
+    RuntimeChannelSession& session, const PortId input,
+    const bool staged_is_committed_freshness_target) noexcept {
   if (!session.impl_ || !input || session.impl_->armed_.load(std::memory_order_acquire) ||
       session.impl_->pump_thread_.joinable()) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
@@ -900,25 +950,61 @@ RuntimeChannelSessionTestAccess::commit_staged_reservation_after_newer_typed_ove
       typed->typed_ingress_reserved || staged->typed_ingress_reserved || typed->active_selected ||
       typed->reuse_retained || typed->temporal_retained || typed->retirement_selected ||
       staged->staged_arrival_evidence || staged->refill_reserved ||
+      staged->refill_prefix_reserved ||
       typed->temporal.producer_epoch != staged->temporal.producer_epoch ||
       !is_strictly_newer_sample(typed->temporal, staged->temporal)) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
+
+  auto& input_state = *(*subscriber)->input;
+  if (staged_is_committed_freshness_target) {
+    if (input_state.freshness_refill_target != nullptr ||
+        input_state.freshness_reservation_generation != 0U) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    staged->refill_reserved = true;
+    input_state.freshness_refill_target = staged;
+    input_state.freshness_refill_target_reference = TimePoint{1, input_state.reference_clock};
+    input_state.freshness_refill_prefix_committed = true;
+  }
+  const auto rollback_freshness_target = [&]() noexcept {
+    if (!staged_is_committed_freshness_target) {
+      return;
+    }
+    staged->refill_reserved = false;
+    input_state.freshness_refill_target = nullptr;
+    input_state.freshness_refill_target_reference = {};
+    input_state.freshness_refill_prefix_committed = false;
+  };
 
   staged->typed_ingress_reserved = true;
   RuntimeChannelSession::Impl::TypedIngressReservation reservation{**subscriber, *staged, true};
   auto deferred = session.impl_->promote_direct_ingress(**subscriber);
   if (!deferred) {
     Error error = std::move(deferred).error();
+    rollback_freshness_target();
     lock.unlock();
     return make_unexpected(std::move(error));
   }
   if (*deferred != 0U || !typed->occupied || !staged->occupied || !staged->direct_ingress_unread ||
       !staged->typed_ingress_reserved) {
+    rollback_freshness_target();
     lock.unlock();
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
-  return session.impl_->commit_typed_ingress_reservation(**subscriber, reservation);
+  auto committed = session.impl_->commit_typed_ingress_reservation(**subscriber, reservation);
+  if (!committed) {
+    rollback_freshness_target();
+    return committed;
+  }
+  if (staged_is_committed_freshness_target &&
+      (input_state.freshness_refill_target != nullptr ||
+       input_state.freshness_refill_target_reference.valid() ||
+       input_state.freshness_refill_prefix_committed)) {
+    rollback_freshness_target();
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  return {};
 }
 
 expected<void, Error> RuntimeChannelSessionTestAccess::set_freshness_subscriber_alias(
@@ -1021,7 +1107,7 @@ expected<void, Error> RuntimeChannelSessionTestAccess::inject_direct_inline_payl
   if (subscriber == session.impl_->subscribers_.end()) {
     return make_unexpected(Error{ErrorCode::kNotFound});
   }
-  return session.impl_->store_direct_inline_payload(**subscriber, payload, std::move(metadata));
+  return session.impl_->retain_direct_inline_payload(**subscriber, payload, std::move(metadata));
 }
 
 expected<void, Error> RuntimeChannelSessionTestAccess::with_input_lock(
@@ -1064,6 +1150,41 @@ expected<void, Error> RuntimeChannelSessionTestAccess::set_input_poll_contention
   }
   (*subscriber)->input_poll_contention_observer_state = state;
   (*subscriber)->input_poll_contention_observer = observer;
+  return {};
+}
+
+expected<void, Error> RuntimeChannelSessionTestAccess::set_input_contention_retry_attempt_observer(
+    RuntimeChannelSession& session, const PortId input, void* const state,
+    const RuntimeChannelInputPollContentionObserver observer) noexcept {
+  if (!session.impl_ || !input || state == nullptr || observer == nullptr ||
+      session.impl_->armed_.load(std::memory_order_acquire)) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  const auto subscriber =
+      std::find_if(session.impl_->subscribers_.begin(),
+                   session.impl_->subscribers_.end(),
+                   [&](const auto& candidate) { return candidate->target == input; });
+  if (subscriber == session.impl_->subscribers_.end() ||
+      std::any_of(std::next(subscriber),
+                  session.impl_->subscribers_.end(),
+                  [&](const auto& candidate) { return candidate->target == input; }) ||
+      (*subscriber)->input_contention_retry_attempt_observer != nullptr) {
+    return make_unexpected(Error{subscriber == session.impl_->subscribers_.end()
+                                     ? ErrorCode::kNotFound
+                                     : ErrorCode::kProtocolError});
+  }
+  (*subscriber)->input_contention_retry_attempt_observer_state = state;
+  (*subscriber)->input_contention_retry_attempt_observer = observer;
+  return {};
+}
+
+expected<void, Error> RuntimeChannelSessionTestAccess::set_contention_retry_budget(
+    RuntimeChannelSession& session, const std::chrono::nanoseconds budget) noexcept {
+  if (!session.impl_ || budget <= std::chrono::nanoseconds::zero() ||
+      session.impl_->armed_.load(std::memory_order_acquire)) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  session.impl_->contention_retry_budget_ = budget;
   return {};
 }
 
@@ -1315,6 +1436,27 @@ expected<void, Error> RuntimeChannelSessionTestAccess::set_external_metadata_con
   return {};
 }
 
+expected<RuntimeChannelSessionTestAccess::InputResourceState, Error>
+RuntimeChannelSessionTestAccess::input_resource_state(const RuntimeChannelSession& session,
+                                                      const PortId input) noexcept {
+  if (!session.impl_ || !input || session.impl_->pump_thread_.joinable() ||
+      session.impl_->armed_.load(std::memory_order_acquire)) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  const auto* input_state = session.impl_->find_input(input);
+  if (input_state == nullptr) {
+    return make_unexpected(Error{ErrorCode::kNotFound});
+  }
+  InputResourceState result{
+      .subscriber_count = input_state->subscribers.size(),
+      .claim_pool_present = input_state->claim_pool != nullptr,
+  };
+  for (const auto* subscriber : input_state->subscribers) {
+    result.payload_slot_count += subscriber->slots.size();
+  }
+  return result;
+}
+
 expected<RuntimeChannelInputResetState, Error> RuntimeChannelSessionTestAccess::input_reset_state(
     const RuntimeChannelSession& session, const PortId input) noexcept {
   if (!session.impl_ || !input) {
@@ -1382,8 +1524,8 @@ expected<RuntimeChannelInputResetState, Error> RuntimeChannelSessionTestAccess::
                    slot.clock_health_disposition !=
                        EndpointClockHealthDisposition::kNotApplicable ||
                    slot.clock_health_generation != 0U || slot.direct_ingress_unread ||
-                   slot.refill_reserved || slot.owed_to_released_claim ||
-                   slot.temporal != TemporalSampleRecord{};
+                   slot.refill_reserved || slot.refill_prefix_reserved ||
+                   slot.owed_to_released_claim || slot.temporal != TemporalSampleRecord{};
           })),
       .catalog_capture_clock = (*subscriber)->catalog_capture_clock,
       .plan_capture_clock = (*subscriber)->plan_capture_clock,
@@ -1539,6 +1681,41 @@ RuntimeChannelSessionTestAccess::tensor_transfer_state(const RuntimeChannelSessi
       .buffer_handle_subscriber = (*found_input)->tensor_endpoint.has_value(),
       .inline_subscriber = (*found_input)->endpoint != nullptr,
   };
+}
+
+expected<void, Error> RuntimeChannelSessionTestAccess::set_output_next_sequence(
+    RuntimeChannelSession& session, const PortId output,
+    const std::uint64_t next_sequence) noexcept {
+  auto current = output_next_sequence(session, output);
+  if (!current) {
+    return make_unexpected(std::move(current).error());
+  }
+  if (next_sequence == 0U) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  const auto found = std::find_if(session.impl_->outputs_.begin(),
+                                  session.impl_->outputs_.end(),
+                                  [&](const auto& candidate) { return candidate->port == output; });
+  (*found)->next_sequence = next_sequence;
+  return {};
+}
+
+expected<std::uint64_t, Error> RuntimeChannelSessionTestAccess::output_next_sequence(
+    const RuntimeChannelSession& session, const PortId output) noexcept {
+  if (!session.impl_ || !output || session.impl_->pump_thread_.joinable() ||
+      session.impl_->armed_.load(std::memory_order_acquire)) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  const auto found = std::find_if(session.impl_->outputs_.begin(),
+                                  session.impl_->outputs_.end(),
+                                  [&](const auto& candidate) { return candidate->port == output; });
+  if (found == session.impl_->outputs_.end()) {
+    return make_unexpected(Error{ErrorCode::kNotFound});
+  }
+  if ((*found)->active || (*found)->live_loan_count.load(std::memory_order_acquire) != 0U) {
+    return make_unexpected(Error{ErrorCode::kBackpressured});
+  }
+  return (*found)->next_sequence;
 }
 
 expected<void, Error> RuntimeChannelSessionTestAccess::set_output_active_generation(

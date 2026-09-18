@@ -147,6 +147,22 @@ TEST(Iox2SetupErrorTest, MapsEventServiceErrors) {
       map_event_open_or_create_error);
 }
 
+TEST(Iox2SetupErrorTest, RetriesOnlyTransientEventServiceCleanupErrors) {
+  using IoxError = iox2::EventOpenOrCreateError;
+  using holomq::detail::transport::is_retryable_event_open_or_create_error;
+
+  EXPECT_TRUE(is_retryable_event_open_or_create_error(IoxError::OpenDoesNotExist));
+  EXPECT_TRUE(is_retryable_event_open_or_create_error(IoxError::OpenServiceInCorruptedState));
+  EXPECT_TRUE(is_retryable_event_open_or_create_error(IoxError::OpenIsMarkedForDestruction));
+  EXPECT_TRUE(is_retryable_event_open_or_create_error(IoxError::CreateServiceInCorruptedState));
+  EXPECT_TRUE(is_retryable_event_open_or_create_error(IoxError::CreateOldConnectionsStillActive));
+
+  EXPECT_FALSE(is_retryable_event_open_or_create_error(IoxError::OpenIncompatibleAttributes));
+  EXPECT_FALSE(is_retryable_event_open_or_create_error(IoxError::OpenInsufficientPermissions));
+  EXPECT_FALSE(is_retryable_event_open_or_create_error(IoxError::CreateInternalFailure));
+  EXPECT_FALSE(is_retryable_event_open_or_create_error(IoxError::SystemInFlux));
+}
+
 TEST(Iox2SetupErrorTest, MapsEndpointCreationErrors) {
   using holomq::ErrorCode;
   using namespace holomq::detail::transport;

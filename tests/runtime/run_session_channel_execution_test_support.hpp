@@ -107,7 +107,16 @@ struct RuntimeDirectContinuationRoundTripEvidence {
   detail::RuntimePhaseCounters::Snapshot counters{};
 };
 
+// Report phase and optional-input evidence to
+// RunSessionTest.OptionalComputeSideRemainsUnselectedUntilPredicateFires.
 struct PredicateRetirementSnapshot {
+  std::size_t degraded_callback_count{};
+  std::size_t optional_not_selected_count{0U};
+  InputState optional_state{InputState::kNotSelected};
+  SelectionReason optional_reason{SelectionReason::kNotSelectedForActivation};
+  ErrorCode optional_scalar_error{ErrorCode::kSuccess};
+  ErrorCode optional_batch_error{ErrorCode::kSuccess};
+
   std::size_t source_count{};
   std::size_t evaluation_count{};
   std::size_t compute_count{};
@@ -174,7 +183,10 @@ void reset_predicate_retirement_probe();
 [[nodiscard]] ExecutionPlan make_runtime_pod_double_emit_plan();
 [[nodiscard]] ExecutionPlan make_runtime_schema_round_trip_plan(bool enable_lifecycle = false);
 [[nodiscard]] ExecutionPlan make_runtime_blocking_pressure_plan(std::string_view graph_name);
-[[nodiscard]] ExecutionPlan make_predicate_retirement_plan();
+// Compile predicate drivers and optional compute/evaluation sides for
+// RunSessionTest.OptionalComputeSidePreservesAnEarlierDegradedPredicatePhase.
+[[nodiscard]] ExecutionPlan make_predicate_retirement_plan(bool optional_side = false,
+                                                           bool degraded_evaluation = false);
 [[nodiscard]] ExecutionPlan make_predicate_compute_skip_plan();
 
 [[nodiscard]] RuntimeDirectContinuationRoundTripEvidence run_direct_continuation_round_trip(

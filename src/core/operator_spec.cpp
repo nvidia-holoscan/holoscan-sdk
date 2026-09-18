@@ -262,7 +262,6 @@ void OperatorSpec::validate_source_declaration(const void* declaration, std::str
 InputSpecBuilder& OperatorSpec::bind_input(InputBase& input, std::string_view name,
                                            const void* local_type_token,
                                            PayloadIdentityRecord payload_identity,
-                                           std::optional<SchemaPackagePlanRecord> schema_package,
                                            const detail::RuntimePortTypeOps* runtime_type_ops) {
   validate_declaration_name(input.name(), name);
   if (input.name_.empty()) {
@@ -279,7 +278,6 @@ InputSpecBuilder& OperatorSpec::bind_input(InputBase& input, std::string_view na
       .builder_index = input_builders_.size() - 1U,
       .local_type_token = local_type_token,
       .payload_identity = std::move(payload_identity),
-      .schema_package = std::move(schema_package),
       .runtime_type_ops = runtime_type_ops,
   });
   return input_builders_.back();
@@ -288,7 +286,6 @@ InputSpecBuilder& OperatorSpec::bind_input(InputBase& input, std::string_view na
 OutputSpecBuilder& OperatorSpec::bind_output(OutputBase& output, std::string_view name,
                                              const void* local_type_token,
                                              PayloadIdentityRecord payload_identity,
-                                             std::optional<SchemaPackagePlanRecord> schema_package,
                                              const detail::RuntimePortTypeOps* runtime_type_ops) {
   validate_declaration_name(output.name(), name);
   if (output.name_.empty()) {
@@ -305,7 +302,6 @@ OutputSpecBuilder& OperatorSpec::bind_output(OutputBase& output, std::string_vie
       .builder_index = output_builders_.size() - 1U,
       .local_type_token = local_type_token,
       .payload_identity = std::move(payload_identity),
-      .schema_package = std::move(schema_package),
       .runtime_type_ops = runtime_type_ops,
   });
   return output_builders_.back();
@@ -313,8 +309,7 @@ OutputSpecBuilder& OperatorSpec::bind_output(OutputBase& output, std::string_vie
 
 TensorOutputSpecBuilder& OperatorSpec::bind_tensor_output(
     OutputBase& output, std::string_view name, const void* local_type_token,
-    PayloadIdentityRecord payload_identity, std::optional<SchemaPackagePlanRecord> schema_package,
-    const detail::RuntimePortTypeOps* runtime_type_ops) {
+    PayloadIdentityRecord payload_identity, const detail::RuntimePortTypeOps* runtime_type_ops) {
   validate_declaration_name(output.name(), name);
   if (output.name_.empty()) {
     output.name_.assign(name);
@@ -330,7 +325,6 @@ TensorOutputSpecBuilder& OperatorSpec::bind_tensor_output(
       .builder_index = tensor_output_builders_.size() - 1U,
       .local_type_token = local_type_token,
       .payload_identity = std::move(payload_identity),
-      .schema_package = std::move(schema_package),
       .runtime_type_ops = runtime_type_ops,
   });
   return tensor_output_builders_.back();

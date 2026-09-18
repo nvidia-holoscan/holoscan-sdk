@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include "compile_test_graph.hpp"
+#include "compiler/compile_internal.hpp"
 #include "compiler/compile_platform.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "compiler/profile_admission.hpp"
@@ -65,11 +66,11 @@ constexpr std::string_view kRuntimePackageX8664Golden =
     R"gold(sion":1},{"evidence_id":"holoscan.runtime.thread_placement.apply_readback/v1","id":"holo)gold"
     R"gold(scan.runtime.thread_placement.apply_readback","version":1},{"evidence_id":"holoscan.runt)gold"
     R"gold(ime.trace_context/v1","id":"holoscan.runtime.trace_context","version":1}],"digest":"sha2)gold"
-    R"gold(56:23a024df6190ed80de6de176425ca3c01a1a174e550a3ef6f5e1ffd6e1115669","package_id":"holos)gold"
+    R"gold(56:a1ff03a272bdf44bc14bb9214ab548ad25befc1e469e0442a221965514638e05","package_id":"holos)gold"
     R"gold(can-core","profile_policies":[{"digest":"sha256:deb27bac29f1e11ef258d8208fc4d9324baeeb73)gold"
     R"gold(bc45d4c6a5d1eeadf312738d","major":1,"minor":0}],"runtime_abi_versions":["holoscan.runtim)gold"
     R"gold(e_abi.v1"],"schema":"holoscan.runtime_package_capabilities.canonical_json.v1","schema_ve)gold"
-    R"gold(rsion":1,"supported_plan_schemas":["holoscan.execution_plan.private.v4"],"target_triples)gold"
+    R"gold(rsion":1,"supported_plan_schemas":["holoscan.execution_plan.private.v6"],"target_triples)gold"
     R"gold(":["x86_64-linux-gnu"],"tensor_inline_record_capability":{"capability_id":"holoscan.runt)gold"
     R"gold(ime.tensor_inline_record","capability_version":1,"evidence_id":"holoscan.runtime.tensor_)gold"
     R"gold(inline_record/generated/v1","fixed_metadata_overhead_bytes":512,"inline_arm_schema_id":")gold"
@@ -133,7 +134,7 @@ constexpr std::string_view kRuntimePackageX8664Golden =
   manifest.requested_profile = profile;
   manifest.effective_graph_profile = profile;
   manifest.profile_policy_id = detail::profile_policy_id_v1();
-  manifest.plan_schema_version = "holoscan.execution_plan.private.v4";
+  manifest.plan_schema_version = "holoscan.execution_plan.private.v6";
   manifest.runtime_abi_version = "holoscan.runtime_abi.v1";
   manifest.target_triple = std::string(detail::compile_target_triple());
   manifest.producer_build_id = "diagnostic-build";
@@ -452,6 +453,47 @@ TEST(ProfileAdmission, ResolvesExactFiveProfilesAndTightenOnlyScopes) {
             Profile::kRobotics);
 }
 
+// REQ: COMPILE-078
+TEST(ProfileAdmission, DuplicateStructuralDiagnosticRetainsLaterCompileCause) {
+  Graph graph{"duplicate-profile-evidence"};
+  (void)graph.op<test::CompileTestOperator>("operator");
+  CompileOptions options;
+  options.profile = Profile::kRegulated;
+  const ExecutionPlan baseline = compile(graph, options);
+
+  // This unknown endpoint first emits a structural-only root diagnostic. The default package's
+  // regulated evidence mismatch later returns the same key with an original Error attached.
+  const std::array qualifications{
+      detail::RuntimeEndpointClockHealthQualification{.endpoint_name = "unknown-endpoint"}};
+  const ExecutionPlan duplicated = detail::compile_with_runtime_evidence(
+      graph,
+      options,
+      detail::RuntimeCompileEvidenceView{
+          .package_capabilities = detail::runtime_package_capability_view(),
+          .endpoint_clock_health = qualifications,
+      });
+  for (const auto* plan : {&baseline, &duplicated}) {
+    ASSERT_FALSE(plan->ok());
+    const auto diagnostics = plan->diagnostics();
+    const auto matches = [](const Diagnostic& diagnostic) {
+      return diagnostic.token == "PROFILE_EVIDENCE_UNSATISFIED" && !diagnostic.source.vertex &&
+             !diagnostic.source.port;
+    };
+    ASSERT_EQ(std::count_if(diagnostics.begin(), diagnostics.end(), matches), 1);
+    const auto found = std::find_if(diagnostics.begin(), diagnostics.end(), matches);
+    ASSERT_NE(found, diagnostics.end());
+    const auto& evidence = found->detail;
+    if (!evidence.has_value()) {
+      FAIL() << "Duplicate structural key discarded the later compile cause";
+    }
+    EXPECT_EQ(evidence->operation, DiagnosticOperation::kCompile);
+    EXPECT_EQ(evidence->error.code, ErrorCode::kNotSupported);
+    EXPECT_EQ(evidence->error.message, "PROFILE_EVIDENCE_UNSATISFIED");
+  }
+  EXPECT_EQ(duplicated.json(), baseline.json());
+  EXPECT_EQ(duplicated.digest(), baseline.digest());
+}
+
 // Single operator inside a kRealTime region under a kStandard graph-level profile.
 // Scope resolution must propagate the region's strictest profile to the operator vertex
 // and expose it through the per-vertex effective_profile() API for downstream lowering.
@@ -745,10 +787,10 @@ TEST(ProfileAdmission, CanonicalPackageCapabilityCodecIsDistinctSealedAndOrderIn
   auto golden = generated;
   golden.target_triples = {"x86_64-linux-gnu"};
   ASSERT_TRUE(detail::seal_runtime_package_capability_manifest(golden));
-  // Task041's private-v4 rate metadata changes the supported-plan-schema byte and therefore the
+  // Explicit optional-input metadata changes the supported-plan-schema byte and therefore the
   // sealed package identity; all other canonical package fields remain byte-identical.
   EXPECT_EQ(golden.digest,
-            "sha256:23a024df6190ed80de6de176425ca3c01a1a174e550a3ef6f5e1ffd6e1115669");
+            "sha256:a1ff03a272bdf44bc14bb9214ab548ad25befc1e469e0442a221965514638e05");
   EXPECT_EQ(detail::runtime_package_capability_canonical_json_v1(golden, true),
             kRuntimePackageX8664Golden);
 
@@ -825,6 +867,16 @@ TEST(ProfileAdmission, MatchesSchemaPolicyAbiTargetCapabilityAndEvidenceExactly)
     EXPECT_EQ(matched.error().message, token);
     EXPECT_EQ(state.profile_manifest.disposition, ProfileAdmissionDisposition::kRejected);
   };
+  expect_rejection(
+      [](auto& package) {
+        package.supported_plan_schemas = {"holoscan.execution_plan.private.v4"};
+      },
+      "PROFILE_PLAN_SCHEMA_UNSUPPORTED");
+  expect_rejection(
+      [](auto& package) {
+        package.supported_plan_schemas = {"holoscan.execution_plan.private.v5"};
+      },
+      "PROFILE_PLAN_SCHEMA_UNSUPPORTED");
   expect_rejection([](auto& package) { package.supported_plan_schemas = {"other"}; },
                    "PROFILE_PLAN_SCHEMA_UNSUPPORTED");
   expect_rejection([](auto& package) { ++package.profile_policies.front().minor; },

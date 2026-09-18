@@ -1,22 +1,34 @@
-# Holoscan SDK 5.0 EA2
+# Holoscan SDK v5.0.0-rc5
 
-Holoscan SDK 5.0 EA2 is a source-only Early Access release intended for
-invited collaborators.
+Holoscan SDK 5.0.0-rc5 is a source-only release candidate intended for
+integration and evaluation of the reviewed SDK, samples, and camera source
+tuple.
 
-## Release Artifacts
+> [!WARNING]
+> Holoscan SDK 5.0.0-rc5 is a source-only release candidate provided for
+> integration and evaluation. This candidate has not undergone the
+> Holoscan SDK formal SQA qualification process and is not a GA release.
 
-- :octocat: **Source:** [`v5.0.0-ea2`](https://github.com/nvidia-holoscan/holoscan-sdk/releases/tag/v5.0.0-ea2)
-- 📕 **Documentation:** [Holoscan SDK 5.0 EA2 User Guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide)
-- 🧪 **Early Access samples:** [`holoscan-sdk-5.0.0-ea2/early-access-samples`](https://github.com/nvidia-holoscan/holohub/releases/tag/holoscan-sdk-5.0.0-ea2/early-access-samples)
+## <a id="release-artifacts"></a>Release Artifacts
 
-For supported platforms and system requirements, see **Documentation → SDK Installation → Prerequisites**.
+- :octocat: **Source:** `v5.0.0-rc5` (publication pending)
+- 🧪 **Early Access samples:** `holoscan-sdk-5.0.0-rc5/early-access-samples`
+  (publication pending)
+- 📷 **Camera module:** `holoscan-sdk-5.0.0-rc5/holoscan-camera-0.4.0`
+  (publication pending)
+- 📕 **Documentation:** Holoscan SDK 5.0.0-rc5 User Guide (publication pending)
 
-> [!warning]
-> The Early Access documentation is derived from the in-development Holoscan SDK 5.0 guide and may contain links to binary artifacts or public GitHub content that are not part of EA2. Treat those links as unavailable for EA2; they are expected to become valid as part of the Holoscan SDK 5.0 GA publication.
+> [!WARNING]
+> The release candidate documentation is derived from the in-development
+> Holoscan SDK 5.0 guide and may contain links to binary artifacts or public
+> GitHub content that are not part of 5.0.0-rc5. Treat those links as
+> unavailable for this release candidate; they are expected to become valid
+> as part of the Holoscan SDK 5.0 GA publication.
 
-> [!important]
-> This release does not include prebuilt containers, Python wheels, Debian
-> packages, or other binary artifacts. Build the SDK from the tagged source.
+> [!IMPORTANT]
+> This release candidate includes source only. It does not include prebuilt
+> containers, Python wheels, Debian packages, or other binary artifacts. Build
+> the SDK from the published source tag when it becomes available.
 
 ## <a id="release-notes"></a>Release Notes
 
@@ -28,6 +40,19 @@ the Holoscan SDK 4.x series. Unless a
 platform restriction is noted, a feature runs on all supported platforms.
 
 #### Breaking Changes
+
+- **Unified startup parameter authoring (EA2)** - The detached `ParamOverrideSet` path was removed,
+  including `decode_overrides()`, `to_overrides()`, `load_overrides()`,
+  `make_param_rebind_target()`, `ParamAdmissionContext`, and
+  `CompileOptions::parameter_overrides`. Decode ordinary startup configuration with
+  `try_decode<T>()`, move the resulting `PreparedParams<T>` into
+  `OperatorHandle::set_params()`, and call the normal `compile(graph, options)`. For an atomic
+  multi-operator configuration or snapshot restore, call the graph-owned `params::set_params()` or
+  `load_and_set_params()` form before compiling. No compatibility shim is provided for this pre-GA
+  API. Applying semantic edits with `Document::patched()` may clear its exact current-source digest;
+  guarded saves of an edited document should use `document.digest().base_source` as
+  `SaveOptions::expected_source_digest`. The pre-GA `decode_params<T>()` and
+  `decode_params_or_throw<T>()` names are now `try_decode<T>()` and `decode<T>()`, respectively.
 
 - **Automatic partitioning is the default topology and artifact contract (EA2)** - Graphs with
   no partition declarations now use the production source-chain planner. Multiple resulting
@@ -70,8 +95,8 @@ platform restriction is noted, a feature runs on all supported platforms.
   operator execution, and preserve Tensor ordering across ordinary and Green
   Context streams. Automatic graph partitioning does not automatically size or
   assign dedicated contexts. See the
-  [Green Context example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v5.0.0-ea2/examples/green_context)
-  and [CUDA Green Contexts guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/green_contexts.mdx).
+  [Green Context example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/green_context)
+  and [CUDA Green Contexts guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/advanced/cuda-green-contexts).
 - **Lifecycle stage graph** - Bounded operator lifecycle with deterministic
   startup, running, and shutdown stages (EA1-008).
 - **Managed shutdown signals (EA2)** - On Linux, blocking `run(plan)`
@@ -112,8 +137,8 @@ platform restriction is noted, a feature runs on all supported platforms.
   the edge queue depth needed for that output. The compiled plan retains both
   derivations and reports invalid or incomplete formulas; explicit capacity and
   queue depth remain available when needed. See the
-  [derived Tensor pool capacity example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v5.0.0-ea2/examples/derived_tensor_pool_capacity)
-  and [Tensor sizing guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/tensors_in_depth.mdx).
+  [derived Tensor pool capacity example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/derived_tensor_pool_capacity)
+  and [Tensor sizing guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#size-queue-entries-from-nominal-rates).
 
 #### Channels and transport
 
@@ -129,6 +154,23 @@ platform restriction is noted, a feature runs on all supported platforms.
 - **External channel clients** - Standalone non-Operator processes connect to
   a running graph using only `endpoint-catalog.json` and the stable endpoint
   name; client code does not require HoloMQ headers (EA1-016).
+- **Explicit external subscriber close (EA2)** - Scalar, POD, generated-schema,
+  raw-Tensor, and descriptor-Tensor Channel subscribers now provide a checked
+  `close()` operation for deterministic local endpoint retirement. Subscriber
+  close discards unread local work and makes later checked operations report
+  `kClosed`; it does not publish producer EOS, close a graph port, or contribute
+  natural-completion evidence. Publisher `close()` remains the ordered EOS
+  operation.
+- **External producer EOS propagation (EA2)** - Ordered publisher EOS now has
+  explicit end-to-end coverage through finite input-driven graph paths. Earlier
+  accepted data and retained work drain before eligible Operator outputs close;
+  live external subscribers observe final data before `kClosed`, and a fully
+  finite graph reaches natural `kCompleted` without `request_stop()`. Inputs on
+  independent triggers remain side inputs, and admitted external-restart
+  capacity keeps outputs open for the replacement generation. A required export
+  subscriber must remain attached through remote EOS; disappearance after data
+  acceptance fails terminal drain rather than satisfying EOS or retrying
+  indefinitely.
 - **Descriptor-Tensor schema external topics (EA2)** - Graph imports and exports
   now carry application-owned singular or multi-Tensor descriptor schemas
   through the endpoint catalog. Standalone non-Operator peers attach with the
@@ -137,8 +179,8 @@ platform restriction is noted, a feature runs on all supported platforms.
   cross-process operation, and ordered health, data, and end-of-stream control.
   Tensor bytes remain in retained or imported backing rather than being
   serialized inline. See the
-  [descriptor-schema external-topic example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v5.0.0-ea2/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
-  and [External Topic Boundaries guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/external_topics.mdx).
+  [descriptor-schema external-topic example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
+  and [External Topic Boundaries guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/composing-applications/external-topics).
 - **Larger catalog inline services (EA2)** - Ordinary catalog-attached scalar,
   POD, and generated-schema endpoints now support complete fixed-inline frames
   through 32 KiB instead of the previous 4-KiB catalog ceiling. After framing,
@@ -146,8 +188,8 @@ platform restriction is noted, a feature runs on all supported platforms.
   32,704 bytes for ordinary generated schemas. Raw Tensor and
   descriptor-Tensor backing remains out of band and does not count toward this
   inline limit. See the capacity details in
-  [External Topic Boundaries](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/external_topics.mdx)
-  and [Standalone Channel Clients](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/standalone_channel_clients.mdx).
+  [External Topic Boundaries](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/composing-applications/external-topics)
+  and [Standalone Channel Clients](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/advanced/standalone-channel-clients).
 - **Event-driven channel waits** - Typed subscribers block on their transport
   event lane with `wait_and_receive_sample` instead of polling
   `receive_sample`; a wait takes an absolute deadline, cancels through a
@@ -175,7 +217,7 @@ The `holoscan.core` bindings include:
   `DLDataTypeCode`, with full DLPack support, including the DLPack 1.3 C
   exchange API, and array interface support through `__array_interface__` and
   `__cuda_array_interface__`.
-- `holoscan.core.hello()` and `holoscan.core.is_tensor_like()`.
+- `holoscan.core.is_tensor_like()`.
 
 *CUDA 13 platforms only.*
 
@@ -199,8 +241,8 @@ The `holoscan.core` bindings include:
   reducing activation and fanout overhead. The expanded benchmark suites
   attribute Runtime and transport costs separately; their dated measurements
   are reference evidence rather than guarantees for other systems. See the
-  [Core Runtime Benchmarks](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/benchmarks_core_runtime.mdx)
-  and [Channel Benchmarks](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/benchmarks_channel.mdx).
+  [Core Runtime Benchmarks](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/performance/core-runtime-benchmarks)
+  and [Channel Benchmarks](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/performance/channel-benchmarks).
 - Tensor pool and catalog tensor-backing sharing reduce allocation pressure.
 - Channel and HoloMQ benchmark suite (`comm_benchmark`).
 
@@ -216,8 +258,8 @@ The `holoscan.core` bindings include:
   one to preserve its freshest-only mailbox behavior. Retaining an authored
   depth greater than one is an intentional semantic change: the queue now
   preserves the newest bounded N-sample backlog in FIFO order. See the
-  [graph composition example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v5.0.0-ea2/examples/graph_composition)
-  and [Composing a Graph guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/composing_a_graph.mdx).
+  [graph composition example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/graph_composition)
+  and [Composing a Graph guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/getting-started/composing-a-graph).
 - **EA2 Tensor port-spec revision**: Tensor port authoring now uses
   `TensorRepresentation`, `TensorBounds`, `TensorInputSpec`,
   `TensorOutputSpec`, and `TensorBoundaryContract`. Replace
@@ -232,9 +274,9 @@ The `holoscan.core` bindings include:
   source and ABI break: perform a clean rebuild, and do not mix libraries,
   plugins, generated artifacts, or endpoint catalogs from before and after
   this change. See the
-  [Tensors 101 example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v5.0.0-ea2/examples/tensors_101),
-  [Tensors 101 guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/tensors_101.mdx),
-  and [Custom FlatBuffer Schemas guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/custom_flatbuffer_schemas.mdx).
+  [Tensors 101 example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/tensors_101),
+  [Tensors 101 guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/getting-started/tensors-101),
+  and [Custom FlatBuffer Schemas guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas).
 - **Sensor payload schemas moved to `holoscan::sensor_io`**: `image.fbs`,
   `imu.fbs`, and the Image metadata helpers moved out of the Core schema
   library. Sources include `<holoscan/sensor_io/image_metadata.hpp>` instead of
@@ -268,11 +310,11 @@ The `holoscan.core` bindings include:
 
 | Issue | Description |
 | ----- | ----------- |
-| — | Fixed Runtime startup for process-local 1:1 and fanout graphs whose application-defined FlatBuffers schema contains one descriptor-backed CUDA-device Tensor field. The single-field schema now uses the same admitted binding path without requiring a dummy host Tensor field. See the [descriptor-Tensor example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v5.0.0-ea2/examples/flatbuffer_schemas/descriptor_tensor_schema) and [Custom FlatBuffer Schemas guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/custom_flatbuffer_schemas.mdx). |
+| — | Fixed Runtime startup for process-local 1:1 and fanout graphs whose application-defined FlatBuffers schema contains one descriptor-backed CUDA-device Tensor field. The single-field schema now uses the same admitted binding path without requiring a dummy host Tensor field. See the [descriptor-Tensor example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_schema) and [Custom FlatBuffer Schemas guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas). |
 | — | Fixed typed inline receive so temporary typed-slot contention cannot drop an already accepted sample while receive staging is blocked. |
 | — | Fixed subscriber-owner wake routing for single-process graphs with multiple execution partitions. |
-| — | Fixed bracketed temporal windows so their anchors stop after end of stream instead of repeatedly scheduling empty windows. See the [Temporal Contracts guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/temporal_contracts.mdx). |
-| — | Fixed stale retained `LatestWithin` evidence retirement, including retained Tensor readiness and end-of-stream paths, so a stale sample cannot remain falsely reusable. See the [Temporal Contracts guide](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v5.0.0-ea2/docs/temporal_contracts.mdx). |
+| — | Fixed bracketed temporal windows so their anchors stop after end of stream instead of repeatedly scheduling empty windows. See the [Temporal Contracts guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/building-operators/temporal-contracts). |
+| — | Fixed stale retained `LatestWithin` evidence retirement, including retained Tensor readiness and end-of-stream paths, so a stale sample cannot remain falsely reusable. See the [Temporal Contracts guide](https://nvidia-preview-v5-0-0-ea2.docs.buildwithfern.com/holoscan/sdk-user-guide/building-operators/temporal-contracts). |
 
 ### <a id="known-issues"></a>Known Issues
 

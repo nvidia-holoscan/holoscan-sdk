@@ -174,6 +174,42 @@ class PartitionMultiDeviceTensorSourceOperator final : public Operator<> {
   Output<Tensor> second;
 };
 
+class AtomicMultiDeviceTensorGraph final : public Graph {
+ protected:
+  void compose() override {
+    test::add_compile_test_default_clock(*this);
+    (void)op<PartitionMultiDeviceTensorSourceOperator>("source");
+  }
+};
+
+// REQ: COMPILE-075
+TEST(CompilePartitionAuthoring, AtomicInstanceMultiOutputDeviceDomainsAgreeAcrossCoverModes) {
+  for (const bool automatic : {false, true}) {
+    for (const bool conflict : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "automatic=" << automatic << " conflict=" << conflict);
+      Graph graph{"root"};
+      test::add_compile_test_default_clock(graph);
+      graph.partition("owner").add(graph.embed<AtomicMultiDeviceTensorGraph>("child"));
+      if (automatic) {
+        (void)graph.op<test::CompileTestOperator>("peer");
+        graph.auto_partition_remaining();
+      }
+      CompileOptions options;
+      options.deployment.bind_tensor_output_device({"child/source", "first", DeviceId{0}})
+          .bind_tensor_output_device({"child/source", "second", DeviceId{conflict ? 1 : 0}});
+      const auto plan = compile(graph, std::move(options));
+      if (conflict) {
+        EXPECT_FALSE(plan.ok());
+        EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE"));
+        EXPECT_TRUE(plan.execution_partitions().empty());
+        EXPECT_TRUE(plan.execution_lanes().empty());
+      } else {
+        EXPECT_TRUE(plan.ok()) << plan.json();
+      }
+    }
+  }
+}
+
 // Keeps the only graph edge scalar while two disconnected Tensor outputs contribute an exact
 // intrinsic multi-device conflict to the source vertex.
 class PartitionMultiDeviceScalarSourceOperator final : public Operator<> {
@@ -1494,7 +1530,7 @@ TEST(CompilePartitionAuthoring, ZeroBindingArtifactMatchesNormalizedBaseline) {
   const ExecutionPlan normalized_plan = detail::ExecutionPlanAccess::make(std::move(normalized));
 
   const std::string golden_path = std::string(HOLOSCAN_COMPILER_TEST_DATA_DIR) +
-                                  "/zero_binding_tensor_graph.v4.normalized.json";
+                                  "/zero_binding_tensor_graph.v6.normalized.json";
   std::ifstream golden_stream{golden_path, std::ios::binary};
   ASSERT_TRUE(golden_stream.is_open()) << golden_path;
   const std::string golden{std::istreambuf_iterator<char>{golden_stream},
@@ -1514,7 +1550,7 @@ TEST(CompilePartitionAuthoring, GreenContextArtifactMatchesFeatureRichNormalized
   // Graph topology (each node is in the named execution partition):
   //   source(alpha) --> target(beta)
   // Key setup: compile accepted dedicated and residual Green Context records, replace its
-  // environment-derived identities with fixed values, and regenerate the complete schema-v4
+  // environment-derived identities with fixed values, and regenerate the complete schema-v6
   // artifact.
   const ExecutionPlan plan = compile_green_context_partitions(false);
   ASSERT_TRUE(plan.ok()) << plan.json();
@@ -1528,7 +1564,7 @@ TEST(CompilePartitionAuthoring, GreenContextArtifactMatchesFeatureRichNormalized
   const ExecutionPlan normalized_plan = detail::ExecutionPlanAccess::make(std::move(normalized));
 
   const std::string golden_path =
-      std::string(HOLOSCAN_COMPILER_TEST_DATA_DIR) + "/green_context_partitions.v4.normalized.json";
+      std::string(HOLOSCAN_COMPILER_TEST_DATA_DIR) + "/green_context_partitions.v6.normalized.json";
   std::ifstream golden_stream{golden_path, std::ios::binary};
   ASSERT_TRUE(golden_stream.is_open()) << golden_path;
   const std::string golden{std::istreambuf_iterator<char>{golden_stream},

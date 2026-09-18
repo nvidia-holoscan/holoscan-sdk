@@ -65,8 +65,8 @@ and [`examples/experimental/web_tuner/cpp`](https://github.com/nvidia-holoscan/h
 When a session starts, each operator is bound to immutable **generation 0**.
 This is the plan's compile-resolved initial aggregate: the parameter type's
 default aggregate, optionally replaced by an explicit typed baseline supplied
-through `OperatorHandle::set_params()`, and then sparsely patched by admitted
-target-bound compile/config overrides. See
+through `OperatorHandle::set_params()`, and then sparsely patched by an admitted
+graph-owned parameter input. See
 [Typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters)
 and
 [Configuring applications](/holoscan/sdk-user-guide/configuration/configuring-applications).

@@ -10,3 +10,4 @@ table RequiredTensorDescriptor {
 }
 
 root_type RequiredTensorDescriptor;
+file_identifier "DRT3";

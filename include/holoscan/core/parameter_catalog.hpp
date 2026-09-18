@@ -217,6 +217,12 @@ struct OperatorParamRecord {
   ParamSchemaProof schema_proof{ParamSchemaProof::kAuthorAsserted};  ///< Coverage evidence.
 };
 
+/// @brief Own one stable enum label and its exact canonical scalar value.
+struct ParamEnumChoiceRecord {
+  std::string name;          ///< Owned user-facing label.
+  ParamScalarValue value{};  ///< Exact underlying enum value.
+};
+
 /// @brief Own immutable policy-relevant facts for one plan-bound field.
 ///
 /// The public record deliberately contains no startup value, protected value digest, value origin,
@@ -242,6 +248,7 @@ struct ParamFieldCatalogRecord {
   std::string alias;               ///< Prior canonical input spelling; never output identity.
   std::string validator_id;        ///< Stable local-validator identity, or empty.
   ParamConstraints constraints{};  ///< Portable declared bounds and choices.
+  std::vector<ParamEnumChoiceRecord> enum_choices;  ///< Owned stable enum label/value domain.
   ParamStringEncoding string_encoding{
       ParamStringEncoding::kArbitraryBytes};  ///< Direct string encoding policy.
   ParamStringEncoding element_string_encoding{

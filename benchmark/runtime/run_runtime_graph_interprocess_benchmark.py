@@ -955,6 +955,31 @@ def worker_failure_details(log_paths: list[Path]) -> str:
     return "\n".join(details)
 
 
+def worker_result_failure_details(result_paths: list[Path]) -> str:
+    details: list[str] = []
+    for path in result_paths:
+        try:
+            result = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError):
+            continue
+        if not isinstance(result, dict):
+            continue
+        summary = {
+            "role": result.get("role"),
+            "termination": result.get("termination"),
+            "diagnostic_count": result.get("diagnostic_count"),
+            "diagnostics": result.get("diagnostics"),
+            "counts": result.get("counts"),
+            "runtime_thread_usage": result.get("runtime_thread_usage"),
+            "support_threads": result.get("support_threads"),
+        }
+        details.append(
+            f"--- {path.name} diagnostic result\n"
+            + json.dumps(summary, separators=(",", ":"), sort_keys=True)
+        )
+    return "\n".join(details)
+
+
 def common_command(args: argparse.Namespace, run_id: str) -> list[str]:
     start_timeout_ms = min((1 << 32) - 1, max(1, math.ceil(args.process_timeout_sec * 1000)))
     return [
@@ -1178,11 +1203,16 @@ def run_repetition(
         if 77 in failures and all(code in (77, -signal.SIGTERM) for code in failures):
             raise SystemExit(77)
         worker_logs = [producer_log_path, *consumer_log_paths]
+        worker_results = [producer_path, *consumer_paths]
         if args.topology == "chain":
             worker_logs.append(relay_log_path)
+            worker_results.append(relay_path)
+        failure_details = worker_failure_details(worker_logs)
+        result_details = worker_result_failure_details(worker_results)
+        if result_details:
+            failure_details += "\n" + result_details
         raise RuntimeError(
-            f"benchmark process failures {failures}; logs in {repetition_dir}\n"
-            f"{worker_failure_details(worker_logs)}"
+            f"benchmark process failures {failures}; logs in {repetition_dir}\n{failure_details}"
         )
 
     producer = checked_json(producer_path)

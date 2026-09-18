@@ -13,10 +13,8 @@ include("${CMAKE_CURRENT_LIST_DIR}/custom_schema_flatbuffers.cmake")
 add_executable(custom_schema
     custom_schema.cpp
 )
-add_dependencies(custom_schema custom_schema_flatbuffers_generated)
 target_compile_features(custom_schema PRIVATE cxx_std_20)
-target_include_directories(custom_schema PRIVATE "${CUSTOM_SCHEMA_GENERATED_DIR}")
-target_link_libraries(custom_schema PRIVATE holoscan::core holoscan::schema)
+target_link_libraries(custom_schema PRIVATE holoscan::core custom_schema_flatbuffers_generated)
 set_target_properties(custom_schema PROPERTIES CXX_EXTENSIONS OFF)
 holoscan_configure_example_install(custom_schema)
 
@@ -32,10 +30,10 @@ endif()
 
 install(TARGETS custom_schema
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/flatbuffer_schemas/custom_schema/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )
 install(FILES
     custom_control.fbs
     DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/flatbuffer_schemas/custom_schema/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

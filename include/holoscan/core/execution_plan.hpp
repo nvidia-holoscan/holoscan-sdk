@@ -262,7 +262,8 @@ struct ExecutionPartitionRecord {
   /// Each decoded Graph/Operator UTF-8 segment is URI-percent-encoded bytewise with uppercase
   /// hexadecimal before slash joining. Keys use the no-leading-slash OperatorPath grammar.
   std::vector<std::string> operator_paths;
-  std::uint32_t execution_lane{};  ///< Dense serial lane index, starting at zero.
+  std::uint32_t execution_lane{};      ///< Dense serial lane index, starting at zero.
+  std::vector<GraphId> graph_members;  ///< Explicit selected roots in the canonical plan Graph.
 };
 
 /// @brief Retain immutable inspection of one accepted execution partition.
@@ -289,6 +290,10 @@ class HOLOSCAN_CORE_EXPORT ExecutionPartitionView {
   /// @note Reserved and non-ASCII bytes are percent-encoded per decoded path segment. Keys use the
   /// no-leading-slash OperatorPath grammar shared by Parameter records and Tensor placement.
   [[nodiscard]] std::span<const std::string> operator_paths() const noexcept;
+
+  /// @brief Return explicitly selected atomic instance roots in the canonical plan Graph.
+  /// @note Descendant Operators are resolved in \ref members and \ref operator_paths.
+  [[nodiscard]] std::span<const GraphId> graph_members() const noexcept;
 
   /// @brief Return the dense serial execution lane.
   [[nodiscard]] std::uint32_t execution_lane() const noexcept;
@@ -506,8 +511,9 @@ struct PortPlanRecord {
   VertexId owner{};                                    ///< Canonical owning logical vertex.
   PortOwnerKind owner_kind{PortOwnerKind::kOperator};  ///< Owning object family.
   PortDirection direction{PortDirection::kInput};      ///< Accepted data-flow direction.
-  std::string local_name;                              ///< Owned declaration-local port name.
-  PayloadIdentityRecord payload_identity;              ///< Complete pointer-free payload identity.
+  bool optional{};         ///< Authored permission for eligible Exact/SafeDefault input absence.
+  std::string local_name;  ///< Owned declaration-local port name.
+  PayloadIdentityRecord payload_identity;  ///< Complete pointer-free payload identity.
   /// Positive generated-package serialized bound; zero for every other payload family.
   std::uint64_t serialized_payload_capacity_bytes{};
   /// Whether compile admitted bounded direct generic-loan construction for this output.
@@ -918,12 +924,17 @@ enum class TensorByteSpanDerivationUpdateDisposition : std::uint8_t {
 /// @brief Preserve one evaluated node of a derived Tensor byte-span expression.
 struct TensorByteSpanDerivationNodePlanRecord {
   TensorByteSpanOperation operation{TensorByteSpanOperation::kPositiveConstant};  ///< Node kind.
-  std::uint32_t left{};            ///< Left child index for compound operations.
-  std::uint32_t right{};           ///< Right child index for binary operations.
-  std::uint64_t operand{};         ///< Literal or alignment operand, otherwise zero.
-  ParamFieldId parameter_field{};  ///< Parameter dependency, or zero.
-  PortId input{};                  ///< Input dependency, or zero.
-  std::uint64_t resolved_value{};  ///< Checked positive node result in bytes.
+  std::uint32_t left{};             ///< Left child index for compound operations.
+  std::uint32_t right{};            ///< Right child index for binary operations.
+  std::uint64_t operand{};          ///< Literal or alignment operand, otherwise zero.
+  ParamFieldId parameter_field{};   ///< Parameter dependency, or zero.
+  PortId input{};                   ///< Input dependency, or zero.
+  std::uint64_t resolved_value{};   ///< Checked positive node result in bytes.
+  std::string projection_id;        ///< Stable projector identity, or empty for closed nodes.
+  std::string parameter_schema_id;  ///< Owning Params schema for a Parameter or projection node.
+  ParamSchemaVersion parameter_schema_version{};  ///< Owning projector schema version, or zero.
+  /// Canonical explicit dependency identities for a Parameter projection node.
+  std::vector<TensorByteSpanProjectionDependencyRecord> projection_dependencies;
 };
 
 /// @brief Record compiler evidence for one derived Tensor output-pool slot capacity.
@@ -941,6 +952,41 @@ struct TensorByteSpanDerivationPlanRecord {
   TensorByteSpanDerivationUpdateDisposition update_disposition{
       TensorByteSpanDerivationUpdateDisposition::kFrozenCompileTime};  ///< Strongest dependency.
   std::vector<TensorByteSpanDerivationNodePlanRecord> nodes;  ///< Canonical evaluated postorder.
+};
+
+/// @brief Classify the update boundary of a Parameter-derived Tensor memory-kind dependency.
+enum class TensorMemoryKindDerivationUpdateDisposition : std::uint8_t {
+  kFrozenCompileTime = 0,  ///< The source Parameter is compile-time immutable.
+  kRecompileRequired = 1,  ///< A changed source value requires compiling a new plan.
+};
+
+/// @brief Record compiler evidence for one Parameter-derived Tensor output memory kind.
+///
+/// This pointer-free record preserves declaration identity and the resolved physical result. It
+/// deliberately excludes the accepted raw Parameter value and all process-local typed readers.
+struct TensorMemoryKindDerivationPlanRecord {
+  PortId output{};  ///< Owning runtime-pooled Tensor output.
+  /// Descriptor-schema field id, or no value for a raw Tensor output.
+  std::optional<std::uint16_t> field_id;
+  /// Dense descriptor-schema Tensor index, or no value for a raw Tensor output.
+  std::optional<std::uint16_t> tensor_index;
+  PlanGenerationId plan_generation{};             ///< Nonzero enclosing plan identity.
+  RunGenerationId run_generation{};               ///< Zero for this immutable plan-bound evidence.
+  std::string parameter_schema_id;                ///< Stable owning Params schema identity.
+  ParamSchemaVersion parameter_schema_version{};  ///< Owning Params schema version.
+  ParamFieldId parameter_field{};                 ///< Stable Parameter field identity.
+  ParamSchemaHash parameter_full_id{};            ///< Complete Parameter field identity.
+  /// Ordered complete identities for every member in the typed Parameter path.
+  std::vector<ParamSchemaHash> parameter_member_full_ids;
+  std::string parameter_path;  ///< Canonical display path.
+  TensorMemoryKindExpressionForm form{TensorMemoryKindExpressionForm::kDirect};  ///< Closed form.
+  std::vector<TensorMemoryKindMappingRecord> mapping;     ///< Canonical declaration mapping.
+  MemoryKind resolved_memory_kind{MemoryKind::kUnknown};  ///< Frozen concrete physical result.
+  TensorMemoryKindDerivationUpdateDisposition update_disposition{
+      TensorMemoryKindDerivationUpdateDisposition::kFrozenCompileTime};  ///< Source update
+                                                                         ///< boundary.
+  TensorContractValueOrigin origin{
+      TensorContractValueOrigin::kCompilerDerivedMemoryKind};  ///< Physical-fact provenance.
 };
 
 /// @brief Freeze one Tensor-backed output allocation capability and capacity.
@@ -1835,6 +1881,7 @@ struct ParameterFieldPlanRecord {
   std::string alias;               ///< Prior canonical input spelling; never output identity.
   std::string validator_id;        ///< Stable validator identity, or empty.
   ParamConstraints constraints{};  ///< Portable declared bounds and choices.
+  std::vector<ParamEnumChoiceRecord> enum_choices;  ///< Owned stable enum label/value domain.
   ParamStringEncoding string_encoding{ParamStringEncoding::kArbitraryBytes};
   ParamStringEncoding element_string_encoding{ParamStringEncoding::kArbitraryBytes};
   ParamValueRouteDisposition value_route{
@@ -2064,12 +2111,6 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @return Plan-owned records in canonical \ref EdgeId order.
   [[nodiscard]] std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes() const noexcept;
 
-  /// @brief Return deep-owned generated-package provenance used by this local plan.
-  /// @return Records ordered by SchemaId and complete evidence, or an empty span.
-  /// @note These diagnostic records are serialized in the public artifact but do not participate
-  /// in Graph identity, the execution-plan digest, or wire compatibility.
-  [[nodiscard]] std::span<const SchemaPackagePlanRecord> schema_packages() const noexcept;
-
   /// @brief Return reusable-Graph aliases projected into plan-local port identities.
   /// @return Plan-owned records in public/internal port order.
   [[nodiscard]] std::span<const InterfacePortBindingPlanRecord> interface_port_bindings()
@@ -2118,6 +2159,23 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @return A plan-owned record, or `nullptr` when the names are absent, the field selector is
   /// incomplete, or an omitted field selector would be ambiguous for a multi-Tensor output.
   [[nodiscard]] const TensorByteSpanDerivationPlanRecord* find_tensor_byte_span_derivation(
+      std::string_view operator_path, std::string_view output_name,
+      std::optional<std::uint16_t> field_id = std::nullopt,
+      std::optional<std::uint16_t> tensor_index = std::nullopt) const noexcept;
+
+  /// @brief Return compile-time evidence for Parameter-derived Tensor memory kinds.
+  /// @return Immutable records in output PortId and descriptor-field order.
+  [[nodiscard]] std::span<const TensorMemoryKindDerivationPlanRecord>
+  tensor_memory_kind_derivations() const noexcept;
+
+  /// @brief Find derived Tensor memory-kind evidence by authored Operator and output names.
+  /// @param operator_path Canonical Operator path, such as `resize` or `child/resize`.
+  /// @param output_name Declaration-local output name.
+  /// @param field_id Optional descriptor-schema field identity.
+  /// @param tensor_index Optional descriptor-schema Tensor index paired with `field_id`.
+  /// @return A plan-owned record, or `nullptr` when the names are absent, the field selector is
+  /// incomplete, or an omitted field selector would be ambiguous for a multi-Tensor output.
+  [[nodiscard]] const TensorMemoryKindDerivationPlanRecord* find_tensor_memory_kind_derivation(
       std::string_view operator_path, std::string_view output_name,
       std::optional<std::uint16_t> field_id = std::nullopt,
       std::optional<std::uint16_t> tensor_index = std::nullopt) const noexcept;

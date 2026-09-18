@@ -21,7 +21,7 @@ operation; this program does not start the graph runtime.
 From an installed SDK consumer build:
 
 ```bash
-cmake -S /path/to/holoscan/share/examples/automatic_partitioning/cpp \
+cmake -S /path/to/holoscan/lib/holoscan/examples/automatic_partitioning/cpp \
   -B build/automatic_partitioning \
   -Dholoscan_DIR=/path/to/holoscan/lib/cmake/holoscan
 cmake --build build/automatic_partitioning
@@ -33,10 +33,11 @@ Run only the GPU-independent automatic and `include_all()` cases with
 with `automatic_partitioning --mode hybrid`. Invoking the executable without a
 mode retains the combined walkthrough.
 
-The regular example build installs the executable under
-`${CMAKE_INSTALL_DATADIR}/examples/automatic_partitioning/cpp` (by default,
-`share/examples/automatic_partitioning/cpp`) and honors a configured data
-directory. It registers
+The regular example build installs the complete source-and-binary bundle under
+`${CMAKE_INSTALL_LIBDIR}/holoscan/examples` (by default,
+`lib/holoscan/examples`). The executable is at
+`<libdir>/holoscan/examples/automatic_partitioning/cpp`; changing
+`CMAKE_INSTALL_DATADIR` does not relocate examples. It registers
 `EXAMPLE_CPP_AUTOMATIC_PARTITIONING_CPU_TEST` and
 `EXAMPLE_CPP_AUTOMATIC_PARTITIONING_HYBRID_TEST` for the installed-example
 package test. The CPU test always evaluates automatic planning and

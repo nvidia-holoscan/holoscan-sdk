@@ -18,6 +18,7 @@
 #include <holoscan/core/expected.hpp>
 
 #include "../compiler/execution_plan_state.hpp"
+#include "../core/diagnostic_context.hpp"
 #include "../core/lifecycle_kernel.hpp"
 #include "../core/lifecycle_parameter_view.hpp"
 #include "runtime_materialization.hpp"
@@ -71,6 +72,15 @@ struct LifecycleRestartExecutionOutcome {
 static_assert(std::is_standard_layout_v<LifecycleRestartExecutionOutcome>);
 static_assert(std::is_trivially_copyable_v<LifecycleRestartExecutionOutcome>);
 
+struct RuntimeLifecycleFailure {
+  VertexId vertex{};
+  LifecycleExecutionFailure failure;
+  DiagnosticCapture capture;
+  std::string_view component_path;
+  LifecycleTransactionId transaction_id{};
+  std::string_view token;
+};
+
 /// Execute the immutable lifecycle stage graph over freshly replayed Operators.
 class RuntimeLifecycleExecutor {
  public:
@@ -87,11 +97,23 @@ class RuntimeLifecycleExecutor {
       RuntimeNotificationSourceRegistry* notifications = nullptr, RuntimeRateState* rates = nullptr,
       RuntimeRateMaterializationBinding rate_materialization = {});
 
+  void clear_failure_evidence() noexcept {
+    failure_count_ = 0U;
+    transaction_id_ = 0U;
+    callback_capture_.clear();
+    result_ = {};
+    failure_diagnostic_.store(0U, std::memory_order_release);
+  }
+
   [[nodiscard]] bool startup() noexcept;
   [[nodiscard]] LifecycleRestartExecutionOutcome restart(
       const LifecycleRestartExecutionRequest& request) noexcept;
   [[nodiscard]] bool shutdown() noexcept;
   [[nodiscard]] std::string_view failure_token() const noexcept;
+  [[nodiscard]] const LifecycleExecutionResult& result() const noexcept { return result_; }
+  [[nodiscard]] std::span<const RuntimeLifecycleFailure> failures() const noexcept {
+    return {failures_.data(), failure_count_};
+  }
 
   /// Install the registry materialized by first ordered kAllocate work before kArm callbacks.
   [[nodiscard]] expected<void, Error> set_notifications(
@@ -106,6 +128,11 @@ class RuntimeLifecycleExecutor {
 
   RuntimeLifecycleExecutor() = default;
 
+  void record_callback_failure(const CallbackReceiver& bound, LifecycleStage stage,
+                               LifecycleTransitionPhase phase, LifecycleStatus status) noexcept;
+  [[nodiscard]] LifecycleStatus finish_callback(const CallbackReceiver& bound, LifecycleStage stage,
+                                                LifecycleTransitionPhase phase,
+                                                LifecycleStatus status) noexcept;
   [[nodiscard]] static LifecycleStatus invoke_callback(void* receiver, LifecycleStage stage,
                                                        LifecycleTransitionPhase phase) noexcept;
   [[nodiscard]] static expected<OperatorRef, Error> resolve_restart_target(
@@ -133,7 +160,7 @@ class RuntimeLifecycleExecutor {
       const ExecutionPlanState& plan, std::span<CallbackReceiver> receivers,
       std::vector<OperatorInstanceId> members, bool union_graph, RestartRuntime& runtime);
   [[nodiscard]] std::size_t startup_position(OperatorInstanceId id) const noexcept;
-  void record_failure_diagnostic(std::string_view token) noexcept;
+  void record_failure_diagnostic(const Error& error) noexcept;
 
   const ExecutionPlanState* plan_{};
   GraphExec* exec_{};
@@ -153,6 +180,12 @@ class RuntimeLifecycleExecutor {
   std::vector<RestartTargetBinding> restart_target_bindings_;
   std::span<const OperatorInstanceId> active_restart_members_;
   std::span<const LifecycleRestartParameterCandidate> active_restart_candidates_;
+  DiagnosticCapture callback_capture_;
+  std::uint32_t callback_diagnostic_{};
+  std::array<RuntimeLifecycleFailure, 4U> failures_;
+  LifecycleExecutionResult result_;
+  std::size_t failure_count_{};
+  LifecycleTransactionId transaction_id_{};
   std::atomic<std::uint32_t> failure_diagnostic_{};
   bool startup_in_progress_{};
   std::size_t startup_legacy_stop_cutoff_{};

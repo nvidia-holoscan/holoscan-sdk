@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(holoscan @PROJECT_VERSION@ CONFIG REQUIRED COMPONENTS core)
+
+include("${CMAKE_CURRENT_LIST_DIR}/holoscan-visualization-targets.cmake")
+check_required_components(holoscan-visualization)

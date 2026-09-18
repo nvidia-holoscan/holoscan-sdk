@@ -819,7 +819,7 @@ class ChannelSubscriber<Tensor>::Impl : public channel_internal::WaitSetSubscrib
     return *data || *terminal || *health;
   }
 
-  [[nodiscard]] expected<void, Error> detach_wait_set() noexcept {
+  [[nodiscard]] expected<void, Error> detach_wait_set() noexcept override {
     terminal_attachment_.reset();
     terminal_wait_handle_ = 0U;
     attachment_.reset();
@@ -1403,9 +1403,21 @@ ChannelSubscriber<Tensor>::ChannelSubscriber(std::unique_ptr<Impl> impl) noexcep
 ChannelSubscriber<Tensor>::ChannelSubscriber(ChannelSubscriber&& other) noexcept = default;
 
 ChannelSubscriber<Tensor>& ChannelSubscriber<Tensor>::operator=(
-    ChannelSubscriber&& other) noexcept = default;
+    ChannelSubscriber&& other) noexcept {
+  if (this != &other) {
+    static_cast<void>(channel_internal::close_local_subscriber(impl_));
+    impl_ = std::move(other.impl_);
+  }
+  return *this;
+}
 
-ChannelSubscriber<Tensor>::~ChannelSubscriber() = default;
+ChannelSubscriber<Tensor>::~ChannelSubscriber() {
+  static_cast<void>(channel_internal::close_local_subscriber(impl_));
+}
+
+expected<void, Error> ChannelSubscriber<Tensor>::close() noexcept {
+  return channel_internal::close_local_subscriber(impl_);
+}
 
 channel_internal::WaitSetSubscriber* ChannelSubscriber<Tensor>::wait_set_subscriber() noexcept {
   return impl_.get();

@@ -21,7 +21,9 @@ target_link_libraries(op_inference
         holoscan::infer
     PRIVATE
         CUDA::cudart
-        yaml-cpp::yaml-cpp
+        $<BUILD_INTERFACE:yaml-cpp::yaml-cpp>
+        $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:
+            $<INSTALL_INTERFACE:holoscan::_inference_yaml_private>>
 )
 
 set_target_properties(op_inference PROPERTIES

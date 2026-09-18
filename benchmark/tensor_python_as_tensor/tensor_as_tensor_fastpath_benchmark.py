@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import re
 import statistics
 import time
@@ -208,16 +209,27 @@ def validate_zero_copy(torch_tensor: torch.Tensor, holoscan_tensor: Tensor) -> N
     validate_zero_copy_pointer(torch_tensor.data_ptr(), holoscan_tensor, "PyTorch tensor")
 
 
+def validate_equal(expected: object, description: str) -> Callable[[object], None]:
+    def validator(actual: object) -> None:
+        if actual != expected:
+            raise RuntimeError(f"{description} returned {actual!r}; expected {expected!r}")
+
+    return validator
+
+
+def validate_dlpack_capsule(result: object) -> None:
+    if type(result).__name__ != "PyCapsule":
+        raise RuntimeError(f"DLPack export returned {type(result).__name__}, not PyCapsule")
+
+
 def ns_per_iteration(elapsed_ns: int, iterations: int) -> float:
     return elapsed_ns / iterations if iterations else 0.0
 
 
-def time_loop(operation: Callable[[], int], iterations: int) -> int:
+def time_loop(operation: Callable[[], object], iterations: int) -> int:
     start = time.perf_counter_ns()
     for _ in range(iterations):
-        data_pointer = operation()
-        if data_pointer == 0:
-            raise RuntimeError("unexpected null data pointer")
+        operation()
     return time.perf_counter_ns() - start
 
 
@@ -227,8 +239,11 @@ def measure(
     iterations: int,
     repeats: int,
     warmup: int,
-    operation: Callable[[], int],
+    operation: Callable[[], object],
+    validator: Callable[[object], None],
 ) -> BenchmarkResult:
+    validator(operation())
+
     if warmup:
         synchronize(device)
         time_loop(operation, warmup)
@@ -273,22 +288,50 @@ def benchmark_device(
         "DLPack C exchange",
     )
 
-    cases: list[tuple[str, Callable[[], int]]] = [
+    round_trip_tensor = Tensor.as_tensor(fast_tensor)
+    validate_zero_copy_pointer(fast_tensor.data, round_trip_tensor, "Holoscan tensor")
+
+    expected_strides = tuple(stride * source.element_size() for stride in source.stride())
+    cases: list[tuple[str, Callable[[], object], Callable[[object], None]]] = [
+        (
+            "tensor_shape",
+            lambda: fast_tensor.shape,
+            validate_equal(shape, "Tensor.shape"),
+        ),
+        (
+            "tensor_strides",
+            lambda: fast_tensor.strides,
+            validate_equal(expected_strides, "Tensor.strides"),
+        ),
+        (
+            "tensor_dlpack_capsule",
+            lambda: fast_tensor.__dlpack__(max_version=(1, 0)),
+            validate_dlpack_capsule,
+        ),
+        (
+            "as_tensor_holoscan_round_trip",
+            lambda: Tensor.as_tensor(fast_tensor).data,
+            validate_equal(fast_tensor.data, "Holoscan Tensor round-trip"),
+        ),
         (
             "as_tensor_torch_c_exchange",
             lambda: Tensor.as_tensor(source).data,
+            validate_equal(source.data_ptr(), "PyTorch C exchange import"),
         ),
         (
             "as_tensor_torch_dlpack_fallback",
             lambda: Tensor.as_tensor(dlpack_proxy).data,
+            validate_equal(source.data_ptr(), "PyTorch DLPack import"),
         ),
         (
             "export_holoscan_c_exchange_helper",
             lambda: int(_test_dlpack_c_exchange_api(fast_tensor)["data"]),
+            validate_equal(fast_tensor.data, "DLPack C exchange export"),
         ),
         (
             "export_python_dlpack_to_torch",
             lambda: torch.from_dlpack(dlpack_export_proxy).data_ptr(),
+            validate_equal(fast_tensor.data, "Python DLPack export"),
         ),
     ]
 
@@ -305,12 +348,14 @@ def benchmark_device(
             (
                 "as_tensor_numpy_array_interface",
                 lambda: Tensor.as_tensor(array_proxy).data,
+                validate_equal(array.ctypes.data, "NumPy array-interface import"),
             )
         )
         cases.append(
             (
                 "export_numpy_array_interface",
                 lambda: np.asarray(host_export_proxy).ctypes.data,
+                validate_equal(host_tensor.data, "NumPy array-interface export"),
             )
         )
     else:
@@ -333,24 +378,28 @@ def benchmark_device(
             (
                 "as_tensor_torch_cuda_array_interface",
                 lambda: Tensor.as_tensor(torch_cuda_array_proxy).data,
+                validate_equal(source.data_ptr(), "PyTorch CUDA array-interface import"),
             )
         )
         cases.append(
             (
                 "as_tensor_cupy_dlpack",
                 lambda: Tensor.as_tensor(cuda_array).data,
+                validate_equal(cuda_array.data.ptr, "CuPy DLPack import"),
             )
         )
         cases.append(
             (
                 "as_tensor_cupy_cuda_array_interface",
                 lambda: Tensor.as_tensor(cuda_array_proxy).data,
+                validate_equal(cuda_array.data.ptr, "CuPy CUDA array-interface import"),
             )
         )
         cases.append(
             (
                 "export_cupy_cuda_array_interface",
                 lambda: cp.asarray(cuda_export_proxy).data.ptr,
+                validate_equal(fast_tensor.data, "CuPy CUDA array-interface export"),
             )
         )
 
@@ -362,8 +411,9 @@ def benchmark_device(
             repeats,
             warmup,
             operation,
+            validator,
         )
-        for name, operation in cases
+        for name, operation, validator in cases
     ]
 
 
@@ -390,10 +440,15 @@ def print_results(results: list[BenchmarkResult]) -> None:
             print(f"{device}: {speedup:.1f}x faster than PyTorch Python DLPack fallback")
 
 
-def write_benchmark_json(results: list[BenchmarkResult], path: str) -> None:
+def write_benchmark_json(
+    results: list[BenchmarkResult], path: str, configuration: str, shape: tuple[int, ...]
+) -> None:
     payload = {
         "context": {
             "benchmark": "tensor_python_protocols",
+            "configuration": configuration,
+            "python_version": platform.python_version(),
+            "shape": shape,
             "torch_version": torch.__version__,
             "cupy_version": cp.__version__ if cp is not None else None,
         },
@@ -413,6 +468,11 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=10000)
     parser.add_argument("--warmup", type=int, default=1000)
     parser.add_argument("--repeats", type=int, default=7)
+    parser.add_argument(
+        "--configuration",
+        default="unspecified",
+        help="configuration label stored in benchmark JSON, for example nanobind-3.0.1-abi3",
+    )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     parser.add_argument("--benchmark_out", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--benchmark_out_format", default=None, help=argparse.SUPPRESS)
@@ -440,7 +500,7 @@ def main() -> int:
     else:
         print_results(results)
     if args.benchmark_out is not None:
-        write_benchmark_json(results, args.benchmark_out)
+        write_benchmark_json(results, args.benchmark_out, args.configuration, args.shape)
     return 0
 
 

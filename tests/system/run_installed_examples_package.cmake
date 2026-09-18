@@ -81,17 +81,14 @@ set(sdk_build_command
         descriptor_tensor_external_topic_graph
         descriptor_tensor_external_topic_client
 )
-if(HOLOSCAN_CONFIG_COMPONENT_ENABLED AND
-   HOLOSCAN_CONFIG_IO_COMPONENT_ENABLED AND
-   HOLOSCAN_PARAMS_COMPONENT_ENABLED AND
-   HOLOSCAN_PARAMS_IO_COMPONENT_ENABLED)
+if(HOLOSCAN_PARAMS_COMPONENT_ENABLED AND HOLOSCAN_PARAMS_IO_COMPONENT_ENABLED)
     list(APPEND sdk_build_command config_file)
 endif()
 if(HOLOSCAN_WEB_TUNER_COMPONENT_ENABLED)
     list(APPEND sdk_build_command web_tuner)
 endif()
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND sdk_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${sdk_build_command}
@@ -119,9 +116,12 @@ set(installed_example_components
     holoscan-dependencies
     iceoryx2-lib
     dev
-    holomq
+    holoscan-holomq
     holoscan-core
     holoscan-sensor-io
+    holoscan-core-examples
+    holoscan-config
+    holoscan-config-io
 )
 # On Windows, a shared iceoryx2 library's DLL is installed in the bin component.
 if(WIN32 AND HOLOSCAN_EXPECT_SHARED)
@@ -132,12 +132,6 @@ endif()
 # the same component closure expected from a package assembled with those
 # features, rather than relying on a build-tree target that is absent from the
 # isolated prefix.
-if(HOLOSCAN_CONFIG_COMPONENT_ENABLED)
-    list(APPEND installed_example_components holoscan-config)
-endif()
-if(HOLOSCAN_CONFIG_IO_COMPONENT_ENABLED)
-    list(APPEND installed_example_components holoscan-config-io)
-endif()
 if(HOLOSCAN_PARAMS_COMPONENT_ENABLED)
     list(APPEND installed_example_components holoscan-params)
 endif()
@@ -147,10 +141,7 @@ endif()
 if(HOLOSCAN_WEB_TUNER_COMPONENT_ENABLED)
     list(APPEND installed_example_components holoscan-experimental-params-web-tuner)
 endif()
-list(APPEND installed_example_components
-    holoscan-examples
-    holoscan-graph-artifacts
-)
+list(APPEND installed_example_components holoscan-graph-artifacts)
 
 foreach(component IN LISTS installed_example_components)
     set(install_command
@@ -159,8 +150,8 @@ foreach(component IN LISTS installed_example_components)
         --prefix "${install_destination}"
         --component "${component}"
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND install_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${install_command}
@@ -318,18 +309,12 @@ set(holoscan_package_dir
 set(required_install_paths
     "${install_prefix}/include/holoscan/holoscan.hpp"
     "${holoscan_package_dir}/holoscan-config.cmake"
+    "${holoscan_package_dir}/holoscan-config-targets.cmake"
+    "${holoscan_package_dir}/holoscan-config-io-targets.cmake"
     "${holoscan_package_dir}/HoloscanLoggingPolicy.cmake"
     "${holoscan_package_dir}/HoloscanGraphArtifacts.cmake"
     "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/CMakeLists.txt"
 )
-if(HOLOSCAN_CONFIG_COMPONENT_ENABLED)
-    list(APPEND required_install_paths
-        "${holoscan_package_dir}/holoscan-config-targets.cmake")
-endif()
-if(HOLOSCAN_CONFIG_IO_COMPONENT_ENABLED)
-    list(APPEND required_install_paths
-        "${holoscan_package_dir}/holoscan-config-io-targets.cmake")
-endif()
 if(HOLOSCAN_PARAMS_COMPONENT_ENABLED)
     list(APPEND required_install_paths
         "${holoscan_package_dir}/holoscan-params-targets.cmake")
@@ -515,8 +500,8 @@ if(DEFINED HOLOSCAN_MSVC_RUNTIME_LIBRARY AND NOT HOLOSCAN_MSVC_RUNTIME_LIBRARY S
         "-DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=${HOLOSCAN_MSVC_RUNTIME_LIBRARY}"
     )
 endif()
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}")
 endif()
 
 execute_process(
@@ -529,8 +514,8 @@ if(NOT configure_result EQUAL 0)
 endif()
 
 set(examples_build_command "${CMAKE_COMMAND}" --build "${examples_build_dir}")
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND examples_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND examples_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${examples_build_command}
@@ -544,10 +529,10 @@ endif()
 set(examples_install_command
     "${CMAKE_COMMAND}" --install "${examples_build_dir}"
     --prefix "${install_prefix}"
-    --component holoscan-examples
+    --component holoscan-core-examples
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND examples_install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND examples_install_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${examples_install_command}
@@ -560,7 +545,7 @@ if(NOT examples_install_result EQUAL 0)
 endif()
 
 set(custom_installed_automatic_partitioning_executable
-    "${install_prefix}/${custom_examples_data_dir}/examples/automatic_partitioning/cpp/automatic_partitioning${HOLOSCAN_EXECUTABLE_SUFFIX}"
+    "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/automatic_partitioning/cpp/automatic_partitioning${HOLOSCAN_EXECUTABLE_SUFFIX}"
 )
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env
@@ -581,7 +566,7 @@ if(NOT custom_installed_automatic_partitioning_result EQUAL 0 OR
    NOT custom_installed_automatic_partitioning_log MATCHES
        "automatic_partitioning cpu example complete")
     message(FATAL_ERROR
-        "Failed to execute the custom-data-directory automatic partitioning target with "
+        "Failed to execute the custom-data-directory reinstalled automatic partitioning target with "
         "sanitized loader paths: ${custom_installed_automatic_partitioning_log}")
 endif()
 
@@ -627,8 +612,8 @@ set(optional_example_test_list_command
     --show-only=json-v1
     -R "^${optional_installed_example_smoke_test}$"
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND optional_example_test_list_command -C "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND optional_example_test_list_command -C "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${optional_example_test_list_command}
@@ -662,8 +647,8 @@ foreach(installed_example_test IN LISTS installed_example_execution_tests)
         --show-only=json-v1
         -R "^${installed_example_test}$"
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND examples_test_list_command -C "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND examples_test_list_command -C "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${examples_test_list_command}
@@ -704,8 +689,8 @@ set(examples_test_command
     --no-tests=error
     -R "${installed_example_test_regex}"
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND examples_test_command -C "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND examples_test_command -C "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${examples_test_command}
@@ -767,4 +752,37 @@ endif()
 if(NOT examples_test_log MATCHES "notification_bridge: worker failure propagated through RUNTIME_OPERATOR_CALLBACK_FAILED|SKIP: notification_bridge requires Linux eventfd")
     message(FATAL_ERROR
         "Installed notification README replay omitted its failure success-or-skip output witness")
+endif()
+
+# On Unix, examples are private SDK programs rather than data files. Reconfigure
+# the installed source tree with a nondefault libdir and inspect its generated
+# install rule to ensure the source-and-binary bundle follows that libdir.
+if(NOT WIN32)
+    set(custom_examples_lib_dir "custom-example-lib")
+    set(custom_libdir_configure_command ${configure_command})
+    list(APPEND custom_libdir_configure_command
+        "-DCMAKE_INSTALL_LIBDIR:STRING=${custom_examples_lib_dir}")
+    execute_process(
+        COMMAND ${custom_libdir_configure_command}
+        RESULT_VARIABLE custom_libdir_configure_result
+        TIMEOUT 300
+    )
+    if(NOT custom_libdir_configure_result EQUAL 0)
+        message(FATAL_ERROR "Failed to configure installed examples with a custom libdir")
+    endif()
+
+    set(custom_libdir_install_script
+        "${examples_build_dir}/automatic_partitioning/cpp/cmake_install.cmake")
+    if(NOT EXISTS "${custom_libdir_install_script}")
+        message(FATAL_ERROR
+            "Missing generated automatic partitioning install script: ${custom_libdir_install_script}")
+    endif()
+    file(READ "${custom_libdir_install_script}" custom_libdir_install_contents)
+    string(FIND "${custom_libdir_install_contents}"
+        "${custom_examples_lib_dir}/holoscan/examples/automatic_partitioning/cpp"
+        custom_libdir_install_offset)
+    if(custom_libdir_install_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Installed examples do not follow CMAKE_INSTALL_LIBDIR=${custom_examples_lib_dir}")
+    endif()
 endif()

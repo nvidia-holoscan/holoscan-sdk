@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_inference_examples LANGUAGES CXX CUDA)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
+find_package(CUDAToolkit REQUIRED)
+find_package(holoscan REQUIRED CONFIG
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
+    COMPONENTS inference
+)
+
+add_executable(holoinfer_example holoinfer_example.cpp)
+target_link_libraries(holoinfer_example
+    PRIVATE
+        holoscan::core
+        holoscan::op_inference
+        CUDA::cudart
+)
+
+include(CTest)
+option(HOLOSCAN_BUILD_TESTS ${BUILD_TESTING})
+if(HOLOSCAN_BUILD_TESTS AND BUILD_TESTING)
+    include(HoloscanInferenceExampleHelper)
+    holoscan_inference_add_example_test("01_single_model.yaml")
+    holoscan_inference_add_example_test("02_multi_model_independent.yaml")
+    holoscan_inference_add_example_test("03_multi_model_chained.yaml")
+    holoscan_inference_add_example_test("04_multi_model_concurrent.yaml")
+    holoscan_inference_add_example_test("05_multi_model_concurrent_graphs.yaml")
+    holoscan_inference_add_example_test("06_multi_model_concurrent_isolated.yaml")
+    holoscan_inference_add_example_test("07_dynamic_shape_single.yaml")
+    holoscan_inference_add_example_test("08_dynamic_shape_concurrent_isolated.yaml")
+endif()

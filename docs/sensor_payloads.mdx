@@ -33,13 +33,14 @@ what you need, and what a schema change costs a deployment that is already runni
 
 ## The two payloads and their shared header
 
-Each payload pins a complete identity: a canonical name, a version, a SHA-256 digest over
-its compiled binary schema, and a compact 128-bit id derived from those.
+Each payload gets its stable family identity from the generated fully qualified root name
+and a compatibility epoch. Its FlatBuffers file identifier is checked independently in
+every buffer.
 
-| Payload | Canonical name | Version | Defined in |
-|---|---|---|---|
-| `holoscan::schema::ImageT` | `holoscan.schema.Image` | 4 | `src/sensor_io/schemas/image.fbs` |
-| `holoscan::schema::ImuT` | `holoscan.schema.Imu` | 3 | `src/sensor_io/schemas/imu.fbs` |
+| Payload | Family name | Epoch | File identifier | Defined in |
+|---|---|---|---|---|
+| `holoscan::schema::ImageT` | `holoscan.schema.Image` | 1 | `HSIG` | `src/sensor_io/schemas/image.fbs` |
+| `holoscan::schema::ImuT` | `holoscan.schema.Imu` | 1 | `HSIM` | `src/sensor_io/schemas/imu.fbs` |
 
 Both include `schemas/header.fbs` and carry its `Header` table as their field 0. The
 `Header` is the part that is common to any sensor message: when the measurement happened,
@@ -154,7 +155,7 @@ could go, and only one of them is right for any given case.
 
 | What you want to add | Where it belongs |
 |---|---|
-| A new fact about the measurement itself | A field in the schema, with a version bump |
+| A new fact about the measurement itself | A field in the schema, following the compatibility rules below |
 | A constraint on how the payload is carried, or on a Tensor member's layout, memory, or allocation | A port declaration in `setup()` |
 | A vendor- or device-specific quantity | A table of your own that includes the shared one |
 
@@ -174,8 +175,8 @@ interpreted correctly only by consumers who also subscribed to that channel.
 
 ### A port declaration cannot add a fact
 
-Port declarations look like the cheap place to put things, because they need no schema
-change and no version bump. They cannot carry a measurement fact at all.
+Port declarations look like the cheap place to put things, because they do not change the
+`.fbs` definition. They cannot carry a measurement fact at all.
 `payload_options()` states carriage: inline byte bounds, Tensor byte spans, and
 materialization policy. `tensor_field()` selects a Tensor member of a descriptor-backed
 schema and states that member's layout, allocation, and memory-conversion contract. Both
@@ -220,23 +221,21 @@ registers itself identically.
 
 ## What a schema change costs
 
-### Identity is exact
+### Compatible changes retain family identity
 
-Compatibility is exact identity. A producer and a consumer agree only when all four
-components match: the canonical name, the version, the `schema_sha256` digest over the
-embedded binary schema, and the compact id derived from those. There is no negotiation, no
-field-evolution policy, and no additive-compatibility rule.
-
-The digest is what makes this strict. It is taken over the compiled binary schema, which
-records field *names* as well as types and offsets, so a pure rename with identical wire
-layout still moves the digest. Renames therefore ride a version bump, which is why `Image`
-is at version 4 after `analog_gain` became `gain` and `plane_pitches` became
-`plane_layouts`.
+Image and Imu follow the same generated family-identity and FlatBuffers evolution rules as
+application-owned schemas. Compatible edits retain the family name, epoch, file identifier, and
+existing field ids; exact BFBS fingerprints remain optional build provenance rather than admission
+identity. There is no generated version or digest for a Sensor I/O maintainer to copy into a traits
+header. See
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+for the canonical compatible-edit, intentional-break, and `flatc --conform` workflows.
 
 ### Where a mismatch is caught
 
-A schema change means every participant rebuilds. Where the mismatch surfaces depends
-entirely on whether the participant is in your graph.
+Early access supports only the latest schema set rebuilt together; it does not yet promise
+cross-release N/N+1 endpoint compatibility. Where an incompatible family mismatch surfaces
+depends on whether the participant is in your graph.
 
 Within a single graph it **fails closed at construction**, before `compile()` runs:
 
@@ -247,10 +246,11 @@ Within a single graph it **fails closed at construction**, before `compile()` ru
 
 Across processes, a peer is not in your graph, so there is nothing to check at
 construction. The mismatch surfaces at run time in two stages. When an endpoint attaches,
-the complete four-component tuple is compared and a mismatch is refused with
-`kIncompatible`, so a wrong peer never reaches steady state. Then every received message
-revalidates the identity carried in its envelope and fails with `kProtocolError` before a
-single payload byte is exposed.
+the family identity, file identifier, and any descriptor-Tensor carriage profile are
+compared and a mismatch is refused with `kIncompatible`, so a wrong peer never reaches
+steady state. Then every received message revalidates the family id, file identifier,
+envelope ABI, and endpoint generation and fails with `kProtocolError` before a single
+payload byte is exposed.
 
 <Warning>
   **There is no build-time gate across a process boundary.** A cross-process schema
@@ -261,22 +261,20 @@ single payload byte is exposed.
   schema change as a coordinated deployment.
 </Warning>
 
-### header.fbs is the one shared surface
+### header.fbs is the shared evolution surface
 
-`Header` is the coupling worth knowing about. Both payloads include it, and the identity
-digest covers the whole include closure rather than the root schema alone — `Image` records
-`tensor.fbs`, `header.fbs`, and `time.fbs`; `Imu` records `geometry.fbs`, `header.fbs`, and
-`time.fbs`. Because the binary schema records the field names of included schemas too,
-**any edit to `header.fbs` moves both digests and forces both versions**, whether or not
-either payload's own text changes.
+`Header` is the coupling worth knowing about because both payloads include it. A compatible
+addition to `header.fbs` can retain both root families when it follows the same explicit-id
+evolution rules. An incompatible `Header` edit changes the wire contract of every root that
+contains it, so each affected root needs an intentional family break even when its own
+`.fbs` text did not change.
 
-That has already happened. Renaming the `Header` counter to `device_sequence` changed
-nothing in `imu.fbs`, and it moved `Imu`'s digest anyway, because the field names of an
-included schema are part of the bytes the digest covers — so the rename had to ride a
-version bump, and it rode the one that produced `Imu` version 3. `Image` took the same
-rename into its version 4. Anyone proposing a `Header` change should expect to reissue
-every sensor payload with it — which is the intended friction, since `Header` is the part
-every sensor consumer already depends on.
+Renaming the shared counter to `device_sequence`, for example, preserved its field id and wire
+type. That rename changed the generated API and required the early-access participants to rebuild,
+but it no longer requires a synthetic schema version or a manually pinned digest. Anyone proposing
+a shared-header edit must still review both sensor roots for FlatBuffers compatibility and
+source-level API impact. Exact artifact fingerprints may change after a shared include edit, but
+they are optional build provenance rather than compatibility identity.
 
 ## Recap
 
@@ -296,11 +294,11 @@ every sensor consumer already depends on.
 - Composition is not inheritance: the composed table is a distinct port type that will not
   connect to an `ImuT` port, and that is what keeps vendor quantities out of the shared
   schema.
-- Compatibility is exact identity over name, version, binary-schema digest, and compact
-  id. In-graph mismatches fail closed at construction; cross-process mismatches fail at
-  attach and then per message with `kProtocolError`. There is no build-time cross-process
-  gate.
-- Any `header.fbs` edit moves both payload digests and forces both versions.
+- Compatible edits retain the generated family identity; intentional incompatible edits
+  move the compatibility epoch or define a new root family and file identifier. In-graph
+  family mismatches fail closed at construction; cross-process mismatches fail at attach
+  and then per message with `kProtocolError`.
+- `header.fbs` is shared evolution surface. Review an edit against both sensor roots.
 
 Next: [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
 covers generating your own `.fbs` definition, including the composed vendor table this

@@ -25,5 +25,5 @@ endif()
 
 install(TARGETS runtime_params
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/runtime_params/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

@@ -17,7 +17,9 @@
 #include <vector>
 
 #include "../core/diagnostic_registry.hpp"
+#include "authored_partition_membership.hpp"
 #include "partition_plan_lowering.hpp"
+#include "partitioning/partition_plan_validator.hpp"
 #include "snapshot_lookup.hpp"
 
 namespace holoscan::detail {
@@ -84,14 +86,15 @@ using partitioning::VertexIndex;
 // precedence and canonical assignment state.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<void, Error> validate_manual_operator_cover(
-    const GraphSnapshotData& snapshot,
-    std::vector<std::optional<std::size_t>>& partition_by_vertex) {
+    const GraphSnapshotData& snapshot, std::vector<std::optional<std::size_t>>& partition_by_vertex,
+    DiagnosticSource* failure_source) {
   const GraphRecord* const root = find_root_graph(snapshot);
   const bool include_all =
       snapshot.partitions.size() == 1U && snapshot.partitions.front().include_all;
   if (include_all) {
     const auto& partition = snapshot.partitions.front();
-    if (root == nullptr || partition.graph != root->id || !partition.members.empty()) {
+    if (root == nullptr || partition.graph != root->id || !partition.members.empty() ||
+        !partition.graph_members.empty()) {
       return partition_lowering_error(ErrorCode::kInvalidArgument,
                                       "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT");
     }
@@ -103,40 +106,42 @@ using partitioning::VertexIndex;
     }
     return {};
   }
-  if (snapshot.graphs.size() != 1U ||
-      std::any_of(snapshot.graphs.begin(), snapshot.graphs.end(), [](const auto& graph) {
-        return graph.parent.has_value();
-      })) {
-    return partition_lowering_error(ErrorCode::kNotSupported,
-                                    "PARTITION_MANUAL_EMBEDDED_GRAPH_UNSUPPORTED");
-  }
-  const GraphId root_id = snapshot.graphs.front().id;
   partition_by_vertex.resize(snapshot.vertices.size());
   for (std::size_t partition_index = 0U; partition_index < snapshot.partitions.size();
        ++partition_index) {
     const auto& partition = snapshot.partitions[partition_index];
-    if (partition.graph != root_id || partition.include_all || partition.members.empty()) {
-      return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
-    }
-    for (const VertexId member : partition.members) {
+    auto members = resolve_authored_partition_members(snapshot, partition);
+    if (!members)
+      return make_unexpected(std::move(members.error()));
+    for (const VertexId member : *members) {
       if (!member || member.value > snapshot.vertices.size()) {
         return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
       }
-      const VertexRecord* const vertex = find_vertex(snapshot, member);
       auto& assigned = partition_by_vertex[static_cast<std::size_t>(member.value - 1U)];
-      if (vertex == nullptr || vertex->kind != VertexKind::kOperator || vertex->graph != root_id ||
-          assigned.has_value()) {
+      if (assigned.has_value()) {
         return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
       }
       assigned = partition_index;
     }
   }
   for (const auto& vertex : snapshot.vertices) {
-    if (vertex.kind == VertexKind::kOperator &&
-        (!vertex.id || vertex.id.value > partition_by_vertex.size() ||
-         !partition_by_vertex[static_cast<std::size_t>(vertex.id.value - 1U)].has_value())) {
+    if (vertex.kind != VertexKind::kOperator)
+      continue;
+    if (!vertex.id || vertex.id.value > partition_by_vertex.size()) {
       return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
     }
+    if (partition_by_vertex[static_cast<std::size_t>(vertex.id.value - 1U)].has_value())
+      continue;
+    const auto* owner = find_graph(snapshot, vertex.graph);
+    if (root != nullptr && owner != nullptr && owner->parent && owner->id != root->id) {
+      if (failure_source != nullptr) {
+        *failure_source = DiagnosticSource{
+            .graph_generation = snapshot.generation, .graph = vertex.graph, .vertex = vertex.id};
+      }
+      return partition_lowering_error(ErrorCode::kInvalidArgument,
+                                      "PARTITION_EMBEDDED_INSTANCE_UNASSIGNED");
+    }
+    return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
   }
   return {};
 }
@@ -202,26 +207,24 @@ using partitioning::VertexIndex;
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 expected<partitioning::PartitioningPassResult, Error> build_manual_partition_cover(
     const GraphSnapshotData& snapshot, const PartitionProblemStorage& storage,
-    std::span<const std::uint32_t> process_group_by_vertex) {
+    std::span<const std::uint32_t> process_group_by_vertex, DiagnosticSource* failure_source) {
+  if (failure_source != nullptr)
+    *failure_source = {};
   const bool include_all =
       snapshot.partitions.size() == 1U && snapshot.partitions.front().include_all;
   std::vector<std::optional<std::size_t>> partition_by_vertex;
-  auto cover = validate_manual_operator_cover(snapshot, partition_by_vertex);
+  auto cover = validate_manual_operator_cover(snapshot, partition_by_vertex, failure_source);
   if (!cover) {
     return make_unexpected(std::move(cover.error()));
   }
 
   std::vector<std::vector<VertexId>> members_by_partition(snapshot.partitions.size());
+  // Materialize exactly the assignment validated above, including recursively selected Operators.
+  for (std::size_t index = 0U; index < partition_by_vertex.size(); ++index) {
+    if (const auto assigned = partition_by_vertex[index])
+      members_by_partition[*assigned].push_back(VertexId{index + 1U});
+  }
   for (std::size_t index = 0U; index < snapshot.partitions.size(); ++index) {
-    if (snapshot.partitions[index].include_all) {
-      for (const auto& vertex : snapshot.vertices) {
-        if (partition_executable(vertex.kind)) {
-          members_by_partition[index].push_back(vertex.id);
-        }
-      }
-    } else {
-      members_by_partition[index] = snapshot.partitions[index].members;
-    }
     std::optional<std::uint32_t> process_group;
     for (const VertexId member : members_by_partition[index]) {
       if (!member || member.value > process_group_by_vertex.size()) {
@@ -233,6 +236,27 @@ expected<partitioning::PartitioningPassResult, Error> build_manual_partition_cov
         return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
       }
       process_group = candidate;
+    }
+  }
+  for (std::size_t index = 0U; index < snapshot.partitions.size(); ++index) {
+    if (snapshot.partitions[index].graph_members.empty()) {
+      continue;
+    }
+    // Explicit instance selections have the same domain contract as exact automatic anchors.
+    // The separate include-all and direct-Operator-only manual contracts retain their checks.
+    std::vector<VertexIndex> members;
+    members.reserve(members_by_partition[index].size());
+    for (const VertexId member : members_by_partition[index]) {
+      const auto found = storage.executable_index.find(member.value);
+      if (found == storage.executable_index.end()) {
+        return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
+      }
+      members.push_back(found->second);
+    }
+    auto domain =
+        partitioning::validate_authored_partition_device_domain(storage.vertices, members);
+    if (!domain) {
+      return make_unexpected(std::move(domain.error()));
     }
   }
   if (!include_all) {
@@ -516,18 +540,9 @@ expected<void, Error> validate_final_accepted_partition_cover(
       return partition_lowering_error(ErrorCode::kInvalidArgument, constraint_token);
     }
     authored_ids.push_back(authored->id.value);
-    std::vector<VertexId> expected = authored->members;
-    if (authored->include_all) {
-      expected.clear();
-      for (const auto& vertex : snapshot.vertices) {
-        if (partition_executable(vertex.kind)) {
-          expected.push_back(vertex.id);
-        }
-      }
-    }
-    std::sort(expected.begin(), expected.end(), [](VertexId lhs, VertexId rhs) {
-      return lhs.value < rhs.value;
-    });
+    auto expected = resolve_authored_partition_members(snapshot, *authored);
+    if (!expected)
+      return make_unexpected(std::move(expected.error()));
     std::vector<VertexId> actual;
     for (const VertexId member : partition.members) {
       const VertexRecord* const vertex = find_vertex(snapshot, member);
@@ -535,7 +550,7 @@ expected<void, Error> validate_final_accepted_partition_cover(
         actual.push_back(member);
       }
     }
-    if (actual != expected) {
+    if (actual != *expected) {
       return partition_lowering_error(ErrorCode::kInvalidArgument, constraint_token);
     }
   }
@@ -610,7 +625,8 @@ expected<void, Error> validate_partition_execution_roots(const GraphSnapshotData
 
   for (std::size_t partition_index = 0U; partition_index < output.execution_partitions.size();
        ++partition_index) {
-    if (!output.execution_partitions[partition_index].authored_name.has_value()) {
+    if (!output.execution_partitions[partition_index].authored_name.has_value() ||
+        !output.execution_partitions[partition_index].graph_members.empty()) {
       continue;
     }
     if (independent_execution_root_count(snapshot, output, partition_index, partition_by_vertex) >

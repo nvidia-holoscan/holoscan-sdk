@@ -7,10 +7,19 @@ project(holoscan_examples LANGUAGES CXX CUDA)
 
 include(GNUInstallDirs)
 include(CTest)
-include("${CMAKE_CURRENT_LIST_DIR}/cmake/HoloscanExampleInstall.cmake")
+
+# Standalone example builds do not inherit the SDK root's module paths.
+if(holoscan_examples_IS_TOP_LEVEL)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+endif()
+include(HoloscanExampleInstall)
 
 set(HOLOSCAN_EXAMPLES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
-set(HOLOSCAN_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/examples")
+if(WIN32)
+    set(HOLOSCAN_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}/holoscan/examples")
+else()
+    set(HOLOSCAN_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/holoscan/examples")
+endif()
 
 if(NOT COMMAND holoscan_add_graph_artifacts)
     if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../cmake/HoloscanGraphArtifacts.cmake")
@@ -20,17 +29,6 @@ endif()
 
 if(NOT TARGET holoscan::core)
     find_package(holoscan REQUIRED)
-endif()
-
-# Installed source packages do not inherit the SDK's cache options. Enable optional examples only
-# when their corresponding exported target is present; SDK builds may provide an explicit value
-# from the top-level configuration.
-if(NOT DEFINED HOLOSCAN_BUILD_INFERENCE)
-    if(TARGET holoscan::op_inference)
-        set(HOLOSCAN_BUILD_INFERENCE ON)
-    else()
-        set(HOLOSCAN_BUILD_INFERENCE OFF)
-    endif()
 endif()
 
 # Shipped examples opt into the SDK configuration matrix even when built from an installed source
@@ -96,14 +94,11 @@ add_subdirectory(flatbuffer_schemas)
 add_subdirectory(essential)
 add_subdirectory(experimental)
 add_subdirectory(holomq)
-if(HOLOSCAN_BUILD_INFERENCE)
-    add_subdirectory(inference)
-endif()
 
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
     install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/"
         DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}"
-        COMPONENT holoscan-examples
+        COMPONENT holoscan-core-examples
         FILES_MATCHING
             PATTERN "CMakeLists.txt"
             PATTERN "CMakeLists.min.txt"

@@ -36,11 +36,13 @@ using namespace std::chrono_literals;
 using namespace runtime_channel_binding_test;
 using namespace runtime_channel_binding_schema_tensor_test;
 
-// Direct-retained raw Tensor delivery keeps the ordinary readiness path. Receipt bookkeeping does
-// not improve the production-sized path enough to justify touching Tensor publication.
+// Direct-retained raw Tensor delivery can arm causal continuation while preserving the ordinary
+// readiness record and the same retained Tensor lifetime authority.
 // REQ: CHAN-098
+// REQ: CHAN-128
 // REQ: RUNTIME-019
-TEST(ChannelBindingParityTest, DirectRawTensorUsesOrdinaryReadinessInsteadOfContinuation) {
+// REQ: RUNTIME-037
+TEST(ChannelBindingParityTest, DirectRawTensorArmsContinuationAndPreservesOrdinaryReadiness) {
   // Key setup: create an otherwise eligible exact shared-lane direct raw Tensor edge.
   TensorSessionFixture fixture;
   fixture.use_direct_retained_delivery();
@@ -62,7 +64,7 @@ TEST(ChannelBindingParityTest, DirectRawTensorUsesOrdinaryReadinessInsteadOfCont
   ASSERT_TRUE(binding) << runtime_error_message(binding.error());
   ASSERT_TRUE((*session)->refresh_connections());
   ASSERT_TRUE((*session)->arm());
-  EXPECT_FALSE((*session)->arm_direct_continuation(VertexId{1U}, 0U));
+  EXPECT_TRUE((*session)->arm_direct_continuation(VertexId{1U}, 0U));
 
   constexpr std::array<std::uint64_t, 1U> values{77U};
   constexpr std::array<std::int64_t, 1U> capture_times{10};
@@ -79,8 +81,8 @@ TEST(ChannelBindingParityTest, DirectRawTensorUsesOrdinaryReadinessInsteadOfCont
   ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, selection));
   ASSERT_TRUE((*session)->prepare_tensor_access(VertexId{2U}, 1U, nullptr));
 
-  // Key assertion: ordinary polling publishes one readiness record while the typed slot remains
-  // the sole backing-lifetime authority through Tensor access and retirement.
+  // Key assertion: continuation eligibility does not consume ordinary readiness or change the
+  // typed slot's sole backing-lifetime authority through Tensor access and retirement.
   {
     auto received = fixture.sink.input.receive();
     ASSERT_TRUE(received) << runtime_error_message(received.error());

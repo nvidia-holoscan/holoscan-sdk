@@ -44,6 +44,122 @@ namespace {
 using namespace std::chrono_literals;
 using namespace test::run_session_channel_execution;
 
+enum class RuntimeLocalEnum : std::uint16_t {
+  kExpected = 0x1234U,
+};
+
+// Retain fanout delivery evidence for
+// RunSessionTest.CompiledGraphRoundTripsProcessLocalEnumThroughHoloMQFanout.
+struct RuntimeLocalEnumProbe {
+  static void reset() {
+    const std::lock_guard lock(mutex);
+    observed.reset();
+    deliveries = 0U;
+  }
+
+  static void record(const Sample<RuntimeLocalEnum>& sample) {
+    {
+      const std::lock_guard lock(mutex);
+      observed = sample;
+      ++deliveries;
+    }
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static std::optional<Sample<RuntimeLocalEnum>> wait(unsigned count = 1U) {
+    std::unique_lock lock(mutex);
+    if (!cv.wait_for(lock, 5s, [count] { return deliveries >= count; })) {
+      return std::nullopt;
+    }
+    return observed;
+  }
+
+  static inline std::mutex mutex;
+  static inline std::condition_variable cv;
+  static inline std::optional<Sample<RuntimeLocalEnum>> observed;
+  static inline unsigned deliveries{};
+};
+
+enum class RuntimeOtherLocalEnum : std::uint16_t { kExpected = 0x1234U };
+
+// Emit one local enum or substitute its declaration during replay in
+// RunSessionTest.LocalEnumReplayRejectsEqualWidthTypeSubstitution.
+class RuntimeLocalEnumSourceOperator final : public Operator<> {
+ public:
+  static inline std::atomic_bool alternate_declaration{};
+  void setup(OperatorSpec& spec) override {
+    if (alternate_declaration.load()) {
+      spec.output(alternate, "output").max_emits_per_compute(1U);
+    } else {
+      spec.output(output, "output").max_emits_per_compute(1U);
+    }
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 10ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    if (emitted_) {
+      return {};
+    }
+    auto result = output.emit(RuntimeLocalEnum::kExpected);
+    if (result) {
+      emitted_ = true;
+    }
+    return result;
+  }
+
+  Output<RuntimeLocalEnum> output;
+  Output<RuntimeOtherLocalEnum> alternate;
+
+ private:
+  bool emitted_{};
+};
+
+// Capture the typed enum sample for RunSessionTest.CompiledGraphRoundTripsProcessLocalEnum.
+class RuntimeLocalEnumSinkOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.input(input, "input").queue_depth(1U); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample).error());
+    }
+    RuntimeLocalEnumProbe::record(*sample);
+    return {};
+  }
+
+  Input<RuntimeLocalEnum> input;
+};
+
+// Build direct or two-reader enum delivery for
+// RunSessionTest.CompiledGraphRoundTripsProcessLocalEnumThroughHoloMQFanout.
+// Graph: source.output --> sink.input; fanout also connects source.output --> second-sink.input.
+[[nodiscard]] ExecutionPlan make_runtime_local_enum_plan(bool holomq_fanout = false) {
+  Graph graph{"runtime-local-enum"};
+  auto source = graph.op<RuntimeLocalEnumSourceOperator>("source");
+  auto sink = graph.op<RuntimeLocalEnumSinkOperator>("sink");
+  graph.add_flow(source->output, sink->input);
+  if (holomq_fanout) {
+    auto second_sink = graph.op<RuntimeLocalEnumSinkOperator>("second-sink");
+    graph.add_flow(source->output, second_sink->input);
+  }
+  graph.partition("runtime-local-enum").include_all();
+  const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
+  graph.set_default_clock(default_clock);
+  return holomq_fanout ? detail::compile_with_process_local_holomq(graph, {}) : compile(graph);
+}
+
 enum class RuntimeMixedPolicyFanoutBranch : std::uint8_t {
   kBlocking,
   kDropOldest,
@@ -506,6 +622,107 @@ void expect_runtime_publication_coordinate(const ExecutionPlan& plan,
 void expect_input_selection_equal(InputSelection expected, InputSelection actual) {
   EXPECT_EQ(actual.state, expected.state);
   EXPECT_EQ(actual.reason, expected.reason);
+}
+
+// Replay must compare exact process-local C++ type identity, even for equal-width enums.
+// REQ: GRAPH-042
+TEST(RunSessionTest, LocalEnumReplayRejectsEqualWidthTypeSubstitution) {
+  // Key setup: replay a compiled enum output using a distinct enum with the same native width.
+  // Key assertion: exact replay succeeds; the substituted type fails with a port mismatch.
+  // Graph:
+  //   source.output --> sink.input [RuntimeLocalEnum]
+  RuntimeLocalEnumSourceOperator::alternate_declaration.store(false);
+  const auto plan = make_runtime_local_enum_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto exact = detail::GraphExec::reconstruct(detail::ExecutionPlanAccess::retain(plan),
+                                              RunGenerationId{81U});
+  ASSERT_TRUE(exact) << exact.error().message;
+  RuntimeLocalEnumSourceOperator::alternate_declaration.store(true);
+  detail::RuntimeReplayMismatchDetail mismatch;
+  auto changed = detail::GraphExec::reconstruct(
+      detail::ExecutionPlanAccess::retain(plan), RunGenerationId{82U}, {}, &mismatch);
+  RuntimeLocalEnumSourceOperator::alternate_declaration.store(false);
+  ASSERT_FALSE(changed);
+  EXPECT_EQ(changed.error().message, "RUNTIME_PORT_BINDING_UNAVAILABLE");
+  EXPECT_EQ(mismatch.category, detail::RuntimeReplayMismatchCategory::kPorts);
+}
+
+// A local enum retains its exact C++ type for replay while the physical plan freezes only the
+// native width required by the private process-local channel.
+// REQ: GRAPH-042
+// REQ: CHAN-096
+// REQ: CHAN-147
+// REQ: RUNTIME-019
+TEST(RunSessionTest, CompiledGraphRoundTripsProcessLocalEnum) {
+  // Key setup: compile and run one local enum flow using direct retained delivery.
+  // Key assertion: the enum value, native byte size, inline kind, and stamped sequence survive.
+  // Graph:
+  //   source.output --> sink.input [RuntimeLocalEnum]
+  RuntimeLocalEnumProbe::reset();
+  const ExecutionPlan plan = make_runtime_local_enum_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto state = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(state, nullptr);
+  ASSERT_EQ(state->process_local_channel_services.size(), 1U);
+  EXPECT_EQ(state->process_local_channel_services.front().payload_size_bytes,
+            sizeof(RuntimeLocalEnum));
+  EXPECT_EQ(state->process_local_channel_services.front().delivery_kind,
+            detail::ProcessLocalChannelDeliveryKind::kDirectRetained);
+
+  RunSession session = run_async(plan);
+  const auto observed = RuntimeLocalEnumProbe::wait();
+  session.request_stop();
+  session.wait();
+
+  if (!observed.has_value()) {
+    ADD_FAILURE() << "local enum round trip omitted the expected sample";
+    return;
+  }
+  EXPECT_EQ(observed->data, RuntimeLocalEnum::kExpected);
+  EXPECT_EQ(observed->metadata.byte_size, sizeof(RuntimeLocalEnum));
+  EXPECT_EQ(observed->metadata.payload_kind, PayloadKind::kInlineTyped);
+  EXPECT_GT(observed->metadata.sequence, 0U);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+}
+
+// The conservative HoloMQ path must preserve the same local enum value for every fanout reader.
+// REQ: GRAPH-042
+// REQ: CHAN-147
+TEST(RunSessionTest, CompiledGraphRoundTripsProcessLocalEnumThroughHoloMQFanout) {
+  // Key setup: force one local enum output through HoloMQ to two readers.
+  // Key assertion: both deliveries arrive with the expected enum value and metadata.
+  // Graph:
+  //   source.output --+--> sink.input
+  //                   +--> second-sink.input
+  RuntimeLocalEnumProbe::reset();
+  const ExecutionPlan plan = make_runtime_local_enum_plan(true);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto state = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(state, nullptr);
+  ASSERT_EQ(state->process_local_channel_services.size(), 1U);
+  ASSERT_EQ(state->process_local_channel_subscribers.size(), 2U);
+  EXPECT_EQ(state->process_local_channel_services.front().delivery_kind,
+            detail::ProcessLocalChannelDeliveryKind::kHoloMQ);
+  EXPECT_EQ(state->process_local_channel_services.front().payload_size_bytes,
+            sizeof(RuntimeLocalEnum));
+
+  RunSession session = run_async(plan);
+  const auto observed = RuntimeLocalEnumProbe::wait(2U);
+  session.request_stop();
+  session.wait();
+
+  if (!observed.has_value()) {
+    ADD_FAILURE() << "local enum fanout omitted the expected samples";
+    return;
+  }
+  EXPECT_EQ(observed->data, RuntimeLocalEnum::kExpected);
+  EXPECT_EQ(observed->metadata.byte_size, sizeof(RuntimeLocalEnum));
+  EXPECT_EQ(observed->metadata.payload_kind, PayloadKind::kInlineTyped);
+  EXPECT_GT(observed->metadata.sequence, 0U);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
 }
 
 // This is the production path rather than a manually assembled RuntimeChannelSession: compile()
@@ -1623,6 +1840,12 @@ TEST(RunSessionTest, FailsStructurallyAfterGraphOwnedBlockingQueuePressure) {
 // REQ: RUNTIME-018
 // REQ: RUNTIME-034
 TEST(RunSessionTest, ChannelAlignedTriggerAcceptsTheInclusiveExactBoundary) {
+  // Key setup: align two captures exactly 10 ns apart with two unwired optional sides.
+  // Key assertion: the tuple is accepted and optional reads preserve empty/cardinality errors.
+  // Graph:
+  //   source.first  --> sink.first
+  //   source.second --> sink.second
+  //   [unwired] sink.optional, sink.additional_optional
   test::RuntimeAlignedChannelProbeState::reset(test::RuntimeAlignedChannelScript::kExactBoundary);
   const ExecutionPlan plan = test::make_runtime_aligned_channel_plan();
   ASSERT_TRUE(plan.ok()) << plan.json();
@@ -1644,6 +1867,14 @@ TEST(RunSessionTest, ChannelAlignedTriggerAcceptsTheInclusiveExactBoundary) {
   EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_second_capture.load() -
                 test::RuntimeAlignedChannelProbeState::observed_first_capture.load(),
             10);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_state.load(),
+            InputState::kSafeDefault);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_reason.load(),
+            SelectionReason::kNotConnected);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_error.load(),
+            ErrorCode::kInputEmpty);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_batch_error.load(),
+            ErrorCode::kInputSelectionCardinalityMismatch);
 }
 
 // REQ: RUNTIME-004
@@ -1706,6 +1937,142 @@ TEST(RunSessionTest, ChannelAlignedTriggerKeepsMissingHeadPendingAndFreshRunRese
   EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_second.load(), 2U);
 }
 
+// An optional side selector cannot turn a non-aligned member pair into activation authority.
+// REQ: CONTRACT-006
+// REQ: RUNTIME-055
+TEST(RunSessionTest, ChannelAlignedOptionalSideInputDoesNotActivateMisalignedMembers) {
+  // Key setup: place the two aligned members 11 ns apart, outside the 10 ns tolerance.
+  // Key assertion: unwired optional sides cannot cause the sink to compute.
+  // Graph:
+  //   source.first  --> sink.first
+  //   source.second --> sink.second
+  //   [unwired] sink.optional, sink.additional_optional
+  test::RuntimeAlignedChannelProbeState::reset(
+      test::RuntimeAlignedChannelScript::kMisalignedMembers);
+  const ExecutionPlan plan = test::make_runtime_aligned_channel_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  ASSERT_TRUE(test::RuntimeAlignedChannelProbeState::wait_for_source(1U));
+  std::this_thread::sleep_for(10ms);
+  session.request_stop();
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::sink_compute_count.load(), 0U);
+}
+
+// Topology absence and producer silence are distinct even when the activation reference comes
+// from an aligned member set.
+// REQ: CONTRACT-022
+// REQ: RUNTIME-055
+TEST(RunSessionTest, ChannelAlignedConnectedSilentSideInputRemainsNeverSeen) {
+  // Key setup: connect a silent optional producer alongside an aligned member pair.
+  // Key assertion: the sink computes with kSafeDefault/kNeverSeen and an empty single-sample read.
+  // Graph:
+  //   source.first    --> sink.first
+  //   source.second   --> sink.second
+  //   source.optional --> sink.optional
+  //   [unwired] sink.additional_optional
+  test::RuntimeAlignedChannelProbeState::reset(test::RuntimeAlignedChannelScript::kExactBoundary);
+  const ExecutionPlan plan = test::make_runtime_aligned_channel_plan(false, true);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool observed = test::RuntimeAlignedChannelProbeState::wait_for_sink(1U);
+  session.request_stop();
+  session.wait();
+
+  EXPECT_TRUE(observed);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_state.load(),
+            InputState::kSafeDefault);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_reason.load(),
+            SelectionReason::kNeverSeen);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_error.load(),
+            ErrorCode::kInputEmpty);
+}
+
+// The member that arrives last need not define the aligned semantic coordinate. Side selectors
+// evaluate at the aligned high reference rather than that final witness coordinate.
+// REQ: CONTRACT-006
+// REQ: RUNTIME-055
+TEST(RunSessionTest, ChannelAlignedSideInputUsesAlignedReferenceWhenOlderMemberArrivesLast) {
+  // Key setup: publish the side at the aligned high reference before the older member arrives last.
+  // Key assertion: the side sample is selected at that reference and retains value 3.
+  // Graph:
+  //   source.first    --> sink.first
+  //   source.second   --> sink.second
+  //   source.optional --> sink.optional
+  //   [unwired] sink.additional_optional
+  test::RuntimeAlignedChannelProbeState::reset(
+      test::RuntimeAlignedChannelScript::kSideInputReference);
+  const ExecutionPlan plan = test::make_runtime_aligned_channel_plan(false, true);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool observed = test::RuntimeAlignedChannelProbeState::wait_for_sink(1U);
+  session.request_stop();
+  session.wait();
+
+  EXPECT_TRUE(observed);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_first_capture.load() -
+                test::RuntimeAlignedChannelProbeState::observed_second_capture.load(),
+            5);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_state.load(),
+            InputState::kSelected);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_reason.load(),
+            SelectionReason::kNone);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_error.load(),
+            ErrorCode::kSuccess);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional.load(), 3U);
+}
+
+// An unwired side input owns no producer generation and therefore cannot block closure after every
+// connected aligned member has delivered EOS.
+// REQ: CONTRACT-022
+// REQ: RUNTIME-055
+TEST(RunSessionTest, ChannelAlignedUnwiredSideInputDoesNotBlockNaturalCompletion) {
+  // Key setup: complete a finite producer after one aligned pair with both optional sides unwired.
+  // Key assertion: connected EOS completes the run naturally despite the absent sides.
+  // Graph:
+  //   source.first  --> sink.first
+  //   source.second --> sink.second
+  //   [unwired] sink.optional, sink.additional_optional
+  test::RuntimeAlignedChannelProbeState::reset(test::RuntimeAlignedChannelScript::kExactBoundary);
+  const ExecutionPlan plan = test::make_runtime_aligned_channel_plan(false, false, true);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool observed = test::RuntimeAlignedChannelProbeState::wait_for_sink(1U);
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (session.is_running() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
+  const bool completed_naturally = !session.is_running();
+  if (!completed_naturally) {
+    session.request_stop();
+  }
+  session.wait();
+
+  ASSERT_TRUE(observed);
+  ASSERT_TRUE(completed_naturally);
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_state.load(),
+            InputState::kSafeDefault);
+  EXPECT_EQ(test::RuntimeAlignedChannelProbeState::observed_optional_reason.load(),
+            SelectionReason::kNotConnected);
+}
+
 // Replayed declarations alone must not opt an independently scheduled Operator into Channel
 // activation preparation when reconstruction did not materialize endpoints for those ports.
 // REQ: RUNTIME-004
@@ -1727,6 +2094,57 @@ TEST(RunSessionTest, ChannelActivationOwnershipRequiresMaterializedEndpoints) {
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty())
       << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+}
+
+// An explicitly degraded optional input has callback-visible typed state without acquiring any
+// transport authority. Connected-but-silent selectors retain their separate kNeverSeen oracle.
+// REQ: CONTRACT-022
+// REQ: RUNTIME-055
+TEST(RunSessionTest, UnwiredExactSafeDefaultRunsWithNotConnectedSelection) {
+  // Key setup: run a clock-driven optional Exact/SafeDefault input and collect channel counters.
+  // Key assertion: one callback sees kNotConnected without payload, subscriber, or transport work.
+  // Graph:
+  //   [unwired] optional.optional [clock-driven operator]
+  auto counters = std::make_shared<detail::RuntimePhaseCounters>();
+  ExecutionPlan plan = test::make_runtime_optional_safe_default_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto state = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(state, nullptr);
+  ASSERT_EQ(state->input_selections.size(), 1U);
+  EXPECT_TRUE(state->graph.edges().empty());
+  EXPECT_TRUE(state->payload_edges.empty());
+  EXPECT_TRUE(state->channel_subscribers.empty());
+  EXPECT_TRUE(state->process_local_channel_subscribers.empty());
+  EXPECT_TRUE(state->cross_process_channel_subscribers.empty());
+  plan = detail::RuntimeTestPlanAccess::with_phase_counters(plan, counters);
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kRequestedCompleted);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  EXPECT_EQ(test::RuntimeOptionalSafeDefaultOperator::compute_count.load(), 1U);
+  EXPECT_EQ(test::RuntimeOptionalSafeDefaultOperator::observed_state.load(),
+            InputState::kSafeDefault);
+  EXPECT_EQ(test::RuntimeOptionalSafeDefaultOperator::observed_reason.load(),
+            SelectionReason::kNotConnected);
+  EXPECT_EQ(test::RuntimeOptionalSafeDefaultOperator::scalar_error.load(), ErrorCode::kInputEmpty);
+  EXPECT_EQ(test::RuntimeOptionalSafeDefaultOperator::batch_error.load(),
+            ErrorCode::kInputSelectionCardinalityMismatch);
+
+  const auto snapshot = counters->snapshot();
+  const auto count = [&](detail::RuntimePhaseCounter counter) {
+    return snapshot[detail::RuntimePhaseCounters::index(counter)];
+  };
+  EXPECT_EQ(count(detail::RuntimePhaseCounter::kChannelPrepareCalls), 1U);
+  EXPECT_EQ(count(detail::RuntimePhaseCounter::kChannelSamplesReceived), 0U);
+  EXPECT_EQ(count(detail::RuntimePhaseCounter::kChannelReadinessPublished), 0U);
+  EXPECT_EQ(count(detail::RuntimePhaseCounter::kChannelInputReads), 0U);
+  EXPECT_EQ(count(detail::RuntimePhaseCounter::kChannelWitnessRetired), 0U);
+  EXPECT_EQ(count(detail::RuntimePhaseCounter::kChannelRetireCalls), 1U);
+  EXPECT_EQ(count(detail::RuntimePhaseCounter::kChannelActivationCutSubscriberProbes), 0U);
+  EXPECT_EQ(count(detail::RuntimePhaseCounter::kChannelActivationCutTransportProbes), 0U);
 }
 
 // The transport scan order is deliberately t+10 then t+5. One serial compute must publish an

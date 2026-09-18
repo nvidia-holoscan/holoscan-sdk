@@ -30,6 +30,7 @@ namespace {
   return PayloadIdentityRecord{
       .kind = PayloadIdentityKind::kSchema,
       .payload_kind = PayloadKind::kDescriptorBacked,
+      .transport_profile_tag = 1U,
   };
 }
 
@@ -157,23 +158,26 @@ TEST(ExecutionPlanContracts, ProviderSizingDependenciesRejectMalformedRanges) {
 }
 
 TEST(ExecutionPlanContracts, DerivesEveryBoundedChannelPayloadSizeFromOneContract) {
+  // Pair each scalar identity and native enum width with its expected bounded payload size.
+  // Used by ExecutionPlanContracts.DerivesEveryBoundedChannelPayloadSizeFromOneContract.
   struct ScalarExpectation {
     ScalarIdentityKind kind;
+    std::uint8_t native_object_size{};
     std::optional<std::uint64_t> size;
   };
   const std::array scalar_expectations{
-      ScalarExpectation{ScalarIdentityKind::kBoolean, sizeof(bool)},
-      ScalarExpectation{ScalarIdentityKind::kInt8, 1U},
-      ScalarExpectation{ScalarIdentityKind::kUInt8, 1U},
-      ScalarExpectation{ScalarIdentityKind::kInt16, 2U},
-      ScalarExpectation{ScalarIdentityKind::kUInt16, 2U},
-      ScalarExpectation{ScalarIdentityKind::kInt32, 4U},
-      ScalarExpectation{ScalarIdentityKind::kUInt32, 4U},
-      ScalarExpectation{ScalarIdentityKind::kFloat32, 4U},
-      ScalarExpectation{ScalarIdentityKind::kInt64, 8U},
-      ScalarExpectation{ScalarIdentityKind::kUInt64, 8U},
-      ScalarExpectation{ScalarIdentityKind::kFloat64, 8U},
-      ScalarExpectation{ScalarIdentityKind::kLocalEnum, std::nullopt},
+      ScalarExpectation{ScalarIdentityKind::kBoolean, 0U, sizeof(bool)},
+      ScalarExpectation{ScalarIdentityKind::kInt8, 0U, 1U},
+      ScalarExpectation{ScalarIdentityKind::kUInt8, 0U, 1U},
+      ScalarExpectation{ScalarIdentityKind::kInt16, 0U, 2U},
+      ScalarExpectation{ScalarIdentityKind::kUInt16, 0U, 2U},
+      ScalarExpectation{ScalarIdentityKind::kInt32, 0U, 4U},
+      ScalarExpectation{ScalarIdentityKind::kUInt32, 0U, 4U},
+      ScalarExpectation{ScalarIdentityKind::kFloat32, 0U, 4U},
+      ScalarExpectation{ScalarIdentityKind::kInt64, 0U, 8U},
+      ScalarExpectation{ScalarIdentityKind::kUInt64, 0U, 8U},
+      ScalarExpectation{ScalarIdentityKind::kFloat64, 0U, 8U},
+      ScalarExpectation{ScalarIdentityKind::kLocalEnum, 4U, 4U},
   };
 
   // Key setup: evaluate every scalar identity and the POD, serialized-schema,
@@ -182,10 +186,20 @@ TEST(ExecutionPlanContracts, DerivesEveryBoundedChannelPayloadSizeFromOneContrac
     const PayloadIdentityRecord scalar{
         .kind = PayloadIdentityKind::kScalar,
         .payload_kind = PayloadKind::kInlineTyped,
-        .scalar = ScalarIdentityRecord{.kind = expectation.kind},
+        .scalar =
+            ScalarIdentityRecord{
+                .kind = expectation.kind,
+                .native_object_size = expectation.native_object_size,
+            },
     };
     EXPECT_EQ(channel_payload_size_bytes(scalar, 0U, true), expectation.size);
   }
+  const PayloadIdentityRecord unsized_local_enum{
+      .kind = PayloadIdentityKind::kScalar,
+      .payload_kind = PayloadKind::kInlineTyped,
+      .scalar = ScalarIdentityRecord{.kind = ScalarIdentityKind::kLocalEnum},
+  };
+  EXPECT_EQ(channel_payload_size_bytes(unsized_local_enum, 0U, true), std::nullopt);
   const PayloadIdentityRecord pod{
       .kind = PayloadIdentityKind::kPod,
       .payload_kind = PayloadKind::kInlineTyped,
@@ -198,11 +212,12 @@ TEST(ExecutionPlanContracts, DerivesEveryBoundedChannelPayloadSizeFromOneContrac
   };
   PayloadIdentityRecord descriptor_schema = serialized_schema;
   descriptor_schema.payload_kind = PayloadKind::kDescriptorBacked;
+  descriptor_schema.transport_profile_tag = 1U;
   PayloadIdentityRecord invalid_schema = serialized_schema;
   invalid_schema.payload_kind = PayloadKind::kInlineTyped;
 
   // Key assertion: native scalar/POD widths, schema-envelope overhead, and
-  // overflow/local-enum rejection have one exact producer/validator result.
+  // invalid enum-width and overflow rejection have one exact producer/validator result.
   EXPECT_EQ(channel_payload_size_bytes(pod, 0U, true), 23U);
   EXPECT_EQ(channel_payload_size_bytes(serialized_schema, 41U, false), 41U);
   EXPECT_EQ(channel_payload_size_bytes(serialized_schema, 41U, true),

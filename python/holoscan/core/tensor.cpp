@@ -13,7 +13,6 @@
 #include <optional>
 #include <string>
 #include <tuple>
-#include <vector>
 
 #include <dlpack/dlpack.h>
 
@@ -26,16 +25,6 @@
 namespace holoscan {
 
 namespace {
-
-/// @brief Convert a std::vector<int64_t> to a Python tuple (holoscan exposes shape/strides as
-/// tuples). Phase 2+ will share a helper with dl_converter; kept local for the metadata slice.
-nb::tuple to_int_tuple(const std::vector<int64_t>& values) {
-  nb::list list;
-  for (int64_t value : values) {
-    list.append(value);
-  }
-  return nb::steal<nb::tuple>(PyList_AsTuple(list.ptr()));
-}
 
 std::string dldevicetype_name(DLDeviceType device_type) {
   return python::cpp_enum_value_name(device_type);
@@ -108,11 +97,11 @@ void init_tensor(nb::module_& m) {
   tensor_class.def_prop_ro("ndim", &Tensor::ndim, doc::Tensor::ndim)
       .def_prop_ro(
           "shape",
-          [](const Tensor& tensor) { return to_int_tuple(tensor.shape()); },
+          [](const Tensor& tensor) { return tensor_shape_tuple(tensor); },
           doc::Tensor::shape)
       .def_prop_ro(
           "strides",
-          [](const Tensor& tensor) { return to_int_tuple(tensor.strides()); },
+          [](const Tensor& tensor) { return tensor_strides_tuple(tensor); },
           doc::Tensor::strides)
       .def_prop_ro("size", &Tensor::size, doc::Tensor::size)
       .def_prop_ro(
@@ -173,6 +162,14 @@ void init_tensor(nb::module_& m) {
 
   // DLPack 1.3 fast C exchange API: publish the function-pointer table on the Tensor type.
   tensor_class.attr("__dlpack_c_exchange_api__") = dlpack_c_exchange_api_capsule();
+  m.def("_test_tensor_metadata_projection",
+        &test_tensor_metadata_projection,
+        nb::arg("backing"),
+        nb::arg("shape"),
+        nb::arg("strides").none(),
+        nb::arg("dtype"),
+        nb::arg("byte_offset"),
+        "Test-only helper that projects synthetic metadata over a live Tensor backing.");
   m.def("_test_dlpack_c_exchange_api",
         &test_dlpack_c_exchange_api,
         nb::arg("tensor"),

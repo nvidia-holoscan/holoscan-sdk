@@ -9,7 +9,7 @@ option(HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER
        "Build the experimental loopback Parameter tuner (default ON per HSDK5-019 X09)" ON)
 
 # Because the tuner defaults ON, a params opt-out must disable the tuner explicitly as well.
-if(HOLOSCAN_BUILD_PARAMS AND (NOT HOLOSCAN_BUILD_CONFIG OR NOT TARGET core OR NOT TARGET config))
+if(HOLOSCAN_BUILD_PARAMS AND (NOT TARGET core OR NOT TARGET config))
     message(FATAL_ERROR
         "HOLOSCAN_BUILD_PARAMS requires the already-enabled core and config components")
 endif()
@@ -17,8 +17,7 @@ if(HOLOSCAN_BUILD_PARAMS_IO AND NOT HOLOSCAN_BUILD_PARAMS)
     message(FATAL_ERROR
         "HOLOSCAN_BUILD_PARAMS_IO requires HOLOSCAN_BUILD_PARAMS=ON; dependencies are not auto-enabled")
 endif()
-if(HOLOSCAN_BUILD_PARAMS_IO AND
-   (NOT HOLOSCAN_BUILD_CONFIG_IO OR NOT TARGET config_io))
+if(HOLOSCAN_BUILD_PARAMS_IO AND NOT TARGET config_io)
     message(FATAL_ERROR
         "HOLOSCAN_BUILD_PARAMS_IO requires the config_io component")
 endif()
@@ -29,10 +28,6 @@ if(HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER AND NOT HOLOSCAN_BUILD_PARAMS)
 endif()
 
 if(HOLOSCAN_BUILD_PARAMS)
-    # Core owns the Graph/factory capture operation. Keeping the seam in Core prevents the optional
-    # tooling DSO from depending on source-private compiler types or retaining authoring addresses.
-    target_sources(core PRIVATE src/core/parameter_rebind_support.cpp)
-
     add_library(params
         src/params/config.cpp
         src/params/error.cpp
@@ -260,6 +255,7 @@ if(HOLOSCAN_BUILD_PARAMS)
     install(FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/params/config.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/params/error.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/params/register_operator.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/holoscan/params/rebind.hpp
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoscan/params
         COMPONENT holoscan-params

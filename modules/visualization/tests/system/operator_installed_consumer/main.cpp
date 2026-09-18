@@ -187,6 +187,8 @@ class InstalledOperator final : public holoscan::Operator<> {
 
   holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& context) override {
     static_cast<void>(context.params<holoscan::NoParams>());
+    // REQ: OPERATOR-050
+    static_cast<void>(context.operator_path());
     return {};
   }
 };

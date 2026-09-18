@@ -30,20 +30,25 @@ namespace {
 template <typename Append>
 void for_each_managed_signal_admission_diagnostic(const ManagedSignalAdmissionFailure& failure,
                                                   Append append) {
-  const RuntimeDiagnosticDetail detail{
+  RuntimeDiagnosticDetail detail{
       .present = true,
-      .error = failure.error,
       .managed_signal = failure.detail,
+      .operation = DiagnosticOperation::kRuntime,
   };
+  detail.capture.emplace();
+  detail.capture->append(failure.error.code, failure.error.message);
   append(failure.token, detail, managed_signal_severity(failure.token));
   if (!failure.cleanup_present) {
     return;
   }
-  const RuntimeDiagnosticDetail cleanup_detail{
+  RuntimeDiagnosticDetail cleanup_detail{
       .present = true,
-      .error = failure.cleanup_error,
       .managed_signal = failure.cleanup_detail,
+      .operation = DiagnosticOperation::kRuntime,
+      .role = DiagnosticFailureRole::kTeardown,
   };
+  cleanup_detail.capture.emplace();
+  cleanup_detail.capture->append(failure.cleanup_error.code, failure.cleanup_error.message);
   append(failure.cleanup_token, cleanup_detail, managed_signal_severity(failure.cleanup_token));
 }
 

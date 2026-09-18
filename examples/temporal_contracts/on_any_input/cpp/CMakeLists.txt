@@ -24,5 +24,5 @@ endif()
 
 install(TARGETS contract_on_any_input
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/temporal_contracts/on_any_input/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

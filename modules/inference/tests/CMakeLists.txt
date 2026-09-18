@@ -78,14 +78,18 @@ gtest_discover_tests(HOLOINFER_TEST
   DISCOVERY_MODE PRE_TEST
   PROPERTIES ENVIRONMENT
     "LD_LIBRARY_PATH=${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/lib:$ENV{LD_LIBRARY_PATH}"
+    LABELS "inference"
 )
 
+get_property(_holoscan_inference_generator_is_multi_config
+  GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 add_test(NAME INFERENCE.installed_package_consumer
   COMMAND ${CMAKE_COMMAND}
     "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
     "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/installed_consumer"
     "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed_consumer"
-    "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+    "-DCMAKE_BUILD_TYPE=$<CONFIG>"
+    "-DHOLOSCAN_GENERATOR_IS_MULTI_CONFIG=${_holoscan_inference_generator_is_multi_config}"
     "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
     "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
     "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
@@ -93,6 +97,8 @@ add_test(NAME INFERENCE.installed_package_consumer
     "-DHOLOSCAN_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
     "-DHOLOSCAN_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
     "-DHOLOSCAN_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}"
+    "-DHOLOSCAN_BUILD_EXAMPLES=${HOLOSCAN_BUILD_EXAMPLES}"
+    "-DHOLOSCAN_MODULE_PACKAGE_DIR=${CMAKE_INSTALL_LIBDIR}/cmake/${HOLOSCAN_PACKAGE_NAME}"
     -P ${CMAKE_CURRENT_SOURCE_DIR}/run_installed_consumer.cmake
 )
 set_tests_properties(INFERENCE.installed_package_consumer
@@ -101,3 +107,4 @@ set_tests_properties(INFERENCE.installed_package_consumer
     LABELS "installed-package;inference;package-boundary"
     TIMEOUT 600
 )
+unset(_holoscan_inference_generator_is_multi_config)

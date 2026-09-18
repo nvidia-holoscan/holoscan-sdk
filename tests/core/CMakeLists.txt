@@ -187,6 +187,7 @@ gtest_discover_tests(lifecycle_test
 )
 
 add_executable(graph_test
+    test_graph_partition_instances.cpp
     test_graph.cpp
     test_graph_tensor_schema.cpp
 )
@@ -347,6 +348,10 @@ target_link_libraries(parameter_dso_test
         parameter_dso_test_plugin
         GTest::gtest_main
 )
+if(HOLOSCAN_BUILD_PARAMS)
+    target_compile_definitions(parameter_dso_test PRIVATE HOLOSCAN_PARAMETER_DSO_PARAMS_TESTS=1)
+    target_link_libraries(parameter_dso_test PRIVATE holoscan::params)
+endif()
 
 gtest_discover_tests(parameter_dso_test
     DISCOVERY_MODE PRE_TEST
@@ -385,14 +390,14 @@ function(holoscan_add_expected_compile_fail_test test_name source_name diagnosti
     add_test(NAME "EXPECTED_COMPILE_FAIL.${test_name}"
         COMMAND ${CMAKE_COMMAND}
             -DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}
-            -DHOLOSCAN_BUILD_CONFIG=$<CONFIG>
+            -DCMAKE_BUILD_TYPE=$<CONFIG>
             -DHOLOSCAN_TARGET=${target_name}
             -DHOLOSCAN_EXPECTED_DIAGNOSTIC=${diagnostic_fragment}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/expected_compile_fail/verify_compile_failure.cmake
     )
-    set_tests_properties("EXPECTED_COMPILE_FAIL.${test_name}" PROPERTIES
-        RESOURCE_LOCK expected_compile_fail_build
-    )
+    # These probes rebuild in the SDK tree and may relink its shared libraries.
+    # Exclude running SDK tests as well as other build-mutating probes.
+    set_tests_properties("EXPECTED_COMPILE_FAIL.${test_name}" PROPERTIES RUN_SERIAL TRUE)
 endfunction()
 
 holoscan_add_expected_compile_fail_test(
@@ -420,6 +425,73 @@ holoscan_add_expected_compile_fail_test(
     parameter_schema_requires_aggregate.cpp
     "parameter schema requires an exact default-initializable copyable aggregate"
 )
+if(HOLOSCAN_BUILD_PARAMS)
+    holoscan_add_expected_compile_fail_test(
+        parameter_schema_codec_requires_complete
+        parameter_schema_codec_requires_complete.cpp
+        "Schema-derived object codecs require a complete parameter schema"
+    )
+    holoscan_add_expected_compile_fail_test(
+        parameter_schema_codec_requires_codable_fields
+        parameter_schema_codec_requires_codable_fields.cpp
+        "Schema-derived object codecs require ConfigCodable, writable schema fields"
+    )
+endif()
+holoscan_add_expected_compile_fail_test(
+    tensor_memory_kind_direct_requires_exact_type
+    tensor_memory_kind_direct_requires_exact_type.cpp
+    "direct parameter_memory_kind requires an exact MemoryKind field"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_throwing
+    tensor_byte_span_projector_throwing.cpp
+    "parameter byte-span projector must be declared noexcept"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_wrong_result
+    tensor_byte_span_projector_wrong_result.cpp
+    "parameter byte-span projector must return expected<uint64_t, Error>"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_wrong_params
+    tensor_byte_span_projector_wrong_params.cpp
+    "parameter byte-span projector dependencies must belong to its exact Params type"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_no_dependencies
+    tensor_byte_span_projector_no_dependencies.cpp
+    "parameter byte-span projector requires at least one Parameter dependency"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_nonstatic
+    tensor_byte_span_projector_nonstatic.cpp
+    "parameter byte-span projector must be a free or static function taking const Params&"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_wrong_arity
+    tensor_byte_span_projector_wrong_arity.cpp
+    "parameter byte-span projector must be a free or static function taking const Params&"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_stateful_function_object
+    tensor_byte_span_projector_stateful_function_object.cpp
+    "parameter byte-span projector must be a free or static function taking const Params&"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_capturing_lambda
+    tensor_byte_span_projector_capturing_lambda.cpp
+    "HOLOSCAN_ACCEPT_ANY_DIAGNOSTIC"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_std_function
+    tensor_byte_span_projector_std_function.cpp
+    "HOLOSCAN_ACCEPT_ANY_DIAGNOSTIC"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_null
+    tensor_byte_span_projector_null.cpp
+    "parameter byte-span projector must not be null"
+)
 holoscan_add_expected_compile_fail_test(
     parameter_throwing_field_destructor
     parameter_throwing_field_destructor.cpp
@@ -444,6 +516,16 @@ holoscan_add_expected_compile_fail_test(
     parameter_invalid_allowed_value
     parameter_invalid_allowed_value.cpp
     "invalid parameter field policy or constraint"
+)
+holoscan_add_expected_compile_fail_test(
+    parameter_empty_named_enum_domain
+    parameter_empty_named_enum_domain.cpp
+    "invalid parameter field policy or constraint"
+)
+holoscan_add_expected_compile_fail_test(
+    parameter_optional_sequence_element
+    parameter_optional_sequence_element.cpp
+    "only top-level std::optional parameter fields are supported"
 )
 holoscan_add_expected_compile_fail_test(
     parameter_constraint_inapplicable

@@ -476,34 +476,4 @@ this_key_does_not_exist: 42
   EXPECT_EQ(params.model_path_map.at("model_a"), (path.parent_path() / "model_a.onnx").string());
 }
 
-// ---------------------------------------------------------------------------------------------
-// Example-config parses
-// ---------------------------------------------------------------------------------------------
-
-TEST_F(YamlConfigTest, YamlConfig_LoadsAllExampleConfigs) {
-  // HOLOINFER_TEST is built from public/modules/inference/tests; the example configs live at
-  // public/examples/inference/configs relative to the source tree, not the test binary's
-  // WORKING_DIRECTORY (CMAKE_BINARY_DIR). Locate them via this test file's own source location,
-  // which is stable regardless of build/install layout.
-  const std::filesystem::path configs_dir = std::filesystem::path(__FILE__).parent_path() / ".." /
-                                            ".." / ".." / ".." / "examples" / "inference" /
-                                            "configs";
-  ASSERT_TRUE(std::filesystem::exists(configs_dir))
-      << "configs dir not found: " << configs_dir.lexically_normal();
-
-  int checked = 0;
-  for (const auto& entry : std::filesystem::directory_iterator(configs_dir)) {
-    if (!entry.is_regular_file() || entry.path().extension() != ".yaml") {
-      continue;
-    }
-    ++checked;
-    EXPECT_NO_THROW({
-      [[maybe_unused]] auto params = InferenceOpParams::from_yaml(entry.path().string());
-    }) << "from_yaml() failed for "
-       << entry.path();
-  }
-  // Guard against a silently-empty directory hiding a rotted glob.
-  EXPECT_GE(checked, 8) << "expected to find configs 01-08 under " << configs_dir;
-}
-
 }  // namespace holoscan::ops

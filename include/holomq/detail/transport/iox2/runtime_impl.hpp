@@ -25,11 +25,13 @@
 #include "iox2/sample_replaced_handler.hpp"
 #include "iox2/service_name.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -120,6 +122,26 @@ namespace {
 
 template <typename Payload>
 using PubSubPortFactory = iox2::PortFactoryPublishSubscribe<iox2::ServiceType::Ipc, Payload, void>;
+
+constexpr std::uint32_t kEventServiceSetupAttemptLimit = 5U;
+constexpr std::chrono::milliseconds kEventServiceSetupRetryDelay{1};
+
+[[nodiscard]] inline auto open_or_create_event_service(iox2::Node<iox2::ServiceType::Ipc>& node,
+                                                       const iox2::ServiceName& name,
+                                                       const std::uint32_t max_listeners) {
+  for (std::uint32_t attempt = 1U;; ++attempt) {
+    auto event_builder = node.service_builder(name).event();
+    if (max_listeners != 0U) {
+      event_builder = std::move(event_builder).max_listeners(max_listeners);
+    }
+    auto event_factory_or = std::move(event_builder).open_or_create();
+    if (event_factory_or.has_value() || attempt == kEventServiceSetupAttemptLimit ||
+        !is_retryable_event_open_or_create_error(event_factory_or.error())) {
+      return event_factory_or;
+    }
+    std::this_thread::sleep_for(kEventServiceSetupRetryDelay);
+  }
+}
 
 [[nodiscard]] inline holomq::Error service_contract_mismatch(const std::string& service_name,
                                                              const char* endpoint_role,
@@ -341,11 +363,8 @@ auto Runtime::create_publisher(
 
   std::optional<iox2::Notifier<iox2::ServiceType::Ipc>> wake_notifier;
   if (service_options.enable_event_wake) {
-    auto event_builder = node_.service_builder(name).event();
-    if (service_options.max_subscribers != 0U) {
-      event_builder = std::move(event_builder).max_listeners(service_options.max_subscribers);
-    }
-    auto event_factory_or = std::move(event_builder).open_or_create();
+    auto event_factory_or =
+        open_or_create_event_service(node_, name, service_options.max_subscribers);
     if (!event_factory_or.has_value()) {
       return holomq::make_unexpected(
           prepend_error_context(map_event_open_or_create_error(event_factory_or.error()),
@@ -413,11 +432,8 @@ auto Runtime::create_subscriber(const std::string& service_name,
 
     std::optional<iox2::Listener<iox2::ServiceType::Ipc>> wake_listener;
     if (service_options.enable_event_wake) {
-      auto event_builder = node_.service_builder(name).event();
-      if (service_options.max_subscribers != 0U) {
-        event_builder = std::move(event_builder).max_listeners(service_options.max_subscribers);
-      }
-      auto event_factory_or = std::move(event_builder).open_or_create();
+      auto event_factory_or =
+          open_or_create_event_service(node_, name, service_options.max_subscribers);
       if (!event_factory_or.has_value()) {
         return holomq::make_unexpected(
             prepend_error_context(map_event_open_or_create_error(event_factory_or.error()),

@@ -58,5 +58,5 @@ endif()
 
 install(TARGETS camera_imu_control
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/camera_imu_control/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

@@ -277,7 +277,7 @@ We provide multiple ways to install and run the Holoscan SDK:
 |  | NGC dev Container | Debian Package | Python Wheels |
 |---|:---:|:---:|:---:|
 | Runtime libraries | **Included** | **Included** | **Included** |
-| Python module | dGPU: 3.12<br />iGPU: 3.10 | N/A | **3.10 to 3.13** |
+| Python module | dGPU: 3.12<br />iGPU: 3.12 | N/A | **3.12 to 3.14** |
 | C++ headers and<br />CMake config | **Included** | **Included** | N/A |
 | Examples (+ source) | **Included** | **Included** | [retrieve from<br />GitHub][examples] |
 | Sample datasets | **Included** | [retrieve from<br />NGC][data] | [retrieve from<br />NGC][data] |
@@ -288,8 +288,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 | [V4L2][v4l2] support [^6] | **Included** | automatically [^2]<br />installed | require manual<br />installation |
 | [Torchscript][torch] support [^7] | **Included** | require manual [^8]<br />installation | require manual [^8]<br />installation |
 | [ONNX Runtime][ort] support [^9] | require manual [^10]<br />installation | require manual [^10]<br />installation | require manual [^10]<br />installation |
-| [ConnectX][connectx] support [^11] | **User space included** <br />Install kernel drivers on the host | require manual <br />installation | require manual <br />installation |
-| [Holoscan Sensor Bridge][hololink] support [^12] | **User space included** <br />Install kernel drivers on the host | not included | not included |
+| [ConnectX][connectx] support | **User space included** <br />Install kernel drivers on the host | require manual <br />installation | require manual <br />installation |
+| [Holoscan Sensor Bridge][hololink] support [^11] | **User space included** <br />Install kernel drivers on the host | not included | not included |
+
+The container's RDMA user-space libraries are distinct from the DOCA SDK.
+Applications requiring DOCA should provide and validate their own DOCA dependencies.
 
 [examples]: https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples#readme
 [data]: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/collections/clara_holoscan
@@ -311,8 +314,7 @@ We provide multiple ways to install and run the Holoscan SDK:
 [^8]: To install LibTorch on baremetal, either build it from source, or point to a PyTorch wheel installation. See instructions in the Inference section.
 [^9]: Tested with ONNX Runtime 1.24.2. Note that ONNX models are generally recommended through the TensorRT backend of the Inference Operator for GPU inference.
 [^10]: To install ONNX Runtime, either build it from source or download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/) with CUDA 12 and TensorRT execution provider support.
-[^11]: Tested with DOCA 3.3.0.
-[^12]: Tested with Holoscan Sensor Bridge [`2.5.0-PB6`](https://github.com/nvidia-holoscan/holoscan-sensor-bridge/tree/2.5.0-PB6) tag
+[^11]: Tested with Holoscan Sensor Bridge [`2.5.0-PB6`](https://github.com/nvidia-holoscan/holoscan-sensor-bridge/tree/2.5.0-PB6) tag
 
 ### Need more control over the SDK?
 

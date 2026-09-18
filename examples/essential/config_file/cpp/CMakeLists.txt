@@ -44,9 +44,9 @@ endif()
 
 install(TARGETS config_file
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/essential/config_file/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )
 install(FILES detector.json detector.yaml
     DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/essential/config_file/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

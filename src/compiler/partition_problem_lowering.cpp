@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "authored_partition_membership.hpp"
 #include "runtime_package_capabilities.hpp"
 #include "snapshot_lookup.hpp"
 
@@ -187,18 +188,15 @@ normalized_device_obligations_by_vertex(  // NOLINT(readability-function-cogniti
     if (partition == partitions_by_name.end()) {
       continue;
     }
-    if (partition->second->include_all) {
-      for (const auto& vertex : snapshot.vertices) {
-        if (partition_executable(vertex.kind)) {
-          assign(vertex.id, binding.placement.device);
-        }
-      }
-    } else {
-      for (const VertexId member : partition->second->members) {
-        assign(member, binding.placement.device);
-      }
+    const auto members = resolve_authored_partition_members(snapshot, *partition->second);
+    // Membership errors are reported by cover/anchor validation before any plan is accepted.
+    if (!members)
+      continue;
+    for (const VertexId member : *members) {
+      assign(member, binding.placement.device);
     }
   }
+
   for (auto& obligations : devices) {
     std::sort(obligations.begin(), obligations.end());
     obligations.erase(std::unique(obligations.begin(), obligations.end()), obligations.end());
@@ -314,16 +312,17 @@ expected<void, Error> append_authored_partition_constraints(const GraphSnapshotD
   }
   storage.authored_constraint_members.reserve(snapshot.partitions.size());
   for (const auto& partition : snapshot.partitions) {
-    if (partition.graph != root->id || partition.include_all || partition.members.empty()) {
+    if (partition.include_all) {
       return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
     }
+    auto resolved = resolve_authored_partition_members(snapshot, partition);
+    if (!resolved)
+      return make_unexpected(std::move(resolved.error()));
     std::vector<VertexIndex> members;
-    members.reserve(partition.members.size());
-    for (const VertexId member : partition.members) {
-      const VertexRecord* const vertex = find_vertex(snapshot, member);
+    members.reserve(resolved->size());
+    for (const VertexId member : *resolved) {
       const auto found = storage.executable_index.find(member.value);
-      if (vertex == nullptr || vertex->kind != VertexKind::kOperator || vertex->graph != root->id ||
-          found == storage.executable_index.end()) {
+      if (found == storage.executable_index.end()) {
         return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
       }
       members.push_back(found->second);

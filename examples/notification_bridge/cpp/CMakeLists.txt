@@ -62,5 +62,5 @@ endif()
 
 install(TARGETS notification_bridge
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/notification_bridge/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

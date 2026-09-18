@@ -25,5 +25,5 @@ endif()
 
 install(TARGETS determinism_replay
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/determinism_replay/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )
