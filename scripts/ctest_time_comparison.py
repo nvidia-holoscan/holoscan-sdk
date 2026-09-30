@@ -20,7 +20,7 @@ def main():
         test_times = {}
         for _, row in enumerate(ctest_costs):
             if len(row) == 2:
-                test_times[row[0]] = row[1]
+                test_times[row[0]] = float(row[1])
 
         if (len(sys.argv) - 2) % 3 != 0:
             print("arguments should be a multiple of three")

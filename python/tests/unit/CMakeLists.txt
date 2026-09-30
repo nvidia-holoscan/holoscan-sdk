@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 set(PYTHON_UNIT_TESTS
+  test_ctest_time_comparison.py
   test_conditions.py
   test_core.py
   test_core_metadata.py
