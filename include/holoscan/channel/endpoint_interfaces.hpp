@@ -7,6 +7,7 @@
 
 #include <holoscan/holoscan_core_export.h>
 #include <holoscan/channel/clock_health.hpp>
+#include <holoscan/channel/readiness_handle.hpp>
 #include <holoscan/channel/types.hpp>
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/errors.hpp>
@@ -32,6 +33,7 @@
 namespace holoscan {
 namespace channel_internal {
 
+struct InlinePayloadTestAccess;
 class SubscriberWaitContext;
 
 /// @brief Attach one private Channel subscriber to a shared backend wait set.
@@ -43,6 +45,43 @@ class SubscriberWaitContext;
 /// Tensor-schema subscribers without exposing backend endpoint or wait-set types.
 class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
  public:
+  /// @brief Hold one exclusive wait-owner claim for a complete public wait operation.
+  class WaitOwnerGuard {
+   public:
+    WaitOwnerGuard(const WaitOwnerGuard&) = delete;
+    WaitOwnerGuard& operator=(const WaitOwnerGuard&) = delete;
+
+    /// @brief Transfer a wait-owner claim from another guard.
+    /// @param other Guard whose claim is transferred.
+    WaitOwnerGuard(WaitOwnerGuard&& other) noexcept
+        : waiting_(std::exchange(other.waiting_, nullptr)) {}
+
+    /// @brief Replace this guard's claim with another guard's claim.
+    /// @param other Guard whose claim is transferred.
+    /// @return This guard.
+    WaitOwnerGuard& operator=(WaitOwnerGuard&& other) noexcept {
+      if (this != &other) {
+        release();
+        waiting_ = std::exchange(other.waiting_, nullptr);
+      }
+      return *this;
+    }
+
+    /// @brief Release the wait-owner claim, if any.
+    ~WaitOwnerGuard() { release(); }
+
+   private:
+    friend class WaitSetSubscriber;
+    explicit WaitOwnerGuard(std::atomic_flag& waiting) noexcept : waiting_(&waiting) {}
+    void release() noexcept {
+      if (waiting_ != nullptr) {
+        waiting_->clear(std::memory_order_release);
+        waiting_ = nullptr;
+      }
+    }
+    std::atomic_flag* waiting_{};
+  };
+
   /// @brief Construct a subscriber with no wait context; one is built on the first wait.
   /// @note Defined out of line because the cached wait context is an incomplete type here, and a
   /// defaulted constructor would need its deleter instantiated for construction-time unwinding.
@@ -59,6 +98,22 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
   /// repeated attachment, or another checked backend setup error.
   [[nodiscard]] virtual expected<std::uint64_t, Error> attach_wait_set(void* wait_set) = 0;
 
+  /// @brief Detach this subscriber from its current opaque backend wait set.
+  /// @return Success after the attachment is retired, including when none was created.
+  /// @note A readiness pump or waiter must be joined before this cold lifecycle operation.
+  [[nodiscard]] virtual expected<void, Error> detach_wait_set() noexcept { return {}; }
+
+  /// @brief Retire source-private local endpoint resources before owner destruction.
+  /// @return Success, or the allocation-free code of the first detach failure.
+  /// @note This operation is local consumer teardown. It publishes no producer operation or EOS.
+  [[nodiscard]] virtual expected<void, Error> close_local_endpoint() noexcept {
+    auto detached = detach_wait_set();
+    if (!detached) {
+      return make_unexpected(Error{detached.error().code});
+    }
+    return {};
+  }
+
   /// @brief Query pending samples without consuming one.
   /// @return Readiness, or a checked backend query error.
   /// @note Readiness is a snapshot hint. A following receive may still report
@@ -72,6 +127,29 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
   /// enabled for this endpoint.
   /// @note This function does not throw. It is a frozen creation-time fact, not a runtime state.
   [[nodiscard]] virtual bool event_wake_enabled() const noexcept = 0;
+
+  /// @brief Return whether a backend wait owner currently retains this subscriber's lanes.
+  /// @return True for a Runtime pump, cached private wait context, or readiness handle.
+  [[nodiscard]] virtual bool wait_set_attached() const noexcept { return false; }
+
+  /// @brief Return whether a readiness handle specifically retains this subscriber's lanes.
+  /// @return True for an external readiness handle, false for a Runtime or private wait set.
+  [[nodiscard]] virtual bool readiness_handle_attached() const noexcept { return false; }
+
+  /// @brief Claim this subscriber's readiness descriptor for an external event loop.
+  /// @return A move-only readiness handle, or a checked capability or ownership error.
+  [[nodiscard]] virtual expected<ChannelReadinessHandle, Error> readiness() {
+    return make_unexpected(Error{ErrorCode::kNotSupported});
+  }
+
+  /// @brief Claim the subscriber's single wait-owner slot for one complete wait operation.
+  /// @return An RAII claim, or \ref ErrorCode::kInvalidArgument when another owner is active.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<WaitOwnerGuard, Error> claim_wait_owner() noexcept;
+
+  /// @brief Claim the owner slot and release a cached private wait context before handle creation.
+  /// @return An RAII claim, or a checked ownership or detach error.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<WaitOwnerGuard, Error>
+  claim_readiness_owner() noexcept;
 
   /// @brief Block until this subscriber may have a sample, the deadline expires, or a stop is
   /// requested.
@@ -117,7 +195,17 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
   /// \ref ErrorCode::kInvalidArgument in every build configuration, rather than being allowed to
   /// share the first waiter's wait context. The rejected call does not disturb the wait already in
   /// flight.
+  /// @note Public subscriber helpers retain one owner claim across their complete receive loop and
+  /// call \ref wait_for_readiness_claimed. This unclaimed entry point remains exported for existing
+  /// direct callers and acquires its own claim.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> wait_for_readiness(
+      std::chrono::steady_clock::time_point deadline, const std::stop_token* stop_token) noexcept;
+
+  /// @brief Wait while the caller retains a successful \ref claim_wait_owner result.
+  /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
+  /// @param stop_token Optional borrowed cancellation observer.
+  /// @return Empty success when readiness may exist, or a checked wait error.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> wait_for_readiness_claimed(
       std::chrono::steady_clock::time_point deadline, const std::stop_token* stop_token) noexcept;
 
   /// @brief Return the private transport runtime used to build this subscriber's wait context.
@@ -129,25 +217,48 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
   [[nodiscard]] virtual void* wait_context_runtime() noexcept = 0;
 
  private:
+  friend struct InlinePayloadTestAccess;
+
   /// Body of \ref wait_for_readiness. Separated so the public entry point is a thin translator that
   /// can catch an allocation failure and honour its \c noexcept, rather than asserting a promise
   /// the body cannot keep. Private and non-virtual, so it adds no layout or vtable surface.
   [[nodiscard]] expected<void, Error> wait_for_readiness_checked(
       std::chrono::steady_clock::time_point deadline, const std::stop_token* stop_token);
 
-  /// @warning These two members are the entire per-subscriber wait state, and they live in an
-  /// exported polymorphic base that all three endpoint families derive from. Adding a third field
-  /// here is an ABI break for every one of them, so new wait state belongs inside
-  /// \ref SubscriberWaitContext -- which is heap-held, private to the implementation, and already
-  /// where everything else about a wait lives. The two that are here have to be: the context
-  /// pointer is what makes a warmed wait rebuild nothing, and the flag has to be readable before
-  /// the context exists.
+  /// @warning The readiness virtuals above deliberately make one pre-GA ABI transition from EA
+  /// snapshots that did not expose readiness handles. A client compiled against those older
+  /// headers must not be mixed with the current Core library; rebuild all in-process components
+  /// from one SDK package. The current virtual order and these two members are ABI state for every
+  /// endpoint family. Adding a third field, inserting or reordering another virtual, or changing a
+  /// signature is another ABI break. New wait state belongs inside \ref SubscriberWaitContext --
+  /// which is heap-held, private to the implementation, and already owns the rest of the wait
+  /// state. The context pointer makes a warmed wait rebuild nothing, and the flag must be readable
+  /// before the context exists.
   std::unique_ptr<SubscriberWaitContext> wait_context_;
   /// Claimed for the duration of one wait, so a second concurrent waiter can be rejected rather
   /// than allowed to share wait_context_. Both the claim and the rejection are unconditional, so
   /// this exported class has the same layout and the same behaviour in every configuration.
   std::atomic_flag waiting_;
 };
+
+/// @brief Consume and retire one source-private subscriber owner.
+/// @tparam Subscriber Concrete endpoint type derived from @ref WaitSetSubscriber.
+/// @param subscriber Owning endpoint pointer; null on return, including after a retirement error.
+/// @return Success, @ref ErrorCode::kClosed when already consumed, or a code-only cleanup error.
+/// @note Existing endpoint destruction remains the sole authority for staged and backend cleanup.
+template <typename Subscriber>
+[[nodiscard]] expected<void, Error> close_local_subscriber(
+    std::unique_ptr<Subscriber>& subscriber) noexcept {
+  if (!subscriber) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  auto retiring = std::move(subscriber);
+  auto closed = retiring->close_local_endpoint();
+  if (!closed) {
+    return make_unexpected(Error{closed.error().code});
+  }
+  return {};
+}
 
 /// @brief Return a borrowed stop-token pointer for \ref WaitSetSubscriber::wait_for_readiness.
 ///
@@ -184,6 +295,10 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
 [[nodiscard]] inline expected<void, Error> wait_for_sample_readiness(
     WaitSetSubscriber& subscriber, const std::chrono::steady_clock::time_point deadline,
     const std::stop_token* const stop_token) {
+  auto claim = subscriber.claim_wait_owner();
+  if (!claim) {
+    return make_unexpected(std::move(claim).error());
+  }
   auto ready = subscriber.has_samples();
   if (!ready) {
     return make_unexpected(std::move(ready).error());
@@ -191,7 +306,7 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
   if (*ready) {
     return {};
   }
-  return subscriber.wait_for_readiness(deadline, stop_token);
+  return subscriber.wait_for_readiness_claimed(deadline, stop_token);
 }
 
 /// @brief Receive one sample from \p subscriber, waiting for readiness until \p deadline.
@@ -220,14 +335,18 @@ class HOLOSCAN_CORE_EXPORT WaitSetSubscriber {
 template <typename Receive>
 [[nodiscard]] std::invoke_result_t<Receive&> wait_and_receive_next(
     WaitSetSubscriber& subscriber, const std::chrono::steady_clock::time_point deadline,
-    const std::stop_token* const stop_token, Receive&& receive) {
+    const std::stop_token* const stop_token, Receive receive) {
+  auto claim = subscriber.claim_wait_owner();
+  if (!claim) {
+    return make_unexpected(std::move(claim).error());
+  }
   while (true) {
     auto received = receive();
     if (received || received.error().code != ErrorCode::kNotReady) {
       return received;
     }
 
-    auto ready = subscriber.wait_for_readiness(deadline, stop_token);
+    auto ready = subscriber.wait_for_readiness_claimed(deadline, stop_token);
     if (!ready && ready.error().code != ErrorCode::kNotReady) {
       return make_unexpected(std::move(ready).error());
     }

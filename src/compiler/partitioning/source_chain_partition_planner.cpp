@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <queue>
 #include <string>
@@ -114,6 +115,7 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
   }
 
   std::vector<CandidatePartitionId> partition_by_vertex(vertex_count);
+  CandidateStructuralTracker structural_tracker(vertex_count);
   std::vector<ExecutionDomainKey> partition_domains(problem.authored_constraints.size());
   for (std::size_t constraint_index = 0U; constraint_index < problem.authored_constraints.size();
        ++constraint_index) {
@@ -122,6 +124,8 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
         problem.vertices[constraint.members.front()].execution_domain;
   }
   partition_domains.reserve(vertex_count);
+  std::map<std::uint64_t, std::vector<CandidatePartitionId>> partitions_by_serialization_domain;
+  CandidateQuotientGraph quotient_graph;
   PartitionProposal proposal;
   proposal.algorithm = source_chain_algorithm();
   proposal.assignments.reserve(vertex_count);
@@ -129,18 +133,6 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
 
   for (const VertexIndex vertex_index : topological_order) {
     const auto& vertex = problem.vertices[vertex_index];
-    if (authored_partition_by_vertex[vertex_index].has_value()) {
-      const CandidatePartitionId selected_partition = *authored_partition_by_vertex[vertex_index];
-      partition_by_vertex[vertex_index] = selected_partition;
-      proposal.assignments.push_back(VertexPartitionAssignment{vertex_index, selected_partition});
-      proposal.decisions.push_back(PartitionDecisionProposal{
-          vertex_index,
-          selected_partition,
-          PartitionDecisionKind::kAuthored,
-          {PartitionDecisionReason::kAuthoredPartitionBoundary},
-      });
-      continue;
-    }
     std::vector<CandidatePartitionId> predecessor_partitions;
     predecessor_partitions.reserve(predecessors[vertex_index].size());
     for (const VertexIndex predecessor : predecessors[vertex_index]) {
@@ -157,6 +149,25 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
     predecessor_partitions.erase(
         std::unique(predecessor_partitions.begin(), predecessor_partitions.end()),
         predecessor_partitions.end());
+
+    if (authored_partition_by_vertex[vertex_index].has_value()) {
+      const CandidatePartitionId selected_partition = *authored_partition_by_vertex[vertex_index];
+      partition_by_vertex[vertex_index] = selected_partition;
+      structural_tracker.add_vertex(partition_by_vertex,
+                                    selected_partition,
+                                    predecessors[vertex_index],
+                                    static_cast<bool>(vertex.serialization_domain));
+      proposal.assignments.push_back(VertexPartitionAssignment{vertex_index, selected_partition});
+      proposal.decisions.push_back(PartitionDecisionProposal{
+          vertex_index,
+          selected_partition,
+          PartitionDecisionKind::kAuthored,
+          {PartitionDecisionReason::kAuthoredPartitionBoundary},
+      });
+      append_candidate_predecessor_edges(
+          quotient_graph, selected_partition, predecessor_partitions);
+      continue;
+    }
 
     PartitionBoundaryMask mandatory = vertex.boundary_before;
     for (const EdgeIndex edge_index : incoming_edges[vertex_index]) {
@@ -187,7 +198,53 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
 
     CandidatePartitionId selected_partition;
     PartitionDecisionKind decision = PartitionDecisionKind::kStart;
-    if (!reasons.empty()) {
+    if (vertex.serialization_domain) {
+      reasons.push_back(PartitionDecisionReason::kSerializationDomain);
+      const auto existing =
+          partitions_by_serialization_domain.find(vertex.serialization_domain.value);
+      if (existing != partitions_by_serialization_domain.end()) {
+        for (const CandidatePartitionId candidate : existing->second) {
+          selected_partition = candidate;
+          bool can_join =
+              selected_partition.value <= partition_domains.size() &&
+              partition_domains[selected_partition.value - 1U] == vertex.execution_domain &&
+              !candidate_join_would_cycle(
+                  quotient_graph, selected_partition, predecessor_partitions);
+          if (can_join) {
+            for (const EdgeIndex edge_index : incoming_edges[vertex_index]) {
+              const auto& edge = problem.edges[edge_index];
+              if (partition_by_vertex[edge.source] == selected_partition &&
+                  (!vertex.boundary_before.empty() || !edge.mandatory_boundaries.empty() ||
+                   !edge.same_partition_collapse_legal || !edge.same_stream_fifo_legal)) {
+                can_join = false;
+                break;
+              }
+            }
+          }
+          if (can_join && structural_tracker.has_non_serialized_member(candidate) &&
+              !structural_tracker.would_form_chain_with_vertex(
+                  partition_by_vertex, candidate, predecessors[vertex_index])) {
+            can_join = false;
+          }
+          if (can_join) {
+            break;
+          }
+          selected_partition = {};
+        }
+      }
+      if (!selected_partition) {
+        if (partition_domains.size() >= problem.max_partitions ||
+            partition_domains.size() >= vertex_count) {
+          return planner_error(ErrorCode::kResourceExhausted, "PARTITION_LIMIT_EXCEEDED");
+        }
+        selected_partition =
+            CandidatePartitionId{static_cast<std::uint32_t>(partition_domains.size() + 1U)};
+        partition_domains.push_back(vertex.execution_domain);
+        partitions_by_serialization_domain[vertex.serialization_domain.value].push_back(
+            selected_partition);
+      }
+      decision = PartitionDecisionKind::kSerializationDomain;
+    } else if (!reasons.empty()) {
       if (partition_domains.size() >= problem.max_partitions ||
           partition_domains.size() >= vertex_count) {
         return planner_error(ErrorCode::kResourceExhausted, "PARTITION_LIMIT_EXCEEDED");
@@ -227,6 +284,10 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
           }
         }
       }
+      if (can_join && !structural_tracker.would_form_chain_with_vertex(
+                          partition_by_vertex, selected_partition, predecessors[vertex_index])) {
+        can_join = false;
+      }
 
       if (can_join) {
         decision = PartitionDecisionKind::kJoin;
@@ -245,9 +306,14 @@ expected<PartitionProposal, Error> SourceChainPartitionPlanner::propose(
     }
 
     partition_by_vertex[vertex_index] = selected_partition;
+    structural_tracker.add_vertex(partition_by_vertex,
+                                  selected_partition,
+                                  predecessors[vertex_index],
+                                  static_cast<bool>(vertex.serialization_domain));
     proposal.assignments.push_back(VertexPartitionAssignment{vertex_index, selected_partition});
     proposal.decisions.push_back(
         PartitionDecisionProposal{vertex_index, selected_partition, decision, std::move(reasons)});
+    append_candidate_predecessor_edges(quotient_graph, selected_partition, predecessor_partitions);
   }
 
   return proposal;

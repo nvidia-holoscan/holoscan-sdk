@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -56,6 +58,10 @@ namespace {
     }
     hash.add(static_cast<std::uint64_t>(partition.members.size()));
     for (const VertexId member : partition.members) {
+      hash.add(member.value);
+    }
+    hash.add(static_cast<std::uint64_t>(partition.graph_members.size()));
+    for (const GraphId member : partition.graph_members) {
       hash.add(member.value);
     }
   }
@@ -234,6 +240,7 @@ void append_schedule_edges(const GraphSnapshotData& snapshot, ExecutionPlanState
   output.execution_partitions.reserve(result.plan.partitions.size());
   for (const auto& partition : result.plan.partitions) {
     std::optional<std::string> authored_name;
+    std::vector<GraphId> graph_members;
     if (partition.authored_constraint.has_value()) {
       const auto authored = std::find_if(
           snapshot.partitions.begin(), snapshot.partitions.end(), [&](const auto& candidate) {
@@ -244,6 +251,7 @@ void append_schedule_edges(const GraphSnapshotData& snapshot, ExecutionPlanState
                                         "PARTITION_PROPOSAL_CONSTRAINT_VIOLATION");
       }
       authored_name = authored->name;
+      graph_members = authored->graph_members;
     }
     output.execution_partitions.push_back(ExecutionPartitionRecord{
         .id = ExecutionPartitionId{partition.canonical_id},
@@ -251,6 +259,7 @@ void append_schedule_edges(const GraphSnapshotData& snapshot, ExecutionPlanState
         .members = partition.members,
         .operator_paths = {},
         .execution_lane = 0U,
+        .graph_members = std::move(graph_members),
     });
     if (output.execution_partitions.back().authored_name) {
       ++output.partitioning_plan.authored_partition_count;
@@ -276,6 +285,54 @@ void append_schedule_edges(const GraphSnapshotData& snapshot, ExecutionPlanState
   return {};
 }
 
+void append_serialization_domain_advisories(const GraphSnapshotData& snapshot,
+                                            std::span<const std::uint32_t> process_group_by_vertex,
+                                            ExecutionPlanState& output) {
+  std::vector<std::uint32_t> partition_by_vertex(snapshot.vertices.size());
+  for (const auto& partition : output.execution_partitions) {
+    for (const VertexId member : partition.members) {
+      if (member && member.value <= partition_by_vertex.size()) {
+        partition_by_vertex[static_cast<std::size_t>(member.value - 1U)] = partition.id.value;
+      }
+    }
+  }
+  struct DomainPartitions {
+    const VertexRecord* source{};
+    std::set<std::uint32_t> partitions;
+  };
+  using DomainKey = std::pair<std::uint32_t, std::string_view>;
+  std::map<DomainKey, DomainPartitions> domains;
+  for (const auto& vertex : snapshot.vertices) {
+    if (vertex.serialization_domain.empty() || !vertex.id ||
+        vertex.id.value > partition_by_vertex.size()) {
+      continue;
+    }
+    const auto index = static_cast<std::size_t>(vertex.id.value - 1U);
+    auto& domain = domains[DomainKey{process_group_by_vertex[index], vertex.serialization_domain}];
+    if (domain.source == nullptr) {
+      domain.source = &vertex;
+    }
+    domain.partitions.insert(partition_by_vertex[static_cast<std::size_t>(vertex.id.value - 1U)]);
+  }
+  for (const auto& [key, domain] : domains) {
+    if (domain.partitions.size() <= 1U || domain.source == nullptr) {
+      continue;
+    }
+    output.diagnostics.push_back(Diagnostic{
+        .id = diagnostic_id("OPERATOR_SERIALIZATION_DOMAIN_SPLIT_ADVISORY"),
+        .severity = ::holoscan::DiagnosticSeverity::kWarning,
+        .token = "OPERATOR_SERIALIZATION_DOMAIN_SPLIT_ADVISORY",
+        .source =
+            DiagnosticSource{
+                .graph_generation = snapshot.generation,
+                .graph = domain.source->graph,
+                .vertex = domain.source->id,
+            },
+        .provided = std::string{key.second},
+    });
+  }
+}
+
 }  // namespace
 
 expected<void, Error> lower_partition_plan(
@@ -283,7 +340,10 @@ expected<void, Error> lower_partition_plan(
     std::span<const std::optional<Profile>> effective_profiles,
     bool removed_environment_selector_present,
     std::span<const std::uint32_t> process_group_by_vertex, const DeploymentBinding& deployment,
-    std::span<const TensorDeviceBindingRecord> tensor_device_bindings, ExecutionPlanState& output) {
+    std::span<const TensorDeviceBindingRecord> tensor_device_bindings, ExecutionPlanState& output,
+    DiagnosticSource* failure_source) {
+  if (failure_source != nullptr)
+    *failure_source = {};
   initialize_partition_attempt(root_profile,
                                effective_profiles,
                                snapshot.partitions,
@@ -331,7 +391,8 @@ expected<void, Error> lower_partition_plan(
 
   auto accepted = [&]() -> expected<partitioning::PartitioningPassResult, Error> {
     if (manual_cover) {
-      return build_manual_partition_cover(snapshot, storage, process_group_by_vertex);
+      return build_manual_partition_cover(
+          snapshot, storage, process_group_by_vertex, failure_source);
     }
     auto catalog = partitioning::PartitionPlannerCatalog::create_default_builtins();
     if (!catalog) {
@@ -365,6 +426,7 @@ expected<void, Error> lower_partition_plan(
   if (!published) {
     return publish_partition_failure(std::move(published).error(), output);
   }
+  append_serialization_domain_advisories(snapshot, process_group_by_vertex, output);
   output.partitioning_plan.config_digest =
       digest_partition_config(root_profile,
                               effective_profiles,

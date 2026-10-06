@@ -67,6 +67,7 @@ RUNTIME_PHASE_COUNTER_NAMES = (
     "candidates_frozen",
     "candidates_selected",
     "readiness_poll_dispatches",
+    "readiness_poll_contention_retries",
     "direct_continuation_receipts_accepted",
     "direct_continuation_poll_elisions",
     "direct_composite_attempts",
@@ -90,6 +91,7 @@ RUNTIME_PHASE_COUNTER_NAMES = (
     "channel_activation_cut_drains",
     "channel_activation_cut_skips",
     "channel_receive_backpressured",
+    "channel_poll_incomplete",
     "channel_activation_cut_inventory_scans",
     "channel_activation_cut_subscriber_probes",
     "channel_activation_cut_transport_probes",
@@ -251,8 +253,8 @@ def event_wake_required(args: argparse.Namespace) -> bool:
 
 
 def continuation_receipt_ineligible(args: argparse.Namespace) -> bool:
-    """Return whether this row must stay off the continuation-receipt path."""
-    return args.scenario in TENSOR_BACKED_SCENARIOS or process_local_delivery(args) == "holomq"
+    """Return whether the selected transport prevents direct continuation receipts."""
+    return process_local_delivery(args) == "holomq"
 
 
 def benchmark_name(
@@ -648,14 +650,25 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--notification-driver-cpu requires a notification workload")
     if not uses_notification_driver(args) and args.notification_capacity != 1:
         raise ValueError("--notification-capacity requires a notification workload")
+    controller_owned_lane = controller_owns_only_operator_lane(args)
+    if (
+        controller_owned_lane
+        and args.source_cpu >= 0
+        and args.controller_cpu >= 0
+        and args.source_cpu != args.controller_cpu
+    ):
+        raise ValueError(
+            "--source-cpu and --controller-cpu must match when the sole Operator lane "
+            "shares the controller thread"
+        )
     assigned_cpus = [
-        args.source_cpu,
+        -1 if controller_owned_lane else args.source_cpu,
         (
             -1
             if args.scenario == "source_only" or args.operator_lanes != "separate"
             else args.sink_cpu
         ),
-        args.controller_cpu,
+        controller_owner_cpu(args),
         args.channel_pump_cpu if uses_channel_pump(args) else -1,
     ]
     if args.scenario == "sample_forward" and args.operator_lanes == "separate":
@@ -771,6 +784,18 @@ def expected_operator_lane_count(args: argparse.Namespace) -> int:
     return 2
 
 
+def controller_owns_only_operator_lane(args: argparse.Namespace) -> bool:
+    """Return whether the sole Operator lane executes on the controller thread."""
+    return expected_operator_lane_count(args) == 1
+
+
+def controller_owner_cpu(args: argparse.Namespace) -> int:
+    """Return the normalized CPU request for a controller-owned Operator lane."""
+    if controller_owns_only_operator_lane(args) and args.source_cpu >= 0:
+        return args.source_cpu
+    return args.controller_cpu
+
+
 def effective_operator_lane_count(placement: dict[str, Any], args: argparse.Namespace) -> int:
     """Read the accepted plan's effective lane count without inferring automatic layout."""
     count = placement.get("operator_lane_count")
@@ -867,11 +892,9 @@ def collect_cpu_topology(args: argparse.Namespace) -> list[dict[str, object]]:
     if args.partition_cover == "automatic":
         # Automatic partition owners are compiler-selected and reported by the accepted plan.
         placements = []
-    elif args.partition_cover != "legacy" and expected_operator_lane_count(args) == 1:
-        # A one-partition plan executes inline on the controller; do not invent worker roles.
+    elif controller_owns_only_operator_lane(args):
+        # A one-partition plan executes inline on the controller; do not invent a worker role.
         placements = []
-    elif args.operator_lanes == "shared":
-        placements = [read_cpu_topology("shared_operator_lane", args.source_cpu)]
     else:
         placements = [read_cpu_topology("source", args.source_cpu)]
         if args.scenario == "sample_forward":
@@ -887,7 +910,7 @@ def collect_cpu_topology(args: argparse.Namespace) -> list[dict[str, object]]:
             )
         elif args.scenario != "source_only":
             placements.append(read_cpu_topology("sink", args.sink_cpu))
-    placements.append(read_cpu_topology("controller", args.controller_cpu))
+    placements.append(read_cpu_topology("controller", controller_owner_cpu(args)))
     if uses_channel_pump(args):
         placements.append(read_cpu_topology("channel_pump", args.channel_pump_cpu))
     if uses_notification_driver(args):
@@ -1075,6 +1098,17 @@ def validate_runtime_phase_counters(
         else samples_received == expected_input_operations
         and readiness_published == expected_input_operations
     )
+    witnesses_retired = phase_counters["channel_witness_retired"]
+    witness_retirement_consistent = (
+        expected_input_operations <= witnesses_retired <= readiness_published
+        if has_lossy_subscriber(args)
+        else witnesses_retired == expected_input_operations
+    )
+    if pressured_staged_diagnostics:
+        witness_retirement_consistent = witness_retirement_consistent and (
+            witnesses_retired + phase_counters["channel_pre_witness_replacements"]
+            == readiness_published
+        )
     channel_consistent = (
         phase_counters["channel_prepare_calls"] == expected_compute
         and phase_counters["channel_emit_attempts"] == expected_emit_attempts
@@ -1082,7 +1116,7 @@ def validate_runtime_phase_counters(
         and phase_counters["channel_emit_backpressured"] == counts.get("backpressured_emits", 0)
         and retained_counts_consistent
         and phase_counters["channel_input_reads"] == expected_input_operations
-        and phase_counters["channel_witness_retired"] == expected_input_operations
+        and witness_retirement_consistent
         and phase_counters["channel_retire_calls"] == expected_compute
         and activation_cut_consistent
     )
@@ -1774,6 +1808,29 @@ def validate_pod_sink_pressure_gate(
         raise RuntimeError(f"{path} reported an impossible POD sink pressure-gate boundary")
 
 
+def validate_tensor_phase_timing(
+    timing: dict[str, Any], args: argparse.Namespace, path: Path
+) -> None:
+    """Validate producer phases per publication and receive phases per delivered sink sample."""
+    tensor_phase_fields = (
+        (timing.get("tensor_loan_acquire_ns"), args.samples),
+        (timing.get("tensor_write_commit_ns"), args.samples),
+        (timing.get("tensor_receive_call_ns"), args.samples * args.fanout),
+    )
+    tensor_phase_expected = args.scenario == "tensor" and args.workload in {
+        "latency",
+        "notification_latency",
+    }
+    if tensor_phase_expected:
+        if any(
+            not isinstance(field, dict) or field.get("samples") != expected_samples
+            for field, expected_samples in tensor_phase_fields
+        ):
+            raise RuntimeError(f"{path} reported incomplete Tensor phase timing")
+    elif any(field is not None for field, _ in tensor_phase_fields):
+        raise RuntimeError(f"{path} reported unexpected Tensor phase timing")
+
+
 def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
     """Validate one native result against the exact contract of its requested row."""
     try:
@@ -2045,7 +2102,7 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError(f"{path} reported unexpected Operator partition/lane inventory")
     by_role = {item.get("role"): item for item in support_threads if isinstance(item, dict)}
     expected_support_threads = {
-        "controller": args.controller_cpu,
+        "controller": controller_owner_cpu(args),
     }
     if uses_channel_pump(args):
         expected_support_threads["channel_pump"] = args.channel_pump_cpu
@@ -2473,23 +2530,7 @@ def checked_result(path: Path, args: argparse.Namespace) -> dict[str, Any]:
     source_post_emit_to_pre_return = timing.get("source_post_emit_to_pre_return_ns")
     source_post_emit_to_sink = timing.get("source_post_emit_to_sink_ns")
     source_post_emit_to_sink_overlaps = timing.get("source_post_emit_to_sink_overlaps")
-    tensor_phase_fields = (
-        timing.get("tensor_loan_acquire_ns"),
-        timing.get("tensor_write_commit_ns"),
-        timing.get("tensor_receive_call_ns"),
-    )
-    tensor_phase_expected = args.scenario == "tensor" and args.workload in {
-        "latency",
-        "notification_latency",
-    }
-    if tensor_phase_expected:
-        if any(
-            not isinstance(field, dict) or field.get("samples") != args.samples
-            for field in tensor_phase_fields
-        ):
-            raise RuntimeError(f"{path} reported incomplete Tensor phase timing")
-    elif any(field is not None for field in tensor_phase_fields):
-        raise RuntimeError(f"{path} reported unexpected Tensor phase timing")
+    validate_tensor_phase_timing(timing, args, path)
     if args.workload == "latency":
         if (
             not isinstance(latency, dict)

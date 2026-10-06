@@ -12,11 +12,52 @@ are stable and explicit:
 - `baseline.camera_imu.control` — `uint32_t` results consumed by
   `result_recorder`.
 
-Run the bounded reference path directly:
+The camera is an unbounded clock-driven producer, so a separately deployed
+graph does not close the control export merely because the finite IMU publisher
+closes. Bound the companion recorder explicitly when consuming this endpoint:
+
+```sh
+./result_recorder <catalog.json> baseline.camera_imu.control 1
+```
+
+The recorder's default no-limit mode remains the data-then-EOS demonstration
+for finite input-driven graphs.
+
+## Language variants
+
+Run the native Python graph from an SDK build tree with:
+
+```sh
+PYTHONPATH=<build>/python/lib python3 python/camera_imu_control.py \
+  --catalog ./endpoint-catalog.json
+```
+
+From an examples-enabled SDK install, configure and test the Python directory
+as a standalone project:
+
+```sh
+cmake -B python/build -S python -Dholoscan_DIR=<prefix>/lib/cmake/holoscan
+cmake --build python/build --target python_camera_imu_control
+ctest --test-dir python/build -R EXAMPLE_PYTHON_CAMERA_IMU_CONTROL_TEST
+```
+
+The Python version independently implements the camera and fusion Operators,
+authors the same embedded graph and endpoint identities, saves the canonical
+endpoint catalog, runs the camera-only `SafeDefault` path briefly, and stops
+cooperatively. The emitted catalog can be used by either the C++ or Python
+`sensor_daemon.py` and `recorder.py` clients. The integrated smoke path below
+remains C++ so one executable can own both the graph session and its reference
+client lifecycle.
+
+Run the bounded C++ reference path directly:
 
 ```sh
 ./camera_imu_control
 ```
+
+Use `./camera_imu_control --plan-json` to print only the admitted canonical
+plan JSON to stdout without starting the runtime. This mode is mutually
+exclusive with `--emit-artifacts` and its artifact options.
 
 The executable starts one real `RunSession` plus an independent public
 `ChannelRuntime` client. The client publishes captured IMU samples and consumes

@@ -46,6 +46,7 @@ struct PhysicalPlanLoweringResult {
   std::vector<TensorInterfacePoolPlanRecord> tensor_interface_pools;
   std::vector<TensorDeviceResourcePlanRecord> tensor_device_resources;
   std::vector<CudaComputeStreamPlanRecord> cuda_compute_streams;
+  std::vector<OperatorCudaStreamBindingPlanRecord> operator_cuda_stream_bindings;
   std::vector<TensorInlineRecordPlanRecord> tensor_inline_records;
   std::vector<ImportedGenerationCapacityPlanRecord> imported_generation_capacities;
   std::vector<TensorTransferPlanRecord> tensor_transfer_plans;
@@ -66,8 +67,8 @@ struct PhysicalPlanLoweringResult {
 /// @param catalog_endpoints Canonical endpoint records that own service identity.
 /// @param process_placements Total vertex-to-process-group mapping.
 /// @param lifecycle_targets Final lifecycle restart dispositions used for generation capacity.
-/// @param execution_partitions Final accepted exact vertex cover used only to
-/// validate resource ownership, never to multiply physical resources.
+/// @param execution_partitions Final accepted exact vertex cover used to validate resource
+/// ownership and, under the partition stream policy, select the compute-stream owner.
 /// @param tensor_device_bindings Explicit device evidence for device-visible Tensor ports.
 /// @return Total inspectable physical records plus stable fail-closed diagnostics.
 /// @note This cold pass creates no endpoint, queue, pool, CUDA event, thread, or backend object.
@@ -86,6 +87,7 @@ struct PhysicalPlanLoweringResult {
     bool force_holomq_process_local_event_wake = false,
     std::span<const TensorByteSpanDerivationPlanRecord> tensor_byte_span_derivations = {},
     std::span<const ResolvedQueueSizing> resolved_queue_sizings = {},
-    std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes = {});
+    std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes = {},
+    CudaComputeStreamPolicy stream_policy = CudaComputeStreamPolicy::kPerExecutionPartition);
 
 }  // namespace holoscan::detail

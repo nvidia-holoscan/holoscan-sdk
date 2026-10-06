@@ -80,6 +80,7 @@ void add_parameter_catalog_records(StableHashBuilder& hash,
     hash.add(field.type_shape.element_or_rep_bit_width);
     hash.add(field.type_shape.duration_period_numerator);
     hash.add(field.type_shape.duration_period_denominator);
+    hash.add(field.type_shape.optional);
     hash.add(field.type_shape.has_stable_shape);
     hash.add(field.mutability);
     hash.add(field.earliest_invalidated_stage);
@@ -91,6 +92,16 @@ void add_parameter_catalog_records(StableHashBuilder& hash,
     hash.add(field.alias);
     hash.add(field.validator_id);
     add_constraints(hash, field.constraints);
+    if (!field.enum_choices.empty()) {
+      hash.add("holoscan.param.enum_choices.v1");
+      hash.add_canonical_size(field.enum_choices.size());
+      for (const ParamEnumChoiceRecord& choice : field.enum_choices) {
+        hash.add(choice.name);
+        hash.add(choice.value.kind);
+        hash.add(choice.value.bit_width);
+        hash.add(choice.value.raw_bits);
+      }
+    }
     hash.add(field.string_encoding);
     hash.add(field.element_string_encoding);
     hash.add(field.value_route);

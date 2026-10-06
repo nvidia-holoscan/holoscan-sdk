@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <holomq/detail/native_descriptor_readiness.hpp>
 #include <holomq/detail/transport/iox2/connection_error.hpp>
 #include <holomq/detail/transport/iox2/id_conversion.hpp>
 #include <holomq/detail/transport/iox2/inbound_message.hpp>
@@ -12,11 +13,11 @@
 #include <holomq/detail/transport/iox2/pubsub_wake_event.hpp>
 #include <holomq/detail/transport/iox2/receive_error.hpp>
 
-#include "iox2/event_id.hpp"
-#include "iox2/listener.hpp"
-#include "iox2/port_factory_publish_subscribe.hpp"
-#include "iox2/service_type.hpp"
-#include "iox2/subscriber.hpp"
+#include <iox2/event_id.hpp>
+#include <iox2/listener.hpp>
+#include <iox2/port_factory_publish_subscribe.hpp>
+#include <iox2/service_type.hpp>
+#include <iox2/subscriber.hpp>
 
 #include <holomq/detail/wait_strategy_utils.hpp>
 #include <holomq/errors.hpp>
@@ -25,6 +26,7 @@
 #include <holomq/wait_strategy.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <thread>
 #include <utility>
@@ -36,6 +38,11 @@ class Iox2WaitSetBackend;
 template <typename Payload>
 class SubscriberPort {
  public:
+  struct ReadinessSource {
+    int descriptor{-1};
+    bool initially_ready{false};
+  };
+
   SubscriberPort() = default;
   SubscriberPort(SubscriberPort&&) noexcept = default;
   SubscriberPort& operator=(SubscriberPort&&) noexcept = default;
@@ -95,13 +102,30 @@ class SubscriberPort {
   [[nodiscard]] holomq::expected<InboundMessage<Payload>, holomq::Error> wait_and_take(
       const holomq::WaitStrategy& strategy);
 
-  [[nodiscard]] bool is_attached_to_wait_set() const noexcept { return attached_to_wait_set_; }
+  [[nodiscard]] bool is_attached_to_wait_set() const noexcept {
+    return wait_owner_ != WaitOwner::kNone;
+  }
+
+  [[nodiscard]] bool is_attached_to_readiness_handle() const noexcept {
+    return wait_owner_ == WaitOwner::kReadinessHandle;
+  }
+
+  /// Claim the listener descriptor for one externally owned readiness handle.
+  [[nodiscard]] auto acquire_readiness() -> holomq::expected<ReadinessSource, holomq::ErrorCode>;
+
+  /// Drain pending listener notifications and report whether a sample remains queued.
+  [[nodiscard]] auto acknowledge_readiness() -> holomq::expected<bool, holomq::ErrorCode>;
+
+  /// Release an external readiness-handle claim.
+  void release_readiness() noexcept { wait_owner_ = WaitOwner::kNone; }
 
  private:
   friend class Runtime;
   friend class Iox2WaitSetBackend;
 
-  void set_attached_to_wait_set(const bool attached) noexcept { attached_to_wait_set_ = attached; }
+  void set_attached_to_wait_set(const bool attached) noexcept {
+    wait_owner_ = attached ? WaitOwner::kWaitSet : WaitOwner::kNone;
+  }
 
   [[nodiscard]] iox2::Listener<iox2::ServiceType::Ipc>* get_listener_if_ready() noexcept {
     return listener_.has_value() ? &listener_.value() : nullptr;
@@ -122,7 +146,13 @@ class SubscriberPort {
   IoxPortFactory port_factory_;
   holomq::WaitStrategy wait_strategy_{};
   std::optional<iox2::Listener<iox2::ServiceType::Ipc>> listener_;
-  bool attached_to_wait_set_{false};
+  enum class WaitOwner : std::uint8_t {
+    kNone,
+    kWaitSet,
+    kReadinessHandle,
+  };
+
+  WaitOwner wait_owner_{WaitOwner::kNone};
 };
 
 template <typename Payload>
@@ -184,8 +214,61 @@ auto SubscriberPort<Payload>::drain_wake_events() -> holomq::expected<bool, holo
 }
 
 template <typename Payload>
+auto SubscriberPort<Payload>::acquire_readiness()
+    -> holomq::expected<ReadinessSource, holomq::ErrorCode> {
+#if !HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
+  return holomq::make_unexpected(holomq::ErrorCode::kNotSupported);
+#else
+  if (!listener_.has_value()) {
+    return holomq::make_unexpected(holomq::ErrorCode::kNotSupported);
+  }
+  if (is_attached_to_wait_set()) {
+    return holomq::make_unexpected(holomq::ErrorCode::kInvalidArgument);
+  }
+
+  auto ready = has_samples();
+  if (!ready) {
+    return holomq::make_unexpected(ready.error());
+  }
+  const int descriptor = listener_->file_descriptor().unsafe_native_handle();
+  if (descriptor < 0) {
+    return holomq::make_unexpected(holomq::ErrorCode::kFailure);
+  }
+  wait_owner_ = WaitOwner::kReadinessHandle;
+  return ReadinessSource{.descriptor = descriptor, .initially_ready = *ready};
+#endif
+}
+
+template <typename Payload>
+auto SubscriberPort<Payload>::acknowledge_readiness() -> holomq::expected<bool, holomq::ErrorCode> {
+#if !HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
+  return holomq::make_unexpected(holomq::ErrorCode::kNotSupported);
+#else
+  if (wait_owner_ != WaitOwner::kReadinessHandle) {
+    return holomq::make_unexpected(holomq::ErrorCode::kInvalidArgument);
+  }
+  if (!listener_.has_value()) {
+    return holomq::make_unexpected(holomq::ErrorCode::kNotSupported);
+  }
+
+  while (true) {
+    const auto event = listener_->try_wait_one();
+    if (!event.has_value()) {
+      return holomq::make_unexpected(map_listener_wait_error_code(event.error()));
+    }
+    if (!event->has_value()) {
+      return has_samples();
+    }
+  }
+#endif
+}
+
+template <typename Payload>
 auto SubscriberPort<Payload>::wait_for_sample(const holomq::WaitStrategy& strategy)
     -> holomq::expected<holomq::WaitResult, holomq::ErrorCode> {
+  if (is_attached_to_wait_set()) {
+    return holomq::make_unexpected(holomq::ErrorCode::kInvalidArgument);
+  }
   holomq::detail::warn_if_ignored_timeout_on_return(strategy);
 
   const auto spin_until = std::chrono::steady_clock::now() + strategy.spin_duration;
@@ -252,6 +335,12 @@ holomq::expected<InboundMessage<Payload>, holomq::Error> SubscriberPort<Payload>
     auto wait_result = wait_for_sample(strategy);
     if (!wait_result.has_value()) {
       HOLOMQ_LOG_ERROR("subscriber wait failed: {}", holomq::error_code_name(wait_result.error()));
+      if (wait_result.error() == holomq::ErrorCode::kInvalidArgument && is_attached_to_wait_set()) {
+        return holomq::make_unexpected_nothrow<InboundMessage<Payload>>(
+            wait_result.error(),
+            is_attached_to_readiness_handle() ? "subscriber is already owned by a readiness handle"
+                                              : "subscriber is already owned by a wait set");
+      }
       return holomq::make_unexpected(holomq::Error{wait_result.error()});
     }
     if (wait_result.value() == holomq::WaitResult::timeout) {

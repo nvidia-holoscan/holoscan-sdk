@@ -1,97 +1,122 @@
 <Anchor id="relevant-technologies" />
 
-Holoscan accelerates streaming AI applications by leveraging both hardware and software.
-The Holoscan SDK relies on multiple core technologies to achieve low latency and high throughput:
-
-- [gpudirect_rdma](#rivermax-and-gpudirect-rdma)
-- [gxf-tech](#graph-execution-framework)
-- [tensorrt](#tensorrt-optimized-inference)
-- [cuda_rendering_interop](#interoperability-between-cuda-and-rendering-frameworks)
-- [npp](#accelerated-image-transformations)
-- [matx](#matx-accelerated-computing)
-
-<Anchor id="gpudirect_rdma" />
-
-## Rivermax and GPUDirect RDMA
-
-The NVIDIA Developer Kits equipped with a [ConnectX network adapter](https://www.nvidia.com/en-us/networking/ethernet-adapters/) can be used along with the [NVIDIA Rivermax SDK](https://developer.nvidia.com/networking/rivermax) to provide an extremely efficient network connection that is further optimized for GPU workloads by using [GPUDirect](https://developer.nvidia.com/gpudirect) for RDMA. This technology avoids unnecessary memory copies and CPU overhead by copying data directly to or from pinned GPU memory, and supports both the integrated GPU or the discrete GPU.
-
-<Note>
-
-NVIDIA is committed to supporting hardware vendors enabling RDMA within their own drivers.
-
+<Note title="You will learn">
+  - How Holoscan SDK 5 supports predictable pipeline latency, early
+    validation, and agent-assisted development
+  - Which technologies support these goals and what role each plays in a
+    pipeline
+  - What changed from SDK 4.x, including which technologies were replaced and
+    which remain optional platform integrations
 </Note>
 
+Holoscan SDK 5 brings together technologies for GPU-accelerated sensor
+processing around three goals: **predictable performance**, **developer
+experience**, and **agent-assisted development**. These technologies help
+pipelines minimize data movement and meet sensor-to-actuator latency
+requirements, let developers declare and validate pipeline behavior before
+execution, and give coding agents machine-readable feedback to check their
+changes without attached sensors.
 
-For more information about GPUDirect RDMA, see the following:
+Each goal rests on specific technologies. [Overview](/holoscan/sdk-user-guide/introduction/overview)
+shows how the SDK is layered and [Highlights](/holoscan/sdk-user-guide/introduction/highlights)
+explains what changed in 5.0; this page names what the SDK is built from and
+why each piece was chosen.
 
-- [GPUDirect RDMA Documentation](https://docs.nvidia.com/cuda/gpudirect-rdma/index.html)
-- [Minimal GPUDirect RDMA Demonstration](https://github.com/NVIDIA/jetson-rdma-picoevb)
-    source code, which provides a real hardware example of using RDMA
-    and includes both kernel drivers and user space applications for
-    the RHS Research PicoEVB and HiTech Global HTG-K800 FPGA boards.
+## Predictable performance: bounded latency on GPU-attached sensor pipelines
 
-<Anchor id="gxf-tech" />
+Latency in a sensor pipeline is lost to copies, allocations, host–device
+synchronization, and scheduling that emerges at run time. Each technology in
+this section removes one of those costs.
 
-## Graph Execution Framework
+### CUDA and stream-ordered execution
 
-GXF (Graph Execution Framework) is an NVIDIA-internal graph execution framework that forms the foundation of the Holoscan SDK. GXF provides a low-level entity-component system for building and executing computation graphs, including schedulers, memory allocators, message passing, and a YAML-based graph definition format.
+Operators can do host-only work or enqueue CUDA work. For operators that
+enqueue work on the runtime-assigned compute stream, the SDK manages stream
+ordering: committing a write records readiness, and a received `Tensor` is
+already ordered on that stream. Host-only operators run without a CUDA device
+query or switch. That is what lets a pipeline stay entirely on the device
+without a `cudaStreamSynchronize` on the hot path.
+[CCCL](https://github.com/NVIDIA/cccl) provides stream-aware primitives for
+custom kernels, and
+[CUDA green contexts](/holoscan/sdk-user-guide/advanced/cuda-green-contexts)
+partition SMs between pipeline stages when one stage must not starve another.
 
-The Holoscan SDK provides a developer-friendly C++ and Python APIs that abstract away GXF internals, culminating in a fully native operator and application model. Today, most Holoscan SDK users do not need to interact with GXF directly.
+Start with [Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101);
+the stream discipline is in
+[Performance considerations](/holoscan/sdk-user-guide/performance/performance-considerations).
 
-### GXF core concepts
+### HoloMQ and iceoryx2: zero-copy interprocess transport
 
-For historical context and to help interpret older code or documentation, here is a mapping of GXF concepts to their Holoscan SDK equivalents:
+**HoloMQ** is the SDK's typed, GPU-memory-aware transport, built on the
+[iceoryx2](https://github.com/eclipse-iceoryx/iceoryx2) shared-memory
+publish–subscribe backend. Host, pinned-host, and device tensors can cross
+process boundaries without a payload copy when their backing is directly
+exportable and their declared placement permits it. Otherwise, supported paths
+use bounded staging pools and copy the payload; a path requiring direct export
+rejects backing it cannot export. Account for staging when measuring
+cross-process latency.
 
-| GXF Concept | Holoscan SDK Equivalent | Description |
-|---|---|---|
-| **Entity** | (implicit) | A node in the computation graph; a container for components. In the Holoscan SDK, an Operator implicitly represents an entity. |
-| **Codelet** | **[Operator](/holoscan/sdk-user-guide/api-reference/holoscan/classes/operator)** | A component that executes custom code via lifecycle methods (`start`, `tick`/`compute`, `stop`). |
-| **Component** | **[Preallocated pools and graph regions](/holoscan/sdk-user-guide/introduction/migrating-from-4x#resources-and-allocators-become-pools-and-regions)** | Supporting functionality such as memory allocation is planned and reserved before execution. |
-| **Scheduling Term** | **[Temporal contract](/holoscan/sdk-user-guide/building-operators/temporal-contracts)** | Declares when an operator activates, which input samples it sees, and how missing data is handled. |
-| **Receiver / Transmitter** | **[Typed input / output ports](/holoscan/sdk-user-guide/getting-started/first-operator)** | Message-passing endpoints declared by an operator. |
-| **Connection** | **Flow (Edge)** | A directed edge in the application graph connecting an output port to an input port. |
-| **Scheduler** | **[Compiled execution plan and dispatcher](/holoscan/sdk-user-guide/introduction/migrating-from-4x#schedulers-become-a-compiled-plan)** | Plans and drives operator activation from declared temporal contracts. |
-| **GXF Extension** | **Operator / Resource library** | A shared library that registers components with the runtime. Native Holoscan operators do not require GXF extension registration. |
+The same typed emit/receive surface serves in-process and cross-process edges.
+External processes can join a running pipeline through the standalone channel
+client API without adopting the rest of the SDK.
+
+See [Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels),
+[Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients),
+and the measured figures in
+[Channel benchmarks](/holoscan/sdk-user-guide/performance/channel-benchmarks).
+
+### Preallocated pools and bounded queues
+
+The runtime is designed to keep heap allocation off the steady-state hot path.
+Tensor slots are borrowed from pools sized before execution, and queue depths
+are either pinned explicitly or derived at compile time from declared rates.
+The compile step can establish that pools and queues are bounded and
+consistent with declared rates; the latency a pipeline achieves on a given
+platform is still something to measure. Bounded memory is what makes latency
+predictable on embedded targets and what makes the runtime a tractable
+substrate for safety-qualified software. The model is described in
+[Performance model](/holoscan/sdk-user-guide/performance/performance-model)
+and [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
 
 <Anchor id="tensorrt" />
+<Anchor id="tensorrt-optimized-inference" />
 
-## TensorRT Optimized Inference
+### TensorRT inference
 
-[NVIDIA TensorRT](https://developer.nvidia.com/tensorrt) is a deep learning inference framework based on CUDA that provided the highest optimizations to run on NVIDIA GPUs, including the NVIDIA Developer Kits.
+Inference is usually the heaviest stage of a pipeline, and
+[NVIDIA TensorRT](https://developer.nvidia.com/tensorrt) optimizes trained
+models for low-latency execution on NVIDIA GPUs. The Holoscan inference module (HoloInfer) builds
+TensorRT 10 engines from ONNX models, or loads prebuilt engines, and executes
+them on the runtime's CUDA streams so inputs and outputs stay on the device.
 
-The inference module leverages TensorRT among other backends, and provides the ability to execute multiple inferences in parallel.
-
-<Anchor id="cuda_rendering_interop" />
-
-## Interoperability between CUDA and rendering frameworks
-
-Vulkan is commonly used for real-time visualization and, like CUDA, is executed on the GPU. This provides an opportunity for efficient sharing of resources between CUDA and this rendering framework.
-
-The Holoviz module uses the [external resource interoperability](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXTRES__INTEROP.html) functions of the low-level CUDA driver application programming interface, the Vulkan [external memory](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_memory_fd.html) and [external semaphore](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_semaphore.html) extensions.
+<Note>
+  Inference is a separately selectable
+  [Holoscan Module](/holoscan/sdk-user-guide/modules); see
+  [Inference](/holoscan/sdk-user-guide/modules/inference) for how to build
+  and link it.
+</Note>
 
 <Anchor id="npp" />
+<Anchor id="accelerated-image-transformations" />
 
-## Accelerated image transformations
+### CV-CUDA and MatX: keeping the work around inference on the GPU
 
-Streaming image processing often requires common GPU operations such as
-resizing, cropping, coordinate remapping, normalization, element-type
-conversion, and layout conversion. The
-[Holoscan Vision](/holoscan/sdk-user-guide/advanced/holoscan-vision) module
-provides HSDK 5 operators backed by CV-CUDA for these transformations and
-for non-maximum suppression. The operators consume and produce CUDA-resident
-Holoscan tensors on the runtime CUDA stream without staging through host
-memory.
+The speedup from accelerated inference is lost if pre- and post-processing
+fall back to the host.
+[Holoscan Vision](/holoscan/sdk-user-guide/modules/vision) provides
+operators backed by [CV-CUDA](https://github.com/CVCUDA/CV-CUDA) for resizing,
+cropping, remapping, normalization, type and layout conversion, and
+non-maximum suppression, consuming and producing CUDA-resident Holoscan
+tensors on the runtime stream. Vision also provides NPP-backed
+`BayerDemosaicOp` for Bayer-to-RGB or Bayer-to-RGBA conversion.
 
 <Anchor id="matx" />
+<Anchor id="matx-accelerated-computing" />
 
-## MatX Accelerated Computing
-
-The Holoscan SDK integrates the [MatX](https://github.com/NVIDIA/MatX) library, a high-performance C++17 library for numerical computing on NVIDIA GPUs.
-
-The library is accessible in C++ applications through the `matx::matx` interface library. It enables zero-copy data exchange between MatX tensors (`matx::tensor`) and `holoscan::Tensor` via the DLPack standard.
-
-To use MatX in a C++ application, link against the `matx::matx` target in `CMakeLists.txt`:
+For numerical work that is not a standard vision primitive, the SDK
+integrates [MatX](https://github.com/NVIDIA/MatX), a C++20 library for GPU
+numerical computing. MatX tensors and `holoscan::Tensor` exchange data
+zero-copy through DLPack. Link against the `matx::matx` target:
 
 ```cmake
 target_link_libraries(my_application
@@ -101,4 +126,214 @@ target_link_libraries(my_application
 )
 ```
 
-A new C++ example, `matx_basic`, is available in the `examples/matx/matx_basic` directory to demonstrate creating, sharing, and performing GPU-accelerated operations on MatX tensors within a Holoscan pipeline.
+The `hello_matx` example (`examples/hello_matx`) shows the pattern, and
+[Hello tour](/holoscan/sdk-user-guide/examples/hello-tour) walks through it.
+
+<Anchor id="cuda_rendering_interop" />
+<Anchor id="interoperability-between-cuda-and-rendering-frameworks" />
+
+### Vulkan and CUDA interoperability in Holoscan Visualization
+
+Display output is part of the latency budget, and a readback to host memory
+before rendering would break it. Vulkan, like CUDA, executes on the GPU, so
+the Holoviz module shares rendering resources between the two without staging
+through host memory. Image ingestion still copies or converts pixels into
+renderer-owned storage, and a CUDA output sink copies the rendered image into
+its output tensor; include those device copies in the latency budget. Resource
+sharing uses the
+[external resource interoperability](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXTRES__INTEROP.html)
+functions of the CUDA driver API together with the Vulkan
+[external memory](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_memory_fd.html)
+and
+[external semaphore](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_semaphore.html)
+extensions. Shaders are compiled with [Slang](https://shader-slang.org/).
+
+## Developer experience: behavior you can read, check, and test without hardware
+
+In earlier releases, timing, types, memory, and failure behavior were emergent
+properties you discovered on the bench. Holoscan 5 declares them, and the
+technologies in this section exist to make those declarations checkable early
+and failures legible.
+
+### Modern C++ with typed ports and errors as values
+
+Ports are typed members (`holoscan::Input<T>` and `holoscan::Output<T>`), so
+connecting mismatched types is rejected when the graph is wired. Hot-path APIs
+return `holoscan::expected<T, Error>` and are marked `[[nodiscard]]`, so an
+ignored failure path draws a compiler diagnostic rather than silently
+misbehaving. The result is that whole classes of mistakes move from the bench
+to the compiler.
+See [Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+and [Typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters).
+
+### The compile step and the execution plan
+
+Every application follows **compose → compile → run**. `compile()` represents
+admission failures as a rejected `ExecutionPlan` rather than throwing. You can
+inspect its diagnostics, serialize the plan to JSON, and compare it with a
+previous plan before execution. `compile()` can still throw `RuntimeError`
+when graph composition cannot produce a coherent snapshot, executable factory
+reconstruction cannot be retained, or a process resource prevents construction
+of any plan result. Handle those exceptional boundaries separately from plan
+admission. See
+[Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)
+and [Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+
+### Temporal contracts and synthetic clocks
+
+Each operator declares in `contract()` what triggers it, which input samples
+participate, and what happens when data is missing. Because timing is declared
+rather than tuned, it can be unit-tested with synthetic clocks and no sensors
+attached — you do not need hardware in the loop to know the pipeline runs at
+the rate you meant. See
+[Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts),
+[Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks),
+and [Testing](/holoscan/sdk-user-guide/debugging-and-testing/testing).
+
+### FlatBuffers payloads and DLPack tensors
+
+Operators, processes, and external tools need one payload vocabulary rather
+than ad-hoc serialization. Structured payloads are generated from
+[FlatBuffers](https://flatbuffers.dev/) schemas, so a message's layout is
+declared once and shared across process boundaries without a parse step.
+`holoscan::Tensor` is built on the [DLPack](https://dmlc.github.io/dlpack/latest/)
+standard, so a tensor is shared without copying with any DLPack-aware library
+that can address the memory it lives in: device tensors with MatX, CV-CUDA,
+CuPy, and PyTorch; host tensors with NumPy and PyTorch. See
+[Schema payloads](/holoscan/sdk-user-guide/data-and-payloads/schema-payloads)
+and [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+
+### Structured diagnostics and logging
+
+Compile-time rejections and run-time failures carry `Diagnostic` records with
+stable identities and severities, not free-form prose. The logger is built on
+[spdlog](https://github.com/gabime/spdlog) and [fmt](https://fmt.dev/) for
+structured, low-overhead output. See
+[Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures)
+and [Logging](/holoscan/sdk-user-guide/debugging-and-testing/logging).
+
+## Agent-assisted development: machine-readable APIs and validation
+
+The same properties that make the API verifiable for a person make it usable
+by a coding agent. Treating agents as first-class users shaped the API; this
+section reads the technologies above from the agent's point of view.
+
+- **Enumerable, declarative surfaces.** Headers, port types, parameter
+  schemas (`HOLOSCAN_PARAM_SCHEMA`), trigger types, error codes, and payload
+  kinds are finite, closed sets that an agent can inspect directly rather than
+  infer from examples.
+- **Machine-readable plans and diagnostics.** `plan.json()` and
+  `diagnostics()` with stable identities let an agent — or a script wrapped
+  around one — pattern-match on *which* rule fired instead of scraping log
+  text that may change between releases.
+- **Repeatable checks without sensors.** The compile step validates wiring,
+  pool sizes, queue depths, and temporal feasibility on the development
+  machine, and synthetic clocks let operator timing be unit-tested there too.
+  A rejected plan is ground truth about what to fix. Confirming throughput and
+  latency on the target GPU still requires running on that hardware.
+
+How to set up and get the most out of agent-assisted Holoscan development is
+covered in [AI coding agents](/holoscan/sdk-user-guide/resources/ai-coding-agents).
+
+## For readers coming from Holoscan SDK 4 or earlier
+
+Several technologies that earlier releases were built on are no longer part of
+the stack and have direct replacements.
+
+<Anchor id="gxf-tech" />
+<Anchor id="graph-execution-framework" />
+
+### GXF
+
+Holoscan 4 and earlier were built on GXF (Graph Execution Framework), an NVIDIA
+entity-component runtime with its own schedulers, allocators, and YAML graph
+format. Holoscan 5 runs on a native runtime and a compiled execution plan;
+there is no GXF underneath.
+
+<Anchor id="gxf-core-concepts" />
+
+The mapping below helps interpret older code and documentation:
+
+| GXF concept | Holoscan 5 equivalent |
+|---|---|
+| Codelet | [Operator](/holoscan/sdk-user-guide/api-reference/holoscan/classes/operator) |
+| Scheduling term | [Temporal contract](/holoscan/sdk-user-guide/building-operators/temporal-contracts) |
+| Receiver / Transmitter | [Typed input / output ports](/holoscan/sdk-user-guide/getting-started/first-operator) |
+| Scheduler | [Compiled execution plan and dispatcher](/holoscan/sdk-user-guide/introduction/migrating-from-4x#schedulers-become-a-compiled-plan) |
+| Allocator components | [Preallocated pools and graph regions](/holoscan/sdk-user-guide/introduction/migrating-from-4x#resources-and-allocators-become-pools-and-regions) |
+| GXF extension | Operator library; no extension registration is required |
+
+The full walk-through is in
+[Migrating from 4.x](/holoscan/sdk-user-guide/introduction/migrating-from-4x).
+
+### UCX and fragments
+
+Distributed 4.x applications split into fragments connected over UCX, which
+could span processes on one host or on several. In Holoscan 5, cross-process
+edges are HoloMQ channels over shared memory, so they connect processes on the
+same host, and operator code is the same on either side of the process
+boundary. Communication between hosts is not part of the runtime; a process
+that bridges a channel to a network protocol is written with the
+[standalone channel client API](/holoscan/sdk-user-guide/advanced/standalone-channel-clients).
+
+### NPP-based image operators
+
+The 4.x `FormatConverter` and `BayerDemosaic` operators used NVIDIA Performance
+Primitives (NPP). In Holoscan 5,
+[Holoscan Vision](/holoscan/sdk-user-guide/modules/vision) provides
+`BayerDemosaicOp`, also backed by NPP, for Bayer-to-RGB or Bayer-to-RGBA
+conversion. Its CV-CUDA-backed `ConvertToOp` changes element type with scaling,
+and `ReformatOp` changes image layout. These cover parts of the legacy
+`FormatConverter` workflow; they do not perform color-space conversion.
+Check the Vision operator's supported formats and parameters when migrating
+each stage of an existing pipeline.
+
+## Optional platform integrations
+
+<Anchor id="gpudirect_rdma" />
+
+### Rivermax and GPUDirect RDMA
+
+Rivermax and GPUDirect RDMA are not dependencies of the SDK. On systems with a
+[ConnectX network adapter](https://www.nvidia.com/en-us/networking/ethernet-adapters/),
+[GPUDirect RDMA](https://developer.nvidia.com/gpudirect) lets network and
+sensor-bridge hardware write directly into GPU memory, which pairs well with
+the zero-copy pipeline described above. Enabling it is a platform setup step;
+see [GPUDirect RDMA](/holoscan/sdk-user-guide/setup/additional-setup/gpudirect-rdma)
+and [Sensor bridge](/holoscan/sdk-user-guide/setup/third-party-hardware/sensor-bridge).
+
+## Where each technology lives
+
+Not every technology on this page is part of every installation. The table
+below summarizes what each one does and how it reaches your application.
+
+| Technology | Role | Availability |
+|---|---|---|
+| CUDA, CCCL | GPU execution and stream ordering | Core SDK |
+| HoloMQ on iceoryx2 | Zero-copy interprocess transport | Core SDK |
+| FlatBuffers, DLPack | Payload schemas and tensor interoperability | Core SDK |
+| spdlog, fmt | Logging and diagnostics output | Core SDK |
+| TensorRT | Inference engine execution | [Inference](/holoscan/sdk-user-guide/modules/inference) module |
+| CV-CUDA, NPP | Image transformation and NMS (CV-CUDA); Bayer demosaic (NPP) | [Vision](/holoscan/sdk-user-guide/modules/vision) module |
+| MatX | GPU numerical computing | Linked by your application (`matx::matx`) |
+| Vulkan, Slang | Rendering and shader compilation | [Visualization](/holoscan/sdk-user-guide/modules/visualization) module |
+| GPUDirect RDMA, Rivermax | Direct-to-GPU network and sensor ingest | Optional platform integration |
+
+## Recap
+
+- **Predictable performance** comes from staying on the device: CUDA stream ordering, HoloMQ
+  transport on iceoryx2 with direct export or bounded staging, preallocated
+  pools, TensorRT inference, CV-CUDA, NPP, and MatX processing, and
+  Vulkan–CUDA interop for display.
+- **Developer experience** comes from declaring behavior and checking it
+  early: typed ports and errors as values, the compile step and execution
+  plan, temporal contracts with synthetic clocks, FlatBuffers and DLPack
+  payloads, and structured diagnostics.
+- **Agent-assisted development** falls out of the same design: enumerable
+  surfaces, machine-readable plans, and checks that run without sensors.
+- GXF and UCX fragments are 4.x-era technologies with replacements in
+  Holoscan 5. Vision provides NPP-backed Bayer demosaic and selected CV-CUDA
+  image operations; map legacy format-conversion stages individually.
+  GPUDirect RDMA remains an optional platform integration.
+
+Next: [API stability](/holoscan/sdk-user-guide/introduction/api-stability).

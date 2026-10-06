@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <string_view>
 #include <type_traits>
 
 #include <holoscan/holoscan_core_export.h>
@@ -41,6 +42,10 @@ class OperatorRuntimeAccess;
 /// are O(1), nonblocking, and allocation-free. It exposes no graph mutation, scheduler wait, clock
 /// registry lookup, or \c reference_time() operation. Restart methods enqueue only through an
 /// active lifecycle-transaction binding and otherwise return a typed disabled error.
+/// During startup CUDA Graph capture, an eligible member receives only the services needed to
+/// record its GPU work. Activation time, rate queries, parameter updates, lifecycle restart, and
+/// termination requests are unavailable; the Operator author must not depend on them during
+/// capture.
 /// Retaining or using the facade, or any view borrowed from it, after \c compute() returns is
 /// invalid; no post-callback safety or no-op behavior is promised.
 class HOLOSCAN_CORE_EXPORT ExecutionContext {
@@ -69,6 +74,8 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
 
   /// @brief Return the dispatch activation time.
   /// @return Time in the admitted activation clock, distinct from source capture time.
+  /// @note Returns an invalid time during CUDA Graph member capture because capture is not a
+  /// runtime activation.
   [[nodiscard]] TimePoint activation_time() const noexcept;
 
   /// @brief Return the immutable trace context for this callback.
@@ -93,6 +100,13 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   /// @note This identity lets fixed compute-originated control records name their own Operator
   /// without retaining an authoring handle or a runtime object address.
   [[nodiscard]] OperatorRef self() const noexcept;
+
+  /// @brief Return the canonical path of the Operator executing this callback.
+  /// @return Nonempty canonical percent-encoded path with no leading slash for a Runtime-bound
+  /// callback, or an empty view when the context is inert or otherwise unbound.
+  /// @warning The returned view is valid only for the active \c compute() callback and must not be
+  /// retained after callback return.
+  [[nodiscard]] std::string_view operator_path() const noexcept;
 
   /// @brief Return the immutable parameter aggregate pinned for this callback.
   /// @tparam ParamsT Exact unqualified aggregate type declared by the Operator.
@@ -123,6 +137,8 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   /// ingress closure, or lifecycle restart authority. It becomes invalid when this callback
   /// returns, and every accepted update targets a future immutable generation rather than the
   /// generation pinned by this context.
+  /// @note During CUDA Graph member capture, the returned facade rejects submissions with
+  /// `ParamUpdateStatus::kUpdatesDisabled`.
   [[nodiscard]] ParamComputeControl param_control() const noexcept;
 
   /// @brief Request a bounded lifecycle restart of the current Operator.
@@ -142,6 +158,8 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   /// waits for completion. Acceptance only queues the request and installs its activation fence;
   /// restart execution begins after this compute callback retires and before this Operator can
   /// begin another compute callback.
+  /// @note During CUDA Graph member capture, no restart binding exists; an otherwise-valid request
+  /// returns `ErrorCode::kLifecycleTransactionsDisabled`.
   [[nodiscard]] expected<LifecycleRestartReceipt, Error> request_restart(
       LifecycleRestartOptions options = {}) noexcept;
 
@@ -166,6 +184,8 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   /// request and installs its activation fence. A target already computing finishes that callback
   /// before restart execution; an idle target restarts at the control safe point before its next
   /// compute callback.
+  /// @note During CUDA Graph member capture, no restart binding exists; an otherwise-valid request
+  /// returns `ErrorCode::kLifecycleTransactionsDisabled`.
   [[nodiscard]] expected<LifecycleRestartReceipt, Error> request_restart(
       OperatorRef target, LifecycleRestartOptions options = {}) noexcept;
 
@@ -182,6 +202,8 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   /// @note Call only during the active \c compute() callback and do not retain the context after
   /// callback return. The returned \c PortRateView is a value and may be retained. The query is
   /// O(1), allocation-free, nonblocking, and observes one atomically pinned generation.
+  /// @note During CUDA Graph member capture, this returns `ErrorCode::kInvalidArgument` because no
+  /// runtime rate generation is bound.
   template <PublishedPayload T>
   [[nodiscard]] expected<PortRateView, Error> rate(const Input<T>& input) const noexcept {
     return rate_port(static_cast<const void*>(&input), false);
@@ -200,6 +222,8 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   /// @note Call only during the active \c compute() callback and do not retain the context after
   /// callback return. The returned \c PortRateView is a value and may be retained. The query is
   /// O(1), allocation-free, nonblocking, and observes one atomically pinned generation.
+  /// @note During CUDA Graph member capture, this returns `ErrorCode::kInvalidArgument` because no
+  /// runtime rate generation is bound.
   template <PublishedPayload T>
   [[nodiscard]] expected<PortRateView, Error> rate(const Output<T>& output) const noexcept {
     return rate_port(static_cast<const void*>(&output), true);
@@ -214,6 +238,8 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   /// does not guarantee source closure, downstream drain, or delivery of queued samples.
   /// @warning This method may be called only through the \c ExecutionContext of the active
   /// \c compute() callback. Using a retained context after callback return is invalid.
+  /// @note This has no effect during CUDA Graph member capture. Use the fused source's temporal
+  /// contract for completion policy.
   void request_completion() noexcept;
 
   /// @brief Request cooperative stop of the current run.
@@ -223,6 +249,8 @@ class HOLOSCAN_CORE_EXPORT ExecutionContext {
   /// weakens stop.
   /// @warning This method may be called only through the \c ExecutionContext of the active
   /// \c compute() callback. Using a retained context after callback return is invalid.
+  /// @note This has no effect during CUDA Graph member capture. Request stop outside the captured
+  /// region.
   void request_stop() noexcept;
 
  private:

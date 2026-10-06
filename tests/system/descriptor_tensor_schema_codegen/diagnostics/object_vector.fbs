@@ -15,3 +15,4 @@ table ObjectVector {
 }
 
 root_type ObjectVector;
+file_identifier "DOV1";

@@ -34,11 +34,9 @@ to fence off further updates.
 and [`examples/experimental/web_tuner/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/web_tuner/cpp)
 
 <Note>
-  The experimental web tuner is built by default when parameter tooling is
-  enabled. To build without parameter tooling, disable both
-  `HOLOSCAN_BUILD_PARAMS` and
-  `HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER`; leaving the tuner enabled
-  while disabling its required params component is a configure-time error.
+  The experimental web tuner is built by default; disable it with
+  `-DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=OFF`. The `params` library it
+  links is always part of `holoscan-core`.
 </Note>
 
 <Note>
@@ -65,8 +63,8 @@ and [`examples/experimental/web_tuner/cpp`](https://github.com/nvidia-holoscan/h
 When a session starts, each operator is bound to immutable **generation 0**.
 This is the plan's compile-resolved initial aggregate: the parameter type's
 default aggregate, optionally replaced by an explicit typed baseline supplied
-through `OperatorHandle::set_params()`, and then sparsely patched by admitted
-target-bound compile/config overrides. See
+through `OperatorHandle::set_params()`, and then sparsely patched by an admitted
+graph-owned parameter input. See
 [Typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters)
 and
 [Configuring applications](/holoscan/sdk-user-guide/configuration/configuring-applications).
@@ -220,7 +218,7 @@ for it. Two links must both be present:
 
    ```cpp
    HOLOSCAN_PARAM_SCHEMA(GainParams,
-                         param_schema("acme.camera.GainParams", 1),
+                         param_schema("custom.camera.GainParams", 1),
                          field<&GainParams::gain>("gain").runtime_mutable());
    ```
 
@@ -438,8 +436,8 @@ The compute seam is reached through the `ExecutionContext`:
   };
   const holoscan::ParamSubmitResult sr =
       ctx.param_control().try_submit_from_compute({&patch, 1});
-  // sr.status == kSubmitted on success; kQueueFull if the bounded ingress
-  // is momentarily full (retry on a later callback, or drop the intent).
+  // sr.status == kSubmitted on enqueue; kQueueFull rejects this intent.
+  // This minimal example drops rejected intents; it does not arrange a retry.
   return {};
 }
 ```
@@ -455,9 +453,15 @@ Two behaviors distinguish the seam from the owning handle:
   follows the lifecycle transaction path. Either way, only a later callback
   can observe a different generation.
 
-`kQueueFull` is the seam's flavor of the familiar exhaustion signature: the
-ingress capacity was reserved at compile time, and a full queue is reported,
-not grown.
+`kQueueFull` can mean either full bounded ingress or transient ingress-lock
+contention. In either case, this attempt enqueued no patches. To retry, keep
+the desired values in bounded operator-owned state or reconstruct them, and
+explicitly resubmit from a later callback that the application's trigger will
+actually produce. Runtime does not retain a rejected intent, schedule a retry
+callback, or replay `compute()`. If no later callback is guaranteed, "retry
+later" is not a delivery guarantee. This differs from retrying a publication
+that consumed a Tensor loan or may already have reached a recipient; see
+[backpressure and callback retry](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures#size-capacity-and-choose-the-pressure-policy-explicitly).
 
 ## Fencing further updates
 

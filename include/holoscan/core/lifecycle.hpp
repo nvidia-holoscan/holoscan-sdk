@@ -23,6 +23,7 @@
 
 namespace holoscan {
 
+class ForeignOperatorCore;
 class OperatorPath;
 template <PublishedPayload T>
 class Output;
@@ -231,6 +232,17 @@ class HOLOSCAN_CORE_EXPORT LifecycleContext {
   /// @return One non-\c kNone phase inside a callback; \c kNone for an inert context.
   [[nodiscard]] LifecycleTransitionPhase transition_phase() const noexcept;
 
+  /// @brief Supply bounded explanatory detail for a failed advanced lifecycle callback.
+  /// @param code Original error category.
+  /// @param message Borrowed text copied before returning; do not include secrets.
+  /// @note The first report wins. The callback's returned LifecycleStatus remains authoritative;
+  /// successful callbacks discard this detail. Reporting never allocates or throws.
+  void report_error(ErrorCode code, std::string_view message) noexcept;
+
+  /// @brief Supply an existing error as callback failure detail.
+  /// @param error Error whose category and bounded message are copied before returning.
+  void report_error(const Error& error) noexcept { report_error(error.code, error.message); }
+
   /// @brief Resolve a declared clock for this lifecycle generation.
   /// @param key Owned cold clock identity; the omitted key requests the admitted default.
   /// @return Generation-scoped reference or a typed binding/capability error.
@@ -325,11 +337,13 @@ class HOLOSCAN_CORE_EXPORT LifecycleContext {
                                                              Rate value) noexcept;
   [[nodiscard]] expected<PortRateView, Error> rate_port(const void* declaration,
                                                         bool output) const noexcept;
+  void record_callback_failure(Error error) noexcept;
 
   detail::LifecycleContextState* state_{};
 
   friend class detail::LifecycleContextTestAccess;
   friend class detail::LifecycleContextRuntimeAccess;
+  friend class ForeignOperatorCore;
 };
 
 static_assert(std::is_standard_layout_v<LifecycleRestartOptions>);

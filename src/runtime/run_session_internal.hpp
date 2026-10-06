@@ -6,6 +6,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +15,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -39,6 +41,7 @@
 #include "runtime_cuda_execution_resources.hpp"
 #include "runtime_diagnostic_sink.hpp"
 #include "runtime_direct_composite.hpp"
+#include "runtime_fixture_observation.hpp"
 #include "runtime_notification_source.hpp"
 #include "runtime_phase_counters.hpp"
 #include "runtime_rate_state.hpp"
@@ -53,13 +56,16 @@ namespace holoscan::detail {
 
 class ActivationParameterBinding;
 class RunSessionState;
+class RuntimeCUDAGraphRegionResources;
+struct CUDAGraphRuntimeRegionIdentity;
 
 [[nodiscard]] RunSession make_run_session(RunSessionState* state) noexcept;
 
 [[nodiscard]] RunSession start_run_session_retained(
     const std::shared_ptr<const ExecutionPlanState>& retained,
     std::optional<ProcessGroupId> process_group,
-    const std::shared_ptr<RuntimeTerminalParticipant>& terminal_participant);
+    const std::shared_ptr<RuntimeTerminalParticipant>& terminal_participant,
+    const std::shared_ptr<RuntimeFixtureObservation>& observation = {});
 
 [[nodiscard]] const void* current_run_owned_session() noexcept;
 
@@ -67,6 +73,20 @@ void set_run_owned_session(const void* owner) noexcept;
 
 [[nodiscard]] std::string_view registered_token_or(std::string_view candidate,
                                                    std::string_view fallback) noexcept;
+
+/// Resolve a Channel terminal identity without treating Error::message as a token side channel.
+[[nodiscard]] constexpr std::string_view channel_terminal_token(
+    const std::optional<StructuralDiagnosticId> diagnostic) noexcept {
+  if (!diagnostic) {
+    return "RUNTIME_READINESS_BINDING_UNAVAILABLE";
+  }
+  if (const auto* descriptor = find_structural_diagnostic(*diagnostic); descriptor != nullptr) {
+    return descriptor->token;
+  }
+  // A new Channel producer must register its typed structural identity instead of silently
+  // degrading to a generic readiness failure.
+  return "COMPILER_DIAGNOSTIC_TOKEN_UNREGISTERED";
+}
 
 void publish_runtime_terminal_summary(RunGenerationId run_generation,
                                       std::span<const Diagnostic> diagnostics,
@@ -76,7 +96,27 @@ void publish_runtime_terminal_summary(RunGenerationId run_generation,
 void quarantine_run_execution_owners(std::unique_ptr<GraphExec> graph,
                                      std::unique_ptr<RuntimeTensorResources> tensors,
                                      std::shared_ptr<RuntimeChannelSession> channels,
+                                     std::unique_ptr<RuntimeCUDAGraphRegionResources> cuda_graph,
                                      std::unique_ptr<RuntimeCudaExecutionResources> cuda) noexcept;
+
+/// Return whether freshness admission must precede a distinct activation witness.
+[[nodiscard]] constexpr bool freshness_input_is_nontrigger_prerequisite(
+    const InputSelectionPlanRecord& selection, const PortId witness_port,
+    const SourceId readiness_source, const SourceId witness_source) noexcept {
+  const bool freshness_selector = selection.selector == InputSelectorKind::kLatestWithin ||
+                                  selection.missing == TemporalRecordMissingKind::kReuseLast;
+  return freshness_selector && selection.input != witness_port &&
+         (witness_port || readiness_source != witness_source);
+}
+
+/// Return whether a staged successor may be qualified against the next periodic clock tick.
+[[nodiscard]] constexpr bool qualifies_upcoming_clock_freshness(
+    const InputSelectionPlanRecord& selection, const bool drop_oldest_refill_supported,
+    const bool clock_driven) noexcept {
+  return drop_oldest_refill_supported && clock_driven &&
+         selection.selector == InputSelectorKind::kLatestWithin && selection.cache_capacity == 1U &&
+         selection.missing == TemporalRecordMissingKind::kReuseLast;
+}
 
 /// Own one run generation and every runtime resource whose lifetime it bounds.
 ///
@@ -185,6 +225,8 @@ class RunSessionState final {
     Error admission_error{ErrorCode::kSuccess};
     Error direct_continuation_error{ErrorCode::kSuccess};
     ComputeAdmissionDisposition admission{ComputeAdmissionDisposition::kPending};
+    bool callback_failed{};
+    bool cuda_device_restore_failed{};
     bool completed_selection{};
     bool direct_continuation_enabled{};
     bool direct_continuation_clock_failed{};
@@ -207,6 +249,10 @@ class RunSessionState final {
 
   [[nodiscard]] static ComputeLaneInvoke select_compute_lane_with_completion_invoke(
       bool trace_callback, bool observe_final_entry) noexcept;
+
+  [[nodiscard]] static expected<void, Error> invoke_cuda_graph_capture_member(
+      void* state, RuntimeOperatorInstance& instance, DeviceId device,
+      cudaStream_t stream) noexcept;
 
  public:
   struct SharedStartupFailureTag {};
@@ -238,6 +284,8 @@ class RunSessionState final {
   void attach_terminal_participant(
       std::shared_ptr<RuntimeTerminalParticipant> participant) noexcept;
 
+  void attach_fixture_observation(std::shared_ptr<RuntimeFixtureObservation> observation);
+
   void release_owner() noexcept;
 
   void publish_startup_failure(const std::shared_ptr<const ExecutionPlanState>& attempted_plan,
@@ -261,6 +309,10 @@ class RunSessionState final {
 
   void wait();
 
+  [[nodiscard]] bool wait_for(std::chrono::nanoseconds timeout);
+
+  [[nodiscard]] expected<void, Error> wait_admission() const noexcept;
+
   [[nodiscard]] std::span<const Diagnostic> diagnostics() const noexcept;
 
   [[nodiscard]] std::span<const OperatorCompletionProgressRecord> operator_completion_progress()
@@ -273,7 +325,8 @@ class RunSessionState final {
   /// The controller and sole partition runner are the same thread in this
   /// specialization. Re-entering ExecutionLaneSet would only reacquire the
   /// lane's stop/serialization locks around a callback that cannot migrate.
-  [[nodiscard]] expected<void, Error> invoke_inline_owner_task(ExecutionLaneTask task) noexcept;
+  [[nodiscard]] expected<void, Error> invoke_inline_owner_task(
+      const ExecutionLaneTask& task) noexcept;
 
   void signal_controller_wake(RuntimePhaseCounter counter) noexcept;
 
@@ -310,11 +363,36 @@ class RunSessionState final {
   [[nodiscard]] expected<void, Error> release_execution_resources(
       RuntimeCudaExecutionDiagnostic* cuda_diagnostic);
 
+  void append_callback_diagnostic(
+      std::string_view token, VertexId vertex, std::string_view service, const Error& error,
+      const RuntimeCallbackIdentity& identity, std::string_view predicate_id = {},
+      const RuntimeDeadlineMissDiagnostic* deadline = nullptr,
+      ::holoscan::DiagnosticSeverity severity = ::holoscan::DiagnosticSeverity::kError) noexcept;
+
+  void append_compute_diagnostics(const RuntimeOperatorInstance& instance,
+                                  const ComputeLaneInvocation& invocation, const Error& error,
+                                  const RuntimeCallbackIdentity& identity) noexcept;
+
+  void append_lifecycle_diagnostics(
+      const GraphExec& exec,
+      ::holoscan::DiagnosticSeverity severity = ::holoscan::DiagnosticSeverity::kError) noexcept;
+
   void append_diagnostic(
       std::string_view token, VertexId vertex = {}, std::string_view service = {},
       const RuntimeDiagnosticDetail* detail = nullptr, std::string_view required = {},
       std::string_view provided = {},
-      ::holoscan::DiagnosticSeverity severity = ::holoscan::DiagnosticSeverity::kError) noexcept;
+      ::holoscan::DiagnosticSeverity severity = ::holoscan::DiagnosticSeverity::kError,
+      GraphId graph = {}, PortId explicit_port = {}) noexcept;
+
+  void append_compute_failure_diagnostic(const RuntimeOperatorInstance& instance,
+                                         const RuntimeDiagnosticDetail& detail,
+                                         const Error& error) noexcept;
+
+  void append_cuda_graph_quiesce_failure(const Error& error,
+                                         RuntimeCudaExecutionDiagnostic diagnostic) noexcept;
+
+  [[nodiscard]] std::string cuda_graph_region_failure_evidence(
+      const CUDAGraphRuntimeRegionIdentity& identity, const Error& error) const noexcept;
 
   void append_managed_signal_diagnostic(std::string_view token,
                                         const RuntimeManagedSignalDiagnostic& managed_detail,
@@ -360,10 +438,16 @@ class RunSessionState final {
     struct InputSelectorSlot {
       VertexId owner{};
       PortId input{};
+      std::size_t receiver_index{std::numeric_limits<std::size_t>::max()};
       PortId witness_port{};
       SourceId witness_source{};
       SourceId readiness_source{};
+      // True only when this input's arrivals populate selector state but cannot activate the
+      // owning Operator under its trigger contract.
+      bool nontrigger_prerequisite{};
       bool freshness_reconcile{};
+      bool connected{true};
+      bool upcoming_clock_freshness{};
       RuntimeInputSelectionState selector;
       std::optional<std::uint32_t> derived_term_index;
       std::uint64_t arrival_watermark{};
@@ -392,10 +476,16 @@ class RunSessionState final {
       // Capture of the record actually promoted, which need not be the one the gate approved:
       // the approved successor can be dropped from staging before the promotion reaches it.
       std::int64_t freshness_promoted_capture_ns{};
-      // Durable marker for a committed ReuseLast handoff until the exact non-trigger input
-      // prerequisite is ingested, or its selector/producer generation resets. Generic
-      // LatestWithin refill uses ordinary candidate order; TimePoint coordinate zero remains valid.
-      std::optional<TimePoint> reuse_replacement_prerequisite_reference;
+      // Durable marker for a committed ReuseLast handoff until that exact non-trigger input and
+      // every earlier arrival on the same port are ingested, or its selector/producer generation
+      // resets. The complete temporal identity disambiguates equal capture coordinates and lets
+      // the prerequisite path prove that it has reached, rather than passed, the successor. Store
+      // the capture coordinate normalized into the selector's reference clock, matching the exact
+      // record ReadinessBinding publishes for temporal_sample().
+      // Exact promoted arrival that must be ingested before its authorizing non-trigger witness.
+      std::optional<TemporalSampleRecord> freshness_refill_prerequisite;
+      // Newest witness-qualified arrival fenced while surviving predecessors are admitted first.
+      std::optional<TemporalSampleRecord> freshness_refill_target;
       std::int64_t selection_reference_ns{};
       // Whether any record reached this selector's cache during the current freeze round.
       bool freshness_ingested_this_round{};
@@ -494,8 +584,16 @@ class RunSessionState final {
     // same-position binding to its cold recovery slot, avoiding a per-round linear lookup while
     // leaving ordinary graphs allocation-free.
     std::vector<std::size_t> freshness_binding_index_by_binding;
+    // One flag per same-position binding: set for Channel readiness bindings, whose ordinary poll
+    // can decline on a contended input cache lock and may retry once before the owner parks.
+    // Physical bindings never decline, so this keeps the incomplete-status query off their path.
+    std::vector<std::uint8_t> contention_retry_eligible_by_binding;
     std::vector<ClockTriggerPortBinding*> clock_bindings;
     std::vector<InputSelectorSlot> input_selectors;
+    // Reused only while a non-trigger freshness prefix is live. Each fence exposes that input's
+    // oldest arrival while keeping the owner's activation witnesses pending; unrelated owners
+    // retain the coordinator's ordinary global ordering.
+    std::vector<RuntimeCandidateInputFence> freshness_input_fences;
     std::vector<OperatorParameterPolicy> parameter_policies;
     std::vector<AlignedSelectorSlot> aligned_selectors;
     std::vector<ActivationSelectionState> activation_selections;
@@ -587,6 +685,12 @@ class RunSessionState final {
     bool resources_materialized{};
   };
 
+  [[nodiscard]] bool has_owned_unwired_inputs(const GraphExec& exec,
+                                              const ReadyRunState& state) const;
+
+  [[nodiscard]] bool bind_channel_publication_context(const GraphExec& exec,
+                                                      RuntimeChannelSession& channels);
+
   [[nodiscard]] bool initialize_channel_session(GraphExec& exec, ReadyRunState& state,
                                                 ReadySharedResources& shared,
                                                 const RuntimeCudaExecutionResources& cuda_resources,
@@ -648,6 +752,9 @@ class RunSessionState final {
   [[nodiscard]] bool begin_zero_completion_closures(ReadyRunState& state) noexcept;
 
   [[nodiscard]] bool refresh_and_arm_channels(RuntimeChannelSession* channels);
+
+  /// Arm one Channel session and retain any terminal pump-placement evidence.
+  [[nodiscard]] bool arm_channels_with_diagnostics(RuntimeChannelSession* channels) noexcept;
 
   [[nodiscard]] PortBinding* physical_binding_for(ReadyRunState& state, SourceId source) noexcept;
 
@@ -738,8 +845,9 @@ class RunSessionState final {
   [[nodiscard]] static std::optional<TimePoint> selector_witness_reference(
       ReadyRunState& state, VertexId owner, SourceId witness_source, PortId witness_port) noexcept;
 
-  [[nodiscard]] static bool replacement_input_is_nontrigger_prerequisite(
-      const ReadyRunState::InputSelectorSlot& slot) noexcept;
+  [[nodiscard]] static bool input_arrival_can_activate(const TemporalTriggerPlanRecord& trigger,
+                                                       const PredicateTriggerPlanRecord* predicate,
+                                                       PortId input) noexcept;
 
   [[nodiscard]] bool reconcile_superseded_retention(ReadyRunState& state, SourceId readiness_source,
                                                     std::size_t& refill_credit,
@@ -747,8 +855,16 @@ class RunSessionState final {
 
   // Channel ingestion atomically reconciles producer epochs, temporal selectors, bracket anchors,
   // predicate state, and payload claims for one frozen witness.
-  [[nodiscard]] bool ingest_channel_candidate(GraphExec& exec, ReadyRunState& state,
-                                              const FrozenRuntimeCandidate& candidate);
+  /// Freshness prerequisite draining may supply the immutable temporal record it already resolved
+  /// while proving prefix order. Ordinary ingestion leaves it null and resolves the record once.
+  [[nodiscard]] bool ingest_channel_candidate(
+      GraphExec& exec, ReadyRunState& state, const FrozenRuntimeCandidate& candidate,
+      const TemporalSampleRecord* pre_resolved_sample = nullptr);
+
+  // Called only with an attached observer, after native ingestion commits. Keep record assembly in
+  // another translation unit so ordinary ingestion need not reserve observation scratch space.
+  void observe_input_ingestion(VertexId owner, const FrozenRuntimeCandidate& candidate,
+                               const TemporalSampleRecord& sample) noexcept;
 
   [[nodiscard]] bool channel_candidate_is_eligible(
       const GraphExec& exec, const ReadyRunState& state,
@@ -922,7 +1038,7 @@ class RunSessionState final {
 
   // Execute the exact callback transaction admitted by ClosedIslandActivationPlanRecord.
   //
-  // This is deliberately narrower than dispatch_ready(): it accepts no predicate, deadline,
+  // This is deliberately narrower than dispatch_ready_impl(): it accepts no predicate, deadline,
   // mutable Parameter, lifecycle, or Tensor state. Both the ordinary one-dispatch-per-callback
   // control and the two-callback composite call this function, so changing lane-task geometry
   // cannot silently change selection, Channel preparation, callback context, or retirement.
@@ -943,7 +1059,8 @@ class RunSessionState final {
 
   // Keep selection, policy gating, callback invocation, and exact credit retirement adjacent so a
   // terminal path cannot skip one part of the activation transaction.
-  [[nodiscard]] RunTermination dispatch_ready(GraphExec& exec, ReadyRunState& state) noexcept;
+  template <bool Observed>
+  [[nodiscard]] RunTermination dispatch_ready_impl(GraphExec& exec, ReadyRunState& state) noexcept;
 
   template <bool TracksTerminalWork>
   [[nodiscard]] bool all_sources_closed(GraphExec& exec, const ReadyRunState& state) const noexcept;
@@ -953,7 +1070,9 @@ class RunSessionState final {
   // Terminal sweep capability is immutable after cold state materialization. Compile the two
   // empty active-work checks and the extended closure proof out of a partition that owns neither
   // completion rules nor input-terminal drains.
-  template <bool TracksTerminalWork>
+  // Observation is likewise selected once before entering this loop, so each batch calls its
+  // dispatch specialization directly without a recurring observer branch or indirect call.
+  template <bool TracksTerminalWork, bool Observed>
   [[nodiscard]] RunTermination run_shared_owner(GraphExec& exec, ReadyRunState& ready) noexcept;
 
   struct PartitionOwnerGroup {
@@ -1018,12 +1137,16 @@ class RunSessionState final {
   std::unique_ptr<RuntimeRateState> rate_state_;
   std::unique_ptr<ParameterUpdateCoordinator> retained_parameter_updates_;
   std::unique_ptr<RuntimeCudaExecutionResources> cuda_execution_resources_;
+  std::unique_ptr<RuntimeCUDAGraphRegionResources> cuda_graph_region_resources_;
   std::unique_ptr<RuntimeTensorResources> tensor_resources_;
   std::shared_ptr<RuntimeChannelSession> channel_session_;
   std::shared_ptr<RuntimeTerminalParticipant> terminal_participant_;
+  // A controller binding must not implicitly narrow separately worker-backed execution lanes.
+  std::optional<CPUAffinity> pre_controller_affinity_;
   std::vector<OperatorCompletionProgressRecord> operator_completion_progress_;
   std::vector<OperatorCompletionPhase> operator_completion_phases_;
   std::atomic_bool stop_requested_{false};
+  std::optional<Error> cuda_graph_quiesce_failure_;
   std::atomic<std::uint64_t> termination_state_{};
   std::atomic<RunTermination> termination_{RunTermination::kRunning};
   std::thread worker_;
@@ -1055,6 +1178,10 @@ class RunSessionState final {
   mutable std::mutex rate_snapshot_mutex_;
   std::condition_variable rate_snapshot_cv_;
   RuntimeRateState* rate_snapshot_state_{};
+  // Cold ownership follows ordinary state so observation does not shift its hot member offsets.
+  // The destructor body releases or quarantines channels first; each observed channel also owns
+  // this observation, independently preserving the OutputState lifetime dependency.
+  std::shared_ptr<RuntimeFixtureObservation> fixture_observation_;
 };
 
 }  // namespace holoscan::detail

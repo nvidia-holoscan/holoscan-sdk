@@ -6,6 +6,7 @@
 #if defined(HOLOMQ_TRANSPORT_IOX2)
 
 #include <holomq/context_builder.hpp>
+#include <holomq/detail/native_descriptor_readiness.hpp>
 #include <holomq/publisher_builder.hpp>
 #include <holomq/subscriber_builder.hpp>
 #include <holomq/wait_set.hpp>
@@ -21,6 +22,9 @@
 #include <utility>
 #include <vector>
 
+#if HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
+#include <poll.h>
+#endif
 #include <unistd.h>
 
 namespace {
@@ -158,6 +162,145 @@ TEST(WaitSetTest, AlreadyAttachedAcrossWaitSets) {
   ASSERT_TRUE(attachment_b_retry.has_value());
 }
 
+#if HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
+
+// REQ: CHAN-148
+TEST(WaitSetTest, ReadinessDescriptorReportsQueuedAndFutureSamples) {
+  REQUIRE_CONTEXT(context);
+  const std::string topic = make_unique_topic();
+  ASSERT_EXPECTED(publisher, make_publisher(context, topic, true));
+  ASSERT_EXPECTED(subscriber, make_subscriber(context, topic, true));
+  ASSERT_TRUE(wait_for_subscribers(publisher, std::chrono::seconds(2)));
+
+  // Queue before acquiring the handle. The handle primes readiness because a prior waiter could
+  // have consumed the transport notification without consuming this sample.
+  ASSERT_TRUE(publish_one(publisher, 7U));
+  ASSERT_EXPECTED(readiness, subscriber.readiness());
+  ASSERT_GE(readiness.descriptor(), 0);
+
+  pollfd descriptor{.fd = readiness.descriptor(), .events = POLLIN, .revents = 0};
+  ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(readiness.acknowledge());
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1, 0), 1) << "a queued sample keeps readiness level-readable";
+  ASSERT_EXPECTED(first, subscriber.try_take());
+  EXPECT_EQ(first.payload().sequence, 7U);
+  ASSERT_TRUE(readiness.acknowledge());
+
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1, 0), 0);
+  ASSERT_TRUE(publish_one(publisher, 8U));
+  ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(readiness.acknowledge());
+  ASSERT_EXPECTED(second, subscriber.try_take());
+  EXPECT_EQ(second.payload().sequence, 8U);
+}
+
+// REQ: CHAN-149
+TEST(WaitSetTest, ReadinessHandleOwnsExclusiveWaitSlotUntilReleased) {
+  REQUIRE_CONTEXT(context);
+  const std::string topic = make_unique_topic();
+  ASSERT_EXPECTED(publisher, make_publisher(context, topic, true));
+  ASSERT_EXPECTED(subscriber, make_subscriber(context, topic, true));
+  ASSERT_TRUE(wait_for_subscribers(publisher, std::chrono::seconds(2)));
+  ASSERT_EXPECTED(waitset, context.create_waitset());
+
+  {
+    ASSERT_EXPECTED(readiness, subscriber.readiness());
+
+    const auto repeated = subscriber.readiness();
+    ASSERT_FALSE(repeated);
+    EXPECT_EQ(repeated.error().code, holomq::ErrorCode::kInvalidArgument);
+    EXPECT_NE(repeated.error().message.find("readiness handle"), std::string::npos);
+
+    const auto attached = waitset.attach(subscriber);
+    ASSERT_FALSE(attached);
+    EXPECT_EQ(attached.error().code, holomq::ErrorCode::kInvalidArgument);
+    EXPECT_NE(attached.error().message.find("readiness handle"), std::string::npos);
+
+    holomq::WaitStrategy block{};
+    block.mode = holomq::WaitMode::KernelWait;
+    block.timeout = std::chrono::milliseconds(1);
+    const auto waited = subscriber.wait_and_take(block);
+    ASSERT_FALSE(waited);
+    EXPECT_EQ(waited.error().code, holomq::ErrorCode::kInvalidArgument);
+    EXPECT_NE(waited.error().message.find("readiness handle"), std::string::npos);
+
+    readiness.detach();
+    EXPECT_EQ(readiness.descriptor(), -1);
+    const auto acknowledged_after_detach = readiness.acknowledge();
+    ASSERT_FALSE(acknowledged_after_detach);
+    EXPECT_EQ(acknowledged_after_detach.error().code, holomq::ErrorCode::kClosed);
+
+    const auto attached_after_detach = waitset.attach(subscriber);
+    ASSERT_TRUE(attached_after_detach);
+  }
+
+  {
+    ASSERT_EXPECTED(readiness_after_detach, subscriber.readiness());
+    EXPECT_GE(readiness_after_detach.descriptor(), 0);
+  }
+
+  const auto attached_after_destruction = waitset.attach(subscriber);
+  ASSERT_TRUE(attached_after_destruction);
+}
+
+// REQ: CHAN-149
+TEST(WaitSetTest, ReadinessRequiresEventWake) {
+  REQUIRE_CONTEXT(context);
+  const std::string topic = make_unique_topic();
+  ASSERT_EXPECTED(subscriber, make_subscriber(context, topic, false));
+
+  const auto readiness = subscriber.readiness();
+  ASSERT_FALSE(readiness);
+  EXPECT_EQ(readiness.error().code, holomq::ErrorCode::kNotSupported);
+}
+
+// REQ: CHAN-148
+TEST(WaitSetTest, AcknowledgePreservesAConcurrentPublicationWake) {
+  REQUIRE_CONTEXT(context);
+  const std::string topic = make_unique_topic();
+  ASSERT_EXPECTED(publisher, make_publisher(context, topic, true));
+  ASSERT_EXPECTED(subscriber, make_subscriber(context, topic, true));
+  ASSERT_TRUE(wait_for_subscribers(publisher, std::chrono::seconds(2)));
+  ASSERT_EXPECTED(readiness, subscriber.readiness());
+
+  ASSERT_TRUE(publish_one(publisher, 1U));
+  pollfd descriptor{.fd = readiness.descriptor(), .events = POLLIN, .revents = 0};
+  ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+  ASSERT_TRUE(readiness.acknowledge());
+  ASSERT_EXPECTED(first, subscriber.try_take());
+  EXPECT_EQ(first.payload().sequence, 1U);
+  ASSERT_TRUE(readiness.acknowledge());
+  descriptor.revents = 0;
+  ASSERT_EQ(::poll(&descriptor, 1, 0), 0);
+
+  std::atomic<bool> publish_now{false};
+  std::jthread racing_publisher([&] {
+    while (!publish_now.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    EXPECT_TRUE(publish_one(publisher, 2U));
+  });
+  publish_now.store(true, std::memory_order_release);
+  ASSERT_TRUE(readiness.acknowledge());
+
+  // Whether publication wins before the source drain (requiring the queued-sample re-arm) or after
+  // it (leaving the listener readable), joining establishes a completed publication that poll must
+  // observe. This races the producer against acknowledge instead of choosing either ordering.
+  racing_publisher.join();
+  descriptor.revents = 0;
+  ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(readiness.acknowledge());
+  ASSERT_EXPECTED(second, subscriber.try_take());
+  EXPECT_EQ(second.payload().sequence, 2U);
+}
+
+#endif  // HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
+
 // REQ: CHAN-066
 TEST(WaitSetTest, SingleTopicWakeAndTake) {
   REQUIRE_CONTEXT(context);
@@ -250,8 +393,8 @@ TEST(WaitSetTest, KernelWaitReportsReadinessForASecondQueuedSample) {
 //                                          `-- second wait observes sequence 1
 // Key setup: the first wait blocks before publication, drains the resulting notification, and
 // deliberately leaves the sample queued.
-// Key assertion: the public pre-block readiness check makes the second wait return immediately;
-// the Runtime-only unchecked entry point is not exposed to this caller.
+// Key assertion: the pre-block readiness check makes the second wait return immediately. Every
+// kernel wait performs this check; the formerly unchecked Runtime entry point now does too.
 TEST(WaitSetTest, PublicKernelWaitPrechecksAQueuedSampleWithoutANotification) {
   REQUIRE_CONTEXT(context);
   const std::string topic = make_unique_topic();

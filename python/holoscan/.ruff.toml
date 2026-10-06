@@ -1,0 +1,24 @@
+extend = "../../.ruff.toml"
+
+[lint]
+extend-select = ["ANN", "FA", "PYI", "TC"]
+
+[lint.per-file-ignores]
+"**/*.pyi" = [
+  "A001",   # public compile() spelling intentionally mirrors the C++ API
+  "A002",   # public format= spelling is part of the configuration API
+  "A005",   # public holoscan.time facade intentionally matches the concept name
+  "E402",   # registry-generated proxy declarations follow the static stub
+  "E501",   # nanobind and registry generators preserve signatures/docstrings verbatim
+  "F401",   # facade module imports are intentional public attributes/re-exports
+  "F811",   # generated proxy support reuses the static OperatorType re-export
+  "F822",   # __version__ is supplied by the runtime facade, not the native extension
+  "F821",   # stubgen emits valid forward references before dependent generated classes
+  "I001",   # nanobind stubgen controls deterministic import ordering
+  "PYI009", # nanobind emits pass for empty native exception classes
+  "PYI011", # native value defaults are preserved by stubgen
+  "PYI012", # generated proxy classes may have only a docstring and pass
+  "PYI021", # docstrings feed the Fern API reference
+  "PYI029", # native repr methods are part of runtime/stub agreement
+]
+"time.py" = ["A005"] # public holoscan.time facade intentionally matches the concept name

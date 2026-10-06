@@ -65,6 +65,9 @@ class TensorMemoryReference {
     return false;
   }
 
+  /// @brief Return whether this memory reference tracks CUDA use before storage reuse.
+  [[nodiscard]] virtual bool tracks_deallocation_stream() const noexcept { return false; }
+
   /**
    * @brief Record the CUDA stream that last made this Tensor's data ready to read.
    *

@@ -66,9 +66,12 @@ find_inline_descriptor_tensor_contract(
                                               std::uint64_t service_payload_capacity,
                                               bool process_local_schema_envelope) noexcept;
 
-[[nodiscard]] bool runtime_tensor_matches_plan(
-    const RuntimePortTypeOps* ops, const PortPlanRecord& port,
-    const ProcessLocalChannelServicePlanRecord& service) noexcept;
+/// @param projected True when this endpoint narrows the producer's schema sample to one Tensor
+/// member, which pairs a Tensor port with the producer's descriptor-schema service.
+[[nodiscard]] bool runtime_tensor_matches_plan(const RuntimePortTypeOps* ops,
+                                               const PortPlanRecord& port,
+                                               const ProcessLocalChannelServicePlanRecord& service,
+                                               bool projected = false) noexcept;
 
 [[nodiscard]] bool runtime_external_tensor_matches_plan(
     const RuntimePortTypeOps* ops, const PortPlanRecord& port,

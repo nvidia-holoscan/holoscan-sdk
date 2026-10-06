@@ -64,6 +64,29 @@ class RuntimeInputSelectionState {
     friend class RuntimeInputSelectionState;
   };
 
+  class CacheReplacementTransaction {
+   public:
+    CacheReplacementTransaction() = default;
+    CacheReplacementTransaction(const CacheReplacementTransaction&) = delete;
+    CacheReplacementTransaction& operator=(const CacheReplacementTransaction&) = delete;
+    CacheReplacementTransaction(CacheReplacementTransaction&& other) noexcept;
+    CacheReplacementTransaction& operator=(CacheReplacementTransaction&&) = delete;
+    ~CacheReplacementTransaction();
+
+    void commit() noexcept;
+
+   private:
+    CacheReplacementTransaction(RuntimeInputSelectionState* owner, TemporalSampleRecord retained,
+                                std::size_t index) noexcept
+        : owner_(owner), retained_(retained), index_(index) {}
+
+    RuntimeInputSelectionState* owner_{};
+    TemporalSampleRecord retained_{};
+    std::size_t index_{};
+
+    friend class RuntimeInputSelectionState;
+  };
+
   class Transaction {
    public:
     Transaction() = default;
@@ -209,6 +232,10 @@ class RuntimeInputSelectionState {
   [[nodiscard]] expected<ReuseReplacementTransaction, Error> reserve_reuse_replacement(
       const TemporalSampleRecord& retained) noexcept;
 
+  /// Temporarily remove one exact cache record for a controller-owned Channel replacement.
+  [[nodiscard]] expected<CacheReplacementTransaction, Error> reserve_cache_replacement(
+      const TemporalSampleRecord& retained) noexcept;
+
   /// Return the exact record independently retained by ReuseLast, excluding ordinary cache rows.
   [[nodiscard]] std::optional<TemporalSampleRecord> reuse_retained_record() const noexcept;
 
@@ -237,6 +264,7 @@ class RuntimeInputSelectionState {
                                                     std::uint64_t producer_epoch,
                                                     TimePoint reference_time) const noexcept;
   void release(Transaction& transaction) noexcept;
+  void restore_cache_replacement(const TemporalSampleRecord& retained, std::size_t index) noexcept;
 
   InputSelectionPlanRecord plan_;
   TemporalInputCache cache_;
@@ -502,6 +530,13 @@ struct FrozenRuntimeCandidate {
   bool source_retired{};
 };
 
+/// Keep one receiver behind an exact same-input arrival prefix without blocking other owners.
+struct RuntimeCandidateInputFence {
+  VertexId owner{};
+  SourceId source{};
+  PortId input{};
+};
+
 /// Drain bounded source events and form deterministic activation candidates.
 ///
 /// Witness acceptance and candidate formation are deliberately separate.
@@ -546,17 +581,21 @@ class RuntimeCandidateCoordinator {
   /// cannot affect equal-time microsteps.
   [[nodiscard]] expected<FrozenRuntimeCandidate, Error> freeze_next() noexcept;
 
-  /// Freeze one already-admitted input prerequisite before its selector's trigger witness.
-  [[nodiscard]] expected<FrozenRuntimeCandidate, Error> freeze_input_prerequisite(
-      VertexId owner, PortId input, TimePoint reference_time) noexcept;
+  /// Form the deterministic minimum pending candidate under owner-local input fences.
+  ///
+  /// An unfenced owner contributes every pending witness. A fenced owner contributes only the
+  /// oldest arrival on each named input; its triggers and terminal witnesses remain pending until
+  /// every selector fence has cleared. Candidate choice among those eligible heads retains the
+  /// ordinary global semantic ordering. Scratch storage is reserved during construction.
+  [[nodiscard]] expected<FrozenRuntimeCandidate, Error> freeze_next_constrained(
+      std::span<const RuntimeCandidateInputFence> input_fences) noexcept;
 
   /// Report the lowest reference coordinate among pending candidates.
   ///
-  /// \ref freeze_next orders by reference time first, so this is the coordinate
-  /// of the candidate it would select from the pending set today. A caller that
-  /// must not disturb a witness it cannot yet see uses this as a lower bound on
-  /// what this round can freeze; it is only a bound, because a candidate
-  /// ingested later in the same round may sort ahead of everything here.
+  /// This is a conservative lower bound, not necessarily the next eligible
+  /// candidate: EOS may wait for an accepted predecessor with a later capture
+  /// coordinate. A caller that must not disturb an unseen witness may use the
+  /// bound; a candidate ingested later can also sort ahead of the current set.
   ///
   /// @return The lowest pending reference time, or \c std::nullopt when nothing
   ///         is pending.
@@ -643,9 +682,13 @@ class RuntimeCandidateCoordinator {
                               std::vector<std::unique_ptr<TagAllocator>> owned_tags,
                               std::size_t max_outstanding, RuntimePhaseCounters* phase_counters);
 
+  // EOS may retain an older observation coordinate than its accepted data prefix.
+  [[nodiscard]] bool end_of_stream_prefix_retired(const PendingEvent& terminal) const noexcept;
   [[nodiscard]] expected<void, Error> accept_event(RuntimeEvent event) noexcept;
-  [[nodiscard]] expected<FrozenRuntimeCandidate, Error> freeze_pending(std::size_t pending_index,
-                                                                       TagTime tag_time) noexcept;
+  // Callers must establish EOS prefix eligibility before reserving a Tag: ordinary/constrained
+  // selection checks it, while causal selection proves only one outstanding witness exists.
+  [[nodiscard]] expected<FrozenRuntimeCandidate, Error> freeze_eligible_pending(
+      std::size_t pending_index, TagTime tag_time) noexcept;
   [[nodiscard]] std::size_t find_source(SourceId source) const noexcept;
 
   std::vector<SourceState> sources_;
@@ -653,6 +696,7 @@ class RuntimeCandidateCoordinator {
   std::vector<TagAllocator*> tags_;
   std::vector<RuntimeEvent> ingress_scratch_;
   std::vector<PendingEvent> pending_;
+  std::vector<std::size_t> input_fence_head_scratch_;
   std::size_t max_outstanding_{};
   std::size_t outstanding_count_{};
   std::int64_t last_logical_ns_{};

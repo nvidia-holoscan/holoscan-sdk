@@ -5,7 +5,7 @@
 // https://github.com/google/flatbuffers/blob/v25.12.19/reflection/reflection.fbs
 // Keep this file in lockstep with HOLOSCAN_FLATBUFFERS_VERSION_EXACT. A FlatBuffers update must
 // refresh this schema and the reflected BaseType/Object/Enum traversal in
-// HoloscanGenerateSchemaTraits.cmake before changing the pinned version.
+// scripts/generate_schema_traits.py before changing the pinned version.
 
 // This schema defines objects that represent a parsed schema, like
 // the binary version of a .fbs file.

@@ -45,9 +45,9 @@ struct ChannelTensorSchemaMetadata {
   static constexpr std::size_t kMetadataCapacity = Payload::metadata_capacity;
 
   /// Complete compact schema identity verified on the received wrapper.
-  SchemaId schema_id{};
-  /// Exact semantic schema version verified on the received wrapper.
-  std::uint32_t schema_version{};
+  SchemaId schema_family_id{};
+  /// Reserved transport-profile tag verified on the received wrapper.
+  std::uint32_t transport_profile_tag{};
   /// Number of valid serialized metadata bytes.
   std::uint32_t metadata_size{};
   /// Endpoint generation carried by the received schema wrapper.
@@ -352,7 +352,7 @@ class ChannelTensorSchemaPublisher {
         return make_unexpected(channel_internal::make_channel_error(
             ErrorCode::kProtocolError, "Tensor schema reservation is missing a field"));
       }
-      field->descriptor.schema_id = Payload::expected_schema_id;
+      field->descriptor.schema_id = Payload::expected_schema_family_id;
       descriptors[index] = field->descriptor;
     }
     auto payload = Payload::copy_from_trusted_metadata(
@@ -521,12 +521,33 @@ template <ChannelDescriptorFlatBufferPayload Payload>
 class ChannelTensorSchemaSubscriber {
  public:
   ChannelTensorSchemaSubscriber(ChannelTensorSchemaSubscriber&& other) noexcept = default;
-  ChannelTensorSchemaSubscriber& operator=(ChannelTensorSchemaSubscriber&& other) noexcept =
-      default;
-  ~ChannelTensorSchemaSubscriber() = default;
+  ChannelTensorSchemaSubscriber& operator=(ChannelTensorSchemaSubscriber&& other) noexcept {
+    if (this != &other) {
+      static_cast<void>(channel_internal::close_local_subscriber(subscriber_));
+      subscriber_ = std::move(other.subscriber_);
+      last_sequence_ = std::exchange(other.last_sequence_, 0U);
+      runtime_envelope_ = std::exchange(other.runtime_envelope_, false);
+    }
+    return *this;
+  }
+  ~ChannelTensorSchemaSubscriber() {
+    static_cast<void>(channel_internal::close_local_subscriber(subscriber_));
+  }
 
   ChannelTensorSchemaSubscriber(const ChannelTensorSchemaSubscriber&) = delete;
   ChannelTensorSchemaSubscriber& operator=(const ChannelTensorSchemaSubscriber&) = delete;
+
+  /** @brief Retire this process's local descriptor-Tensor subscriber endpoint.
+   * @return Success on the first live close, or a code-only cleanup error. Repeated close and
+   * close on a moved-from facade return @ref ErrorCode::kClosed.
+   * @note This externally serialized, consuming operation publishes no producer end-of-stream
+   * record and supplies no graph-completion evidence. Cancel and join any active waiter before
+   * closing. Already returned Tensor bundles retain their ordinary owning lifetime; unread local
+   * data may be discarded. A cleanup failure still consumes the endpoint; later checked
+   * operations return @ref ErrorCode::kClosed. */
+  [[nodiscard]] expected<void, Error> close() noexcept {
+    return channel_internal::close_local_subscriber(subscriber_);
+  }
 
   /** @brief Query pending metadata descriptors without consuming one.
    * @return Readiness or Error when closed or the backend query fails. */
@@ -655,11 +676,12 @@ class ChannelTensorSchemaSubscriber {
 
     ChannelResolvedTensorBundle<Payload> result{
         .metadata =
-            ChannelTensorSchemaMetadata<Payload>{.schema_id = payload.schema_id,
-                                                 .schema_version = payload.schema_version,
-                                                 .metadata_size = payload.metadata_size,
-                                                 .endpoint_generation = payload.endpoint_generation,
-                                                 .metadata = payload.metadata},
+            ChannelTensorSchemaMetadata<Payload>{
+                .schema_family_id = payload.schema_family_id,
+                .transport_profile_tag = payload.transport_profile_tag,
+                .metadata_size = payload.metadata_size,
+                .endpoint_generation = payload.endpoint_generation,
+                .metadata = payload.metadata},
         .sample_metadata = runtime_envelope_ ? envelope.metadata : SampleMetadata{},
     };
     for (std::size_t index = 0U; index < Payload::max_tensors; ++index) {
@@ -692,10 +714,11 @@ class ChannelTensorSchemaSubscriber {
   /// @return The resolved sample on success, or the first checked error.
   /// @retval ErrorCode::kTimeout \p deadline elapsed. Retryable; endpoint state is unchanged.
   /// @retval ErrorCode::kClosed The producer published end of stream through
-  /// \ref ChannelTensorSchemaPublisher::close, or this facade was moved from. Both mean no later
-  /// sample arrives through this endpoint. Only a catalog-attached or runtime-envelope publisher
-  /// can publish end of stream; \ref ChannelTensorSchemaPublisher::close on a name-based publisher
-  /// reports \ref ErrorCode::kNotSupported, so a name-based stream never reaches this outcome.
+  /// \ref ChannelTensorSchemaPublisher::close, or this facade was locally closed or moved from.
+  /// Each means no later sample arrives through this facade. Only a catalog-attached or
+  /// runtime-envelope publisher can publish end of stream; \ref ChannelTensorSchemaPublisher::close
+  /// on a name-based publisher reports \ref ErrorCode::kNotSupported, so a name-based stream never
+  /// reaches the remote end-of-stream outcome.
   /// @retval ErrorCode::kStaleEndpoint The producer was replaced by a new incarnation; rebuild the
   /// subscriber. Reported only by a catalog-attached subscriber, which is the only form that
   /// carries a producer generation on the wire. A name-based subscriber cannot tell a replaced
@@ -753,7 +776,7 @@ class ChannelTensorSchemaSubscriber {
   /// @return Empty success when a sample may be available, or a checked wait error.
   /// @retval ErrorCode::kTimeout \p deadline elapsed with no readiness.
   /// @retval ErrorCode::kInterrupted \p token requested a stop.
-  /// @retval ErrorCode::kClosed This facade was moved from.
+  /// @retval ErrorCode::kClosed This facade was locally closed or moved from.
   /// @retval ErrorCode::kNotSupported This endpoint was created with
   /// \c ChannelOptions::enable_event_wake disabled and has no queued sample.
   /// @retval ErrorCode::kInvalidArgument This subscriber's readiness is already owned by another
@@ -768,6 +791,27 @@ class ChannelTensorSchemaSubscriber {
     }
     return channel_internal::wait_for_sample_readiness(
         *subscriber_, deadline, channel_internal::borrowed_stop_token(token));
+  }
+
+  /// @brief Claim an externally pollable readiness descriptor for this subscriber.
+  /// @return A move-only handle, or a checked closed, capability, or ownership error.
+  /// @retval ErrorCode::kClosed This facade is locally closed or moved from.
+  /// @retval ErrorCode::kNotSupported Native descriptor readiness is unavailable on this platform,
+  /// or this endpoint was created without event wake.
+  /// @retval ErrorCode::kInvalidArgument A wait is in flight, the Runtime readiness pump owns the
+  /// subscriber, or another readiness handle is live.
+  /// @note Readability is a hint. Call \ref ChannelReadinessHandle::acknowledge first, then drain
+  /// \ref receive until \ref ErrorCode::kNotReady. A wake arriving during that drain stays pending.
+  /// Producer end of stream and producer-incarnation changes are also readable terminal/control
+  /// events when the endpoint contract carries those operations.
+  /// @note Blocking wait operations return \ref ErrorCode::kInvalidArgument while the handle is
+  /// live.
+  [[nodiscard]] expected<ChannelReadinessHandle, Error> readiness() {
+    if (!subscriber_) {
+      return make_unexpected(channel_internal::make_channel_error(
+          ErrorCode::kClosed, "Tensor schema channel subscriber is closed"));
+    }
+    return subscriber_->readiness();
   }
 
  private:

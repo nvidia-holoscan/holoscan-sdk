@@ -29,6 +29,6 @@ struct RuntimeClockReconstruction {
 
 /// Materialize and authenticate the complete run-local clock catalog as one cold-start unit.
 [[nodiscard]] expected<RuntimeClockReconstruction, Error> reconstruct_runtime_clocks(
-    const ExecutionPlanState& plan);
+    const ExecutionPlanState& plan, RuntimeDiagnosticDetail* failure_detail = nullptr);
 
 }  // namespace holoscan::detail

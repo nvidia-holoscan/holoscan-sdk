@@ -8,7 +8,7 @@
 
 #include <holomq/expected.hpp>
 
-#include "iox2/node.hpp"
+#include <iox2/node.hpp>
 
 #include <utility>
 

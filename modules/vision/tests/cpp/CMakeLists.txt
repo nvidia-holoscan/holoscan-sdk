@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+include("${holoscan_SOURCE_DIR}/tests/cmake/consumer_test.cmake")
+
 if(NOT TARGET GTest::gtest_main)
     find_package(GTest CONFIG QUIET)
 endif()
@@ -12,52 +14,68 @@ get_target_property(_holoscan_vision_source_dir vision SOURCE_DIR)
 
 add_executable(holoscan_vision_tests
     test_capacity_api.cpp
+    test_operator_catalog.cpp
     test_pipeline.cpp
     test_operators.cpp
-    "${_holoscan_vision_source_dir}/src/detail/cvcuda_tensor.cpp"
+    test_image_payload.cpp
+    test_borrowed_image.cpp
 )
-holoscan_configure_cxx20_target(holoscan_vision_tests PRIVATE)
-target_include_directories(holoscan_vision_tests PRIVATE
-    "${_holoscan_vision_source_dir}/src"
-    "${holoscan_SOURCE_DIR}/src"
-    "${holoscan_SOURCE_DIR}/tests/core"
-)
-target_link_libraries(holoscan_vision_tests
-    PRIVATE
-        holoscan::vision
-        cvcuda
-        nvcv_types
-        GTest::gtest_main
-)
+
+# Keep native malloc interposition out of the general Vision test executable.
+add_executable(holoscan_vision_nvcv_warmup_tests test_nvcv_warmup.cpp)
 
 include(GoogleTest)
-gtest_discover_tests(holoscan_vision_tests
-    DISCOVERY_MODE PRE_TEST
-    PROPERTIES LABELS "vision;unit"
-)
+foreach(_vision_test_target IN ITEMS holoscan_vision_tests holoscan_vision_nvcv_warmup_tests)
+    target_sources(${_vision_test_target} PRIVATE
+        "${holoscan_SOURCE_DIR}/tests/common/allocation_counter.cpp"
+        "${_holoscan_vision_source_dir}/src/detail/image_metadata.cpp"
+        "${_holoscan_vision_source_dir}/src/detail/cvcuda_tensor.cpp"
+    )
+    holoscan_configure_cxx20_target(${_vision_test_target} PRIVATE)
+    target_include_directories(${_vision_test_target} PRIVATE
+        "${_holoscan_vision_source_dir}/src"
+        "${holoscan_SOURCE_DIR}/src"
+        "${holoscan_SOURCE_DIR}/tests/core"
+        "${holoscan_SOURCE_DIR}/tests"
+    )
+    target_link_libraries(${_vision_test_target}
+        PRIVATE
+            holoscan::vision
+            holoscan::sensor_io
+            cvcuda
+            nvcv_types
+            GTest::gtest_main
+    )
+    gtest_discover_tests(${_vision_test_target}
+        DISCOVERY_MODE PRE_TEST
+        PROPERTIES LABELS "vision;unit"
+    )
+endforeach()
+unset(_vision_test_target)
 
-add_test(NAME VISION.installed_package_consumer
-    COMMAND ${CMAKE_COMMAND}
-        "-DHOLOSCAN_BUILD_DIR=${CMAKE_BINARY_DIR}"
-        "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${_holoscan_vision_source_dir}/tests/installed_consumer"
-        "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed_consumer"
-        "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
+holoscan_add_installed_consumer_test(
+    VISION.installed_package_consumer
+    SOURCE_DIRECTORY "${_holoscan_vision_source_dir}/tests/installed_consumer"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/installed_consumer"
+    LABELS vision
+    CMAKE_ARGS
         "-DHOLOSCAN_BUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
         "-DHOLOSCAN_EXTRA_BUILD_TARGETS=vision"
         "-DHOLOSCAN_EXTRA_INSTALL_COMPONENTS=holoscan-vision"
-        "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
-        "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
-        "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
-        "-DHOLOSCAN_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
-        "-DHOLOSCAN_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
-        "-DHOLOSCAN_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
-        "-DHOLOSCAN_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}"
-        "-DHOLOSCAN_CTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
-        -P "${CMAKE_SOURCE_DIR}/tests/system/run_time_installed_consumer.cmake"
+        "-DHOLOSCAN_CONSUMER_FIND_MODE=module"
+        "-DHOLOSCAN_MODULE_PACKAGE_DIR=${CMAKE_INSTALL_LIBDIR}/cmake/holoscan"
 )
-set_tests_properties(VISION.installed_package_consumer PROPERTIES
-    RUN_SERIAL TRUE
-    LABELS "vision;installed-package"
+
+holoscan_add_installed_consumer_test(
+    VISION.installed_component_consumer
+    SOURCE_DIRECTORY "${_holoscan_vision_source_dir}/tests/installed_consumer"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/installed_component_consumer"
+    LABELS vision
+    CMAKE_ARGS
+        "-DHOLOSCAN_BUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
+        "-DHOLOSCAN_EXTRA_BUILD_TARGETS=vision"
+        "-DHOLOSCAN_EXTRA_INSTALL_COMPONENTS=holoscan-vision"
+        "-DHOLOSCAN_CONSUMER_FIND_MODE=component"
 )
 
 unset(_holoscan_vision_source_dir)

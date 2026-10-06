@@ -13,7 +13,10 @@
 #include <string_view>
 #include <vector>
 
+#include "authored_partition_membership.hpp"
+#include "core/graph_compiler_access.hpp"
 #include "execution_plan_state.hpp"
+#include "partitioning/partition_types.hpp"
 #include "snapshot_lookup.hpp"
 
 namespace holoscan::detail {
@@ -36,7 +39,8 @@ struct AcceptedPartitionProjection {
 [[nodiscard]] bool accepted_partition_algorithm_supported(
     const PartitioningPlanRecord& partitioning) noexcept {
   if (partitioning.disposition != PlanDisposition::kAccepted ||
-      partitioning.interface_version != 2U || !partitioning.requested_algorithm.has_value() ||
+      partitioning.interface_version != partitioning::kPartitionPlannerInterfaceVersion ||
+      !partitioning.requested_algorithm.has_value() ||
       !partitioning.accepted_algorithm.has_value() ||
       partitioning.requested_algorithm != partitioning.accepted_algorithm || partitioning.reason ||
       partitioning.selection_source != PlanSelectionSource::kCoreDefault ||
@@ -71,6 +75,7 @@ struct AcceptedPartitionProjection {
     case PartitionDecisionKind::kFanOutLegSplit:
     case PartitionDecisionKind::kCollapseRejected:
     case PartitionDecisionKind::kAuthored:
+    case PartitionDecisionKind::kSerializationDomain:
       return true;
   }
   return false;
@@ -93,6 +98,7 @@ struct AcceptedPartitionProjection {
     case PartitionDecisionReason::kCollapseRejected:
     case PartitionDecisionReason::kLinearChainJoin:
     case PartitionDecisionReason::kAuthoredPartitionBoundary:
+    case PartitionDecisionReason::kSerializationDomain:
       return true;
   }
   return false;
@@ -143,10 +149,52 @@ template <typename Values>
          state.execution_partition_index_by_operator_path.empty();
 }
 
+// Authenticate selection provenance against the immutable authoring snapshot, including omitted
+// claims. Flat partitions keep their existing authority contract.
+[[nodiscard]] bool atomic_partition_selection_valid(const ExecutionPlanState& state,
+                                                    const ExecutionPartitionRecord& partition) {
+  const auto declarations = state.graph.partitions();
+  const auto authored =
+      std::find_if(declarations.begin(), declarations.end(), [&](const auto& item) {
+        return partition.authored_name && item.name == *partition.authored_name;
+      });
+  if (partition.graph_members.empty() &&
+      (authored == declarations.end() || authored->graph_members.empty())) {
+    return true;
+  }
+  if (authored == declarations.end() || partition.graph_members != authored->graph_members) {
+    return false;
+  }
+  const auto snapshot = GraphCompilerAccess::retain_snapshot(state.graph);
+  if (!snapshot)
+    return false;
+  const auto expected = resolve_authored_partition_members(*snapshot, *authored);
+  if (!expected)
+    return false;
+  std::vector<VertexId> actual;
+  for (const VertexId member : partition.members) {
+    const auto* vertex = find_vertex(*snapshot, member);
+    if (vertex != nullptr && vertex->kind == VertexKind::kOperator)
+      actual.push_back(member);
+  }
+  return actual == *expected;
+}
+
 // Validate the public cover and all derived decision relations as one fail-closed authority.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] std::optional<AcceptedPartitionProjection> validate_partition_cover_and_decisions(
     const ExecutionPlanState& state) {
+  // Every frozen atomic declaration must survive in the accepted inventory. This forward join
+  // also detects a removed claim combined with a renamed/removed accepted authored name.
+  for (const auto& authored : state.graph.partitions()) {
+    if (!authored.graph_members.empty() &&
+        std::count_if(
+            state.execution_partitions.begin(),
+            state.execution_partitions.end(),
+            [&](const auto& partition) { return partition.authored_name == authored.name; }) != 1) {
+      return std::nullopt;
+    }
+  }
   const auto vertices = state.graph.vertices();
   std::vector<const VertexRecord*> executable_vertices;
   executable_vertices.reserve(vertices.size());
@@ -180,7 +228,8 @@ template <typename Values>
        ++partition_index) {
     const std::uint32_t table_index = static_cast<std::uint32_t>(partition_index + 1U);
     const auto& partition = state.execution_partitions[partition_index];
-    if (partition.id.value != table_index || partition.members.empty()) {
+    if (partition.id.value != table_index || partition.members.empty() ||
+        !atomic_partition_selection_valid(state, partition)) {
       return std::nullopt;
     }
     projection.expected_by_id[partition_index] = table_index;

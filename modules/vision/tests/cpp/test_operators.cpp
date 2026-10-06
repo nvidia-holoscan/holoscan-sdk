@@ -22,7 +22,9 @@
 #include <nvcv/TensorData.hpp>
 #include <nvcv/TensorLayout.hpp>
 
+#include <holoscan/authoring/parameter_materializer.hpp>
 #include <holoscan/core/graph.hpp>
+#include <holoscan/vision/bayer_demosaic_op.hpp>
 #include <holoscan/vision/convert_to_op.hpp>
 #include <holoscan/vision/copy_make_border_op.hpp>
 #include <holoscan/vision/custom_crop_op.hpp>
@@ -403,6 +405,7 @@ TEST(CvCudaTensor, RejectsStridesAndTensorSpansOutsideCvCuda32BitAddressing) {
                                      2U));
 }
 
+// REQ: VISION-011
 TEST(CvCudaTensor, DerivesContiguousStridesAndCheckedAllocationBound) {
   constexpr std::array<std::int64_t, 4U> kShape{2, 4, 5, 3};
   auto strides = contiguous_byte_strides(kShape, kF32);
@@ -412,17 +415,24 @@ TEST(CvCudaTensor, DerivesContiguousStridesAndCheckedAllocationBound) {
   EXPECT_EQ((*strides)[2], 12);
   EXPECT_EQ((*strides)[3], 4);
 
-  auto byte_span = maximum_output_byte_span(640, 480, 8U, sizeof(float));
+  auto byte_span = projected_image_output_byte_span(640, 480, 8U, sizeof(float));
   ASSERT_TRUE(byte_span);
   EXPECT_EQ(*byte_span, 640U * 480U * 8U * 4U * sizeof(float));
 
-  EXPECT_FALSE(maximum_output_byte_span(std::numeric_limits<std::int32_t>::max(),
-                                        std::numeric_limits<std::int32_t>::max(),
-                                        std::numeric_limits<std::uint32_t>::max(),
-                                        sizeof(double)));
-  EXPECT_FALSE(maximum_output_byte_span(32768, 32768, 1U, sizeof(float)));
-  EXPECT_TRUE(maximum_output_byte_span(1, 1, kMaximumBatchSize, sizeof(float)));
-  EXPECT_FALSE(maximum_output_byte_span(1, 1, kMaximumBatchSize + 1U, sizeof(float)));
+  const auto overflow = projected_image_output_byte_span(std::numeric_limits<std::int32_t>::max(),
+                                                         std::numeric_limits<std::int32_t>::max(),
+                                                         kMaximumBatchSize,
+                                                         sizeof(double));
+  ASSERT_FALSE(overflow);
+  EXPECT_EQ(overflow.error().code, ErrorCode::kArithmeticOverflow);
+  const auto exceeds_cvcuda = projected_image_output_byte_span(32768, 32768, 1U, sizeof(float));
+  ASSERT_FALSE(exceeds_cvcuda);
+  EXPECT_EQ(exceeds_cvcuda.error().code, ErrorCode::kNotSupported);
+  EXPECT_TRUE(projected_image_output_byte_span(1, 1, kMaximumBatchSize, sizeof(float)));
+  const auto invalid_batch =
+      projected_image_output_byte_span(1, 1, kMaximumBatchSize + 1U, sizeof(float));
+  ASSERT_FALSE(invalid_batch);
+  EXPECT_EQ(invalid_batch.error().code, ErrorCode::kInvalidArgument);
 }
 
 Tensor make_tensor_with_dlpack_strides(void* data, std::vector<std::int64_t> shape,
@@ -478,10 +488,11 @@ TEST(CvCudaTensor, DerivesImplicitContiguousDlpackStridesIntoFixedStorage) {
 }
 
 void expect_nms_alignment_failure(Tensor boxes, Tensor scores) {
-  NonMaximumSuppressionOp op{NMSCapacity{.max_boxes = 2, .max_batch_size = 1U}};
+  NonMaximumSuppressionOp op;
   holoscan::test::SyntheticOperatorFixture fixture{op};
   ASSERT_TRUE(fixture.declare_ports());
-  ASSERT_TRUE(fixture.bind_initial_params(NonMaximumSuppressionOpParams{}));
+  ASSERT_TRUE(fixture.bind_initial_params(
+      NonMaximumSuppressionOpParams{.max_boxes = 2, .max_batch_size = 1U}));
   ASSERT_TRUE(fixture.bind_value(op.boxes, std::move(boxes)));
   ASSERT_TRUE(fixture.bind_value(op.scores, std::move(scores)));
   ASSERT_NO_THROW(op.start());
@@ -536,38 +547,192 @@ namespace holoscan::vision {
 namespace {
 
 template <typename Op>
-void expect_structural_capacity_error(Op& op, typename Op::Params params,
-                                      std::string_view field_name) {
-  test::SyntheticOperatorFixture fixture{op};
-  auto declared = fixture.declare_ports();
-  ASSERT_TRUE(declared) << declared.error().message;
-  auto bound = fixture.bind_initial_params(std::move(params));
-  ASSERT_TRUE(bound) << bound.error().message;
-
-  auto result = fixture.invoke_once();
+void expect_uninitialized_resources(std::string_view name) {
+  SCOPED_TRACE(name);
+  Op op;
+  holoscan::test::SyntheticOperatorFixture fixture{op};
+  ASSERT_TRUE(fixture.declare_ports());
+  ASSERT_TRUE(fixture.bind_initial_params(typename Op::Params{}));
+  const auto result = fixture.invoke_once();
   ASSERT_FALSE(result);
-  EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
-  EXPECT_NE(result.error().message.find(field_name), std::string::npos);
+  EXPECT_EQ(result.error().code, ErrorCode::kNotReady);
+  EXPECT_EQ(result.error().message, std::string(name) + " resources are not initialized");
+}
+
+// REQ: VISION-008
+TEST(VisionOperators, UninitializedImageResourcesHaveAccurateDiagnostics) {
+  expect_uninitialized_resources<ResizeOp>("ResizeOp");
+  expect_uninitialized_resources<ConvertToOp>("ConvertToOp");
+  expect_uninitialized_resources<CopyMakeBorderOp>("CopyMakeBorderOp");
+  expect_uninitialized_resources<CustomCropOp>("CustomCropOp");
+  expect_uninitialized_resources<NormalizeOp>("NormalizeOp");
+  expect_uninitialized_resources<ReformatOp>("ReformatOp");
+  expect_uninitialized_resources<RemapOp>("RemapOp");
+  expect_uninitialized_resources<BayerDemosaicOp>("BayerDemosaicOp");
 }
 
 template <typename Params>
-void expect_compile_time_capacity_fields(std::initializer_list<std::string_view> field_names) {
+void expect_fields(std::initializer_list<std::string_view> field_names, ParamMutability mutability,
+                   bool required_on_load = false) {
   const ParamSchemaDescriptor* const schema = param_schema_descriptor<Params>();
   ASSERT_NE(schema, nullptr);
   for (const std::string_view field_name : field_names) {
     const auto field =
         std::ranges::find(schema->fields, field_name, &ParamFieldDescriptor::canonical_name);
     ASSERT_NE(field, schema->fields.end()) << field_name;
-    EXPECT_EQ(field->mutability, ParamMutability::kCompileTime) << field_name;
+    EXPECT_EQ(field->mutability, mutability) << field_name;
+    EXPECT_EQ(field->required_on_load, required_on_load) << field_name;
   }
 }
 
+template <typename Params, typename Enum>
+void expect_named_enum_domain(std::string_view field_name,
+                              std::initializer_list<NamedParamEnumValue<Enum>> expected_choices) {
+  const ParamSchemaDescriptor* const schema = param_schema_descriptor<Params>();
+  ASSERT_NE(schema, nullptr);
+  EXPECT_EQ(schema->version, 2U);
+  const auto field =
+      std::ranges::find(schema->fields, field_name, &ParamFieldDescriptor::canonical_name);
+  ASSERT_NE(field, schema->fields.end()) << field_name;
+  ASSERT_EQ(field->enum_choices.count, expected_choices.size()) << field_name;
+  ASSERT_EQ(field->constraints.allowed_value_count, expected_choices.size()) << field_name;
+
+  std::size_t index = 0U;
+  for (const NamedParamEnumValue<Enum>& expected : expected_choices) {
+    const ParamEnumChoice& actual = field->enum_choices.values[index];
+    const ParamScalarValue expected_value = ParamScalarValue::from(expected.value);
+    EXPECT_EQ(actual.name, expected.name) << field_name << '[' << index << ']';
+    EXPECT_EQ(actual.value.kind, expected_value.kind) << field_name << '[' << index << ']';
+    EXPECT_EQ(actual.value.bit_width, expected_value.bit_width)
+        << field_name << '[' << index << ']';
+    EXPECT_EQ(actual.value.raw_bits, expected_value.raw_bits) << field_name << '[' << index << ']';
+    ++index;
+  }
+}
+
+template <typename Params, auto Member>
+void expect_named_and_numeric_enum_assignment(
+    std::string_view field_name, std::string_view label,
+    std::remove_cvref_t<decltype(std::declval<Params>().*Member)> expected_value) {
+  using Enum = std::remove_cvref_t<decltype(std::declval<Params>().*Member)>;
+  using Underlying = std::underlying_type_t<Enum>;
+
+  const std::array named_assignments{
+      authoring::ParameterAssignment{field_name, authoring::ParameterValue::from(label)}};
+  auto named = authoring::materialize_parameters(
+      param_type_descriptor<Params>(), param_schema_descriptor<Params>(), named_assignments);
+  ASSERT_TRUE(named) << named.error().message;
+  EXPECT_EQ(static_cast<const Params*>(named->data())->*Member, expected_value);
+
+  const std::array numeric_assignments{authoring::ParameterAssignment{
+      field_name,
+      authoring::ParameterValue::from(
+          static_cast<std::uint64_t>(static_cast<Underlying>(expected_value)))}};
+  auto numeric = authoring::materialize_parameters(
+      param_type_descriptor<Params>(), param_schema_descriptor<Params>(), numeric_assignments);
+  ASSERT_TRUE(numeric) << numeric.error().message;
+  EXPECT_EQ(static_cast<const Params*>(numeric->data())->*Member, expected_value);
+}
+
+// REQ: AUTHOR-018
+TEST(VisionParameterSchema, PublishesStableNamedEnumDomains) {
+  expect_named_enum_domain<BayerDemosaicOpParams>(
+      "bayer_grid_pos",
+      {param_enum_value("bggr", BayerGridPosition::kBGGR),
+       param_enum_value("rggb", BayerGridPosition::kRGGB),
+       param_enum_value("gbrg", BayerGridPosition::kGBRG),
+       param_enum_value("grbg", BayerGridPosition::kGRBG)});
+  expect_named_enum_domain<ConvertToOpParams>(
+      "output_type",
+      {param_enum_value("uint8", VisionElementType::kU8),
+       param_enum_value("int8", VisionElementType::kS8),
+       param_enum_value("uint16", VisionElementType::kU16),
+       param_enum_value("int16", VisionElementType::kS16),
+       param_enum_value("int32", VisionElementType::kS32),
+       param_enum_value("float32", VisionElementType::kF32),
+       param_enum_value("float64", VisionElementType::kF64)});
+  expect_named_enum_domain<ConvertToOpParams>(
+      "rounding",
+      {param_enum_value("nearest", RoundingMode::kNearest),
+       param_enum_value("truncate", RoundingMode::kTruncate)});
+  expect_named_enum_domain<CopyMakeBorderOpParams>(
+      "border_mode",
+      {param_enum_value("constant", BorderMode::kConstant),
+       param_enum_value("replicate", BorderMode::kReplicate),
+       param_enum_value("reflect", BorderMode::kReflect),
+       param_enum_value("wrap", BorderMode::kWrap),
+       param_enum_value("reflect_101", BorderMode::kReflect101)});
+  expect_named_enum_domain<ResizeOpParams>(
+      "interpolation",
+      {param_enum_value("nearest", InterpolationMode::kNearest),
+       param_enum_value("linear", InterpolationMode::kLinear),
+       param_enum_value("cubic", InterpolationMode::kCubic),
+       param_enum_value("area", InterpolationMode::kArea)});
+  expect_named_enum_domain<ReformatOpParams>(
+      "mode",
+      {param_enum_value("interleaved_to_planar", ReformatMode::kInterleavedToPlanar),
+       param_enum_value("planar_to_interleaved", ReformatMode::kPlanarToInterleaved)});
+  expect_named_enum_domain<RemapOpParams>("input_interpolation",
+                                          {param_enum_value("nearest", InterpolationMode::kNearest),
+                                           param_enum_value("linear", InterpolationMode::kLinear),
+                                           param_enum_value("cubic", InterpolationMode::kCubic)});
+  expect_named_enum_domain<RemapOpParams>("map_interpolation",
+                                          {param_enum_value("nearest", InterpolationMode::kNearest),
+                                           param_enum_value("linear", InterpolationMode::kLinear),
+                                           param_enum_value("cubic", InterpolationMode::kCubic)});
+  expect_named_enum_domain<RemapOpParams>(
+      "map_value_mode",
+      {param_enum_value("absolute", RemapMapValueMode::kAbsolute),
+       param_enum_value("absolute_normalized", RemapMapValueMode::kAbsoluteNormalized),
+       param_enum_value("relative_normalized", RemapMapValueMode::kRelativeNormalized)});
+  expect_named_enum_domain<RemapOpParams>(
+      "border_mode",
+      {param_enum_value("constant", BorderMode::kConstant),
+       param_enum_value("replicate", BorderMode::kReplicate),
+       param_enum_value("reflect", BorderMode::kReflect),
+       param_enum_value("wrap", BorderMode::kWrap),
+       param_enum_value("reflect_101", BorderMode::kReflect101)});
+  expect_named_enum_domain<RemapOpParams>(
+      "map_synchronization",
+      {param_enum_value("latest", RemapMapSynchronizationMode::kLatest),
+       param_enum_value("exact", RemapMapSynchronizationMode::kExact)});
+}
+
+// REQ: AUTHOR-018
+TEST(VisionParameterSchema, MaterializesNamedAndNumericEnumAssignments) {
+  expect_named_and_numeric_enum_assignment<BayerDemosaicOpParams,
+                                           &BayerDemosaicOpParams::bayer_grid_pos>(
+      "bayer_grid_pos", "rggb", BayerGridPosition::kRGGB);
+  expect_named_and_numeric_enum_assignment<ConvertToOpParams, &ConvertToOpParams::output_type>(
+      "output_type", "float64", VisionElementType::kF64);
+  expect_named_and_numeric_enum_assignment<ConvertToOpParams, &ConvertToOpParams::rounding>(
+      "rounding", "truncate", RoundingMode::kTruncate);
+  expect_named_and_numeric_enum_assignment<CopyMakeBorderOpParams,
+                                           &CopyMakeBorderOpParams::border_mode>(
+      "border_mode", "reflect_101", BorderMode::kReflect101);
+  expect_named_and_numeric_enum_assignment<ResizeOpParams, &ResizeOpParams::interpolation>(
+      "interpolation", "area", InterpolationMode::kArea);
+  expect_named_and_numeric_enum_assignment<ReformatOpParams, &ReformatOpParams::mode>(
+      "mode", "planar_to_interleaved", ReformatMode::kPlanarToInterleaved);
+  expect_named_and_numeric_enum_assignment<RemapOpParams, &RemapOpParams::input_interpolation>(
+      "input_interpolation", "cubic", InterpolationMode::kCubic);
+  expect_named_and_numeric_enum_assignment<RemapOpParams, &RemapOpParams::map_interpolation>(
+      "map_interpolation", "nearest", InterpolationMode::kNearest);
+  expect_named_and_numeric_enum_assignment<RemapOpParams, &RemapOpParams::map_value_mode>(
+      "map_value_mode", "relative_normalized", RemapMapValueMode::kRelativeNormalized);
+  expect_named_and_numeric_enum_assignment<RemapOpParams, &RemapOpParams::border_mode>(
+      "border_mode", "replicate", BorderMode::kReplicate);
+  expect_named_and_numeric_enum_assignment<RemapOpParams, &RemapOpParams::map_synchronization>(
+      "map_synchronization", "exact", RemapMapSynchronizationMode::kExact);
+}
+
 static_assert(std::derived_from<ResizeOp, Operator<ResizeOpParams>>);
-static_assert(std::same_as<decltype(ResizeOp::input), Input<Tensor>>);
-static_assert(std::same_as<decltype(ResizeOp::output), Output<Tensor>>);
+static_assert(std::same_as<decltype(ResizeOp::input), Input<schema::ImageT>>);
+static_assert(std::same_as<decltype(ResizeOp::output), Output<schema::ImageT>>);
 static_assert(!std::copy_constructible<ResizeOp>);
 static_assert(!std::move_constructible<ResizeOp>);
 
+// REQ: VISION-011
 TEST(ResizeOp, ParameterSchemaAcceptsValidDefaultsAndRejectsInvalidValues) {
   EXPECT_TRUE(validate_params(ResizeOpParams{}).ok());
 
@@ -580,6 +745,10 @@ TEST(ResizeOp, ParameterSchemaAcceptsValidDefaultsAndRejectsInvalidValues) {
   EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
 
   params = {};
+  params.max_batch_size = 0U;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
+
+  params = {};
   params.interpolation = InterpolationMode::kCubic;
   EXPECT_TRUE(validate_params(params).ok());
 
@@ -588,18 +757,20 @@ TEST(ResizeOp, ParameterSchemaAcceptsValidDefaultsAndRejectsInvalidValues) {
   EXPECT_EQ(validate_params(params).code, ParamValidationCode::kNotAllowed);
 }
 
-TEST(ResizeOp, OwnsStableNamedTensorPorts) {
-  ResizeOp op{VisionImageCapacity{.max_width = 1, .max_height = 1, .max_batch_size = 1U}};
+// REQ: VISION-003
+TEST(ResizeOp, OwnsStableNamedImagePorts) {
+  ResizeOp op;
   EXPECT_EQ(op.input.name(), "input");
   EXPECT_EQ(op.output.name(), "output");
 }
 
 static_assert(std::derived_from<CustomCropOp, Operator<CustomCropOpParams>>);
-static_assert(std::same_as<decltype(CustomCropOp::input), Input<Tensor>>);
-static_assert(std::same_as<decltype(CustomCropOp::output), Output<Tensor>>);
+static_assert(std::same_as<decltype(CustomCropOp::input), Input<schema::ImageT>>);
+static_assert(std::same_as<decltype(CustomCropOp::output), Output<schema::ImageT>>);
 static_assert(!std::copy_constructible<CustomCropOp>);
 static_assert(!std::move_constructible<CustomCropOp>);
 
+// REQ: VISION-011
 TEST(CustomCropOp, ParameterSchemaAcceptsValidDefaultsAndRejectsInvalidValues) {
   EXPECT_TRUE(validate_params(CustomCropOpParams{}).ok());
 
@@ -618,24 +789,42 @@ TEST(CustomCropOp, ParameterSchemaAcceptsValidDefaultsAndRejectsInvalidValues) {
   params = {};
   params.height = 0;
   EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
+
+  params = {};
+  params.max_batch_size = 0U;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
 }
 
-TEST(CustomCropOp, OwnsStableNamedTensorPorts) {
-  CustomCropOp op{VisionImageCapacity{.max_width = 1, .max_height = 1, .max_batch_size = 1U}};
+// REQ: VISION-003
+TEST(CustomCropOp, OwnsStableNamedImagePorts) {
+  CustomCropOp op;
   EXPECT_EQ(op.input.name(), "input");
   EXPECT_EQ(op.output.name(), "output");
 }
 
 static_assert(std::derived_from<CopyMakeBorderOp, Operator<CopyMakeBorderOpParams>>);
-static_assert(std::same_as<decltype(CopyMakeBorderOp::input), Input<Tensor>>);
-static_assert(std::same_as<decltype(CopyMakeBorderOp::output), Output<Tensor>>);
+static_assert(std::same_as<decltype(CopyMakeBorderOp::input), Input<schema::ImageT>>);
+static_assert(std::same_as<decltype(CopyMakeBorderOp::output), Output<schema::ImageT>>);
 static_assert(!std::copy_constructible<CopyMakeBorderOp>);
 static_assert(!std::move_constructible<CopyMakeBorderOp>);
 
+// REQ: VISION-011
 TEST(CopyMakeBorderOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidValues) {
   EXPECT_TRUE(validate_params(CopyMakeBorderOpParams{}).ok());
 
   CopyMakeBorderOpParams params;
+  params.max_width = 0;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
+
+  params = {};
+  params.max_height = 0;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
+
+  params = {};
+  params.max_batch_size = 0U;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
+
+  params = {};
   params.top = -1;
   EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
 
@@ -652,27 +841,37 @@ TEST(CopyMakeBorderOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidValues) {
   EXPECT_EQ(validate_params(params).code, ParamValidationCode::kValidatorRejected);
 }
 
-TEST(CopyMakeBorderOp, OwnsStableNamedTensorPorts) {
-  CopyMakeBorderOp op{VisionImageCapacity{.max_width = 1, .max_height = 1, .max_batch_size = 1U}};
+// REQ: VISION-003
+TEST(CopyMakeBorderOp, OwnsStableNamedImagePorts) {
+  CopyMakeBorderOp op;
   EXPECT_EQ(op.input.name(), "input");
   EXPECT_EQ(op.output.name(), "output");
 }
 
 static_assert(std::derived_from<RemapOp, Operator<RemapOpParams>>);
-static_assert(std::same_as<decltype(RemapOp::input), Input<Tensor>>);
+static_assert(std::same_as<decltype(RemapOp::input), Input<schema::ImageT>>);
 static_assert(std::same_as<decltype(RemapOp::map), Input<Tensor>>);
-static_assert(std::same_as<decltype(RemapOp::output), Output<Tensor>>);
+static_assert(std::same_as<decltype(RemapOp::output), Output<schema::ImageT>>);
 static_assert(!std::copy_constructible<RemapOp>);
 static_assert(!std::move_constructible<RemapOp>);
 
+// REQ: VISION-011
 TEST(RemapOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidValues) {
   const ParamSchemaDescriptor* const schema = param_schema_descriptor<RemapOpParams>();
   ASSERT_NE(schema, nullptr);
-  EXPECT_EQ(schema->version, 1U);
+  EXPECT_EQ(schema->version, 2U);
   EXPECT_TRUE(validate_params(RemapOpParams{}).ok());
 
   RemapOpParams params;
   params.width = 0;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
+
+  params = {};
+  params.height = 0;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
+
+  params = {};
+  params.max_batch_size = 0U;
   EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
 
   params = {};
@@ -704,16 +903,17 @@ TEST(RemapOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidValues) {
   EXPECT_EQ(validate_params(params).code, ParamValidationCode::kNotAllowed);
 }
 
-TEST(RemapOp, OwnsStableNamedTensorPorts) {
-  RemapOp op{VisionImageCapacity{.max_width = 1, .max_height = 1, .max_batch_size = 1U}};
+// REQ: VISION-003
+TEST(RemapOp, OwnsStableNamedImagePorts) {
+  RemapOp op;
   EXPECT_EQ(op.input.name(), "input");
   EXPECT_EQ(op.map.name(), "map");
   EXPECT_EQ(op.output.name(), "output");
 }
 
 static_assert(std::derived_from<NormalizeOp, Operator<NormalizeOpParams>>);
-static_assert(std::same_as<decltype(NormalizeOp::input), Input<Tensor>>);
-static_assert(std::same_as<decltype(NormalizeOp::output), Output<Tensor>>);
+static_assert(std::same_as<decltype(NormalizeOp::input), Input<schema::ImageT>>);
+static_assert(std::same_as<decltype(NormalizeOp::output), Output<schema::ImageT>>);
 static_assert(!std::copy_constructible<NormalizeOp>);
 static_assert(!std::move_constructible<NormalizeOp>);
 
@@ -760,8 +960,7 @@ TEST(NormalizeOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidValues) {
 
 TEST(NormalizeOp, RejectsZeroStandardDeviationOnlyWithoutEpsilon) {
   Graph graph{"vision-normalize-standard-deviation-test"};
-  auto normalize = graph.op<NormalizeOp>(
-      "normalize", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto normalize = graph.op<NormalizeOp>("normalize");
   NormalizeOpParams params;
   params.scale = {0.F};
   params.scale_is_stddev = true;
@@ -783,15 +982,16 @@ TEST(NormalizeOp, RejectsZeroStandardDeviationOnlyWithoutEpsilon) {
   EXPECT_NO_THROW(normalize.set_params(params));
 }
 
-TEST(NormalizeOp, OwnsStableNamedTensorPorts) {
-  NormalizeOp op{VisionImageCapacity{.max_width = 1, .max_height = 1, .max_batch_size = 1U}};
+// REQ: VISION-003
+TEST(NormalizeOp, OwnsStableNamedImagePorts) {
+  NormalizeOp op;
   EXPECT_EQ(op.input.name(), "input");
   EXPECT_EQ(op.output.name(), "output");
 }
 
 static_assert(std::derived_from<ConvertToOp, Operator<ConvertToOpParams>>);
-static_assert(std::same_as<decltype(ConvertToOp::input), Input<Tensor>>);
-static_assert(std::same_as<decltype(ConvertToOp::output), Output<Tensor>>);
+static_assert(std::same_as<decltype(ConvertToOp::input), Input<schema::ImageT>>);
+static_assert(std::same_as<decltype(ConvertToOp::output), Output<schema::ImageT>>);
 static_assert(!std::copy_constructible<ConvertToOp>);
 static_assert(!std::move_constructible<ConvertToOp>);
 
@@ -820,15 +1020,16 @@ TEST(ConvertToOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidValues) {
   EXPECT_EQ(validate_params(params).code, ParamValidationCode::kValidatorRejected);
 }
 
-TEST(ConvertToOp, OwnsStableNamedTensorPorts) {
-  ConvertToOp op{VisionImageCapacity{.max_width = 1, .max_height = 1, .max_batch_size = 1U}};
+// REQ: VISION-003
+TEST(ConvertToOp, OwnsStableNamedImagePorts) {
+  ConvertToOp op;
   EXPECT_EQ(op.input.name(), "input");
   EXPECT_EQ(op.output.name(), "output");
 }
 
 static_assert(std::derived_from<ReformatOp, Operator<ReformatOpParams>>);
-static_assert(std::same_as<decltype(ReformatOp::input), Input<Tensor>>);
-static_assert(std::same_as<decltype(ReformatOp::output), Output<Tensor>>);
+static_assert(std::same_as<decltype(ReformatOp::input), Input<schema::ImageT>>);
+static_assert(std::same_as<decltype(ReformatOp::output), Output<schema::ImageT>>);
 static_assert(!std::copy_constructible<ReformatOp>);
 static_assert(!std::move_constructible<ReformatOp>);
 
@@ -844,8 +1045,9 @@ TEST(ReformatOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidValues) {
   EXPECT_EQ(validate_params(params).code, ParamValidationCode::kNotAllowed);
 }
 
-TEST(ReformatOp, OwnsStableNamedTensorPorts) {
-  ReformatOp op{VisionImageCapacity{.max_width = 1, .max_height = 1, .max_batch_size = 1U}};
+// REQ: VISION-003
+TEST(ReformatOp, OwnsStableNamedImagePorts) {
+  ReformatOp op;
   EXPECT_EQ(op.input.name(), "input");
   EXPECT_EQ(op.output.name(), "output");
 }
@@ -857,10 +1059,19 @@ static_assert(std::same_as<decltype(NonMaximumSuppressionOp::mask), Output<Tenso
 static_assert(!std::copy_constructible<NonMaximumSuppressionOp>);
 static_assert(!std::move_constructible<NonMaximumSuppressionOp>);
 
+// REQ: VISION-011
 TEST(NonMaximumSuppressionOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidValues) {
   EXPECT_TRUE(validate_params(NonMaximumSuppressionOpParams{}).ok());
 
   NonMaximumSuppressionOpParams params;
+  params.max_boxes = 0;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
+
+  params = {};
+  params.max_batch_size = 0U;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kOutOfRange);
+
+  params = {};
   params.score_threshold = 1.F;
   params.iou_threshold = 1.F;
   EXPECT_TRUE(validate_params(params).ok());
@@ -883,10 +1094,213 @@ TEST(NonMaximumSuppressionOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidVal
 }
 
 TEST(NonMaximumSuppressionOp, OwnsStableNamedTensorPorts) {
-  NonMaximumSuppressionOp op{NMSCapacity{.max_boxes = 1, .max_batch_size = 1U}};
+  NonMaximumSuppressionOp op;
   EXPECT_EQ(op.boxes.name(), "boxes");
   EXPECT_EQ(op.scores.name(), "scores");
   EXPECT_EQ(op.mask.name(), "mask");
+}
+
+static_assert(std::derived_from<BayerDemosaicOp, Operator<BayerDemosaicOpParams>>);
+static_assert(std::same_as<decltype(BayerDemosaicOp::input), Input<schema::ImageT>>);
+static_assert(std::same_as<decltype(BayerDemosaicOp::output), Output<schema::ImageT>>);
+static_assert(!std::copy_constructible<BayerDemosaicOp>);
+static_assert(!std::move_constructible<BayerDemosaicOp>);
+
+// REQ: VISION-011
+TEST(BayerDemosaicOp, ParameterSchemaAcceptsDefaultsAndRejectsInvalidValues) {
+  EXPECT_TRUE(validate_params(BayerDemosaicOpParams{}).ok());
+
+  BayerDemosaicOpParams params;
+  params.bayer_grid_pos = BayerGridPosition::kRGGB;
+  params.generate_alpha = true;
+  params.alpha_value = 0U;
+  EXPECT_TRUE(validate_params(params).ok());
+
+  params = {};
+  params.bayer_grid_pos = static_cast<BayerGridPosition>(UINT8_MAX);
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kNotAllowed);
+}
+
+TEST(BayerDemosaicOp, OwnsStableNamedImagePorts) {
+  BayerDemosaicOp op;
+  EXPECT_EQ(op.input.name(), "input");
+  EXPECT_EQ(op.output.name(), "output");
+}
+
+[[nodiscard]] schema::ImageT bayer_mosaic_image(std::shared_ptr<Tensor> data, std::int32_t width,
+                                                std::int32_t height) {
+  schema::ImageT image;
+  image.width = width;
+  image.height = height;
+  image.encoding = schema::ImageEncoding_BAYER_GBRG;
+  image.data = std::move(data);
+  return image;
+}
+
+// The output is deliberately unbound: accepted input reaches allocation and returns
+// kNotReady, while invalid input must return kInvalidArgument before allocation or NPP.
+[[nodiscard]] expected<void, Error> validate_bayer_input(schema::ImageEncoding encoding,
+                                                         BayerDemosaicOpParams params,
+                                                         std::uint8_t bits = 8U) {
+  alignas(2) std::array<std::byte, 32U> storage{};
+  auto tensor = std::make_shared<Tensor>(detail::make_tensor_with_dlpack_strides(
+      storage.data(), {4, 4, 1}, {}, DLDataType{kDLUInt, bits, 1U}));
+  auto image = bayer_mosaic_image(tensor, 4, 4);
+  image.encoding = encoding;
+  BayerDemosaicOp op;
+  holoscan::test::SyntheticOperatorFixture fixture{op};
+  if (auto result = fixture.declare_ports(); !result) {
+    return result;
+  }
+  if (auto result = fixture.bind_initial_params(params); !result) {
+    return result;
+  }
+  if (auto result = fixture.bind_value(op.input, std::move(image)); !result) {
+    return result;
+  }
+  op.start();
+  return fixture.invoke_once(holoscan::detail::SyntheticActivationOptions{
+      .cuda_stream = reinterpret_cast<cudaStream_t>(std::uintptr_t{1U}),
+  });
+}
+
+// REQ: VISION-010
+TEST(BayerDemosaicOpValidation, NamedEncodingMustMatchConfiguredPhase) {
+  constexpr std::array kPhases{
+      std::pair{schema::ImageEncoding_BAYER_RGGB, BayerGridPosition::kRGGB},
+      std::pair{schema::ImageEncoding_BAYER_BGGR, BayerGridPosition::kBGGR},
+      std::pair{schema::ImageEncoding_BAYER_GRBG, BayerGridPosition::kGRBG},
+      std::pair{schema::ImageEncoding_BAYER_GBRG, BayerGridPosition::kGBRG},
+  };
+  for (const auto& [encoding, expected_phase] : kPhases) {
+    for (const auto& [unused_encoding, configured_phase] : kPhases) {
+      for (const auto bits : {8U, 16U}) {
+        SCOPED_TRACE(testing::Message() << "encoding=" << encoding << " phase="
+                                        << static_cast<int>(configured_phase) << " bits=" << bits);
+        const auto result = validate_bayer_input(
+            encoding, BayerDemosaicOpParams{.bayer_grid_pos = configured_phase}, bits);
+        ASSERT_FALSE(result);
+        EXPECT_EQ(result.error().code,
+                  expected_phase == configured_phase ? ErrorCode::kNotReady
+                                                     : ErrorCode::kInvalidArgument);
+        if (expected_phase != configured_phase) {
+          EXPECT_NE(result.error().message.find("bayer_grid_pos"), std::string::npos);
+        } else {
+          // An empty message distinguishes "validation passed, reached the deliberately
+          // unbound output" (Output<T>::allocate_tensor()'s plain Error{kNotReady}) from
+          // BayerDemosaicOp's own "resources are not initialized" kNotReady, which would
+          // otherwise mask a regression that silently dropped validate_bayer_input's start().
+          EXPECT_TRUE(result.error().message.empty());
+        }
+      }
+    }
+  }
+}
+
+// REQ: VISION-010
+TEST(BayerDemosaicOpValidation, UnnamedPhaseUsesConfiguredPhase) {
+  for (const auto phase : {BayerGridPosition::kRGGB,
+                           BayerGridPosition::kBGGR,
+                           BayerGridPosition::kGRBG,
+                           BayerGridPosition::kGBRG}) {
+    for (const auto bits : {8U, 16U}) {
+      for (const auto encoding :
+           {schema::ImageEncoding_CUSTOM,
+            bits == 8U ? schema::ImageEncoding_MONO8 : schema::ImageEncoding_MONO16}) {
+        SCOPED_TRACE(testing::Message()
+                     << "encoding=" << encoding << " phase=" << static_cast<int>(phase));
+        const auto result =
+            validate_bayer_input(encoding, BayerDemosaicOpParams{.bayer_grid_pos = phase}, bits);
+        ASSERT_FALSE(result);
+        EXPECT_EQ(result.error().code, ErrorCode::kNotReady);
+        // See NamedEncodingMustMatchConfiguredPhase above: an empty message confirms this
+        // reached the deliberately unbound output, not BayerDemosaicOp's own uninitialized-
+        // resources guard.
+        EXPECT_TRUE(result.error().message.empty());
+      }
+    }
+  }
+}
+
+// REQ: VISION-010
+TEST(BayerDemosaicOpValidation, AlphaMustFitTheOutputElementWhenEnabled) {
+  struct Case {
+    std::uint8_t bits;
+    std::uint16_t alpha;
+    bool generate_alpha;
+    ErrorCode expected_code;
+  };
+  for (const auto& item : {Case{8U, 255U, true, ErrorCode::kNotReady},
+                           Case{8U, 256U, true, ErrorCode::kInvalidArgument},
+                           Case{8U, 65535U, true, ErrorCode::kInvalidArgument},
+                           Case{16U, 65535U, true, ErrorCode::kNotReady},
+                           Case{8U, 65535U, false, ErrorCode::kNotReady}}) {
+    SCOPED_TRACE(testing::Message() << "bits=" << static_cast<int>(item.bits) << " alpha="
+                                    << item.alpha << " generate_alpha=" << item.generate_alpha);
+    const auto result = validate_bayer_input(
+        schema::ImageEncoding_BAYER_GBRG,
+        BayerDemosaicOpParams{.generate_alpha = item.generate_alpha, .alpha_value = item.alpha},
+        item.bits);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().code, item.expected_code);
+    if (item.expected_code == ErrorCode::kInvalidArgument) {
+      EXPECT_NE(result.error().message.find("alpha_value"), std::string::npos);
+    } else {
+      // See NamedEncodingMustMatchConfiguredPhase above: an empty message confirms this
+      // reached the deliberately unbound output, not BayerDemosaicOp's own uninitialized-
+      // resources guard.
+      EXPECT_TRUE(result.error().message.empty());
+    }
+  }
+}
+
+TEST(BayerDemosaicOpValidation, RejectsOddWidthOrHeight) {
+  alignas(2) std::array<std::byte, 12U> storage{};
+  auto tensor = std::make_shared<Tensor>(detail::make_tensor_with_dlpack_strides(
+      storage.data(), {4, 3, 1}, {}, DLDataType{kDLUInt, 8U, 1U}));
+
+  BayerDemosaicOp op;
+  holoscan::test::SyntheticOperatorFixture fixture{op};
+  ASSERT_TRUE(fixture.declare_ports());
+  ASSERT_TRUE(fixture.bind_initial_params(BayerDemosaicOpParams{}));
+  ASSERT_TRUE(fixture.bind_value(op.input, bayer_mosaic_image(tensor, 3, 4)));
+  ASSERT_NO_THROW(op.start());
+
+  auto result = fixture.invoke_once(holoscan::detail::SyntheticActivationOptions{
+      .cuda_stream = reinterpret_cast<cudaStream_t>(std::uintptr_t{1U}),
+  });
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_NE(result.error().message.find("even"), std::string::npos);
+}
+
+TEST(BayerDemosaicOpValidation, RejectsUnsupportedDtype) {
+  // Unsigned 8-bit and unsigned 16-bit are the two dtypes schema::ImageT can name an output
+  // encoding for (RGB8/RGBA8, RGB16/RGBA16); everything else -- including a same-width signed
+  // int -- must still be rejected. dtype_supported() in detail/cvcuda_tensor.cpp enforces this
+  // ahead of BayerDemosaicOp's own compute(), inside describe_image_payload().
+  for (const DLDataType dtype :
+       {DLDataType{kDLInt, 16U, 1U}, DLDataType{kDLUInt, 32U, 1U}, DLDataType{kDLFloat, 32U, 1U}}) {
+    SCOPED_TRACE(testing::Message() << "code=" << static_cast<int>(dtype.code)
+                                    << " bits=" << static_cast<int>(dtype.bits));
+    alignas(4) std::array<std::byte, 64U> storage{};
+    auto tensor = std::make_shared<Tensor>(
+        detail::make_tensor_with_dlpack_strides(storage.data(), {4, 4, 1}, {}, dtype));
+
+    BayerDemosaicOp op;
+    holoscan::test::SyntheticOperatorFixture fixture{op};
+    ASSERT_TRUE(fixture.declare_ports());
+    ASSERT_TRUE(fixture.bind_initial_params(BayerDemosaicOpParams{}));
+    ASSERT_TRUE(fixture.bind_value(op.input, bayer_mosaic_image(tensor, 4, 4)));
+    ASSERT_NO_THROW(op.start());
+
+    auto result = fixture.invoke_once(holoscan::detail::SyntheticActivationOptions{
+        .cuda_stream = reinterpret_cast<cudaStream_t>(std::uintptr_t{1U}),
+    });
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_NE(result.error().message.find("dtype"), std::string::npos);
+  }
 }
 
 constexpr DLDataType kNmsBoxesDtype{kDLInt, 16U, 1U};
@@ -898,46 +1312,49 @@ const PortRecord* declared_port(const GraphView& view, std::string_view name) {
   return found == view.ports().end() ? nullptr : &*found;
 }
 
-void expect_image_tensor_contracts(const GraphView& view) {
+void expect_image_tensor_contracts(const GraphView& view, std::uint32_t max_rank = 4U) {
+  // The graph canonicalizes the singular Image.data contract onto the port.
   const PortRecord* input = declared_port(view, "input");
   ASSERT_NE(input, nullptr);
   ASSERT_TRUE(input->setup.tensor_contract);
-  EXPECT_EQ(input->setup.tensor_contract->max_rank, 4U);
+  EXPECT_EQ(input->setup.tensor_contract->max_rank, max_rank);
   EXPECT_FALSE(input->setup.tensor_contract->representation.strides);
 
   const PortRecord* output = declared_port(view, "output");
   ASSERT_NE(output, nullptr);
   ASSERT_TRUE(output->setup.tensor_contract);
-  EXPECT_EQ(output->setup.tensor_contract->max_rank, 4U);
+  EXPECT_EQ(output->setup.tensor_contract->max_rank, max_rank);
   EXPECT_EQ(output->setup.tensor_contract->representation.strides,
             TensorStridePolicy::kContiguousOnly);
   EXPECT_FALSE(output->setup.tensor_contract->representation.dtype);
   EXPECT_FALSE(output->setup.tensor_contract->representation.rank);
 }
 
+// REQ: VISION-003
 TEST(VisionTensorContracts, ImageOperatorsBoundInputRankAndPromiseContiguousOutput) {
   {
+    Graph graph{"vision-bayer-contract"};
+    (void)graph.op<BayerDemosaicOp>("bayer");
+    expect_image_tensor_contracts(graph.view(), 3U);
+  }
+  {
     Graph graph{"vision-resize-contract"};
-    (void)graph.op<ResizeOp>(
-        "resize", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+    (void)graph.op<ResizeOp>("resize");
     expect_image_tensor_contracts(graph.view());
   }
   {
     Graph graph{"vision-crop-contract"};
-    (void)graph.op<CustomCropOp>(
-        "crop", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+    (void)graph.op<CustomCropOp>("crop");
     expect_image_tensor_contracts(graph.view());
   }
   {
     Graph graph{"vision-border-contract"};
-    (void)graph.op<CopyMakeBorderOp>(
-        "border", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+    (void)graph.op<CopyMakeBorderOp>("border");
     expect_image_tensor_contracts(graph.view());
   }
   {
     Graph graph{"vision-remap-contract"};
-    (void)graph.op<RemapOp>(
-        "remap", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+    (void)graph.op<RemapOp>("remap");
     const GraphView view = graph.view();
     expect_image_tensor_contracts(view);
     const PortRecord* map = declared_port(view, "map");
@@ -948,27 +1365,24 @@ TEST(VisionTensorContracts, ImageOperatorsBoundInputRankAndPromiseContiguousOutp
   }
   {
     Graph graph{"vision-normalize-contract"};
-    (void)graph.op<NormalizeOp>(
-        "normalize", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+    (void)graph.op<NormalizeOp>("normalize");
     expect_image_tensor_contracts(graph.view());
   }
   {
     Graph graph{"vision-convert-contract"};
-    (void)graph.op<ConvertToOp>(
-        "convert", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+    (void)graph.op<ConvertToOp>("convert");
     expect_image_tensor_contracts(graph.view());
   }
   {
     Graph graph{"vision-reformat-contract"};
-    (void)graph.op<ReformatOp>(
-        "reformat", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+    (void)graph.op<ReformatOp>("reformat");
     expect_image_tensor_contracts(graph.view());
   }
 }
 
 TEST(VisionTensorContracts, NmsDeclaresExactInputsAndContiguousMask) {
   Graph graph{"vision-nms-contract"};
-  (void)graph.op<NonMaximumSuppressionOp>("nms", NMSCapacity{.max_boxes = 2, .max_batch_size = 1U});
+  (void)graph.op<NonMaximumSuppressionOp>("nms");
   const GraphView view = graph.view();
 
   const PortRecord* boxes = declared_port(view, "boxes");
@@ -1001,80 +1415,51 @@ TEST(VisionTensorContracts, NmsDeclaresExactInputsAndContiguousMask) {
             TensorStridePolicy::kContiguousOnly);
 }
 
-TEST(VisionOperators, ShapeFieldsRemainCompileTime) {
-  // Compile-time fields are classified as requiring recompilation before an update candidate is
-  // created, so active mutation remains unavailable even when runtime updates are opted in.
-  expect_compile_time_capacity_fields<ResizeOpParams>({"width", "height"});
-  expect_compile_time_capacity_fields<CustomCropOpParams>({"x", "y", "width", "height"});
-  expect_compile_time_capacity_fields<RemapOpParams>({"width", "height"});
-  expect_compile_time_capacity_fields<CopyMakeBorderOpParams>({"top", "bottom", "left", "right"});
+// REQ: PARAM-003
+// REQ: VISION-011
+TEST(VisionOperators, CapacityDependenciesHaveStructuralMutability) {
+  // Key assertion: projector dependencies are compile-time or recompile-required, and true
+  // capacity limits cannot be omitted by a future complete parameter loader.
+  expect_fields<ResizeOpParams>({"width", "height"}, ParamMutability::kRecompile);
+  expect_fields<ResizeOpParams>({"max_batch_size"}, ParamMutability::kRecompile, true);
+  expect_fields<CustomCropOpParams>({"width", "height"}, ParamMutability::kRecompile);
+  expect_fields<CustomCropOpParams>({"max_batch_size"}, ParamMutability::kRecompile, true);
+  expect_fields<RemapOpParams>({"width", "height"}, ParamMutability::kRecompile);
+  expect_fields<RemapOpParams>({"max_batch_size"}, ParamMutability::kRecompile, true);
+  expect_fields<CopyMakeBorderOpParams>(
+      {"max_width", "max_height", "max_batch_size"}, ParamMutability::kRecompile, true);
+  expect_fields<ConvertToOpParams>({"output_type"}, ParamMutability::kCompileTime);
+  expect_fields<NonMaximumSuppressionOpParams>(
+      {"max_boxes", "max_batch_size"}, ParamMutability::kRecompile, true);
+
+  // Unrelated behavior fields retain their prior compile-time mutability.
+  expect_fields<CustomCropOpParams>({"x", "y"}, ParamMutability::kCompileTime);
+  expect_fields<CopyMakeBorderOpParams>({"top", "bottom", "left", "right"},
+                                        ParamMutability::kCompileTime);
 }
 
-TEST(VisionOperators, ComputeRejectsSpatialParametersBeyondAuthoredCapacity) {
-  // A 3x1 U8C1 output occupies three bytes, below even Remap's 2x2x1 authored 16-byte span.
-  // The individual width axis must still remain bounded by the authored structural capacity.
-  static_assert(3U < 4U * 2U * 2U * 1U);
+// REQ: VISION-011
+TEST(VisionOperators, ParameterSchemaVersionsMatchStructuralChanges) {
+  // Key assertion: capacity and named-enum schema changes publish version 2.
+  ASSERT_NE(param_schema_descriptor<BayerDemosaicOpParams>(), nullptr);
+  EXPECT_EQ(param_schema_descriptor<BayerDemosaicOpParams>()->version, 2U);
+  ASSERT_NE(param_schema_descriptor<ResizeOpParams>(), nullptr);
+  EXPECT_EQ(param_schema_descriptor<ResizeOpParams>()->version, 2U);
+  ASSERT_NE(param_schema_descriptor<CustomCropOpParams>(), nullptr);
+  EXPECT_EQ(param_schema_descriptor<CustomCropOpParams>()->version, 2U);
+  ASSERT_NE(param_schema_descriptor<RemapOpParams>(), nullptr);
+  EXPECT_EQ(param_schema_descriptor<RemapOpParams>()->version, 2U);
+  ASSERT_NE(param_schema_descriptor<CopyMakeBorderOpParams>(), nullptr);
+  EXPECT_EQ(param_schema_descriptor<CopyMakeBorderOpParams>()->version, 2U);
+  ASSERT_NE(param_schema_descriptor<NonMaximumSuppressionOpParams>(), nullptr);
+  EXPECT_EQ(param_schema_descriptor<NonMaximumSuppressionOpParams>()->version, 2U);
 
-  {
-    ResizeOp op{VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U}};
-    ResizeOpParams params{.width = 3, .height = 1};
-    expect_structural_capacity_error(op, std::move(params), "width");
-  }
-  {
-    ResizeOp op{VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U}};
-    ResizeOpParams params{.width = 1, .height = 3};
-    expect_structural_capacity_error(op, std::move(params), "height");
-  }
-  {
-    CustomCropOp op{VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U}};
-    CustomCropOpParams params{.width = 3, .height = 1};
-    expect_structural_capacity_error(op, std::move(params), "width");
-  }
-  {
-    CustomCropOp op{VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U}};
-    CustomCropOpParams params{.width = 1, .height = 3};
-    expect_structural_capacity_error(op, std::move(params), "height");
-  }
-  {
-    RemapOp op{VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U}};
-    RemapOpParams params{.width = 3, .height = 1};
-    expect_structural_capacity_error(op, std::move(params), "width");
-  }
-  {
-    RemapOp op{VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U}};
-    RemapOpParams params{.width = 1, .height = 3};
-    expect_structural_capacity_error(op, std::move(params), "height");
-  }
-}
-
-TEST(VisionOperators, ShapeParameterOverridesCannotExceedAuthoredPoolCapacity) {
-  Graph graph{"vision-capacity-test"};
-  constexpr VisionImageCapacity kCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U};
-  auto resize = graph.op<ResizeOp>("resize", kCapacity);
-  EXPECT_THROW(resize.set_params(ResizeOpParams{.width = 3, .height = 2}), RuntimeError);
-
-  auto crop = graph.op<CustomCropOp>("crop", kCapacity);
-  EXPECT_THROW(crop.set_params(CustomCropOpParams{.width = 2, .height = 3}), RuntimeError);
-
-  auto border = graph.op<CopyMakeBorderOp>("border", kCapacity);
-  EXPECT_THROW(border.set_params(CopyMakeBorderOpParams{.top = 1, .bottom = 1}), RuntimeError);
-
-  auto remap = graph.op<RemapOp>("remap", kCapacity);
-  EXPECT_THROW(remap.set_params(RemapOpParams{.width = 3, .height = 2}), RuntimeError);
-}
-
-TEST(VisionOperators, RejectAuthoredBatchCapacityAboveSharedLimit) {
-  Graph resize_graph{"vision-image-batch-capacity-test"};
-  EXPECT_THROW((void)resize_graph.op<ResizeOp>(
-                   "resize",
-                   VisionImageCapacity{
-                       .max_width = 1, .max_height = 1, .max_batch_size = kMaximumBatchSize + 1U}),
-               RuntimeError);
-
-  Graph nms_graph{"vision-nms-batch-capacity-test"};
-  EXPECT_THROW((void)nms_graph.op<NonMaximumSuppressionOp>(
-                   "nms", NMSCapacity{.max_boxes = 1, .max_batch_size = kMaximumBatchSize + 1U}),
-               RuntimeError);
+  ASSERT_NE(param_schema_descriptor<NormalizeOpParams>(), nullptr);
+  EXPECT_EQ(param_schema_descriptor<NormalizeOpParams>()->version, 1U);
+  ASSERT_NE(param_schema_descriptor<ConvertToOpParams>(), nullptr);
+  EXPECT_EQ(param_schema_descriptor<ConvertToOpParams>()->version, 2U);
+  ASSERT_NE(param_schema_descriptor<ReformatOpParams>(), nullptr);
+  EXPECT_EQ(param_schema_descriptor<ReformatOpParams>()->version, 2U);
 }
 
 }  // namespace

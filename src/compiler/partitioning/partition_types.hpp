@@ -42,6 +42,14 @@ struct ExecutionDomainKey {
   friend constexpr bool operator==(ExecutionDomainKey, ExecutionDomainKey) noexcept = default;
 };
 
+/// Identify one compiler-normalized optional callback serialization domain.
+struct SerializationDomainKey {
+  std::uint64_t value{};
+  [[nodiscard]] explicit constexpr operator bool() const noexcept { return value != 0U; }
+  friend constexpr bool operator==(SerializationDomainKey,
+                                   SerializationDomainKey) noexcept = default;
+};
+
 /// Describe the finite normalized facts that force an edge to cross a partition boundary.
 enum class PartitionBoundary : std::uint32_t {
   kNone = 0U,
@@ -77,6 +85,7 @@ enum class PartitionPlannerCapability : std::uint32_t {
   kCollapseLegality = 1U << 2U,
   kIndependentReadinessRoots = 1U << 3U,
   kAuthoredExactConstraints = 1U << 4U,
+  kSerializationDomains = 1U << 5U,
 };
 
 /// Carry a finite capability set for planner registration and invocation checks.
@@ -96,7 +105,7 @@ struct PartitionPlannerCapabilities {
                                    PartitionPlannerCapabilities) noexcept = default;
 };
 
-inline constexpr std::uint32_t kPartitionPlannerInterfaceVersion = 2U;
+inline constexpr std::uint32_t kPartitionPlannerInterfaceVersion = 3U;
 inline constexpr std::string_view kSerialBaselineAlgorithmId = "holoscan.partition.serial_baseline";
 inline constexpr std::string_view kSourceChainAlgorithmId = "holoscan.partition.source_chain";
 inline constexpr std::uint32_t kPartitionAlgorithmVersion = 1U;
@@ -114,6 +123,7 @@ inline constexpr std::uint32_t kPartitionAlgorithmVersion = 1U;
   capabilities.add(PartitionPlannerCapability::kCollapseLegality);
   capabilities.add(PartitionPlannerCapability::kIndependentReadinessRoots);
   capabilities.add(PartitionPlannerCapability::kAuthoredExactConstraints);
+  capabilities.add(PartitionPlannerCapability::kSerializationDomains);
   return capabilities;
 }
 
@@ -145,6 +155,7 @@ struct PartitionVertexView {
   std::span<const EdgeIndex> outgoing_edges;
   bool starts_execution_chain{};
   ExecutionDomainKey execution_domain;
+  SerializationDomainKey serialization_domain;
   /// Canonical exact CUDA-device obligations; empty is unconstrained and multiple values conflict.
   std::span<const std::int32_t> device_obligations;
   PartitionBoundaryMask boundary_before;

@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "compiler/execution_plan_contracts.hpp"
 #include "compiler/physical_plan_lowering_internal.hpp"
@@ -120,10 +121,11 @@ void validate_tensor_provider_geometry(
     }
     const auto dependencies =
         provider_sizing_dependencies(result.pool_capacity_dependencies, *provider);
-    if (!dependencies || std::ranges::count(result.pool_capacity_dependencies,
-                                            pool_id,
-                                            &PoolCapacityDependencyPlanRecord::pool_id) !=
-                             provider->sizing_dependency_count) {
+    if (!dependencies ||
+        std::cmp_not_equal(std::ranges::count(result.pool_capacity_dependencies,
+                                              pool_id,
+                                              &PoolCapacityDependencyPlanRecord::pool_id),
+                           provider->sizing_dependency_count)) {
       return false;
     }
     const auto capacity = evaluate_pool_capacity_plan(pool_id,

@@ -39,9 +39,18 @@ set(_all_component_targets
 set(_all_metadata
     holoscan-config.json
     holoscan-config-io.json
-    holoscan-params.json
-    holoscan-params-io.json
     holoscan-experimental-params-web-tuner.json)
+# Every Core-bearing prefix imports the whole shared holoscan-targets.cmake, and the config
+# components it links.
+set(_core_closure_targets
+    holoscan::core
+    holoscan::config
+    holoscan::config_io
+    holoscan::params
+    holoscan::params_io
+    holoscan::sensor_io
+    holoscan::sensor_io_schemas)
+set(_core_closure_metadata holoscan-config.json holoscan-config-io.json)
 
 if(HOLOSCAN_TEST_COMPONENT_MODE STREQUAL "missing_unknown")
   find_package(holoscan REQUIRED CONFIG COMPONENTS definitely_unknown
@@ -66,84 +75,62 @@ elseif(HOLOSCAN_TEST_COMPONENT_MODE STREQUAL "config_io")
   set(_link_target holoscan::config_io)
   add_compile_definitions(HOLOSCAN_TEST_USE_CONFIG_IO=1)
 elseif(HOLOSCAN_TEST_COMPONENT_MODE STREQUAL "params")
+  # params is a pass-through name for a target in the Core export set, so requesting it yields the
+  # whole Core closure rather than a narrower one.
   find_package(holoscan REQUIRED CONFIG COMPONENTS params
       PATHS "${HOLOSCAN_TEST_INSTALL_PREFIX}" NO_DEFAULT_PATH)
-  set(_expected_targets holoscan::core holoscan::config holoscan::params)
-  set(_expected_metadata holoscan-config.json holoscan-params.json)
+  set(_expected_targets ${_core_closure_targets})
+  set(_expected_metadata ${_core_closure_metadata})
   set(_link_target holoscan::params)
   add_compile_definitions(HOLOSCAN_TEST_USE_PARAMS=1)
 elseif(HOLOSCAN_TEST_COMPONENT_MODE STREQUAL "params_io")
   find_package(holoscan REQUIRED CONFIG COMPONENTS params_io
       PATHS "${HOLOSCAN_TEST_INSTALL_PREFIX}" NO_DEFAULT_PATH)
-  set(_expected_targets holoscan::core holoscan::config holoscan::config_io
-                        holoscan::params holoscan::params_io)
-  set(_expected_metadata holoscan-config.json holoscan-config-io.json
-                         holoscan-params.json holoscan-params-io.json)
+  set(_expected_targets ${_core_closure_targets})
+  set(_expected_metadata ${_core_closure_metadata})
   set(_link_target holoscan::params_io)
   add_compile_definitions(HOLOSCAN_TEST_USE_PARAMS_IO=1)
 elseif(HOLOSCAN_TEST_COMPONENT_MODE STREQUAL "tuner")
   find_package(holoscan REQUIRED CONFIG COMPONENTS experimental_params_web_tuner
       PATHS "${HOLOSCAN_TEST_INSTALL_PREFIX}" NO_DEFAULT_PATH)
-  set(_expected_targets holoscan::core holoscan::config holoscan::params
-                        holoscan::experimental_params_web_tuner)
-  set(_expected_metadata holoscan-config.json holoscan-params.json
+  set(_expected_targets ${_core_closure_targets} holoscan::experimental_params_web_tuner)
+  set(_expected_metadata ${_core_closure_metadata}
                          holoscan-experimental-params-web-tuner.json)
   set(_link_target holoscan::experimental_params_web_tuner)
   add_compile_definitions(HOLOSCAN_TEST_USE_TUNER=1)
 elseif(HOLOSCAN_TEST_COMPONENT_MODE STREQUAL "full")
   find_package(holoscan REQUIRED CONFIG
       PATHS "${HOLOSCAN_TEST_INSTALL_PREFIX}" NO_DEFAULT_PATH)
-  set(_expected_targets holoscan::core)
-  set(_expected_metadata)
+  set(_expected_targets ${_core_closure_targets})
+  set(_expected_metadata ${_core_closure_metadata})
   string(REPLACE "," ";" _available_modes "${HOLOSCAN_TEST_AVAILABLE_COMPONENTS}")
-  foreach(_available_mode IN LISTS _available_modes)
-    if(_available_mode STREQUAL "config")
-      list(APPEND _expected_targets holoscan::config)
-      list(APPEND _expected_metadata holoscan-config.json)
-    elseif(_available_mode STREQUAL "config_io")
-      list(APPEND _expected_targets holoscan::config_io)
-      list(APPEND _expected_metadata holoscan-config-io.json)
-    elseif(_available_mode STREQUAL "params")
-      list(APPEND _expected_targets holoscan::params)
-      list(APPEND _expected_metadata holoscan-params.json)
-    elseif(_available_mode STREQUAL "params_io")
-      list(APPEND _expected_targets holoscan::params_io)
-      list(APPEND _expected_metadata holoscan-params-io.json)
-    elseif(_available_mode STREQUAL "tuner")
-      list(APPEND _expected_targets holoscan::experimental_params_web_tuner)
-      list(APPEND _expected_metadata holoscan-experimental-params-web-tuner.json)
-    endif()
-  endforeach()
-  # Exercise every imported component's link interface in the aggregate mode. The
-  # consumer body uses the configuration API, while the complete target list proves
-  # that optional component closures coexist without hidden ordering requirements.
+  if("tuner" IN_LIST _available_modes)
+    list(APPEND _expected_targets holoscan::experimental_params_web_tuner)
+    list(APPEND _expected_metadata holoscan-experimental-params-web-tuner.json)
+  endif()
+  # Exercise every imported component's link interface in the aggregate mode. The consumer body
+  # uses the configuration API, while the complete target list proves that the Core closure and
+  # the optional tuner coexist without hidden ordering requirements.
   set(_link_target ${_expected_targets})
 
-  # holoscan-sensor-io is installed on this prefix, so an unqualified find has to resolve it out of
-  # its own export file without a second component argument. Expected but deliberately not linked:
-  # the claim under test is provenance, not that a configuration consumer needs the acquisition DSO.
-  list(APPEND _expected_targets holoscan::sensor_io holoscan::sensor_io_schemas)
-
-  # The separation itself, checked against the installed files rather than only the resulting
-  # targets. While the sensor targets lived in the shared holoscan-exports set, the generated
-  # holoscan-targets.cmake declared holoscan::sensor_io and asserted its DSO existed, so a prefix
-  # without the component failed find_package(holoscan) for every consumer. Reading the shared file
-  # back is what distinguishes "the component is absent" from "the component is mandatory again".
+  # The Core export set declares the sensor targets, so a Core-bearing prefix must not also carry
+  # a stale standalone export file for them.
   get_filename_component(_holoscan_package_dir "${holoscan_CONFIG}" DIRECTORY)
-  if(NOT EXISTS "${_holoscan_package_dir}/holoscan-sensor-io-targets.cmake")
-    message(FATAL_ERROR
-        "holoscan-sensor-io did not install an export file of its own")
-  endif()
-  # The shared file is included OPTIONAL by the generated package, so read it only if it is there;
-  # holoscan::core above already fails if a Core-bearing prefix somehow lacks it.
-  if(EXISTS "${_holoscan_package_dir}/holoscan-targets.cmake")
-    file(READ "${_holoscan_package_dir}/holoscan-targets.cmake" _holoscan_shared_exports)
-    if(_holoscan_shared_exports MATCHES "holoscan::sensor_io")
-      message(FATAL_ERROR
-          "The shared holoscan-targets.cmake declares holoscan::sensor_io again, "
-          "which makes a Core-only prefix fail find_package(holoscan)")
+  foreach(_stale_export IN ITEMS
+      holoscan-sensor-io-targets.cmake
+      holoscan-params-targets.cmake
+      holoscan-params-io-targets.cmake)
+    if(EXISTS "${_holoscan_package_dir}/${_stale_export}")
+      message(FATAL_ERROR "Stale standalone export file installed: ${_stale_export}")
     endif()
-  endif()
+  endforeach()
+  file(READ "${_holoscan_package_dir}/holoscan-targets.cmake" _holoscan_shared_exports)
+  foreach(_core_target IN ITEMS holoscan::params holoscan::params_io holoscan::sensor_io)
+    if(NOT _holoscan_shared_exports MATCHES "${_core_target}")
+      message(FATAL_ERROR
+          "The shared holoscan-targets.cmake does not declare ${_core_target}")
+    endif()
+  endforeach()
 else()
   message(FATAL_ERROR "Unknown HOLOSCAN_TEST_COMPONENT_MODE=${HOLOSCAN_TEST_COMPONENT_MODE}")
 endif()
@@ -195,10 +182,6 @@ foreach(_metadata IN LISTS _all_metadata)
       set(_metadata_target holoscan::config)
     elseif(_metadata STREQUAL "holoscan-config-io.json")
       set(_metadata_target holoscan::config_io)
-    elseif(_metadata STREQUAL "holoscan-params.json")
-      set(_metadata_target holoscan::params)
-    elseif(_metadata STREQUAL "holoscan-params-io.json")
-      set(_metadata_target holoscan::params_io)
     else()
       set(_metadata_target holoscan::experimental_params_web_tuner)
     endif()

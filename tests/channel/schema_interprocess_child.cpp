@@ -28,8 +28,8 @@
 #include <holoscan/core/errors.hpp>
 #include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
 // Provides generated owning types and schema-trait specializations.
-#include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/schema/inline_flatbuffer_payload.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/sensor_io/image_metadata.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 

@@ -6,9 +6,13 @@
 #include "runtime_channel_session_impl.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <utility>
+#include <vector>
 
 #include <holoscan/profiler/nvtx3.hpp>
 
@@ -50,12 +54,12 @@ RuntimeChannelSession::Impl::InputPortState::publish_readiness_change() noexcept
   if (state.active_selection.state == InputState::kNotSelected) {
     return make_unexpected(Error{ErrorCode::kInputNotSelected});
   }
+  const bool empty_state = state.active_selection.state == InputState::kAbsent ||
+                           state.active_selection.state == InputState::kSafeDefault;
   if (state.batch != batch_accessor) {
     return make_unexpected(Error{ErrorCode::kInputSelectionCardinalityMismatch});
   }
-  if (state.active_selection.state == InputState::kAbsent ||
-      state.active_selection.state == InputState::kSafeDefault ||
-      (!batch_accessor && state.active_slots.empty())) {
+  if (empty_state || (!batch_accessor && state.active_slots.empty())) {
     return make_unexpected(Error{ErrorCode::kInputEmpty});
   }
   return {};
@@ -95,6 +99,8 @@ RuntimeChannelSession::Impl::InputPortState::scalar(const void* opaque, std::uin
   return RuntimeScalarReadBinding{
       .sample = slot->sample.data(),
       .claim = claim,
+      .view_generation = &state.view_generation,
+      .expected_view_generation = state.view_generation,
   };
 }
 
@@ -135,7 +141,8 @@ RuntimeChannelSession::Impl::InputPortState::batch_read(const void* opaque,
 }
 
 [[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::bind_activation_owners(
-    std::size_t port_count) {
+    const ExecutionPlanState& plan) {
+  const std::size_t port_count = plan.ports.size();
   if (!activation_owners_.empty() || !input_by_port_.empty() || port_count == 0U ||
       std::any_of(
           inputs_.begin(), inputs_.end(), [](const auto& input) { return !input->owner; }) ||
@@ -148,12 +155,22 @@ RuntimeChannelSession::Impl::InputPortState::batch_read(const void* opaque,
           outputs_.begin(), outputs_.end(), [](const auto& output) { return !output->owner; })) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
+  const auto activation_owner = [&](const VertexId owner) {
+    const auto* region = find_unique_cuda_graph_execution_region_by_member(plan, owner);
+    return region != nullptr ? region->fused_operator : owner;
+  };
   std::uint64_t maximum_owner = 0U;
   for (const auto& input : inputs_) {
-    maximum_owner = std::max(maximum_owner, input->owner.value);
+    maximum_owner = std::max(maximum_owner, activation_owner(input->owner).value);
   }
   for (const auto& output : outputs_) {
-    maximum_owner = std::max(maximum_owner, output->owner.value);
+    maximum_owner = std::max(maximum_owner, activation_owner(output->owner).value);
+  }
+  // A CUDA Graph region removes capture-only members from the runner inventory, but Channel
+  // subscribers still retain their original consumer owner. Include those owners when sizing the
+  // dense table before indexing it below.
+  for (const auto& subscriber : subscribers_) {
+    maximum_owner = std::max(maximum_owner, activation_owner(subscriber->owner).value);
   }
   if (maximum_owner > std::numeric_limits<std::size_t>::max()) {
     return make_unexpected(Error{ErrorCode::kResourceExhausted});
@@ -169,16 +186,17 @@ RuntimeChannelSession::Impl::InputPortState::batch_read(const void* opaque,
       return make_unexpected(Error{ErrorCode::kProtocolError});
     }
     indexed = input.get();
-    activation_owners_[static_cast<std::size_t>(input->owner.value - 1U)].inputs.push_back(
-        input.get());
+    const VertexId owner = activation_owner(input->owner);
+    activation_owners_[static_cast<std::size_t>(owner.value - 1U)].inputs.push_back(input.get());
   }
   for (const auto& subscriber : subscribers_) {
-    activation_owners_[static_cast<std::size_t>(subscriber->owner.value - 1U)]
-        .subscribers.push_back(subscriber.get());
+    const VertexId owner = activation_owner(subscriber->owner);
+    activation_owners_[static_cast<std::size_t>(owner.value - 1U)].subscribers.push_back(
+        subscriber.get());
   }
   for (const auto& output : outputs_) {
-    activation_owners_[static_cast<std::size_t>(output->owner.value - 1U)].outputs.push_back(
-        output.get());
+    const VertexId owner = activation_owner(output->owner);
+    activation_owners_[static_cast<std::size_t>(owner.value - 1U)].outputs.push_back(output.get());
   }
 #if !defined(NDEBUG)
   owner_mutation_active_ =
@@ -242,8 +260,7 @@ void RuntimeChannelSession::Impl::cache_direct_continuation_candidate(
 
   OutputState* output = nullptr;
   for (OutputState* const candidate : producer_state->outputs) {
-    if (candidate->direct_subscriber == nullptr || candidate->tensor_payload() ||
-        candidate->tensor_schema_payload()) {
+    if (candidate->direct_subscriber == nullptr) {
       continue;
     }
     if (output != nullptr) {
@@ -252,8 +269,7 @@ void RuntimeChannelSession::Impl::cache_direct_continuation_candidate(
     output = candidate;
   }
   if (output == nullptr || output->direct_subscriber != &subscriber ||
-      output->owner != subscriber.source_owner || output->port != subscriber.source ||
-      output->tensor_payload() || output->tensor_schema_payload()) {
+      output->owner != subscriber.source_owner || output->port != subscriber.source) {
     return;
   }
   producer_state->direct_continuation_output = output;
@@ -517,6 +533,24 @@ RuntimeChannelSession::Impl::poll_direct_continuation(const VertexId producer,
         return rollback_tensor_access(
             input, access_checkpoint, lease_checkpoint, Error{ErrorCode::kProtocolError});
       }
+      if (direct_tensor && input.required_tensor_address != nullptr) {
+        const auto shape = tensor->shape_span();
+        const bool shape_matches =
+            shape.size() == input.required_tensor_shape.size() &&
+            std::equal(shape.begin(),
+                       shape.end(),
+                       input.required_tensor_shape.begin(),
+                       [](const std::int64_t actual, const std::uint64_t expected) {
+                         return actual >= 0 && static_cast<std::uint64_t>(actual) == expected;
+                       });
+        if (tensor->data() != input.required_tensor_address || !shape_matches) {
+          return rollback_tensor_access(
+              input,
+              access_checkpoint,
+              lease_checkpoint,
+              Error{ErrorCode::kIncompatible, "CUDA_GRAPH_RUNTIME_INGRESS_MISMATCH"});
+        }
+      }
       auto lease = TensorAccess::acquire_read_lease(*tensor);
       if (!lease) {
         return rollback_tensor_access(
@@ -570,33 +604,43 @@ RuntimeChannelSession::Impl::ReadinessBinding::~ReadinessBinding() {
 
 [[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::ReadinessBinding::poll(
     TimePoint observed_at) noexcept {
-  return poll_with_acquisition(observed_at, false);
+  return poll_with_acquisition(observed_at, RuntimeChannelIncompletePollKind::kNonblocking);
 }
 
 [[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::ReadinessBinding::poll_blocking(
     TimePoint observed_at) noexcept {
-  return poll_with_acquisition(observed_at, true);
+  return poll_with_acquisition(observed_at, RuntimeChannelIncompletePollKind::kBlocking);
 }
 
 [[nodiscard]] expected<void, Error>
-RuntimeChannelSession::Impl::ReadinessBinding::poll_with_acquisition(TimePoint observed_at,
-                                                                     const bool block) noexcept {
+RuntimeChannelSession::Impl::ReadinessBinding::poll_after_contention(
+    TimePoint observed_at) noexcept {
+  return poll_with_acquisition(observed_at, RuntimeChannelIncompletePollKind::kContentionRetry);
+}
+
+[[nodiscard]] expected<void, Error>
+RuntimeChannelSession::Impl::ReadinessBinding::poll_with_acquisition(
+    TimePoint observed_at, const RuntimeChannelIncompletePollKind flavour) noexcept {
   if (closed_ || owner_ == nullptr) {
     return make_unexpected(Error{ErrorCode::kClosed});
   }
   if (!observed_at.valid() || observed_at.clock_id != request_.reference_clock) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
+  last_poll_lock_contended_ = false;
   for (InputRevision& revision : input_revisions_) {
     revision.pending = revision.input->readiness_revision.load(std::memory_order_acquire);
   }
-  if (block && owner_->incomplete_poll_test_control_ != nullptr &&
-      owner_->incomplete_poll_test_control_->consume()) {
+  if (owner_->incomplete_poll_test_control_ != nullptr &&
+      owner_->incomplete_poll_test_control_->applies_to(flavour) &&
+      owner_->incomplete_poll_test_control_->consume(vertex_)) {
+    // A forced nonblocking or contention-retry decline models a lost input cache lock.
+    last_poll_lock_contended_ = flavour != RuntimeChannelIncompletePollKind::kBlocking;
     last_poll_incomplete_ = true;
     count_phase(owner_->phase_counters_, RuntimePhaseCounter::kChannelPollIncomplete);
     return {};
   }
-  auto polled = owner_->poll_inputs(*this, observed_at, block);
+  auto polled = owner_->poll_inputs(*this, observed_at, flavour);
   if (!polled) {
     return make_unexpected(std::move(polled).error());
   }
@@ -1024,10 +1068,62 @@ RuntimeChannelSession::Impl::event_coordinates(const SampleSlot& slot,
   return std::pair{capture, *reference};
 }
 
+namespace {
+
+// A contention retry waits out one holder's critical section on an input cache mutex: one
+// kContentionRetryBudget interval per contended acquisition. poll_inputs acquires once per owner
+// subscriber in its scan and once per popped candidate in its commit, and the first acquisition
+// that fails ends the poll, so a poll accrues budget only across acquisitions that contend and then
+// succeed; a wide fan-in owner may therefore spend up to (subscribers + popped candidates) x
+// budget, each attempt overshooting by one yield. Holders are far shorter than the budget, so it
+// expires only when a holder is preempted mid-section, and that expiry is reported exactly like a
+// declined nonblocking poll: the dirty revision stays for the next round and the 1 ms fallback park
+// follows as before. The wait is a yield loop, which under SCHED_FIFO or SCHED_RR cannot hand the
+// CPU to a lower-priority holder sharing it; a real-time lane then pays the full budget before that
+// park. Execution lanes run SCHED_OTHER unless an application places them, and the pump thread is
+// never placed.
+//
+// The budget is the session's (kContentionRetryBudget unless a source-tree test widened it). Each
+// failed attempt that the loop follows with another try reports to the caller first; the final
+// failure that expires the budget is returned as the unowned lock instead. That report is how a
+// test releases a real holder only after the loop has actually re-armed; production callers
+// install no observer, so it costs one null check per attempt.
+template <typename OnFailedRetryAttempt>
+[[nodiscard]] std::unique_lock<std::mutex> acquire_input_cache_lock(
+    std::mutex& mutex, const RuntimeChannelIncompletePollKind flavour,
+    const std::chrono::nanoseconds retry_budget,
+    OnFailedRetryAttempt on_failed_retry_attempt) noexcept {
+  switch (flavour) {
+    case RuntimeChannelIncompletePollKind::kBlocking:
+      return std::unique_lock<std::mutex>{mutex};
+    case RuntimeChannelIncompletePollKind::kContentionRetry: {
+      std::unique_lock<std::mutex> lock{mutex, std::try_to_lock};
+      if (lock.owns_lock()) {
+        return lock;
+      }
+      const auto deadline = std::chrono::steady_clock::now() + retry_budget;
+      do {
+        on_failed_retry_attempt();
+        std::this_thread::yield();
+        if (lock.try_lock()) {
+          return lock;
+        }
+      } while (std::chrono::steady_clock::now() < deadline);
+      return lock;
+    }
+    case RuntimeChannelIncompletePollKind::kNonblocking:
+      break;
+  }
+  return std::unique_lock<std::mutex>{mutex, std::try_to_lock};
+}
+
+}  // namespace
+
 // Polling joins every endpoint family into one ordered readiness publication pass.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<bool, Error> RuntimeChannelSession::Impl::poll_inputs(
-    ReadinessBinding& binding, TimePoint observed_at, const bool block) noexcept {
+    ReadinessBinding& binding, TimePoint observed_at,
+    const RuntimeChannelIncompletePollKind flavour) noexcept {
   const auto completion = [this](const bool complete) -> expected<bool, Error> {
     auto current = status();
     return current ? expected<bool, Error>{complete}
@@ -1046,10 +1142,21 @@ RuntimeChannelSession::Impl::event_coordinates(const SampleSlot& slot,
   }
   binding.candidates_.clear();
   for (SubscriberState* const subscriber : owner->subscribers) {
-    const std::unique_lock lock = block ? std::unique_lock{subscriber->mutex}
-                                        : std::unique_lock{subscriber->mutex, std::try_to_lock};
+    DeferredSampleReleases releases{*subscriber->input->type_ops, subscriber->slots.size() + 1U};
+    const std::unique_lock lock = acquire_input_cache_lock(
+        subscriber->mutex, flavour, contention_retry_budget_, [&]() noexcept {
+          if (subscriber->input_contention_retry_attempt_observer != nullptr) {
+            subscriber->input_contention_retry_attempt_observer(
+                subscriber->input_contention_retry_attempt_observer_state,
+                subscriber->owner,
+                subscriber->target,
+                binding.source());
+          }
+        });
     if (!lock.owns_lock()) {
-      if (!block && subscriber->input_poll_contention_observer != nullptr) {
+      binding.last_poll_lock_contended_ = true;
+      if (flavour == RuntimeChannelIncompletePollKind::kNonblocking &&
+          subscriber->input_poll_contention_observer != nullptr) {
         subscriber->input_poll_contention_observer(subscriber->input_poll_contention_observer_state,
                                                    subscriber->owner,
                                                    subscriber->target,
@@ -1060,7 +1167,7 @@ RuntimeChannelSession::Impl::event_coordinates(const SampleSlot& slot,
       // it. The dispatcher may retry after the bounded owner of the lock makes progress.
       return completion(false);
     }
-    auto promoted = promote_direct_ingress(*subscriber);
+    auto promoted = promote_direct_ingress(*subscriber, releases);
     if (!promoted) {
       return make_unexpected(std::move(promoted).error());
     }
@@ -1119,10 +1226,18 @@ RuntimeChannelSession::Impl::event_coordinates(const SampleSlot& slot,
       observer(state);
     }
     SubscriberState& selected_subscriber = *selected.subscriber;
-    const std::unique_lock lock =
-        block ? std::unique_lock{selected_subscriber.mutex}
-              : std::unique_lock{selected_subscriber.mutex, std::try_to_lock};
+    const std::unique_lock lock = acquire_input_cache_lock(
+        selected_subscriber.mutex, flavour, contention_retry_budget_, [&]() noexcept {
+          if (selected_subscriber.input_contention_retry_attempt_observer != nullptr) {
+            selected_subscriber.input_contention_retry_attempt_observer(
+                selected_subscriber.input_contention_retry_attempt_observer_state,
+                selected_subscriber.owner,
+                selected_subscriber.target,
+                binding.source());
+          }
+        });
     if (!lock.owns_lock()) {
+      binding.last_poll_lock_contended_ = true;
       return completion(false);
     }
     if (selected.slot == nullptr) {
@@ -1200,6 +1315,7 @@ RuntimeChannelSession::Impl::event_coordinates(const SampleSlot& slot,
   for (SubscriberState* const subscriber : activation_owner->subscribers) {
     bool matched = false;
     bool direct_capacity_available = false;
+    DeferredSampleReleases releases{*subscriber->input->type_ops, subscriber->slots.size() + 1U};
     {
       const std::scoped_lock lock{subscriber->mutex};
       for (SampleSlot& slot : subscriber->slots) {
@@ -1208,8 +1324,8 @@ RuntimeChannelSession::Impl::event_coordinates(const SampleSlot& slot,
             return make_unexpected(Error{ErrorCode::kStaleEndpoint});
           }
           slot.witness_retired = true;
-          reclaim_sample_slot_if_unclaimed(slot);
-          auto promoted = promote_direct_ingress(*subscriber);
+          reclaim_sample_slot_if_unclaimed(slot, releases);
+          auto promoted = promote_direct_ingress(*subscriber, releases);
           if (!promoted) {
             return make_unexpected(std::move(promoted).error());
           }
@@ -1273,7 +1389,10 @@ bool RuntimeChannelSession::has_materialized_input_state(const VertexId owner) c
     return false;
   }
   const auto* activation_owner = impl_->find_activation_owner(owner);
-  return activation_owner != nullptr && !activation_owner->inputs.empty();
+  return activation_owner != nullptr &&
+         std::any_of(activation_owner->inputs.begin(),
+                     activation_owner->inputs.end(),
+                     [](const auto* input) { return !input->subscribers.empty(); });
 }
 
 expected<std::unique_ptr<PortBinding>, Error> RuntimeChannelSession::create_readiness_binding(
@@ -1444,6 +1563,10 @@ RuntimeChannelSession::Impl::begin_activation_prepare(
                     [&](const auto& prior) { return prior.port == selections[index].port; })) {
       return make_unexpected(Error{ErrorCode::kInvalidArgument});
     }
+    // A failed preparation must be able to invalidate every newly staged view before rollback.
+    if (input->view_generation == std::numeric_limits<std::uint64_t>::max()) {
+      return make_unexpected(Error{ErrorCode::kResourceExhausted});
+    }
   }
 
   if (initial_prepare) {
@@ -1472,6 +1595,11 @@ RuntimeChannelSession::Impl::begin_activation_prepare(
 
 void RuntimeChannelSession::Impl::rollback_activation_prepare(
     ActivationPrepareTransaction& transaction) noexcept {
+  for (auto* input : transaction.owner->inputs) {
+    if (input->staged_now) {
+      ++input->view_generation;
+    }
+  }
   for (auto* input : transaction.owner->inputs) {
     if (!input->staged_now) {
       continue;
@@ -1695,11 +1823,18 @@ expected<void, Error> RuntimeChannelSession::Impl::validate_activation_retiremen
       }
       const bool value_state = input->active_selection.state == InputState::kSelected ||
                                input->active_selection.state == InputState::kReused;
-      if (input->reuse_last && value_state && input->active_slots.size() == 1U &&
-          input->reuse_slot != nullptr && input->reuse_slot != input->active_slots.front()) {
-        const std::scoped_lock lock{input->reuse_slot->subscriber->mutex};
-        if (input->reuse_slot->active_selected ||
-            (input->reuse_slot->event_emitted && !input->reuse_slot->witness_retired)) {
+      if (!input->reuse_last || !value_state || input->active_slots.size() != 1U) {
+        continue;
+      }
+      SampleSlot* const reuse_slot = input->reuse_slot.load(std::memory_order_acquire);
+      if (reuse_slot != nullptr && reuse_slot != input->active_slots.front()) {
+        const std::scoped_lock lock{reuse_slot->subscriber->mutex};
+        // A transported replacement can release the prior reuse identity while this execution
+        // lane waits for its slot lock. The address remains valid, but it no longer owns a claim
+        // that activation retirement must validate.
+        if (input->reuse_slot.load(std::memory_order_acquire) == reuse_slot &&
+            (reuse_slot->active_selected ||
+             (reuse_slot->event_emitted && !reuse_slot->witness_retired))) {
           return make_unexpected(Error{ErrorCode::kBackpressured});
         }
       }
@@ -1724,6 +1859,11 @@ expected<void, Error> RuntimeChannelSession::Impl::validate_activation_retiremen
 expected<void, Error> RuntimeChannelSession::Impl::retire_activation_inputs(
     ActivationOwnerState& owner, const bool activation_accepted,
     const bool signal_direct_progress) noexcept {
+  // Preflight checked every epoch. Invalidate the entire callback's views before releasing any
+  // storage: direct-ingress promotion can fail partway through the cleanup loop below.
+  for (auto* input : owner.inputs) {
+    ++input->view_generation;
+  }
   for (auto* input : owner.inputs) {
     if (input->predicate_view_constructed) {
       input->type_ops->destroy_predicate_view(input->predicate_view_storage.data());
@@ -1735,33 +1875,46 @@ expected<void, Error> RuntimeChannelSession::Impl::retire_activation_inputs(
                                    value_state && input->active_slots.size() == 1U
                                ? input->active_slots.front()
                                : nullptr;
-    if (retained != nullptr && input->reuse_slot != nullptr && input->reuse_slot != retained) {
-      SampleSlot* prior = input->reuse_slot;
-      const std::scoped_lock lock{prior->subscriber->mutex};
-      prior->reuse_retained = false;
-      reclaim_sample_slot_if_unclaimed(*prior);
-    }
-    for (SampleSlot* slot : input->active_slots) {
-      const std::scoped_lock lock{slot->subscriber->mutex};
-      slot->active_selected = false;
-      if (slot == retained) {
-        slot->reuse_retained = true;
-      } else {
-        // Selection commit/rollback owns the temporal claim; activation retirement owns only the
-        // activation and finite reuse claims. Reclaiming through the shared gate preserves scalar
-        // rollback, overlapping windows, and cache-retained non-destructive selections.
-        reclaim_sample_slot_if_unclaimed(*slot);
-      }
-    }
+    const auto retire_slot =
+        [](SampleSlot& slot, const bool keep, DeferredSampleReleases& releases) {
+          slot.active_selected = false;
+          if (keep) {
+            slot.reuse_retained = true;
+          } else {
+            // Temporal and finite read claims continue to protect the payload
+            // independently.
+            reclaim_sample_slot_if_unclaimed(slot, releases);
+          }
+        };
     if (retained != nullptr) {
-      input->reuse_slot = retained;
+      // Keep the old claim, selected claims, and fallback publication in one
+      // cache transaction. Ingress must not clear or restore the fallback
+      // between those steps.
+      DeferredSampleReleases releases{*input->type_ops, 1U};
+      const InputCacheLock lock{*input};
+      SampleSlot* const prior = input->reuse_slot.load(std::memory_order_acquire);
+      if (prior != nullptr && prior != retained) {
+        prior->reuse_retained = false;
+        reclaim_sample_slot_if_unclaimed(*prior, releases);
+      }
+      for (SampleSlot* slot : input->active_slots) {
+        retire_slot(*slot, slot == retained, releases);
+      }
+      input->reuse_slot.store(retained, std::memory_order_release);
+    } else {
+      for (SampleSlot* slot : input->active_slots) {
+        DeferredSampleReleases releases{*slot->subscriber->input->type_ops, 1U};
+        const std::scoped_lock lock{slot->subscriber->mutex};
+        retire_slot(*slot, false, releases);
+      }
     }
 
     for (SubscriberState* subscriber : input->subscribers) {
       bool direct_capacity_may_have_changed = false;
+      DeferredSampleReleases releases{*subscriber->input->type_ops, subscriber->slots.size() + 1U};
       {
         const std::scoped_lock lock{subscriber->mutex};
-        auto promoted = promote_direct_ingress(*subscriber);
+        auto promoted = promote_direct_ingress(*subscriber, releases);
         if (!promoted) {
           return make_unexpected(std::move(promoted).error());
         }
@@ -1788,7 +1941,6 @@ expected<void, Error> RuntimeChannelSession::Impl::retire_activation_inputs(
     input->selection_prepared = false;
     input->staged_now = false;
     input->active = false;
-    ++input->view_generation;
   }
   return {};
 }
@@ -1868,7 +2020,8 @@ expected<bool, Error> RuntimeChannelSession::has_freshness_refill_candidate(
       return false;
     }
     retained_subscriber = subscriber;
-    const bool reuse_exact = retained_slot->reuse_retained && input->reuse_slot == &*retained_slot;
+    const bool reuse_exact = retained_slot->reuse_retained &&
+                             input->reuse_slot.load(std::memory_order_acquire) == &*retained_slot;
     const bool reclaimable =
         retained_slot->temporal_retained && !retained_slot->retirement_selected &&
         !retained_slot->typed_ingress_reserved && !retained_slot->active_selected &&
@@ -1885,8 +2038,9 @@ expected<bool, Error> RuntimeChannelSession::has_freshness_refill_candidate(
 }
 
 // Keep staged and retained identity checks under one serialized subscriber observation.
+expected<std::optional<RuntimeChannelStagedReuseCandidate>, Error>
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-expected<std::optional<TimePoint>, Error> RuntimeChannelSession::staged_reuse_replacement_candidate(
+RuntimeChannelSession::staged_reuse_replacement_candidate(
     const PortId port, const TemporalSampleRecord& retained) const noexcept {
   if (!impl_ || !port || retained.source_sequence == 0U) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
@@ -1896,8 +2050,12 @@ expected<std::optional<TimePoint>, Error> RuntimeChannelSession::staged_reuse_re
     return make_unexpected(Error{ErrorCode::kNotFound});
   }
   const Impl::SubscriberState* match = nullptr;
-  std::optional<TimePoint> capture_time;
-  for (const Impl::SubscriberState* const subscriber : input->subscribers) {
+  std::optional<RuntimeChannelStagedReuseCandidate> candidate;
+  for (std::size_t index = 0U; index < input->subscribers.size(); ++index) {
+    const Impl::SubscriberState* const subscriber = input->subscribers[index];
+    if (subscriber == nullptr || index > std::numeric_limits<std::uint32_t>::max()) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
     const std::scoped_lock transport_lock{subscriber->transport_mutex};
     const auto staged = const_cast<Impl::SubscriberState*>(subscriber)->staged_data_state();
     if (!staged || staged->sequence <= retained.source_sequence) {
@@ -1907,44 +2065,51 @@ expected<std::optional<TimePoint>, Error> RuntimeChannelSession::staged_reuse_re
     const auto slot = std::find_if(
         subscriber->slots.begin(), subscriber->slots.end(), [&](const auto& candidate) {
           return candidate.occupied && !candidate.direct_ingress_unread &&
-                 candidate.temporal == retained && candidate.reuse_retained &&
-                 candidate.temporal_retained && !candidate.active_selected &&
-                 !candidate.retirement_selected && !candidate.typed_ingress_reserved &&
-                 (!candidate.event_emitted || candidate.witness_retired) &&
-                 input->reuse_slot == &candidate;
+                 candidate.temporal == retained && candidate.temporal_retained &&
+                 (!candidate.reuse_retained ||
+                  input->reuse_slot.load(std::memory_order_acquire) == &candidate) &&
+                 !candidate.active_selected && !candidate.retirement_selected &&
+                 !candidate.typed_ingress_reserved &&
+                 (!candidate.event_emitted || candidate.witness_retired);
         });
     if (slot == subscriber->slots.end()) {
       continue;
     }
     if (match != nullptr) {
-      return std::optional<TimePoint>{};
+      return std::optional<RuntimeChannelStagedReuseCandidate>{};
     }
-    TimePoint normalized = staged->capture_time;
-    if (!normalized.valid()) {
-      return make_unexpected(Error{ErrorCode::kProtocolError});
-    }
-    if (subscriber->externally_driven_import) {
-      if (!subscriber->catalog_capture_clock.valid() || !subscriber->plan_capture_clock.valid() ||
-          normalized.clock_id != subscriber->catalog_capture_clock) {
+    TimePoint reference;
+    if (staged->capture_time.valid()) {
+      TimePoint normalized = staged->capture_time;
+      if (subscriber->externally_driven_import) {
+        if (!subscriber->catalog_capture_clock.valid() || !subscriber->plan_capture_clock.valid() ||
+            normalized.clock_id != subscriber->catalog_capture_clock) {
+          return make_unexpected(Error{ErrorCode::kProtocolError});
+        }
+        normalized.clock_id = subscriber->plan_capture_clock;
+      }
+      if (!input->capture_clock.valid() || !input->reference_clock.valid() ||
+          normalized.clock_id != input->capture_clock) {
         return make_unexpected(Error{ErrorCode::kProtocolError});
       }
-      normalized.clock_id = subscriber->plan_capture_clock;
-    }
-    if (!input->capture_clock.valid() || !input->reference_clock.valid() ||
-        normalized.clock_id != input->capture_clock) {
-      return make_unexpected(Error{ErrorCode::kProtocolError});
-    }
-    auto reference = convert_identical_or_direct(
-        normalized,
-        input->reference_clock,
-        input->capture_to_reference ? &*input->capture_to_reference : nullptr);
-    if (!reference) {
-      return make_unexpected(std::move(reference).error());
+      auto converted = convert_identical_or_direct(
+          normalized,
+          input->reference_clock,
+          input->capture_to_reference ? &*input->capture_to_reference : nullptr);
+      if (!converted) {
+        return make_unexpected(std::move(converted).error());
+      }
+      reference = *converted;
     }
     match = subscriber;
-    capture_time = *reference;
+    candidate = RuntimeChannelStagedReuseCandidate{
+        .subscriber_index = static_cast<std::uint32_t>(index),
+        .source_sequence = staged->sequence,
+        .source_capture = staged->capture_time,
+        .successor_reference = reference,
+    };
   }
-  return match != nullptr ? capture_time : std::optional<TimePoint>{};
+  return match != nullptr ? candidate : std::optional<RuntimeChannelStagedReuseCandidate>{};
 }
 
 expected<bool, Error> RuntimeChannelSession::input_terminal_observed(
@@ -1975,44 +2140,51 @@ expected<bool, Error> RuntimeChannelSession::input_terminal_observed(
   return subscriber.end_of_stream_received || staged_terminal.has_value();
 }
 
-expected<void, Error> RuntimeChannelSession::replace_staged_reuse(
-    const PortId port, const TemporalSampleRecord& retained) noexcept {
-  if (!impl_ || !port || retained.source_sequence == 0U) {
+expected<TemporalSampleRecord, Error> RuntimeChannelSession::replace_staged_reuse(
+    const PortId port, const TemporalSampleRecord& retained,
+    const RuntimeChannelStagedReuseCandidate& candidate) noexcept {
+  if (!impl_ || !port || retained.source_sequence == 0U || candidate.source_sequence == 0U) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
   Impl::InputPortState* const input = impl_->find_input(port);
   if (input == nullptr) {
     return make_unexpected(Error{ErrorCode::kNotFound});
   }
-  Impl::SubscriberState* match = nullptr;
-  ErrorCode injected_error = ErrorCode::kSuccess;
-  for (Impl::SubscriberState* const subscriber : input->subscribers) {
-    const std::scoped_lock cache_lock{subscriber->mutex};
-    const bool owns =
-        std::any_of(subscriber->slots.begin(), subscriber->slots.end(), [&](const auto& candidate) {
-          return candidate.occupied && !candidate.direct_ingress_unread &&
-                 candidate.temporal == retained && candidate.reuse_retained &&
-                 candidate.temporal_retained && input->reuse_slot == &candidate;
-        });
-    if (!owns) {
-      continue;
-    }
-    if (match != nullptr) {
-      return make_unexpected(Error{ErrorCode::kProtocolError});
-    }
-    match = subscriber;
-    injected_error = std::exchange(subscriber->retryable_reuse_replacement_receive_error_for_test,
-                                   ErrorCode::kSuccess);
+  if (candidate.subscriber_index >= input->subscribers.size() ||
+      input->subscribers[candidate.subscriber_index] == nullptr) {
+    return make_unexpected(Error{ErrorCode::kStaleEndpoint});
   }
-  if (match == nullptr) {
-    return make_unexpected(Error{ErrorCode::kNotFound});
+  Impl::SubscriberState* const match = input->subscribers[candidate.subscriber_index];
+  Impl::SampleSlot* replacement_slot = nullptr;
+  bool replacing_reuse = false;
+  ErrorCode injected_error = ErrorCode::kSuccess;
+  {
+    const std::scoped_lock cache_lock{match->mutex};
+    const auto owned =
+        std::find_if(match->slots.begin(), match->slots.end(), [&](const auto& slot) {
+          return slot.occupied && !slot.direct_ingress_unread && slot.temporal == retained &&
+                 slot.temporal_retained &&
+                 (!slot.reuse_retained ||
+                  input->reuse_slot.load(std::memory_order_acquire) == &slot);
+        });
+    if (owned == match->slots.end()) {
+      return make_unexpected(Error{ErrorCode::kNotFound});
+    }
+    replacement_slot = &*owned;
+    replacing_reuse = replacement_slot->reuse_retained;
+    injected_error = std::exchange(match->retryable_reuse_replacement_receive_error_for_test,
+                                   ErrorCode::kSuccess);
   }
   if (injected_error != ErrorCode::kSuccess) {
     return make_unexpected(Error{injected_error});
   }
-  auto replaced = impl_->receive_one(*match, nullptr, nullptr, retained);
+  const channel_internal::StagedDataState expected_staged{
+      .sequence = candidate.source_sequence,
+      .capture_time = candidate.source_capture,
+  };
+  auto replaced = impl_->receive_one(*match, nullptr, nullptr, retained, &expected_staged);
   if (!replaced) {
-    return replaced;
+    return make_unexpected(std::move(replaced).error());
   }
   // This controller-owned receive bypasses the ordinary drain loops, so it must retire the one
   // process-local publication it just consumed itself. The earlier backpressured probe consumed
@@ -2022,13 +2194,18 @@ expected<void, Error> RuntimeChannelSession::replace_staged_reuse(
     impl_->record_process_local_receive();
   }
   const std::scoped_lock cache_lock{match->mutex};
-  if (input->reuse_slot != nullptr ||
+  if (replacement_slot == nullptr ||
+      (replacing_reuse ? input->reuse_slot.load(std::memory_order_acquire) != nullptr
+                       : input->reuse_slot.load(std::memory_order_acquire) == replacement_slot) ||
+      !replacement_slot->occupied || replacement_slot->direct_ingress_unread ||
+      replacement_slot->temporal == retained ||
+      !is_strictly_newer_sample(replacement_slot->temporal, retained) ||
       std::any_of(match->slots.begin(), match->slots.end(), [&](const auto& candidate) {
         return candidate.occupied && candidate.temporal == retained;
       })) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
-  return {};
+  return replacement_slot->temporal;
 }
 
 expected<bool, Error> RuntimeChannelSession::supports_freshness_refill(
@@ -2051,8 +2228,24 @@ expected<bool, Error> RuntimeChannelSession::supports_freshness_refill(
   });
 }
 
+expected<bool, Error> RuntimeChannelSession::supports_drop_oldest_freshness_refill(
+    const PortId port) const noexcept {
+  if (!impl_ || !port) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  const Impl::InputPortState* const input = impl_->find_input(port);
+  if (input == nullptr) {
+    return make_unexpected(Error{ErrorCode::kNotFound});
+  }
+  return std::any_of(input->subscribers.begin(), input->subscribers.end(), [&](auto* subscriber) {
+    return subscriber != nullptr && subscriber->queue_policy == QueuePolicy::kDropOldest &&
+           (subscriber->direct_ingress_capacity != 0U ||
+            (input->reuse_last && subscriber->supports_staged_data_replacement()));
+  });
+}
+
 expected<bool, Error> RuntimeChannelSession::recover_abandoned_freshness_reservation(
-    const PortId port) noexcept {
+    const PortId port, const bool preserve_uncommitted_target) noexcept {
   if (!impl_ || !port) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
@@ -2066,6 +2259,8 @@ expected<bool, Error> RuntimeChannelSession::recover_abandoned_freshness_reserva
   }
 
   bool direct_capacity_may_have_changed = false;
+  Impl::DeferredSampleReleases releases{*subscriber->input->type_ops,
+                                        subscriber->slots.size() + 1U};
   {
     // Recovery runs on a freshness-only dispatcher path. Never wait on a producer: an abandoned
     // reservation remains generation-fenced, so declining this pass is safe and bounded.
@@ -2076,10 +2271,35 @@ expected<bool, Error> RuntimeChannelSession::recover_abandoned_freshness_reserva
     if (input->freshness_reservation_subscriber != subscriber) {
       return true;
     }
-    if (input->freshness_reservation_successor != nullptr) {
-      input->freshness_reservation_successor->refill_reserved = false;
+    const Impl::SampleSlot* const retained = input->freshness_reservation_retained;
+    const bool retained_claim_live =
+        retained != nullptr && retained->subscriber == subscriber && retained->occupied &&
+        !retained->direct_ingress_unread && retained->temporal_retained &&
+        !retained->retirement_selected && !retained->typed_ingress_reserved &&
+        !retained->active_selected;
+    // A caller about to choose again may keep its speculative target long enough to re-reserve it.
+    // Standalone recovery owns no such continuation and releases an uncommitted target even while
+    // the retained claim is live. A committed predecessor always leaves a durable prefix fence.
+    const bool keep_recovery_marker = preserve_uncommitted_target && retained_claim_live &&
+                                      !input->freshness_refill_prefix_committed;
+    const bool preserve_target = input->freshness_refill_prefix_committed || keep_recovery_marker;
+    if (!preserve_target &&
+        !Impl::normalize_direct_ingress_after_freshness_release(*subscriber, releases)) {
+      return false;
     }
-    input->freshness_reservation_subscriber = nullptr;
+    if (input->freshness_reservation_successor != nullptr &&
+        input->freshness_reservation_successor != input->freshness_refill_target) {
+      input->freshness_reservation_successor->refill_prefix_reserved = false;
+    }
+    if (!preserve_target && input->freshness_refill_target != nullptr) {
+      input->freshness_refill_target->refill_reserved = false;
+      input->freshness_refill_target = nullptr;
+      input->freshness_refill_target_reference = {};
+    }
+    // When reserve_freshness_refill() is about to choose again, retain this existing pointer as a
+    // recovery marker until the new reservation is published. Any intervening early return then
+    // remains self-healing; standalone recovery clears the marker with the speculative target.
+    input->freshness_reservation_subscriber = keep_recovery_marker ? subscriber : nullptr;
     input->freshness_reservation_retained = nullptr;
     input->freshness_reservation_successor = nullptr;
     input->freshness_reservation_generation = 0U;
@@ -2087,7 +2307,7 @@ expected<bool, Error> RuntimeChannelSession::recover_abandoned_freshness_reserva
     // The retained claim may have disappeared while release was deferred. Promote now so an idle
     // port publishes a fresh revision instead of waiting for another producer arrival to revisit
     // the staged record.
-    auto promoted = impl_->promote_direct_ingress(*subscriber);
+    auto promoted = impl_->promote_direct_ingress(*subscriber, releases);
     if (!promoted) {
       return make_unexpected(std::move(promoted).error());
     }
@@ -2144,7 +2364,8 @@ expected<bool, Error> RuntimeChannelSession::retire_terminal_input_generation(
     if (input->active || input->selection_prepared || input->staged_now ||
         input->predicate_view_constructed || !input->active_slots.empty() ||
         !input->retirement_slots.empty() || !input->tensor_access_slots.empty() ||
-        !input->tensor_read_leases.empty() || input->claim_pool->has_live_claims()) {
+        !input->tensor_read_leases.empty() ||
+        (input->claim_pool != nullptr && input->claim_pool->has_live_claims())) {
       return false;
     }
   }
@@ -2170,7 +2391,8 @@ expected<bool, Error> RuntimeChannelSession::retire_terminal_input_generation(
         subscriber->has_pending_direct_ingress() ||
         std::any_of(subscriber->slots.begin(), subscriber->slots.end(), [](const auto& slot) {
           return slot.direct_ingress_unread || slot.typed_ingress_reserved ||
-                 slot.active_selected || slot.temporal_retained || slot.retirement_selected;
+                 slot.active_selected || slot.temporal_retained || slot.retirement_selected ||
+                 slot.owed_to_released_claim;
         })) {
       return false;
     }
@@ -2179,12 +2401,18 @@ expected<bool, Error> RuntimeChannelSession::retire_terminal_input_generation(
   // not a reason to keep an EOS-closed producer generation alive, so release it in one monotonic
   // owner transaction and reclaim the now-unobservable typed slots.
   for (Impl::InputPortState* const input : activation_owner->inputs) {
-    input->reuse_slot = nullptr;
+    std::size_t maximum_releases = 0U;
+    for (const Impl::SubscriberState* subscriber : input->subscribers) {
+      maximum_releases += subscriber->slots.size();
+    }
+    // Finalizers may reenter Runtime only after the entire cache cohort unlocks.
+    Impl::DeferredSampleReleases releases{*input->type_ops, maximum_releases};
+    const Impl::InputCacheLock lock{*input};
+    input->reuse_slot.store(nullptr, std::memory_order_release);
     for (Impl::SubscriberState* const subscriber : input->subscribers) {
-      const std::scoped_lock lock{subscriber->mutex};
       for (Impl::SampleSlot& slot : subscriber->slots) {
         slot.reuse_retained = false;
-        Impl::reclaim_sample_slot_if_unclaimed(slot);
+        Impl::reclaim_sample_slot_if_unclaimed(slot, releases);
         if (slot.occupied) {
           return make_unexpected(Error{ErrorCode::kProtocolError});
         }
@@ -2197,8 +2425,9 @@ expected<bool, Error> RuntimeChannelSession::retire_terminal_input_generation(
 // Reserve the exact staged-or-retained replacement without publishing partial ownership.
 expected<std::optional<RuntimeChannelFreshnessReservation>, Error>
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-RuntimeChannelSession::reserve_freshness_refill(PortId port, const TemporalSampleRecord& retained,
-                                                std::optional<TimePoint> floor) noexcept {
+RuntimeChannelSession::reserve_freshness_refill(
+    PortId port, const TemporalSampleRecord& retained, std::optional<TimePoint> floor,
+    const RuntimeChannelFreshnessSelectionMode selection_mode) noexcept {
   if (!impl_ || !port) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
@@ -2207,7 +2436,10 @@ RuntimeChannelSession::reserve_freshness_refill(PortId port, const TemporalSampl
     return make_unexpected(Error{ErrorCode::kNotFound});
   }
 
-  auto recovered = recover_abandoned_freshness_reservation(port);
+  // A live reservation here is speculative and must be rolled back before a new choice. A target
+  // that already committed a prefix step remains protected by recovery itself; an uncommitted
+  // target must not strand headroom after its retained claim disappears.
+  auto recovered = recover_abandoned_freshness_reservation(port, true);
   if (!recovered) {
     return make_unexpected(std::move(recovered).error());
   }
@@ -2245,6 +2477,8 @@ RuntimeChannelSession::reserve_freshness_refill(PortId port, const TemporalSampl
 
   // Revalidate the retained claim and choose its successor while holding their one shared mutex.
   // A successor staged by a different subscriber is not comparable and cannot refill this slot.
+  Impl::DeferredSampleReleases releases{*retained_subscriber->input->type_ops,
+                                        retained_subscriber->slots.size() + 1U};
   const std::unique_lock lock{retained_subscriber->mutex, std::try_to_lock};
   if (!lock.owns_lock()) {
     return std::optional<RuntimeChannelFreshnessReservation>{};
@@ -2256,61 +2490,168 @@ RuntimeChannelSession::reserve_freshness_refill(PortId port, const TemporalSampl
   if (retained_slot == retained_subscriber->slots.end() || !retained_slot->temporal_retained ||
       retained_slot->retirement_selected || retained_slot->typed_ingress_reserved ||
       retained_slot->active_selected ||
-      (retained_slot->reuse_retained && input->reuse_slot != &*retained_slot) ||
+      (retained_slot->reuse_retained &&
+       input->reuse_slot.load(std::memory_order_acquire) != &*retained_slot) ||
       (retained_slot->event_emitted && !retained_slot->witness_retired)) {
     return std::optional<RuntimeChannelFreshnessReservation>{};
   }
 
-  // Newest first: every staged record below the floor is admissible for ordering, so taking an
-  // older one would preserve avoidable staleness. Arrival identity was fixed at staging and does
-  // not change when this choice deliberately promotes out of source-sequence order.
-  Impl::SampleSlot* best = nullptr;
-  TimePoint best_reference;
-  for (Impl::SampleSlot& slot : retained_subscriber->slots) {
-    if (!slot.occupied || !slot.direct_ingress_unread || slot.staged_arrival_evidence ||
-        slot.typed_ingress_reserved || slot.refill_reserved) {
-      continue;
-    }
-    const TimePoint capture = slot.temporal.capture_time;
-    if (!capture.valid() || !input->capture_clock.valid() || !input->reference_clock.valid() ||
-        capture.clock_id != input->capture_clock) {
-      return make_unexpected(Error{ErrorCode::kProtocolError});
-    }
-    auto reference = convert_identical_or_direct(
-        capture,
-        input->reference_clock,
-        input->capture_to_reference ? &*input->capture_to_reference : nullptr);
-    if (!reference) {
-      return make_unexpected(std::move(reference).error());
-    }
-    if (floor &&
-        (reference->clock_id != floor->clock_id || reference->timestamp_ns > floor->timestamp_ns)) {
-      continue;
-    }
-    if (!is_strictly_newer_sample(slot.temporal, retained)) {
-      continue;
-    }
-    if (best == nullptr || best->temporal.source_sequence < slot.temporal.source_sequence) {
-      best = &slot;
-      best_reference = *reference;
+  // A non-trigger LatestWithin side input freezes its newest witness-qualified record as the
+  // target, then hands out the target's surviving producer-order prefix one record at a time.
+  // Exact instead exposes only the oldest staged producer successor, matching a transported
+  // queue head rather than scanning past it to a later exact match. Other selector paths retain
+  // the established newest-eligible choice. All remain one bounded scan of staging.
+  Impl::SampleSlot* const prior_target = input->freshness_refill_target;
+  const bool target_is_committed = input->freshness_refill_prefix_committed;
+  const bool preserve_prefix =
+      selection_mode == RuntimeChannelFreshnessSelectionMode::kNewestWithArrivalPrefix;
+  if (target_is_committed && !preserve_prefix) {
+    // Once a prefix successor is published, its target is an arrival-order fence. Reinterpreting
+    // that target under a single-record mode could let newer producer traffic overtake it.
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  if (prior_target != nullptr &&
+      (prior_target->subscriber != retained_subscriber || !prior_target->occupied ||
+       !prior_target->direct_ingress_unread || !prior_target->refill_reserved ||
+       prior_target->refill_prefix_reserved || prior_target->staged_arrival_evidence ||
+       prior_target->typed_ingress_reserved || !input->freshness_refill_target_reference.valid() ||
+       !is_strictly_newer_sample(prior_target->temporal, retained))) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+
+  Impl::SampleSlot* target = target_is_committed ? prior_target : nullptr;
+  TimePoint target_reference =
+      target_is_committed ? input->freshness_refill_target_reference : TimePoint{};
+  if (!target_is_committed) {
+    for (Impl::SampleSlot& slot : retained_subscriber->slots) {
+      if (!slot.occupied || !slot.direct_ingress_unread || slot.staged_arrival_evidence ||
+          slot.typed_ingress_reserved || slot.refill_prefix_reserved ||
+          (slot.refill_reserved && &slot != prior_target)) {
+        continue;
+      }
+      const TimePoint capture = slot.temporal.capture_time;
+      if (!capture.valid() || !input->capture_clock.valid() || !input->reference_clock.valid() ||
+          capture.clock_id != input->capture_clock) {
+        return make_unexpected(Error{ErrorCode::kProtocolError});
+      }
+      auto reference = convert_identical_or_direct(
+          capture,
+          input->reference_clock,
+          input->capture_to_reference ? &*input->capture_to_reference : nullptr);
+      if (!reference) {
+        return make_unexpected(std::move(reference).error());
+      }
+      const bool oldest_producer_successor =
+          selection_mode == RuntimeChannelFreshnessSelectionMode::kOldestProducerSuccessor;
+      if (!oldest_producer_successor && floor &&
+          (reference->clock_id != floor->clock_id ||
+           reference->timestamp_ns > floor->timestamp_ns)) {
+        continue;
+      }
+      if (!is_strictly_newer_sample(slot.temporal, retained)) {
+        continue;
+      }
+      const bool preferred = [&]() noexcept {
+        if (target == nullptr) {
+          return true;
+        }
+        if (oldest_producer_successor) {
+          return is_strictly_newer_sample(target->temporal, slot.temporal);
+        }
+        if (selection_mode == RuntimeChannelFreshnessSelectionMode::kNewest) {
+          return is_strictly_newer_sample(slot.temporal, target->temporal);
+        }
+        // LatestWithin ranks causal records by normalized capture coordinate. Producer order is
+        // only the stable tie-breaker and the later admission fence because capture coordinates
+        // may be non-monotonic within one epoch.
+        return reference->timestamp_ns > target_reference.timestamp_ns ||
+               (reference->timestamp_ns == target_reference.timestamp_ns &&
+                is_strictly_newer_sample(slot.temporal, target->temporal));
+      }();
+      if (preferred) {
+        target = &slot;
+        target_reference = *reference;
+      }
     }
   }
-  if (best == nullptr) {
+  if (target == nullptr) {
+    if (prior_target != nullptr) {
+      prior_target->refill_reserved = false;
+      if (!Impl::normalize_direct_ingress_after_freshness_release(*retained_subscriber, releases)) {
+        prior_target->refill_reserved = true;
+        return std::optional<RuntimeChannelFreshnessReservation>{};
+      }
+      input->freshness_refill_target = nullptr;
+      input->freshness_refill_target_reference = {};
+      input->freshness_refill_prefix_committed = false;
+    }
     return std::optional<RuntimeChannelFreshnessReservation>{};
+  }
+
+  Impl::SampleSlot* successor = preserve_prefix ? nullptr : target;
+  TimePoint successor_reference;
+  if (!preserve_prefix) {
+    successor_reference = target_reference;
+  }
+  for (Impl::SampleSlot& slot : retained_subscriber->slots) {
+    if (!preserve_prefix) {
+      break;
+    }
+    const bool at_or_before_target = slot.temporal == target->temporal ||
+                                     is_strictly_newer_sample(target->temporal, slot.temporal);
+    if (!slot.occupied || !slot.direct_ingress_unread || slot.staged_arrival_evidence ||
+        slot.typed_ingress_reserved || slot.refill_prefix_reserved ||
+        (&slot != target && &slot != prior_target && slot.refill_reserved) ||
+        !at_or_before_target || slot.temporal.producer_epoch != target->temporal.producer_epoch ||
+        !is_strictly_newer_sample(slot.temporal, retained)) {
+      continue;
+    }
+    if (successor == nullptr || is_strictly_newer_sample(successor->temporal, slot.temporal)) {
+      const TimePoint capture = slot.temporal.capture_time;
+      if (!capture.valid() || !input->capture_clock.valid() || !input->reference_clock.valid() ||
+          capture.clock_id != input->capture_clock) {
+        return make_unexpected(Error{ErrorCode::kProtocolError});
+      }
+      auto reference = convert_identical_or_direct(
+          capture,
+          input->reference_clock,
+          input->capture_to_reference ? &*input->capture_to_reference : nullptr);
+      if (!reference) {
+        return make_unexpected(std::move(reference).error());
+      }
+      successor = &slot;
+      successor_reference = *reference;
+    }
+  }
+  if (successor == nullptr) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
   }
   if (input->next_freshness_reservation_generation == std::numeric_limits<std::uint64_t>::max()) {
     return make_unexpected(Error{ErrorCode::kResourceExhausted});
   }
   const std::uint64_t generation = input->next_freshness_reservation_generation++;
-  best->refill_reserved = true;
+  if (prior_target != target) {
+    if (prior_target != nullptr) {
+      prior_target->refill_reserved = false;
+    }
+    input->freshness_refill_prefix_committed = false;
+  }
+  target->refill_reserved = true;
+  input->freshness_refill_target = target;
+  input->freshness_refill_target_reference = target_reference;
+  if (successor != target) {
+    successor->refill_prefix_reserved = true;
+  }
   input->freshness_reservation_subscriber = retained_subscriber;
   input->freshness_reservation_retained = &*retained_slot;
-  input->freshness_reservation_successor = best;
+  input->freshness_reservation_successor = successor;
   input->freshness_reservation_generation = generation;
   return std::optional<RuntimeChannelFreshnessReservation>{RuntimeChannelFreshnessReservation{
       .port = port,
-      .successor = best->temporal,
-      .successor_reference = best_reference,
+      .successor = successor->temporal,
+      .successor_reference = successor_reference,
+      .target = target->temporal,
+      .target_reference = target_reference,
       .generation = generation,
   }};
 }
@@ -2328,7 +2669,9 @@ void RuntimeChannelSession::release_freshness_reservation(
   // The caller is abandoning speculative work from the dispatcher thread. If a producer owns the
   // cache, keep the fenced reservation intact; the next reconcile recovery self-heals it before
   // any credit, claim, or successor gate can skip the input.
-  const std::unique_lock lock{input->freshness_reservation_subscriber->mutex, std::try_to_lock};
+  Impl::SubscriberState& subscriber = *input->freshness_reservation_subscriber;
+  Impl::DeferredSampleReleases releases{*subscriber.input->type_ops, subscriber.slots.size() + 1U};
+  const std::unique_lock lock{subscriber.mutex, std::try_to_lock};
   if (!lock.owns_lock()) {
     count_phase(impl_->phase_counters_,
                 RuntimePhaseCounter::kChannelFreshnessReservationReleaseDeferred);
@@ -2337,8 +2680,20 @@ void RuntimeChannelSession::release_freshness_reservation(
   if (input->freshness_reservation_generation != reservation.generation) {
     return;
   }
-  if (input->freshness_reservation_successor != nullptr) {
-    input->freshness_reservation_successor->refill_reserved = false;
+  if (!input->freshness_refill_prefix_committed &&
+      !Impl::normalize_direct_ingress_after_freshness_release(subscriber, releases)) {
+    count_phase(impl_->phase_counters_,
+                RuntimePhaseCounter::kChannelFreshnessReservationReleaseDeferred);
+    return;
+  }
+  if (input->freshness_reservation_successor != nullptr &&
+      input->freshness_reservation_successor != input->freshness_refill_target) {
+    input->freshness_reservation_successor->refill_prefix_reserved = false;
+  }
+  if (!input->freshness_refill_prefix_committed && input->freshness_refill_target != nullptr) {
+    input->freshness_refill_target->refill_reserved = false;
+    input->freshness_refill_target = nullptr;
+    input->freshness_refill_target_reference = {};
   }
   input->freshness_reservation_subscriber = nullptr;
   input->freshness_reservation_retained = nullptr;
@@ -2377,17 +2732,39 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
     return publication_error_consumes_authority(code) || code == ErrorCode::kProtocolError ||
            code == ErrorCode::kInvalidArgument || code == ErrorCode::kClosed;
   };
-  const auto reject_terminal_publication =
-      [&](Impl::ProcessLocalPublicationScope& publication, Error error, bool& terminal_resolved) {
-        if (consumes_terminal_authority(error.code)) {
-          publication.invalidate();
-          terminal_resolved = true;
-        } else {
-          publication.reject();
-          error = normalize_terminal_pre_submit_error(std::move(error));
-        }
-        return expected<void, Error>{make_unexpected(std::move(error))};
-      };
+  using TerminalCloseState = Impl::OutputState::TerminalCloseState;
+  const auto resolve_terminal_publication = [](Impl::OutputState& output, bool& terminal_resolved) {
+    terminal_resolved = true;
+    output.terminal_close_state = TerminalCloseState::kAuthorityConsumed;
+  };
+  const auto reject_terminal_publication = [&](Impl::OutputState& output,
+                                               Impl::ProcessLocalPublicationScope& publication,
+                                               Error error,
+                                               bool& terminal_resolved) {
+    if (consumes_terminal_authority(error.code)) {
+      publication.invalidate();
+      resolve_terminal_publication(output, terminal_resolved);
+    } else {
+      publication.reject();
+      error = normalize_terminal_pre_submit_error(std::move(error));
+    }
+    return expected<void, Error>{make_unexpected(std::move(error))};
+  };
+  const auto required_export_peer_vanished = [](const bool external_export,
+                                                const bool peer_required,
+                                                const std::uint64_t next_sequence,
+                                                const bool has_subscribers) noexcept {
+    // A sequence beyond the initial value proves that this output committed data before its
+    // terminal drain. Do not apply the disappearance policy to a required export that is still
+    // waiting for its first peer, nor to a process-local lifecycle replacement window.
+    return external_export && peer_required && next_sequence > 1U && !has_subscribers;
+  };
+  const auto fail_vanished_required_export = [](bool& terminal_resolved) {
+    // No receiver can observe a later retry from the retired endpoint generation. Resolve the
+    // arm monotonically while failing the run; consumer abandonment is not producer EOS.
+    terminal_resolved = true;
+    return expected<void, Error>{make_unexpected(Error{ErrorCode::kClosed})};
+  };
   for (Impl::OutputState* const output : activation_owner->outputs) {
     if (output == nullptr) {
       return make_unexpected(Error{ErrorCode::kProtocolError});
@@ -2395,7 +2772,7 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
     if (output->live_loan_count.load(std::memory_order_acquire) != 0U) {
       return make_unexpected(Error{ErrorCode::kBackpressured});
     }
-    if (output->end_of_stream_published) {
+    if (output->terminal_close_state == TerminalCloseState::kComplete) {
       continue;
     }
     auto refreshed = output->refresh_connections();
@@ -2403,13 +2780,16 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
       return make_unexpected(std::move(refreshed).error());
     }
     if (output->direct_subscriber != nullptr) {
+      if (output->next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+        return make_unexpected(Error{ErrorCode::kResourceExhausted});
+      }
       const std::scoped_lock lock{output->direct_subscriber->mutex};
       auto closed = impl_->store_end_of_stream(*output->direct_subscriber, output->next_sequence);
       if (!closed) {
         return make_unexpected(std::move(closed).error());
       }
       ++output->next_sequence;
-      output->end_of_stream_published = true;
+      output->terminal_close_state = TerminalCloseState::kComplete;
       continue;
     }
     // A prior fanout attempt may have closed one endpoint before another backpressured.
@@ -2422,6 +2802,16 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
         endpoint.terminal_resolved = true;
         continue;
       }
+      if (required_export_peer_vanished(endpoint.refresh_before_emit,
+                                        endpoint.peer_required,
+                                        output->next_sequence,
+                                        endpoint.publisher->has_subscribers())) {
+        return fail_vanished_required_export(endpoint.terminal_resolved);
+      }
+      // Refresh and local resolution do not require a new sequence coordinate.
+      if (output->next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+        return make_unexpected(Error{ErrorCode::kResourceExhausted});
+      }
       Impl::ProcessLocalPublicationScope publication{*impl_, endpoint.process_local_transport};
       expected<void, Error> closed;
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
@@ -2430,20 +2820,30 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
         closed = endpoint.publisher->close_stream();
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
       } catch (...) {
-        return reject_terminal_publication(
-            publication, Error{ErrorCode::kPublicationIndeterminate}, endpoint.terminal_resolved);
+        return reject_terminal_publication(*output,
+                                           publication,
+                                           Error{ErrorCode::kPublicationIndeterminate},
+                                           endpoint.terminal_resolved);
       }
 #endif
       if (!closed) {
+        if (endpoint.refresh_before_emit && endpoint.peer_required && output->next_sequence > 1U &&
+            closed.error().code == ErrorCode::kNotReady) {
+          publication.reject();
+          return fail_vanished_required_export(endpoint.terminal_resolved);
+        }
         return reject_terminal_publication(
-            publication, std::move(closed).error(), endpoint.terminal_resolved);
+            *output, publication, std::move(closed).error(), endpoint.terminal_resolved);
       }
       publication.accept(endpoint.expected_recipient_count, endpoint.activation_cut_subscribers);
-      endpoint.terminal_resolved = true;
+      resolve_terminal_publication(*output, endpoint.terminal_resolved);
     }
     for (auto& endpoint : output->tensor_endpoints) {
       if (endpoint.terminal_resolved) {
         continue;
+      }
+      if (output->next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+        return make_unexpected(Error{ErrorCode::kResourceExhausted});
       }
       const SampleMetadata metadata{.sequence = output->next_sequence,
                                     .byte_size = 0U,
@@ -2453,18 +2853,18 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
           endpoint.publisher, metadata);
       if (!closed) {
         return reject_terminal_publication(
-            publication, std::move(closed).error(), endpoint.terminal_resolved);
+            *output, publication, std::move(closed).error(), endpoint.terminal_resolved);
       }
       if (*closed != endpoint.expected_recipient_count) {
         publication.invalidate();
-        endpoint.terminal_resolved = true;
+        resolve_terminal_publication(*output, endpoint.terminal_resolved);
         return make_unexpected(
             *closed < endpoint.expected_recipient_count
                 ? make_publication_partial_error(*closed, endpoint.expected_recipient_count)
                 : Error{ErrorCode::kProtocolError, "RUNTIME_PUBLICATION_RECIPIENT_COUNT_EXCESS"});
       }
       publication.accept(*closed, endpoint.activation_cut_subscribers);
-      endpoint.terminal_resolved = true;
+      resolve_terminal_publication(*output, endpoint.terminal_resolved);
     }
     for (auto& endpoint : output->catalog_tensor_endpoints) {
       if (endpoint.terminal_resolved) {
@@ -2475,6 +2875,15 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
         endpoint.terminal_resolved = true;
         continue;
       }
+      if (required_export_peer_vanished(true,
+                                        endpoint.peer_required,
+                                        output->next_sequence,
+                                        endpoint.publisher.has_subscribers())) {
+        return fail_vanished_required_export(endpoint.terminal_resolved);
+      }
+      if (output->next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+        return make_unexpected(Error{ErrorCode::kResourceExhausted});
+      }
       expected<void, Error> closed;
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
       try {
@@ -2482,17 +2891,21 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
         closed = endpoint.publisher.close();
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
       } catch (...) {
-        endpoint.terminal_resolved = true;
+        resolve_terminal_publication(*output, endpoint.terminal_resolved);
         return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
       }
 #endif
       if (!closed) {
+        if (endpoint.peer_required && output->next_sequence > 1U &&
+            closed.error().code == ErrorCode::kNotReady) {
+          return fail_vanished_required_export(endpoint.terminal_resolved);
+        }
         if (consumes_terminal_authority(closed.error().code)) {
-          endpoint.terminal_resolved = true;
+          resolve_terminal_publication(*output, endpoint.terminal_resolved);
         }
         return make_unexpected(std::move(closed).error());
       }
-      endpoint.terminal_resolved = true;
+      resolve_terminal_publication(*output, endpoint.terminal_resolved);
     }
     for (auto& endpoint : output->tensor_schema_endpoints) {
       if (endpoint.terminal_resolved) {
@@ -2502,6 +2915,15 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
           !endpoint.publisher->has_subscribers()) {
         endpoint.terminal_resolved = true;
         continue;
+      }
+      if (required_export_peer_vanished(endpoint.refresh_before_emit,
+                                        endpoint.peer_required,
+                                        output->next_sequence,
+                                        endpoint.publisher->has_subscribers())) {
+        return fail_vanished_required_export(endpoint.terminal_resolved);
+      }
+      if (output->next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+        return make_unexpected(Error{ErrorCode::kResourceExhausted});
       }
       const auto endpoint_sequence = endpoint.refresh_before_emit
                                          ? endpoint.publisher->next_operation_sequence()
@@ -2521,22 +2943,26 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
       } catch (...) {
         publication.invalidate();
-        endpoint.terminal_resolved = true;
+        resolve_terminal_publication(*output, endpoint.terminal_resolved);
         return make_unexpected(Error{ErrorCode::kPublicationIndeterminate});
       }
 #endif
       if (closed.phase == channel_internal::InlinePublicationPhase::kPreSubmitRejected) {
         publication.reject();
+        if (endpoint.refresh_before_emit && endpoint.peer_required && output->next_sequence > 1U &&
+            closed.error.code == ErrorCode::kNotReady) {
+          return fail_vanished_required_export(endpoint.terminal_resolved);
+        }
         return make_unexpected(normalize_terminal_pre_submit_error(std::move(closed.error)));
       }
       if (closed.phase == channel_internal::InlinePublicationPhase::kPostSubmitUncertain) {
         publication.invalidate();
-        endpoint.terminal_resolved = true;
+        resolve_terminal_publication(*output, endpoint.terminal_resolved);
         return make_unexpected(std::move(closed.error));
       }
       if (closed.recipient_count != endpoint.expected_recipient_count) {
         publication.invalidate();
-        endpoint.terminal_resolved = true;
+        resolve_terminal_publication(*output, endpoint.terminal_resolved);
         return make_unexpected(
             closed.recipient_count < endpoint.expected_recipient_count
                 ? make_publication_partial_error(closed.recipient_count,
@@ -2544,10 +2970,14 @@ expected<void, Error> RuntimeChannelSession::close_owner_outputs(const VertexId 
                 : Error{ErrorCode::kProtocolError, "RUNTIME_PUBLICATION_RECIPIENT_COUNT_EXCESS"});
       }
       publication.accept(closed.recipient_count, endpoint.activation_cut_subscribers);
-      endpoint.terminal_resolved = true;
+      resolve_terminal_publication(*output, endpoint.terminal_resolved);
     }
-    ++output->next_sequence;
-    output->end_of_stream_published = true;
+    // A retry can finish without submitting anything itself. Account once for any earlier
+    // authority-consuming submission, but not for an entirely local terminal disposition.
+    if (output->terminal_close_state == TerminalCloseState::kAuthorityConsumed) {
+      ++output->next_sequence;
+    }
+    output->terminal_close_state = TerminalCloseState::kComplete;
   }
   return {};
 }
@@ -2651,24 +3081,25 @@ expected<void, Error> RuntimeChannelSession::Impl::validate_sample_retirement(
     }
   }
   if (terminal_history_release) {
+    const InputCacheLock lock{input};
+    const SampleSlot* const reuse = input.reuse_slot.load(std::memory_order_acquire);
     std::size_t retained_claims = 0U;
     for (SubscriberState* const subscriber : input.subscribers) {
-      const std::scoped_lock lock{subscriber->mutex};
       retained_claims += static_cast<std::size_t>(
           std::count_if(subscriber->slots.begin(), subscriber->slots.end(), [](const auto& slot) {
             return slot.temporal_retained;
           }));
     }
     const bool reuse_slot_selected =
-        input.reuse_slot == nullptr ||
-        std::find(input.retirement_slots.begin(), input.retirement_slots.end(), input.reuse_slot) !=
+        reuse == nullptr ||
+        std::find(input.retirement_slots.begin(), input.retirement_slots.end(), reuse) !=
             input.retirement_slots.end();
     const bool reuse_claim_exact = std::all_of(
         input.retirement_slots.begin(), input.retirement_slots.end(), [&](const auto* slot) {
-          return !slot->reuse_retained || slot == input.reuse_slot;
+          return !slot->reuse_retained || slot == reuse;
         });
     if (retained_claims != input.retirement_slots.size() || !reuse_slot_selected ||
-        !reuse_claim_exact || (input.reuse_slot != nullptr && !input.reuse_slot->reuse_retained)) {
+        !reuse_claim_exact || (reuse != nullptr && !reuse->reuse_retained)) {
       return make_unexpected(Error{ErrorCode::kProtocolError});
     }
   }
@@ -2678,23 +3109,35 @@ expected<void, Error> RuntimeChannelSession::Impl::validate_sample_retirement(
 expected<void, Error> RuntimeChannelSession::Impl::commit_sample_retirement(
     InputPortState& input, const bool terminal_history_release, const bool signal_direct_progress,
     std::uint32_t* const promoted_out) noexcept {
-  for (SampleSlot* slot : input.retirement_slots) {
-    const std::scoped_lock lock{slot->subscriber->mutex};
-    slot->temporal_retained = false;
+  const auto retire_slot = [terminal_history_release](SampleSlot& slot,
+                                                      DeferredSampleReleases& releases) {
+    slot.temporal_retained = false;
     if (terminal_history_release) {
-      slot->reuse_retained = false;
+      slot.reuse_retained = false;
     }
-    slot->retirement_selected = false;
-    reclaim_sample_slot_if_unclaimed(*slot);
-  }
+    slot.retirement_selected = false;
+    reclaim_sample_slot_if_unclaimed(slot, releases);
+  };
   if (terminal_history_release) {
-    input.reuse_slot = nullptr;
+    DeferredSampleReleases releases{*input.type_ops, input.retirement_slots.size()};
+    const InputCacheLock lock{input};
+    for (SampleSlot* slot : input.retirement_slots) {
+      retire_slot(*slot, releases);
+    }
+    input.reuse_slot.store(nullptr, std::memory_order_release);
+  } else {
+    for (SampleSlot* slot : input.retirement_slots) {
+      DeferredSampleReleases releases{*slot->subscriber->input->type_ops, 1U};
+      const std::scoped_lock lock{slot->subscriber->mutex};
+      retire_slot(*slot, releases);
+    }
   }
   for (SubscriberState* subscriber : input.subscribers) {
     bool direct_capacity_may_have_changed = false;
+    DeferredSampleReleases releases{*subscriber->input->type_ops, subscriber->slots.size() + 1U};
     {
       const std::scoped_lock lock{subscriber->mutex};
-      auto promoted = promote_direct_ingress(*subscriber);
+      auto promoted = promote_direct_ingress(*subscriber, releases);
       if (!promoted) {
         input.retirement_slots.clear();
         return make_unexpected(std::move(promoted).error());
@@ -2779,11 +3222,14 @@ expected<void, Error> RuntimeChannelSession::retire_samples_impl(
         input->freshness_reservation_generation != freshness_reservation->generation ||
         input->freshness_reservation_subscriber == nullptr ||
         input->freshness_reservation_retained == nullptr ||
-        input->freshness_reservation_successor == nullptr) {
+        input->freshness_reservation_successor == nullptr ||
+        input->freshness_refill_target == nullptr) {
       return make_unexpected(Error{ErrorCode::kStaleEndpoint});
     }
     Impl::SubscriberState* const subscriber = input->freshness_reservation_subscriber;
     bool direct_capacity_may_have_changed = false;
+    Impl::DeferredSampleReleases releases{*subscriber->input->type_ops,
+                                          subscriber->slots.size() + 1U};
     {
       // This is the freshness handoff's commit boundary. The producer cannot take the retained
       // typed slot between claim release and reserved promotion because both happen under this one
@@ -2791,18 +3237,26 @@ expected<void, Error> RuntimeChannelSession::retire_samples_impl(
       const std::scoped_lock lock{subscriber->mutex};
       Impl::SampleSlot* const retained = input->freshness_reservation_retained;
       Impl::SampleSlot* const successor = input->freshness_reservation_successor;
+      Impl::SampleSlot* const target = input->freshness_refill_target;
+      const bool successor_is_target = successor == target;
       const bool reservation_live =
           input->freshness_reservation_generation == freshness_reservation->generation &&
           retained->occupied && !retained->direct_ingress_unread &&
           retained->temporal == samples[0] && retained->temporal_retained &&
           !retained->retirement_selected && !retained->typed_ingress_reserved &&
           !retained->active_selected &&
-          (!retained->reuse_retained || input->reuse_slot == retained) &&
+          (!retained->reuse_retained ||
+           input->reuse_slot.load(std::memory_order_acquire) == retained) &&
           (!retained->event_emitted || retained->witness_retired) && successor->occupied &&
-          successor->direct_ingress_unread && successor->refill_reserved &&
+          successor->direct_ingress_unread &&
+          (successor_is_target ? successor->refill_reserved : successor->refill_prefix_reserved) &&
           !successor->typed_ingress_reserved &&
           successor->temporal == freshness_reservation->successor &&
-          successor->temporal.arrival_sequence != 0U;
+          successor->temporal.arrival_sequence != 0U && target->occupied &&
+          target->direct_ingress_unread && target->refill_reserved &&
+          !target->refill_prefix_reserved && !target->typed_ingress_reserved &&
+          target->temporal == freshness_reservation->target &&
+          input->freshness_refill_target_reference == freshness_reservation->target_reference;
       if (!reservation_live) {
         return make_unexpected(Error{ErrorCode::kStaleEndpoint});
       }
@@ -2814,11 +3268,11 @@ expected<void, Error> RuntimeChannelSession::retire_samples_impl(
       retained->temporal_retained = false;
       if (retained->reuse_retained) {
         retained->reuse_retained = false;
-        input->reuse_slot = nullptr;
+        input->reuse_slot.store(nullptr, std::memory_order_release);
       }
-      Impl::reset_sample_slot(*retained);
+      Impl::reset_sample_slot(*retained, releases);
       auto promoted = impl_->promote_direct_ingress(
-          *subscriber, *arrival_order, successor, promoted_capture_out, retained);
+          *subscriber, releases, *arrival_order, successor, promoted_capture_out, retained);
       if (!promoted || *promoted != 1U) {
         // Every fallible condition was preflighted before the claim release. Reaching this branch
         // means an internal invariant, not producer contention, was violated.
@@ -2829,6 +3283,13 @@ expected<void, Error> RuntimeChannelSession::retire_samples_impl(
       input->freshness_reservation_retained = nullptr;
       input->freshness_reservation_successor = nullptr;
       input->freshness_reservation_generation = 0U;
+      if (successor_is_target) {
+        input->freshness_refill_target = nullptr;
+        input->freshness_refill_target_reference = {};
+        input->freshness_refill_prefix_committed = false;
+      } else {
+        input->freshness_refill_prefix_committed = true;
+      }
       if (promoted_out != nullptr) {
         *promoted_out = 1U;
       }
@@ -2850,7 +3311,7 @@ expected<void, Error> RuntimeChannelSession::retire_samples_impl(
     if (input->active || input->selection_prepared || input->staged_now ||
         input->predicate_view_constructed || !input->active_slots.empty() ||
         !input->tensor_access_slots.empty() || !input->tensor_read_leases.empty() ||
-        input->claim_pool->has_live_claims()) {
+        (input->claim_pool != nullptr && input->claim_pool->has_live_claims())) {
       return make_unexpected(Error{ErrorCode::kBackpressured});
     }
     for (Impl::SubscriberState* const subscriber : input->subscribers) {

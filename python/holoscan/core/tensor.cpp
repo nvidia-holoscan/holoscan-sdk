@@ -13,7 +13,6 @@
 #include <optional>
 #include <string>
 #include <tuple>
-#include <vector>
 
 #include <dlpack/dlpack.h>
 
@@ -21,21 +20,12 @@
 
 #include "dl_converter.hpp"
 #include "enum_util.hpp"
+#include "module_name.hpp"
 #include "tensor_pydoc.hpp"
 
 namespace holoscan {
 
 namespace {
-
-/// @brief Convert a std::vector<int64_t> to a Python tuple (holoscan exposes shape/strides as
-/// tuples). Phase 2+ will share a helper with dl_converter; kept local for the metadata slice.
-nb::tuple to_int_tuple(const std::vector<int64_t>& values) {
-  nb::list list;
-  for (int64_t value : values) {
-    list.append(value);
-  }
-  return nb::steal<nb::tuple>(PyList_AsTuple(list.ptr()));
-}
 
 std::string dldevicetype_name(DLDeviceType device_type) {
   return python::cpp_enum_value_name(device_type);
@@ -66,12 +56,15 @@ std::optional<std::tuple<int, int>> parse_int_pair(const nb::object& obj,
 void init_tensor(nb::module_& m) {
   // is_arithmetic so the members convert to / compare with the underlying int (these are DLPack
   // integer codes), matching how they're used at the DLPack boundary.
-  python::export_enum<DLDeviceType>(m, "DLDeviceType", nb::is_arithmetic(), doc::DLDeviceType::doc);
+  auto dl_device_type = python::export_enum<DLDeviceType>(
+      m, "holoscan.tensor", "DLDeviceType", nb::is_arithmetic(), doc::DLDeviceType::doc);
 
-  python::export_enum<DLDataTypeCode>(
-      m, "DLDataTypeCode", nb::is_arithmetic(), doc::DLDataTypeCode::doc);
+  auto dl_data_type_code = python::export_enum<DLDataTypeCode>(
+      m, "holoscan.tensor", "DLDataTypeCode", nb::is_arithmetic(), doc::DLDataTypeCode::doc);
 
-  nb::class_<DLDevice>(m, "DLDevice", doc::DLDevice::doc)
+  auto dl_device =
+      python::bind_class_in_module<DLDevice>(m, "holoscan.tensor", "DLDevice", doc::DLDevice::doc);
+  dl_device
       .def(
           "__init__",
           [](DLDevice* self, DLDeviceType device_type, int32_t device_id) {
@@ -86,7 +79,9 @@ void init_tensor(nb::module_& m) {
                ", device_id=" + std::to_string(device.device_id) + ")";
       });
 
-  nb::class_<DLDataType>(m, "DLDataType", doc::DLDataType::doc)
+  auto dl_data_type = python::bind_class_in_module<DLDataType>(
+      m, "holoscan.tensor", "DLDataType", doc::DLDataType::doc);
+  dl_data_type
       .def(
           "__init__",
           [](DLDataType* self, uint8_t code, uint8_t bits, uint16_t lanes) {
@@ -104,16 +99,20 @@ void init_tensor(nb::module_& m) {
                ")";
       });
 
-  auto tensor_class = nb::class_<Tensor>(m, "Tensor", doc::Tensor::doc);
+  auto tensor_class =
+      python::bind_class_in_module<Tensor>(m, "holoscan", "Tensor", doc::Tensor::doc);
+  tensor_class.attr("_registry_name") = "holoscan.Tensor";
   tensor_class.def_prop_ro("ndim", &Tensor::ndim, doc::Tensor::ndim)
       .def_prop_ro(
           "shape",
-          [](const Tensor& tensor) { return to_int_tuple(tensor.shape()); },
-          doc::Tensor::shape)
+          [](const Tensor& tensor) { return tensor_shape_tuple(tensor); },
+          doc::Tensor::shape,
+          nb::for_getter(nb::sig("def shape(self, /) -> tuple[int, ...]")))
       .def_prop_ro(
           "strides",
-          [](const Tensor& tensor) { return to_int_tuple(tensor.strides()); },
-          doc::Tensor::strides)
+          [](const Tensor& tensor) { return tensor_strides_tuple(tensor); },
+          doc::Tensor::strides,
+          nb::for_getter(nb::sig("def strides(self, /) -> tuple[int, ...]")))
       .def_prop_ro("size", &Tensor::size, doc::Tensor::size)
       .def_prop_ro(
           "itemsize",
@@ -135,9 +134,15 @@ void init_tensor(nb::module_& m) {
       // Array-interface export (host -> __array_interface__, device -> __cuda_array_interface__).
       // Each getter raises AttributeError when the device doesn't match, so numpy/cupy duck-typing
       // (hasattr) resolves to the right protocol.
-      .def_prop_ro("__array_interface__", &array_interface, doc::Tensor::array_interface)
+      .def_prop_ro("__array_interface__",
+                   &array_interface,
+                   doc::Tensor::array_interface,
+                   nb::for_getter(nb::sig("def __array_interface__(self, /) -> dict[str, object]")))
       .def_prop_ro(
-          "__cuda_array_interface__", &cuda_array_interface, doc::Tensor::cuda_array_interface)
+          "__cuda_array_interface__",
+          &cuda_array_interface,
+          doc::Tensor::cuda_array_interface,
+          nb::for_getter(nb::sig("def __cuda_array_interface__(self, /) -> dict[str, object]")))
       // DLPack export protocol.
       .def(
           "__dlpack__",
@@ -157,15 +162,20 @@ void init_tensor(nb::module_& m) {
             return py_dlpack(&self, stream, cpp_max_version, cpp_dl_device, cpp_copy);
           },
           nb::kw_only(),
-          nb::arg("stream") = nb::none(),
-          nb::arg("max_version") = nb::none(),
-          nb::arg("dl_device") = nb::none(),
-          nb::arg("copy") = nb::none(),
-          doc::Tensor::dlpack)
+          nb::arg("stream").none() = nb::none(),
+          nb::arg("max_version").none() = nb::none(),
+          nb::arg("dl_device").none() = nb::none(),
+          nb::arg("copy").none() = nb::none(),
+          doc::Tensor::dlpack,
+          nb::sig("def __dlpack__(self, *, stream: object | None = None, "
+                  "max_version: tuple[int, int] | None = None, "
+                  "dl_device: tuple[int, int] | None = None, "
+                  "copy: bool | None = None) -> object"))
       .def(
           "__dlpack_device__",
           [](Tensor& self) { return py_dlpack_device(&self); },
-          doc::Tensor::dlpack_device)
+          doc::Tensor::dlpack_device,
+          nb::sig("def __dlpack_device__(self) -> tuple[int, int]"))
       // DLPack import (GIL-safe ownership; see dl_converter.cpp). as_tensor accepts DLPack or an
       // array interface (DLPack preferred); from_dlpack is DLPack-only.
       .def_static("as_tensor", &as_tensor, nb::arg("obj"), doc::Tensor::as_tensor)
@@ -173,12 +183,22 @@ void init_tensor(nb::module_& m) {
 
   // DLPack 1.3 fast C exchange API: publish the function-pointer table on the Tensor type.
   tensor_class.attr("__dlpack_c_exchange_api__") = dlpack_c_exchange_api_capsule();
+  m.def("_test_tensor_metadata_projection",
+        &test_tensor_metadata_projection,
+        nb::arg("backing"),
+        nb::arg("shape"),
+        nb::arg("strides").none(),
+        nb::arg("dtype"),
+        nb::arg("byte_offset"),
+        "Test-only helper that projects synthetic metadata over a live Tensor backing.");
   m.def("_test_dlpack_c_exchange_api",
         &test_dlpack_c_exchange_api,
         nb::arg("tensor"),
         "Test-only helper that directly exercises the DLPack C exchange API.");
 
-  m.def("is_tensor_like", &is_tensor_like, nb::arg("obj"), doc::is_tensor_like);
+  python::bind_functions_in_module(m, "holoscan.tensor", [&] {
+    m.def("is_tensor_like", &is_tensor_like, nb::arg("obj"), doc::is_tensor_like);
+  });
 }
 
 }  // namespace holoscan

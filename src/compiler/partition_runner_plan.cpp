@@ -12,12 +12,15 @@
 #include <utility>
 #include <vector>
 
+#include "compiler/execution_plan_lookup.hpp"
+
 namespace holoscan::detail {
 namespace {
 
 struct RunnerMemberIdentity {
   VertexId vertex{};
   OperatorInstanceId operator_id{};
+  std::optional<CUDAGraphRegionPlanRef> fused_cuda_graph_region;
 };
 
 [[nodiscard]] const PortPlanRecord* dense_port(const ExecutionPlanState& state,
@@ -110,14 +113,24 @@ void canonicalize_edges(std::vector<EdgeId>& edges) {
     return std::nullopt;
   }
 
+  // The region source becomes the fused callback owner. Other capture-member factories remain
+  // available for startup capture but are omitted from steady-state callback dispatch.
   std::vector<RunnerMemberIdentity> members;
   for (const VertexId vertex : partition.members) {
+    const auto* fused = find_unique_cuda_graph_execution_region_by_member(state, vertex);
+    if (fused != nullptr && vertex != fused->fused_operator) {
+      continue;
+    }
     const auto begin = members.size();
     for (const auto& candidate : state.executable_factories.operators) {
       if (candidate.vertex == vertex) {
         members.push_back(RunnerMemberIdentity{
             .vertex = candidate.vertex,
             .operator_id = candidate.operator_id,
+            .fused_cuda_graph_region = fused != nullptr
+                                           ? std::optional{CUDAGraphRegionPlanRef{
+                                                 .graph = fused->graph, .region = fused->region}}
+                                           : std::nullopt,
         });
       }
     }
@@ -135,13 +148,26 @@ void canonicalize_edges(std::vector<EdgeId>& edges) {
       .process_group = *process_group,
   };
   for (const auto& edge : state.payload_edges) {
+    // Internal region edges are executed inside the captured CUDA Graph. Boundary owners are
+    // rebound to the fused source identity so ordinary neighbors see one operator.
+    if (is_cuda_graph_internal_execution_edge(state, edge.edge)) {
+      continue;
+    }
     const auto* source = dense_port(state, edge.source);
     const auto* target = dense_port(state, edge.target);
     if (source == nullptr || target == nullptr) {
       return std::nullopt;
     }
-    const auto source_index = member_index(members, source->owner);
-    const auto target_index = member_index(members, target->owner);
+    const auto* source_region =
+        find_unique_cuda_graph_execution_region_by_member(state, source->owner);
+    const auto* target_region =
+        find_unique_cuda_graph_execution_region_by_member(state, target->owner);
+    const VertexId source_owner =
+        source_region != nullptr ? source_region->fused_operator : source->owner;
+    const VertexId target_owner =
+        target_region != nullptr ? target_region->fused_operator : target->owner;
+    const auto source_index = member_index(members, source_owner);
+    const auto target_index = member_index(members, target_owner);
     if (source_index && target_index) {
       if (*source_index == *target_index) {
         return std::nullopt;
@@ -179,6 +205,7 @@ void canonicalize_edges(std::vector<EdgeId>& edges) {
     result.operators.push_back(PartitionRunnerOperatorPlanRecord{
         .vertex = members[current].vertex,
         .operator_id = members[current].operator_id,
+        .fused_cuda_graph_region = members[current].fused_cuda_graph_region,
         .readiness_source = trigger != nullptr ? trigger->readiness_source : SourceId{},
         .trigger_kind = trigger != nullptr ? std::optional<TemporalRecordTriggerKind>{trigger->kind}
                                            : std::nullopt,
@@ -232,6 +259,41 @@ std::optional<std::vector<PartitionRunnerPlanRecord>> derive_partition_runner_pl
   return result;
 }
 
+std::optional<InlinePartitionControllerAffinityConflict>
+find_inline_partition_controller_affinity_conflict(const ExecutionPlanState& state) {
+  const auto controller = std::ranges::find(state.support_thread_affinities,
+                                            SupportThreadRole::kController,
+                                            &SupportThreadAffinityPlanRecord::role);
+  if (controller == state.support_thread_affinities.end() || !controller->accepted ||
+      !controller->accepted->affinity) {
+    return std::nullopt;
+  }
+
+  for (const PartitionRunnerPlanRecord& runner : state.partition_runners) {
+    if (std::ranges::count(state.partition_runners,
+                           runner.process_group,
+                           &PartitionRunnerPlanRecord::process_group) != 1) {
+      continue;
+    }
+    const auto lane = std::ranges::find_if(state.execution_lanes, [&](const auto& candidate) {
+      return candidate.partition == runner.partition &&
+             candidate.execution_lane == runner.execution_lane;
+    });
+    if (lane == state.execution_lanes.end() || !lane->accepted_placement.affinity ||
+        lane->accepted_placement.affinity->cores == controller->accepted->affinity->cores) {
+      continue;
+    }
+    return InlinePartitionControllerAffinityConflict{
+        .process_group = runner.process_group,
+        .partition = runner.partition,
+        .execution_lane = runner.execution_lane,
+        .controller_affinity = *controller->accepted->affinity,
+        .partition_affinity = *lane->accepted_placement.affinity,
+    };
+  }
+  return std::nullopt;
+}
+
 bool valid_partition_runner_plan(const ExecutionPlanState& state) {
   const auto expected = derive_partition_runner_plan(state);
   if (!expected || state.partition_runners != *expected) {
@@ -239,6 +301,9 @@ bool valid_partition_runner_plan(const ExecutionPlanState& state) {
   }
   if (!state.admitted) {
     return true;
+  }
+  if (find_inline_partition_controller_affinity_conflict(state)) {
+    return false;
   }
   const std::uint32_t callback_owner_count = static_cast<std::uint32_t>(expected->size());
   if ((expected->empty() != state.executable_factories.operators.empty()) ||
@@ -268,12 +333,38 @@ bool valid_partition_runner_plan(const ExecutionPlanState& state) {
       if (factory == state.executable_factories.operators.end()) {
         return false;
       }
-      const std::size_t factory_index = static_cast<std::size_t>(
-          std::distance(state.executable_factories.operators.begin(), factory));
-      if (covered[factory_index] != 0U) {
+      const auto cover_factory = [&](const ExecutableOperatorFactoryRecord& candidate) {
+        const std::size_t factory_index =
+            static_cast<std::size_t>(&candidate - state.executable_factories.operators.data());
+        if (covered[factory_index] != 0U) {
+          return false;
+        }
+        covered[factory_index] = 1U;
+        return true;
+      };
+      if (!member.fused_cuda_graph_region) {
+        if (!cover_factory(*factory)) {
+          return false;
+        }
+        continue;
+      }
+      // One fused runner member accounts for every original factory used during startup capture.
+      const auto* capture_plan = find_unique_cuda_graph_capture_plan_by_region(
+          state, member.fused_cuda_graph_region->graph, member.fused_cuda_graph_region->region);
+      if (capture_plan == nullptr || capture_plan->members.empty() ||
+          capture_plan->members.front().vertex != member.vertex) {
         return false;
       }
-      covered[factory_index] = 1U;
+      for (const auto& captured : capture_plan->members) {
+        const auto captured_factory = std::find_if(
+            state.executable_factories.operators.begin(),
+            state.executable_factories.operators.end(),
+            [&](const auto& candidate) { return candidate.vertex == captured.vertex; });
+        if (captured_factory == state.executable_factories.operators.end() ||
+            !cover_factory(*captured_factory)) {
+          return false;
+        }
+      }
     }
   }
   return std::ranges::all_of(covered, [](std::uint8_t value) { return value == 1U; });

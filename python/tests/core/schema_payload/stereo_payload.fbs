@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace python.fixture;
+
+table FrameHeader {
+  sequence: ulong (id: 0);
+  source: string (id: 1);
+}
+
+table StereoPayload {
+  header: FrameHeader (id: 0);
+  left: holoscan.schema.Tensor (id: 1);
+  right: holoscan.schema.Tensor (id: 2);
+  exposure_us: uint (id: 3);
+}
+
+root_type StereoPayload;
+file_identifier "PYSP";

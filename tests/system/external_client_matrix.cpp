@@ -25,7 +25,9 @@
 //   External subscriber  →  validate_sample()
 //
 // The 12-cell matrix covers: 3 payload types × 2 locality modes × 2 direction
-// checks (import-side probe vs. export-side probe).
+// checks (import-side probe vs. export-side probe). Every cell exercises and
+// closes all three producer generations so the complete graph can drain
+// naturally; the selected cell controls which observation is reported.
 
 #include <poll.h>
 #include <signal.h>
@@ -62,7 +64,7 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/run.hpp>
 // Provides generated owning types and schema-trait specializations.
-#include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
+#include <holoscan/schema/sdk_schemas.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/time/realtime_clock.hpp>
 
 namespace {
@@ -310,6 +312,15 @@ struct MatrixRuntimeStartupProbe {
 
   static inline std::atomic<std::uint32_t> started{};
 };
+
+// Bounds failure cleanup without making request_stop() part of the success path.
+[[nodiscard]] bool wait_for_session_terminal(holoscan::RunSession& session) noexcept {
+  const auto deadline = std::chrono::steady_clock::now() + 10s;
+  while (session.is_running() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(2ms);
+  }
+  return !session.is_running();
+}
 
 // Tensor specialization of MatrixProbe: same interface, separate static
 // state because Tensor is not a regular value type and needs explicit
@@ -608,16 +619,23 @@ template <typename Subscriber>
 // Holds export-side observations collected by external subscriber clients,
 // indexed by MatrixPayload ordinal (kPod=0, kSchema=1, kTensor=2).
 struct ClientResult {
+  holoscan::ChannelRuntime runtime;
   std::array<NormalizedObservation, 3U> exports;
+  std::optional<holoscan::ChannelSubscriber<MatrixPod>> pod_subscriber;
+  std::optional<holoscan::ChannelSubscriber<holoscan::schema::StringT>> schema_subscriber;
+  std::optional<holoscan::ChannelSubscriber<holoscan::Tensor>> tensor_subscriber;
 };
 
 // Creates external publisher and subscriber for a value-typed (Pod or Schema)
-// payload, sends one sample with emit_captured, waits for it at the export,
-// validates it end-to-end, and exercises the double-close idempotency contract.
+// payload, sends one sample with emit_captured, closes the producer, validates
+// final-data-before-EOS at the export, and retains the remotely closed
+// subscriber until the parent observes session completion.
 template <typename T>
-[[nodiscard]] std::optional<NormalizedObservation> run_value_clients(
+[[nodiscard]] bool run_value_clients(
     holoscan::ChannelRuntime& runtime, const holoscan::ChannelEndpointCatalog& catalog,
-    std::string_view import_name, std::string_view export_name, std::uint64_t ordinal) {
+    std::string_view import_name, std::string_view export_name, std::uint64_t ordinal,
+    NormalizedObservation& observation,
+    std::optional<holoscan::ChannelSubscriber<T>>& retained_subscriber) {
   auto publisher = runtime.create_publisher<T>(catalog, import_name);
   auto subscriber = runtime.create_subscriber<T>(catalog, export_name);
   if (!publisher || !subscriber) {
@@ -625,44 +643,51 @@ template <typename T>
               << (publisher ? "ok" : holoscan::runtime_error_message(publisher.error()))
               << ", subscriber="
               << (subscriber ? "ok" : holoscan::runtime_error_message(subscriber.error())) << '\n';
-    return std::nullopt;
+    return false;
   }
   if (!wait_for_connection(*publisher, *subscriber, import_name)) {
-    return std::nullopt;
+    return false;
   }
   auto emitted =
       publisher->emit_captured(MatrixTraits<T>::value(), 10'000 + ordinal, emit_options(ordinal));
   if (!emitted) {
     std::cerr << "matrix emit failed for " << import_name << ": "
               << holoscan::runtime_error_message(emitted.error()) << '\n';
-    return std::nullopt;
+    return false;
+  }
+  const auto closed = publisher->close();
+  const auto closed_twice = publisher->close();
+  if (!closed || closed_twice || closed_twice.error().code != holoscan::ErrorCode::kClosed) {
+    std::cerr << "matrix producer close validation failed for " << import_name << '\n';
+    return false;
   }
   auto sample = receive_until(*subscriber);
   if (!sample) {
     std::cerr << "matrix receive failed for " << export_name << ": "
               << holoscan::runtime_error_message(sample.error()) << '\n';
-    return std::nullopt;
+    return false;
   }
   if (!validate_sample(*sample)) {
     std::cerr << "matrix sample validation failed for " << export_name << '\n';
-    return std::nullopt;
+    return false;
   }
-  const auto observation = normalize_sample(*sample);
-  const auto closed = publisher->close();
-  const auto closed_twice = publisher->close();
-  if (!closed || closed_twice || closed_twice.error().code != holoscan::ErrorCode::kClosed) {
-    std::cerr << "matrix close validation failed for " << import_name << '\n';
-    return std::nullopt;
+  observation = normalize_sample(*sample);
+  auto remote_end_of_stream = receive_until(*subscriber);
+  if (remote_end_of_stream || remote_end_of_stream.error().code != holoscan::ErrorCode::kClosed) {
+    std::cerr << "matrix remote EOS validation failed for " << export_name << '\n';
+    return false;
   }
-  return observation;
+  retained_subscriber.emplace(std::move(*subscriber));
+  return true;
 }
 
 // Creates external publisher and subscriber for a Tensor payload, loans a
-// write buffer, fills it with bytes 1..8, commits and emits it, then waits
-// for the sample at the export and validates its descriptor and content.
-[[nodiscard]] std::optional<NormalizedObservation> run_tensor_clients(
+// write buffer, fills it with bytes 1..8, commits and emits it, then closes the
+// producer and validates descriptor data before remote EOS.
+[[nodiscard]] bool run_tensor_clients(
     holoscan::ChannelRuntime& runtime, const holoscan::ChannelEndpointCatalog& catalog,
-    std::string_view import_name, std::string_view export_name) {
+    std::string_view import_name, std::string_view export_name, NormalizedObservation& observation,
+    std::optional<holoscan::ChannelSubscriber<holoscan::Tensor>>& retained_subscriber) {
   auto publisher = runtime.create_publisher<holoscan::Tensor>(catalog, import_name);
   auto subscriber = runtime.create_subscriber<holoscan::Tensor>(catalog, export_name);
   if (!publisher || !subscriber) {
@@ -670,24 +695,24 @@ template <typename T>
               << (publisher ? "ok" : holoscan::runtime_error_message(publisher.error()))
               << ", subscriber="
               << (subscriber ? "ok" : holoscan::runtime_error_message(subscriber.error())) << '\n';
-    return std::nullopt;
+    return false;
   }
   if (!wait_for_connection(*publisher, *subscriber, import_name)) {
-    return std::nullopt;
+    return false;
   }
   auto loan = publisher->loan_tensor(
       holoscan::TensorLoanRequest{.shape = kTensorShape, .dtype = kByteDtype});
   if (!loan) {
     std::cerr << "matrix Tensor loan failed for " << import_name << ": "
               << holoscan::runtime_error_message(loan.error()) << '\n';
-    return std::nullopt;
+    return false;
   }
   auto writer = loan->write_host();
   if (!writer || writer->byte_size() != 8U) {
     std::cerr << "matrix Tensor writer failed for " << import_name << ": "
               << (writer ? "unexpected byte size" : holoscan::runtime_error_message(writer.error()))
               << '\n';
-    return std::nullopt;
+    return false;
   }
   auto* bytes = static_cast<std::byte*>(writer->data());
   for (std::size_t index = 0U; index < 8U; ++index) {
@@ -697,55 +722,89 @@ template <typename T>
   if (!committed) {
     std::cerr << "matrix Tensor commit failed for " << import_name << ": "
               << holoscan::runtime_error_message(committed.error()) << '\n';
-    return std::nullopt;
+    return false;
   }
   auto emitted = publisher->emit(std::move(*loan), emit_options(3U));
   if (!emitted) {
     std::cerr << "matrix Tensor emit failed for " << import_name << ": "
               << holoscan::runtime_error_message(emitted.error()) << '\n';
-    return std::nullopt;
+    return false;
   }
-  auto sample = receive_until(*subscriber);
-  if (!sample) {
-    std::cerr << "matrix Tensor receive failed for " << export_name << ": "
-              << holoscan::runtime_error_message(sample.error()) << '\n';
-    return std::nullopt;
+  const auto producer_closed = publisher->close();
+  if (!producer_closed) {
+    std::cerr << "matrix Tensor producer close failed for " << import_name << ": "
+              << holoscan::runtime_error_message(producer_closed.error()) << '\n';
+    return false;
   }
-  if (!validate_sample(*sample)) {
-    std::cerr << "matrix Tensor sample validation failed for " << export_name << '\n';
-    return std::nullopt;
+  {
+    auto sample = receive_until(*subscriber);
+    if (!sample) {
+      std::cerr << "matrix Tensor receive failed for " << export_name << ": "
+                << holoscan::runtime_error_message(sample.error()) << '\n';
+      return false;
+    }
+    if (!validate_sample(*sample)) {
+      std::cerr << "matrix Tensor sample validation failed for " << export_name << '\n';
+      return false;
+    }
+    observation = normalize_sample(*sample);
   }
-  return normalize_sample(*sample);
+  auto remote_end_of_stream = receive_until(*subscriber);
+  if (remote_end_of_stream || remote_end_of_stream.error().code != holoscan::ErrorCode::kClosed) {
+    std::cerr << "matrix Tensor remote EOS validation failed for " << export_name << '\n';
+    return false;
+  }
+  retained_subscriber.emplace(std::move(*subscriber));
+  return true;
 }
 
-// Dispatches to the payload-specific client runner and stores the observation
-// at the index matching the payload's enum ordinal in ClientResult::exports.
+[[nodiscard]] bool close_client_subscribers(ClientResult& result) {
+  auto close = [](auto& subscriber) {
+    if (!subscriber) {
+      return false;
+    }
+    auto closed = subscriber->close();
+    subscriber.reset();
+    return static_cast<bool>(closed);
+  };
+  const bool pod_closed = close(result.pod_subscriber);
+  const bool schema_closed = close(result.schema_subscriber);
+  const bool tensor_closed = close(result.tensor_subscriber);
+  return pod_closed && schema_closed && tensor_closed;
+}
+
+// Exercises all three finite paths so every graph input reaches EOS. The caller
+// still selects one import/export observation for each matrix cell.
 [[nodiscard]] std::optional<ClientResult> run_clients(
-    const holoscan::ChannelEndpointCatalog& catalog, const MatrixNames& names,
-    MatrixPayload payload) {
+    const holoscan::ChannelEndpointCatalog& catalog, const MatrixNames& names) {
   auto runtime = holoscan::ChannelRuntime::create();
   if (!runtime) {
     return std::nullopt;
   }
-  ClientResult result{};
-  std::optional<NormalizedObservation> observation;
-  switch (payload) {
-    case MatrixPayload::kPod:
-      observation =
-          run_value_clients<MatrixPod>(*runtime, catalog, names.pod_import, names.pod_export, 1U);
-      break;
-    case MatrixPayload::kSchema:
-      observation = run_value_clients<holoscan::schema::StringT>(
-          *runtime, catalog, names.schema_import, names.schema_export, 2U);
-      break;
-    case MatrixPayload::kTensor:
-      observation = run_tensor_clients(*runtime, catalog, names.tensor_import, names.tensor_export);
-      break;
-  }
-  if (!observation) {
+  ClientResult result{.runtime = std::move(*runtime)};
+  const bool pod = run_value_clients<MatrixPod>(result.runtime,
+                                                catalog,
+                                                names.pod_import,
+                                                names.pod_export,
+                                                1U,
+                                                result.exports[0],
+                                                result.pod_subscriber);
+  const bool schema = run_value_clients<holoscan::schema::StringT>(result.runtime,
+                                                                   catalog,
+                                                                   names.schema_import,
+                                                                   names.schema_export,
+                                                                   2U,
+                                                                   result.exports[1],
+                                                                   result.schema_subscriber);
+  const bool tensor = run_tensor_clients(result.runtime,
+                                         catalog,
+                                         names.tensor_import,
+                                         names.tensor_export,
+                                         result.exports[2],
+                                         result.tensor_subscriber);
+  if (!pod || !schema || !tensor) {
     return std::nullopt;
   }
-  result.exports[static_cast<std::size_t>(payload)] = *observation;
   return result;
 }
 
@@ -921,22 +980,28 @@ template <typename T>
     std::cerr << "matrix Runtime startup barrier timed out\n";
     return false;
   }
-  const auto clients = run_clients(matrix.plan.endpoint_catalog(), matrix.names, cell.payload);
+  auto clients = run_clients(matrix.plan.endpoint_catalog(), matrix.names);
   const bool imported = validate_graph_import(matrix, cell.payload);
   const bool exported = clients && validate_graph_exports(cell.payload, *clients);
   const bool selected =
       clients && (cell.direction == MatrixDirection::kImport ? imported : exported);
-  session.request_stop();
+  const bool completed = clients && wait_for_session_terminal(session);
+  if (!completed && session.is_running()) {
+    session.request_stop();
+  }
   session.wait();
-  if (!selected || session.termination() != holoscan::RunTermination::kStopped ||
-      !session.diagnostics().empty()) {
+  const bool subscribers_closed = clients && close_client_subscribers(*clients);
+  if (!selected || !completed || session.termination() != holoscan::RunTermination::kCompleted ||
+      !subscribers_closed || !session.diagnostics().empty()) {
     std::cerr << "matrix same-process runtime: clients=" << static_cast<bool>(clients)
               << ", imported=" << imported << ", exported=" << exported << ", selected=" << selected
+              << ", completed=" << completed << ", subscribers_closed=" << subscribers_closed
               << ", termination=" << static_cast<int>(session.termination()) << ", diagnostic="
               << (session.diagnostics().empty() ? "<none>" : session.diagnostics().front().token)
               << '\n';
   }
-  return selected && session.termination() == holoscan::RunTermination::kStopped &&
+  return selected && completed && subscribers_closed &&
+         session.termination() == holoscan::RunTermination::kCompleted &&
          session.diagnostics().empty();
 }
 
@@ -1174,12 +1239,16 @@ void close_pipe(std::array<int, 2U>& pipe_fds) noexcept {
   const bool reported = released && read_byte(child.ready_fd, result);
   const bool selected =
       cell.direction == MatrixDirection::kExport || validate_graph_import(matrix, cell.payload);
-  const int child_exit = join_child(child);
-  session.request_stop();
+  const bool completed = reported && result == 0U && wait_for_session_terminal(session);
+  if (!completed && session.is_running()) {
+    session.request_stop();
+  }
   session.wait();
+  const bool cleanup_released = reported && result == 0U && write_byte(child.start_fd, 2U);
+  const int child_exit = join_child(child);
   std::filesystem::remove(path);
-  return reported && result == 0U && selected && child_exit == 0 &&
-         session.termination() == holoscan::RunTermination::kStopped &&
+  return reported && result == 0U && selected && cleanup_released && child_exit == 0 && completed &&
+         session.termination() == holoscan::RunTermination::kCompleted &&
          session.diagnostics().empty();
 }
 
@@ -1220,11 +1289,20 @@ void close_pipe(std::array<int, 2U>& pipe_fds) noexcept {
   if (!read_byte(start_fd, start) || start != 1U) {
     return 23;  // exit 23: timed out or received unexpected value waiting for parent start signal
   }
-  const auto result = run_clients(*catalog, names, cell.payload);
+  auto result = run_clients(*catalog, names);
   const bool selected = result && (cell.direction == MatrixDirection::kImport ||
                                    validate_graph_exports(cell.payload, *result));
   const bool reported = write_byte(ready_fd, selected ? 0U : 1U);
-  return selected && reported ? 0 : 24;  // exit 24: client round-trip or result report failed
+  if (!selected || !reported) {
+    return 24;  // exit 24: client round-trip or result report failed
+  }
+  std::uint8_t cleanup{};
+  if (!read_byte(start_fd, cleanup) || cleanup != 2U) {
+    return 27;  // exit 27: parent did not authorize local close after session completion
+  }
+  return close_client_subscribers(*result)
+             ? 0
+             : 28;  // exit 28: explicit local subscriber cleanup failed
 }
 
 // Builds a fresh MatrixGraph, validates its catalog, and runs the selected

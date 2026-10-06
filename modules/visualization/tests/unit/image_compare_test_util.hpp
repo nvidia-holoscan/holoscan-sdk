@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-#include <holoviz/rhi.hpp>
+#include <holoviz/holoviz.hpp>
 #include <holoviz/text.hpp>
 
 #include <gtest/gtest.h>
@@ -29,8 +29,8 @@ namespace holoviz::test_util {
 
 /// Create a device on the first adapter, or an empty handle if this machine
 /// cannot (no Vulkan adapter, no matching CUDA device, ...).
-inline rhi::Device try_create_device() {
-  auto adapters = rhi::enumerate_adapters();
+inline Device try_create_device() {
+  auto adapters = enumerate_adapters();
   if (!adapters || adapters->empty()) {
     return {};
   }
@@ -141,7 +141,7 @@ inline void write_bmp(const std::filesystem::path& path, std::span<const uint8_t
 /// and clamped so near-threshold differences are visible), written next to
 /// the test binary; returns the message listing the paths.
 inline std::string dump_artifacts(std::string_view tag, std::span<const uint8_t> a,
-                                  std::span<const uint8_t> b, rhi::Extent2D extent) {
+                                  std::span<const uint8_t> b, Extent2D extent) {
   // Callers with no reference image pass an empty (or mismatched) `b`: dump only `a`,
   // there is nothing to diff against.
   const bool have_b = b.size() == a.size() && !b.empty();
@@ -186,7 +186,7 @@ inline bool dump_requested() {
 
 /// Dump on failure (appended to the failure output) or on request.
 inline void maybe_dump(std::string_view tag, std::span<const uint8_t> a, std::span<const uint8_t> b,
-                       rhi::Extent2D extent, bool failed) {
+                       Extent2D extent, bool failed) {
   if (!failed && !dump_requested()) {
     return;
   }
@@ -202,18 +202,18 @@ inline void maybe_dump(std::string_view tag, std::span<const uint8_t> a, std::sp
 /// download the RGBA8 pixels. Works for both text implementations: the monospace
 /// renderer returns a default (no-op) end_frame token, which submit() skips;
 /// the ImGui renderer returns a real CUDA-signaled token.
-inline void render_with(rhi::Device& device, text::TextRenderer& renderer, rhi::Extent2D extent,
+inline void render_with(Device& device, text::TextRenderer& renderer, Extent2D extent,
                         std::span<const Draw> draws, std::vector<uint8_t>& out_pixels) {
   auto target = device.create_image({
       .extent = extent,
-      .format = rhi::Format::kR8G8B8A8Unorm,
-      .usage = rhi::ImageUsage::kRenderTarget,
+      .format = Format::kR8G8B8A8Unorm,
+      .usage = ImageUsage::kRenderTarget,
       .debug_name = "text compare target",
   });
   ASSERT_TRUE(target.has_value()) << target.error().message;
 
   auto render_pass =
-      device.create_render_pass({.render_targets = {{.format = rhi::Format::kR8G8B8A8Unorm}}});
+      device.create_render_pass({.render_targets = {{.format = Format::kR8G8B8A8Unorm}}});
   ASSERT_TRUE(render_pass.has_value()) << render_pass.error().message;
   ASSERT_TRUE(render_pass->set_render_image(*target, 0, {0.0F, 0.0F, 0.0F, 1.0F}).has_value());
 
@@ -224,7 +224,7 @@ inline void render_with(rhi::Device& device, text::TextRenderer& renderer, rhi::
   const auto token = renderer.end_frame();
   ASSERT_TRUE(token.has_value());
 
-  auto command_list = device.create_command_list({.type = rhi::CommandListType::kTransient});
+  auto command_list = device.create_command_list({.type = CommandListType::kTransient});
   ASSERT_TRUE(command_list.has_value()) << command_list.error().message;
   ASSERT_TRUE(command_list->begin().has_value());
   ASSERT_TRUE(
@@ -233,7 +233,7 @@ inline void render_with(rhi::Device& device, text::TextRenderer& renderer, rhi::
   ASSERT_TRUE(command_list->end_render().has_value());
   ASSERT_TRUE(command_list->end().has_value());
 
-  const rhi::SubmitDesc submit_desc{
+  const SubmitDesc submit_desc{
       .wait_external_sync_tokens = {&token.value(), 1},
       .command_lists = {&command_list.value(), 1},
   };

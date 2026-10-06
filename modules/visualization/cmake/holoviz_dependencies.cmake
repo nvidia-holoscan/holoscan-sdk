@@ -22,9 +22,9 @@ function(holoviz_copy_runtime_dlls target)
   endif()
 endfunction()
 
-# A standalone Holoscan Visualization build can install Slang beside libholoviz. Give this
-# module-owned runtime the same sibling lookup used by the SDK build without changing the caller's
-# directory-wide policy.
+# A standalone Holoscan Visualization build may install shared dependencies beside libholoviz.
+# Give this module-owned runtime the same sibling lookup used by the SDK build without changing
+# the caller's directory-wide policy.
 function(holoviz_configure_runtime_search_path target)
   get_target_property(_holoviz_target_type ${target} TYPE)
   if(holoscan_visualization_IS_TOP_LEVEL AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
@@ -60,7 +60,7 @@ set(_holoviz_dependencies
     vma
     imgui)
 if(HOLOSCAN_BUILD_EXAMPLES)
-  # stb is only consumed by the RHI examples; skip acquisition otherwise.
+  # stb is only consumed by the core examples; skip acquisition otherwise.
   list(APPEND _holoviz_dependencies stb)
 endif()
 foreach(_holoviz_dependency IN LISTS _holoviz_dependencies)

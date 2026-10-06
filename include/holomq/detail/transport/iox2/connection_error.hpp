@@ -7,7 +7,7 @@
 
 #include <holomq/errors.hpp>
 
-#include "iox2/connection_failure.hpp"
+#include <iox2/connection_failure.hpp>
 
 namespace holomq::detail::transport {
 

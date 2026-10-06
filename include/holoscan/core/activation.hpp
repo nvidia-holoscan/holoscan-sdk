@@ -69,16 +69,16 @@ enum class InputState : std::uint8_t {
 /// as an unbound, stale, closed, wrong-cardinality, or backend-materialization
 /// error remain typed \c ErrorCode values and are not folded into this enum.
 enum class SelectionReason : std::uint8_t {
-  kNone = 0,                       ///< No missing or temporal failure affected selection.
-  kNeverSeen = 1,                  ///< No eligible sample has ever been observed.
-  kTooStale = 2,                   ///< Available history is older than the admitted bound.
-  kInsufficientHistory = 3,        ///< Required bracketing or history is not available.
-  kWindowTimeout = 4,              ///< A bounded window closed before a complete selection.
-  kWindowSampleLimit = 5,          ///< A finite selected-sample bound prevented completion.
-  kWindowPendingLimit = 6,         ///< A finite pending-window bound prevented admission.
-  kEndOfStream = 7,                ///< The input closed without another eligible value.
-  kNotConnected = 8,               ///< No admitted producer is connected to the input.
-  kAlignmentWindowMiss = 9,        ///< An impossible aligned FIFO head was retired.
+  kNone = 0,                 ///< No missing or temporal failure affected selection.
+  kNeverSeen = 1,            ///< No eligible sample has ever been observed.
+  kTooStale = 2,             ///< Available history is older than the admitted bound.
+  kInsufficientHistory = 3,  ///< Required bracketing or history is not available.
+  kWindowTimeout = 4,        ///< A bounded window closed before a complete selection.
+  kWindowSampleLimit = 5,    ///< A finite selected-sample bound prevented completion.
+  kWindowPendingLimit = 6,   ///< A finite pending-window bound prevented admission.
+  kEndOfStream = 7,          ///< The input closed without another eligible value.
+  kNotConnected = 8,         ///< Explicit SafeDefault selected for an admitted unwired Exact input.
+  kAlignmentWindowMiss = 9,  ///< An impossible aligned FIFO head was retired.
   kNotSelectedForActivation = 10,  ///< Live input was not a member of this activation.
   kCaptureTimeAbsent = 11,         ///< Event-time selection found canonical absent capture time.
   kClockIncomparable = 12,         ///< Source and reference clock domains are not comparable.

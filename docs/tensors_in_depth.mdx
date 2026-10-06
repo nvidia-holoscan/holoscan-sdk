@@ -32,8 +32,8 @@ path** — the design goes out of its way to make that unnecessary.
     and per-consumer **deallocation (release) streams**
   - Why a received tensor arrives pre-ordered on your compute stream, with no
     host blocking anywhere on the device path
-  - How the one-stream-per-process-group-and-device model compares with the
-    per-operator streams of Holoscan 4.x
+  - How the default one-stream-per-execution-partition-and-device model compares
+    with the per-operator streams of Holoscan 4.x
   - When the compiler proves a linear chain and elides the fences entirely
   - The rules for foreign DLPack tensors and for explicit host access
   - How pools bound memory: cold materialization, `kResourceExhausted`, and
@@ -177,41 +177,76 @@ authority stayed with the producer's guard and was spent at commit.
   no additional correctness.
 </Warning>
 
-## One stream per process group and device
+## One stream per active execution partition and device
 
-Holoscan 5.0 materializes **one non-blocking CUDA stream per (process group,
-device) pair**. Every operator in that group computing on that device resolves
-to the same stream, exposed in `compute()` as `ExecutionContext::cuda_stream()`
-(a typed `cuda::stream_ref`). The runtime owns that stream's lifetime: it
-prepares your tensor inputs on it, records your output readiness on it, and
-keeps it alive through release ordering and teardown. Do not destroy it and do
-not retain it beyond the activation. An operator that deliberately uses its
-own stream — or a standalone client with no `ExecutionContext` — takes on the
-opposite duty: keep that external stream alive and use the explicit
-synchronization and deallocation APIs yourself.
+By default, Holoscan 5.0 materializes **one non-blocking CUDA stream per active
+(process group, execution partition, device) tuple**. A host-only partition
+gets no CUDA stream; a partition with CUDA-active operators on two devices gets
+one stream on each device. Every CUDA-active operator resolves to exactly one
+planned stream, exposed in `compute()` as `ExecutionContext::cuda_stream()` (a
+typed `cuda::stream_ref`). Operators in one partition still have one serial
+callback owner, while distinct partition streams permit—but do not guarantee—
+overlapping CUDA execution.
+
+The runtime owns each stream's lifetime: it prepares your tensor inputs on it,
+records your output readiness on it, and keeps it alive through release
+ordering and teardown. Do not destroy it and do not retain it beyond the
+activation. An operator that deliberately uses its own stream—or a standalone
+client with no `ExecutionContext`—takes on the opposite duty: keep that
+external stream alive and use the explicit synchronization and deallocation
+APIs yourself.
+
+For example, the automatic partitioner splits the two successor legs at this
+fork. The default policy gives the three active partitions streams `S_A`,
+`S_B`, and `S_C` on device 0, so B and C can submit independently:
+
+```text
+             ┌── B partition ── S_B
+A partition ─┤
+    S_A      └── C partition ── S_C
+```
+
+Applications that have measured a benefit from serial GPU submission can
+retain one ordinary stream per process group and device explicitly:
+
+```cpp
+holoscan::CompileOptions options;
+options.cuda_execution.compute_stream_policy =
+    holoscan::CudaComputeStreamPolicy::kSharedProcessDevice;
+auto plan = holoscan::compile(graph, std::move(options));
+```
+
+The selected policy is frozen in the execution plan. It does not change Tensor
+pool geometry, and there is no runtime switch or profile-dependent override.
+Treat shared mode as a measured tuning choice, not as a general latency or
+jitter improvement.
 
 This is a deliberate change from Holoscan 4.x:
 
 | | Holoscan 4.x | Holoscan 5.0 |
 |---|---|---|
-| Stream assignment | One unique internal stream per operator | One shared stream per process group + device |
+| Stream assignment | One unique internal stream per operator | One stream per active execution partition + device by default; optional shared process-group + device policy |
 | How `compute()` gets it | `receive_cuda_stream(port)` on the input context | `ExecutionContext::cuda_stream()` |
-| Producer/consumer ordering | Event record + stream wait on every hop | Same event model, but compiler-proven same-stream chains skip the fence entirely |
+| Producer/consumer ordering | Event record + stream wait on every hop | Same event model; same-final-stream chains skip the fence, partition boundaries use it by default |
 | Release streams per buffer | One (the buffer abstraction was not stream-aware) | One per fanout consumer, bounded and tracked per slot |
 | Stream lifetime | Operator-managed | Runtime-owned; borrow, never destroy or retain |
 
-Fewer streams means fewer cross-stream fences: in 4.x a linear chain of three
-operators paid an event record and wait at every hop just to bridge three
-private streams. In 5.0 those operators usually share one stream — and the
-compiler can prove it, as the next section explains.
+Partitions preserve useful serialization without returning to one stream per
+operator. A linear chain within one partition shares a stream and can elide
+fences, while a branch split can use separate streams. The compatibility policy
+uses fewer streams and may also fuse eligible edges across partition boundaries
+when both final operator bindings name the same stream.
 
 ## When the fences disappear: proven linear chains
 
 A cold compiler pass looks for strict linear device-tensor chains: the
 producer has **exactly one accepted successor in total**, the edge is
-process-local, and both endpoints resolve to the same process-group + device
-stream. For every edge it can prove, the plan carries fusion evidence that the
-runtime re-validates and then acts on:
+process-local, and both endpoints' final bindings name exactly the same stream.
+Under the default policy, this stops fusion at every execution-partition
+boundary. Under the shared policy, an otherwise eligible cross-partition edge
+may remain fused only when Green Context resolution and all other placement
+decisions leave its final stream IDs equal. For every edge it can prove, the
+plan carries fusion evidence that the runtime re-validates and then acts on:
 
 - `commit()` skips recording the readiness event — same-stream ordering is
   already implied by stream serialization;
@@ -434,6 +469,140 @@ refinements likewise require field scope.
   already materialized pool.
 </Warning>
 
+### Use a parameter byte-span projector for custom formulas
+
+Use the closed expression operations above whenever they can describe the
+capacity relationship. For irreducible domain logic, a **parameter byte-span
+projector** is a named C++ free or static function with this exact contract:
+
+```cpp
+holoscan::expected<std::uint64_t, holoscan::Error> projector(
+    const Params& params) noexcept;
+```
+
+The function runs once while the plan is compiled and returns the maximum
+addressable bytes for one Tensor slot. It must be deterministic,
+side-effect-free, reentrant, and non-throwing. C++ enforces the exact signature
+and `noexcept`; operator authors remain responsible for the other properties.
+Runtime receives only the resolved scalar and never retains the callback or a
+Params snapshot.
+
+Declare every Parameter the function reads next to the versioned semantic ID:
+
+```cpp
+static holoscan::expected<std::uint64_t, holoscan::Error>
+output_max_byte_span(const BatchParams& params) noexcept {
+  // Perform domain validation and overflow-checked arithmetic here.
+  return checked_batch_bytes(params.width,
+                             params.height,
+                             params.max_batch_size);
+}
+
+const auto capacity =
+    holoscan::parameter_projected_byte_span<&output_max_byte_span>(
+        "com.example.BatchOutput.output-max-byte-span.v1",
+        holoscan::param_ref<&BatchParams::width>(),
+        holoscan::param_ref<&BatchParams::height>(),
+        holoscan::param_ref<&BatchParams::max_batch_size>());
+
+spec.output(output, "output").produces_tensor(output_spec, capacity);
+```
+
+The `param_ref` list is normative compiler input, not documentation. Core
+cannot inspect the function body, so reading an undeclared field is an
+authoring correctness bug. Dependencies must belong to the exact Params
+schema, be non-sensitive, and be compile-time or recompile-required. Nested
+paths are distinct dependencies even when they end at the same reused nested
+field descriptor.
+
+The stable ID identifies the calculation independently of its C++ address or
+symbol spelling. Increment its semantic version whenever the function could
+return a different result or error for the same declared inputs. Renaming or
+moving an otherwise unchanged function does not require a new ID. Reusing one
+ID for different implementations in the same compilation fails closed.
+
+Return `ErrorCode::kArithmeticOverflow` when checked arithmetic overflows; the
+compiler reports `PHYSICAL_TENSOR_BYTE_SPAN_OVERFLOW`. Other returned errors
+become `PHYSICAL_TENSOR_BYTE_SPAN_PROJECTION_FAILED`, exposing only the stable
+error-code name rather than private error text. Zero and values that cannot be
+represented by the compiling host remain invalid byte spans.
+
+The projected leaf can be composed with the same checked multiplication,
+ceiling division, maximum, and alignment operations as any other byte-span
+expression. Keep such standard operations outside the projector when
+possible, so the plan retains their structure. Registered C++ operators use
+the same projector when instantiated from Python; arbitrary Python callbacks
+are not accepted during compiler lowering.
+
+### Derive memory kind from deployment parameters
+
+A runtime-pooled output can also select its physical memory kind from a
+generation-zero Parameter. Keep a module's public vocabulary narrow by mapping
+its own enum exhaustively to concrete Core memory kinds:
+
+```cpp
+enum class OutputStorage : std::uint8_t { kHost, kPinned };
+
+struct ResizeParams {
+  OutputStorage output_storage{OutputStorage::kHost};
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    ResizeParams,
+    holoscan::param_schema("com.example.ResizeParams", 1),
+    holoscan::field<&ResizeParams::output_storage>("output_storage")
+        .enum_values({
+            holoscan::param_enum_value("host", OutputStorage::kHost),
+            holoscan::param_enum_value("pinned", OutputStorage::kPinned),
+        })
+        .recompile_required());
+
+spec.output(output, "output")
+    .produces_tensor(
+        holoscan::TensorOutputSpec{
+            .representation = {.dtype = kByteDtype, .rank = 3U},
+            .bounds = holoscan::tensor_bounds(max_output_bytes),
+            .storage = holoscan::TensorOutputStorage::kRuntimePool,
+        },
+        holoscan::TensorOutputDerivations{
+            .memory_kind = holoscan::parameter_memory_kind(
+                holoscan::param_ref<&ResizeParams::output_storage>(),
+                {
+                    holoscan::memory_kind_case(
+                        OutputStorage::kHost, holoscan::MemoryKind::kHost),
+                    holoscan::memory_kind_case(
+                        OutputStorage::kPinned,
+                        holoscan::MemoryKind::kPinnedHost),
+                }),
+        });
+```
+
+The mapping must cover every value admitted by the field's named enum domain,
+with no extra or duplicate source values. An operator may instead expose an
+exact `MemoryKind` Parameter and use the one-argument
+`parameter_memory_kind()` overload. That direct field must still declare a
+nonempty `.enum_values(...)` domain containing exactly the concrete kinds the
+operator supports; `MemoryKind::kUnknown` is never an admissible choice.
+
+Compilation reads the accepted value once and freezes the resulting concrete
+kind into the ordinary Tensor allocation and channel plan. Runtime does not
+retain or reevaluate the expression. Changing a `.recompile_required()` value
+therefore requires compiling a new plan and starting a new session; it cannot
+migrate an already materialized pool.
+
+A derived producer choice must satisfy every downstream exact-memory
+requirement. Compilation rejects a mismatch with
+`PHYSICAL_TENSOR_LAYOUT_MISMATCH`; it does not silently insert a copy. A
+CUDA-backed result also needs separate explicit operator/device placement and
+never implies device zero. Memory kind answers *where each slot is allocated*;
+it does not choose the CUDA device, determine per-slot byte capacity, select an
+allocator/provider, or change the number of pool entries.
+
+The
+[`derived_tensor_pool_capacity` example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/derived_tensor_pool_capacity/cpp)
+keeps the selectable memory kind independent of its byte-span and rate-derived
+capacity calculations, and pins its consumers to the selected kind.
+
 ### Size queue entries from nominal rates
 
 Byte-span derivation answers **how many logical payload bytes fit in one
@@ -592,7 +761,7 @@ active depth. Explicit depth remains authoritative and is reported without a rep
 The `derived_tensor_pool_capacity` example exercises both renderings against its real published
 lifecycle generation and checks the canonical schema marker.
 
-The private-v4 artifact writer/finalizer includes the immutable recipe and
+The private-v7 artifact writer/finalizer includes the immutable recipe and
 capability evidence. There is no persisted `ExecutionPlan` importer or
 reconstructor in this release; `plan.json()` is canonical inspection output,
 not a reload API.
@@ -610,15 +779,35 @@ retry-spinning in `compute()`.
 
 ### Fanout release-stream caps
 
-Release tracking is bounded like everything else. The direct-output pool
-preallocates its release-event capacity at cold setup — one shared stream plus
-one per potential subscriber — and registering a consumer stream beyond that
-frozen capacity fails closed rather than growing. The same-process buffer path
+Release tracking is bounded like everything else. For each CUDA-backed
+direct-output or descriptor-field pool, the compiler records a checked
+process/device-wide per-slot bound. It reserves two streams for every other
+CUDA-active operator in that domain—its Runtime stream and one
+application-selected stream—plus the producer stream and every compatible CUDA
+descriptor-staging stream. The domain-wide bound remains safe when callbacks
+forward the same Tensor backing through later outputs: forwarding does not
+allocate replacement backing or reset the original slot's retained stream list.
+Descriptor-schema exports may copy on a distinct joined service stream, which
+must also retain the producer allocation until its copy completes. Runtime
+preallocates that many release events at cold setup, validates the plan value,
+and fails closed rather than growing when a caller exceeds it. This deliberately
+creates one event per admitted release-stream slot for every output-pool slot,
+including capacity that a particular run never consumes; the bounded cold-setup
+cost avoids allocation or growth on the publication and retirement hot paths.
+The same-process buffer path
 enforces `MemoryBuffer::kMaximumFanoutReleaseStreams` (8 by default,
 configurable per buffer via
 `MemoryBuffer::Options{.max_fanout_release_streams = ...}`): the consumer
 stream past the cap is rejected, not silently serialized. Duplicate
 registrations of the same stream are deduplicated and do not consume capacity.
+
+Retirement work scales with the number of distinct registered release streams:
+Runtime records one event per stream and polls those events until all complete.
+Likewise, the default compute policy materializes one stream for each active
+process-group, execution-partition, and device tuple. These are finite compiled
+records, but this release defines no separate deployment-wide CUDA stream-count
+limit; graphs with many CUDA-active partitions should inspect
+`ExecutionPlan::cuda_compute_streams()` when budgeting device resources.
 
 <Anchor id="preview-limitations" />
 
@@ -662,11 +851,12 @@ The current release draws four hard lines you should plan around:
   **deallocation stream per consumer**; the slot recycles only after all
   consumer events and read leases retire.
 - Received tensors arrive **pre-ordered** on `ExecutionContext::cuda_stream()`
-  — one runtime-owned stream per process group + device. Never add a hot-path
-  `cudaStreamSynchronize`.
-- The compiler proves strict linear same-stream chains and elides readiness
-  and release events entirely, with a lazy fallback for host or cross-stream
-  access.
+  — by default, one runtime-owned stream per active process group + execution
+  partition + device. Never add a hot-path `cudaStreamSynchronize`.
+- The compiler proves strict linear same-final-stream chains and elides
+  readiness and release events entirely. Default-policy partition boundaries
+  retain fences; shared-policy boundaries may fuse only when final stream IDs
+  match. Host or cross-stream access uses the lazy fence fallback.
 - Foreign DLPack imports are permanently read-only; `set_readiness_stream()`
   is your only ordering hook, and without it the tensor has no readiness
   contract.

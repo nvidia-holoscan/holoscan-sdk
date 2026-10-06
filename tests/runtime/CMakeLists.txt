@@ -25,13 +25,16 @@ add_executable(runtime_test
     ../support/direct_port_binding.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/closed_island_activation_plan.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/compile_platform.cpp
+    ${holoscan_SOURCE_DIR}/src/compiler/cuda_graph_execution_lowering.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/execution_plan_lookup.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/inline_partition_execution_plan.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/partition_authority_validation.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/partition_runner_plan.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/process_local_channel_plan_validation.cpp
+    ${holoscan_SOURCE_DIR}/src/compiler/optional_input_plan_validation.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/profile_admission.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/runtime_package_capabilities.cpp
+    ${holoscan_SOURCE_DIR}/src/core/diagnostic_context.cpp
     ${holoscan_SOURCE_DIR}/src/core/parameter_catalog_digest_internal.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/dispatcher.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health.cpp
@@ -48,6 +51,8 @@ add_executable(runtime_test
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_rate_state.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_activation.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_binding.cpp
+    ${holoscan_SOURCE_DIR}/src/runtime/runtime_cuda_graph_region_resources.cpp
+    ${holoscan_SOURCE_DIR}/src/runtime/runtime_cuda_graph_tensor_resources.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_binding_test_access.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_ingress.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_materialization.cpp
@@ -61,6 +66,7 @@ add_executable(runtime_test
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_partition_plan_validation.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_operator_replay_validation.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_package_capability.cpp
+    ${holoscan_SOURCE_DIR}/src/runtime/runtime_support_thread_placement.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_tensor_resources.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_tensor_output_pool.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_tensor_output_plan.cpp
@@ -80,8 +86,10 @@ add_executable(runtime_test
     test_parameter_updates_runtime.cpp
     test_physical_readiness_binding.cpp
     test_runtime_materialization.cpp
+    test_runtime_fixture_observation.cpp
     test_runtime_notification_source.cpp
     test_runtime_rate_state.cpp
+    nvtx_emit_marker_capture.cpp
     runtime_channel_binding_test_support.cpp
     runtime_channel_binding_schema_tensor_test_support.cpp
     test_runtime_channel_binding.cpp
@@ -90,6 +98,11 @@ add_executable(runtime_test
     test_runtime_channel_binding_tensor_selection.cpp
     test_runtime_channel_binding_temporal.cpp
     test_runtime_channel_binding_lifecycle.cpp
+    test_runtime_cuda_graph_region_resources.cpp
+    test_runtime_cuda_graph_tensor_resources.cpp
+    test_runtime_scalar_selection.cpp
+    test_borrowed_descriptor_graph.cpp
+    test_image_scratch_codec.cpp
     test_runtime_external_channel.cpp
     test_runtime_external_pod.cpp
     test_runtime_external_schema.cpp
@@ -104,15 +117,19 @@ add_executable(runtime_test
     test_runtime_diagnostic_sink.cpp
     run_session_channel_execution_test_support.cpp
     test_run_session.cpp
+    test_optional_inputs.cpp
     test_run_session_channel_execution.cpp
+    test_run_session_cuda_graph.cpp
     test_run_session_descriptor_output.cpp
     test_run_session_lane_evidence.cpp
     test_run_session_plan_ownership.cpp
     test_run_session_tensor.cpp
     test_execution_lane.cpp
+    test_foreign_operator.cpp
     $<TARGET_OBJECTS:holoscan_lifecycle_plan_private_objects>
 )
 holoscan_configure_test_clang_tidy(runtime_test)
+target_sources(runtime_test PRIVATE test_borrowed_descriptor_cuda.cpp borrowed_descriptor_cuda.cu)
 holoscan_apply_logging_policy(runtime_test)
 
 target_include_directories(runtime_test
@@ -141,9 +158,25 @@ gtest_discover_tests(runtime_test
     DISCOVERY_MODE PRE_TEST
     TEST_PREFIX RUNTIME.
     WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    PROPERTIES ENVIRONMENT "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING="
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(runtime_benchmark_signal_admission_test test_benchmark_signal_admission.cpp)
+    holoscan_configure_test_clang_tidy(runtime_benchmark_signal_admission_test)
+    target_include_directories(runtime_benchmark_signal_admission_test
+        PRIVATE ${holoscan_SOURCE_DIR}/benchmark/runtime
+    )
+    target_link_libraries(runtime_benchmark_signal_admission_test
+        PRIVATE holoscan::core GTest::gtest_main Threads::Threads
+    )
+    gtest_discover_tests(runtime_benchmark_signal_admission_test
+        DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX RUNTIME.
+        PROPERTIES LABELS "runtime;signals"
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+
     add_executable(runtime_signal_process_probe
         runtime_signal_process_probe.cpp
         ../support/direct_port_binding.cpp
@@ -349,3 +382,31 @@ gtest_discover_tests(runtime_ready_policy_test
     TEST_PREFIX holoscan_runtime_ready_policy_
     WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
+
+# These assertions need ERROR or WARN output regardless of inherited logger settings.
+foreach(logger_environment IN ITEMS OFF ERROR WARN)
+    add_test(NAME RUNTIME.diagnostic_logger_fixture_isolation_${logger_environment}
+        COMMAND ${CMAKE_COMMAND} -E env
+            "HOLOSCAN_LOG_LEVEL=${logger_environment}"
+            "HOLOSCAN_LOG_FORMAT=inherited: %v"
+            "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING="
+            $<TARGET_FILE:runtime_test>
+            "--gtest_filter=RunSessionTest.PendingTerminalReportSamplesCurrentAutomaticPolicy:RunSessionTest.ExplicitTerminalReportRemainsAvailableAfterAutomaticOptOut:RunSessionTest.ExplicitHelperReportsPublishedWarningPrefixWithoutWaiting"
+            --gtest_shuffle --gtest_repeat=10
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+endforeach()
+
+# Verify that an inherited ON/OFF setting in the launcher does not become the
+# immutable policy override in the API-toggle test process.
+foreach(policy_environment IN ITEMS ON OFF)
+    add_test(NAME RUNTIME.diagnostic_policy_toggle_isolation_${policy_environment}
+        COMMAND ${CMAKE_COMMAND} -E env
+            "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING=${policy_environment}"
+            ${CMAKE_COMMAND} -E env --unset=HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING
+            $<TARGET_FILE:runtime_test>
+            "--gtest_filter=RunSessionTest.PendingTerminalReportSamplesCurrentAutomaticPolicy:RunSessionTest.ExplicitTerminalReportRemainsAvailableAfterAutomaticOptOut"
+            --gtest_shuffle --gtest_repeat=10
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+endforeach()

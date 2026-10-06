@@ -370,8 +370,5 @@ class ManagerInfer {
       {"trt", holoinfer_backend::h_trt}};
 };
 
-inline std::shared_ptr<ManagerInfer> g_manager;
-inline std::map<std::string, std::shared_ptr<ManagerInfer>> g_managers;
-
 }  // namespace inference
 }  // namespace holoscan

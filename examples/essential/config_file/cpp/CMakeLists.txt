@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    cmake_minimum_required(VERSION 4.0)
-    project(holoscan_config_file LANGUAGES CXX)
+cmake_minimum_required(VERSION 4.0)
+project(holoscan_config_file LANGUAGES CXX)
+
+if(PROJECT_IS_TOP_LEVEL)
     include("${CMAKE_CURRENT_LIST_DIR}/CMakeLists.min.txt")
     return()
 endif()
@@ -31,6 +32,8 @@ target_link_libraries(config_file
 holoscan_configure_example_install(config_file)
 
 if(BUILD_TESTING)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../../common/ctest_workspace.cmake")
+    holoscan_configure_example_test_workspace(config_file)
     # REQ: SYSTEM-015
     add_test(NAME EXAMPLE_CPP_CONFIG_FILE_TEST
         COMMAND config_file --config-dir ${CMAKE_CURRENT_SOURCE_DIR})
@@ -44,9 +47,9 @@ endif()
 
 install(TARGETS config_file
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/essential/config_file/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )
 install(FILES detector.json detector.yaml
     DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/essential/config_file/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

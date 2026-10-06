@@ -192,10 +192,36 @@ class ChannelSubscriber<Tensor> {
   ChannelSubscriber(const ChannelSubscriber&) = delete;
   ChannelSubscriber& operator=(const ChannelSubscriber&) = delete;
 
+  /// @brief Retire this process's local Tensor subscriber endpoint.
+  /// @return Success on the first live close, or a code-only cleanup error. Repeated close and
+  /// close on a moved-from facade return @ref ErrorCode::kClosed.
+  /// @note This externally serialized, consuming operation publishes no producer end-of-stream
+  /// record and supplies no graph-completion evidence. Cancel and join any active waiter before
+  /// closing. Already returned Tensors and derived views retain their ordinary owning lifetime;
+  /// unread local data may be discarded. A cleanup failure still consumes the endpoint; later
+  /// checked operations return @ref ErrorCode::kClosed.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<void, Error> close() noexcept;
+
   /// Return whether the transport reports a pending Tensor descriptor without consuming it.
   ///
   /// @return The readiness state, or an error when the backend cannot query it.
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<bool, Error> has_samples() const;
+
+  /// @brief Claim an externally pollable readiness descriptor for this subscriber.
+  /// @return A move-only handle, or a checked closed, capability, or ownership error.
+  /// @retval ErrorCode::kClosed This facade is locally closed, moved from, or already observed
+  /// producer end of stream.
+  /// @retval ErrorCode::kNotSupported Native descriptor readiness is unavailable on this platform,
+  /// or this endpoint was created without event wake.
+  /// @retval ErrorCode::kInvalidArgument A wait is in flight, the Runtime readiness pump owns the
+  /// subscriber, or another readiness handle is live.
+  /// @note Readability is a hint. A consumer calls \ref ChannelReadinessHandle::acknowledge first,
+  /// then drains \ref receive or \ref receive_sample until \ref ErrorCode::kNotReady. Producer end
+  /// of stream and a changed producer incarnation also wake the descriptor so the next receive
+  /// reports \ref ErrorCode::kClosed or \ref ErrorCode::kStaleEndpoint.
+  /// @note Blocking wait operations return \ref ErrorCode::kInvalidArgument while the handle is
+  /// live.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<ChannelReadinessHandle, Error> readiness();
 
   /// Receive the next Tensor handle.
   ///
@@ -220,8 +246,9 @@ class ChannelSubscriber<Tensor> {
   /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
   /// @return The sample on success, or the first checked error.
   /// @retval ErrorCode::kTimeout \p deadline elapsed. Retryable; endpoint state is unchanged.
-  /// @retval ErrorCode::kClosed The producer published end of stream, or this facade was moved
-  /// from. The end-of-stream state is latched, so every later call reports it.
+  /// @retval ErrorCode::kClosed The producer published end of stream, this facade was locally
+  /// closed, or this facade was moved from. The end-of-stream state is latched, so every later
+  /// call reports it.
   /// @retval ErrorCode::kStaleEndpoint The producer incarnation changed; rebuild the subscriber.
   /// @retval ErrorCode::kNotSupported This endpoint was created with
   /// \c ChannelOptions::enable_event_wake disabled, so it has no kernel event lane. Reported only
@@ -263,7 +290,8 @@ class ChannelSubscriber<Tensor> {
   /// @return Empty success when a sample may be available, or a checked wait error.
   /// @retval ErrorCode::kTimeout \p deadline elapsed with no readiness.
   /// @retval ErrorCode::kInterrupted \p token requested a stop.
-  /// @retval ErrorCode::kClosed End of stream was already consumed, or this facade was moved from.
+  /// @retval ErrorCode::kClosed End of stream was already consumed, or this facade was locally
+  /// closed or moved from.
   /// @retval ErrorCode::kNotSupported This endpoint was created with
   /// \c ChannelOptions::enable_event_wake disabled and has no queued sample.
   /// @retval ErrorCode::kInvalidArgument This subscriber's readiness is already owned by another

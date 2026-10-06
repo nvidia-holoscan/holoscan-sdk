@@ -7,9 +7,11 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include "execution_plan_state.hpp"
 
@@ -40,6 +42,7 @@ namespace holoscan::detail {
 struct TensorServiceContractView {
   const PayloadIdentityRecord& payload_identity;
   std::uint64_t payload_size_bytes{};
+  std::uint64_t selected_inline_bucket_bytes{};
   bool tensor_payload{};
   std::uint64_t tensor_max_byte_span{};
   std::string_view tensor_pool_id;
@@ -124,6 +127,7 @@ provider_sizing_dependencies(std::span<const PoolCapacityDependencyPlanRecord> d
   return TensorServiceContractView{
       .payload_identity = service.payload_identity,
       .payload_size_bytes = service.payload_size_bytes,
+      .selected_inline_bucket_bytes = service.selected_inline_bucket_bytes,
       .tensor_payload = service.tensor_payload,
       .tensor_max_byte_span = service.tensor_max_byte_span,
       .tensor_pool_id = service.tensor_pool_id,
@@ -144,6 +148,7 @@ provider_sizing_dependencies(std::span<const PoolCapacityDependencyPlanRecord> d
   return TensorServiceContractView{
       .payload_identity = service.payload_identity,
       .payload_size_bytes = service.payload_size_bytes,
+      .selected_inline_bucket_bytes = service.selected_inline_bucket_bytes,
       .tensor_payload = service.tensor_payload,
       .tensor_max_byte_span = service.tensor_max_byte_span,
       .tensor_pool_id = service.tensor_pool_id,
@@ -165,6 +170,7 @@ provider_sizing_dependencies(std::span<const PoolCapacityDependencyPlanRecord> d
   return TensorServiceContractView{
       .payload_identity = service.payload_identity,
       .payload_size_bytes = service.payload_size_bytes,
+      .selected_inline_bucket_bytes = service.selected_inline_bucket_bytes,
       .tensor_payload = service.tensor_payload,
       .tensor_max_byte_span = service.tensor_max_byte_span,
       .tensor_pool_id = service.tensor_pool_id,
@@ -210,6 +216,7 @@ inline void for_each_tensor_service_storage(TensorServiceContractView service, F
     TensorServiceContractView left, TensorServiceContractView right) noexcept {
   return payload_identity_exactly_equal(left.payload_identity, right.payload_identity) &&
          left.payload_size_bytes == right.payload_size_bytes &&
+         left.selected_inline_bucket_bytes == right.selected_inline_bucket_bytes &&
          left.tensor_payload == right.tensor_payload &&
          left.tensor_max_byte_span == right.tensor_max_byte_span &&
          left.tensor_pool_id == right.tensor_pool_id &&
@@ -324,6 +331,98 @@ template <typename Service>
                             storage.device == device);
   });
   return required;
+}
+
+/// Derive the bounded number of distinct release streams retained by one output-pool slot.
+///
+/// CUDA backing can be forwarded by arbitrary Operator callbacks, so immediate fanout is not a
+/// sound lifetime bound. For CUDA-addressable storage, reserve the producer stream plus one
+/// runtime and one application-selected stream for every other CUDA-active Operator in the
+/// allocator's final process/device binding domain, after any Green Context replacement. Also
+/// reserve every compatible descriptor-staging stream in that domain. Host-only storage retains
+/// the direct-service bound because it cannot accumulate CUDA release streams through callback
+/// forwarding.
+[[nodiscard]] inline std::optional<std::uint32_t> tensor_output_release_stream_capacity(
+    std::span<const ProcessLocalChannelServicePlanRecord> process_local_services,
+    std::span<const CrossProcessChannelServicePlanRecord> cross_process_services,
+    std::span<const OperatorCudaStreamBindingPlanRecord> final_operator_bindings,
+    VertexId allocating_producer, PortId output, std::optional<std::uint16_t> tensor_index,
+    ProcessGroupId allocator_process_group, DeviceId device) noexcept {
+  constexpr std::uint64_t kMaximum = std::numeric_limits<std::uint32_t>::max();
+
+  if (allocator_process_group && device.valid()) {
+    std::vector<VertexId> operators;
+    for (const auto& binding : final_operator_bindings) {
+      if (!binding.operator_vertex || binding.process_group != allocator_process_group ||
+          binding.device != device) {
+        continue;
+      }
+      if (std::ranges::find(operators, binding.operator_vertex) == operators.end()) {
+        operators.push_back(binding.operator_vertex);
+      }
+    }
+
+    std::uint64_t staging_streams{};
+    for (const auto& service : cross_process_services) {
+      if (!descriptor_tensor_schema_service(service)) {
+        continue;
+      }
+      const bool retains_forwarded_backing =
+          cross_process_tensor_service_requires_stream_for_device_in_group(
+              service, allocator_process_group, device);
+      if (retains_forwarded_backing && staging_streams == kMaximum) {
+        return std::nullopt;
+      }
+      staging_streams += static_cast<std::uint64_t>(retains_forwarded_backing);
+    }
+
+    const bool producer_counted =
+        allocating_producer && std::ranges::find(operators, allocating_producer) != operators.end();
+    const std::uint64_t possible_consumers =
+        operators.size() - static_cast<std::size_t>(producer_counted);
+    if (staging_streams + 1U > kMaximum ||
+        possible_consumers > (kMaximum - staging_streams - 1U) / 2U) {
+      return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(2U * possible_consumers + staging_streams + 1U);
+  }
+
+  std::uint64_t subscribers{};
+  for (const auto& service : process_local_services) {
+    if (service.source != output || !service.tensor_payload) {
+      continue;
+    }
+    if (subscribers > kMaximum - service.max_subscribers) {
+      return std::nullopt;
+    }
+    subscribers += service.max_subscribers;
+  }
+
+  std::uint64_t staging_streams{};
+  for (const auto& service : cross_process_services) {
+    if (service.source != output || !descriptor_tensor_schema_service(service)) {
+      continue;
+    }
+    const auto view = tensor_service_contract_view(service);
+    bool retains_pool_on_service_stream = !tensor_index && view.tensor_fields.empty() &&
+                                          view.tensor_memory_kind == MemoryKind::kCudaDevice;
+    if (tensor_index) {
+      retains_pool_on_service_stream = std::ranges::any_of(
+          view.tensor_fields, [&](const TensorFieldServiceStorageContract& field) {
+            return field.tensor_index == *tensor_index &&
+                   field.memory_kind == MemoryKind::kCudaDevice;
+          });
+    }
+    if (retains_pool_on_service_stream && staging_streams == kMaximum) {
+      return std::nullopt;
+    }
+    staging_streams += static_cast<std::uint64_t>(retains_pool_on_service_stream);
+  }
+
+  if (staging_streams + 1U > kMaximum || subscribers > (kMaximum - staging_streams - 1U) / 2U) {
+    return std::nullopt;
+  }
+  return static_cast<std::uint32_t>(2U * subscribers + staging_streams + 1U);
 }
 
 }  // namespace holoscan::detail

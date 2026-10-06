@@ -33,174 +33,9 @@ struct PendingOperatorFactory {
   VertexId authored_vertex{};
   std::shared_ptr<OperatorFactoryBase> factory;
   std::optional<std::size_t> root_operator_index;
+  std::shared_ptr<const ParameterInputEvidenceState> parameter_input_evidence;
+  std::vector<ExecutableLocalEnumPortRecord> local_enum_ports;
 };
-
-struct AuthoredGraphLookup {
-  std::vector<std::string> path;
-  std::string name;
-  GraphId id{};
-};
-
-struct AuthoredVertexLookup {
-  GraphId graph{};
-  std::string name;
-  VertexId id{};
-};
-
-[[nodiscard]] inline bool schema_package_less(const SchemaPackagePlanRecord& lhs,
-                                              const SchemaPackagePlanRecord& rhs) {
-  return std::tie(lhs.schema_id.value,
-                  lhs.binary_schema_size,
-                  lhs.flatc_build,
-                  lhs.ordered_flags,
-                  lhs.include_closure_sha256,
-                  lhs.generator_format_version,
-                  lhs.package_format_version,
-                  lhs.runtime_abi.major,
-                  lhs.runtime_abi.minor,
-                  lhs.runtime_abi.revision) < std::tie(rhs.schema_id.value,
-                                                       rhs.binary_schema_size,
-                                                       rhs.flatc_build,
-                                                       rhs.ordered_flags,
-                                                       rhs.include_closure_sha256,
-                                                       rhs.generator_format_version,
-                                                       rhs.package_format_version,
-                                                       rhs.runtime_abi.major,
-                                                       rhs.runtime_abi.minor,
-                                                       rhs.runtime_abi.revision);
-}
-
-[[nodiscard]] inline std::vector<std::string> graph_path(const GraphRecord& record) {
-  return record.path ? std::vector<std::string>{record.path->segments().begin(),
-                                                record.path->segments().end()}
-                     : std::vector<std::string>{};
-}
-
-[[nodiscard]] inline std::vector<AuthoredGraphLookup> make_graph_lookup(
-    const std::vector<GraphRecord>& graphs) {
-  std::vector<AuthoredGraphLookup> result;
-  result.reserve(graphs.size());
-  for (const GraphRecord& graph : graphs) {
-    result.push_back(AuthoredGraphLookup{
-        .path = graph_path(graph),
-        .name = graph.name,
-        .id = graph.id,
-    });
-  }
-  std::ranges::sort(result, [](const auto& lhs, const auto& rhs) {
-    return std::tie(lhs.path, lhs.name) < std::tie(rhs.path, rhs.name);
-  });
-  return result;
-}
-
-[[nodiscard]] inline std::vector<AuthoredVertexLookup> make_vertex_lookup(
-    const std::vector<VertexRecord>& vertices) {
-  std::vector<AuthoredVertexLookup> result;
-  result.reserve(vertices.size());
-  for (const VertexRecord& vertex : vertices) {
-    if (vertex.kind == VertexKind::kOperator) {
-      result.push_back(AuthoredVertexLookup{
-          .graph = vertex.graph,
-          .name = vertex.name,
-          .id = vertex.id,
-      });
-    }
-  }
-  std::ranges::sort(result, [](const auto& lhs, const auto& rhs) {
-    return std::tie(lhs.graph.value, lhs.name) < std::tie(rhs.graph.value, rhs.name);
-  });
-  return result;
-}
-
-[[nodiscard]] inline const AuthoredGraphLookup* find_graph(
-    const std::vector<AuthoredGraphLookup>& graphs, const GraphRecord& canonical) {
-  const AuthoredGraphLookup key{
-      .path = graph_path(canonical),
-      .name = canonical.name,
-  };
-  const auto less = [](const AuthoredGraphLookup& lhs, const AuthoredGraphLookup& rhs) {
-    return std::tie(lhs.path, lhs.name) < std::tie(rhs.path, rhs.name);
-  };
-  const auto found = std::ranges::lower_bound(graphs, key, less);
-  return found != graphs.end() && found->path == key.path && found->name == key.name ? &*found
-                                                                                     : nullptr;
-}
-
-[[nodiscard]] inline const AuthoredVertexLookup* find_vertex(
-    const std::vector<AuthoredVertexLookup>& vertices, GraphId graph, std::string_view name) {
-  const AuthoredVertexLookup key{
-      .graph = graph,
-      .name = std::string{name},
-  };
-  const auto less = [](const AuthoredVertexLookup& lhs, const AuthoredVertexLookup& rhs) {
-    return std::tie(lhs.graph.value, lhs.name) < std::tie(rhs.graph.value, rhs.name);
-  };
-  const auto found = std::ranges::lower_bound(vertices, key, less);
-  return found != vertices.end() && found->graph == graph && found->name == name ? &*found
-                                                                                 : nullptr;
-}
-
-[[nodiscard]] inline ExecutableFactoryInventory make_selected_factory_inventory(
-    const std::vector<GraphRecord>& authored_graphs,
-    const std::vector<VertexRecord>& authored_vertices,
-    std::vector<PendingOperatorFactory> pending_operators, const GraphSnapshotData& canonical,
-    std::span<const VertexId> selected_operators) {
-  auto graphs = make_graph_lookup(authored_graphs);
-  auto vertices = make_vertex_lookup(authored_vertices);
-  std::ranges::sort(pending_operators, [](const auto& lhs, const auto& rhs) {
-    return lhs.authored_vertex.value < rhs.authored_vertex.value;
-  });
-
-  std::vector<VertexId> selected{selected_operators.begin(), selected_operators.end()};
-  std::ranges::sort(selected, {}, &VertexId::value);
-  if (std::ranges::adjacent_find(selected) != selected.end()) {
-    throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_INVALID"}};
-  }
-
-  ExecutableFactoryInventory result;
-  result.operators.reserve(selected.size());
-  for (const VertexId selected_id : selected) {
-    if (selected_id.value == 0U || selected_id.value > canonical.vertices.size()) {
-      throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_INVALID"}};
-    }
-    const VertexRecord& canonical_vertex = canonical.vertices[selected_id.value - 1U];
-    if (canonical_vertex.id != selected_id || canonical_vertex.kind != VertexKind::kOperator ||
-        canonical_vertex.graph.value == 0U ||
-        canonical_vertex.graph.value > canonical.graphs.size()) {
-      throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_INVALID"}};
-    }
-    const GraphRecord& canonical_graph = canonical.graphs[canonical_vertex.graph.value - 1U];
-    const AuthoredGraphLookup* const authored_graph = find_graph(graphs, canonical_graph);
-    if (authored_graph == nullptr) {
-      throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_UNRESOLVED"}};
-    }
-    const AuthoredVertexLookup* const authored_vertex =
-        find_vertex(vertices, authored_graph->id, canonical_vertex.name);
-    if (authored_vertex == nullptr) {
-      throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_UNRESOLVED"}};
-    }
-    const auto pending = std::ranges::lower_bound(
-        pending_operators, authored_vertex->id.value, {}, [](const PendingOperatorFactory& item) {
-          return item.authored_vertex.value;
-        });
-    if (pending == pending_operators.end() || pending->authored_vertex != authored_vertex->id ||
-        !pending->factory) {
-      throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_UNRESOLVED"}};
-    }
-    std::shared_ptr<OperatorFactoryBase> factory = pending->factory->clone();
-    if (!factory) {
-      throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_INVALID"}};
-    }
-    result.operators.push_back(ExecutableOperatorFactoryRecord{
-        .vertex = selected_id,
-        .operator_id = static_cast<OperatorInstanceId>(result.operators.size() + 1U),
-        .factory = std::move(factory),
-        .lifecycle_callbacks = {},
-        .root_operator_index = pending->root_operator_index,
-    });
-  }
-  return result;
-}
 
 }  // namespace graph_compiler_access_detail
 
@@ -252,34 +87,6 @@ class GraphCompilerAccess {
     return GraphView{std::move(snapshot)};
   }
 
-  /// @brief Deep-copy canonical generated-package provenance used by one Graph.
-  /// @param graph Composed source Graph whose cold package evidence is captured.
-  /// @param canonical Canonical snapshot whose generation must still match.
-  /// @return Records ordered by SchemaId and complete evidence with exact duplicates coalesced.
-  /// @throws RuntimeError when the Graph changes during capture.
-  /// @note Distinct honest evidence for one SchemaId remains as distinct diagnostic records and
-  /// never changes compile admission or semantic identity.
-  [[nodiscard]] static std::vector<SchemaPackagePlanRecord> schema_packages(
-      const Graph& graph, const GraphSnapshotData& canonical) {
-    std::vector<SchemaPackagePlanRecord> result;
-    {
-      const std::shared_ptr<GraphState>& state = graph.state_;
-      const std::lock_guard lock(state->mutex_);
-      if (state->generation_ != canonical.generation) {
-        throw RuntimeError{Error{ErrorCode::kIncompatible, "GRAPH_MUTATED_DURING_COMPILE"}};
-      }
-      result.reserve(state->ports_.size());
-      for (const PortStorage& port : state->ports_) {
-        if (port.schema_package) {
-          result.push_back(*port.schema_package);
-        }
-      }
-    }
-    std::ranges::sort(result, graph_compiler_access_detail::schema_package_less);
-    result.erase(std::unique(result.begin(), result.end()), result.end());
-    return result;
-  }
-
   /// @brief Retain the immutable canonical storage behind one compiler Graph view.
   /// @param view Canonical Graph view published in an execution plan.
   /// @return Shared immutable storage, or null for an empty view.
@@ -290,61 +97,12 @@ class GraphCompilerAccess {
     return view.snapshot_;
   }
 
-  /// @brief Clone only explicitly selected Operator factories for cold Parameter tooling.
-  /// @param graph Composed source Graph whose selected process-local factories are captured.
-  /// @param canonical Canonical snapshot used to resolve exact selected identities.
-  /// @param selected_operators Non-empty canonical Operator vertex set.
-  /// @return Deep-owned selected factories with no clocks or lifecycle callback inventory.
-  /// @throws RuntimeError when the Graph changes or a selected factory cannot be resolved.
-  /// @throws std::bad_alloc when cold index or factory storage cannot be allocated.
-  /// @note Unselected factories are neither retained, cloned, nor schema-queried. This seam is
-  /// source-private and adds no runtime dispatch state or lookup.
-  [[nodiscard]] static ExecutableFactoryInventory parameter_factories(
-      const Graph& graph, const GraphSnapshotData& canonical,
-      std::span<const VertexId> selected_operators) {
-    if (selected_operators.empty()) {
-      throw RuntimeError{Error{ErrorCode::kInvalidArgument, "GRAPH_OPERATOR_SELECTION_EMPTY"}};
-    }
-    std::vector<GraphRecord> authored_graphs;
-    std::vector<VertexRecord> authored_vertices;
-    std::vector<graph_compiler_access_detail::PendingOperatorFactory> pending_operators;
-    {
-      const std::shared_ptr<GraphState>& state = graph.state_;
-      const std::lock_guard lock(state->mutex_);
-      if (state->generation_ != canonical.generation) {
-        throw RuntimeError{Error{ErrorCode::kIncompatible, "GRAPH_MUTATED_DURING_COMPILE"}};
-      }
-      authored_graphs.reserve(1U + state->embedded_graph_records_.size());
-      authored_graphs.push_back(state->graph_record_);
-      authored_graphs.insert(authored_graphs.end(),
-                             state->embedded_graph_records_.begin(),
-                             state->embedded_graph_records_.end());
-      authored_vertices = state->vertices_;
-      pending_operators.reserve(state->operators_.size() +
-                                state->embedded_operator_mappings_.size());
-      for (std::size_t index = 0U; index < state->operators_.size(); ++index) {
-        const auto& op = state->operators_[index];
-        pending_operators.push_back(
-            graph_compiler_access_detail::PendingOperatorFactory{op.vertex, op.factory, index});
-      }
-      for (const auto& mapping : state->embedded_operator_mappings_) {
-        pending_operators.push_back(graph_compiler_access_detail::PendingOperatorFactory{
-            mapping.vertex, mapping.factory, std::nullopt});
-      }
-    }
-    return graph_compiler_access_detail::make_selected_factory_inventory(
-        authored_graphs,
-        authored_vertices,
-        std::move(pending_operators),
-        canonical,
-        selected_operators);
-  }
-
   /// @brief Clone every executable factory and bind it to canonical plan identities.
   /// @param graph Composed source Graph whose process-local factory inventory is captured.
   /// @param canonical Canonical snapshot published through the resulting ExecutionPlan.
   /// @return Deep-owned private inventory safe after the source Graph is destroyed.
-  /// @throws RuntimeError when the Graph changes during capture or a factory cannot be resolved.
+  /// @throws RuntimeError when the Graph changes during capture, a factory cannot be resolved, or
+  /// a parameter transaction target is not present in the captured operator inventory.
   /// @throws std::bad_alloc when cold factory or identity storage cannot be allocated.
   /// @note The inventory is process-local executable state. It never enters serialized
   /// artifacts, digests, diagnostics, GraphView, or transport records.
@@ -363,6 +121,7 @@ class GraphCompilerAccess {
     std::vector<VertexRecord> authored_vertices;
     std::vector<graph_compiler_access_detail::PendingOperatorFactory> pending_operators;
     std::vector<PendingClock> pending_clocks;
+    std::shared_ptr<const ParameterTransactionState> parameter_transaction;
     {
       const std::shared_ptr<GraphState>& state = graph.state_;
       const std::lock_guard lock(state->mutex_);
@@ -379,13 +138,25 @@ class GraphCompilerAccess {
                                 state->embedded_operator_mappings_.size());
       for (std::size_t index = 0U; index < state->operators_.size(); ++index) {
         const auto& op = state->operators_[index];
-        pending_operators.push_back(
-            graph_compiler_access_detail::PendingOperatorFactory{op.vertex, op.factory, index});
+        pending_operators.push_back(graph_compiler_access_detail::PendingOperatorFactory{
+            op.vertex, op.factory, index, op.parameter_input_evidence, {}});
       }
       for (const auto& mapping : state->embedded_operator_mappings_) {
         pending_operators.push_back(graph_compiler_access_detail::PendingOperatorFactory{
-            mapping.vertex, mapping.factory, std::nullopt});
+            mapping.vertex, mapping.factory, std::nullopt, mapping.parameter_input_evidence, {}});
       }
+      for (auto& pending : pending_operators) {
+        for (const auto& port : state->ports_) {
+          if (port.record.owner == pending.authored_vertex &&
+              port.record.owner_kind == PortOwnerKind::kOperator &&
+              port.record.payload_identity.scalar &&
+              port.record.payload_identity.scalar->kind == ScalarIdentityKind::kLocalEnum) {
+            pending.local_enum_ports.push_back(ExecutableLocalEnumPortRecord{
+                port.record.direction, port.record.name, port.local_type_token});
+          }
+        }
+      }
+      parameter_transaction = state->parameter_transaction_;
       pending_clocks.reserve(state->clocks_.size());
       for (const auto& clock : state->clocks_) {
         pending_clocks.push_back(PendingClock{clock.record, clock.factory, clock.shared});
@@ -410,8 +181,10 @@ class GraphCompilerAccess {
     };
 
     ExecutableFactoryInventory result;
+    std::vector<std::pair<VertexId, VertexId>> canonical_vertices;
+    canonical_vertices.reserve(pending_operators.size());
     result.operators.reserve(pending_operators.size());
-    for (const graph_compiler_access_detail::PendingOperatorFactory& pending : pending_operators) {
+    for (graph_compiler_access_detail::PendingOperatorFactory& pending : pending_operators) {
       const auto vertex =
           std::ranges::find(authored_vertices, pending.authored_vertex, &VertexRecord::id);
       if (vertex == authored_vertices.end()) {
@@ -431,6 +204,7 @@ class GraphCompilerAccess {
       if (canonical_vertex == canonical.vertices.end()) {
         throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_UNRESOLVED"}};
       }
+      canonical_vertices.emplace_back(pending.authored_vertex, canonical_vertex->id);
       if (!pending.factory) {
         throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_INVALID"}};
       }
@@ -465,9 +239,12 @@ class GraphCompilerAccess {
       result.operators.push_back(ExecutableOperatorFactoryRecord{
           .vertex = canonical_vertex->id,
           .operator_id = 0U,
+          .cuda_graph_capture_eligible = canonical_vertex->cuda_graph_capture_eligible,
           .factory = std::move(factory),
+          .parameter_input_evidence = pending.parameter_input_evidence,
           .lifecycle_callbacks = std::move(lifecycle_callbacks),
           .root_operator_index = pending.root_operator_index,
+          .local_enum_ports = std::move(pending.local_enum_ports),
       });
     }
     std::ranges::sort(result.operators, [](const auto& lhs, const auto& rhs) {
@@ -478,6 +255,37 @@ class GraphCompilerAccess {
         throw RuntimeError{Error{ErrorCode::kResourceExhausted, "GRAPH_OPERATOR_ID_EXHAUSTED"}};
       }
       result.operators[index].operator_id = static_cast<OperatorInstanceId>(index + 1U);
+    }
+    if (parameter_transaction) {
+      auto remapped = std::make_shared<ParameterTransactionState>(*parameter_transaction);
+      for (auto& op : remapped->operators) {
+        const auto target = std::ranges::find_if(canonical_vertices, [&](const auto& candidate) {
+          return candidate.first == op.target;
+        });
+        if (target == canonical_vertices.end()) {
+          throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_PARAMETER_TRANSACTION_INVALID"}};
+        }
+        op.target = target->second;
+      }
+      for (auto& scope_target : remapped->scope.operators) {
+        const auto target = std::ranges::find_if(canonical_vertices, [&](const auto& candidate) {
+          return candidate.first == scope_target;
+        });
+        if (target == canonical_vertices.end()) {
+          throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_PARAMETER_TRANSACTION_INVALID"}};
+        }
+        scope_target = target->second;
+      }
+      if (remapped->scope.graph) {
+        const GraphRecord* const authored = authored_graph(*remapped->scope.graph);
+        const GraphRecord* const mapped =
+            authored == nullptr ? nullptr : canonical_graph(*authored);
+        if (mapped == nullptr) {
+          throw RuntimeError{Error{ErrorCode::kFailure, "GRAPH_PARAMETER_TRANSACTION_INVALID"}};
+        }
+        remapped->scope.graph = mapped->id;
+      }
+      result.parameter_transaction = std::move(remapped);
     }
 
     result.clocks.reserve(pending_clocks.size());
@@ -525,7 +333,7 @@ class GraphCompilerAccess {
     for (const auto& factory : factories) {
       if (!factory)
         return make_unexpected(Error{ErrorCode::kFailure, "GRAPH_OPERATOR_FACTORY_INVALID"});
-      auto created = factory->create();
+      auto created = factory->create(nullptr);
       if (!created)
         return make_unexpected(std::move(created.error()));
       if (!created.value())
@@ -544,7 +352,8 @@ class GraphCompilerAccess {
   /// evidence and never enter the returned public plan records or serializers.
   [[nodiscard]] static expected<std::vector<TemporalReplay>, Error> replay_temporal_contracts(
       const ExecutableFactoryInventory& factories, const GraphSnapshotData& snapshot,
-      PlanGenerationId plan_generation, std::span<const ReadinessPlanRecord> readiness);
+      PlanGenerationId plan_generation, std::span<const ReadinessPlanRecord> readiness,
+      Diagnostic* failure = nullptr);
 
   /// @brief Recreate or resolve every root and embedded clock declaration.
   /// @param graph Graph whose private clock ownership inventory is exercised.
@@ -567,7 +376,7 @@ class GraphCompilerAccess {
       }
     }
     for (const auto& factory : factories) {
-      auto created = factory->create();
+      auto created = factory->create(nullptr);
       if (!created)
         return make_unexpected(std::move(created.error()));
       if (!created.value())
@@ -602,7 +411,6 @@ class GraphCompilerAccess {
                                  {},
                                  std::unique_ptr<OutputBase>{std::move(port)},
                                  std::move(payload_identity),
-                                 std::nullopt,
                                  0U);
   }
 

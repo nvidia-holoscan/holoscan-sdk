@@ -49,8 +49,8 @@ endif()
 if(DEFINED HOLOSCAN_TOOLCHAIN_FILE AND NOT HOLOSCAN_TOOLCHAIN_FILE STREQUAL "")
     list(APPEND configure_command "-DCMAKE_TOOLCHAIN_FILE:FILEPATH=${HOLOSCAN_TOOLCHAIN_FILE}")
 endif()
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}")
 endif()
 if(DEFINED HOLOSCAN_MSVC_RUNTIME_LIBRARY AND NOT HOLOSCAN_MSVC_RUNTIME_LIBRARY STREQUAL "")
     list(APPEND configure_command
@@ -70,8 +70,8 @@ endif()
 
 if(NOT HOLOSCAN_ARTIFACT_FIXTURE_MODE STREQUAL "cross_without_emulator")
     set(build_command "${CMAKE_COMMAND}" --build "${fixture_build_dir}")
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND build_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${build_command}
@@ -91,8 +91,8 @@ if(HOLOSCAN_ARTIFACT_FIXTURE_MODE STREQUAL "valid_absolute_destination" OR
         "${CMAKE_COMMAND}" --build "${fixture_build_dir}"
         --target artifact_install_fixture_graph_artifacts
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND artifact_target_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND artifact_target_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${artifact_target_command}
@@ -126,8 +126,8 @@ if(HOLOSCAN_ARTIFACT_FIXTURE_MODE STREQUAL "default_install_excluded")
         "${CMAKE_COMMAND}" --install "${fixture_build_dir}"
         --prefix "${fixture_install_prefix}"
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND default_install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND default_install_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${default_install_command}
@@ -151,8 +151,8 @@ set(install_command
     --prefix "${fixture_install_prefix}"
     --component holoscan-graph-artifacts
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND install_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${install_command}

@@ -827,7 +827,8 @@ TEST(ChannelTensorTest, HoloMQBufferTensorEmitRetainsOwnerUntilSubscriberRelease
 //
 //   publisher --[kBufferHandle, device pool, S0 blocked]--> subscriber (S1)
 //   S1 captures S0 fence via synchronize_for_consumer_stream; slot held until S1 drains.
-TEST(ChannelTensorTest, HoloMQBufferTensorChannelOrdersProducerAndConsumerStreams) {
+// REQ: CHAN-143
+TEST(ChannelTensorTest, HoloMQBufferTensorLocalClosePreservesImportedDeviceTensorStreamContract) {
   holoscan::test::skip_without_cuda_device();
   ASSERT_EQ(cudaSetDevice(0), cudaSuccess);
   ASSERT_EQ(cudaFree(nullptr), cudaSuccess);
@@ -891,6 +892,22 @@ TEST(ChannelTensorTest, HoloMQBufferTensorChannelOrdersProducerAndConsumerStream
   ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
   auto received_tensor = std::move(received).value();
   EXPECT_TRUE(received_tensor.has_readiness_stream_contract());
+
+  // Key close assertion: the imported BufferHandle Tensor owns its lease and producer fence
+  // independently of the external subscriber facade. Retire the endpoint while that Tensor is
+  // still live, then replace the endpoint so the later trigger publication can drive ordinary
+  // transport-release progress without relying on the retired subscriber.
+  ASSERT_TRUE(subscriber->close());
+  ASSERT_TRUE(wait_until(
+      [&publisher] {
+        auto refreshed = publisher->update_connections();
+        return refreshed.has_value() && !publisher->has_subscribers();
+      },
+      std::chrono::seconds(2)));
+  auto replacement = runtime->create_subscriber<holoscan::Tensor>(channel_name, options);
+  ASSERT_TRUE(replacement) << holoscan::runtime_error_message(replacement.error());
+  ASSERT_TRUE(wait_for_subscribers(publisher.value(), std::chrono::seconds(2)));
+
   auto synchronized = received_tensor.synchronize_for_consumer_stream(consumer_stream.get());
   ASSERT_TRUE(synchronized) << holoscan::runtime_error_message(synchronized.error());
 
@@ -914,6 +931,9 @@ TEST(ChannelTensorTest, HoloMQBufferTensorChannelOrdersProducerAndConsumerStream
   received_tensor = holoscan::Tensor{};
   auto trigger_emitted = publisher->emit(std::move(trigger_tensor).value());
   ASSERT_TRUE(trigger_emitted) << holoscan::runtime_error_message(trigger_emitted.error());
+  auto trigger_received = replacement->receive();
+  ASSERT_TRUE(trigger_received) << holoscan::runtime_error_message(trigger_received.error());
+  trigger_received = holoscan::Tensor{};
   // Key assertion: pool slot unavailable even after received_tensor is dropped, while
   // consumer_stream is still blocked — deallocation stream must complete first.
   EXPECT_FALSE(fixture->pool.acquire().has_value());
@@ -1576,6 +1596,208 @@ TEST(ChannelTensorTest, BlockingPublishesAndReceivesTensorHandle) {
   EXPECT_EQ(destroyed_counter->load(std::memory_order_relaxed), 1);
 }
 
+// A raw Tensor subscriber close retires the endpoint without invalidating a Tensor that the
+// application already owns. Moving first also proves that owner absence is the only facade-closed
+// state and that every operation reports the same terminal code afterward.
+// REQ: CHAN-143
+TEST(ChannelTensorTest, LocalClosePreservesReturnedTensorAndConsumesFacade) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  auto publisher = create_tensor_publisher(runtime.value(), channel_name);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<holoscan::Tensor>(channel_name);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+  auto destroyed = std::make_shared<std::atomic<int>>(0);
+  void* expected_data = nullptr;
+  ASSERT_TRUE(publisher->emit(make_counting_tensor(destroyed, &expected_data, 0x2aU)));
+  auto received = subscriber->receive();
+  ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  holoscan::Tensor retained = std::move(*received);
+
+  holoscan::ChannelSubscriber<holoscan::Tensor> moved = std::move(*subscriber);
+  auto moved_from_close = subscriber->close();
+  ASSERT_FALSE(moved_from_close);
+  EXPECT_EQ(moved_from_close.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_TRUE(moved_from_close.error().message.empty());
+
+  std::size_t close_allocations = 0U;
+  holoscan::expected<void, holoscan::Error> closed;
+  {
+    const holoscan::test::ScopedAllocationCounter allocations;
+    closed = moved.close();
+    close_allocations = allocations.count();
+  }
+  ASSERT_TRUE(closed);
+  EXPECT_EQ(close_allocations, 0U);
+  EXPECT_EQ(retained.data(), expected_data);
+  ASSERT_EQ(retained.nbytes(), 6);
+  EXPECT_EQ(static_cast<const std::uint8_t*>(retained.data())[0], 0x2aU);
+  EXPECT_EQ(destroyed->load(std::memory_order_relaxed), 0);
+  EXPECT_FALSE(moved.has_publishers());
+
+  auto readiness = moved.has_samples();
+  ASSERT_FALSE(readiness);
+  EXPECT_EQ(readiness.error().code, holoscan::ErrorCode::kClosed);
+  auto value = moved.receive();
+  ASSERT_FALSE(value);
+  EXPECT_EQ(value.error().code, holoscan::ErrorCode::kClosed);
+  auto sample = moved.receive_sample();
+  ASSERT_FALSE(sample);
+  EXPECT_EQ(sample.error().code, holoscan::ErrorCode::kClosed);
+  auto refreshed = moved.refresh_connections();
+  ASSERT_FALSE(refreshed);
+  EXPECT_EQ(refreshed.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_EQ(
+      holoscan::detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(moved),
+      0U);
+
+  auto repeated = moved.close();
+  ASSERT_FALSE(repeated);
+  EXPECT_EQ(repeated.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_TRUE(repeated.error().message.empty());
+
+  retained = holoscan::Tensor{};
+  EXPECT_EQ(destroyed->load(std::memory_order_relaxed), 1);
+}
+
+// Closing a raw Tensor subscriber may discard unread local work and must retire a sidecar claim
+// already staged into subscriber-local authority instead of retaining it until process teardown.
+// REQ: CHAN-143
+TEST(ChannelTensorTest, LocalCloseDiscardsStagedUnreadTensorAndRetiresBacking) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  auto publisher = create_tensor_publisher(runtime.value(), channel_name);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<holoscan::Tensor>(channel_name);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+  auto destroyed = std::make_shared<std::atomic<int>>(0);
+  void* expected_data = nullptr;
+  ASSERT_TRUE(publisher->emit(make_counting_tensor(destroyed, &expected_data, 0x63U)));
+  EXPECT_EQ(destroyed->load(std::memory_order_relaxed), 0);
+
+  auto staged =
+      holoscan::detail::RuntimeChannelBindingAccess::receive_tensor_sample(*subscriber, false);
+  ASSERT_FALSE(staged);
+  EXPECT_EQ(staged.error().code, holoscan::ErrorCode::kBackpressured);
+
+  ASSERT_TRUE(subscriber->close());
+  EXPECT_TRUE(wait_until([&] { return destroyed->load(std::memory_order_relaxed) == 1; },
+                         std::chrono::seconds(2)));
+}
+
+// A fanout subscriber owns one stable sidecar claim-bit position. Local close releases its unread
+// claim without renumbering the surviving peer, and a replacement reuses the vacant position.
+// REQ: CHAN-143
+TEST(ChannelTensorTest, LocalCloseReleasesFanoutClaimAndAdmitsReplacement) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  holoscan::ChannelOptions options{};
+  options.expected_recipient_count = 2U;
+  auto publisher = create_tensor_publisher(*runtime, channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber_a = runtime->create_subscriber<holoscan::Tensor>(channel_name, options);
+  ASSERT_TRUE(subscriber_a) << holoscan::runtime_error_message(subscriber_a.error());
+  auto subscriber_b = runtime->create_subscriber<holoscan::Tensor>(channel_name, options);
+  ASSERT_TRUE(subscriber_b) << holoscan::runtime_error_message(subscriber_b.error());
+  ASSERT_TRUE(wait_for_tensor_recipients(
+      *publisher, {&*subscriber_a, &*subscriber_b}, 2U, std::chrono::seconds(2)));
+
+  auto first_destroyed = std::make_shared<std::atomic<int>>(0);
+  void* first_data = nullptr;
+  auto first = publisher->emit(make_counting_tensor(first_destroyed, &first_data, 0x71U));
+  ASSERT_TRUE(first) << holoscan::runtime_error_message(first.error());
+  ASSERT_EQ(*first, 2U);
+  ASSERT_TRUE(subscriber_a->close());
+  EXPECT_EQ(first_destroyed->load(std::memory_order_relaxed), 0);
+
+  auto received_b = subscriber_b->receive();
+  ASSERT_TRUE(received_b) << holoscan::runtime_error_message(received_b.error());
+  EXPECT_EQ(received_b->data(), first_data);
+  *received_b = holoscan::Tensor{};
+  EXPECT_TRUE(wait_until([&] { return first_destroyed->load(std::memory_order_relaxed) == 1; },
+                         std::chrono::seconds(2)));
+
+  auto replacement = runtime->create_subscriber<holoscan::Tensor>(channel_name, options);
+  ASSERT_TRUE(replacement) << holoscan::runtime_error_message(replacement.error());
+  ASSERT_TRUE(wait_for_tensor_recipients(
+      *publisher, {&*subscriber_b, &*replacement}, 2U, std::chrono::seconds(2)));
+
+  auto second_destroyed = std::make_shared<std::atomic<int>>(0);
+  void* second_data = nullptr;
+  auto second = publisher->emit(make_counting_tensor(second_destroyed, &second_data, 0x72U));
+  ASSERT_TRUE(second) << holoscan::runtime_error_message(second.error());
+  ASSERT_EQ(*second, 2U);
+  auto second_b = subscriber_b->receive();
+  auto second_replacement = replacement->receive();
+  ASSERT_TRUE(second_b) << holoscan::runtime_error_message(second_b.error());
+  ASSERT_TRUE(second_replacement) << holoscan::runtime_error_message(second_replacement.error());
+  EXPECT_EQ(second_b->data(), second_data);
+  EXPECT_EQ(second_replacement->data(), second_data);
+  *second_b = holoscan::Tensor{};
+  EXPECT_EQ(second_destroyed->load(std::memory_order_relaxed), 0);
+  *second_replacement = holoscan::Tensor{};
+  EXPECT_EQ(second_destroyed->load(std::memory_order_relaxed), 1);
+}
+
+// Raw Tensor local close uses the same quiescent data/protected-terminal detach transaction. Its
+// catalog health subscriber remains a poll-only endpoint and is retired by ordinary destruction.
+// REQ: CHAN-143
+TEST(ChannelTensorTest, LocalCloseDetachesProtectedWaitAndClearsTerminalInspection) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+
+  holoscan::ChannelOptions options{};
+  options.queue_policy = holoscan::ChannelQueuePolicy::kDropOldest;
+  options.subscriber_queue_depth = 1U;
+  options.max_subscriber_queue_depth = 1U;
+  options.enable_event_wake = true;
+  auto publisher = create_tensor_publisher(*runtime, channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<holoscan::Tensor>(channel_name, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+  auto wait_set = holoscan::detail::RuntimeChannelBindingAccess::create_wait_set(*runtime);
+  ASSERT_TRUE(wait_set) << holoscan::runtime_error_message(wait_set.error());
+  auto attached =
+      holoscan::detail::RuntimeChannelBindingAccess::attach_wait_set(**wait_set, *subscriber);
+  ASSERT_TRUE(attached) << holoscan::runtime_error_message(attached.error());
+  EXPECT_TRUE(holoscan::detail::RuntimeChannelBindingAccess::secondary_wait_set_handle(*subscriber)
+                  .has_value());
+
+  ASSERT_TRUE(subscriber->close());
+  auto attach_after_close =
+      holoscan::detail::RuntimeChannelBindingAccess::attach_wait_set(**wait_set, *subscriber);
+  ASSERT_FALSE(attach_after_close);
+  EXPECT_EQ(attach_after_close.error().code, holoscan::ErrorCode::kClosed);
+  EXPECT_FALSE(holoscan::detail::RuntimeChannelBindingAccess::secondary_wait_set_handle(*subscriber)
+                   .has_value());
+  EXPECT_EQ(holoscan::detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(
+                *subscriber),
+            0U);
+
+  auto waited = (*wait_set)->wait_for(std::chrono::milliseconds(10));
+  ASSERT_FALSE(waited);
+  EXPECT_EQ(waited.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_TRUE(wait_until(
+      [&publisher] {
+        auto refreshed = publisher->update_connections();
+        return refreshed && !publisher->has_subscribers();
+      },
+      std::chrono::seconds(2)));
+}
+
 // Verifies Tensor receive_sample returns both the Tensor handle and public sample metadata.
 TEST(ChannelTensorTest, ReceiveSampleReturnsTensorAndPublicMetadata) {
   auto runtime = holoscan::ChannelRuntime::create();
@@ -2229,6 +2451,7 @@ TEST(ChannelTensorTest, BlockingOneToOneHotPathDoesNotAllocateAfterWarmup) {
 // The data and protected-terminal services are observed independently. A final data publication
 // that becomes visible after the receiver's first data probe must still drain before EOS.
 // REQ: CHAN-136
+// REQ: CHAN-143
 TEST(ChannelTensorTest, ProtectedTerminalRechecksDataPublishedAfterInitialProbe) {
   auto runtime = holoscan::ChannelRuntime::create();
   ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
@@ -2306,6 +2529,14 @@ TEST(ChannelTensorTest, ProtectedTerminalRechecksDataPublishedAfterInitialProbe)
   EXPECT_EQ(holoscan::detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(
                 *subscriber),
             2U);
+
+  ASSERT_TRUE(subscriber->close());
+  EXPECT_EQ(holoscan::detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(
+                *subscriber),
+            0U);
+  auto after_local_close = subscriber->receive_sample();
+  ASSERT_FALSE(after_local_close);
+  EXPECT_EQ(after_local_close.error().code, holoscan::ErrorCode::kClosed);
 }
 
 // Verifies blocking Tensor fanout keeps storage alive until every expected subscriber releases its
@@ -2883,6 +3114,36 @@ TEST(ChannelTensorTest, DropOldestDepthOneFanoutReplacementHotPathDoesNotAllocat
 
   EXPECT_TRUE(all_cycles_succeeded);
   EXPECT_EQ(allocation_count, 0U);
+}
+
+// Recipient indices are stable claim-bit positions, so unregistering an earlier endpoint leaves a
+// hole rather than compacting later recipients. Replacement retirement must still find a live
+// recipient beyond that hole and release its final backing claim.
+TEST(ChannelTensorTest, SidecarReplacementReleaseFindsRecipientBeyondVacantSlot) {
+  holoscan::TensorSidecarStore store(/*capacity=*/1U, /*expected_recipient_count=*/2U);
+  holomq::DeliveryRecipientId first_recipient{};
+  holomq::DeliveryRecipientId later_recipient{};
+  first_recipient.bytes.front() = 1U;
+  later_recipient.bytes.front() = 2U;
+
+  auto first_index = store.register_recipient(first_recipient);
+  ASSERT_TRUE(first_index);
+  EXPECT_EQ(first_index.value(), 0U);
+  auto later_index = store.register_recipient(later_recipient);
+  ASSERT_TRUE(later_index);
+  EXPECT_EQ(later_index.value(), 1U);
+
+  auto destroyed = std::make_shared<std::atomic<int>>(0);
+  void* data = nullptr;
+  auto published = store.insert(make_counting_tensor(destroyed, &data, 0x42U));
+  ASSERT_TRUE(published) << holoscan::runtime_error_message(published.error());
+
+  store.unregister_recipient(first_index.value(), first_recipient);
+  EXPECT_EQ(destroyed->load(std::memory_order_relaxed), 0);
+  store.release_replaced(published.value(), later_recipient);
+  EXPECT_EQ(destroyed->load(std::memory_order_relaxed), 1);
+
+  store.unregister_recipient(later_index.value(), later_recipient);
 }
 
 // Verifies same-process Tensor sidecar lookup fails closed for descriptors with invalid ABI,

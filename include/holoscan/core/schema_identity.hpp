@@ -9,12 +9,19 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <type_traits>
 
 namespace holoscan {
+
+namespace schema {
+template <typename Root>
+struct FlatBufferSchemaBinding;
+}  // namespace schema
 
 /// @brief Carry the compact semantic identity of one generated schema.
 ///
@@ -32,36 +39,74 @@ struct SchemaId {
   friend constexpr bool operator==(SchemaId lhs, SchemaId rhs) noexcept = default;
 };
 
-/// @brief Describe the complete compile-time semantic identity of a schema root.
+/// @brief Carry the exact four-byte FlatBuffers root file identifier.
 ///
-/// Generated schema packages supply this value for the semantic root/native
-/// object exposed to application code. The identity does not carry verifier,
-/// parser, artifact-lifetime, or transport-package authority. The canonical
-/// name and digest storage supplied by a specialization must have static
-/// lifetime because this value borrows the name as a \c std::string_view.
+/// The identifier is an independent in-buffer type check. It is deliberately
+/// excluded from schema-family ID derivation and is not authentication.
+struct FlatBufferFileIdentifier {
+  std::array<char, 4> value{};  ///< Exact four identifier bytes.
+
+  /// @brief Compare all four identifier bytes.
+  friend constexpr bool operator==(FlatBufferFileIdentifier,
+                                   FlatBufferFileIdentifier) noexcept = default;
+};
+
+/// @brief Identify one author-governed FlatBuffers compatibility family.
+///
+/// The canonical name and compatibility epoch define the default compact ID.
+/// Compatible schema revisions retain both values. An intentionally
+/// incompatible revision changes the epoch or family name. Generated
+/// specializations provide storage with static lifetime for the borrowed name.
+struct SchemaFamilyIdentity {
+  SchemaId id{};                         ///< Stable compact family identity.
+  std::string_view canonical_name{};     ///< Stable fully qualified FlatBuffers root name.
+  std::uint32_t compatibility_epoch{1};  ///< Positive intentional wire-break epoch.
+
+  /// @brief Compare all family identity facts.
+  friend constexpr bool operator==(SchemaFamilyIdentity, SchemaFamilyIdentity) noexcept = default;
+};
+
+/// @brief Describe one stable FlatBuffers family and its independent buffer identifier.
+///
+/// The canonical name storage supplied by a specialization must have static
+/// lifetime because this value borrows it as a \c std::string_view. Exact BFBS
+/// artifact fingerprints do not participate in this runtime identity.
 struct SchemaIdentity {
-  std::string_view canonical_name{};          ///< Validated globally scoped UTF-8 name.
-  std::uint32_t version{};                    ///< Explicit nonzero semantic schema version.
-  std::array<std::byte, 32> schema_sha256{};  ///< Raw SHA-256 bytes of the canonical artifact.
-  SchemaId id{};                              ///< Compact identity derived by the schema package.
+  std::string_view canonical_name{};           ///< Validated globally scoped UTF-8 family name.
+  std::uint32_t compatibility_epoch{1U};       ///< Positive intentional wire-break epoch.
+  SchemaId family_id{};                        ///< Stable compact compatibility-family identity.
+  FlatBufferFileIdentifier file_identifier{};  ///< Exact independent in-buffer type check.
+
+  /// @brief Compare every stable identity and buffer-type fact.
+  friend constexpr bool operator==(SchemaIdentity, SchemaIdentity) noexcept = default;
 };
 
 /// @brief Return the generated semantic identity for \p T.
 ///
-/// Generated packages explicitly specialize this function for their public
-/// semantic root/native object type. The unspecialized template is deleted so
-/// arbitrary copyable classes, transport wrappers, and parser artifacts do not
-/// acquire schema identity by structural inference.
+/// Generated roots obtain this through their single schema binding; generated owning types
+/// delegate through their FlatBuffers `TableType` association. The unspecialized template is
+/// deleted so arbitrary classes and transport wrappers do not acquire schema identity.
 ///
 /// @tparam T Unqualified semantic generated root type.
 /// @return Complete compile-time semantic schema identity.
 template <typename T>
 consteval SchemaIdentity schema_identity() = delete;
 
+/// @brief Return the generated compatibility-family identity for \p T.
+///
+/// Generated roots obtain this through their single schema binding, while owning native types
+/// delegate through their generated root association. Artifact fingerprints and codec operations
+/// are deliberately separate.
+///
+/// @tparam T Unqualified generated root or owning native type.
+/// @return Compile-time schema family identity.
+template <typename T>
+consteval SchemaFamilyIdentity schema_family_identity() = delete;
+
 namespace detail {
 
 // This dependency-free SHA-256 implementation is shared by generated-schema
-// package validation and compact identity derivation. Callers add only the
+// package validation and family identity derivation. Callers add only the
 // byte-exact inputs defined by the schema contract; C++ object representation,
 // addresses, RTTI, and host byte order never enter the digest.
 class SchemaSha256Builder {
@@ -211,46 +256,90 @@ class SchemaSha256Builder {
 };
 
 template <typename T>
-concept HasSchemaIdentity = requires {
-  { schema_identity<T>() } -> std::same_as<SchemaIdentity>;
+concept HasFlatBufferSchemaRootBinding = requires {
+  typename schema::FlatBufferSchemaBinding<T>::root_type;
+  typename schema::FlatBufferSchemaBinding<T>::native_type;
+  { schema::FlatBufferSchemaBinding<T>::identity } -> std::same_as<const SchemaIdentity&>;
+  {
+    schema::FlatBufferSchemaBinding<T>::family_identity
+  } -> std::same_as<const SchemaFamilyIdentity&>;
+} && std::same_as<typename schema::FlatBufferSchemaBinding<T>::root_type, T>;
+
+template <typename T>
+using FlatBufferSchemaNativeType =
+    typename schema::FlatBufferSchemaBinding<typename T::TableType>::native_type;
+
+template <typename T>
+concept HasFlatBufferSchemaNativeBinding = requires {
+  typename T::TableType;
+  requires HasFlatBufferSchemaRootBinding<typename T::TableType>;
+  requires std::same_as<FlatBufferSchemaNativeType<T>, T>;
 };
 
 }  // namespace detail
 
-/// @brief Compute SHA-256 over exact generated binary-schema artifact bytes.
-/// @param bytes Canonical package-pinned `.bfbs` byte sequence.
-/// @return Raw 32-byte SHA-256 digest.
-///
-/// This helper performs no schema parsing, text normalization, path rewriting,
-/// or object-representation hashing. Generated-package validation compares its
-/// result with the complete digest in \ref SchemaIdentity.
-[[nodiscard]] constexpr std::array<std::byte, 32> schema_artifact_sha256(
-    std::span<const std::byte> bytes) noexcept {
-  detail::SchemaSha256Builder hash;
-  hash.add(bytes);
-  return hash.finish();
+/// @brief Return identity from the one generated binding for a FlatBuffers root.
+template <typename Root>
+  requires detail::HasFlatBufferSchemaRootBinding<Root>
+[[nodiscard]] consteval SchemaIdentity schema_identity() {
+  return schema::FlatBufferSchemaBinding<Root>::identity;
 }
 
-/// @brief Derive the compact v1 schema identifier from complete semantic identity.
-/// @param canonical_name Exact globally scoped UTF-8 schema name.
-/// @param version Explicit nonzero semantic schema version.
-/// @param schema_sha256 Full digest of the canonical package-pinned `.bfbs` bytes.
+/// @brief Return a generated owning type's identity through its root binding.
+template <typename Native>
+  requires detail::HasFlatBufferSchemaNativeBinding<Native>
+[[nodiscard]] consteval SchemaIdentity schema_identity() {
+  return schema::FlatBufferSchemaBinding<typename Native::TableType>::identity;
+}
+
+/// @brief Return family identity from the one generated binding for a FlatBuffers root.
+template <typename Root>
+  requires detail::HasFlatBufferSchemaRootBinding<Root>
+[[nodiscard]] consteval SchemaFamilyIdentity schema_family_identity() {
+  return schema::FlatBufferSchemaBinding<Root>::family_identity;
+}
+
+/// @brief Return a generated owning type's family identity through its root binding.
+template <typename Native>
+  requires detail::HasFlatBufferSchemaNativeBinding<Native>
+[[nodiscard]] consteval SchemaFamilyIdentity schema_family_identity() {
+  return schema::FlatBufferSchemaBinding<typename Native::TableType>::family_identity;
+}
+
+namespace detail {
+
+template <typename T>
+concept HasSchemaIdentity = requires {
+  { schema_identity<T>() } -> std::same_as<SchemaIdentity>;
+};
+
+template <typename T>
+concept HasSchemaFamilyIdentity = requires {
+  { schema_family_identity<T>() } -> std::same_as<SchemaFamilyIdentity>;
+};
+
+template <typename T>
+concept HasGeneratedSchemaName = requires {
+  { T::GetFullyQualifiedName() } -> std::convertible_to<const char*>;
+};
+
+}  // namespace detail
+
+/// @brief Derive the compact v2 schema-family identifier.
+/// @param canonical_name Stable fully qualified FlatBuffers root name.
+/// @param compatibility_epoch Positive intentional wire-break epoch.
 /// @return First 16 bytes of the domain-separated SHA-256 derivation.
 ///
-/// The encoded preimage is exactly `"holoscan.schema-id/v1\\0"`, the name
-/// byte count as unsigned 32-bit big-endian, the unmodified name bytes, the
-/// version as unsigned 32-bit big-endian, and the 32 raw artifact-digest bytes.
-/// Callers validate the name length and UTF-8 contract before invoking this
-/// bounded derivation; Core never performs Unicode normalization.
-[[nodiscard]] constexpr SchemaId derive_schema_id(
-    std::string_view canonical_name, std::uint32_t version,
-    std::span<const std::byte, 32> schema_sha256) noexcept {
+/// The preimage is exactly `"holoscan.schema-family/v2\\0"`, the unmodified
+/// name bytes, and the epoch as unsigned 32-bit big-endian. Artifact digests,
+/// generated C++ spellings, and per-revision counters never enter this value.
+[[nodiscard]] constexpr SchemaId derive_schema_family_id(
+    std::string_view canonical_name, std::uint32_t compatibility_epoch) noexcept {
   detail::SchemaSha256Builder hash;
-  hash.add(std::string_view{"holoscan.schema-id/v1\0", 22U});
-  hash.add_u32_be(static_cast<std::uint32_t>(canonical_name.size()));
+  hash.add("holoscan.schema-family/v2");
+  hash.add_byte(0U);
   hash.add(canonical_name);
-  hash.add_u32_be(version);
-  hash.add(schema_sha256);
+  hash.add_u32_be(compatibility_epoch);
   const auto digest = hash.finish();
 
   SchemaId result;
@@ -260,18 +349,182 @@ concept HasSchemaIdentity = requires {
   return result;
 }
 
-/// @brief Recompute the compact identifier carried by a complete identity.
-/// @param identity Complete semantic schema identity.
-/// @return Derived compact identifier using the v1 byte-exact algorithm.
-[[nodiscard]] constexpr SchemaId derive_schema_id(const SchemaIdentity& identity) noexcept {
-  return derive_schema_id(identity.canonical_name, identity.version, identity.schema_sha256);
+/// @brief Build the default derived identity for a stable family name.
+/// @param canonical_name Stable fully qualified FlatBuffers root name.
+/// @param compatibility_epoch Positive intentional wire-break epoch.
+/// @return Family identity whose ID is derived from name and epoch.
+[[nodiscard]] consteval SchemaFamilyIdentity make_schema_family_identity(
+    std::string_view canonical_name, std::uint32_t compatibility_epoch = 1U) {
+  if (canonical_name.empty() || compatibility_epoch == 0U) {
+    std::abort();
+  }
+  return SchemaFamilyIdentity{
+      .id = derive_schema_family_id(canonical_name, compatibility_epoch),
+      .canonical_name = canonical_name,
+      .compatibility_epoch = compatibility_epoch,
+  };
+}
+
+/// @brief Build an exact four-byte FlatBuffers root file identifier.
+/// @tparam Size Character-array width, including the trailing null byte.
+/// @param identifier Four identifier bytes followed by a null terminator.
+/// @return Exact identifier bytes without the terminator.
+template <std::size_t Size>
+[[nodiscard]] consteval FlatBufferFileIdentifier make_flatbuffer_file_identifier(
+    // The array reference is required to deduce and statically validate the string-literal extent.
+    const char (&identifier)[Size]) {  // NOLINT(cppcoreguidelines-avoid-c-arrays)
+  static_assert(Size == 5U, "FlatBuffers file_identifier must contain exactly four bytes");
+  if (identifier[4U] != '\0') {
+    std::abort();
+  }
+  return FlatBufferFileIdentifier{
+      .value = {identifier[0U], identifier[1U], identifier[2U], identifier[3U]},
+  };
+}
+
+/// @brief Return a null-terminated FlatBuffers identifier for generated APIs.
+/// @param identifier Exact four-byte identifier.
+/// @return Five-byte array containing the identifier and a trailing null.
+[[nodiscard]] constexpr std::array<char, 5> flatbuffer_file_identifier_c_string(
+    FlatBufferFileIdentifier identifier) noexcept {
+  return {
+      identifier.value[0U], identifier.value[1U], identifier.value[2U], identifier.value[3U], '\0'};
+}
+
+/// @brief Return whether an identifier contains four printable nonzero ASCII bytes.
+/// @param identifier Exact four-byte identifier.
+/// @return c true when every byte is suitable for a FlatBuffers schema declaration.
+[[nodiscard]] constexpr bool valid_flatbuffer_file_identifier(
+    FlatBufferFileIdentifier identifier) noexcept {
+  for (const char byte : identifier.value) {
+    const auto value = static_cast<unsigned char>(byte);
+    if (value < 0x20U || value > 0x7eU) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// @brief Compare every stable schema identity and buffer-type fact.
+[[nodiscard]] constexpr bool schema_identity_equal(const SchemaIdentity& left,
+                                                   const SchemaIdentity& right) noexcept {
+  return left == right;
+}
+
+/// @brief Project the compatibility-family view from a complete schema identity.
+[[nodiscard]] constexpr SchemaFamilyIdentity schema_family_identity_of(
+    const SchemaIdentity& identity) noexcept {
+  return SchemaFamilyIdentity{
+      .id = identity.family_id,
+      .canonical_name = identity.canonical_name,
+      .compatibility_epoch = identity.compatibility_epoch,
+  };
+}
+
+namespace detail {
+
+// Keep the UTF-8 decoder in one bounded pass so schema names cannot enter diagnostics with
+// overlong, surrogate, or out-of-range encodings.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] constexpr bool valid_schema_utf8(std::string_view value,
+                                               bool reject_ascii_controls) noexcept {
+  std::size_t index = 0U;
+  while (index < value.size()) {
+    const auto first = static_cast<unsigned char>(value[index++]);
+    if (first <= 0x7FU) {
+      if (reject_ascii_controls && (first < 0x20U || first == 0x7FU)) {
+        return false;
+      }
+      continue;
+    }
+    std::uint32_t code_point{};
+    std::size_t continuation_count{};
+    if (first >= 0xC2U && first <= 0xDFU) {
+      code_point = first & 0x1FU;
+      continuation_count = 1U;
+    } else if (first >= 0xE0U && first <= 0xEFU) {
+      code_point = first & 0x0FU;
+      continuation_count = 2U;
+    } else if (first >= 0xF0U && first <= 0xF4U) {
+      code_point = first & 0x07U;
+      continuation_count = 3U;
+    } else {
+      return false;
+    }
+    if (index + continuation_count > value.size()) {
+      return false;
+    }
+    for (std::size_t count = 0U; count < continuation_count; ++count) {
+      const auto next = static_cast<unsigned char>(value[index++]);
+      if ((next & 0xC0U) != 0x80U) {
+        return false;
+      }
+      code_point = (code_point << 6U) | (next & 0x3FU);
+    }
+    if ((continuation_count == 2U && code_point < 0x800U) ||
+        (continuation_count == 3U && code_point < 0x10000U) ||
+        (code_point >= 0xD800U && code_point <= 0xDFFFU) || code_point > 0x10FFFFU) {
+      return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace detail
+
+/// @brief Return whether a canonical schema name is globally scoped valid UTF-8.
+[[nodiscard]] constexpr bool valid_schema_name(std::string_view value) noexcept {
+  return !value.empty() && value.size() <= std::numeric_limits<std::uint32_t>::max() &&
+         value.front() != '.' && value.back() != '.' && value.find('.') != std::string_view::npos &&
+         detail::valid_schema_utf8(value, true);
+}
+
+/// @brief Validate one complete borrowed schema identity.
+[[nodiscard]] constexpr bool valid_schema_identity(const SchemaIdentity& identity) noexcept {
+  return valid_schema_name(identity.canonical_name) && identity.compatibility_epoch != 0U &&
+         derive_schema_family_id(identity.canonical_name, identity.compatibility_epoch) ==
+             identity.family_id &&
+         valid_flatbuffer_file_identifier(identity.file_identifier);
+}
+
+/// @brief Combine stable family identity with its independent FlatBuffers identifier.
+/// @param family_identity Stable name, compatibility epoch, and derived family ID.
+/// @param file_identifier Exact four-byte identifier stamped in every buffer.
+/// @return Complete stable schema identity used by records and attachment.
+[[nodiscard]] consteval SchemaIdentity make_schema_identity(
+    SchemaFamilyIdentity family_identity, FlatBufferFileIdentifier file_identifier) {
+  if (!valid_flatbuffer_file_identifier(file_identifier)) {
+    std::abort();
+  }
+  return SchemaIdentity{
+      .canonical_name = family_identity.canonical_name,
+      .compatibility_epoch = family_identity.compatibility_epoch,
+      .family_id = family_identity.id,
+      .file_identifier = file_identifier,
+  };
+}
+
+/// @brief Build the default identity from a generated FlatBuffers root name.
+/// @tparam Root Generated root exposing `GetFullyQualifiedName()`.
+/// @param compatibility_epoch Positive intentional wire-break epoch.
+/// @return Family identity derived directly from generated root facts.
+template <typename Root>
+  requires detail::HasGeneratedSchemaName<Root>
+[[nodiscard]] consteval SchemaFamilyIdentity make_schema_family_identity(
+    std::uint32_t compatibility_epoch = 1U) {
+  return make_schema_family_identity(std::string_view(Root::GetFullyQualifiedName()),
+                                     compatibility_epoch);
 }
 
 static_assert(sizeof(SchemaId) == 16);
+static_assert(sizeof(FlatBufferFileIdentifier) == 4);
 static_assert(alignof(SchemaId) == alignof(std::byte));
 static_assert(std::is_standard_layout_v<SchemaId>);
 static_assert(std::is_trivially_copyable_v<SchemaId>);
-
+static_assert(std::is_standard_layout_v<FlatBufferFileIdentifier>);
+static_assert(std::is_trivially_copyable_v<FlatBufferFileIdentifier>);
+static_assert(std::is_standard_layout_v<SchemaFamilyIdentity>);
+static_assert(std::is_trivially_copyable_v<SchemaFamilyIdentity>);
 }  // namespace holoscan
 
 namespace std {

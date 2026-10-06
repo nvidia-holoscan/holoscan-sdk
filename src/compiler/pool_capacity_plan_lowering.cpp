@@ -116,8 +116,10 @@ expected<EvaluatedPoolCapacity, Error> evaluate_pool_capacity_plan(
                        ? "QUEUE_POOL_CAPACITY_UNBOUNDED"
                        : "QUEUE_POOL_DEPENDENCY_INVALID"));
   }
-  return EvaluatedPoolCapacity{.required_entries = capacity->required_entries,
-                               .admitted_entry_ceiling = *capacity->admitted_entry_ceiling};
+  return EvaluatedPoolCapacity{
+      .required_entries = capacity->required_entries,
+      .admitted_entry_ceiling =
+          *capacity->admitted_entry_ceiling};  // NOLINT(bugprone-unchecked-optional-access)
 }
 
 }  // namespace holoscan::detail

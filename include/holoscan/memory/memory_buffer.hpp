@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <source_location>
 #include <utility>
 
 #include <holoscan/holoscan_core_export.h>
@@ -111,9 +112,14 @@ class MemoryBuffer {
 
   virtual ~MemoryBuffer() { (void)free_buffer(); }
 
-  // Resizes the buffer, allocating memory from a native allocator. The optional stream parameter
-  // specifies the CUDA stream for stream-aware deallocation. The stream can be updated later via
-  // set_stream() to reflect downstream consumer work.
+  /// @brief Resize the buffer using a native allocator.
+  /// @param allocator Allocator that owns the new backing storage.
+  /// @param size Requested size in bytes.
+  /// @param storage_type Requested storage location.
+  /// @param stream Optional CUDA stream for stream-aware allocation and release.
+  /// @return Success or the original release/allocation Error. Failed release retains the backing
+  /// storage and prevents a new allocation. Reporting follows the automatic diagnostic policy and
+  /// cannot replace the returned failure. Use set_stream() to record later consumer work.
   [[nodiscard]] expected<void, Error> resize(std::shared_ptr<Allocator> allocator, uint64_t size,
                                              MemoryStorageType storage_type,
                                              void* stream = nullptr) {
@@ -125,7 +131,9 @@ class MemoryBuffer {
 
     const auto result = free_buffer();
     if (!result) {
-      HOLOSCAN_LOG_ERROR("Failed to free memory: {}", runtime_error_message(result.error()));
+#if HOLOSCAN_LOG_ACTIVE_LEVEL <= HOLOSCAN_LOG_LEVEL_ERROR
+      report_release_failure(result.error());
+#endif
       return forward_error(result);
     }
 
@@ -140,10 +148,9 @@ class MemoryBuffer {
                                  size, storage_type, static_cast<cudaStream_t>(stream))
                            : allocator->allocate(size, storage_type);
     if (!maybe) {
-      HOLOSCAN_LOG_ERROR("Native allocator failed to allocate {} bytes of memory of type {}: {}",
-                         size,
-                         static_cast<int32_t>(storage_type),
-                         runtime_error_message(maybe.error()));
+#if HOLOSCAN_LOG_ACTIVE_LEVEL <= HOLOSCAN_LOG_LEVEL_ERROR
+      report_allocation_failure(maybe.error(), size, storage_type);
+#endif
       return forward_error(maybe);
     }
 
@@ -454,6 +461,22 @@ class MemoryBuffer {
   int32_t device_id_ = Allocator::kUnknownDeviceId;
   release_function_t release_func_ = nullptr;
   std::shared_ptr<StreamState> stream_state_;
+
+ private:
+  /// @brief Present a release failure through the shared native automatic-report policy.
+  /// @param error Original failure, borrowed without rendering until presentation is enabled.
+  /// @param location Inline resize call site retained for the normal logger.
+  static HOLOSCAN_CORE_EXPORT void report_release_failure(
+      const Error& error, std::source_location location = std::source_location::current()) noexcept;
+
+  /// @brief Present an allocation rejection without changing the allocator's Error.
+  /// @param error Original failure, borrowed until this synchronous call returns.
+  /// @param size Requested size in bytes.
+  /// @param storage_type Requested storage location.
+  /// @param location Inline resize call site retained for the normal logger.
+  static HOLOSCAN_CORE_EXPORT void report_allocation_failure(
+      const Error& error, uint64_t size, MemoryStorageType storage_type,
+      std::source_location location = std::source_location::current()) noexcept;
 };
 
 /**

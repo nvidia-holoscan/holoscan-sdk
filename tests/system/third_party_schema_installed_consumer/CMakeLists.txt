@@ -66,80 +66,58 @@ holoscan_add_flatbuffer_schema(
     SCHEMAS third_party_common.fbs third_party_frame.fbs
     INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_DIR "${generated_dir}"
-    BFBS_EMBED
     TRAITS_HEADER third_party_frame_traits.hpp
-    TRAITS_SCHEMA third_party_frame.fbs
-    TRAITS_ROOT_TYPE app3p::Frame
-    TRAITS_NATIVE_TYPE app3p::FrameT
-    TRAITS_BINARY_SCHEMA_TYPE app3p::FrameBinarySchema
-    TRAITS_PACKAGE_NAMESPACE app3p::package
-    TRAITS_CANONICAL_NAME app3p.Frame
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 512
+    ROOT_SCHEMA third_party_frame.fbs
+    COMPATIBILITY_EPOCH 3
+    MAX_SERIALIZED_SIZE 512
+    BFBS_EMBED
 )
+# Both invocations embed, so the determinism comparison below also covers the reflection bytes.
 set(generated_dir_repeat "${CMAKE_CURRENT_BINARY_DIR}/generated-b")
 holoscan_add_flatbuffer_schema(
     TARGET third_party_frame_generated_repeat
     SCHEMAS third_party_common.fbs third_party_frame.fbs
     INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_DIR "${generated_dir_repeat}"
-    BFBS_EMBED
     TRAITS_HEADER third_party_frame_traits.hpp
-    TRAITS_SCHEMA third_party_frame.fbs
-    TRAITS_ROOT_TYPE app3p::Frame
-    TRAITS_NATIVE_TYPE app3p::FrameT
-    TRAITS_BINARY_SCHEMA_TYPE app3p::FrameBinarySchema
-    TRAITS_PACKAGE_NAMESPACE app3p::package
-    TRAITS_CANONICAL_NAME app3p.Frame
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 512
+    ROOT_SCHEMA third_party_frame.fbs
+    COMPATIBILITY_EPOCH 3
+    MAX_SERIALIZED_SIZE 512
+    BFBS_EMBED
 )
 holoscan_add_flatbuffer_schema(
     TARGET third_party_tensor_schema_generated
-    SCHEMAS schema_tooling_tensor_probe.fbs
+    SCHEMA schema_tooling_tensor_probe.fbs
     OUTPUT_DIR "${generated_dir}"
-    BFBS_EMBED
 )
 holoscan_add_flatbuffer_schema(
-    TARGET third_party_tensor_schema_ordinary_traits_rejected
-    SCHEMAS schema_tooling_tensor_probe.fbs
-    INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-tensor-rejected"
-    BFBS_EMBED
-    TRAITS_HEADER schema_tooling_tensor_probe_traits.hpp
-    TRAITS_ROOT_TYPE holoscan::schema::SchemaToolingTensorProbe
-    TRAITS_NATIVE_TYPE holoscan::schema::SchemaToolingTensorProbeT
-    TRAITS_BINARY_SCHEMA_TYPE holoscan::schema::SchemaToolingTensorProbeBinarySchema
-    TRAITS_PACKAGE_NAMESPACE holoscan::schema::tensor_probe_package
-    TRAITS_CANONICAL_NAME holoscan.schema.SchemaToolingTensorProbe
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 512
+    TARGET third_party_tensor_schema_inferred_descriptor_traits
+    SCHEMA schema_tooling_tensor_probe.fbs
+    MAX_SERIALIZED_SIZE 512
 )
+set_target_properties(third_party_tensor_schema_inferred_descriptor_traits PROPERTIES
+    EXCLUDE_FROM_ALL TRUE)
 holoscan_add_flatbuffer_schema(
-    TARGET third_party_selected_tensor_schema_ordinary_traits_rejected
-    SCHEMAS schema_tooling_selected_tensor_probe.fbs
-    INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
-    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-selected-tensor-rejected"
-    BFBS_EMBED
-    TRAITS_HEADER schema_tooling_selected_tensor_probe_traits.hpp
-    TRAITS_ROOT_TYPE holoscan::schema::SchemaToolingSelectedTensorProbe
-    TRAITS_NATIVE_TYPE holoscan::schema::SchemaToolingSelectedTensorProbeT
-    TRAITS_BINARY_SCHEMA_TYPE holoscan::schema::SchemaToolingSelectedTensorProbeBinarySchema
-    TRAITS_PACKAGE_NAMESPACE holoscan::schema::selected_tensor_probe_package
-    TRAITS_CANONICAL_NAME holoscan.schema.SchemaToolingSelectedTensorProbe
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 512
+    TARGET third_party_selected_tensor_schema_ordinary_traits
+    SCHEMA schema_tooling_selected_tensor_probe.fbs
+    MAX_SERIALIZED_SIZE 512
 )
 get_target_property(third_party_flatc_version_configured
     third_party_frame_generated HOLOSCAN_FLATC_VERSION_CONFIGURED)
 get_target_property(installed_flatc_version holoscan::fbs_tools HOLOSCAN_FLATC_VERSION)
+get_target_property(third_party_frame_generated_traits_header
+    third_party_frame_generated HOLOSCAN_FLATBUFFER_TRAITS_HEADER)
+get_target_property(third_party_frame_generated_repeat_traits_header
+    third_party_frame_generated_repeat HOLOSCAN_FLATBUFFER_TRAITS_HEADER)
+get_target_property(third_party_tensor_schema_inferred_descriptor_traits_header
+    third_party_tensor_schema_inferred_descriptor_traits HOLOSCAN_FLATBUFFER_TRAITS_HEADER)
 if(NOT third_party_flatc_version_configured OR NOT installed_flatc_version)
     message(FATAL_ERROR "Schema helper did not record the configured flatc version")
 endif()
 if(NOT third_party_flatc_version_configured STREQUAL installed_flatc_version)
     message(FATAL_ERROR "Schema helper did not record the configured flatc version")
 endif()
-if(NOT third_party_frame_generated_TRAITS_HEADER STREQUAL
+if(NOT third_party_frame_generated_traits_header STREQUAL
        "${generated_dir}/third_party_frame_traits.hpp")
     message(FATAL_ERROR "Schema helper did not publish its generated traits header")
 endif()
@@ -149,12 +127,12 @@ set(traits_determinism_stamp
 add_custom_command(
     OUTPUT "${traits_determinism_stamp}"
     COMMAND "${CMAKE_COMMAND}" -E compare_files
-        "${third_party_frame_generated_TRAITS_HEADER}"
-        "${third_party_frame_generated_repeat_TRAITS_HEADER}"
+        "${third_party_frame_generated_traits_header}"
+        "${third_party_frame_generated_repeat_traits_header}"
     COMMAND "${CMAKE_COMMAND}" -E touch "${traits_determinism_stamp}"
     DEPENDS
-        "${third_party_frame_generated_TRAITS_HEADER}"
-        "${third_party_frame_generated_repeat_TRAITS_HEADER}"
+        "${third_party_frame_generated_traits_header}"
+        "${third_party_frame_generated_repeat_traits_header}"
     COMMENT "Comparing independently generated schema traits headers"
     VERBATIM
 )
@@ -163,27 +141,27 @@ add_custom_target(third_party_frame_traits_determinism ALL
 
 add_executable(third_party_schema_installed_consumer main.cpp)
 add_dependencies(third_party_schema_installed_consumer
-    third_party_frame_generated
     third_party_frame_generated_repeat
     third_party_frame_traits_determinism
     third_party_tensor_schema_generated
 )
 target_compile_features(third_party_schema_installed_consumer PRIVATE cxx_std_20)
-target_include_directories(third_party_schema_installed_consumer
-    PRIVATE "${generated_dir}")
 set_target_properties(third_party_schema_installed_consumer PROPERTIES CXX_EXTENSIONS OFF)
 # The application consumes the FlatBuffers package configured by find_package(holoscan), including
-# its bundled archive for parser APIs that are not header-only.
+# its bundled archive for parser APIs that are not header-only. holoscan::sensor_io is named because
+# the consumer also reads the reflection bytes the SDK ships for its own Image and Imu payloads,
+# which exercises the installed sensor-payload target rather than only Core.
 target_link_libraries(third_party_schema_installed_consumer
-    PRIVATE holoscan::core holoscan::schema flatbuffers::flatbuffers)
+    PRIVATE holoscan::core holoscan::sensor_io third_party_frame_generated)
 
 include(CTest)
 add_test(NAME third_party_schema_installed_consumer.run
     COMMAND third_party_schema_installed_consumer)
-add_test(NAME third_party_schema_installed_consumer.tensor_traits_rejected
+add_test(NAME third_party_schema_installed_consumer.tensor_traits_inferred
     COMMAND ${CMAKE_COMMAND}
         "-DHOLOSCAN_TEST_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_tensor_traits_rejection.cmake"
+        "-DINFERRED_DESCRIPTOR_TRAITS_HEADER=${third_party_tensor_schema_inferred_descriptor_traits_header}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_tensor_traits_inference.cmake"
 )
 if(WIN32)
     set_tests_properties(third_party_schema_installed_consumer.run PROPERTIES

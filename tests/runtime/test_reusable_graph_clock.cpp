@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -29,35 +30,35 @@ namespace {
 using namespace std::chrono_literals;
 
 struct ReusableClockProbe {
-  static void reset() {
+  void reset() {
     const std::lock_guard lock(mutex);
     values.clear();
   }
 
-  static void record(std::uint32_t value) {
+  void record(std::uint32_t value) {
     const std::lock_guard lock(mutex);
     values.push_back(value);
     cv.notify_all();
   }
 
-  [[nodiscard]] static bool wait_for_value() {
+  [[nodiscard]] bool wait_for_value() {
     std::unique_lock lock(mutex);
-    return cv.wait_for(lock, 5s, [] { return !values.empty(); });
+    return cv.wait_for(lock, 5s, [this] { return !values.empty(); });
   }
 
-  [[nodiscard]] static bool wait_for_values(std::size_t count) {
+  [[nodiscard]] bool wait_for_value_until(std::chrono::steady_clock::time_point deadline) {
     std::unique_lock lock(mutex);
-    return cv.wait_for(lock, 5s, [count] { return values.size() >= count; });
+    return cv.wait_until(lock, deadline, [this] { return !values.empty(); });
   }
 
-  [[nodiscard]] static std::vector<std::uint32_t> snapshot() {
+  [[nodiscard]] std::vector<std::uint32_t> snapshot() {
     const std::lock_guard lock(mutex);
     return values;
   }
 
-  static inline std::mutex mutex;
-  static inline std::condition_variable cv;
-  static inline std::vector<std::uint32_t> values;
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<std::uint32_t> values;
 };
 
 class ReusableClockSource final : public Operator<> {
@@ -114,6 +115,9 @@ class ReusableClockRelay final : public Operator<> {
 
 class ReusableClockSink final : public Operator<> {
  public:
+  explicit ReusableClockSink(std::shared_ptr<ReusableClockProbe> probe)
+      : probe_(std::move(probe)) {}
+
   void setup(OperatorSpec& spec) override { spec.input(input, "input").queue_depth(2U); }
 
   [[nodiscard]] Contract contract() const override {
@@ -127,11 +131,14 @@ class ReusableClockSink final : public Operator<> {
     if (!received) {
       return make_unexpected(std::move(received.error()));
     }
-    ReusableClockProbe::record(received->data);
+    probe_->record(received->data);
     return {};
   }
 
   Input<std::uint32_t> input;
+
+ private:
+  std::shared_ptr<ReusableClockProbe> probe_;
 };
 
 class ReusableClockRelayGraph final : public Graph {
@@ -196,11 +203,126 @@ class ReusableClockConversionGraph final : public Graph {
   ClockKey target_import_;
 };
 
-[[nodiscard]] ExecutionPlan reusable_clock_plan() {
+/// One embedded instance's cold clock-resolution outcome, recorded from its \c kWarmUp body.
+struct ColdClockResolution {
+  ClockId resolved_default{};  ///< The child's selected default, bound alike in both instances.
+  ClockId resolved_scoped{};   ///< The shared authored name bound differently per instance.
+  bool default_readable{};
+  bool default_matches_named{};
+  bool absent_name_rejected{};
+};
+
+struct ColdClockResolutionProbe {
+  static void reset() {
+    const std::lock_guard lock(mutex);
+    resolutions.clear();
+  }
+
+  static void record(ColdClockResolution resolution) {
+    const std::lock_guard lock(mutex);
+    resolutions.push_back(resolution);
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static bool wait_for_resolutions(std::size_t count) {
+    std::unique_lock lock(mutex);
+    return cv.wait_for(lock, 5s, [count] { return resolutions.size() >= count; });
+  }
+
+  [[nodiscard]] static std::vector<ColdClockResolution> snapshot() {
+    const std::lock_guard lock(mutex);
+    return resolutions;
+  }
+
+  static inline std::mutex mutex;
+  static inline std::condition_variable cv;
+  static inline std::vector<ColdClockResolution> resolutions;
+};
+
+/// Resolve this Operator's declared clocks from a cold lifecycle body.
+///
+/// This is the workflow \c ClockDiscipline prescribes for priming: obtain the graph clock in
+/// \c kWarmUp, before any activation, so acquisition never begins with an unsettled timestamp
+/// relationship. It requires the Runtime lifecycle clock resolver to be installed.
+class ColdClockResolutionProbeOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input").queue_depth(2U);
+    spec.lifecycle().stage(LifecycleStage::kWarmUp, &ColdClockResolutionProbeOperator::warm_up);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  LifecycleStatus warm_up(LifecycleContext& context) noexcept {
+    ColdClockResolution resolution;
+    if (auto resolved = context.resolve_clock(ClockKey::default_clock())) {
+      resolution.resolved_default = resolved->id();
+      // A reference that cannot be read would not let an operator prime anything, so the useful
+      // assertion is that the resolved clock is live rather than merely named.
+      resolution.default_readable = resolved->now().has_value();
+    }
+    // The child selected this import as its default, so the omitted key and the authored name must
+    // name one clock.
+    if (auto resolved = context.resolve_clock(ClockKey::named("timeline"))) {
+      resolution.default_matches_named = resolved->id() == resolution.resolved_default;
+    }
+    if (auto resolved = context.resolve_clock(ClockKey::named("reference"))) {
+      resolution.resolved_scoped = resolved->id();
+    }
+    // A name this Graph scope never declared must fail rather than fall through to an ancestor.
+    resolution.absent_name_rejected =
+        !context.resolve_clock(ClockKey::named("absent_timeline")).has_value();
+    ColdClockResolutionProbe::record(resolution);
+    return LifecycleStatus::kOk;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto received = input.receive();
+    if (!received) {
+      return make_unexpected(std::move(received.error()));
+    }
+    return {};
+  }
+
+  Input<std::uint32_t> input;
+};
+
+/// A self-contained pipeline that imports its scheduling clock and one further reference clock.
+///
+/// Only \c timeline is selected as the default, so it alone reaches this instance's triggers. Every
+/// trigger in a plan must share one reference clock, so binding two instances' defaults to
+/// different clocks would be rejected with \c TEMPORAL_SCHEDULING_DOMAIN_UNSUPPORTED before the
+/// resolution under test ever runs. The unscheduled \c reference import carries the per-instance
+/// difference instead, which is what lets one plan hold two scopes that disagree about a name.
+class ColdClockResolutionGraph final : public Graph {
+ public:
+  [[nodiscard]] ClockKey clock_import() const noexcept { return clock_import_; }
+  [[nodiscard]] ClockKey scoped_import() const noexcept { return scoped_import_; }
+
+ protected:
+  void compose() override {
+    clock_import_ = import_clock("timeline");
+    scoped_import_ = import_clock("reference");
+    set_default_clock(clock_import_);
+    auto source = op<ReusableClockSource>("source");
+    auto probe = op<ColdClockResolutionProbeOperator>("probe");
+    add_flow(source->output, probe->input, ConnectionOptions{.queue_depth = 2U});
+  }
+
+ private:
+  ClockKey clock_import_;
+  ClockKey scoped_import_;
+};
+
+[[nodiscard]] ExecutionPlan reusable_clock_plan(const std::shared_ptr<ReusableClockProbe>& probe) {
   Graph graph{"reusable-clock-runtime"};
   auto source = graph.op<ReusableClockSource>("source");
   auto child = graph.embed<ReusableClockWrapperGraph>("child");
-  auto sink = graph.op<ReusableClockSink>("sink");
+  auto sink = graph.op<ReusableClockSink>("sink", probe);
   graph.add_flow(source->output, child->input, ConnectionOptions{.queue_depth = 2U});
   graph.add_flow(child->output, sink->input, ConnectionOptions{.queue_depth = 2U});
   const ClockKey clock = graph.add_clock<RealtimeClock>("runtime_clock");
@@ -213,20 +335,21 @@ class ReusableClockConversionGraph final : public Graph {
 
 // REQ: RUNTIME-027
 TEST(ReusableGraphClockTest, ReconstructsAndReplaysExplicitClockImportBindings) {
-  const ExecutionPlan plan = reusable_clock_plan();
+  const auto probe = std::make_shared<ReusableClockProbe>();
+  const ExecutionPlan plan = reusable_clock_plan(probe);
   ASSERT_TRUE(plan.ok()) << plan.json();
 
   for (std::size_t run = 0U; run < 2U; ++run) {
-    ReusableClockProbe::reset();
+    probe->reset();
     RunSession session = run_async(plan);
-    const bool observed = ReusableClockProbe::wait_for_value();
+    const bool observed = probe->wait_for_value();
     session.request_stop();
     session.wait();
 
     ASSERT_TRUE(observed) << plan.json();
     EXPECT_EQ(session.termination(), RunTermination::kStopped);
     EXPECT_TRUE(session.diagnostics().empty());
-    const auto values = ReusableClockProbe::snapshot();
+    const auto values = probe->snapshot();
     ASSERT_FALSE(values.empty());
     EXPECT_EQ(values.front(), 1U);
   }
@@ -241,8 +364,10 @@ TEST(ReusableGraphClockTest, ReconstructsRepeatedReusableOperatorLocalNames) {
   auto source = graph.op<ReusableClockSource>("source");
   auto first = graph.embed<ReusableClockWrapperGraph>("first");
   auto second = graph.embed<ReusableClockWrapperGraph>("second");
-  auto first_sink = graph.op<ReusableClockSink>("first_sink");
-  auto second_sink = graph.op<ReusableClockSink>("second_sink");
+  const auto first_probe = std::make_shared<ReusableClockProbe>();
+  const auto second_probe = std::make_shared<ReusableClockProbe>();
+  auto first_sink = graph.op<ReusableClockSink>("first_sink", first_probe);
+  auto second_sink = graph.op<ReusableClockSink>("second_sink", second_probe);
   graph.add_flow(source->output, first->input, ConnectionOptions{.queue_depth = 2U});
   graph.add_flow(source->output, second->input, ConnectionOptions{.queue_depth = 2U});
   graph.add_flow(first->output, first_sink->input, ConnectionOptions{.queue_depth = 2U});
@@ -278,19 +403,27 @@ TEST(ReusableGraphClockTest, ReconstructsRepeatedReusableOperatorLocalNames) {
       (*reconstructed)->plan(), (*reconstructed)->operators().first(1U), RunGenerationId{32U}, 1U);
   ASSERT_TRUE(local_rates) << local_rates.error().message;
 
-  ReusableClockProbe::reset();
   RunSession session = run_async(plan);
-  const bool observed = ReusableClockProbe::wait_for_values(2U);
+  // Independent branches need not alternate. Preserve one five-second budget while waiting
+  // for each sink's first value, so two records from one branch cannot complete this test.
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  const bool first_observed = first_probe->wait_for_value_until(deadline);
+  const bool second_observed = second_probe->wait_for_value_until(deadline);
   session.request_stop();
   session.wait();
 
-  ASSERT_TRUE(observed) << plan.json();
+  EXPECT_TRUE(first_observed) << "first_sink did not receive a value: " << plan.json();
+  EXPECT_TRUE(second_observed) << "second_sink did not receive a value: " << plan.json();
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty());
-  const auto values = ReusableClockProbe::snapshot();
-  ASSERT_GE(values.size(), 2U);
-  EXPECT_EQ(values[0], 1U);
-  EXPECT_EQ(values[1], 1U);
+  for (const auto& probe : std::array{first_probe, second_probe}) {
+    SCOPED_TRACE(probe == first_probe ? "first_sink" : "second_sink");
+    const auto values = probe->snapshot();
+    EXPECT_FALSE(values.empty());
+    if (!values.empty()) {
+      EXPECT_EQ(values.front(), 1U);
+    }
+  }
 }
 
 // REQ: RUNTIME-027
@@ -331,7 +464,7 @@ TEST(ReusableGraphClockTest, RejectsMissingChangedAndMalformedFrozenClockImportC
       Mutation::kFrozenResolvedClock,
       Mutation::kDuplicateImportedDefault,
   };
-  const ExecutionPlan baseline = reusable_clock_plan();
+  const ExecutionPlan baseline = reusable_clock_plan(std::make_shared<ReusableClockProbe>());
   ASSERT_TRUE(baseline.ok()) << baseline.json();
 
   for (const Mutation mutation : mutations) {
@@ -346,6 +479,57 @@ TEST(ReusableGraphClockTest, RejectsMissingChangedAndMalformedFrozenClockImportC
     EXPECT_EQ(reconstructed.error().code, ErrorCode::kFailure);
     EXPECT_EQ(reconstructed.error().message, "RUNTIME_CLOCK_INVENTORY_MISMATCH");
   }
+}
+
+// A ClockKey is authored per Graph, so one name means different clocks in independently embedded
+// instances. Both children below import "reference" and bind it to a different parent clock, which
+// is the case that separates graph-scoped resolution from a flat lookup: a global by-name lookup
+// would hand both instances the same clock, and passing the authored name to the live registry
+// would find nothing at all, because runtime reconstruction registers private id-derived keys.
+// REQ: LIFECYCLE-005
+// REQ: RUNTIME-027
+TEST(ReusableGraphClockTest, ResolvesGraphScopedClockKeysDuringColdLifecycle) {
+  Graph graph{"cold-clock-resolution"};
+  auto first = graph.embed<ColdClockResolutionGraph>("first");
+  auto second = graph.embed<ColdClockResolutionGraph>("second");
+
+  const ClockKey primary = graph.add_clock<RealtimeClock>("runtime_clock");
+  const ClockKey alternate = graph.add_clock<RealtimeClock>("alternate_runtime_clock");
+  graph.set_default_clock(primary);
+  // Both scheduling imports bind alike, which keeps the plan in one scheduling domain.
+  graph.bind_clock(first, first->clock_import(), primary);
+  graph.bind_clock(second, second->clock_import(), primary);
+  // Key setup: one shared authored name, two different bound parent clocks.
+  graph.bind_clock(first, first->scoped_import(), primary);
+  graph.bind_clock(second, second->scoped_import(), alternate);
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  ColdClockResolutionProbe::reset();
+  RunSession session = run_async(plan);
+  const bool observed = ColdClockResolutionProbe::wait_for_resolutions(2U);
+  session.request_stop();
+  session.wait();
+
+  ASSERT_TRUE(observed) << plan.json();
+  EXPECT_NE(session.termination(), RunTermination::kFailed);
+  EXPECT_TRUE(session.diagnostics().empty());
+
+  const auto resolutions = ColdClockResolutionProbe::snapshot();
+  ASSERT_EQ(resolutions.size(), 2U);
+  for (const ColdClockResolution& resolution : resolutions) {
+    // Key assertion: cold resolution succeeds at all, which is what the null resolver denied.
+    EXPECT_TRUE(resolution.resolved_default.valid());
+    EXPECT_TRUE(resolution.default_readable);
+    EXPECT_TRUE(resolution.default_matches_named);
+    EXPECT_TRUE(resolution.resolved_scoped.valid());
+    EXPECT_TRUE(resolution.absent_name_rejected);
+  }
+  // Both children selected an import bound to the same parent clock, so their defaults agree.
+  EXPECT_EQ(resolutions[0].resolved_default.value, resolutions[1].resolved_default.value);
+  // Key assertion: the shared authored name resolved per Graph scope rather than globally.
+  EXPECT_NE(resolutions[0].resolved_scoped.value, resolutions[1].resolved_scoped.value);
 }
 
 }  // namespace

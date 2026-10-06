@@ -1,0 +1,142 @@
+Python does not manufacture a parallel operator hierarchy. It discovers C++
+operator registrations already loaded into the process and presents each one
+as an immutable `OperatorType` proxy with reflected ports, parameters, and
+documentation.
+
+Prefer importable proxies in application code. Fully qualified registry-name
+lookup remains available for data-driven graph builders and diagnostics.
+
+<Note title="You will learn">
+  - How to import and inspect operator proxies
+  - How proxies differ from graph-owned operator handles
+  - When to use a fully qualified registry name
+  - How provider imports and generated stubs affect discovery
+</Note>
+
+## Import a proxy
+
+```python
+from custom_holoscan.operators import CounterSource
+
+source = CounterSource(graph, "source", limit=10)
+```
+
+`CounterSource` is a callable registry proxy, not an instance of the C++
+operator. Calling it uses its stable registry identity to author the
+graph-owned operator declaration and validates keyword arguments against the
+registered parameter schema.
+
+`custom_holoscan` is an illustrative independently installed provider package.
+Import the package that ships your operators; Core does not copy provider
+classes into `holoscan.operators`.
+
+The returned `source` is an `OperatorHandle`. It exposes the ports of that
+specific graph instance:
+
+```python
+print(source.name)          # source
+print(source.type_name)     # stable registered type name
+print(source.out)           # attribute spelling
+print(source["out"])        # dynamic spelling
+```
+
+Operator and port handles are weak. They do not keep their `Graph` alive; a
+later use after graph retirement fails with a stable authoring error.
+
+## Inspect the registry
+
+`hs.registry` is the process-local registration discovery module:
+
+```python
+import holoscan as hs
+import custom_holoscan
+
+for operator_type in hs.registry.operators():
+    print(operator_type.name)
+    print(operator_type.ports)
+    print(operator_type.parameters)
+
+counter = hs.registry.resolve("holoscan.ext.custom.CounterSource")
+print(counter.parameters["limit"].python_type)
+help(counter)
+```
+
+The registry iteration order is stable and lexical. Reflected parameter
+records include type spelling, description, units, optionality, nested status,
+ranges, named choices, and sensitivity metadata. Sensitive values are never
+rendered by operator-handle representations.
+
+## Use names only for dynamic composition
+
+Both forms below identify the same registered operator type:
+
+```python
+from custom_holoscan.operators import CounterSource
+
+typed = CounterSource(graph, "typed", limit=10)
+dynamic = graph.op("holoscan.ext.custom.CounterSource", "dynamic", limit=10)
+```
+
+Use the imported proxy for ordinary source code: editors can complete the
+operator name, `help()` is useful, and a misspelling fails at import or
+attribute access. Use the fully qualified string when the operator identity
+comes from an external graph description.
+
+`holoscan.operators` owns Core's generic `OperatorHandle`; it never publishes
+provider leaf names. This prevents two providers with the same class name from
+changing one another's Python API. Look up dynamic types by fully qualified
+registry identity.
+
+## Import the provider first
+
+The registry is process-local. Core types are available after `import
+holoscan`; separately shipped operator modules register their rows when their
+provider package is imported. A distribution can advertise a lazy public alias
+through the `holoscan.modules` entry-point group:
+
+```python
+import holoscan as hs
+import custom_holoscan
+import holoscan.custom
+
+assert holoscan.custom is custom_holoscan
+
+operator_type = hs.registry.resolve("holoscan.ext.custom.imaging.Normalize")
+```
+
+An unknown-name error suggests close registered matches and reminds you to
+import the provider. Core indexes entry-point metadata but does not import
+provider Python packages or native libraries until their alias is requested.
+SDK registrations use `holoscan.*`; downstream providers should allocate names
+under `holoscan.ext.<provider>.*` to avoid collisions with SDK-owned types.
+
+## Typing and generated documentation
+
+Each provider package ships its generated proxy definitions and a `py.typed`
+marker. Each proxy has a generated `Params` `TypedDict` and a generated
+`Handle` type. The callable signature expands that parameter dictionary, so
+editors and type checkers know the exact keyword names and value types, while
+the handle exposes only the operator's declared ports. For example,
+`CounterSource.Params` contains `limit: int`, and the return type exposes
+`out`.
+
+Those precise nested types are PEP 561 views: at runtime `Handle` is the erased
+`OperatorHandle` class and `Params` is `dict`. Use the generated views for
+static analysis and editor completion, not for `isinstance()` checks or
+`typing.get_type_hints()` introspection.
+
+Fern's generated Python reference turns those same parameter records into the
+parameter table on each proxy page. Scalar, sequence, optional, named-enum,
+nested-aggregate, and duration annotations therefore come from the same schema
+metadata that drives runtime validation rather than from a second handwritten
+description.
+
+## Recap
+
+- Calling an `OperatorType` proxy authors one graph-owned instance and returns
+  its precisely typed weak handle.
+- Prefer importable proxies in application source and fully qualified strings
+  through `graph.op()` for data-driven composition.
+- Core discovers provider metadata lazily; importing an operator package or
+  requesting its `holoscan.<module>` alias populates the process-local registry.
+- Registry metadata drives validation, help text, and generated typing stubs.

@@ -19,8 +19,8 @@
 
 #include <holomq/context.hpp>
 
+#include <holoscan/channel/runtime.hpp>
 #include "channel_tensor_sidecar_store.hpp"
-#include "holoscan/channel/runtime.hpp"
 
 namespace holoscan {
 

@@ -6,7 +6,10 @@
 #pragma once
 
 #include <concepts>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -30,6 +33,47 @@ namespace holoscan {
 
 class ExecutionContext;
 class OperatorSpec;
+
+/// @brief Classify the implementation boundary hosting one Operator callback surface.
+enum class OperatorHostKind : std::uint8_t {
+  kNative = 0,   ///< Ordinary native C++ Operator implementation.
+  kForeign = 1,  ///< Language-neutral callback-table host.
+};
+
+/// @brief Expose cold compiler-visible hosting constraints from one Operator instance.
+struct OperatorHostMetadata {
+  OperatorHostKind kind{OperatorHostKind::kNative};  ///< Native or foreign callback host.
+  /// Equal nonempty domains ask automatic partitioning to co-partition compatible Operators so
+  /// their callbacks do not run concurrently. Python hosts use `python.gil` while the interpreter
+  /// GIL is enabled; an empty domain permits ordinary independent partitioning. The view must
+  /// remain valid while the producing Operator is alive and is copied by Graph during registration.
+  std::string_view serialization_domain;
+};
+
+/// @brief Return whether a nonempty callback serialization-domain spelling is portable.
+/// @param domain Candidate domain containing at most 128 ASCII characters.
+/// @return True when every character is ASCII alphanumeric, period, underscore, or hyphen.
+[[nodiscard]] constexpr bool valid_operator_serialization_domain(std::string_view domain) noexcept {
+  constexpr std::size_t kMaximumDomainSize = 128U;
+  if (domain.empty() || domain.size() > kMaximumDomainSize) {
+    return false;
+  }
+  for (const char value : domain) {
+    const auto character = static_cast<unsigned char>(value);
+    const bool alphanumeric = (character >= static_cast<unsigned char>('a') &&
+                               character <= static_cast<unsigned char>('z')) ||
+                              (character >= static_cast<unsigned char>('A') &&
+                               character <= static_cast<unsigned char>('Z')) ||
+                              (character >= static_cast<unsigned char>('0') &&
+                               character <= static_cast<unsigned char>('9'));
+    if (!alphanumeric && character != static_cast<unsigned char>('.') &&
+        character != static_cast<unsigned char>('_') &&
+        character != static_cast<unsigned char>('-')) {
+      return false;
+    }
+  }
+  return true;
+}
 
 namespace detail {
 class GraphOperatorAccess;
@@ -106,6 +150,10 @@ class HOLOSCAN_CORE_EXPORT OperatorBase {
   /// @note The callback is invoked at most once for one activation tag. It must not wait for or
   /// recursively trigger another activation.
   [[nodiscard]] virtual expected<void, Error> compute(ExecutionContext& context) = 0;
+
+  /// @brief Return cold compiler-visible callback-host metadata.
+  /// @return Native hosting without a serialization constraint by default.
+  [[nodiscard]] virtual OperatorHostMetadata host_metadata() const noexcept { return {}; }
 
  private:
   [[nodiscard]] expected<void, Error> invoke_compute(ExecutionContext& context);

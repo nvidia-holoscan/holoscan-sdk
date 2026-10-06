@@ -6,16 +6,7 @@ if(NOT DEFINED GENERATED_TRAITS OR NOT EXISTS "${GENERATED_TRAITS}")
 endif()
 file(READ "${GENERATED_TRAITS}" generated_traits)
 string(FIND "${generated_traits}"
-    "kDescriptorTensorFields{\n    \"first\",\n    \"second\",\n    \"third\",\n};"
-    tensor_names_position
-)
-if(tensor_names_position EQUAL -1)
-    message(FATAL_ERROR
-        "Generated descriptor Tensor names are not in canonical FlatBuffers field-id order"
-    )
-endif()
-string(FIND "${generated_traits}"
-    "kDescriptorTensorFieldIds{\n    1U,\n    3U,\n    5U,\n};"
+    "tensor_field_ids{\n    1U,\n    3U,\n    5U,\n  };"
     tensor_ids_position
 )
 if(tensor_ids_position EQUAL -1)

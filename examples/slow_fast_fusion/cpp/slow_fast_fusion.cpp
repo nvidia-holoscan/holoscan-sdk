@@ -157,6 +157,11 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  if (argc == 2 && std::string_view(argv[1]) == "--plan-json") {
+    std::cout << plan.json() << '\n';
+    return 0;
+  }
+
   if (argc != 1) {
     std::filesystem::path artifact_root;
     std::string deployment_id{"default"};

@@ -7,6 +7,7 @@
 #include <holoscan/core/readiness_source.hpp>
 
 #include <string>
+#include <typeinfo>
 #include <utility>
 
 #include "rate_math_internal.hpp"
@@ -262,8 +263,16 @@ void OperatorSpec::validate_source_declaration(const void* declaration, std::str
 InputSpecBuilder& OperatorSpec::bind_input(InputBase& input, std::string_view name,
                                            const void* local_type_token,
                                            PayloadIdentityRecord payload_identity,
-                                           std::optional<SchemaPackagePlanRecord> schema_package,
                                            const detail::RuntimePortTypeOps* runtime_type_ops) {
+  return bind_input(
+      input, name, local_type_token, std::move(payload_identity), runtime_type_ops, nullptr);
+}
+
+InputSpecBuilder& OperatorSpec::bind_input(InputBase& input, std::string_view name,
+                                           const void* local_type_token,
+                                           PayloadIdentityRecord payload_identity,
+                                           const detail::RuntimePortTypeOps* runtime_type_ops,
+                                           const std::type_info* local_type_info) {
   validate_declaration_name(input.name(), name);
   if (input.name_.empty()) {
     input.name_.assign(name);
@@ -279,8 +288,8 @@ InputSpecBuilder& OperatorSpec::bind_input(InputBase& input, std::string_view na
       .builder_index = input_builders_.size() - 1U,
       .local_type_token = local_type_token,
       .payload_identity = std::move(payload_identity),
-      .schema_package = std::move(schema_package),
       .runtime_type_ops = runtime_type_ops,
+      .local_type_info = local_type_info,
   });
   return input_builders_.back();
 }
@@ -288,8 +297,16 @@ InputSpecBuilder& OperatorSpec::bind_input(InputBase& input, std::string_view na
 OutputSpecBuilder& OperatorSpec::bind_output(OutputBase& output, std::string_view name,
                                              const void* local_type_token,
                                              PayloadIdentityRecord payload_identity,
-                                             std::optional<SchemaPackagePlanRecord> schema_package,
                                              const detail::RuntimePortTypeOps* runtime_type_ops) {
+  return bind_output(
+      output, name, local_type_token, std::move(payload_identity), runtime_type_ops, nullptr);
+}
+
+OutputSpecBuilder& OperatorSpec::bind_output(OutputBase& output, std::string_view name,
+                                             const void* local_type_token,
+                                             PayloadIdentityRecord payload_identity,
+                                             const detail::RuntimePortTypeOps* runtime_type_ops,
+                                             const std::type_info* local_type_info) {
   validate_declaration_name(output.name(), name);
   if (output.name_.empty()) {
     output.name_.assign(name);
@@ -305,16 +322,23 @@ OutputSpecBuilder& OperatorSpec::bind_output(OutputBase& output, std::string_vie
       .builder_index = output_builders_.size() - 1U,
       .local_type_token = local_type_token,
       .payload_identity = std::move(payload_identity),
-      .schema_package = std::move(schema_package),
       .runtime_type_ops = runtime_type_ops,
+      .local_type_info = local_type_info,
   });
   return output_builders_.back();
 }
 
 TensorOutputSpecBuilder& OperatorSpec::bind_tensor_output(
     OutputBase& output, std::string_view name, const void* local_type_token,
-    PayloadIdentityRecord payload_identity, std::optional<SchemaPackagePlanRecord> schema_package,
-    const detail::RuntimePortTypeOps* runtime_type_ops) {
+    PayloadIdentityRecord payload_identity, const detail::RuntimePortTypeOps* runtime_type_ops) {
+  return bind_tensor_output(
+      output, name, local_type_token, std::move(payload_identity), runtime_type_ops, nullptr);
+}
+
+TensorOutputSpecBuilder& OperatorSpec::bind_tensor_output(
+    OutputBase& output, std::string_view name, const void* local_type_token,
+    PayloadIdentityRecord payload_identity, const detail::RuntimePortTypeOps* runtime_type_ops,
+    const std::type_info* local_type_info) {
   validate_declaration_name(output.name(), name);
   if (output.name_.empty()) {
     output.name_.assign(name);
@@ -330,8 +354,8 @@ TensorOutputSpecBuilder& OperatorSpec::bind_tensor_output(
       .builder_index = tensor_output_builders_.size() - 1U,
       .local_type_token = local_type_token,
       .payload_identity = std::move(payload_identity),
-      .schema_package = std::move(schema_package),
       .runtime_type_ops = runtime_type_ops,
+      .local_type_info = local_type_info,
   });
   return tensor_output_builders_.back();
 }

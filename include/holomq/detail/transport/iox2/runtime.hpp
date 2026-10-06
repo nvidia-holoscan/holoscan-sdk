@@ -8,8 +8,8 @@
 #include <holomq/detail/transport/iox2/publisher_port.hpp>
 #include <holomq/detail/transport/iox2/subscriber_port.hpp>
 
-#include "iox2/node.hpp"
-#include "iox2/service_type.hpp"
+#include <iox2/node.hpp>
+#include <iox2/service_type.hpp>
 
 #include <holomq/delivery_attribution.hpp>
 #include <holomq/detail/publisher_sample_release_registry.hpp>

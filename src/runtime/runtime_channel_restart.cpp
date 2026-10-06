@@ -21,6 +21,19 @@
 #include "runtime_channel_storage.hpp"
 
 namespace holoscan::detail {
+// Never derive this floor during receive: the live output counter could include missing data
+// published after cutover. External imports keep their endpoint-owned sequence authority.
+std::uint64_t RuntimeChannelSession::Impl::cutover_sequence_floor(
+    const SubscriberState& subscriber) const noexcept {
+  if (subscriber.externally_driven_import) {
+    return 0U;
+  }
+  const auto output = std::find_if(outputs_.begin(), outputs_.end(), [&](const auto& candidate) {
+    return candidate->port == subscriber.source;
+  });
+  return output == outputs_.end() ? 0U : (*output)->next_sequence - 1U;
+}
+
 /// Gate one externally driven import for a generation-fenced rebind.
 ///
 /// Caller holds the subscriber mutex with the pump joined. The gate stays kBackpressured while
@@ -189,7 +202,7 @@ expected<void, Error> RuntimeChannelSession::reset() noexcept {
   }
   for (const auto& input : impl_->inputs_) {
     if (input->active || input->predicate_view_constructed ||
-        input->claim_pool->has_live_claims()) {
+        input->claim_pool != nullptr && input->claim_pool->has_live_claims()) {
       return make_unexpected(Error{ErrorCode::kBackpressured});
     }
   }
@@ -257,22 +270,24 @@ expected<void, Error> RuntimeChannelSession::reset() noexcept {
     }
   }
   for (const auto& subscriber : impl_->subscribers_) {
-    subscriber->clear_samples();
+    subscriber->clear_samples(impl_->cutover_sequence_floor(*subscriber));
     ++subscriber->producer_epoch;
   }
   for (const auto& input : impl_->inputs_) {
-    input->reuse_slot = nullptr;
+    input->reuse_slot.store(nullptr, std::memory_order_release);
     input->retirement_slots.clear();
     input->selection_prepared = false;
     input->staged_now = false;
     input->freshness_reservation_subscriber = nullptr;
     input->freshness_reservation_retained = nullptr;
     input->freshness_reservation_successor = nullptr;
+    input->freshness_refill_target = nullptr;
+    input->freshness_refill_target_reference = {};
+    input->freshness_refill_prefix_committed = false;
     input->freshness_reservation_generation = 0U;
     input->last_refill_outcome.store(0U, std::memory_order_relaxed);
   }
   for (const auto& output : impl_->outputs_) {
-    output->next_sequence = 1U;
     output->reset_terminal_close_state();
   }
   impl_->next_arrival_order_.store(1U, std::memory_order_release);
@@ -309,7 +324,7 @@ expected<void, Error> RuntimeChannelSession::reset(VertexId owner) noexcept {
     }
     found = true;
     if (input->active || input->predicate_view_constructed ||
-        input->claim_pool->has_live_claims()) {
+        input->claim_pool != nullptr && input->claim_pool->has_live_claims()) {
       return make_unexpected(Error{ErrorCode::kBackpressured});
     }
   }
@@ -408,15 +423,22 @@ expected<void, Error> RuntimeChannelSession::reset(VertexId owner) noexcept {
   }
   for (const auto& subscriber : impl_->subscribers_) {
     if (subscriber->owner == owner || subscriber->source_owner == owner) {
-      subscriber->clear_samples();
+      subscriber->clear_samples(impl_->cutover_sequence_floor(*subscriber));
       ++subscriber->producer_epoch;
     }
   }
   for (const auto& input : impl_->inputs_) {
-    if (input->reuse_slot != nullptr && !input->reuse_slot->occupied) {
-      input->reuse_slot = nullptr;
+    const auto* const reuse_slot = input->reuse_slot.load(std::memory_order_acquire);
+    if (reuse_slot != nullptr && !reuse_slot->occupied) {
+      input->reuse_slot.store(nullptr, std::memory_order_release);
     }
-    input->retirement_slots.clear();
+    if (input->owner == owner) {
+      input->retirement_slots.clear();
+    } else {
+      std::erase_if(input->retirement_slots, [&](const auto* slot) {
+        return slot->subscriber->owner == owner || slot->subscriber->source_owner == owner;
+      });
+    }
     const bool incident = std::any_of(
         input->subscribers.begin(), input->subscribers.end(), [&](const auto* subscriber) {
           return subscriber->owner == owner || subscriber->source_owner == owner;
@@ -425,6 +447,9 @@ expected<void, Error> RuntimeChannelSession::reset(VertexId owner) noexcept {
       input->freshness_reservation_subscriber = nullptr;
       input->freshness_reservation_retained = nullptr;
       input->freshness_reservation_successor = nullptr;
+      input->freshness_refill_target = nullptr;
+      input->freshness_refill_target_reference = {};
+      input->freshness_refill_prefix_committed = false;
       input->freshness_reservation_generation = 0U;
       input->last_refill_outcome.store(0U, std::memory_order_relaxed);
     }
@@ -444,7 +469,6 @@ expected<void, Error> RuntimeChannelSession::reset(VertexId owner) noexcept {
   for (const auto& output : impl_->outputs_) {
     if (output->owner == owner) {
       ++output->active_generation;
-      output->next_sequence = 1U;
       output->emitted_this_activation = 0U;
     }
   }
@@ -618,7 +642,7 @@ expected<void, Error> RuntimeChannelSession::commit_restart(
     }
     found = true;
     if (input->active || input->predicate_view_constructed ||
-        input->claim_pool->has_live_claims()) {
+        input->claim_pool != nullptr && input->claim_pool->has_live_claims()) {
       return make_unexpected(Error{ErrorCode::kBackpressured});
     }
   }
@@ -759,18 +783,21 @@ expected<void, Error> RuntimeChannelSession::commit_restart(
     if (!owner_restarted(subscriber->source_owner) && !receiver_affected(subscriber->owner)) {
       continue;
     }
-    subscriber->clear_samples();
+    subscriber->clear_samples(impl_->cutover_sequence_floor(*subscriber));
     ++subscriber->producer_epoch;
   }
   for (const auto& input : impl_->inputs_) {
     if (!receiver_affected(input->owner)) {
       continue;
     }
-    input->reuse_slot = nullptr;
+    input->reuse_slot.store(nullptr, std::memory_order_release);
     input->retirement_slots.clear();
     input->freshness_reservation_subscriber = nullptr;
     input->freshness_reservation_retained = nullptr;
     input->freshness_reservation_successor = nullptr;
+    input->freshness_refill_target = nullptr;
+    input->freshness_refill_target_reference = {};
+    input->freshness_refill_prefix_committed = false;
     input->freshness_reservation_generation = 0U;
     input->last_refill_outcome.store(0U, std::memory_order_relaxed);
     ++input->active_generation;
@@ -787,7 +814,6 @@ expected<void, Error> RuntimeChannelSession::commit_restart(
       continue;
     }
     ++output->active_generation;
-    output->next_sequence = 1U;
     output->emitted_this_activation = 0U;
   }
   return {};

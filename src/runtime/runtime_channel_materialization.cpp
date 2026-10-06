@@ -36,11 +36,13 @@
 #include "../compiler/cuda_service_stream_plan.hpp"
 #include "../compiler/execution_plan_lookup.hpp"
 #include "../compiler/execution_plan_state.hpp"
+#include "../compiler/optional_input_plan_validation.hpp"
 #include "../compiler/process_local_channel_plan_validation.hpp"
 #include "../core/domain/tensor_access.hpp"
 #include "../core/plan_record_contracts.hpp"
 #include "../core/tensor_allocation_record_validation.hpp"
 #include "channel_runtime_binding_access.hpp"
+#include "core/diagnostic_reporting.hpp"
 #include "endpoint_clock_health_runtime.hpp"
 #include "operator_profile_labels.hpp"
 #include "runtime_channel_binding.hpp"
@@ -75,7 +77,7 @@ template <typename OutputState>
                                                            const PortPlanRecord& port_plan) {
   const VertexRecord* const owner_vertex = find_vertex_by_id(plan, output.owner);
   if (owner_vertex == nullptr || owner_vertex->name.empty() || port_plan.local_name.empty()) {
-    HOLOSCAN_LOG_WARN(
+    HOLOSCAN_LOG_AUTOMATIC_WARN(
         "OCL NVTX emit annotations disabled: missing output operator or port metadata.");
     return {};
   }
@@ -102,7 +104,7 @@ template <typename SubscriberState>
   if (source_vertex == nullptr || target_vertex == nullptr || source_vertex->name.empty() ||
       target_vertex->name.empty() || source_port.local_name.empty() ||
       target_port.local_name.empty()) {
-    HOLOSCAN_LOG_WARN(
+    HOLOSCAN_LOG_AUTOMATIC_WARN(
         "OCL NVTX receive annotations disabled: missing source/target operator or port metadata.");
     return {};
   }
@@ -289,7 +291,7 @@ expected<std::unique_ptr<RuntimeChannelSession>, Error> RuntimeChannelSession::c
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
   if (!valid_process_local_channel_plan(plan) || !valid_external_channel_plan(plan) ||
-      !valid_cross_process_channel_plan(plan)) {
+      !valid_cross_process_channel_plan(plan) || !valid_optional_input_plan(plan)) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
   auto generation_capacities_valid =
@@ -353,6 +355,31 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize(ChannelRunt
   if (!external_imports_materialized) {
     return make_unexpected(std::move(external_imports_materialized).error());
   }
+  // an admitted unconnected Exact/SafeDefault input still needs its typed
+  // callback binding, but no subscriber, endpoint, wait attachment, payload slot, or claim pool.
+  for (const InputSelectionPlanRecord& selection : plan_.input_selections) {
+    if (!selection.unwired_safe_default) {
+      continue;
+    }
+    const auto* port_plan =
+        find_port_by_id_and_direction(plan_, selection.input, PortDirection::kInput);
+    if (port_plan == nullptr) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    // Remote-owned optional inputs have no local replay object or callback binding.
+    if (process_group_ && !worker_owns_vertex(plan_, process_group_, port_plan->owner)) {
+      continue;
+    }
+    const auto* replay = find_replay(replay_ports_, selection.input, PortDirection::kInput);
+    if (replay == nullptr || replay->owner != port_plan->owner || replay->type_ops == nullptr) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    auto ensured_input = impl_->ensure_input_state(plan_, *replay);
+    if (!ensured_input || (*ensured_input)->subscribers.size() != 0U) {
+      return make_unexpected(ensured_input ? Error{ErrorCode::kProtocolError}
+                                           : std::move(ensured_input).error());
+    }
+  }
   impl_->clock_health_reset_requests_.reserve(impl_->subscribers_.size());
   auto input_bindings_published = publish_input_bindings_and_indexes();
   if (!input_bindings_published) {
@@ -383,6 +410,7 @@ RuntimeChannelSession::Impl::MaterializationTransaction::initialize_common_owner
                                  plan_.plan_generation,
                                  run_generation_,
                                  plan_.clock_conversions,
+                                 plan_.support_thread_affinities,
                                  plan_.executable_factories.support_thread_control,
                                  plan_.executable_factories.test_channel_incomplete_poll_control,
                                  plan_.executable_factories.test_force_process_local_channel_pump,
@@ -503,11 +531,12 @@ RuntimeChannelSession::Impl::MaterializationTransaction::resolved_queue_depth(
   if (!selected) {
     return make_unexpected(std::move(selected.error()));
   }
-  if (*selected && (**selected == 0U || planned == 0U)) {
+  auto selected_depth = std::move(*selected);
+  if (selected_depth && (*selected_depth == 0U || planned == 0U)) {
     return make_unexpected(
         Error{ErrorCode::kInvalidArgument, "QUEUE_ACTIVE_DEPTH_NOT_ENFORCEABLE"});
   }
-  return *selected;
+  return selected_depth;
 }
 
 // Phase 1: materialize all participating process-local and projected cross-process outputs.
@@ -616,7 +645,7 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_publishers(
                 if (!port_plan->payload_identity.schema) {
                   return make_unexpected(Error{ErrorCode::kProtocolError});
                 }
-                created.tensor_schema_id = port_plan->payload_identity.schema->id;
+                created.tensor_schema_id = port_plan->payload_identity.schema->family_id;
                 created.tensor_schema_scratch.resize(
                     replay->type_ops->descriptor_tensor_static_count);
               }
@@ -760,7 +789,7 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_publishers(
         });
       } else {
         auto endpoint = RuntimeChannelBindingAccess::create_publisher(
-            *impl->runtime_, service->service_id, service->payload_size_bytes, options);
+            *impl->runtime_, service->service_id, service->selected_inline_bucket_bytes, options);
         if (!endpoint) {
           return make_unexpected(std::move(endpoint).error());
         }
@@ -835,7 +864,7 @@ RuntimeChannelSession::Impl::MaterializationTransaction::validate_external_expor
                                  false);
     if (replay == nullptr || port_plan == nullptr || service == nullptr || publisher == nullptr ||
         subscriber == nullptr || replay->owner != port_plan->owner ||
-        replay->declaration == nullptr || !runtime_type_matches ||
+        replay->declaration == nullptr || replay->type_ops == nullptr || !runtime_type_matches ||
         ((!tensor_service || descriptor_tensor_service) &&
          (replay->type_ops->sample_payload == nullptr ||
           replay->type_ops->sample_metadata == nullptr)) ||
@@ -925,7 +954,7 @@ RuntimeChannelSession::Impl::MaterializationTransaction::validate_external_expor
           if (!descriptor_tensor_service) {
             return {};
           }
-          created.tensor_schema_id = port_plan->payload_identity.schema->id;
+          created.tensor_schema_id = port_plan->payload_identity.schema->family_id;
           created.tensor_fields = descriptor_storage_fields;
           created.tensor_logical_fields = service->tensor_fields;
           created.tensor_schema_scratch.resize(replay->type_ops->descriptor_tensor_static_count);
@@ -947,7 +976,7 @@ RuntimeChannelSession::Impl::MaterializationTransaction::validate_external_expor
           output->tensor_fields = descriptor_storage_fields;
         }
         output->tensor_logical_fields = service->tensor_fields;
-        output->tensor_schema_id = port_plan->payload_identity.schema->id;
+        output->tensor_schema_id = port_plan->payload_identity.schema->family_id;
         if (output->tensor_schema_scratch.empty()) {
           output->tensor_schema_scratch.resize(replay->type_ops->descriptor_tensor_static_count);
         }
@@ -1150,8 +1179,8 @@ RuntimeChannelSession::Impl::MaterializationTransaction::prepare_output_storage(
     auto tensor_endpoint = RuntimeChannelBindingAccess::create_catalog_tensor_publisher(
         *impl->runtime_, pending.endpoint, pending.max_loaned_samples, pending.planned_device);
     if (!tensor_endpoint) {
-      HOLOSCAN_LOG_ERROR("External Tensor publisher materialization failed with {}",
-                         runtime_error_message(tensor_endpoint.error()));
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("External Tensor publisher materialization failed with {}",
+                                   runtime_error_message(tensor_endpoint.error()));
       return make_unexpected(std::move(tensor_endpoint).error());
     }
     pending.output->catalog_tensor_endpoints.push_back(
@@ -1167,15 +1196,24 @@ RuntimeChannelSession::Impl::MaterializationTransaction::prepare_output_storage(
 
   for (const auto& output : impl->outputs_) {
     // Phase 3: allocate output scratch and loan state, then publish declaration bindings.
+    // Subscriber objects are bound after this phase; use their validated plan selection here.
+    const bool projected_only =
+        output->tensor_schema_endpoints.empty() &&
+        std::ranges::any_of(plan.process_local_channel_subscribers, [&](const auto& subscriber) {
+          return subscriber.source == output->port && subscriber.tensor_projection;
+        });
     if (output->type_ops->codec_family == RuntimePayloadCodecFamily::kGeneratedSchema ||
         output->type_ops->codec_family == RuntimePayloadCodecFamily::kCustomPod ||
-        output->type_ops->codec_family == RuntimePayloadCodecFamily::kDescriptorTensorSchema) {
+        (output->type_ops->codec_family == RuntimePayloadCodecFamily::kDescriptorTensorSchema &&
+         !projected_only)) {
       auto scratch =
           AlignedBlock::create(output->type_ops->wire_capacity, alignof(std::max_align_t));
       if (!scratch) {
         return make_unexpected(std::move(scratch).error());
       }
       output->encode_scratch = std::move(*scratch);
+      count_phase(output->phase_counters,
+                  RuntimePhaseCounter::kChannelOutputEncodingScratchAllocations);
     }
     if (output->process_local_schema_identity) {
       auto scratch = AlignedBlock::create(
@@ -1255,17 +1293,24 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_subscribers
         continue;
       }
       const bool tensor_service = service->tensor_payload;
+      // A projected subscriber holds a Tensor port against the producer's schema service, so it
+      // takes the narrowing branch instead of the port's own payload family.
+      const bool projected = subscriber_plan.tensor_projection.has_value();
       const bool runtime_type_matches =
           tensor_service
               ? runtime_tensor_matches_plan(
-                    replay == nullptr ? nullptr : replay->type_ops, *port_plan, *service)
+                    replay == nullptr ? nullptr : replay->type_ops, *port_plan, *service, projected)
               : runtime_codec_matches_plan(replay == nullptr ? nullptr : replay->type_ops,
                                            *port_plan,
                                            service->payload_size_bytes,
                                            !service->cross_process_transport);
+      const bool sample_constructor_available =
+          replay != nullptr && replay->type_ops != nullptr &&
+          (replay->type_ops->codec_family == RuntimePayloadCodecFamily::kProcessLocalObject
+               ? replay->type_ops->construct_sample_from_value != nullptr
+               : replay->type_ops->construct_sample != nullptr);
       if (replay == nullptr || !replay->owner || replay->declaration == nullptr ||
-          !runtime_type_matches ||
-          (!tensor_service && replay->type_ops->construct_sample == nullptr) ||
+          !runtime_type_matches || (!tensor_service && !sample_constructor_available) ||
           replay->type_ops->destroy_sample == nullptr || replay->type_ops->bind_input == nullptr ||
           replay->type_ops->unbind_input == nullptr || subscriber_plan.readiness_capacity == 0U ||
           subscriber_plan.requested_queue_depth == 0U ||
@@ -1361,6 +1406,7 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_subscribers
       subscriber->pre_witness_replacement_allowed =
           publisher_plan->replacement_attribution_required;
       subscriber->direct_process_local = direct_retained;
+      subscriber->tensor_projection = subscriber_plan.tensor_projection;
       subscriber->cross_process_transport = service->cross_process_transport;
       subscriber->process_local_transport = !direct_retained && !service->cross_process_transport;
       subscriber->input = input;
@@ -1370,7 +1416,24 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_subscribers
         subscriber->tensor_max_byte_span = effective_tensor_max_byte_span;
         subscriber->tensor_memory_kind = effective_tensor_memory_kind;
         subscriber->tensor_device = effective_tensor_device;
-        subscriber->tensor_fields = service->tensor_fields;
+        if (subscriber->tensor_projection && !service->tensor_fields.empty()) {
+          const auto& projection = *subscriber->tensor_projection;
+          const auto field =
+              std::ranges::find_if(service->tensor_fields, [&](const auto& candidate) {
+                return candidate.field_id == projection.field_id &&
+                       candidate.tensor_index == projection.tensor_index;
+              });
+          if (field == service->tensor_fields.end()) {
+            return make_unexpected(Error{ErrorCode::kProtocolError});
+          }
+          // A Tensor subscriber validates only its selected field's storage envelope. Other
+          // schema fields may have different sizes, memory kinds, and CUDA devices.
+          subscriber->tensor_max_byte_span = field->max_byte_span;
+          subscriber->tensor_memory_kind = field->memory_kind;
+          subscriber->tensor_device = field->device;
+        } else {
+          subscriber->tensor_fields = service->tensor_fields;
+        }
         if (replay->type_ops->codec_family != RuntimePayloadCodecFamily::kDescriptorTensorSchema ||
             replay->type_ops->descriptor_tensor_static_count <= 1U) {
           subscriber->pass_through_tensor_contract = port_plan->tensor_contract;
@@ -1414,7 +1477,8 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_subscribers
           } else if (service->tensor_memory_kind == MemoryKind::kUnknown) {
             subscriber->pass_through_tensor_layout = port_plan->tensor_layout;
           }
-        } else {
+        } else if (replay->type_ops->codec_family !=
+                   RuntimePayloadCodecFamily::kProcessLocalObject) {
           auto scratch =
               AlignedBlock::create(service->payload_size_bytes, alignof(std::max_align_t));
           if (!scratch) {
@@ -1454,7 +1518,7 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_subscribers
         }
       } else {
         auto endpoint = RuntimeChannelBindingAccess::create_subscriber(
-            *impl->runtime_, service->service_id, service->payload_size_bytes, options);
+            *impl->runtime_, service->service_id, service->selected_inline_bucket_bytes, options);
         if (!endpoint) {
           return make_unexpected(std::move(endpoint).error());
         }
@@ -1495,18 +1559,21 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_subscribers
           std::numeric_limits<std::uint32_t>::max() - subscriber->direct_ingress_capacity) {
         return make_unexpected(Error{ErrorCode::kResourceExhausted});
       }
-      // One physical slot beyond the authored staging depth, reachable only by a freshness
-      // reservation. It is deliberately not part of direct_ingress_capacity: the survivor set a
-      // witness can see stays the newest N unread, and this slot holds only the record an
-      // eviction has already qualified and is about to promote. Without it, reserving that
-      // record at depth one closes the producer's only staging destination.
+      // Retained fallback and freshness reservations are private ownership, not authored unread
+      // depth. Give each one physical storage without changing the newest-N survivor set.
       const std::uint32_t reservation_headroom =
           subscriber->direct_ingress_capacity != 0U ? 1U : 0U;
-      if (typed_slot_capacity > std::numeric_limits<std::uint32_t>::max() - reservation_headroom) {
+      const std::uint32_t reuse_headroom =
+          service->queue_policy == QueuePolicy::kDropOldest && input->private_depth_one_reuse_slot
+              ? 1U
+              : 0U;
+      const std::uint32_t headroom = reservation_headroom + reuse_headroom;
+      const std::uint32_t retained_capacity =
+          typed_slot_capacity + subscriber->direct_ingress_capacity;
+      if (retained_capacity > std::numeric_limits<std::uint32_t>::max() - headroom) {
         return make_unexpected(Error{ErrorCode::kResourceExhausted});
       }
-      const std::uint32_t sample_slot_capacity =
-          typed_slot_capacity + subscriber->direct_ingress_capacity + reservation_headroom;
+      const std::uint32_t sample_slot_capacity = retained_capacity + headroom;
       const std::size_t tensor_fields_per_slot =
           replay->type_ops->codec_family == RuntimePayloadCodecFamily::kDescriptorTensorSchema
               ? replay->type_ops->descriptor_tensor_static_count
@@ -1588,10 +1655,15 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_external_im
                                  *port_plan,
                                  replay->type_ops == nullptr ? 0U : replay->type_ops->wire_capacity,
                                  false);
+    const bool sample_constructor_available =
+        replay != nullptr && replay->type_ops != nullptr &&
+        (replay->type_ops->codec_family == RuntimePayloadCodecFamily::kProcessLocalObject
+             ? replay->type_ops->construct_sample_from_value != nullptr
+             : replay->type_ops->construct_sample != nullptr);
     if (replay == nullptr || port_plan == nullptr || service == nullptr || publisher == nullptr ||
         subscriber_plan == nullptr || replay->owner != port_plan->owner ||
         replay->declaration == nullptr || !runtime_type_matches ||
-        (!tensor_service && replay->type_ops->construct_sample == nullptr) ||
+        (!tensor_service && !sample_constructor_available) ||
         (descriptor_tensor_service &&
          (replay->type_ops->descriptor_tensor_sample_metadata == nullptr ||
           replay->type_ops->descriptor_tensor_view_metadata_at == nullptr ||
@@ -1834,8 +1906,18 @@ RuntimeChannelSession::Impl::MaterializationTransaction::materialize_external_im
     }
     const std::size_t tensor_fields_per_slot =
         descriptor_tensor_service ? replay->type_ops->descriptor_tensor_static_count : 1U;
-    auto prepared_storage = impl->prepare_subscriber_storage(
-        *subscriber, typed_slot_capacity, typed_slot_capacity, tensor_fields_per_slot, true);
+    const std::uint32_t reuse_headroom =
+        service->queue_policy == QueuePolicy::kDropOldest && input->private_depth_one_reuse_slot
+            ? 1U
+            : 0U;
+    if (typed_slot_capacity > std::numeric_limits<std::uint32_t>::max() - reuse_headroom) {
+      return make_unexpected(Error{ErrorCode::kResourceExhausted});
+    }
+    auto prepared_storage = impl->prepare_subscriber_storage(*subscriber,
+                                                             typed_slot_capacity,
+                                                             typed_slot_capacity + reuse_headroom,
+                                                             tensor_fields_per_slot,
+                                                             true);
     if (!prepared_storage) {
       return make_unexpected(std::move(prepared_storage).error());
     }
@@ -1873,11 +1955,13 @@ RuntimeChannelSession::Impl::MaterializationTransaction::publish_input_bindings_
       }
       claim_capacity += subscriber->read_claim_capacity;
     }
-    auto claim_pool = ReadClaimPool::create(claim_capacity);
-    if (!claim_pool) {
-      return make_unexpected(std::move(claim_pool).error());
+    if (claim_capacity != 0U) {
+      auto claim_pool = ReadClaimPool::create(claim_capacity);
+      if (!claim_pool) {
+        return make_unexpected(std::move(claim_pool).error());
+      }
+      input->claim_pool = *claim_pool;
     }
-    input->claim_pool = *claim_pool;
     input->type_ops->bind_input(input->declaration, &input->binding);
   }
   auto pump_indices = impl->initialize_pump_indices();
@@ -1888,7 +1972,7 @@ RuntimeChannelSession::Impl::MaterializationTransaction::publish_input_bindings_
   if (!activation_cut_index) {
     return make_unexpected(std::move(activation_cut_index).error());
   }
-  auto activation_owners = impl->bind_activation_owners(plan.ports.size());
+  auto activation_owners = impl->bind_activation_owners(plan);
   if (!activation_owners) {
     return make_unexpected(std::move(activation_owners).error());
   }

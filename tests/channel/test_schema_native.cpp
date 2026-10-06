@@ -13,8 +13,8 @@
 #include <holoscan/channel/runtime.hpp>
 #include <holoscan/core/domain/tensor.hpp>
 // Provides generated owning types and schema-trait specializations.
-#include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/schema/inline_flatbuffer_payload.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "../common/allocation_counter.hpp"
@@ -33,25 +33,29 @@ static_assert(!holoscan::CatalogChannelSchema<holoscan::schema::Image>);
 static_assert(!holoscan::CatalogChannelSchema<holoscan::schema::Tensor>);
 static_assert(!holoscan::CatalogChannelSchema<holoscan::schema::String>);
 static_assert(!holoscan::CatalogChannelSchema<holoscan::Tensor>);
+static_assert(std::is_standard_layout_v<
+              holoscan::schema::InlineFlatBufferPayload<holoscan::schema::Time, 512U>>);
+static_assert(std::is_trivially_copyable_v<
+              holoscan::schema::InlineFlatBufferPayload<holoscan::schema::Time, 512U>>);
 static_assert(!holoscan::CatalogChannelSchema<
               holoscan::schema::InlineFlatBufferPayload<holoscan::schema::String, 512U>>);
 
-// Verifies that generated native type Native inherits its canonical name, version,
-// schema digest, and schema ID from its FlatBuffers root type. Also confirms the
-// singleton schema_package<Native> is valid and reports the correct max serialized
-// size. Used by ProjectsRootIdentityOntoOwningGeneratedType.
+// Verifies that generated native type Native inherits stable family identity and
+// the independent buffer identifier from its FlatBuffers root type. Also confirms
+// the singleton schema_package<Native> is valid and reports the correct maximum
+// serialized size. Used by ProjectsRootIdentityOntoOwningGeneratedType.
 template <typename Native>
 void expect_native_package_projects_root_identity() {
   using Root = typename holoscan::GeneratedSchemaNativeTraits<Native>::root_type;
   constexpr holoscan::SchemaIdentity kRootIdentity = holoscan::schema_identity<Root>();
   constexpr holoscan::SchemaIdentity kNativeIdentity = holoscan::schema_identity<Native>();
   EXPECT_EQ(kNativeIdentity.canonical_name, kRootIdentity.canonical_name);
-  EXPECT_EQ(kNativeIdentity.version, kRootIdentity.version);
-  EXPECT_EQ(kNativeIdentity.schema_sha256, kRootIdentity.schema_sha256);
-  EXPECT_EQ(kNativeIdentity.id, kRootIdentity.id);
+  EXPECT_EQ(kNativeIdentity.compatibility_epoch, kRootIdentity.compatibility_epoch);
+  EXPECT_EQ(kNativeIdentity.family_id, kRootIdentity.family_id);
+  EXPECT_EQ(kNativeIdentity.file_identifier, kRootIdentity.file_identifier);
 
   const auto& package = holoscan::schema_package<Native>();
-  EXPECT_EQ(package.identity().id, kNativeIdentity.id);
+  EXPECT_EQ(package.identity(), kNativeIdentity);
   EXPECT_EQ(package.max_serialized_size(),
             holoscan::generated_schema_max_serialized_size_v<Native>);
   EXPECT_TRUE(package.has_encoder());

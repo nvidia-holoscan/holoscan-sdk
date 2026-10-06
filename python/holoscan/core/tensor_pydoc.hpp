@@ -5,7 +5,7 @@
 
 #pragma once
 
-// Docstrings for the holoscan.core Tensor bindings. Plain constants (no codegen) covering the
+// Docstrings for the Holoscan Tensor bindings. Plain constants (no codegen) covering the
 // surface bound in tensor.cpp / dl_converter.cpp.
 
 namespace holoscan::doc {
@@ -93,7 +93,7 @@ obj : array-like
 
 Returns
 -------
-holoscan.core.Tensor
+holoscan.Tensor
 
 Notes
 -----
@@ -125,7 +125,7 @@ obj : array-like
 
 Returns
 -------
-holoscan.core.Tensor
+holoscan.Tensor
 
 Notes
 -----
@@ -153,10 +153,10 @@ stream : int or None, optional
 max_version : tuple[int, int] or None, optional
     Maximum supported DLPack ``(major, minor)`` version; a major >= 1 selects the versioned capsule.
 dl_device : tuple[int, int] or None, optional
-    Requested ``(device_type, device_id)``. Copying to a different device is not supported and
-    raises ``BufferError``.
+    Requested ``(device_type, device_id)``. A different device requests an explicit copy.
 copy : bool or None, optional
-    ``copy=True`` is not supported and raises ``BufferError``.
+    Request an owning contiguous copy before export. ``copy=False`` rejects a different
+    ``dl_device`` request.
 
 Returns
 -------

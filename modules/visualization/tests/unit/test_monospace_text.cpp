@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include <holoviz/rhi.hpp>
+#include <holoviz/holoviz.hpp>
 #include <holoviz/text.hpp>
 
 #include <gtest/gtest.h>
@@ -20,12 +20,10 @@
 namespace holoviz::text {
 namespace {
 
-namespace rhi = holoviz::rhi;
-
 /// Create a device on the first adapter, or an empty handle if this machine
 /// cannot (no Vulkan adapter, no matching CUDA device, ...).
-rhi::Device try_create_device() {
-  auto adapters = rhi::enumerate_adapters();
+Device try_create_device() {
+  auto adapters = enumerate_adapters();
   if (!adapters || adapters->empty()) {
     return {};
   }
@@ -42,7 +40,7 @@ rhi::Device try_create_device() {
   }
 
 TEST(MonospaceText, FactoryRejectsInvalidAtlasHeight) {
-  rhi::Device device = try_create_device();
+  Device device = try_create_device();
   SKIP_WITHOUT_DEVICE(device);
 
   const auto renderer = create_monospace_text_renderer(device, {.atlas_glyph_height_px = 0.0F});
@@ -54,7 +52,7 @@ TEST(MonospaceText, FactoryRejectsInvalidAtlasHeight) {
 }
 
 TEST(MonospaceText, DeviceReportsPushConstantLimit) {
-  rhi::Device device = try_create_device();
+  Device device = try_create_device();
   SKIP_WITHOUT_DEVICE(device);
 
   const auto capabilities = device.capabilities();
@@ -66,14 +64,14 @@ TEST(MonospaceText, DeviceReportsPushConstantLimit) {
 }
 
 TEST(MonospaceText, FrameStateMachine) {
-  rhi::Device device = try_create_device();
+  Device device = try_create_device();
   SKIP_WITHOUT_DEVICE(device);
 
   auto renderer_result = create_monospace_text_renderer(device, {});
   ASSERT_TRUE(renderer_result.has_value()) << renderer_result.error().message;
   TextRenderer renderer = std::move(*renderer_result);
 
-  const rhi::Extent2D extent{256, 128};
+  const Extent2D extent{256, 128};
 
   // add_text/end_frame outside a frame fail.
   const auto orphan_add = renderer.add_text({}, "x");
@@ -92,13 +90,13 @@ TEST(MonospaceText, FrameStateMachine) {
 }
 
 TEST(MonospaceText, CancelFrameIsIdempotentAndUnbricks) {
-  rhi::Device device = try_create_device();
+  Device device = try_create_device();
   SKIP_WITHOUT_DEVICE(device);
 
   auto renderer_result = create_monospace_text_renderer(device, {});
   ASSERT_TRUE(renderer_result.has_value()) << renderer_result.error().message;
   TextRenderer renderer = std::move(*renderer_result);
-  const rhi::Extent2D extent{256, 128};
+  const Extent2D extent{256, 128};
 
   // Open a frame and hit the mid-frame rejection that used to leave it stuck open.
   ASSERT_TRUE(renderer.begin_frame(extent, 0, {}).has_value());
@@ -124,18 +122,18 @@ TEST(MonospaceText, CancelFrameIsIdempotentAndUnbricks) {
 // renderer desc and check pixels changed. Passing end_frame()'s no-op token
 // through wait_external_sync_tokens doubles as the regression test for
 // submit() skipping default-constructed tokens.
-void expect_renders_visible_pixels(rhi::Device& device, const MonospaceTextRendererDesc& desc) {
-  const rhi::Extent2D extent{256, 128};
+void expect_renders_visible_pixels(Device& device, const MonospaceTextRendererDesc& desc) {
+  const Extent2D extent{256, 128};
   auto target = device.create_image({
       .extent = extent,
-      .format = rhi::Format::kR8G8B8A8Unorm,
-      .usage = rhi::ImageUsage::kRenderTarget,
+      .format = Format::kR8G8B8A8Unorm,
+      .usage = ImageUsage::kRenderTarget,
       .debug_name = "monospace test target",
   });
   ASSERT_TRUE(target.has_value()) << target.error().message;
 
   auto render_pass =
-      device.create_render_pass({.render_targets = {{.format = rhi::Format::kR8G8B8A8Unorm}}});
+      device.create_render_pass({.render_targets = {{.format = Format::kR8G8B8A8Unorm}}});
   ASSERT_TRUE(render_pass.has_value()) << render_pass.error().message;
   ASSERT_TRUE(render_pass->set_render_image(*target, 0, {0.0F, 0.0F, 0.0F, 1.0F}).has_value());
 
@@ -151,7 +149,7 @@ void expect_renders_visible_pixels(rhi::Device& device, const MonospaceTextRende
   ASSERT_TRUE(token.has_value());
   EXPECT_EQ(token->impl, nullptr);  // the no-op token
 
-  auto command_list = device.create_command_list({.type = rhi::CommandListType::kTransient});
+  auto command_list = device.create_command_list({.type = CommandListType::kTransient});
   ASSERT_TRUE(command_list.has_value()) << command_list.error().message;
   ASSERT_TRUE(command_list->begin().has_value());
   ASSERT_TRUE(
@@ -160,7 +158,7 @@ void expect_renders_visible_pixels(rhi::Device& device, const MonospaceTextRende
   ASSERT_TRUE(command_list->end_render().has_value());
   ASSERT_TRUE(command_list->end().has_value());
 
-  const rhi::SubmitDesc submit_desc{
+  const SubmitDesc submit_desc{
       .wait_external_sync_tokens = {&token.value(), 1},
       .command_lists = {&command_list.value(), 1},
   };
@@ -191,7 +189,7 @@ void expect_renders_visible_pixels(rhi::Device& device, const MonospaceTextRende
 }
 
 TEST(MonospaceText, RendersVisiblePixels) {
-  rhi::Device device = try_create_device();
+  Device device = try_create_device();
   SKIP_WITHOUT_DEVICE(device);
 
   expect_renders_visible_pixels(device, {.fill_mode = MonospaceFillMode::kTriangles});
@@ -199,7 +197,7 @@ TEST(MonospaceText, RendersVisiblePixels) {
 }
 
 TEST(MonospaceText, FillRectRendersVisiblePixels) {
-  rhi::Device device = try_create_device();
+  Device device = try_create_device();
   SKIP_WITHOUT_DEVICE(device);
 
   const auto capabilities = device.capabilities();

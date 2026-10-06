@@ -24,6 +24,7 @@
 #include "catalog_attach_wait.hpp"
 #include "channel_common.hpp"
 #include "channel_inline_payload.hpp"
+#include "channel_readiness_handle.hpp"
 #include "channel_runtime_impl.hpp"
 #include "endpoint_catalog_state.hpp"
 #include "pod_codec.hpp"
@@ -109,12 +110,6 @@ struct DataAttribution {
     const PayloadIdentityRecord& identity, const std::size_t payload_capacity = 0U) noexcept {
   const auto contract = catalog_inline_payload_contract(identity, payload_capacity);
   return contract ? static_cast<std::size_t>(contract->native_payload_capacity_bytes) : 0U;
-}
-
-[[nodiscard]] bool schema_identity_equal(const SchemaIdentityRecord& left,
-                                         const SchemaIdentityRecord& right) noexcept {
-  return left.canonical_name == right.canonical_name && left.version == right.version &&
-         left.schema_sha256 == right.schema_sha256 && left.id == right.id;
 }
 
 [[nodiscard]] expected<void, Error> validate_payload_attachment(
@@ -215,7 +210,7 @@ void corrupt_schema_frame(std::span<std::byte> frame,
                           const CatalogSchemaFrameCorruption corruption) noexcept {
   constexpr std::size_t kEnvelopeOffset = kCatalogDataAttributionBytes;
   constexpr std::size_t kSchemaIdOffset = kEnvelopeOffset + 8U;
-  constexpr std::size_t kSchemaVersionOffset = kEnvelopeOffset + 24U;
+  constexpr std::size_t kPayloadSizeOffset = kEnvelopeOffset + 24U;
   constexpr std::size_t kEndpointGenerationOffset = kEnvelopeOffset + 32U;
   constexpr std::size_t kPayloadOffset = kEnvelopeOffset + kSchemaEnvelopeHeaderSize;
 
@@ -226,8 +221,8 @@ void corrupt_schema_frame(std::span<std::byte> frame,
     case CatalogSchemaFrameCorruption::kSchemaId:
       frame[kSchemaIdOffset] ^= std::byte{0xffU};
       break;
-    case CatalogSchemaFrameCorruption::kSchemaVersion:
-      store_little<std::uint32_t>(frame, kSchemaVersionOffset, 0U);
+    case CatalogSchemaFrameCorruption::kPayloadSize:
+      store_little<std::uint32_t>(frame, kPayloadSizeOffset, 0U);
       break;
     case CatalogSchemaFrameCorruption::kEndpointGeneration:
       store_little<std::uint64_t>(
@@ -235,6 +230,9 @@ void corrupt_schema_frame(std::span<std::byte> frame,
       break;
     case CatalogSchemaFrameCorruption::kPayloadVerifier:
       std::fill(frame.begin() + kPayloadOffset, frame.end(), std::byte{0xffU});
+      break;
+    case CatalogSchemaFrameCorruption::kEnvelopeAbi:
+      store_little<std::uint32_t>(frame, kEnvelopeOffset, 0U);
       break;
   }
 }
@@ -431,11 +429,19 @@ void encode_data_attribution(std::span<std::byte> wire, const DataAttributionKin
   }
   const auto service_contract =
       catalog_inline_payload_contract(endpoint.service_static.payload_identity,
-                                      endpoint.service_static.serialized_payload_capacity_bytes);
+                                      endpoint.service_static.schema_writer_max_serialized_bytes);
   const auto attaching_contract = catalog_inline_payload_contract(payload_identity, payload_size);
-  if (!service_contract || !service_contract->frame_fits_inline_transport || !attaching_contract ||
+  if (!service_contract || service_contract->selected_bucket_bytes == 0U || !attaching_contract ||
       attaching_contract->native_payload_capacity_bytes != payload_size) {
     return make_unexpected(catalog_error(ErrorCode::kIncompatible, "ENDPOINT_TYPE_MISMATCH"));
+  }
+  if (endpoint.service_static.required_data_frame_bytes != service_contract->required_frame_bytes ||
+      endpoint.service_static.selected_inline_bucket_bytes !=
+          service_contract->selected_bucket_bytes ||
+      endpoint.service_static.bucket_usable_serialized_bytes !=
+          service_contract->bucket_usable_native_payload_bytes) {
+    return make_unexpected(
+        catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_SERVICE_CONTRACT_INVALID"));
   }
   const bool capacity_admitted = attaching_publisher
                                      ? attaching_contract->native_payload_capacity_bytes <=
@@ -589,7 +595,7 @@ class CatalogInlinePayloadPublisher final : public InlinePayloadPublisher {
 
     // Every submitted byte is overwritten below. The cold endpoint-owned scratch avoids a large
     // stack frame and leaves its unused tail untouched on variable-size schema publications.
-    std::span<std::byte> encoded{encoded_};
+    const std::span<std::byte> encoded{encoded_};
     encode_data_attribution(
         encoded, DataAttributionKind::kData, report_sequence_, producer_generation_);
     std::size_t submitted_frame_size = framed_payload_size_;
@@ -744,7 +750,7 @@ class CatalogInlinePayloadPublisher final : public InlinePayloadPublisher {
     if (operation_sequence_ == std::numeric_limits<std::uint64_t>::max()) {
       return make_unexpected(Error{ErrorCode::kResourceExhausted});
     }
-    std::span<std::byte> encoded{encoded_};
+    const std::span<std::byte> encoded{encoded_};
     // The fixed-width transport stages the complete configured frame before it can inspect the
     // EOS attribution. Initialize only that frame, not the unused maximum-size buffer tail.
     std::fill_n(encoded.begin(), framed_payload_size_, std::byte{});
@@ -816,9 +822,10 @@ class CatalogInlinePayloadPublisher final : public InlinePayloadPublisher {
     switch (corruption) {
       case CatalogSchemaFrameCorruption::kMalformedEnvelope:
       case CatalogSchemaFrameCorruption::kSchemaId:
-      case CatalogSchemaFrameCorruption::kSchemaVersion:
+      case CatalogSchemaFrameCorruption::kPayloadSize:
       case CatalogSchemaFrameCorruption::kEndpointGeneration:
       case CatalogSchemaFrameCorruption::kPayloadVerifier:
+      case CatalogSchemaFrameCorruption::kEnvelopeAbi:
         next_schema_corruption_ = corruption;
         return {};
     }
@@ -990,6 +997,44 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
 
   [[nodiscard]] void* wait_context_runtime() noexcept override {
     return data_->wait_context_runtime();
+  }
+
+  [[nodiscard]] bool wait_set_attached() const noexcept override {
+    return data_->wait_set_attached() || (health_ && health_->wait_set_attached());
+  }
+
+  [[nodiscard]] bool readiness_handle_attached() const noexcept override {
+    return data_->readiness_handle_attached() || (health_ && health_->readiness_handle_attached());
+  }
+
+  [[nodiscard]] expected<ChannelReadinessHandle, Error> readiness() override {
+    auto claim = claim_readiness_owner();
+    if (!claim) {
+      return make_unexpected(std::move(claim).error());
+    }
+    if (stream_closed_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    auto ready = has_samples();
+    if (!ready) {
+      return make_unexpected(std::move(ready).error());
+    }
+
+    std::vector<ChannelReadinessHandle> handles;
+    handles.reserve(health_ ? 2U : 1U);
+    auto data = data_->readiness();
+    if (!data) {
+      return make_unexpected(std::move(data).error());
+    }
+    handles.push_back(std::move(*data));
+    if (health_) {
+      auto health = health_->readiness();
+      if (!health) {
+        return make_unexpected(std::move(health).error());
+      }
+      handles.push_back(std::move(*health));
+    }
+    return ChannelReadinessHandleAccess::create({}, std::move(handles), *ready);
   }
 
   [[nodiscard]] std::optional<std::uint64_t> protected_terminal_wait_handle()
@@ -1328,6 +1373,17 @@ class CatalogInlinePayloadSubscriber final : public InlinePayloadSubscriber,
       return true;
     }
 
+    // A subscriber that attaches after this producer already published data can first observe its
+    // ordered EOS. Admit that terminal operation as the attachment boundary instead of waiting for
+    // data that was published before this receiver existed. Keep the contiguous fast path above
+    // unchanged, and do not grant the same gap to a late ordinary data operation.
+    if (latched_producer_generation_ == 0U && pending_data_ && !pending_health_ &&
+        pending_data_attribution_.kind == DataAttributionKind::kEndOfStream) {
+      health_state_.report_sequence = pending_data_attribution_.health_report_sequence;
+      expected_operation_sequence_ = next_sequence;
+      return true;
+    }
+
     // Lossless data and health services may become visible at different times. Retain one head
     // from each service and wait for the missing predecessor instead of letting a later operation
     // overtake it. A replacement queue may legitimately erase that predecessor before the
@@ -1561,7 +1617,7 @@ expected<void, Error> CatalogChannelBindingTestAccess::validate_data_metadata(
   if (record == nullptr) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
-  const std::uint64_t capacity = record->service_static.serialized_payload_capacity_bytes;
+  const std::uint64_t capacity = record->service_static.schema_writer_max_serialized_bytes;
   if (capacity > std::numeric_limits<std::size_t>::max()) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
@@ -1710,13 +1766,15 @@ ChannelRuntime::create_catalog_inline_payload_publisher(
       detail::ChannelEndpointCatalogAccess::backend_service_binding(endpoint);
   const std::size_t framed_payload_size =
       static_cast<std::size_t>(service_contract->required_frame_bytes);
+  const std::size_t selected_bucket_bytes =
+      static_cast<std::size_t>(service_contract->selected_bucket_bytes);
   const ChannelOptions endpoint_options = channel_internal::channel_options(*endpoint_record, true);
   const channel_internal::PublisherPressureOptions data_pressure =
       pressure.for_queue(endpoint_options.queue_policy);
   auto data =
       channel_internal::create_inline_payload_publisher(impl_->context_,
                                                         binding,
-                                                        framed_payload_size,
+                                                        selected_bucket_bytes,
                                                         endpoint_options,
                                                         impl_->context_.pubsub_capabilities(),
                                                         data_pressure);
@@ -1788,12 +1846,14 @@ ChannelRuntime::create_catalog_inline_payload_subscriber(
       detail::ChannelEndpointCatalogAccess::backend_service_binding(endpoint);
   const std::size_t framed_payload_size =
       static_cast<std::size_t>(service_contract->required_frame_bytes);
+  const std::size_t selected_bucket_bytes =
+      static_cast<std::size_t>(service_contract->selected_bucket_bytes);
   const ChannelOptions endpoint_options =
       channel_internal::channel_options(*endpoint_record, false);
   auto data =
       channel_internal::create_inline_payload_subscriber(impl_->context_,
                                                          binding,
-                                                         framed_payload_size,
+                                                         selected_bucket_bytes,
                                                          endpoint_options,
                                                          impl_->context_.pubsub_capabilities());
   if (!data) {

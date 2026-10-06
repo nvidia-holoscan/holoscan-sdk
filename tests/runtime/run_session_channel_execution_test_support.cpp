@@ -22,7 +22,8 @@
 #include <vector>
 
 // Provides generated owning types and schema-trait specializations.
-#include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
+#include <holoscan/core/predicate.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>  // NOLINT(misc-include-cleaner)
 
 #include "compiler/compile_internal.hpp"
 #include "compiler/execution_plan_state.hpp"
@@ -769,8 +770,17 @@ class RuntimeClosedIslandTensorSinkOperator final : public Operator<> {
   Input<Tensor> input;
 };
 
+// Collect predicate/compute phase and optional-read observations for
+// RunSessionTest.OptionalComputeSideRemainsUnselectedUntilPredicateFires.
 struct PredicateRetirementProbeState {
   static void reset() {
+    degraded_callback_count.store(0U, std::memory_order_relaxed);
+    optional_not_selected_count.store(0U, std::memory_order_relaxed);
+    optional_state.store(InputState::kNotSelected, std::memory_order_relaxed);
+    optional_reason.store(SelectionReason::kNotSelectedForActivation, std::memory_order_relaxed);
+    optional_scalar_error.store(ErrorCode::kSuccess, std::memory_order_relaxed);
+    optional_batch_error.store(ErrorCode::kSuccess, std::memory_order_relaxed);
+
     source_count.store(0U, std::memory_order_relaxed);
     evaluation_count.store(0U, std::memory_order_relaxed);
     compute_count.store(0U, std::memory_order_relaxed);
@@ -801,6 +811,13 @@ struct PredicateRetirementProbeState {
         lock, 5s, [] { return compute_count.load(std::memory_order_acquire) != 0U; });
   }
 
+  static inline std::atomic<std::size_t> degraded_callback_count{};
+  static inline std::atomic<std::size_t> optional_not_selected_count{0U};
+  static inline std::atomic<InputState> optional_state{InputState::kNotSelected};
+  static inline std::atomic<SelectionReason> optional_reason{
+      SelectionReason::kNotSelectedForActivation};
+  static inline std::atomic<ErrorCode> optional_scalar_error{ErrorCode::kSuccess};
+  static inline std::atomic<ErrorCode> optional_batch_error{ErrorCode::kSuccess};
   static inline std::mutex mutex;
   static inline std::condition_variable cv;
   static inline std::atomic<std::size_t> source_count{};
@@ -822,9 +839,14 @@ struct PredicateRetirementProbeState {
   });
 }
 
+// Emit up to five predicate drivers while keeping the evaluation-side output silent for
+// RunSessionTest.OptionalComputeSidePreservesAnEarlierDegradedPredicatePhase.
 class PredicateRetirementSourceOperator final : public Operator<> {
  public:
-  void setup(OperatorSpec& spec) override { spec.output(driver, "driver"); }
+  void setup(OperatorSpec& spec) override {
+    spec.output(driver, "driver");
+    spec.output(silent, "silent");
+  }
 
   [[nodiscard]] Contract contract() const override {
     Contract result;
@@ -846,43 +868,107 @@ class PredicateRetirementSourceOperator final : public Operator<> {
   }
 
   Output<std::uint32_t> driver;
+  Output<std::uint32_t> silent;
 
  private:
   std::uint32_t next_value_{1U};
 };
 
+// Separate predicate evaluation from compute-only optional selection for
+// RunSessionTest.OptionalComputeSideRemainsUnselectedUntilPredicateFires.
 class PredicateRetirementSinkOperator final : public Operator<> {
  public:
-  void setup(OperatorSpec& spec) override { spec.input(driver, "driver").queue_depth(2U); }
+  explicit PredicateRetirementSinkOperator(bool optional_side = false,
+                                           bool degraded_evaluation = false)
+      : optional_side_(optional_side), degraded_evaluation_(degraded_evaluation) {}
+
+  void setup(OperatorSpec& spec) override {
+    spec.input(driver, "driver").queue_depth(2U);
+    if (degraded_evaluation_) {
+      spec.input(evaluation_side, "evaluation_side");
+    }
+    if (optional_side_) {
+      spec.input(side, "side").optional();
+    }
+  }
 
   [[nodiscard]] Contract contract() const override {
-    auto evaluator = predicate("predicate-retirement",
-                               [](const PredicateEvaluationContext&,
-                                  const PredicateInputView<std::uint32_t>& driver_view) noexcept {
-                                 PredicateRetirementProbeState::record_evaluation();
-                                 return driver_view.sample().data >= 5U;
-                               });
+    auto evaluator =
+        degraded_evaluation_
+            ? predicate("predicate-retirement-degraded",
+                        predicate_inputs(evaluation_side),
+                        bind_predicate(*this, &PredicateRetirementSinkOperator::evaluate_degraded))
+            : predicate("predicate-retirement",
+                        bind_predicate(*this, &PredicateRetirementSinkOperator::evaluate));
     Contract result;
     result
-        .trigger(OnPredicate{
-            .evaluate_on = OnInputUpdate{driver},
-            .predicate = std::move(evaluator),
-            .firing = PredicateFiring::kOnEveryTrueEvaluation,
-        })
+        .trigger(OnPredicate{.evaluate_on = OnInputUpdate{driver},
+                             .predicate = std::move(evaluator),
+                             .firing = PredicateFiring::kOnEveryTrueEvaluation})
         .input(driver, Exact{});
+    if (degraded_evaluation_) {
+      result.input(evaluation_side, Exact{}).on_missing(evaluation_side, SafeDefault{});
+    }
+    if (optional_side_) {
+      result.input(side, Exact{}).on_missing(side, SafeDefault{});
+    }
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] bool evaluate(const PredicateEvaluationContext&,
+                              const PredicateInputView<std::uint32_t>& driver_view) const noexcept {
+    if (optional_side_) {
+      const auto selection = side.selection();
+      if (selection.state == InputState::kNotSelected &&
+          selection.reason == SelectionReason::kNotSelectedForActivation) {
+        PredicateRetirementProbeState::optional_not_selected_count.fetch_add(1U);
+      }
+    }
+    PredicateRetirementProbeState::record_evaluation();
+    return driver_view.sample().data >= 5U;
+  }
+
+  [[nodiscard]] bool evaluate_degraded(const PredicateEvaluationContext& context,
+                                       const PredicateInputView<std::uint32_t>& driver_view,
+                                       const PredicateInputView<std::uint32_t>&) const noexcept {
+    return evaluate(context, driver_view);
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    if (degraded_evaluation_) {
+      const auto selection = evaluation_side.selection();
+      if (selection.state == InputState::kSafeDefault &&
+          selection.reason == SelectionReason::kNeverSeen) {
+        PredicateRetirementProbeState::degraded_callback_count.fetch_add(1U);
+      }
+      context.request_completion();
+    }
     auto received = driver.receive();
     if (!received) {
       return make_unexpected(std::move(received.error()));
+    }
+    if (optional_side_) {
+      const auto selection = side.selection();
+      PredicateRetirementProbeState::optional_state.store(selection.state);
+      PredicateRetirementProbeState::optional_reason.store(selection.reason);
+      auto scalar = side.receive();
+      PredicateRetirementProbeState::optional_scalar_error.store(scalar ? ErrorCode::kSuccess
+                                                                        : scalar.error().code);
+      auto batch = side.selected_batch();
+      PredicateRetirementProbeState::optional_batch_error.store(batch ? ErrorCode::kSuccess
+                                                                      : batch.error().code);
     }
     PredicateRetirementProbeState::record_compute(received->data);
     return {};
   }
 
   Input<std::uint32_t> driver;
+  Input<std::uint32_t> side;
+  Input<std::uint32_t> evaluation_side;
+
+ private:
+  bool optional_side_{};
+  bool degraded_evaluation_{};
 };
 
 class PredicateComputeSkipSourceOperator final : public Operator<> {
@@ -1224,10 +1310,18 @@ template <typename Sink>
   return detail::compile_with_process_local_holomq(graph, CompileOptions{});
 }
 
-[[nodiscard]] ExecutionPlan make_predicate_retirement_plan() {
+// Build the phase-isolation graph for
+// RunSessionTest.OptionalComputeSidePreservesAnEarlierDegradedPredicatePhase.
+// Graph: source.driver --> sink.driver; source.silent --> sink.evaluation_side when degraded.
+// The optional sink.side is unwired when enabled.
+[[nodiscard]] ExecutionPlan make_predicate_retirement_plan(bool optional_side,
+                                                           bool degraded_evaluation) {
   Graph graph{"predicate-retirement"};
   auto source = graph.op<PredicateRetirementSourceOperator>("source");
-  auto sink = graph.op<PredicateRetirementSinkOperator>("sink");
+  auto sink = graph.op<PredicateRetirementSinkOperator>("sink", optional_side, degraded_evaluation);
+  if (degraded_evaluation) {
+    graph.add_flow(source->silent, sink->evaluation_side);
+  }
   graph.add_flow(source->driver, sink->driver, ConnectionOptions{.queue_depth = 2U});
   const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
   graph.set_default_clock(default_clock);
@@ -1467,6 +1561,14 @@ bool wait_for_predicate_retirement_compute() {
 
 PredicateRetirementSnapshot predicate_retirement_snapshot() {
   return PredicateRetirementSnapshot{
+      .degraded_callback_count = PredicateRetirementProbeState::degraded_callback_count.load(),
+      .optional_not_selected_count =
+          PredicateRetirementProbeState::optional_not_selected_count.load(),
+      .optional_state = PredicateRetirementProbeState::optional_state.load(),
+      .optional_reason = PredicateRetirementProbeState::optional_reason.load(),
+      .optional_scalar_error = PredicateRetirementProbeState::optional_scalar_error.load(),
+      .optional_batch_error = PredicateRetirementProbeState::optional_batch_error.load(),
+
       .source_count = PredicateRetirementProbeState::source_count.load(),
       .evaluation_count = PredicateRetirementProbeState::evaluation_count.load(),
       .compute_count = PredicateRetirementProbeState::compute_count.load(),

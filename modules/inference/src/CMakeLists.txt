@@ -11,7 +11,7 @@ set(holoinfer_utils_src
     utils/infer_buffer.cpp
     utils/work_queue.cpp
 )
-add_library(holoinfer_utils SHARED ${holoinfer_utils_src})
+add_library(holoinfer_utils ${holoinfer_utils_src})
 add_library(holoscan::holoinfer_utils ALIAS holoinfer_utils)
 
 target_include_directories(holoinfer_utils
@@ -26,8 +26,13 @@ target_link_libraries(holoinfer_utils
         holoscan::infer::headers
     PRIVATE
         CUDA::cudart
-        holoscan_security_flags
-        yaml-cpp::yaml-cpp
+        $<BUILD_INTERFACE:holoscan_security_flags>
+        $<BUILD_INTERFACE:yaml-cpp::yaml-cpp>
+        $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:
+            $<INSTALL_INTERFACE:holoscan::_inference_yaml_private>>
+)
+target_compile_definitions(holoinfer_utils
+    PUBLIC $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:HOLOINFER_STATIC_DEFINE>
 )
 
 set_target_properties(holoinfer_utils PROPERTIES
@@ -46,12 +51,14 @@ set(holoinfer_src
     manager/infer_context.cpp
 )
 
-add_library(${PROJECT_NAME} SHARED ${holoinfer_src})
+add_library(${PROJECT_NAME} ${holoinfer_src})
 add_library(holoscan::infer ALIAS ${PROJECT_NAME})
 
 target_compile_definitions(${PROJECT_NAME}
     PRIVATE
         PROJECT_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    PUBLIC
+        $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:HOLOINFER_STATIC_DEFINE>
 )
 
 target_include_directories(${PROJECT_NAME}
@@ -62,8 +69,6 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
     PUBLIC
-        CUDA::cuda_driver
-        CUDA::nvrtc
         dlpack::dlpack
         holoscan::infer::headers
         holoscan::holoinfer_utils # [1]
@@ -74,10 +79,13 @@ target_link_libraries(${PROJECT_NAME}
         CUDA::cudart
         holoscan::core # [2]
         holoscan::logger
+        TensorRT::nvinfer
         TensorRT::nvinfer_plugin
         TensorRT::nvonnxparser
-        holoscan_security_flags
-        yaml-cpp::yaml-cpp
+        $<BUILD_INTERFACE:holoscan_security_flags>
+        $<BUILD_INTERFACE:yaml-cpp::yaml-cpp>
+        $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:
+            $<INSTALL_INTERFACE:holoscan::_inference_yaml_private>>
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -93,6 +101,7 @@ include(GenerateExportHeader)
 generate_export_header(${PROJECT_NAME}
     BASE_NAME HOLOINFER
     EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/include/holoinfer/holoinfer_export.h
+    STATIC_DEFINE HOLOINFER_STATIC_DEFINE
 )
 target_include_directories(${PROJECT_NAME}
     PUBLIC
@@ -101,19 +110,19 @@ target_include_directories(${PROJECT_NAME}
 )
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/holoinfer/holoinfer_export.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoinfer
-    COMPONENT holoscan-inference
+    COMPONENT ${HOLOSCAN_INFERENCE_INSTALL_COMPONENT}
 )
 
 install(TARGETS holoinfer_utils
     EXPORT ${HOLOSCAN_PACKAGE_NAME}-inference-exports
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    COMPONENT holoscan-inference
+    COMPONENT ${HOLOSCAN_INFERENCE_INSTALL_COMPONENT}
 )
 
 install(TARGETS ${PROJECT_NAME}
     EXPORT ${HOLOSCAN_PACKAGE_NAME}-inference-exports
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    COMPONENT holoscan-inference
+    COMPONENT ${HOLOSCAN_INFERENCE_INSTALL_COMPONENT}
 )

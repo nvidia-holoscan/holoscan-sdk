@@ -58,6 +58,19 @@ template <typename SchemaT>
   return {field, spec};
 }
 
+/// @brief Name the producer Tensor field delivered across a payload-narrowing edge.
+///
+/// A projected edge publishes a descriptor-backed schema and delivers one of its Tensor members
+/// to a Tensor consumer. The record keeps the same canonical identity used by port configuration
+/// so Graph, plan, and diagnostics all name the field the same way.
+struct TensorProjectionRecord {
+  std::uint16_t field_id{};      ///< Canonical FlatBuffers field id.
+  std::uint16_t tensor_index{};  ///< Dense index in ascending field-id order.
+
+  friend constexpr bool operator==(const TensorProjectionRecord&,
+                                   const TensorProjectionRecord&) noexcept = default;
+};
+
 /// @brief Preserve one field-scoped Tensor declaration in canonical pointer-free form.
 struct TensorFieldConfigurationRecord {
   std::uint16_t field_id{};                           ///< Canonical FlatBuffers field id.
@@ -69,6 +82,8 @@ struct TensorFieldConfigurationRecord {
   std::optional<TensorContractRecord> tensor_contract;       ///< Owned normalized contract.
   /// Immutable compile-derived slot-capacity expression for this field, when authored.
   std::optional<TensorByteSpanExpressionRecord> tensor_byte_span_expression;
+  /// Immutable compile-derived memory-kind expression for this field, when authored.
+  std::optional<TensorMemoryKindExpressionRecord> tensor_memory_kind_expression;
 };
 
 }  // namespace holoscan

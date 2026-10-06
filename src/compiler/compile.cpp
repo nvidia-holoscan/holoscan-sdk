@@ -42,7 +42,10 @@
 #include "closed_island_activation_plan.hpp"
 #include "compile_internal.hpp"
 #include "compile_platform.hpp"
+#include "compiler_diagnostic.hpp"
 #include "cuda_execution_plan_validation.hpp"
+#include "cuda_graph_execution_lowering.hpp"
+#include "cuda_graph_region_lowering.hpp"
 #include "cuda_service_stream_plan.hpp"
 #include "deployment_plan_lowering.hpp"
 #include "endpoint_catalog_lowering.hpp"
@@ -52,6 +55,7 @@
 #include "execution_plan_state.hpp"
 #include "inline_partition_execution_plan.hpp"
 #include "lifecycle_plan_lowering.hpp"
+#include "operator_cuda_device_obligations.hpp"
 #include "parameter_identity.hpp"
 #include "parameter_plan_lowering.hpp"
 #include "partition_plan_lowering.hpp"
@@ -65,61 +69,13 @@
 #include "profile_manifest_lowering.hpp"
 #include "rate_plan_lowering.hpp"
 #include "snapshot_lookup.hpp"
+#include "support_thread_affinity_contracts.hpp"
 #include "temporal_plan_lowering.hpp"
 #include "tensor_byte_span_derivation.hpp"
+#include "tensor_memory_kind_derivation.hpp"
 
 namespace holoscan {
 namespace {
-
-[[nodiscard]] const detail::StructuralDiagnosticDescriptor* diagnostic_for_token(
-    std::string_view token) noexcept {
-  for (const auto& descriptor : detail::kStructuralDiagnosticRegistry) {
-    if (descriptor.token == token) {
-      return &descriptor;
-    }
-  }
-  return nullptr;
-}
-
-[[nodiscard]] DiagnosticSource complete_diagnostic_source(const detail::ExecutionPlanState& state,
-                                                          DiagnosticSource source) noexcept {
-  if (source.graph_generation == 0U) {
-    source.graph_generation = state.graph.generation();
-  }
-  if (!source.graph && source.vertex) {
-    const auto owner = std::find_if(state.graph.vertices().begin(),
-                                    state.graph.vertices().end(),
-                                    [&](const auto& vertex) { return vertex.id == source.vertex; });
-    if (owner != state.graph.vertices().end()) {
-      source.graph = owner->graph;
-    }
-  }
-  if (!source.graph && source.port) {
-    const auto port = std::find_if(
-        state.graph.ports().begin(), state.graph.ports().end(), [&](const auto& candidate) {
-          return candidate.id.value == source.port.value();
-        });
-    if (port != state.graph.ports().end()) {
-      source.vertex = port->owner;
-      const auto owner = std::find_if(
-          state.graph.vertices().begin(), state.graph.vertices().end(), [&](const auto& vertex) {
-            return vertex.id == source.vertex;
-          });
-      if (owner != state.graph.vertices().end()) {
-        source.graph = owner->graph;
-      }
-    }
-  }
-  if (!source.graph) {
-    const auto root = std::find_if(state.graph.graphs().begin(),
-                                   state.graph.graphs().end(),
-                                   [](const auto& graph) { return !graph.parent.has_value(); });
-    if (root != state.graph.graphs().end()) {
-      source.graph = root->id;
-    }
-  }
-  return source;
-}
 
 [[nodiscard]] std::uint32_t callback_partition_owner_count(
     const detail::ExecutionPlanState& state) noexcept {
@@ -136,42 +92,87 @@ namespace {
       }));
 }
 
-void append_diagnostic(detail::ExecutionPlanState& state, std::string_view token,
-                       DiagnosticSource source = {},
-                       std::optional<DiagnosticSeverity> severity_override = std::nullopt,
-                       std::string_view json_pointer = {}, std::string_view required = {},
-                       std::string_view provided = {}) {
-  source = complete_diagnostic_source(state, source);
-  const auto* descriptor = diagnostic_for_token(token);
-  if (descriptor == nullptr) {
-    descriptor = diagnostic_for_token("COMPILER_DIAGNOSTIC_TOKEN_UNREGISTERED");
-    token = descriptor->token;
-  }
-  if (std::any_of(state.diagnostics.begin(), state.diagnostics.end(), [&](const auto& item) {
-        return item.token == token && item.source.graph_generation == source.graph_generation &&
-               item.source.graph == source.graph && item.source.vertex == source.vertex &&
-               item.source.port == source.port && item.json_pointer == json_pointer &&
-               item.required == required && item.provided == provided;
-      })) {
-    return;
-  }
+using detail::append_compiler_diagnostic;
 
-  const auto severity = severity_override.value_or(
-      descriptor->severity == detail::DiagnosticSeverity::kWarning ? DiagnosticSeverity::kWarning
-                                                                   : DiagnosticSeverity::kError);
-  state.diagnostics.push_back(Diagnostic{
-      .id = DiagnosticId{static_cast<std::uint32_t>(descriptor->id)},
-      .severity = severity,
-      .token = std::string(token),
-      .source = source,
-      .json_pointer = std::string(json_pointer),
-      .required = std::string(required),
-      .provided = std::string(provided),
-  });
+void publish_operator_hosts(const detail::GraphSnapshotData& snapshot,
+                            PlanGenerationId plan_generation, detail::ExecutionPlanState& state) {
+  state.operator_hosts.clear();
+  state.operator_hosts.reserve(state.executable_factories.operators.size());
+  for (const auto& factory : state.executable_factories.operators) {
+    const auto vertex = std::find_if(
+        snapshot.vertices.begin(), snapshot.vertices.end(), [&](const auto& candidate) {
+          return candidate.id == factory.vertex;
+        });
+    if (vertex == snapshot.vertices.end()) {
+      continue;
+    }
+    state.operator_hosts.push_back(OperatorHostPlanRecord{
+        .owner = OperatorRef{.id = factory.operator_id,
+                             .plan_generation = plan_generation,
+                             .run_generation = 0U},
+        .vertex = factory.vertex,
+        .kind = vertex->operator_host,
+        .serialization_domain = vertex->serialization_domain,
+    });
+  }
 }
 
-void append_error(detail::ExecutionPlanState& state, const Error& error) {
-  append_diagnostic(state, error.message.empty() ? error_code_name(error.code) : error.message);
+void append_error(detail::ExecutionPlanState& state, const Error& error,
+                  DiagnosticSource source = {}) {
+  const DiagnosticDetail evidence{.operation = DiagnosticOperation::kCompile, .error = error};
+  append_compiler_diagnostic(state,
+                             error.message.empty() ? error_code_name(error.code) : error.message,
+                             source,
+                             std::nullopt,
+                             {},
+                             {},
+                             {},
+                             &evidence);
+}
+
+void append_clock_error(detail::ExecutionPlanState& state,
+                        const detail::GraphSnapshotData& snapshot, const Error& error) {
+  if (error.message != "CLOCK_IMPORT_UNBOUND") {
+    append_error(state, error);
+    return;
+  }
+  const DiagnosticDetail evidence{.operation = DiagnosticOperation::kCompile, .error = error};
+  bool diagnosed = false;
+  // Report missing direct bindings, not every descendant whose resolution traverses them.
+  for (std::size_t index = 0U; index < snapshot.clock_imports.size(); ++index) {
+    const auto& clock_import = snapshot.clock_imports[index];
+    const bool bound = std::any_of(
+        snapshot.clock_bindings.begin(), snapshot.clock_bindings.end(), [&](const auto& binding) {
+          return binding.child_graph == clock_import.graph &&
+                 binding.child_clock == clock_import.key;
+        });
+    const auto* graph = detail::find_graph(snapshot, clock_import.graph);
+    if (bound || graph == nullptr) {
+      continue;
+    }
+    const auto* parent = graph->parent ? detail::find_graph(snapshot, *graph->parent) : nullptr;
+    const std::string dependency = "clock import \"" + std::string(clock_import.key.name()) +
+                                   "\" in graph \"" + detail::canonical_graph_path(*graph) + "\"";
+    const std::string required =
+        parent != nullptr
+            ? "Bind " + dependency + " using bind_clock() in the immediate parent graph \"" +
+                  detail::canonical_graph_path(*parent) + "\""
+            : "A root graph has no parent to bind its imports; declare a concrete clock using "
+              "add_clock() and select it using set_default_clock()";
+    append_compiler_diagnostic(
+        state,
+        error.message,
+        DiagnosticSource{.graph_generation = snapshot.generation, .graph = clock_import.graph},
+        std::nullopt,
+        "/clock_imports/" + std::to_string(index),
+        required,
+        dependency + " was declared using import_clock() but has no parent binding",
+        &evidence);
+    diagnosed = true;
+  }
+  if (!diagnosed) {
+    append_error(state, error);
+  }
 }
 
 [[nodiscard]] std::string bounded_placement_value(std::string_view value) {
@@ -180,6 +181,41 @@ void append_error(detail::ExecutionPlanState& state, const Error& error) {
     return std::string(value);
   }
   return "<oversized:" + std::to_string(value.size()) + ">";
+}
+
+void apply_opaque_object_payload_policy(const detail::GraphSnapshotData& snapshot,
+                                        OpaqueObjectPayloadPolicy policy,
+                                        detail::ExecutionPlanState& state) {
+  bool reject = false;
+  switch (policy) {
+    case OpaqueObjectPayloadPolicy::kAllow:
+      return;
+    case OpaqueObjectPayloadPolicy::kWarn:
+      break;
+    case OpaqueObjectPayloadPolicy::kReject:
+      reject = true;
+      break;
+  }
+  if (policy != OpaqueObjectPayloadPolicy::kAllow && policy != OpaqueObjectPayloadPolicy::kWarn &&
+      policy != OpaqueObjectPayloadPolicy::kReject) {
+    append_compiler_diagnostic(state, "OPAQUE_OBJECT_PAYLOAD_POLICY_INVALID");
+    return;
+  }
+  for (const auto& edge : snapshot.edges) {
+    const PortRecord* const source = detail::find_port(snapshot, edge.source);
+    if (source == nullptr || !detail::is_py_object_payload_identity(source->payload_identity) ||
+        !source->payload_identity.schema) {
+      continue;
+    }
+    append_compiler_diagnostic(
+        state,
+        reject ? "PYOBJECT_PAYLOAD_REJECTED" : "PYOBJECT_PAYLOAD_ADVISORY",
+        DiagnosticSource{.vertex = source->owner, .port = PortId{source->id.value}},
+        reject ? DiagnosticSeverity::kError : DiagnosticSeverity::kWarning,
+        "/edges/" + std::to_string(edge.id.value) + "/payload_identity",
+        {},
+        source->payload_identity.schema->canonical_name);
+  }
 }
 
 // Resolve and diagnose the complete cold deployment binding set in one canonical pass.
@@ -236,16 +272,16 @@ void append_error(detail::ExecutionPlanState& state, const Error& error) {
     const std::string pointer =
         "/deployment/tensor_output_devices/" + std::to_string(indexed.authored_index);
     const auto reject_placement = [&](std::string_view reason, DiagnosticSource source = {}) {
-      append_diagnostic(state,
-                        "PHYSICAL_TENSOR_DEVICE_BINDING_INVALID",
-                        source,
-                        std::nullopt,
-                        pointer,
-                        "one exact operator-owned Tensor-bearing output and nonnegative device",
-                        "operator_path=" + bounded_placement_value(placement.operator_path) +
-                            ",output_port=" + bounded_placement_value(placement.output_port) +
-                            ",device=" + std::to_string(placement.device.value) +
-                            ",reason=" + std::string(reason));
+      append_compiler_diagnostic(
+          state,
+          "PHYSICAL_TENSOR_DEVICE_BINDING_INVALID",
+          source,
+          std::nullopt,
+          pointer,
+          "one exact operator-owned Tensor-bearing output and nonnegative device",
+          "operator_path=" + bounded_placement_value(placement.operator_path) +
+              ",output_port=" + bounded_placement_value(placement.output_port) + ",device=" +
+              std::to_string(placement.device.value) + ",reason=" + std::string(reason));
     };
 
     const auto owner_match = operator_by_path.find(placement.operator_path);
@@ -300,14 +336,6 @@ void append_error(detail::ExecutionPlanState& state, const Error& error) {
   return result;
 }
 
-[[nodiscard]] bool partition_contains(const ExecutionPartitionRecord& partition,
-                                      VertexId vertex) noexcept {
-  return std::binary_search(partition.members.begin(),
-                            partition.members.end(),
-                            vertex,
-                            [](VertexId left, VertexId right) { return left.value < right.value; });
-}
-
 [[nodiscard]] std::optional<ProcessGroupId> partition_process_group(
     const ExecutionPartitionRecord& partition, const detail::ExecutionPlanState& state) {
   std::optional<ProcessGroupId> result;
@@ -325,88 +353,6 @@ void append_error(detail::ExecutionPlanState& state, const Error& error) {
     result = placement->process_group;
   }
   return result;
-}
-
-// Device projection validates every Tensor storage vocabulary against one partition. Keeping the
-// cases together makes omissions visible when a new storage record is added.
-[[nodiscard]] std::set<std::int32_t>
-partition_tensor_devices(  // NOLINT(readability-function-cognitive-complexity)
-    const detail::GraphSnapshotData& snapshot, const ExecutionPartitionRecord& partition,
-    const detail::ExecutionPlanState& state) {
-  std::set<std::int32_t> devices;
-  const auto owns_port = [&](PortId port_id) {
-    const PortRecord* port = find_port(snapshot, GraphPortId{port_id.value()});
-    return port != nullptr && port->owner_kind == PortOwnerKind::kOperator &&
-           partition_contains(partition, port->owner);
-  };
-  const auto append_device = [&](DeviceId device) {
-    if (device.valid()) {
-      devices.insert(device.value);
-    }
-  };
-  const auto append_service_devices = [&](const auto& service) {
-    detail::for_each_tensor_service_storage(
-        detail::tensor_service_contract_view(service),
-        [&](detail::TensorServiceStorageView storage) { append_device(storage.device); });
-  };
-  const auto append_output = [&](PortId output, DeviceId device) {
-    if (owns_port(output)) {
-      append_device(device);
-    }
-  };
-  for (const auto& allocation : state.tensor_allocations) {
-    append_output(allocation.output, allocation.device);
-  }
-  for (const auto& allocation : state.tensor_field_allocations) {
-    append_output(allocation.output, allocation.device);
-  }
-  for (const auto& pool : state.tensor_interface_pools) {
-    bool owned = owns_port(pool.graph_port);
-    const PortId graph_port{pool.graph_port.value()};
-    for (const auto& edge : state.payload_edges) {
-      if ((pool.imported && edge.source == graph_port && owns_port(edge.target)) ||
-          (!pool.imported && edge.target == graph_port && owns_port(edge.source))) {
-        owned = true;
-      }
-    }
-    if (owned) {
-      append_device(pool.device);
-    }
-  }
-  for (const auto& subscriber : state.process_local_channel_subscribers) {
-    if (!owns_port(subscriber.target)) {
-      continue;
-    }
-    const auto service = std::find_if(state.process_local_channel_services.begin(),
-                                      state.process_local_channel_services.end(),
-                                      [&](const auto& row) {
-                                        return row.source == subscriber.source &&
-                                               row.service_id == subscriber.service_id;
-                                      });
-    if (service != state.process_local_channel_services.end()) {
-      append_service_devices(*service);
-    }
-  }
-  for (const auto& subscriber : state.cross_process_channel_subscribers) {
-    if (!owns_port(subscriber.target)) {
-      continue;
-    }
-    const auto service = std::find_if(state.cross_process_channel_services.begin(),
-                                      state.cross_process_channel_services.end(),
-                                      [&](const auto& row) {
-                                        return row.source == subscriber.source &&
-                                               row.service_id == subscriber.service_id;
-                                      });
-    if (service != state.cross_process_channel_services.end()) {
-      append_service_devices(*service);
-    }
-  }
-  for (const auto& service : state.cross_process_channel_services) {
-    if (detail::descriptor_tensor_schema_service(service) && owns_port(service.source)) {
-      append_service_devices(service);
-    }
-  }
-  return devices;
 }
 
 [[nodiscard]] std::optional<detail::CudaGreenContextCapabilityEvidence> green_context_capability(
@@ -462,6 +408,7 @@ struct CudaGreenContextLoweringResult {
   std::vector<CudaGreenContextPoolPlanRecord> pools;
   std::vector<CudaGreenContextResourcePlanRecord> resources;
   std::vector<CudaComputeStreamPlanRecord> compute_streams;
+  std::vector<OperatorCudaStreamBindingPlanRecord> operator_stream_bindings;
   std::vector<PlacementProbePlanRecord> placement_probes;
   std::vector<detail::PlanLoweringDiagnostic> errors;
   std::vector<detail::PlanLoweringDiagnostic> warnings;
@@ -496,6 +443,51 @@ struct CudaGreenContextLoweringResult {
   CudaGreenContextLoweringResult result;
   result.requests.reserve(authored.size());
   result.compute_streams = state.cuda_compute_streams;
+  result.operator_stream_bindings = state.operator_cuda_stream_bindings;
+  const auto operator_device_obligations =
+      detail::collect_operator_cuda_device_obligations(detail::OperatorCudaDeviceObligationView{
+          .ports = state.ports,
+          .interface_bindings = state.interface_port_bindings,
+          .tensor_allocations = state.tensor_allocations,
+          .tensor_field_allocations = state.tensor_field_allocations,
+          .process_local_services = state.process_local_channel_services,
+          .process_local_subscribers = state.process_local_channel_subscribers,
+          .cross_process_services = state.cross_process_channel_services,
+          .cross_process_subscribers = state.cross_process_channel_subscribers,
+          .tensor_interface_pools = state.tensor_interface_pools,
+      });
+  const auto partition_obligation_devices = [&](const ExecutionPartitionRecord& partition) {
+    std::set<std::int32_t> devices;
+    for (const auto& obligation : operator_device_obligations) {
+      if (obligation.device.valid() &&
+          std::ranges::find(partition.members, obligation.operator_vertex) !=
+              partition.members.end()) {
+        devices.insert(obligation.device.value);
+      }
+    }
+    return devices;
+  };
+  const auto partition_binding_devices = [&](ExecutionPartitionId partition) {
+    std::set<std::int32_t> devices;
+    for (const auto& binding : result.operator_stream_bindings) {
+      if (binding.partition == partition && binding.device.valid()) {
+        devices.insert(binding.device.value);
+      }
+    }
+    return devices;
+  };
+  std::vector<EdgeId> fusion_candidates;
+  for (auto& stream : result.compute_streams) {
+    fusion_candidates.insert(fusion_candidates.end(),
+                             stream.fused_linear_edges.begin(),
+                             stream.fused_linear_edges.end());
+    stream.fused_linear_edges.clear();
+  }
+  std::sort(fusion_candidates.begin(), fusion_candidates.end(), [](EdgeId left, EdgeId right) {
+    return left.value < right.value;
+  });
+  fusion_candidates.erase(std::unique(fusion_candidates.begin(), fusion_candidates.end()),
+                          fusion_candidates.end());
   std::vector<NormalizedRequest> normalized;
   normalized.reserve(authored.size());
   std::vector<Candidate> candidates;
@@ -587,7 +579,7 @@ struct CudaGreenContextLoweringResult {
              "partition process ownership is unresolved or split");
       continue;
     }
-    const auto tensor_devices = partition_tensor_devices(snapshot, *partition, state);
+    const auto tensor_devices = partition_obligation_devices(*partition);
     if (tensor_devices.size() > 1U) {
       reject(request_index,
              "CUDA_GREEN_CONTEXT_PARTITION_MULTI_DEVICE",
@@ -733,21 +725,20 @@ struct CudaGreenContextLoweringResult {
                     })) {
       return true;
     }
-    return std::any_of(
-        state.execution_partitions.begin(),
-        state.execution_partitions.end(),
-        [&](const auto& partition) {
-          const auto group = partition_process_group(partition, state);
-          if (!group || *group != process_group ||
-              !partition_tensor_devices(snapshot, partition, state).contains(device.value)) {
-            return false;
-          }
-          return std::none_of(candidates.begin(), candidates.end(), [&](const auto& candidate) {
-            const auto& request = result.requests[candidate.request_index];
-            return candidate.process_group == process_group &&
-                   candidate.partition->id == partition.id && request.requested.device == device;
-          });
-        });
+    return std::any_of(result.operator_stream_bindings.begin(),
+                       result.operator_stream_bindings.end(),
+                       [&](const auto& binding) {
+                         if (binding.process_group != process_group || binding.device != device) {
+                           return false;
+                         }
+                         return std::none_of(
+                             candidates.begin(), candidates.end(), [&](const auto& candidate) {
+                               const auto& request = result.requests[candidate.request_index];
+                               return candidate.process_group == process_group &&
+                                      candidate.partition->id == binding.partition &&
+                                      request.requested.device == device;
+                             });
+                       });
   };
 
   for (auto& candidate : candidates) {
@@ -777,7 +768,7 @@ struct CudaGreenContextLoweringResult {
                      state.execution_partitions.end(),
                      [&](const auto& partition) {
                        const auto group = partition_process_group(partition, state);
-                       const auto devices = partition_tensor_devices(snapshot, partition, state);
+                       const auto devices = partition_binding_devices(partition.id);
                        const bool dedicated =
                            std::any_of(candidates.begin(), candidates.end(), [&](const auto& peer) {
                              const auto& peer_request = result.requests[peer.request_index];
@@ -791,7 +782,7 @@ struct CudaGreenContextLoweringResult {
                                                           partition, effective_profiles));
                      });
     if (invalid_residual_participant != state.execution_partitions.end()) {
-      const auto devices = partition_tensor_devices(snapshot, *invalid_residual_participant, state);
+      const auto devices = partition_binding_devices(invalid_residual_participant->id);
       if (devices.size() > 1U) {
         reject(candidate.request_index,
                "CUDA_GREEN_CONTEXT_PARTITION_MULTI_DEVICE",
@@ -871,7 +862,7 @@ struct CudaGreenContextLoweringResult {
     request.accepted = request.requested;
     request.disposition = PlanDisposition::kAccepted;
     request.reason = {};
-    if (partition_tensor_devices(snapshot, *candidate.partition, state).empty()) {
+    if (partition_binding_devices(candidate.partition->id).empty()) {
       result.warnings.push_back(detail::PlanLoweringDiagnostic{
           .token = "CUDA_GREEN_CONTEXT_INACTIVE_RESERVATION",
           .source = DiagnosticSource{.vertex = candidate.partition->members.empty()
@@ -967,19 +958,17 @@ struct CudaGreenContextLoweringResult {
                       return service.process_group == assignment.process_group &&
                              service.device == assignment.device;
                     }) ||
-        std::any_of(state.execution_partitions.begin(),
-                    state.execution_partitions.end(),
-                    [&](const auto& partition) {
-                      const auto group = partition_process_group(partition, state);
-                      return group && *group == assignment.process_group &&
-                             partition_tensor_devices(snapshot, partition, state)
-                                 .contains(assignment.device.value) &&
+        std::any_of(result.operator_stream_bindings.begin(),
+                    result.operator_stream_bindings.end(),
+                    [&](const auto& binding) {
+                      return binding.process_group == assignment.process_group &&
+                             binding.device == assignment.device &&
                              std::none_of(result.assignments.begin(),
                                           result.assignments.end(),
                                           [&](const auto& peer) {
                                             return peer.process_group == assignment.process_group &&
                                                    peer.device == assignment.device &&
-                                                   peer.partition == partition.id;
+                                                   peer.partition == binding.partition;
                                           });
                     });
     const std::string residual_id = detail::cuda_green_context_residual_id(assignment.pool_id);
@@ -1019,7 +1008,8 @@ struct CudaGreenContextLoweringResult {
     });
   }
 
-  // Phase 4: replace ordinary streams only after every structured resource family is complete.
+  // Phase 4: resolve final streams and bindings only after every structured resource family is
+  // complete. Fusion candidates are attached afterward from the final exact binding rows.
   std::set<std::pair<std::uint32_t, std::int32_t>> replaced_stream_groups;
   for (const auto& assignment : result.assignments) {
     const auto group_key = std::pair{assignment.process_group.value, assignment.device.value};
@@ -1027,16 +1017,12 @@ struct CudaGreenContextLoweringResult {
       continue;
     }
     const std::string residual_id = detail::cuda_green_context_residual_id(assignment.pool_id);
-    std::vector<EdgeId> fused_edges;
     result.compute_streams.erase(
         std::remove_if(result.compute_streams.begin(),
                        result.compute_streams.end(),
                        [&](const auto& stream) {
                          if (stream.process_group == assignment.process_group &&
                              stream.device == assignment.device && !stream.green_context_id) {
-                           fused_edges.insert(fused_edges.end(),
-                                              stream.fused_linear_edges.begin(),
-                                              stream.fused_linear_edges.end());
                            return true;
                          }
                          return false;
@@ -1066,7 +1052,7 @@ struct CudaGreenContextLoweringResult {
         continue;
       }
       const auto process_group = partition_process_group(partition, state);
-      const auto devices = partition_tensor_devices(snapshot, partition, state);
+      const auto devices = partition_binding_devices(partition.id);
       if (!process_group || *process_group != assignment.process_group ||
           !devices.contains(assignment.device.value)) {
         continue;
@@ -1101,36 +1087,109 @@ struct CudaGreenContextLoweringResult {
       });
     }
 
-    for (const EdgeId edge_id : fused_edges) {
-      const auto edge = std::find_if(state.payload_edges.begin(),
-                                     state.payload_edges.end(),
-                                     [&](const auto& row) { return row.edge == edge_id; });
-      if (edge == state.payload_edges.end()) {
+    // An explicit Green Context assignment makes every Operator in that partition CUDA-active,
+    // including Operators whose ports do not otherwise require Tensor device storage. Publish the
+    // final partition stream as their exact binding rather than reconstructing this join at
+    // Runtime.
+    for (const auto& peer : result.assignments) {
+      if (peer.process_group != assignment.process_group || peer.device != assignment.device) {
         continue;
       }
-      const PortRecord* source_port = find_port(snapshot, GraphPortId{edge->source.value()});
-      const PortRecord* target_port = find_port(snapshot, GraphPortId{edge->target.value()});
-      if (source_port == nullptr || target_port == nullptr) {
+      const auto partition =
+          std::find_if(state.execution_partitions.begin(),
+                       state.execution_partitions.end(),
+                       [&](const auto& row) { return row.id == peer.partition; });
+      const auto stream = std::find_if(
+          result.compute_streams.begin(), result.compute_streams.end(), [&](const auto& row) {
+            return row.process_group == peer.process_group && row.device == peer.device &&
+                   row.partition == peer.partition;
+          });
+      if (partition == state.execution_partitions.end() || stream == result.compute_streams.end()) {
         continue;
       }
-      const auto partition = std::find_if(state.execution_partitions.begin(),
-                                          state.execution_partitions.end(),
-                                          [&](const auto& row) {
-                                            return partition_contains(row, source_port->owner) &&
-                                                   partition_contains(row, target_port->owner);
-                                          });
-      if (partition == state.execution_partitions.end()) {
+      for (const VertexId member : partition->members) {
+        const auto vertex = std::find_if(snapshot.vertices.begin(),
+                                         snapshot.vertices.end(),
+                                         [&](const auto& row) { return row.id == member; });
+        if (vertex == snapshot.vertices.end() || vertex->kind != VertexKind::kOperator) {
+          continue;
+        }
+        const auto binding =
+            std::find_if(result.operator_stream_bindings.begin(),
+                         result.operator_stream_bindings.end(),
+                         [&](const auto& row) { return row.operator_vertex == member; });
+        if (binding == result.operator_stream_bindings.end()) {
+          result.operator_stream_bindings.push_back(OperatorCudaStreamBindingPlanRecord{
+              .plan_generation = state.plan_generation,
+              .run_generation = 0U,
+              .operator_vertex = member,
+              .process_group = peer.process_group,
+              .partition = peer.partition,
+              .device = peer.device,
+              .stream_id = stream->stream_id,
+          });
+        } else {
+          binding->process_group = peer.process_group;
+          binding->partition = peer.partition;
+          binding->device = peer.device;
+          binding->stream_id = stream->stream_id;
+        }
+      }
+    }
+
+    for (auto& binding : result.operator_stream_bindings) {
+      if (binding.process_group != assignment.process_group ||
+          binding.device != assignment.device) {
         continue;
       }
       const auto stream = std::find_if(
           result.compute_streams.begin(), result.compute_streams.end(), [&](const auto& row) {
-            return row.process_group == assignment.process_group &&
-                   row.device == assignment.device && row.partition == partition->id;
+            return row.process_group == binding.process_group && row.device == binding.device &&
+                   row.partition == binding.partition;
           });
       if (stream != result.compute_streams.end()) {
-        stream->fused_linear_edges.push_back(edge_id);
+        binding.stream_id = stream->stream_id;
       }
     }
+  }
+
+  for (const EdgeId edge_id : fusion_candidates) {
+    const auto edge = std::find_if(state.payload_edges.begin(),
+                                   state.payload_edges.end(),
+                                   [&](const auto& row) { return row.edge == edge_id; });
+    if (edge == state.payload_edges.end() || !edge->source || !edge->target) {
+      continue;
+    }
+    const PortRecord* source_port = find_port(snapshot, GraphPortId{edge->source.value()});
+    const PortRecord* target_port = find_port(snapshot, GraphPortId{edge->target.value()});
+    if (source_port == nullptr || target_port == nullptr) {
+      continue;
+    }
+    const auto source_binding =
+        std::find_if(result.operator_stream_bindings.begin(),
+                     result.operator_stream_bindings.end(),
+                     [&](const auto& row) { return row.operator_vertex == source_port->owner; });
+    const auto target_binding =
+        std::find_if(result.operator_stream_bindings.begin(),
+                     result.operator_stream_bindings.end(),
+                     [&](const auto& row) { return row.operator_vertex == target_port->owner; });
+    if (source_binding == result.operator_stream_bindings.end() ||
+        target_binding == result.operator_stream_bindings.end() ||
+        source_binding->stream_id != target_binding->stream_id) {
+      continue;
+    }
+    const auto stream = std::find_if(
+        result.compute_streams.begin(), result.compute_streams.end(), [&](const auto& row) {
+          return row.stream_id == source_binding->stream_id;
+        });
+    if (stream != result.compute_streams.end()) {
+      stream->fused_linear_edges.push_back(edge_id);
+    }
+  }
+  for (auto& stream : result.compute_streams) {
+    std::sort(stream.fused_linear_edges.begin(),
+              stream.fused_linear_edges.end(),
+              [](EdgeId left, EdgeId right) { return left.value < right.value; });
   }
   std::sort(
       result.pools.begin(), result.pools.end(), detail::canonical_cuda_green_context_pool_order);
@@ -1142,28 +1201,33 @@ struct CudaGreenContextLoweringResult {
   std::sort(result.compute_streams.begin(),
             result.compute_streams.end(),
             detail::canonical_cuda_compute_stream_order);
+  std::sort(result.operator_stream_bindings.begin(),
+            result.operator_stream_bindings.end(),
+            [](const auto& left, const auto& right) {
+              return left.operator_vertex.value < right.operator_vertex.value;
+            });
   return result;
 }
 
 void publish_cuda_green_context_plan(CudaGreenContextLoweringResult&& lowered,
                                      detail::ExecutionPlanState& state) {
   for (const auto& diagnostic : lowered.errors) {
-    append_diagnostic(state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      DiagnosticSeverity::kError,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               DiagnosticSeverity::kError,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided);
   }
   for (const auto& diagnostic : lowered.warnings) {
-    append_diagnostic(state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      holoscan::DiagnosticSeverity::kWarning,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               holoscan::DiagnosticSeverity::kWarning,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided);
   }
   state.placement_probes.insert(state.placement_probes.end(),
                                 std::make_move_iterator(lowered.placement_probes.begin()),
@@ -1173,6 +1237,72 @@ void publish_cuda_green_context_plan(CudaGreenContextLoweringResult&& lowered,
   state.cuda_green_context_pools = std::move(lowered.pools);
   state.cuda_green_context_resources = std::move(lowered.resources);
   state.cuda_compute_streams = std::move(lowered.compute_streams);
+  state.operator_cuda_stream_bindings = std::move(lowered.operator_stream_bindings);
+}
+
+// Freeze per-slot release-event inventories only after Green Context lowering has published the
+// final exact Operator bindings. Explicit Green placement can make an otherwise host-only
+// Operator CUDA-active, so pre-replacement Tensor obligations are not a complete lifetime domain.
+void finalize_tensor_release_stream_capacities(detail::ExecutionPlanState& state) {
+  const auto allocating_producer = [&](PortId output) {
+    const auto port = std::ranges::find(state.ports, output, &PortPlanRecord::id);
+    return port == state.ports.end() ? VertexId{} : port->owner;
+  };
+  const auto derive = [&](PortId output,
+                          std::optional<std::uint16_t>
+                              tensor_index,
+                          ProcessGroupId allocator_process_group,
+                          DeviceId device) {
+    return detail::tensor_output_release_stream_capacity(state.process_local_channel_services,
+                                                         state.cross_process_channel_services,
+                                                         state.operator_cuda_stream_bindings,
+                                                         allocating_producer(output),
+                                                         output,
+                                                         tensor_index,
+                                                         allocator_process_group,
+                                                         device);
+  };
+  const auto reject_overflow = [&](PortId output, std::string_view json_pointer) {
+    const DiagnosticDetail diagnostic{
+        .operation = DiagnosticOperation::kCompile,
+        .error = Error{ErrorCode::kResourceExhausted,
+                       "CUDA release stream capacity exceeds the representable bound"},
+        .mismatches = {{.field = "release_stream_capacity",
+                        .provided = "overflow",
+                        .required = "representable uint32_t capacity"}},
+    };
+    append_compiler_diagnostic(state,
+                               "TENSOR_RELEASE_STREAM_CAPACITY_MISMATCH",
+                               DiagnosticSource{.port = output},
+                               DiagnosticSeverity::kError,
+                               json_pointer,
+                               "checked final process/device forwarding and descriptor-staging "
+                               "stream bound",
+                               "overflow",
+                               &diagnostic);
+  };
+  for (auto& pool : state.tensor_allocations) {
+    const auto capacity =
+        derive(pool.output, std::nullopt, pool.allocator_process_group, pool.device);
+    if (capacity) {
+      pool.release_stream_capacity = *capacity;
+    } else {
+      reject_overflow(pool.output,
+                      "/tensor_allocations/" + std::to_string(pool.output.value()) +
+                          "/release_stream_capacity");
+    }
+  }
+  for (auto& pool : state.tensor_field_allocations) {
+    const auto capacity =
+        derive(pool.output, pool.tensor_index, pool.allocator_process_group, pool.device);
+    if (capacity) {
+      pool.release_stream_capacity = *capacity;
+    } else {
+      reject_overflow(pool.output,
+                      "/tensor_field_allocations/" + std::to_string(pool.output.value()) +
+                          "/release_stream_capacity");
+    }
+  }
 }
 
 [[nodiscard]] bool partition_environment_selector_present() {
@@ -1194,13 +1324,13 @@ void publish_cuda_green_context_plan(CudaGreenContextLoweringResult&& lowered,
 void publish_lifecycle(detail::LifecyclePlanLowering&& lifecycle,
                        detail::ExecutionPlanState& state) {
   for (const auto& diagnostic : lifecycle.diagnostics) {
-    append_diagnostic(state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      std::nullopt,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               std::nullopt,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided);
   }
   state.lifecycle_checkpoints = std::move(lifecycle.checkpoints);
   state.lifecycle_dependencies = std::move(lifecycle.dependencies);
@@ -1214,22 +1344,22 @@ void publish_lifecycle(detail::LifecyclePlanLowering&& lifecycle,
 void publish_catalog(detail::EndpointCatalogLoweringResult&& catalog,
                      detail::ExecutionPlanState& state) {
   for (const auto& diagnostic : catalog.errors) {
-    append_diagnostic(state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      DiagnosticSeverity::kError,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               DiagnosticSeverity::kError,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided);
   }
   for (const auto& diagnostic : catalog.warnings) {
-    append_diagnostic(state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      holoscan::DiagnosticSeverity::kWarning,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               holoscan::DiagnosticSeverity::kWarning,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided);
   }
   state.endpoint_catalog = std::move(catalog.catalog);
 }
@@ -1237,13 +1367,13 @@ void publish_catalog(detail::EndpointCatalogLoweringResult&& catalog,
 void publish_endpoint_clock_health(detail::EndpointClockHealthLoweringResult&& health,
                                    detail::ExecutionPlanState& state) {
   for (const auto& diagnostic : health.errors) {
-    append_diagnostic(state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      DiagnosticSeverity::kError,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               DiagnosticSeverity::kError,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided);
   }
   state.endpoint_clock_health = std::move(health.records);
 }
@@ -1260,22 +1390,24 @@ void publish_clocks_and_readiness(detail::ClockAndReadinessLoweringResult&& lowe
 void publish_temporal(detail::TemporalPlanLoweringResult&& temporal,
                       detail::ExecutionPlanState& state) {
   for (const auto& diagnostic : temporal.errors) {
-    append_diagnostic(state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      DiagnosticSeverity::kError,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               DiagnosticSeverity::kError,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided,
+                               diagnostic.detail ? &*diagnostic.detail : nullptr);
   }
   for (const auto& diagnostic : temporal.warnings) {
-    append_diagnostic(state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      holoscan::DiagnosticSeverity::kWarning,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               holoscan::DiagnosticSeverity::kWarning,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided,
+                               diagnostic.detail ? &*diagnostic.detail : nullptr);
   }
   state.operator_completion_rules = std::move(temporal.operator_completion_rules);
   state.temporal_triggers = std::move(temporal.triggers);
@@ -1293,16 +1425,43 @@ void publish_temporal(detail::TemporalPlanLoweringResult&& temporal,
   state.missing_aggregates = std::move(temporal.missing_aggregates);
 }
 
+void publish_cuda_graph_region_errors(std::span<const detail::PlanLoweringDiagnostic> errors,
+                                      detail::ExecutionPlanState& state) {
+  for (const auto& diagnostic : errors) {
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               DiagnosticSeverity::kError,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided,
+                               diagnostic.detail ? &*diagnostic.detail : nullptr);
+  }
+}
+
+void publish_cuda_graph_regions(detail::CUDAGraphRegionLoweringResult&& lowered,
+                                detail::ExecutionPlanState& state) {
+  publish_cuda_graph_region_errors(lowered.errors, state);
+  state.cuda_graph_capture_plans = std::move(lowered.capture_plans);
+}
+
+void publish_cuda_graph_execution_regions(detail::CUDAGraphExecutionLoweringResult&& lowered,
+                                          detail::ExecutionPlanState& state) {
+  publish_cuda_graph_region_errors(lowered.errors, state);
+  state.cuda_graph_execution_regions = std::move(lowered.regions);
+}
+
 void publish_physical(detail::PhysicalPlanLoweringResult&& physical,
                       detail::ExecutionPlanState& state) {
   for (const auto& diagnostic : physical.errors) {
-    append_diagnostic(state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      DiagnosticSeverity::kError,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               DiagnosticSeverity::kError,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided,
+                               diagnostic.detail ? &*diagnostic.detail : nullptr);
   }
   detail::publish_physical_plan_records(std::move(physical), state);
 }
@@ -1319,7 +1478,7 @@ void reject_unsupported_staged_inputs(const CompileOptions& options,
   // foundation cannot yet prove a converter-free graph. Reject the one
   // non-default request instead of accepting a hash-only policy switch.
   if (!options.auto_insert_converters) {
-    append_diagnostic(state, "CONVERTER_AUTO_INSERTION_DISABLE_UNSUPPORTED");
+    append_compiler_diagnostic(state, "CONVERTER_AUTO_INSERTION_DISABLE_UNSUPPORTED");
   }
 }
 
@@ -1359,7 +1518,7 @@ resolve_clock_health_qualifications(const detail::RuntimeCompileEvidenceView& ev
   const auto& package = evidence.package_capabilities.manifest();
   std::set<std::string_view> seen_endpoints;
   if (evidence.endpoint_clock_health.size() > kMaxEndpointQualifications) {
-    append_diagnostic(state, "PROFILE_EVIDENCE_UNSATISFIED");
+    append_compiler_diagnostic(state, "PROFILE_EVIDENCE_UNSATISFIED");
   }
 
   for (std::size_t index = 0U; index < qualification_count; ++index) {
@@ -1390,7 +1549,7 @@ resolve_clock_health_qualifications(const detail::RuntimeCompileEvidenceView& ev
         endpoint->clock_health.requirement == ClockHealthRequirement::kFreshHealthyReport;
     if (endpoint == nullptr || duplicate || !package_matches || !monitored_import ||
         !clock_health_qualification_shape_valid(qualification)) {
-      append_diagnostic(state, "PROFILE_EVIDENCE_UNSATISFIED", source);
+      append_compiler_diagnostic(state, "PROFILE_EVIDENCE_UNSATISFIED", source);
       continue;
     }
     result.push_back(detail::EndpointClockHealthQualificationRecord{
@@ -1431,6 +1590,7 @@ void detail::publish_physical_plan_records(detail::PhysicalPlanLoweringResult&& 
   state.tensor_interface_pools = std::move(physical.tensor_interface_pools);
   state.tensor_device_resources = std::move(physical.tensor_device_resources);
   state.cuda_compute_streams = std::move(physical.cuda_compute_streams);
+  state.operator_cuda_stream_bindings = std::move(physical.operator_cuda_stream_bindings);
   state.tensor_inline_records = std::move(physical.tensor_inline_records);
   state.imported_generation_capacities = std::move(physical.imported_generation_capacities);
   state.tensor_transfer_plans = std::move(physical.tensor_transfer_plans);
@@ -1455,8 +1615,32 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
   const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
 
   auto state = std::make_shared<detail::ExecutionPlanState>();
+  state->cuda_compute_stream_policy = options.cuda_execution.compute_stream_policy;
+  CudaComputeStreamPolicy lowering_cuda_compute_stream_policy = state->cuda_compute_stream_policy;
+  switch (state->cuda_compute_stream_policy) {
+    case CudaComputeStreamPolicy::kPerExecutionPartition:
+    case CudaComputeStreamPolicy::kSharedProcessDevice:
+      break;
+    default: {
+      const DiagnosticDetail detail{
+          .operation = DiagnosticOperation::kCompile,
+          .error = Error{ErrorCode::kInvalidArgument, "unknown CUDA compute stream policy"},
+          .mismatches = {{.field = "compute_stream_policy",
+                          .provided = std::to_string(
+                              static_cast<std::uint32_t>(state->cuda_compute_stream_policy)),
+                          .required = "kPerExecutionPartition or kSharedProcessDevice"}},
+      };
+      append_compiler_diagnostic(
+          *state, "CUDA_STREAM_POLICY_VIOLATION", {}, std::nullopt, {}, {}, {}, &detail);
+    }
+      // Retain the rejected value for exact inspection and identity. Lower the rest of the
+      // rejected plan with a valid value so diagnostics remain deterministic and memory-safe.
+      lowering_cuda_compute_stream_policy = CudaComputeStreamPolicy::kPerExecutionPartition;
+      break;
+  }
   state->graph = detail::GraphCompilerAccess::canonical_view(snapshot);
   state->graph_identity = state->graph.identity();
+  apply_opaque_object_payload_policy(*snapshot, options.opaque_object_payloads, *state);
 
   auto profile = detail::resolve_profile_admission(*snapshot, options.profile);
   const bool profile_accepted = profile.accepted();
@@ -1465,14 +1649,14 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
   state->profile_manifest.target_triple = std::string(detail::compile_target_triple());
   state->profile_manifest.producer_build_id = "holoscan-core-5.0";
   for (const auto& token : profile.error_tokens) {
-    append_diagnostic(*state, token);
+    append_compiler_diagnostic(*state, token);
   }
 
   reject_unsupported_staged_inputs(options, *state);
 
   auto process = detail::lower_process_plan(*snapshot, placement);
   for (const auto& token : process.error_tokens) {
-    append_diagnostic(*state, token);
+    append_compiler_diagnostic(*state, token);
   }
   state->process_roles = std::move(process.roles);
   state->process_selectors = std::move(process.selectors);
@@ -1485,24 +1669,24 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
   state->plan_generation = plan_generation;
   // Capture once at the common source-private ingress so public compilation and provider-injected
   // evidence compilation retain the same executable inventory after the source Graph is gone.
-  state->schema_packages = detail::GraphCompilerAccess::schema_packages(graph, *snapshot);
   state->executable_factories = detail::GraphCompilerAccess::executable_factories(graph, *snapshot);
+  publish_operator_hosts(*snapshot, plan_generation, *state);
 
-  const ParamSchemaHash parameter_admission_context = detail::parameter_admission_context_digest(
-      state->profile_manifest,
-      options.deployment,
-      detail::empty_parameter_migration_catalog_digest());
+  // Resolve valid CUDA Graph region structure before partitioning. Contract checks remain after
+  // Parameter lowering so replay observes accepted generation-zero overrides.
+  auto cuda_graph_regions = detail::analyze_cuda_graph_regions(*snapshot);
+  publish_cuda_graph_region_errors(cuda_graph_regions.errors, *state);
 
   auto clocks_and_readiness =
       detail::lower_clocks_and_readiness(*snapshot, plan_generation, profile.effective_profiles());
   if (!clocks_and_readiness) {
-    append_error(*state, clocks_and_readiness.error());
+    append_clock_error(*state, *snapshot, clocks_and_readiness.error());
   } else {
     publish_clocks_and_readiness(std::move(clocks_and_readiness).value(), *state);
   }
 
   // Resolve generation zero before replaying temporal declarations. An
-  // accepted override set replaces only isolated factory clones, so every
+  // accepted parameter input replaces only isolated factory clones, so every
   // later setup(), contract(), param_ref(), and lifecycle pass observes the
   // same exact resolved generation without mutating the source Graph.
   auto parameters = detail::lower_parameter_plan(*snapshot,
@@ -1510,25 +1694,49 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
                                                  profile.effective_profiles(),
                                                  plan_generation,
                                                  options.parameters,
-                                                 options.lifecycle_transactions,
-                                                 parameter_admission_context,
-                                                 options.parameter_overrides);
-  publish_temporal(detail::lower_temporal_plan(state->executable_factories,
-                                               *snapshot,
-                                               plan_generation,
-                                               state->clocks,
-                                               state->clock_conversions,
-                                               state->readiness,
-                                               profile.effective_profiles(),
-                                               options.parameters,
-                                               package_capabilities),
-                   *state);
+                                                 options.lifecycle_transactions);
+  // Replay each temporal contract once and share the normalized result with temporal-plan
+  // lowering and CUDA Graph region validation.
+  Diagnostic temporal_replay_failure;
+  auto normalized_contracts = detail::GraphCompilerAccess::replay_temporal_contracts(
+      state->executable_factories,
+      *snapshot,
+      plan_generation,
+      std::span<const ReadinessPlanRecord>{state->readiness},
+      &temporal_replay_failure);
+  if (!normalized_contracts) {
+    const auto& replay_error = normalized_contracts.error();
+    append_compiler_diagnostic(
+        *state,
+        replay_error.message.empty() ? error_code_name(replay_error.code) : replay_error.message,
+        temporal_replay_failure.source,
+        std::nullopt,
+        {},
+        {},
+        {},
+        temporal_replay_failure.detail ? &*temporal_replay_failure.detail : nullptr);
+  } else {
+    auto temporal = detail::lower_temporal_plan(*normalized_contracts,
+                                                *snapshot,
+                                                plan_generation,
+                                                state->clocks,
+                                                state->clock_conversions,
+                                                state->readiness,
+                                                profile.effective_profiles(),
+                                                options.parameters,
+                                                package_capabilities);
+    publish_cuda_graph_regions(
+        detail::lower_cuda_graph_regions(
+            cuda_graph_regions.regions, plan_generation, *normalized_contracts),
+        *state);
+    publish_temporal(std::move(temporal), *state);
+  }
   for (const auto& source : state->readiness) {
     if (!source.referenced) {
-      append_diagnostic(*state,
-                        "READINESS_SOURCE_UNUSED",
-                        DiagnosticSource{.vertex = source.owner},
-                        holoscan::DiagnosticSeverity::kWarning);
+      append_compiler_diagnostic(*state,
+                                 "READINESS_SOURCE_UNUSED",
+                                 DiagnosticSource{.vertex = source.owner},
+                                 holoscan::DiagnosticSeverity::kWarning);
     }
   }
 
@@ -1546,22 +1754,22 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
                                       state->window_triggers,
                                       state->predicate_triggers);
   for (const auto& diagnostic : rate.errors) {
-    append_diagnostic(*state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      std::nullopt,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(*state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               std::nullopt,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided);
   }
   for (const auto& diagnostic : rate.warnings) {
-    append_diagnostic(*state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      holoscan::DiagnosticSeverity::kWarning,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    append_compiler_diagnostic(*state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               holoscan::DiagnosticSeverity::kWarning,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided);
   }
   state->port_rates = std::move(rate.port_rates);
   state->accumulation_horizons = std::move(rate.accumulation_horizons);
@@ -1590,7 +1798,7 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
                                            plan_generation,
                                            rate.restart_dependencies);
   for (const auto& diagnostic : parameters.diagnostics) {
-    append_diagnostic(*state, diagnostic.token, diagnostic.source);
+    append_compiler_diagnostic(*state, diagnostic.token, diagnostic.source);
   }
   state->operator_parameters = std::move(parameters.operators);
   state->parameter_fields = std::move(parameters.fields);
@@ -1603,22 +1811,31 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
   auto tensor_byte_spans = detail::lower_tensor_byte_span_derivations(
       state->executable_factories, *snapshot, plan_generation, state->parameter_fields);
   for (const auto& diagnostic : tensor_byte_spans.diagnostics) {
-    append_diagnostic(*state,
-                      diagnostic.token,
-                      diagnostic.source,
-                      std::nullopt,
-                      diagnostic.json_pointer,
-                      diagnostic.required,
-                      diagnostic.provided);
+    detail::publish_derivation_diagnostic(*state, diagnostic);
   }
   state->tensor_byte_span_derivations = std::move(tensor_byte_spans.records);
+  std::unique_ptr<detail::GraphSnapshotData> resolved_physical_snapshot;
+  const detail::GraphSnapshotData* physical_snapshot = snapshot.get();
+  detail::TensorMemoryKindDerivationLowering tensor_memory_kinds;
+  if (detail::has_tensor_memory_kind_derivations(*snapshot)) {
+    resolved_physical_snapshot = std::make_unique<detail::GraphSnapshotData>(*snapshot);
+    physical_snapshot = resolved_physical_snapshot.get();
+    tensor_memory_kinds = detail::lower_tensor_memory_kind_derivations(state->executable_factories,
+                                                                       *resolved_physical_snapshot,
+                                                                       plan_generation,
+                                                                       state->parameter_fields);
+  }
+  for (const auto& diagnostic : tensor_memory_kinds.diagnostics) {
+    detail::publish_derivation_diagnostic(*state, diagnostic);
+  }
+  state->tensor_memory_kind_derivations = std::move(tensor_memory_kinds.records);
   auto tensor_device_bindings =
-      resolve_tensor_device_placements(*snapshot, options.deployment, *state);
+      resolve_tensor_device_placements(*physical_snapshot, options.deployment, *state);
   tensor_device_bindings.insert(tensor_device_bindings.end(),
                                 evidence.tensor_device_bindings.begin(),
                                 evidence.tensor_device_bindings.end());
 
-  detail::finalize_temporal_queue_capacities(*snapshot,
+  detail::finalize_temporal_queue_capacities(*physical_snapshot,
                                              rate.queue_sizings,
                                              state->input_selections,
                                              state->bracketed_windows,
@@ -1627,32 +1844,45 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
 
   // Plan one final cover only after generation-zero Parameter, selected temporal/readiness,
   // lifecycle, derived Tensor-byte, process, and hard device facts are immutable.
-  auto partition = detail::lower_partition_plan(*snapshot,
+  // CUDA Graph execution lowering represents each accepted region as one fused operator.
+  DiagnosticSource partition_failure_source;
+  auto partition = detail::lower_partition_plan(*physical_snapshot,
                                                 options.profile,
                                                 profile.effective_profiles(),
                                                 removed_partition_environment_selector_present,
                                                 process.process_group_by_vertex,
                                                 options.deployment,
                                                 tensor_device_bindings,
-                                                *state);
+                                                *state,
+                                                &partition_failure_source);
   if (!partition) {
-    append_error(*state, partition.error());
+    append_error(*state, partition.error(), partition_failure_source);
   }
-  auto partition_roots = detail::validate_partition_execution_roots(*snapshot, *state);
+  auto partition_roots = detail::validate_partition_execution_roots(*physical_snapshot, *state);
   if (!partition_roots) {
     append_error(*state, partition_roots.error());
   }
 
-  auto deployment = detail::lower_deployment_plan(
-      *snapshot, options.deployment, profile.effective_profiles(), state->execution_partitions);
-  for (const auto& token : deployment.error_tokens) {
-    append_diagnostic(*state, token);
+  auto deployment = detail::lower_deployment_plan(*physical_snapshot,
+                                                  options.deployment,
+                                                  profile.effective_profiles(),
+                                                  state->execution_partitions);
+  for (const auto& diagnostic : deployment.errors) {
+    append_compiler_diagnostic(*state,
+                               diagnostic.token,
+                               diagnostic.source,
+                               holoscan::DiagnosticSeverity::kError,
+                               diagnostic.json_pointer,
+                               diagnostic.required,
+                               diagnostic.provided,
+                               diagnostic.detail ? &*diagnostic.detail : nullptr);
   }
   for (const auto& token : deployment.warning_tokens) {
-    append_diagnostic(*state, token, {}, holoscan::DiagnosticSeverity::kWarning);
+    append_compiler_diagnostic(*state, token, {}, holoscan::DiagnosticSeverity::kWarning);
   }
   state->placement_probes = std::move(deployment.placement_probes);
   state->partition_placements = std::move(deployment.placements);
+  state->support_thread_affinities = std::move(deployment.support_thread_affinities);
   state->execution_lanes = std::move(deployment.lanes);
   state->scheduler_plan.execution_lane_count =
       static_cast<std::uint32_t>(state->execution_lanes.size());
@@ -1675,11 +1905,11 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
         });
     if (accepted_lane == state->execution_lanes.end() ||
         accepted_lane->accepted_placement.wake_mode != WakeMode::kBusyPoll) {
-      append_diagnostic(*state, "SPIN_UNPLACED", DiagnosticSource{.vertex = source.owner});
+      append_compiler_diagnostic(*state, "SPIN_UNPLACED", DiagnosticSource{.vertex = source.owner});
     }
   }
 
-  auto endpoint_catalog = detail::lower_endpoint_catalog(*snapshot,
+  auto endpoint_catalog = detail::lower_endpoint_catalog(*physical_snapshot,
                                                          options.deployment,
                                                          profile.effective_profiles(),
                                                          options.endpoint_catalog,
@@ -1694,7 +1924,7 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
           ? std::span<const detail::ChannelEndpointRecord>{endpoint_catalog_state->endpoints}
           : std::span<const detail::ChannelEndpointRecord>{};
   state->force_process_local_holomq_event_wake = evidence.force_holomq_process_local_event_wake;
-  publish_physical(detail::lower_physical_plan(*snapshot,
+  publish_physical(detail::lower_physical_plan(*physical_snapshot,
                                                plan_generation,
                                                profile.effective_profiles(),
                                                package_capabilities,
@@ -1709,7 +1939,8 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
                                                evidence.force_holomq_process_local_event_wake,
                                                state->tensor_byte_span_derivations,
                                                rate.queue_sizings,
-                                               state->queue_sizing_recipes),
+                                               state->queue_sizing_recipes,
+                                               lowering_cuda_compute_stream_policy),
                    *state);
   for (const auto& derivation : state->tensor_byte_span_derivations) {
     bool allocation_found{};
@@ -1744,25 +1975,69 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
           allocation_found && allocation->bounds.max_byte_span == derivation.resolved_max_byte_span;
     }
     if (allocation_found && !allocation_matches) {
-      append_diagnostic(*state,
-                        "PHYSICAL_TENSOR_BYTE_SPAN_CONTRACT_CONFLICT",
-                        DiagnosticSource{.port = derivation.output});
+      append_compiler_diagnostic(*state,
+                                 "PHYSICAL_TENSOR_BYTE_SPAN_CONTRACT_CONFLICT",
+                                 DiagnosticSource{.port = derivation.output});
+    }
+  }
+  for (const auto& derivation : state->tensor_memory_kind_derivations) {
+    bool allocation_found{};
+    bool allocation_matches{};
+    if (derivation.field_id) {
+      const auto allocation = std::find_if(state->tensor_field_allocations.begin(),
+                                           state->tensor_field_allocations.end(),
+                                           [&](const auto& item) {
+                                             return item.output == derivation.output &&
+                                                    item.field_id == derivation.field_id &&
+                                                    item.tensor_index == derivation.tensor_index;
+                                           });
+      if (allocation != state->tensor_field_allocations.end()) {
+        allocation_found = true;
+        allocation_matches = allocation->memory_kind == derivation.resolved_memory_kind;
+      } else {
+        const auto singular =
+            std::find_if(state->tensor_allocations.begin(),
+                         state->tensor_allocations.end(),
+                         [&](const auto& item) { return item.output == derivation.output; });
+        allocation_found = singular != state->tensor_allocations.end();
+        allocation_matches =
+            allocation_found && singular->memory_kind == derivation.resolved_memory_kind;
+      }
+    } else {
+      const auto allocation =
+          std::find_if(state->tensor_allocations.begin(),
+                       state->tensor_allocations.end(),
+                       [&](const auto& item) { return item.output == derivation.output; });
+      allocation_found = allocation != state->tensor_allocations.end();
+      allocation_matches =
+          allocation_found && allocation->memory_kind == derivation.resolved_memory_kind;
+    }
+    if (allocation_found && !allocation_matches) {
+      append_compiler_diagnostic(*state,
+                                 "PHYSICAL_TENSOR_MEMORY_KIND_CONTRACT_CONFLICT",
+                                 DiagnosticSource{.port = derivation.output});
     }
   }
   const auto cuda_service_streams = detail::lower_cuda_service_stream_requirements(*state);
-  publish_cuda_green_context_plan(lower_cuda_green_context_plan(*snapshot,
+  publish_cuda_green_context_plan(lower_cuda_green_context_plan(*physical_snapshot,
                                                                 options.deployment,
                                                                 evidence,
                                                                 profile.effective_profiles(),
                                                                 cuda_service_streams,
                                                                 *state),
                                   *state);
+  finalize_tensor_release_stream_capacities(*state);
+  // Partition, physical Tensor storage, and final CUDA stream/context identities are immutable at
+  // this point. Convert each validated region into the fused-operator plan consumed by Runtime.
+  publish_cuda_graph_execution_regions(
+      detail::finalize_cuda_graph_execution_regions(snapshot->generation, *state), *state);
+  auto cuda_graph_channel_backup = detail::remove_cuda_graph_internal_runtime_channels(*state);
   detail::apply_process_edge_locality(
       process.locality_by_edge, state->payload_edges, state->channel_locality);
   state->closed_island_activations = detail::derive_closed_island_activation_plan(*state);
   const auto clock_health_qualifications =
       resolve_clock_health_qualifications(evidence, endpoint_catalog_state, *state);
-  publish_endpoint_clock_health(detail::lower_endpoint_clock_health(*snapshot,
+  publish_endpoint_clock_health(detail::lower_endpoint_clock_health(*physical_snapshot,
                                                                     plan_generation,
                                                                     state->clocks,
                                                                     state->clock_conversions,
@@ -1781,19 +2056,42 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
   if (auto runners = detail::derive_partition_runner_plan(*state); runners) {
     state->partition_runners = std::move(*runners);
   } else {
-    append_diagnostic(*state, "PARTITION_RESOURCE_REALIZATION_FAILED");
+    append_compiler_diagnostic(*state, "PARTITION_RESOURCE_REALIZATION_FAILED");
+    state->admitted = false;
+    state->partition_runners.clear();
+  }
+  if (const auto conflict = detail::find_inline_partition_controller_affinity_conflict(*state)) {
+    append_compiler_diagnostic(
+        *state,
+        "THREAD_PLACEMENT_REJECTED",
+        {},
+        std::nullopt,
+        "/deployment/support_thread_affinities/controller",
+        "A controller and the sole partition runner in one process must use the same exact CPU "
+        "affinity because they share one Runtime thread",
+        "process_group=" + std::to_string(conflict->process_group.value) +
+            ",partition=" + std::to_string(conflict->partition.value) +
+            ",execution_lane=" + std::to_string(conflict->execution_lane) + ",controller=" +
+            detail::support_thread_affinity_summary(conflict->controller_affinity) +
+            ",partition_affinity=" +
+            detail::support_thread_affinity_summary(conflict->partition_affinity));
     state->admitted = false;
     state->partition_runners.clear();
   }
   state->inline_partition_execution = detail::derive_inline_partition_execution_plan(*state);
   auto canonicalized = detail::finalize_plan_artifact(*state);
   if (!canonicalized) {
-    // Artifact construction is a cold deterministic pass. Preserve a total
-    // rejected result whenever its failure still permits bounded state.
+    // Recover from inconsistent compiler-generated records. Preserve a rejected result whenever
+    // the remaining state can still be finalized.
     append_error(*state, canonicalized.error());
     state->admitted = false;
+    // Restore the ordinary channel plan, then clear or rebuild the general execution records that
+    // were derived while CUDA Graph regions were fused.
+    detail::discard_cuda_graph_capture_and_execution_plan(*state,
+                                                          std::move(cuda_graph_channel_backup));
     state->partition_runners.clear();
     state->inline_partition_execution.reset();
+    state->closed_island_activations = detail::derive_closed_island_activation_plan(*state);
     auto retry = detail::finalize_plan_artifact(*state);
     if (!retry) {
       throw RuntimeError(retry.error());
@@ -1804,8 +2102,8 @@ ExecutionPlan detail::compile_with_runtime_evidence_and_process_placement(
   detail::rebind_plan_generation(*state, resolved_generation);
   auto finalized = detail::finalize_plan_artifact(*state);
   if (!finalized) {
-    // Rebinding changes only fixed-width provenance values, so failure here is
-    // a process-resource failure rather than an admission disposition.
+    // Final rebinding must preserve every cross-record identity. Failure here indicates an
+    // inconsistent compiler-generated plan.
     throw RuntimeError(finalized.error());
   }
 

@@ -912,6 +912,22 @@ void lower_output_storage(
           return row.output == service.source;
         });
     if (allocation == result.tensor_allocations.end()) {
+      const auto candidate =
+          std::ranges::find_if(result.provider_allocation_plans, [&](const auto& provider) {
+            return provider.output == service.source &&
+                   provider.allocation_kind == ProviderAllocationKind::kTensorOutput &&
+                   provider.geometry_mode == AllocationGeometryMode::kLifecycleCandidate &&
+                   provider.disposition == PlanDisposition::kAccepted && provider.tensor_template;
+          });
+      if (candidate != result.provider_allocation_plans.end()) {
+        const auto& storage = *candidate->tensor_template;
+        // Geometry is selected at the lifecycle barrier; the provider's storage facts and
+        // pool identity are already authoritative for the descriptor Channel service.
+        service.tensor_max_byte_span = storage.bounds.max_byte_span;
+        service.tensor_pool_id = candidate->pool_id;
+        service.tensor_memory_kind = storage.memory_kind;
+        service.tensor_device = storage.device;
+      }
       continue;
     }
     service.tensor_max_byte_span = allocation->bounds.max_byte_span;

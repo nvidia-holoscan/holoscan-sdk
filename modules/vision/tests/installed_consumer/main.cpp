@@ -3,6 +3,7 @@
 
 #include <concepts>
 
+#include <holoscan/vision/bayer_demosaic_op.hpp>
 #include <holoscan/vision/convert_to_op.hpp>
 #include <holoscan/vision/copy_make_border_op.hpp>
 #include <holoscan/vision/custom_crop_op.hpp>
@@ -11,8 +12,9 @@
 #include <holoscan/vision/reformat_op.hpp>
 #include <holoscan/vision/remap_op.hpp>
 #include <holoscan/vision/resize_op.hpp>
-#include <holoscan/vision/vision_types.hpp>
 
+static_assert(std::derived_from<holoscan::vision::BayerDemosaicOp,
+                                holoscan::Operator<holoscan::vision::BayerDemosaicOpParams>>);
 static_assert(std::derived_from<holoscan::vision::ResizeOp,
                                 holoscan::Operator<holoscan::vision::ResizeOpParams>>);
 static_assert(std::derived_from<holoscan::vision::CustomCropOp,
@@ -31,19 +33,59 @@ static_assert(
     std::derived_from<holoscan::vision::NonMaximumSuppressionOp,
                       holoscan::Operator<holoscan::vision::NonMaximumSuppressionOpParams>>);
 
+static_assert(std::same_as<decltype(holoscan::vision::BayerDemosaicOp::input),
+                           holoscan::Input<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::BayerDemosaicOp::output),
+                           holoscan::Output<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::ResizeOp::input),
+                           holoscan::Input<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::ResizeOp::output),
+                           holoscan::Output<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::CustomCropOp::input),
+                           holoscan::Input<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::CustomCropOp::output),
+                           holoscan::Output<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::CopyMakeBorderOp::input),
+                           holoscan::Input<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::CopyMakeBorderOp::output),
+                           holoscan::Output<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::RemapOp::input),
+                           holoscan::Input<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::RemapOp::output),
+                           holoscan::Output<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::NormalizeOp::input),
+                           holoscan::Input<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::NormalizeOp::output),
+                           holoscan::Output<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::ConvertToOp::input),
+                           holoscan::Input<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::ConvertToOp::output),
+                           holoscan::Output<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::ReformatOp::input),
+                           holoscan::Input<holoscan::schema::ImageT>>);
+static_assert(std::same_as<decltype(holoscan::vision::ReformatOp::output),
+                           holoscan::Output<holoscan::schema::ImageT>>);
+static_assert(
+    std::same_as<decltype(holoscan::vision::RemapOp::map), holoscan::Input<holoscan::Tensor>>);
+static_assert(std::same_as<decltype(holoscan::vision::NonMaximumSuppressionOp::boxes),
+                           holoscan::Input<holoscan::Tensor>>);
+static_assert(std::same_as<decltype(holoscan::vision::NonMaximumSuppressionOp::scores),
+                           holoscan::Input<holoscan::Tensor>>);
+static_assert(std::same_as<decltype(holoscan::vision::NonMaximumSuppressionOp::mask),
+                           holoscan::Output<holoscan::Tensor>>);
+
 int main() {
-  constexpr holoscan::vision::VisionImageCapacity kImageCapacity{
-      .max_width = 1, .max_height = 1, .max_batch_size = 1U};
-  holoscan::vision::ResizeOp resize{kImageCapacity};
-  holoscan::vision::CustomCropOp crop{kImageCapacity};
-  holoscan::vision::CopyMakeBorderOp border{kImageCapacity};
-  holoscan::vision::RemapOp remap{kImageCapacity};
-  holoscan::vision::NormalizeOp normalize{kImageCapacity};
-  holoscan::vision::ConvertToOp convert{kImageCapacity};
-  holoscan::vision::ReformatOp reformat{kImageCapacity};
-  holoscan::vision::NonMaximumSuppressionOp nms{
-      holoscan::vision::NMSCapacity{.max_boxes = 1, .max_batch_size = 1U}};
+  holoscan::vision::BayerDemosaicOp bayer;
+  holoscan::vision::ResizeOp resize;
+  holoscan::vision::CustomCropOp crop;
+  holoscan::vision::CopyMakeBorderOp border;
+  holoscan::vision::RemapOp remap;
+  holoscan::vision::NormalizeOp normalize;
+  holoscan::vision::ConvertToOp convert;
+  holoscan::vision::ReformatOp reformat;
+  holoscan::vision::NonMaximumSuppressionOp nms;
   const bool ports_are_available =
+      bayer.input.name() == "input" && bayer.output.name() == "output" &&
       resize.input.name() == "input" && crop.output.name() == "output" &&
       border.input.name() == "input" && remap.map.name() == "map" &&
       normalize.output.name() == "output" && convert.input.name() == "input" &&

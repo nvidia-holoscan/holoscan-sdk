@@ -1,5 +1,28 @@
 # Runtime Benchmarks
 
+## Owning versus borrowed Image input
+
+Run `runtime_graph_benchmark --scenario image --operator-lanes shared --samples 10000 --warmup 100`
+with and without `--borrow-image-input`. Owning `receive()` remains the default; the switch selects
+`selected_sample()` only in the Image sink, with identical source, storage, and validation settings.
+The JSON field `image_input_accessor` is `receive` or `selected_sample` for Image runs and `null`
+for other scenarios. Other scenarios reject the switch. The native executable supports it; the
+Python benchmark runner does not currently forward it.
+
+Borrowed mode requires zero C++ allocations in the excluded sink-accessor warmup probe, not zero
+whole-callback or transport allocations. Both accessors have maintained direct/HoloMQ CTest smokes;
+the existing lane, fanout, storage, and workload options permit broader paired experiments without
+a new benchmark target. This read-only sink comparison complements
+`runtime_descriptor_receive_benchmark` and `runtime_descriptor_graph_benchmark`, which also
+qualify scratch edits. Neither comparison measures Vision GPU kernels.
+
+The switch is adapted from JC Fillion-Robin's `51b3e56cfd` on `jcfr/5x/selected-sample-view`, using
+the retirement-aware scalar borrow on this branch. Record revision, host tuning, build profile,
+run date, and both JSON outputs before making timing claims; CTest smokes are functional checks,
+not controlled performance collection. Archive run artifacts outside the SDK source tree.
+
+## Benchmark suites
+
 The source-tree-only Google Benchmark suites measure bounded baseline Runtime paths.
 For controlled latency measurements, apply and record the platform setup in
 [Runtime Benchmark Hardware Tuning](HARDWARE_TUNING.md). Functional CTest
@@ -146,6 +169,72 @@ publication and independent catalog receive for:
 - nested owning `schema::ImuT` with a header, timestamp, frame string, and
   vector fields.
 
+`runtime_descriptor_receive_benchmark` isolates public scalar access from a
+prepared selection. It compares `Input<Tensor>::receive()`, `Input<ImageT>::receive()`,
+`receive_data()`, generated Image assignment into a previously prepared destination,
+`selected_sample()`, and borrowed metadata edits through `ImageDescriptorScratch`, using
+interleaved/three-plane metadata and 6/128-byte frame IDs. Every case has real 48-byte CPU Tensor
+backing; validation checks independent nested metadata/wrapper objects and unchanged pixel pointers.
+It uses a synthetic scalar binding with one read credit, not a compiled Graph: scheduling, transport,
+CUDA execution, and production slot retirement are outside this benchmark.
+
+The `first_read_allocations` and `allocations_per_read` counters measure C++ allocations on the
+benchmark thread, after cold slot preparation/Tensor import. The latter counts a separate pass of
+100 reads. Allocation instrumentation is disabled during the timed loop, which includes accessor
+work, bounded validation, and destruction/replacement of the owning value or bounded scratch copy.
+Borrowed cases assert zero first-read and repeated allocations. It does not cover arbitrary
+native-library `malloc`. The benchmark intentionally reports rather than asserts exact owning-copy
+counts because generated code and standard-library allocation details can vary.
+
+Run the CTest smoke `BENCHMARK_RUNTIME_DESCRIPTOR_RECEIVE`, or collect JSON with:
+
+```bash
+./run bench --name BENCHMARK_RUNTIME_DESCRIPTOR_RECEIVE \
+  --output-json descriptor-receive.json \
+  --benchmark-args "--benchmark_min_time=0.1s --benchmark_repetitions=5"
+```
+
+`runtime_descriptor_graph_benchmark` complements that isolated accessor benchmark with real
+source -> transform -> sink callbacks on three Runtime execution partitions. Modes 0/1/2 are owning
+receive, borrowed unchanged metadata, and borrowed metadata edits. Transport 0 uses direct retained
+delivery; 1 forces process-local HoloMQ. Every run sends 512 acknowledged messages using an eight-byte
+host Tensor, a 128-byte frame ID, depth-one queues, and compiler-derived pools without extra slots.
+The transform reads the selected pixels and writes a distinct output loan, preserving provenance.
+Each sink publishes a scalar acknowledgment to a small control operator on that sink's existing
+serial partition. That operator grants the next source credit only after the data sink's callback
+and selected input have retired. An acknowledgment written inside the data callback would allow
+the next transform to publish while a depth-one destination is still occupied. The source,
+transform, and sink remain on distinct partitions; no data queue or Tensor pool is enlarged.
+The control hop is outside the measured transform callback, and latency is recorded in the data
+sink before acknowledgment. It still changes inter-message pacing, so compare timing only between
+revisions with the same acknowledgment protocol. This harness protocol is not automatic Runtime
+retry or a general lossless application backpressure mechanism.
+
+An untimed run counts C++ `new` on the transform worker, separately for receive, metadata copy,
+publication, and the whole callback. A second run disables allocation counting and reports mean
+transform callback nanoseconds using Google Benchmark manual time. Source-to-sink p50/p95/p99
+include scheduling and transport and are not GPU execution or throughput measurements. Both runs
+validate pixels, metadata, sequence, provenance, and bounded progress. The prepared encode/decode
+allocation test is `RUNTIME.ImageScratchCodec.SeparateTensorAuthorityAndPreparedDecodeAreAllocationFree`.
+Native-library `malloc`, CUDA, and third-party wrapper allocations are outside this instrumentation.
+
+Run `BENCHMARK_RUNTIME_DESCRIPTOR_GRAPH` for smoke coverage, or collect a retained comparison:
+
+```bash
+./run launch --standalone build-x86_64 --run-cmd \
+  "taskset -c 2-4 benchmark/runtime/runtime_descriptor_graph_benchmark \\
+   --benchmark_out=descriptor-graph-REVISION.json \\
+   --benchmark_out_format=json"
+```
+
+Replace `REVISION` with the tested revision and record the exact command, CPU affinity, host tuning,
+build options, compiler/library versions, and any dirty source hashes alongside the JSON. Collect
+only after compilation and lint finish. This command writes to the selected build directory;
+save generated JSON and interpretation outside the SDK source tree. Keep your owning baselines
+without overwriting them. Zero borrowed-descriptor
+allocations are regression assertions, not a claim that the complete
+runtime or any arbitrary transport is allocation-free.
+
 `runtime_graph_benchmark` is a native production-Graph harness rather than a
 Google Benchmark microbenchmark. Its initial paced-latency row compiles a blocking depth-one
 `Output<BenchmarkPOD64>` to `Input<BenchmarkPOD64>` edge, starts a
@@ -241,11 +330,12 @@ object through `selected_batch()`. The fixed-field `schema::TimeT` owning row
 must also report zero allocations. The singular `schema::ImageT` row instead
 records the allocations performed by `Input<T>::receive()` without treating
 them as transport regressions: that accessor intentionally makes an independent
-generated C++ object and attaches a finite read claim so its selected Runtime
-slot remains protected while the object escapes the callback. Tensor bytes are
-still shared through their retained backing. Pointer-owned generated fields can
-allocate while making that semantic copy; use `selected_batch()` when an
-activation-scoped borrowed value is sufficient. Both multi-Tensor rows also
+generated C++ object and consumes finite owning-read credit. The owning copy,
+not the credit itself, retains its Tensor backing after callback retirement;
+the credit does not pin the selected Runtime slot. Pointer-owned generated fields can
+allocate while making that semantic copy. Use `--borrow-image-input` for scalar
+`selected_sample()` access without that copy; `selected_batch()` serves batch-shaped inputs.
+Both multi-Tensor rows also
 support the notification-driven `saturated` workload; their bounded smoke cases
 prove that finite multi-field reservation exhaustion reaps completed transport
 releases and resumes publication.
@@ -466,9 +556,11 @@ Ordinary completion-driven lossy rows require fanout one. The controlled fixed-r
 exception is described below. Pass
 `--force-holomq-process-local-inline` to preserve the prior transport-backed path as an exact
 same-binary control; the result name gains `_holomq_fallback`, the JSON records
-`process_local_inline_delivery` and `queue_policy`. A separate-lane or event-wake control row admits
-`--channel-pump-cpu`; a shared-lane eventless HoloMQ row is pump-free unless the exact pump control
-described below is selected. These are private measurement controls, not application authoring policy.
+`process_local_inline_delivery` and `queue_policy`. A row with an active Channel pump accepts
+`--channel-pump-cpu`, which authors public support-thread placement but never creates a pump. A
+shared-lane eventless HoloMQ row is pump-free unless the exact pump control described below is
+selected. The `--force-*` controls in this section are private measurement controls, not application
+authoring policy.
 
 For a shared-lane 1:1 POD, SDK-schema, third-party-schema, Tensor, Image, or multi-Tensor HoloMQ row, or a shared-lane
 POD/SDK-schema/third-party-schema/raw-Tensor/Image/multi-Tensor fanout row at any positive depth
@@ -804,6 +896,31 @@ See [GREEN_CONTEXT_QUALIFICATION.md](GREEN_CONTEXT_QUALIFICATION.md) for the
 matrix runner, Nsight attribution procedure, sanitizer lane, and `kRealTime`
 disposition.
 
+CUDA compute-stream policy qualification uses a two-sink device-Tensor fork
+with the source and each sink in separate execution partitions. The native
+binary accepts `--stream-policy shared|per_partition` and
+`--cuda-work-profile none|low_occupancy|saturating`; non-empty profiles also
+require `--cuda-branch-work-us B,C`. It reports exact plan stream/binding
+counts, Runtime readiness/release counters, per-branch host and CUDA duration,
+source-to-GPU-completion latency, and overlap derived from preallocated CUDA
+events. The synthetic kernels only enqueue bounded work on each Operator's
+compiled stream; the callback does not synchronize that work.
+
+Use `run_cuda_stream_policy_qualification.py` for matched shared and
+per-partition rows across no-device-work, low-occupancy, saturating, and
+asymmetric regimes. The runner claims a fresh output directory, publishes an
+atomic attempt status, hashes the binary and every result/plan artifact, and
+reports repeated-run coefficient of variation. Its policy deltas are
+characterization evidence only; the runner intentionally defines no universal
+performance pass/fail threshold.
+
+```sh
+python3 ../benchmark/runtime/run_cuda_stream_policy_qualification.py \
+  ./benchmark/runtime/runtime_graph_benchmark \
+  --revision "$(git rev-parse HEAD)" \
+  --output-dir runtime-cuda-stream-policy-qualification
+```
+
 Tensor results also report the admitted direct-allocation and device-resource record counts, plus whether the
 compiler assigned the strict process-local 1:1 edge to a fused linear stream. These are immutable plan facts;
 the timed row does not install the mutex-backed source-tree Runtime test counter.
@@ -835,10 +952,12 @@ distributions. Callback-to-pre-emit covers source-side preparation before the pu
 publication-call covers that call through its successful return. These components reuse timestamps already
 needed by the other boundaries and add no timed-path clock reads. Tensor rows additionally report
 `tensor_loan_acquire_ns`, `tensor_write_commit_ns`, and `tensor_receive_call_ns`. Those diagnostic
-boundaries add two source-side and one sink-side clock read per measured Tensor sample; compare their
-sub-microsecond values with the reported timestamp-read-pair calibration rather than treating them as an
-unperturbed application path. A concurrently running sink can enter or complete before the producer records
-its post-`emit()` or pre-return boundary. The corresponding
+boundaries add two source-side clock reads per measured publication and one sink-side clock read per
+measured delivery; compare their sub-microsecond values with the reported timestamp-read-pair calibration
+rather than treating them as an unperturbed application path. Loan-acquire and write-commit therefore each
+contain `samples` observations, while receive-call aggregates `samples * fanout` independently paired
+sink-call observations. A concurrently running sink can enter or complete before the producer records its
+post-`emit()` or pre-return boundary. The corresponding
 `source_post_emit_to_sink_overlaps` and per-sink `overlaps` fields classify those valid concurrent samples
 instead of misreporting them as missing; every overlap-sensitive interval requires
 `latency_ns.samples + overlaps` to equal the requested measured sample count. The
@@ -958,13 +1077,14 @@ different owner, the `include_all` callbacks share the controller owner, every c
 and at least one measured callback interval overlaps. This intentionally different-cover row is always
 unqualified for the 3% parity gate.
 
-For notification-driven rows, also pass `--notification-driver-cpu` on a distinct physical core. The Operator CPU
-options use the public compile-time lane-placement contract, whose startup barrier applies and verifies the
-accepted placement. `--controller-cpu`, pump-backed `--channel-pump-cpu`, and
-`--notification-driver-cpu` use a
-source-tree-only measurement control: it applies Linux affinity once when each thread enters, reads the
-affinity back, and records the native thread ID. This is deliberately not a public application placement API
-or a serialized plan field, and it adds no per-activation work.
+For notification-driven rows, also pass `--notification-driver-cpu` on a distinct physical core. The
+Operator CPU options use the public compile-time lane-placement contract, whose startup barrier applies
+and verifies the accepted placement. `--controller-cpu` and pump-backed `--channel-pump-cpu` author the
+public support-thread affinity contract; their accepted values are serialized in the execution plan and
+applied before those Runtime threads perform work. The benchmark's observation hook independently reads
+the affinity back and records the native thread ID without reapplying those public bindings.
+`--notification-driver-cpu` remains a source-tree-only measurement control because the notification driver
+is not a public support-thread role. None of these controls adds per-activation work.
 
 Use `--runtime-phase-counters` only for diagnostic runs. It installs a private, source-tree-only fixed counter
 block and a capped, preallocated phase-trace buffer. The counters record controller readiness scans, waits and

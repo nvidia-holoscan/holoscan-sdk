@@ -32,6 +32,22 @@ class ScopedAllocationFailure {
   std::size_t previous_remaining_ = 0;
 };
 
+/// Fail every allocation on the current test thread after a fixed number of successes.
+class ScopedAllocationExhaustion {
+ public:
+  explicit ScopedAllocationExhaustion(std::size_t successful_allocations_before_failure) noexcept;
+  ~ScopedAllocationExhaustion() noexcept;
+
+ private:
+  bool previous_enabled_ = false;
+  std::size_t previous_remaining_ = 0;
+};
+
+/// Fail one allocation on the current test thread after a fixed number of successes.
+///
+/// This unscoped form arms a worker-thread failure from an explicit test callback.
+void fail_allocation_on_current_thread(std::size_t successful_allocations_before_failure) noexcept;
+
 /// Fail the next explicitly aligned allocation on the current test thread.
 class ScopedAlignedAllocationFailure {
  public:

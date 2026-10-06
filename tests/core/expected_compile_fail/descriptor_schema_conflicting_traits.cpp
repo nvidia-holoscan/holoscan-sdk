@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 
 #include <holoscan/core/port.hpp>
 
@@ -15,22 +17,21 @@ struct ConflictingDescriptorTraits {
 
 template <>
 consteval holoscan::SchemaIdentity holoscan::schema_identity<ConflictingDescriptorTraits>() {
-  return holoscan::SchemaIdentity{
-      .canonical_name = "nvidia.holoscan.test.ConflictingDescriptorTraits",
-      .version = 1U,
-      .schema_sha256 = {std::byte{0x42}},
-      .id = holoscan::SchemaId{.value = {std::byte{0x24}}},
-  };
+  return holoscan::make_schema_identity(
+      holoscan::make_schema_family_identity("nvidia.holoscan.test.ConflictingDescriptorTraits"),
+      holoscan::make_flatbuffer_file_identifier("CDTR"));
 }
 
 template <>
 struct holoscan::DescriptorTensorSchemaNativeTraits<ConflictingDescriptorTraits> {
   using root_type = ConflictingDescriptorTraitsRoot;
   static constexpr std::size_t metadata_capacity = 256U;
+  static constexpr std::size_t tensor_count = 1U;
+  static constexpr std::array<std::uint16_t, tensor_count> tensor_field_ids{1U};
 
-  [[nodiscard]] static const holoscan::Tensor* tensor(
-      const ConflictingDescriptorTraits& value) noexcept {
-    return &value.tensor;
+  [[nodiscard]] static const holoscan::Tensor* tensor_at(const ConflictingDescriptorTraits& value,
+                                                         const std::size_t index) noexcept {
+    return index == 0U ? &value.tensor : nullptr;
   }
 };
 

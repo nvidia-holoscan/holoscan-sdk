@@ -24,7 +24,7 @@
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "compiler/execution_plan_state.hpp"

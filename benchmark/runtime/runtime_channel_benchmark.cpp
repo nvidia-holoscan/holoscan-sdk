@@ -36,6 +36,7 @@
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "../common/benchmark_pod.hpp"
+#include "channel/channel_payload_limits.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "core/operator_spec_compiler_access.hpp"
 #include "core/source_id_internal.hpp"
@@ -320,6 +321,7 @@ class ChannelBenchmarkFixtureT {
     for (std::uint32_t offset = 0U; offset < queue_depth_; ++offset) {
       holoscan::SampleMetadata metadata{};
       metadata.sequence = first_sequence + offset;
+      metadata.publish_clock_id = holoscan::ClockId{1U};
       metadata.byte_size = sizeof(PayloadT);
       metadata.payload_kind = holoscan::PayloadKind::kInlineTyped;
       for (const holoscan::PortId port : input_ports_) {
@@ -337,6 +339,7 @@ class ChannelBenchmarkFixtureT {
       holoscan::PortId port, std::uint64_t sequence) noexcept {
     holoscan::SampleMetadata metadata{};
     metadata.sequence = sequence;
+    metadata.publish_clock_id = holoscan::ClockId{1U};
     metadata.byte_size = sizeof(PayloadT);
     metadata.payload_kind = holoscan::PayloadKind::kInlineTyped;
     return holoscan::detail::RuntimeChannelSessionTestAccess::inject_received_metadata(
@@ -485,6 +488,11 @@ class ChannelBenchmarkFixtureT {
         .service_id = service,
         .payload_identity = output.payload_identity,
         .payload_size_bytes = sizeof(PayloadT),
+        .selected_inline_bucket_bytes =
+            delivery_kind == holoscan::detail::ProcessLocalChannelDeliveryKind::kHoloMQ
+                ? holoscan::channel_internal::inline_payload_bucket_size(sizeof(PayloadT))
+                      .value_or(0U)
+                : 0U,
         .delivery_kind = delivery_kind,
         .queue_policy = holoscan::QueuePolicy::kBlocking,
         .max_subscribers = input_count,

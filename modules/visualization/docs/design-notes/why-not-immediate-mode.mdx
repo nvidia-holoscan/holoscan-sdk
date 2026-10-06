@@ -41,7 +41,7 @@ headers look the way they do:
   before the first frame.
 - `RenderBackend` splits into `allocate()` (all GPU allocation) → `build()` (all
   pipeline compilation) → per-frame record/submit that does neither.
-- Beneath that, the RHI is built for the same shape: `DevicePolicy::kSealed`,
+- Beneath that, HoloViz is built for the same shape: `DevicePolicy::kSealed`,
   usage-flag-free buffers, deduplicated sampler values, and `kReusable` command lists
   that are recorded once and replayed.
 
@@ -53,5 +53,5 @@ this module's target, as per our explicit and focused design goals.
 A second gap motivated the split as much as the first: 4.x has no supported
 lower-level rendering foundation. An application needing an unusual pipeline could
 not reuse HoloViz's interop and frame-lifecycle machinery without also taking its
-immediate-mode layer API. Hence a rendering substrate (`holoviz::rhi`) that stands on
+immediate-mode layer API. Hence a rendering substrate (`holoviz`) that stands on
 its own beneath the layer renderer.

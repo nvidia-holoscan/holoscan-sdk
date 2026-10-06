@@ -9,39 +9,150 @@
 #include <holoscan/time/realtime_clock.hpp>
 #include <holoscan/time/synthetic_clock.hpp>
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cassert>
 #include <cctype>
 #include <cstdint>
+#include <deque>
 #include <exception>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
 #include <numeric>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <tuple>
 #include <type_traits>
+#include <typeinfo>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "canonical_text_encoding.hpp"
+#include "core/diagnostic_reporting.hpp"
+#include "diagnostic_context.hpp"
 #include "domain/tensor_layout_validation.hpp"
 #include "graph_state.hpp"
 #include "operator_spec_compiler_access.hpp"
+#include "parameter_authoring_target.hpp"
+#include "parameter_input_internal.hpp"
 #include "plan_record_contracts.hpp"
 #include "port_configuration_internal.hpp"
+#include "tensor_contract_comparison.hpp"
 #include "tensor_contract_resolution_internal.hpp"
 #include "tensor_field_configuration_internal.hpp"
 
 namespace holoscan {
 namespace detail {
+namespace {
+
+[[nodiscard]] std::string authored_operator_path(const GraphState& state,
+                                                 const VertexRecord& vertex) {
+  const auto graph =
+      std::ranges::find(state.embedded_graph_records_, vertex.graph, &GraphRecord::id);
+  const GraphRecord* const record =
+      vertex.graph == state.graph_record_.id
+          ? &state.graph_record_
+          : (graph == state.embedded_graph_records_.end() ? nullptr : &*graph);
+  if (record == nullptr)
+    return {};
+  std::string path;
+  const auto append = [&](std::string_view segment) {
+    if (!path.empty())
+      path.push_back('/');
+    append_percent_encoded_uri_component(path, segment);
+  };
+  if (record->path) {
+    for (const auto& segment : record->path->segments())
+      append(segment);
+  }
+  append(vertex.name);
+  return path;
+}
+
+}  // namespace
+
+expected<ParameterAuthoringInventory, Error> ParameterInputAccess::authoring_targets(Graph& graph) {
+  try {
+    const std::shared_ptr<GraphState>& state = graph.state_;
+    auto prepared = state->prepare_mutation();
+    if (!prepared) {
+      return make_unexpected(std::move(prepared.error()));
+    }
+    const std::lock_guard lock(state->mutex_);
+    ParameterAuthoringInventory inventory{.root_graph = state->graph_record_.id};
+    inventory.graphs.reserve(1U + state->embedded_graph_records_.size());
+    inventory.targets.reserve(state->operators_.size() + state->embedded_operator_mappings_.size());
+    inventory.graphs.push_back(ParameterAuthoringGraph{.graph = state->graph_record_.id});
+    for (const GraphRecord& record : state->embedded_graph_records_) {
+      std::string path;
+      if (record.path) {
+        for (const auto& segment : record.path->segments()) {
+          if (!path.empty())
+            path.push_back('/');
+          append_percent_encoded_uri_component(path, segment);
+        }
+      }
+      inventory.graphs.push_back(
+          ParameterAuthoringGraph{.graph = record.id, .path = std::move(path)});
+    }
+    const auto append = [&](VertexId target, const std::shared_ptr<OperatorFactoryBase>& factory) {
+      const auto vertex = std::ranges::find(state->vertices_, target, &VertexRecord::id);
+      if (vertex == state->vertices_.end() || !factory) {
+        throw RuntimeError{Error{ErrorCode::kFailure, "PARAM_REBIND_TARGET_OPERATOR_INVALID"}};
+      }
+      const ParamTypeDescriptor& type = factory->parameter_type();
+      inventory.targets.push_back(ParameterAuthoringTarget{
+          .vertex = target,
+          .graph = vertex->graph,
+          .path = authored_operator_path(*state, *vertex),
+          .schema = factory->parameter_schema(),
+          .type = &type,
+      });
+    };
+    for (const auto& op : state->operators_)
+      append(op.vertex, op.factory);
+    for (const auto& mapping : state->embedded_operator_mappings_)
+      append(mapping.vertex, mapping.factory);
+    return inventory;
+  } catch (const RuntimeError& error) {
+    return make_unexpected(make_error(error));
+  } catch (const std::bad_alloc&) {
+    return make_unexpected(Error{ErrorCode::kResourceExhausted, "PARAM_REBIND_ALLOC_FAILED"});
+  } catch (...) {
+    return make_unexpected(Error{ErrorCode::kFailure, "PARAM_REBIND_TARGET_CAPTURE_FAILED"});
+  }
+}
+
+expected<void, Error> ParameterInputAccess::attach_transaction(
+    Graph& graph, std::shared_ptr<const ParameterTransactionState> transaction) {
+  if (!transaction || transaction->operators.empty()) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument, "GRAPH_PARAMETER_TRANSACTION_INVALID"});
+  }
+  const std::shared_ptr<GraphState>& state = graph.state_;
+  auto prepared = state->prepare_mutation();
+  if (!prepared) {
+    return make_unexpected(std::move(prepared.error()));
+  }
+  const std::lock_guard lock(state->mutex_);
+  if (state->parameter_transaction_) {
+    return make_unexpected(Error{ErrorCode::kDuplicateName, "GRAPH_PARAMETER_TRANSACTION_EXISTS"});
+  }
+  state->parameter_transaction_ = std::move(transaction);
+  state->mark_mutation();
+  return {};
+}
 
 [[nodiscard]] ClockCapabilityAuthoringRecord clock_capabilities(const Clock& clock, GraphId graph,
                                                                 const ClockKey& key) {
@@ -66,20 +177,130 @@ namespace detail {
   return result;
 }
 
+Error graph_factory_error(std::string_view token, DiagnosticCapture* capture) noexcept {
+  if (capture == nullptr) {
+    return graph_factory_error(token);
+  }
+  capture->capture_exception();
+  return Error{capture->causes[0].code};
+}
+
+Error graph_factory_error(std::string_view token) noexcept {
+  DiagnosticCapture capture;
+  capture.capture_exception();
+  try {
+    const auto evidence = capture.detail(DiagnosticOperation::kConstruct);
+    std::string message(token);
+    if (!evidence.error.message.empty()) {
+      if (!message.empty()) {
+        message += ": ";
+      }
+      message += evidence.error.message;
+    }
+    for (const auto& cause : evidence.causes) {
+      message += "; caused by " + runtime_error_message(cause);
+    }
+    if (capture.truncated) {
+      message += " [truncated]";
+    }
+    return Error{evidence.error.code, std::move(message)};
+  } catch (...) {
+    return Error{capture.count != 0U ? capture.causes[0].code : ErrorCode::kFailure};
+  }
+}
+
 void graph_log_factory_exception(std::string_view context, std::string_view detail) noexcept {
   try {
-    HOLOSCAN_LOG_DEBUG("Graph {} factory exception detail: {}", context, detail);
+    HOLOSCAN_LOG_DEBUG(
+        "Graph {} factory exception detail: {}", context, diagnostic_display_text(detail));
   } catch (...) {  // NOLINT(bugprone-empty-catch)
     // Logging is diagnostic-only and must never replace the stable typed factory failure.
   }
 }
 
 /// Restore appended Graph records and their derived side-index entries after a cold mutation
-/// throws. Successful transactions capture only scalar sizes and counters; rollback may scan the
-/// newly appended records but never allocates. Existing nested records are prepared off to the
-/// side and swapped separately by their mutators.
+/// throws. Ordinary transactions capture only scalar sizes and counters; the compound mode also
+/// owns pre-mutation region and partition records because nested public mutations can commit into
+/// those existing records. Rollback may scan or swap prepared storage but never allocates.
 class GraphMutationRollback {
  public:
+  struct CaptureExistingRecords {};
+
+  struct ExistingRecords {
+    explicit ExistingRecords(const GraphState& state)
+        : embedded_graph_records(state.embedded_graph_records_),
+          embedded_operator_mappings(state.embedded_operator_mappings_),
+          operators(state.operators_),
+          vertex_adjacency(state.vertex_adjacency_),
+          cycle_visit_marks(state.cycle_visit_marks_),
+          cycle_visit_epoch(state.cycle_visit_epoch_),
+          vertices(state.vertices_),
+          ports(state.ports_),
+          port_by_declaration(state.port_by_declaration_),
+          edges(state.edges_),
+          edge_handle_identities(state.edge_handle_identities_),
+          interface_bindings(state.interface_bindings_),
+          readiness_sources(state.readiness_sources_),
+          regions(state.regions_),
+          region_handle_identities(state.region_handle_identities_),
+          partitions(state.partitions_),
+          partition_handle_identities(state.partition_handle_identities_),
+          automatic_partition_remaining(state.automatic_partition_remaining_),
+          clocks(state.clocks_),
+          clock_imports(state.clock_imports_),
+          clock_bindings(state.clock_bindings_),
+          clock_conversions(state.clock_conversions_),
+          lifecycle_dependencies(state.lifecycle_dependencies_),
+          lifecycle_callbacks(state.lifecycle_callbacks_),
+          lifecycle_facts(state.lifecycle_facts_),
+          lifecycle_restart_permissions(state.lifecycle_restart_permissions_),
+          vertex_names(state.vertex_names_),
+          interface_port_names(state.interface_port_names_),
+          region_names(state.region_names_),
+          partition_names(state.partition_names_),
+          clock_names(state.clock_names_),
+          explicit_endpoint_names(state.explicit_endpoint_names_),
+          embedded_instance_names(state.embedded_instance_names_),
+          pod_identity_catalog(state.pod_identity_catalog_),
+          default_clock(state.default_clock_) {}
+
+    std::vector<GraphRecord> embedded_graph_records;
+    std::vector<EmbeddedOperatorMapping> embedded_operator_mappings;
+    std::deque<OperatorStorage> operators;
+    std::vector<std::vector<std::size_t>> vertex_adjacency;
+    std::vector<std::uint64_t> cycle_visit_marks;
+    std::uint64_t cycle_visit_epoch{};
+    std::vector<VertexRecord> vertices;
+    std::deque<PortStorage> ports;
+    std::unordered_map<const void*, GraphPortId> port_by_declaration;
+    std::vector<EdgeRecord> edges;
+    std::vector<std::shared_ptr<const void>> edge_handle_identities;
+    std::vector<InterfaceBindingRecord> interface_bindings;
+    std::vector<ReadinessSourceDeclarationRecord> readiness_sources;
+    std::vector<RegionRecord> regions;
+    std::vector<std::shared_ptr<const void>> region_handle_identities;
+    std::vector<PartitionRecord> partitions;
+    std::vector<std::shared_ptr<const void>> partition_handle_identities;
+    bool automatic_partition_remaining{};
+    std::deque<ClockStorage> clocks;
+    std::vector<ClockImportAuthoringRecord> clock_imports;
+    std::vector<EmbeddedClockBindingAuthoringRecord> clock_bindings;
+    std::vector<ClockConversionAuthoringRecord> clock_conversions;
+    std::vector<LifecycleDependencyAuthoringRecord> lifecycle_dependencies;
+    std::vector<LifecycleCallbackAuthoringRecord> lifecycle_callbacks;
+    std::vector<LifecycleFactAuthoringRecord> lifecycle_facts;
+    std::vector<LifecycleRestartPermissionAuthoringRecord> lifecycle_restart_permissions;
+    std::unordered_set<std::string> vertex_names;
+    std::unordered_set<std::string> interface_port_names;
+    std::unordered_set<std::string> region_names;
+    std::unordered_set<std::string> partition_names;
+    std::unordered_set<std::string> clock_names;
+    std::unordered_set<std::string> explicit_endpoint_names;
+    std::unordered_set<std::string> embedded_instance_names;
+    std::vector<PayloadIdentityRecord> pod_identity_catalog;
+    ClockKey default_clock;
+  };
+
   explicit GraphMutationRollback(GraphState& state) noexcept
       : state_(state),
         generation_(state.generation_),
@@ -95,6 +316,7 @@ class GraphMutationRollback {
         embedded_graph_records_size_(state.embedded_graph_records_.size()),
         embedded_graphs_size_(state.embedded_graphs_.size()),
         embedded_operator_mappings_size_(state.embedded_operator_mappings_.size()),
+        parameter_transaction_(state.parameter_transaction_),
         vertices_size_(state.vertices_.size()),
         ports_size_(state.ports_.size()),
         edges_size_(state.edges_.size()),
@@ -115,12 +337,24 @@ class GraphMutationRollback {
     assert(state_.dense_ids_valid());
   }
 
+  GraphMutationRollback(GraphState& state, CaptureExistingRecords) : GraphMutationRollback(state) {
+    existing_records_ = std::make_unique<ExistingRecords>(state);
+  }
+
   GraphMutationRollback(const GraphMutationRollback&) = delete;
   GraphMutationRollback& operator=(const GraphMutationRollback&) = delete;
 
-  ~GraphMutationRollback() noexcept {
+  ~GraphMutationRollback() noexcept { rollback(); }
+
+  void rollback() noexcept {
     if (committed_)
       return;
+    if (existing_records_) {
+      rollback_complete_mutation();
+      assert(state_.dense_ids_valid());
+      committed_ = true;
+      return;
+    }
     rollback_ports();
     rollback_name_indexes();
     rollback_adjacency();
@@ -128,6 +362,7 @@ class GraphMutationRollback {
     truncate_records();
     restore_identity();
     assert(state_.dense_ids_valid());
+    committed_ = true;
   }
 
   void restore_boundary_ordinal(std::uint32_t ordinal) noexcept {
@@ -148,6 +383,83 @@ class GraphMutationRollback {
   }
 
  private:
+  void rollback_complete_mutation() noexcept {
+    release_root_port_ownership();
+
+    state_.embedded_graphs_.erase(
+        state_.embedded_graphs_.begin() + static_cast<std::ptrdiff_t>(embedded_graphs_size_),
+        state_.embedded_graphs_.end());
+    state_.external_topics_.resize(external_topics_size_);
+
+    ExistingRecords& existing = *existing_records_;
+    state_.embedded_graph_records_.swap(existing.embedded_graph_records);
+    state_.embedded_operator_mappings_.swap(existing.embedded_operator_mappings);
+    state_.operators_.swap(existing.operators);
+    state_.vertex_adjacency_.swap(existing.vertex_adjacency);
+    state_.cycle_visit_marks_.swap(existing.cycle_visit_marks);
+    state_.cycle_visit_epoch_ = existing.cycle_visit_epoch;
+    state_.vertices_.swap(existing.vertices);
+    state_.ports_.swap(existing.ports);
+    state_.port_by_declaration_.swap(existing.port_by_declaration);
+    state_.edges_.swap(existing.edges);
+    state_.edge_handle_identities_.swap(existing.edge_handle_identities);
+    state_.interface_bindings_.swap(existing.interface_bindings);
+    state_.readiness_sources_.swap(existing.readiness_sources);
+    state_.regions_.swap(existing.regions);
+    state_.region_handle_identities_.swap(existing.region_handle_identities);
+    state_.partitions_.swap(existing.partitions);
+    state_.partition_handle_identities_.swap(existing.partition_handle_identities);
+    state_.automatic_partition_remaining_ = existing.automatic_partition_remaining;
+    state_.clocks_.swap(existing.clocks);
+    state_.clock_imports_.swap(existing.clock_imports);
+    state_.clock_bindings_.swap(existing.clock_bindings);
+    state_.clock_conversions_.swap(existing.clock_conversions);
+    state_.lifecycle_dependencies_.swap(existing.lifecycle_dependencies);
+    state_.lifecycle_callbacks_.swap(existing.lifecycle_callbacks);
+    state_.lifecycle_facts_.swap(existing.lifecycle_facts);
+    state_.lifecycle_restart_permissions_.swap(existing.lifecycle_restart_permissions);
+    state_.vertex_names_.swap(existing.vertex_names);
+    state_.interface_port_names_.swap(existing.interface_port_names);
+    state_.region_names_.swap(existing.region_names);
+    state_.partition_names_.swap(existing.partition_names);
+    state_.clock_names_.swap(existing.clock_names);
+    state_.explicit_endpoint_names_.swap(existing.explicit_endpoint_names);
+    state_.embedded_instance_names_.swap(existing.embedded_instance_names);
+    state_.pod_identity_catalog_.swap(existing.pod_identity_catalog);
+    std::swap(state_.default_clock_, existing.default_clock);
+    state_.parameter_transaction_ = parameter_transaction_;
+    restore_identity();
+    claim_root_port_ownership();
+  }
+
+  void release_root_port_ownership() noexcept {
+    for (const auto& port : state_.ports_) {
+      if (port.declaration == nullptr || !is_root_vertex(state_, port.record.owner))
+        continue;
+      if (port.record.direction == PortDirection::kInput) {
+        const auto& input = *static_cast<const InputBase*>(port.declaration);
+        if (GraphPortOwnershipAccess::owner(input) == &state_)
+          GraphPortOwnershipAccess::claim(input, nullptr);
+      } else {
+        const auto& output = *static_cast<const OutputBase*>(port.declaration);
+        if (GraphPortOwnershipAccess::owner(output) == &state_)
+          GraphPortOwnershipAccess::claim(output, nullptr);
+      }
+    }
+  }
+
+  void claim_root_port_ownership() noexcept {
+    for (const auto& port : state_.ports_) {
+      if (port.declaration == nullptr || !is_root_vertex(state_, port.record.owner))
+        continue;
+      if (port.record.direction == PortDirection::kInput) {
+        GraphPortOwnershipAccess::claim(*static_cast<const InputBase*>(port.declaration), &state_);
+      } else {
+        GraphPortOwnershipAccess::claim(*static_cast<const OutputBase*>(port.declaration), &state_);
+      }
+    }
+  }
+
   void rollback_ports() noexcept {
     for (std::size_t index = ports_size_; index < state_.ports_.size(); ++index) {
       const auto& port = state_.ports_[index];
@@ -227,6 +539,7 @@ class GraphMutationRollback {
   void truncate_records() noexcept {
     state_.interface_bindings_.resize(interface_bindings_size_);
     state_.edges_.resize(edges_size_);
+    state_.edge_handle_identities_.resize(edges_size_);
     state_.readiness_sources_.resize(readiness_sources_size_);
     state_.clock_bindings_.resize(clock_bindings_size_);
     state_.clock_imports_.resize(clock_imports_size_);
@@ -244,10 +557,13 @@ class GraphMutationRollback {
     state_.embedded_graphs_.erase(
         state_.embedded_graphs_.begin() + static_cast<std::ptrdiff_t>(embedded_graphs_size_),
         state_.embedded_graphs_.end());
+    state_.parameter_transaction_ = parameter_transaction_;
     state_.vertex_adjacency_.resize(vertices_size_);
     state_.cycle_visit_marks_.resize(vertices_size_);
     state_.regions_.resize(regions_size_);
+    state_.region_handle_identities_.resize(regions_size_);
     state_.partitions_.resize(partitions_size_);
+    state_.partition_handle_identities_.resize(partitions_size_);
     state_.clocks_.resize(clocks_size_);
     state_.pod_identity_catalog_.resize(pod_identity_catalog_size_);
   }
@@ -341,6 +657,7 @@ class GraphMutationRollback {
   std::size_t embedded_graph_records_size_;
   std::size_t embedded_graphs_size_;
   std::size_t embedded_operator_mappings_size_;
+  std::shared_ptr<const ParameterTransactionState> parameter_transaction_;
   std::size_t vertices_size_;
   std::size_t ports_size_;
   std::size_t edges_size_;
@@ -358,6 +675,7 @@ class GraphMutationRollback {
   std::size_t lifecycle_facts_size_;
   std::size_t lifecycle_permissions_size_;
   std::size_t pod_identity_catalog_size_;
+  std::unique_ptr<ExistingRecords> existing_records_;
   bool committed_{};
 };
 
@@ -390,11 +708,157 @@ namespace {
 
 constexpr std::string_view kGeneratedEndpointNamespace{"__holoscan_auto_endpoint/"};
 constexpr std::string_view kHoloMqTopicPrefix{"holomq://"};
+constexpr std::size_t kMaximumPartitionContextFieldBytes = 192U;
 
 std::atomic<std::uint64_t> g_next_graph_instance{1U};
 
 [[nodiscard]] Error graph_error(ErrorCode code, std::string_view token) {
   return Error{code, std::string(token)};
+}
+
+[[nodiscard]] std::string graph_payload_identity_name(const PayloadIdentityRecord& identity) {
+  if (identity.schema) {
+    return fmt::format("{} epoch={} family_id={} file_identifier={} transport_profile_tag={}",
+                       identity.schema->canonical_name,
+                       identity.schema->compatibility_epoch,
+                       lowercase_hex_text(identity.schema->family_id.value, HexPrefix::kNone),
+                       std::string_view{identity.schema->file_identifier.value.data(),
+                                        identity.schema->file_identifier.value.size()},
+                       identity.transport_profile_tag);
+  }
+  if (identity.pod) {
+    return fmt::format("{} v{} size={} alignment={}",
+                       identity.pod->canonical_name,
+                       identity.pod->version,
+                       identity.pod->object_size,
+                       identity.pod->object_alignment);
+  }
+  if (identity.scalar) {
+    constexpr std::array names{"bool",
+                               "uint8",
+                               "int8",
+                               "uint16",
+                               "int16",
+                               "uint32",
+                               "int32",
+                               "uint64",
+                               "int64",
+                               "float32",
+                               "float64",
+                               "local enum"};
+    const auto index = static_cast<std::size_t>(identity.scalar->kind);
+    if (index < names.size()) {
+      return std::string{names[index]};
+    }
+  }
+  return identity.kind == PayloadIdentityKind::kTensor ? std::string{"Tensor"}
+                                                       : std::string{"unknown payload"};
+}
+
+[[nodiscard]] std::string_view graph_operator_port_type_mismatch_reason(
+    const PortStorage& port, PortDirection direction, const PayloadIdentityRecord& payload_identity,
+    const void* payload_local_type_token, const std::type_info* payload_local_type_info) {
+  // Local enums retain their exact local-token requirement, including when RTTI is supplied.
+  if (payload_local_type_token == nullptr &&
+      ((payload_identity.scalar &&
+        payload_identity.scalar->kind == ScalarIdentityKind::kLocalEnum) ||
+       (port.record.payload_identity.scalar &&
+        port.record.payload_identity.scalar->kind == ScalarIdentityKind::kLocalEnum))) {
+    return "process-local enums require typed C++ local Graph authoring";
+  }
+  if (port.record.direction != direction) {
+    return "port direction differs";
+  }
+  if (!payload_identity_exactly_equal(port.record.payload_identity, payload_identity)) {
+    return "semantic payload identity differs";
+  }
+  // Tensor and admitted arithmetic scalars are closed SDK types. When exact native resolution
+  // is requested, schema/POD types need a matching token or RTTI witness before a typed cast.
+  // The legacy erased overload retains its semantic-only authoring behavior.
+  const bool canonical_builtin =
+      payload_identity.kind == PayloadIdentityKind::kTensor ||
+      (payload_identity.kind == PayloadIdentityKind::kScalar && payload_identity.scalar &&
+       payload_identity.scalar->kind != ScalarIdentityKind::kLocalEnum);
+  const bool exact_requested =
+      payload_local_type_token != nullptr || payload_local_type_info != nullptr;
+  const bool same_token =
+      payload_local_type_token != nullptr && port.local_type_token == payload_local_type_token;
+  const bool rtti_eligible = payload_identity.kind == PayloadIdentityKind::kSchema ||
+                             payload_identity.kind == PayloadIdentityKind::kPod;
+  // Compare type_info values, never their addresses or diagnostic names. This follows the
+  // existing Core parameter-type contract for ODR-conforming types across compatible DSOs.
+  const bool same_rtti = !same_token && rtti_eligible && payload_local_type_info != nullptr &&
+                         port.local_type_info != nullptr &&
+                         *payload_local_type_info == *port.local_type_info;
+  if (exact_requested && !canonical_builtin && !same_token && !same_rtti) {
+    return "native payload type differs or exact native proof is unavailable";
+  }
+  return {};
+}
+
+[[nodiscard]] std::span<const std::string> partition_owner_path(const GraphState& state,
+                                                                const PartitionRecord& partition) {
+  const auto owner =
+      std::ranges::find(state.embedded_graph_records_, partition.graph, &GraphRecord::id);
+  if (owner == state.embedded_graph_records_.end())
+    return {};
+  const auto& path = owner->path;
+  if (!path)
+    return {};
+  return path->segments();
+}
+
+// Bound each field independently and keep percent-encoded bytes intact when truncating.
+[[nodiscard]] bool append_partition_context(std::string& output, std::string_view segment) {
+  std::string encoded;
+  append_percent_encoded_uri_component(encoded, segment);
+  const std::size_t remaining = kMaximumPartitionContextFieldBytes - output.size();
+  if (encoded.size() <= remaining) {
+    output.append(encoded);
+    return true;
+  }
+  std::size_t count = remaining;
+  const auto escape = encoded.rfind('%', count);
+  if (escape != std::string::npos && escape + 3U > count)
+    count = escape;
+  output.append(encoded, 0U, count);
+  output.append("...");
+  return false;
+}
+
+[[nodiscard]] Error internal_partition_graph_error(const EmbeddedGraphStorage& embedded) {
+  const auto& state = *embedded.state;
+  const auto declaration = std::ranges::min_element(
+      state.partitions_, [&](const PartitionRecord& lhs, const PartitionRecord& rhs) {
+        const auto lhs_path = partition_owner_path(state, lhs);
+        const auto rhs_path = partition_owner_path(state, rhs);
+        if (std::ranges::equal(lhs_path, rhs_path))
+          return lhs.name < rhs.name;
+        return std::lexicographical_compare(
+            lhs_path.begin(), lhs_path.end(), rhs_path.begin(), rhs_path.end());
+      });
+  std::string owner;
+  const auto append_path = [&](std::span<const std::string> segments) {
+    for (const auto& segment : segments) {
+      if (!owner.empty()) {
+        if (owner.size() == kMaximumPartitionContextFieldBytes) {
+          owner.append("...");
+          return false;
+        }
+        owner.push_back('/');
+      }
+      if (!append_partition_context(owner, segment))
+        return false;
+    }
+    return true;
+  };
+  if (append_path(embedded.path.segments()))
+    static_cast<void>(append_path(partition_owner_path(state, *declaration)));
+  std::string name;
+  static_cast<void>(append_partition_context(name, declaration->name));
+  return Error{
+      ErrorCode::kInvalidArgument,
+      "GRAPH_PARTITION_INTERNAL_DECLARATION (owner=" + owner + ", partition=" + name + ")"};
 }
 
 [[nodiscard]] Error tensor_field_graph_error(ErrorCode code, std::string_view token,
@@ -527,9 +991,8 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(
     HOLOSCAN_GRAPH_ENUM_CASE(RegionConstraintKind::kStaticTopology)
         HOLOSCAN_GRAPH_ENUM_CASE(RegionConstraintKind::kBoundedMemory)
             HOLOSCAN_GRAPH_ENUM_CASE(RegionConstraintKind::kDeviceCompatibleOperators)
-                HOLOSCAN_GRAPH_ENUM_CASE(RegionConstraintKind::kLatencyBudget))
-HOLOSCAN_GRAPH_CLOSED_ENUM(OptimizationHint,
-                           HOLOSCAN_GRAPH_ENUM_CASE(OptimizationHint::kCudaGraphFusion))
+                HOLOSCAN_GRAPH_ENUM_CASE(RegionConstraintKind::kLatencyBudget)
+                    HOLOSCAN_GRAPH_ENUM_CASE(RegionConstraintKind::kCudaGraph))
 HOLOSCAN_GRAPH_CLOSED_ENUM(
     LifecycleStage, HOLOSCAN_GRAPH_ENUM_CASE(LifecycleStage::kConfigure)
                         HOLOSCAN_GRAPH_ENUM_CASE(LifecycleStage::kDiscover)
@@ -679,17 +1142,11 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(
 }
 
 [[nodiscard]] expected<void, Error> validate_schema(const SchemaIdentityRecord& schema) {
-  auto name = validate_name(schema.canonical_name, "GRAPH_SCHEMA_NAME_INVALID");
-  if (!name)
-    return name;
-  if (schema.version == 0U) {
-    return make_unexpected(
-        graph_error(ErrorCode::kInvalidArgument, "GRAPH_SCHEMA_VERSION_INVALID"));
+  if (!valid_schema_name(schema.canonical_name)) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_SCHEMA_NAME_INVALID"));
   }
-  if (std::all_of(schema.schema_sha256.begin(), schema.schema_sha256.end(), [](std::byte value) {
-        return value == std::byte{};
-      })) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_SCHEMA_DIGEST_INVALID"));
+  if (!valid_schema_identity(schema)) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_SCHEMA_FAMILY_INVALID"));
   }
   return {};
 }
@@ -733,16 +1190,25 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_PAYLOAD_IDENTITY_ENUM_INVALID"));
   }
   switch (identity.kind) {
-    case PayloadIdentityKind::kScalar:
-      if (!identity.scalar || !closed_enum(identity.scalar->kind) || identity.schema ||
-          identity.pod) {
+    case PayloadIdentityKind::kScalar: {
+      const bool valid_native_size =
+          identity.scalar && (identity.scalar->kind == ScalarIdentityKind::kLocalEnum
+                                  ? identity.scalar->native_object_size == 1U ||
+                                        identity.scalar->native_object_size == 2U ||
+                                        identity.scalar->native_object_size == 4U ||
+                                        identity.scalar->native_object_size == 8U
+                                  : identity.scalar->native_object_size == 0U);
+      if (identity.transport_profile_tag != 0U || !identity.scalar ||
+          !closed_enum(identity.scalar->kind) || identity.schema || identity.pod ||
+          !valid_native_size) {
         return make_unexpected(
             graph_error(ErrorCode::kInvalidArgument, "GRAPH_PAYLOAD_IDENTITY_INVALID"));
       }
       break;
+    }
     case PayloadIdentityKind::kTensor:
-      if (identity.scalar || identity.schema || identity.pod ||
-          identity.payload_kind != PayloadKind::kDescriptorBacked) {
+      if (identity.transport_profile_tag != 0U || identity.scalar || identity.schema ||
+          identity.pod || identity.payload_kind != PayloadKind::kDescriptorBacked) {
         return make_unexpected(
             graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_IDENTITY_INVALID"));
       }
@@ -750,15 +1216,23 @@ HOLOSCAN_GRAPH_CLOSED_ENUM(
     case PayloadIdentityKind::kSchema: {
       const bool supported_schema_payload =
           identity.payload_kind == PayloadKind::kSerializedBytes ||
-          identity.payload_kind == PayloadKind::kDescriptorBacked;
+          identity.payload_kind == PayloadKind::kDescriptorBacked ||
+          (identity.payload_kind == PayloadKind::kInlineTyped &&
+           is_py_object_payload_identity(identity));
       if (identity.scalar || !identity.schema || identity.pod || !supported_schema_payload) {
         return make_unexpected(
             graph_error(ErrorCode::kInvalidArgument, "GRAPH_SCHEMA_IDENTITY_INVALID"));
       }
+      if ((identity.payload_kind == PayloadKind::kDescriptorBacked) !=
+          (identity.transport_profile_tag != 0U)) {
+        return make_unexpected(
+            graph_error(ErrorCode::kInvalidArgument, "GRAPH_SCHEMA_PROFILE_INVALID"));
+      }
       return validate_schema(*identity.schema);
     }
     case PayloadIdentityKind::kPod:
-      if (identity.scalar || identity.schema || !identity.pod) {
+      if (identity.transport_profile_tag != 0U || identity.scalar || identity.schema ||
+          !identity.pod) {
         return make_unexpected(
             graph_error(ErrorCode::kInvalidArgument, "GRAPH_POD_IDENTITY_INVALID"));
       }
@@ -855,12 +1329,7 @@ void record_pod_identity(GraphState& state, const PayloadIdentityRecord& identit
     const std::optional<SchemaIdentity>& source) {
   if (!source)
     return std::nullopt;
-  return SchemaIdentityRecord{
-      .canonical_name = std::string(source->canonical_name),
-      .version = source->version,
-      .schema_sha256 = source->schema_sha256,
-      .id = source->id,
-  };
+  return make_schema_identity_record(*source);
 }
 
 [[nodiscard]] ConnectionOptionsRecord copy_connection_options(const ConnectionOptions& source) {
@@ -909,6 +1378,26 @@ void record_pod_identity(GraphState& state, const PayloadIdentityRecord& identit
   return &port;
 }
 
+[[nodiscard]] bool region_handle_valid(const GraphState& state, RegionId id,
+                                       const void* handle_identity) noexcept {
+  if (!id || id.value > state.regions_.size() || id.value > state.region_handle_identities_.size())
+    return false;
+  const std::size_t index = static_cast<std::size_t>(id.value - 1U);
+  return state.regions_[index].id == id &&
+         state.region_handle_identities_[index].get() == handle_identity;
+}
+
+[[nodiscard]] bool partition_handle_valid(const GraphState& state, PartitionId id,
+                                          const void* handle_identity) noexcept {
+  if (!id || id.value > state.partitions_.size() ||
+      id.value > state.partition_handle_identities_.size()) {
+    return false;
+  }
+  const std::size_t index = static_cast<std::size_t>(id.value - 1U);
+  return state.partitions_[index].id == id &&
+         state.partition_handle_identities_[index].get() == handle_identity;
+}
+
 [[nodiscard]] EdgeRecord* find_edge(GraphState& state, EdgeId id) noexcept {
   if (!id || id.value > state.edges_.size())
     return nullptr;
@@ -941,13 +1430,13 @@ void record_pod_identity(GraphState& state, const PayloadIdentityRecord& identit
   } catch (const RuntimeError& error) {
     graph_log_noexcept(
         [&] { HOLOSCAN_LOG_DEBUG("Operator setup RuntimeError detail: {}", error.what()); });
-    return make_unexpected(Error{error.code(), "GRAPH_OPERATOR_SETUP_RUNTIME_ERROR"});
+    return make_unexpected(graph_factory_error("GRAPH_OPERATOR_SETUP_RUNTIME_ERROR"));
   } catch (const std::exception& exception) {
     graph_log_noexcept(
         [&] { HOLOSCAN_LOG_DEBUG("Operator setup exception detail: {}", exception.what()); });
-    return make_unexpected(Error{ErrorCode::kFailure, "GRAPH_OPERATOR_SETUP_FAILED"});
+    return make_unexpected(graph_factory_error("GRAPH_OPERATOR_SETUP_FAILED"));
   } catch (...) {
-    return make_unexpected(graph_error(ErrorCode::kFailure, "GRAPH_OPERATOR_SETUP_FAILED"));
+    return make_unexpected(graph_factory_error("GRAPH_OPERATOR_SETUP_FAILED"));
   }
   if (OperatorSpecCompilerAccess::declaration_error(spec).code != ErrorCode::kSuccess) {
     return make_unexpected(OperatorSpecCompilerAccess::declaration_error(spec));
@@ -1027,6 +1516,9 @@ expected<void, Error> GraphState::prepare_mutation() {
       } else {
         failure = graph_error(ErrorCode::kFailure, "GRAPH_COMPOSE_FAILED");
         failure_cause = std::move(cause);
+        failure.message += fmt::format(": graph={} caused by {}",
+                                       diagnostic_display_text(graph_record_.name),
+                                       runtime_error_message(*failure_cause));
       }
     });
   } catch (const std::exception& exception) {
@@ -1034,7 +1526,8 @@ expected<void, Error> GraphState::prepare_mutation() {
       failure_context = bounded_exception_context(exception.what());
       graph_log_noexcept(
           [&] { HOLOSCAN_LOG_DEBUG("Graph compose exception detail: {}", failure_context); });
-      failure = graph_error(ErrorCode::kFailure, "GRAPH_COMPOSE_EXCEPTION");
+      failure = graph_factory_error("GRAPH_COMPOSE_EXCEPTION");
+      failure.message += "; graph=" + diagnostic_display_text(graph_record_.name);
     });
   } catch (...) {
     capture_failure(
@@ -1055,8 +1548,9 @@ expected<void, Error> GraphState::prepare_mutation() {
     clear_failed_draft();
     composition_cv_.notify_all();
     graph_log_noexcept([&] {
-      HOLOSCAN_LOG_ERROR("Graph composition failed: {}",
-                         runtime_error_message(composition_diagnostic_->primary));
+      HOLOSCAN_LOG_AUTOMATIC_ERROR(
+          "Graph composition failed: {}",
+          diagnostic_display_text(runtime_error_message(composition_diagnostic_->primary), 16384U));
     });
     return make_unexpected(composition_diagnostic_->primary);
   }
@@ -1103,11 +1597,14 @@ void GraphState::clear_failed_draft() noexcept {
   ports_.clear();
   port_by_declaration_.clear();
   edges_.clear();
+  edge_handle_identities_.clear();
   interface_bindings_.clear();
   external_topics_.clear();
   readiness_sources_.clear();
   regions_.clear();
+  region_handle_identities_.clear();
   partitions_.clear();
+  partition_handle_identities_.clear();
   automatic_partition_remaining_ = false;
   clocks_.clear();
   clock_imports_.clear();
@@ -1140,6 +1637,8 @@ namespace {
          inline_policy == options.max_inline_bytes.has_value();
 }
 
+// Field selector, schema, allocation, and transfer checks jointly define one authored field.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<void, Error> validate_one_tensor_field_metadata(
     const OperatorSpecCompilerAccess::PortMetadata& metadata,
     const AuthoredTensorFieldConfiguration& authored, std::vector<std::uint16_t>& field_ids,
@@ -1197,6 +1696,14 @@ namespace {
     return make_unexpected(tensor_field_graph_error(
         ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID", field));
   }
+  if (field.tensor_memory_kind_expression &&
+      (metadata.direction != PortDirection::kOutput || !field.tensor_contract ||
+       field.tensor_contract->storage != TensorOutputStorage::kRuntimePool ||
+       field.tensor_contract->representation.memory_kind ||
+       (field.tensor_layout && field.tensor_layout->memory_kind))) {
+    return make_unexpected(tensor_field_graph_error(
+        ErrorCode::kInvalidArgument, "GRAPH_TENSOR_MEMORY_KIND_DERIVATION_INVALID", field));
+  }
   return {};
 }
 
@@ -1211,13 +1718,15 @@ namespace {
   }
   if (metadata.descriptor_tensor_field_count > 1U &&
       (metadata.tensor_layout || metadata.memory_conversion || metadata.tensor_allocation ||
-       metadata.payload_options || metadata.tensor_byte_span_expression)) {
+       metadata.payload_options || metadata.tensor_byte_span_expression ||
+       metadata.tensor_memory_kind_expression)) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_FIELD_SCOPE_REQUIRED"));
   }
   if (metadata.descriptor_tensor_field_count == 1U && !metadata.tensor_fields.empty() &&
       (metadata.tensor_layout || metadata.memory_conversion || metadata.tensor_allocation ||
-       metadata.payload_options || metadata.tensor_byte_span_expression)) {
+       metadata.payload_options || metadata.tensor_byte_span_expression ||
+       metadata.tensor_memory_kind_expression)) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_FIELD_SCOPE_CONFLICT"));
   }
@@ -1343,13 +1852,22 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
   if (!identity)
     return identity;
   const bool schema = metadata.payload_identity.kind == PayloadIdentityKind::kSchema;
-  if (schema != (metadata.serialized_payload_capacity_bytes != 0U) ||
-      (schema &&
-       (metadata.runtime_type_ops == nullptr ||
-        (metadata.runtime_type_ops->codec_family != RuntimePayloadCodecFamily::kGeneratedSchema &&
-         metadata.runtime_type_ops->codec_family !=
-             RuntimePayloadCodecFamily::kDescriptorTensorSchema) ||
-        metadata.runtime_type_ops->wire_capacity != metadata.serialized_payload_capacity_bytes))) {
+  const bool py_object = is_py_object_payload_identity(metadata.payload_identity);
+  const bool schema_capacity_valid =
+      (schema && !py_object) == (metadata.serialized_payload_capacity_bytes != 0U);
+  const bool schema_runtime_valid =
+      !schema ||
+      (metadata.runtime_type_ops != nullptr &&
+       ((py_object &&
+         metadata.runtime_type_ops->codec_family ==
+             RuntimePayloadCodecFamily::kProcessLocalObject &&
+         metadata.runtime_type_ops->wire_capacity == 0U) ||
+        (!py_object &&
+         (metadata.runtime_type_ops->codec_family == RuntimePayloadCodecFamily::kGeneratedSchema ||
+          metadata.runtime_type_ops->codec_family ==
+              RuntimePayloadCodecFamily::kDescriptorTensorSchema) &&
+         metadata.runtime_type_ops->wire_capacity == metadata.serialized_payload_capacity_bytes)));
+  if (!schema_capacity_valid || !schema_runtime_valid) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_SCHEMA_CAPACITY_INVALID"));
   }
@@ -1387,6 +1905,16 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_DERIVATION_INVALID"));
   }
+  if (metadata.tensor_memory_kind_expression &&
+      (metadata.direction != PortDirection::kOutput || !metadata.tensor ||
+       metadata.payload_identity.kind != PayloadIdentityKind::kTensor ||
+       !metadata.tensor_contract ||
+       metadata.tensor_contract->storage != TensorOutputStorage::kRuntimePool ||
+       metadata.tensor_contract->representation.memory_kind ||
+       (metadata.tensor_layout && metadata.tensor_layout->memory_kind))) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_MEMORY_KIND_DERIVATION_INVALID"));
+  }
   if (metadata.payload_options) {
     auto options = validate_payload_options(
         *metadata.payload_options, metadata.payload_identity, metadata.tensor_layout);
@@ -1400,7 +1928,7 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
                                 const std::optional<SchemaIdentityRecord>& rhs) {
   if (lhs.has_value() != rhs.has_value())
     return false;
-  return !lhs || schema_identity_exactly_equal(*lhs, *rhs);
+  return !lhs || schema_identity_equal(*lhs, *rhs);
 }
 
 [[nodiscard]] bool payload_options_equal(const std::optional<PayloadOptionsRecord>& lhs,
@@ -1413,26 +1941,32 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
                   lhs->interface_tensor_emit_policy == rhs->interface_tensor_emit_policy);
 }
 
+[[nodiscard]] bool supports_generic_output_loan(
+    const OperatorSpecCompilerAccess::PortMetadata& metadata) noexcept {
+  return metadata.direction == PortDirection::kOutput && metadata.runtime_type_ops != nullptr &&
+         metadata.runtime_type_ops->generic_loan_supported &&
+         (!metadata.payload_identity.scalar ||
+          metadata.payload_identity.scalar->kind != ScalarIdentityKind::kLocalEnum);
+}
+
 [[nodiscard]] bool port_setup_equal(const PortStorage& existing,
                                     const OperatorSpecCompilerAccess::PortMetadata& candidate,
                                     std::optional<GraphPortId> candidate_follows_input) {
   const auto candidate_setup = setup_port_configuration(candidate, candidate_follows_input);
   const auto& setup = existing.record.setup;
   return existing.record.direction == candidate.direction &&
-         existing.record.name == candidate.name &&
+         existing.record.optional == candidate.optional && existing.record.name == candidate.name &&
          existing.local_type_token == candidate.local_type_token &&
+         (existing.local_type_info == candidate.local_type_info ||
+          (existing.local_type_info != nullptr && candidate.local_type_info != nullptr &&
+           *existing.local_type_info == *candidate.local_type_info)) &&
          payload_identity_exactly_equal(existing.record.payload_identity,
                                         candidate.payload_identity) &&
          existing.record.serialized_payload_capacity_bytes ==
              candidate.serialized_payload_capacity_bytes &&
-         existing.record.generic_loan_supported ==
-             (candidate.direction == PortDirection::kOutput &&
-              candidate.runtime_type_ops != nullptr &&
-              candidate.runtime_type_ops->generic_loan_supported) &&
+         existing.record.generic_loan_supported == supports_generic_output_loan(candidate) &&
          existing.record.generic_loan_slot_size_bytes ==
-             (candidate.direction == PortDirection::kOutput &&
-                      candidate.runtime_type_ops != nullptr &&
-                      candidate.runtime_type_ops->generic_loan_supported
+             (supports_generic_output_loan(candidate)
                   ? static_cast<std::uint64_t>(
                         candidate.runtime_type_ops->generic_loan_slot_size_bytes)
                   : 0U) &&
@@ -1459,7 +1993,9 @@ validate_port_metadata(  // NOLINT(readability-function-cognitive-complexity)
            setup.tensor_allocation->max_byte_span ==
                candidate_setup.tensor_allocation->max_byte_span)) &&
          setup.tensor_byte_span_expression == candidate_setup.tensor_byte_span_expression &&
+         setup.tensor_memory_kind_expression == candidate_setup.tensor_memory_kind_expression &&
          payload_options_equal(setup.payload_options, candidate_setup.payload_options) &&
+         setup.accepts_projected_tensor == candidate_setup.accepts_projected_tensor &&
          tensor_field_configuration_equal(setup.tensor_fields, candidate_setup.tensor_fields);
 }
 
@@ -1588,7 +2124,7 @@ expected<OperatorRegistration, Error>
 graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
     const std::shared_ptr<GraphState>& state, std::string_view name,
     std::shared_ptr<OperatorFactoryBase> factory, std::unique_ptr<OperatorBase> prototype,
-    const void* operator_type_token) {
+    const void* operator_type_token, const InitialOperatorParameters* initial_params) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return make_unexpected(std::move(prepared.error()));
@@ -1603,8 +2139,11 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
 
   OperatorSpec spec;
   auto setup = run_setup(*prototype, spec);
-  if (!setup)
+  if (!setup) {
+    setup.error().message +=
+        fmt::format("; operator={} callback=setup", diagnostic_display_text(name));
     return make_unexpected(std::move(setup.error()));
+  }
   std::vector<std::optional<std::size_t>> follows_port_indices;
   follows_port_indices.reserve(OperatorSpecCompilerAccess::port_count(spec));
   for (std::size_t index = 0; index < OperatorSpecCompilerAccess::port_count(spec); ++index) {
@@ -1643,7 +2182,7 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
     return make_unexpected(
         graph_error(ErrorCode::kDuplicateName, "GRAPH_LIFECYCLE_CALLBACK_DUPLICATE"));
   }
-  const std::lock_guard lock(state->mutex_);
+  std::unique_lock lock(state->mutex_);
   if (state->vertex_names_.contains(std::string(name))) {
     return make_unexpected(graph_error(ErrorCode::kDuplicateName, "GRAPH_OPERATOR_NAME_DUPLICATE"));
   }
@@ -1692,11 +2231,23 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
   GraphMutationRollback rollback(*state);
   const std::size_t operator_index = state->operators_.size();
   const VertexId vertex = state->next_vertex_id();
+  const OperatorHostMetadata host_metadata = prototype->host_metadata();
+  if (host_metadata.kind != OperatorHostKind::kNative &&
+      host_metadata.kind != OperatorHostKind::kForeign) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_OPERATOR_HOST_METADATA_INVALID"));
+  }
+  if (!host_metadata.serialization_domain.empty() &&
+      !valid_operator_serialization_domain(host_metadata.serialization_domain)) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_OPERATOR_HOST_METADATA_INVALID"));
+  }
   storage = OperatorStorage{
       .name = std::string(name),
+      .handle_identity = std::make_shared<std::byte>(),
       .operator_type_token = operator_type_token,
       .factory = std::move(factory),
-      .prototype = std::move(prototype),
+      .prototype = std::shared_ptr<OperatorBase>(std::move(prototype)),
       .vertex = vertex,
   };
   storage.ports.reserve(OperatorSpecCompilerAccess::port_count(spec));
@@ -1711,6 +2262,9 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
       .graph = state->graph_record_.id,
       .kind = VertexKind::kOperator,
       .name = std::string(name),
+      .operator_host = host_metadata.kind,
+      .serialization_domain = std::string(host_metadata.serialization_domain),
+      .cuda_graph_capture_eligible = OperatorSpecCompilerAccess::cuda_graph_capture_eligible(spec),
   });
   GraphMutationRollback::checkpoint(*state);
   state->vertex_names_.emplace(name);
@@ -1729,27 +2283,25 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
                 .owner = vertex,
                 .owner_kind = PortOwnerKind::kOperator,
                 .direction = metadata.direction,
+                .optional = metadata.optional,
                 .name = std::string(metadata.name),
                 .payload_identity = metadata.payload_identity,
                 .serialized_payload_capacity_bytes = metadata.serialized_payload_capacity_bytes,
-                .generic_loan_supported = metadata.direction == PortDirection::kOutput &&
-                                          metadata.runtime_type_ops != nullptr &&
-                                          metadata.runtime_type_ops->generic_loan_supported,
+                .generic_loan_supported = supports_generic_output_loan(metadata),
                 .generic_loan_slot_size_bytes =
-                    metadata.direction == PortDirection::kOutput &&
-                            metadata.runtime_type_ops != nullptr &&
-                            metadata.runtime_type_ops->generic_loan_supported
+                    supports_generic_output_loan(metadata)
                         ? static_cast<std::uint64_t>(
                               metadata.runtime_type_ops->generic_loan_slot_size_bytes)
                         : 0U,
                 .descriptor_tensor_field_count = metadata.descriptor_tensor_field_count,
                 .setup = setup_port_configuration(metadata, follows_input),
             },
+        .handle_identity = std::make_shared<std::byte>(),
         .declaration = metadata.declaration,
         .local_type_token = metadata.local_type_token,
         .operator_index = operator_index,
         .setup_tensor_allocation = metadata.tensor_allocation,
-        .schema_package = metadata.schema_package,
+        .local_type_info = metadata.local_type_info,
     };
     state->ports_.push_back(std::move(port));
     GraphMutationRollback::checkpoint(*state);
@@ -1836,50 +2388,280 @@ graph_register_operator(  // NOLINT(readability-function-cognitive-complexity)
   state->operators_.push_back(std::move(storage));
   state->vertex_adjacency_.emplace_back();
   state->cycle_visit_marks_.push_back(0U);
+  if (initial_params != nullptr) {
+    lock.unlock();
+    auto initialized = [&]() {
+      try {
+        return graph_set_operator_params(state,
+                                         operator_index,
+                                         initial_params->value,
+                                         operator_type_token,
+                                         state->operators_[operator_index].handle_identity.get(),
+                                         initial_params->local_type_token,
+                                         initial_params->schema,
+                                         nullptr);
+      } catch (...) {
+        lock.lock();
+        throw;
+      }
+    }();
+    lock.lock();
+    if (!initialized) {
+      return make_unexpected(std::move(initialized.error()));
+    }
+  }
   state->mark_mutation();
   GraphMutationRollback::checkpoint(*state);
   rollback.commit();
   graph_log_noexcept([&] { HOLOSCAN_LOG_TRACE("Registered Graph operator '{}'", name); });
-  return OperatorRegistration{.index = operator_index};
+  return OperatorRegistration{
+      .index = operator_index,
+      .handle_identity = state->operators_[operator_index].handle_identity,
+  };
 }
 
 const OperatorBase* graph_operator_prototype(const std::shared_ptr<GraphState>& state,
-                                             std::size_t index,
-                                             const void* operator_type_token) noexcept {
+                                             std::size_t index, const void* operator_type_token,
+                                             const void* handle_identity) noexcept {
   const std::lock_guard lock(state->mutex_);
   if (index >= state->operators_.size())
     return nullptr;
   const auto& op = state->operators_[index];
-  if (op.operator_type_token != operator_type_token)
+  if (op.operator_type_token != operator_type_token ||
+      op.handle_identity.get() != handle_identity) {
     return nullptr;
+  }
   return op.prototype.get();
 }
 
-bool graph_operator_valid(const std::shared_ptr<GraphState>& state, std::size_t index,
-                          const void* operator_type_token) noexcept {
-  return graph_operator_prototype(state, index, operator_type_token) != nullptr;
+const void* graph_operator_port_declaration(const std::shared_ptr<GraphState>& state,
+                                            std::size_t index, const void* handle_identity,
+                                            std::string_view name) noexcept {
+  if (!state)
+    return nullptr;
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->operators_.size() ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
+    return nullptr;
+  }
+  const auto& op = state->operators_[index];
+  for (const GraphPortId port_id : op.ports) {
+    const PortStorage* port = find_port(*state, port_id);
+    if (port != nullptr && port->record.name == name)
+      return port->declaration;
+  }
+  return nullptr;
 }
 
-std::string_view graph_operator_name(const std::shared_ptr<GraphState>& state,
-                                     std::size_t index) noexcept {
+expected<std::vector<PortRecord>, Error> graph_operator_ports(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* operator_type_token,
+    const void* handle_identity) {
+  if (!state) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
   const std::lock_guard lock(state->mutex_);
-  if (index >= state->operators_.size())
+  if (index >= state->operators_.size() ||
+      state->operators_[index].operator_type_token != operator_type_token ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  std::vector<PortRecord> result;
+  result.reserve(state->operators_[index].ports.size());
+  for (const GraphPortId port_id : state->operators_[index].ports) {
+    const PortStorage* port = find_port(*state, port_id);
+    if (port == nullptr) {
+      return make_unexpected(graph_error(ErrorCode::kFailure, "GRAPH_PORT_RECORD_MISSING"));
+    }
+    result.push_back(port->record);
+  }
+  return result;
+}
+
+expected<const void*, Error> graph_resolve_operator_port(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* operator_type_token,
+    const void* handle_identity, std::string_view name, PortDirection direction,
+    const PayloadIdentityRecord& payload_identity) {
+  return graph_resolve_operator_port(state,
+                                     index,
+                                     operator_type_token,
+                                     handle_identity,
+                                     name,
+                                     direction,
+                                     payload_identity,
+                                     nullptr);
+}
+
+expected<const void*, Error> graph_resolve_operator_port(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* operator_type_token,
+    const void* handle_identity, std::string_view name, PortDirection direction,
+    const PayloadIdentityRecord& payload_identity, const void* payload_local_type_token) {
+  return graph_resolve_operator_port(state,
+                                     index,
+                                     operator_type_token,
+                                     handle_identity,
+                                     name,
+                                     direction,
+                                     payload_identity,
+                                     payload_local_type_token,
+                                     nullptr);
+}
+
+expected<const void*, Error> graph_resolve_operator_port(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* operator_type_token,
+    const void* handle_identity, std::string_view name, PortDirection direction,
+    const PayloadIdentityRecord& payload_identity, const void* payload_local_type_token,
+    const std::type_info* payload_local_type_info) {
+  if (!state) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->operators_.size() ||
+      state->operators_[index].operator_type_token != operator_type_token ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const auto port_error = [&](ErrorCode code,
+                              std::string_view token,
+                              std::string_view reason,
+                              const PortStorage* port = nullptr) {
+    Error error{code};
+    try {
+      error.message = fmt::format(
+          "{}; operator='{}' port='{}'; {}; requested={} {} native='{}'",
+          token,
+          state->operators_[index].name,
+          name,
+          reason,
+          direction == PortDirection::kInput ? "input" : "output",
+          graph_payload_identity_name(payload_identity),
+          payload_local_type_info == nullptr ? "unavailable" : payload_local_type_info->name());
+      if (port != nullptr) {
+        error.message += fmt::format(
+            "; declared={} {} native='{}'",
+            port->record.direction == PortDirection::kInput ? "input" : "output",
+            graph_payload_identity_name(port->record.payload_identity),
+            port->local_type_info == nullptr ? "unavailable" : port->local_type_info->name());
+      }
+    } catch (...) {
+      // Preserve rejection even when supplemental cold diagnostics cannot be allocated.
+      error.message.clear();
+    }
+    return make_unexpected(std::move(error));
+  };
+  for (const GraphPortId port_id : state->operators_[index].ports) {
+    const PortStorage* port = find_port(*state, port_id);
+    if (port == nullptr || port->record.name != name) {
+      continue;
+    }
+    const auto mismatch_reason = graph_operator_port_type_mismatch_reason(
+        *port, direction, payload_identity, payload_local_type_token, payload_local_type_info);
+    if (!mismatch_reason.empty()) {
+      return port_error(
+          ErrorCode::kIncompatible, "GRAPH_PORT_TYPE_MISMATCH", mismatch_reason, port);
+    }
+    if (port->declaration == nullptr) {
+      return port_error(ErrorCode::kInvalidArgument,
+                        "GRAPH_PORT_DECLARATION_INVALID",
+                        "port declaration is unavailable",
+                        port);
+    }
+    return port->declaration;
+  }
+  return port_error(ErrorCode::kNotFound, "GRAPH_PORT_NOT_FOUND", "named port does not exist");
+}
+
+expected<PortRecord, Error> graph_operator_port_record(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* operator_type_token,
+    const void* handle_identity, std::string_view name, PortDirection direction) {
+  if (!state) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->operators_.size() ||
+      state->operators_[index].operator_type_token != operator_type_token ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  for (const GraphPortId id : state->operators_[index].ports) {
+    const auto* port = find_port(*state, id);
+    if (port != nullptr && port->record.name == name) {
+      if (port->record.direction != direction) {
+        return make_unexpected(graph_error(ErrorCode::kIncompatible, "GRAPH_PORT_TYPE_MISMATCH"));
+      }
+      return port->record;
+    }
+  }
+  return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_PORT_NOT_FOUND"));
+}
+
+bool graph_operator_valid(const std::shared_ptr<GraphState>& state, std::size_t index,
+                          const void* operator_type_token, const void* handle_identity) noexcept {
+  return graph_operator_prototype(state, index, operator_type_token, handle_identity) != nullptr;
+}
+
+std::string_view graph_operator_name(const std::shared_ptr<GraphState>& state, std::size_t index,
+                                     const void* handle_identity) noexcept {
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->operators_.size() ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
     return {};
+  }
   return state->operators_[index].name;
 }
 
-OperatorRef graph_operator_ref(const std::shared_ptr<GraphState>& state,
-                               std::size_t index) noexcept {
+expected<std::string, Error> graph_operator_path(const std::shared_ptr<GraphState>& state,
+                                                 std::size_t index, const void* handle_identity) {
+  if (!state) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
   const std::lock_guard lock(state->mutex_);
-  if (index >= state->operators_.size())
+  if (state->owner_ == nullptr || index >= state->operators_.size() ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const VertexId vertex_id = state->operators_[index].vertex;
+  const auto vertex = std::ranges::find(state->vertices_, vertex_id, &VertexRecord::id);
+  if (vertex == state->vertices_.end()) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  return authored_operator_path(*state, *vertex);
+}
+
+expected<OperatorRegistration, Error> graph_find_operator(const std::shared_ptr<GraphState>& state,
+                                                          std::string_view name) noexcept {
+  if (!state) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const std::lock_guard lock(state->mutex_);
+  if (state->owner_ == nullptr) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const auto found = std::ranges::find(state->operators_, name, &OperatorStorage::name);
+  if (found == state->operators_.end()) {
+    return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_OPERATOR_NOT_FOUND"));
+  }
+  return OperatorRegistration{
+      .index = static_cast<std::size_t>(std::distance(state->operators_.begin(), found)),
+      .handle_identity = found->handle_identity,
+  };
+}
+
+OperatorRef graph_operator_ref(const std::shared_ptr<GraphState>& state, std::size_t index,
+                               const void* handle_identity) noexcept {
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->operators_.size() ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
     return {};
+  }
   return state->operators_[index].plan_ref;
 }
 
 expected<GraphOperatorLocator, Error> graph_operator_locator(
-    const std::shared_ptr<GraphState>& state, std::size_t index) noexcept {
+    const std::shared_ptr<GraphState>& state, std::size_t index,
+    const void* handle_identity) noexcept {
   const std::lock_guard lock(state->mutex_);
-  if (index >= state->operators_.size()) {
+  if (index >= state->operators_.size() ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
   return GraphOperatorLocator{
@@ -1889,40 +2671,144 @@ expected<GraphOperatorLocator, Error> graph_operator_locator(
   };
 }
 
+expected<VertexId, Error> graph_operator_vertex(const std::shared_ptr<GraphState>& state,
+                                                std::size_t index, const void* operator_type_token,
+                                                const void* handle_identity) {
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->operators_.size() ||
+      state->operators_[index].operator_type_token != operator_type_token ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "PARAM_CONFIG_HANDLE_INVALID"));
+  }
+  return state->operators_[index].vertex;
+}
+
+expected<GraphOperatorParameterTarget, Error> graph_operator_parameter_target(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* operator_type_token,
+    const void* handle_identity) {
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->operators_.size()) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "PARAM_CONFIG_HANDLE_INVALID"));
+  }
+  const auto& op = state->operators_[index];
+  if (op.operator_type_token != operator_type_token ||
+      op.handle_identity.get() != handle_identity || !op.factory || !op.prototype || !op.vertex) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "PARAM_CONFIG_HANDLE_INVALID"));
+  }
+  const ParamTypeDescriptor& type = op.factory->parameter_type();
+  const ParamSchemaDescriptor* const schema = op.factory->parameter_schema();
+  if (type.local_type_token == nullptr || (schema != nullptr && schema->local_type != &type)) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "PARAM_CONFIG_HANDLE_INVALID"));
+  }
+  return GraphOperatorParameterTarget{
+      .vertex = op.vertex,
+      .schema = schema,
+  };
+}
+
+namespace {
+
+[[nodiscard]] bool parameter_schema_stable_equal(const ParamSchemaDescriptor* left,
+                                                 const ParamSchemaDescriptor* right) noexcept {
+  if (left == nullptr || right == nullptr) {
+    return left == right;
+  }
+  return left->stable_id == right->stable_id && left->version == right->version &&
+         left->structural_hash == right->structural_hash &&
+         left->contract_hash == right->contract_hash;
+}
+
+[[nodiscard]] bool parameter_type_compatible(
+    const void* caller_type_token, const ParamSchemaDescriptor* caller_schema,
+    const ParamTypeDescriptor& defining_type,
+    const ParamSchemaDescriptor* defining_schema) noexcept {
+  if (caller_type_token == nullptr || defining_type.local_type_token == nullptr) {
+    return false;
+  }
+  if (caller_schema == nullptr || defining_schema == nullptr) {
+    return caller_schema == nullptr && defining_schema == nullptr &&
+           caller_type_token == defining_type.local_type_token;
+  }
+  return caller_schema->local_type != nullptr &&
+         caller_schema->local_type->local_type_token == caller_type_token &&
+         parameter_schema_stable_equal(caller_schema, defining_schema);
+}
+
+}  // namespace
+
 // Parameter replacement validates a complete candidate and its port/source invariants before
 // atomically transferring ownership into the existing logical Operator identity.
 expected<void, Error>
 graph_set_operator_params(  // NOLINT(readability-function-cognitive-complexity)
     const std::shared_ptr<GraphState>& state, std::size_t index, const void* params,
-    const void* parameter_type_token) {
+    const void* expected_operator_type_token, const void* handle_identity,
+    const void* caller_parameter_type_token, const ParamSchemaDescriptor* caller_schema,
+    std::shared_ptr<const ParameterInputEvidenceState> evidence) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return make_unexpected(std::move(prepared.error()));
 
   std::shared_ptr<OperatorFactoryBase> factory;
   VertexId vertex;
-  const void* operator_type_token{};
+  const void* defining_operator_type_token{};
   {
     const std::lock_guard lock(state->mutex_);
     if (index >= state->operators_.size()) {
       return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
     }
+    if (state->operators_[index].operator_type_token != expected_operator_type_token ||
+        state->operators_[index].handle_identity.get() != handle_identity) {
+      return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+    }
     factory = state->operators_[index].factory;
     vertex = state->operators_[index].vertex;
-    operator_type_token = state->operators_[index].operator_type_token;
+    defining_operator_type_token = state->operators_[index].operator_type_token;
   }
-  auto updated_factory = factory->clone_with_params(params, parameter_type_token);
+  if (!factory) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const ParamTypeDescriptor& defining_type = factory->parameter_type();
+  const ParamSchemaDescriptor* const defining_schema = factory->parameter_schema();
+  if (defining_type.local_type_token == nullptr ||
+      (defining_schema != nullptr && defining_schema->local_type != &defining_type) ||
+      !parameter_type_compatible(
+          caller_parameter_type_token, caller_schema, defining_type, defining_schema)) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARAMETER_TYPE_MISMATCH"));
+  }
+  auto updated_factory = factory->clone_with_params(params, defining_type.local_type_token);
   if (!updated_factory) {
     return make_unexpected(std::move(updated_factory.error()));
   }
-  auto candidate = updated_factory.value()->create();
+  const ParamTypeDescriptor& updated_type = updated_factory.value()->parameter_type();
+  const ParamSchemaDescriptor* const updated_schema = updated_factory.value()->parameter_schema();
+  if (updated_type.local_type_token != defining_type.local_type_token ||
+      (updated_schema != nullptr && updated_schema->local_type != &updated_type) ||
+      !parameter_schema_stable_equal(defining_schema, updated_schema)) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARAMETER_TYPE_MISMATCH"));
+  }
+  if (evidence) {
+    if (updated_schema == nullptr || evidence->local_type_token == nullptr ||
+        evidence->schema_id != updated_schema->stable_id ||
+        evidence->schema_version != updated_schema->version ||
+        evidence->structural_hash != updated_schema->structural_hash ||
+        evidence->contract_hash != updated_schema->contract_hash) {
+      return make_unexpected(
+          graph_error(ErrorCode::kIncompatible, "GRAPH_PARAMETER_INPUT_EVIDENCE_MISMATCH"));
+    }
+    auto normalized_evidence = std::make_shared<ParameterInputEvidenceState>(*evidence);
+    normalized_evidence->local_type_token = defining_type.local_type_token;
+    evidence = std::move(normalized_evidence);
+  }
+  auto candidate = updated_factory.value()->create(nullptr);
   if (!candidate)
     return make_unexpected(std::move(candidate.error()));
   OperatorSpec spec;
   auto setup = run_setup(*candidate.value(), spec);
   if (!setup)
     return setup;
-  auto valid_lifecycle = validate_lifecycle_metadata(spec, operator_type_token);
+  auto valid_lifecycle = validate_lifecycle_metadata(spec, defining_operator_type_token);
   if (!valid_lifecycle)
     return make_unexpected(std::move(valid_lifecycle.error()));
   const OperatorFactoryBase::LifecycleHookSet lifecycle_hooks =
@@ -1934,7 +2820,9 @@ graph_set_operator_params(  // NOLINT(readability-function-cognitive-complexity)
   }
 
   const std::lock_guard lock(state->mutex_);
-  if (index >= state->operators_.size() || state->operators_[index].factory != factory) {
+  if (index >= state->operators_.size() || state->operators_[index].factory != factory ||
+      state->operators_[index].operator_type_token != expected_operator_type_token ||
+      state->operators_[index].handle_identity.get() != handle_identity) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_OPERATOR_CHANGED"));
   }
   auto& op = state->operators_[index];
@@ -1944,6 +2832,11 @@ graph_set_operator_params(  // NOLINT(readability-function-cognitive-complexity)
       });
   if (vertex_record == state->vertices_.end())
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_OPERATOR_CHANGED"));
+  if (vertex_record->cuda_graph_capture_eligible !=
+      OperatorSpecCompilerAccess::cuda_graph_capture_eligible(spec)) {
+    return make_unexpected(
+        graph_error(ErrorCode::kIncompatible, "GRAPH_PARAMETER_OPERATOR_SPEC_CHANGED"));
+  }
   if (OperatorSpecCompilerAccess::port_count(spec) != op.ports.size()) {
     return make_unexpected(
         graph_error(ErrorCode::kIncompatible, "GRAPH_PARAMETER_PORT_SHAPE_CHANGED"));
@@ -2075,15 +2968,21 @@ graph_set_operator_params(  // NOLINT(readability-function-cognitive-complexity)
           graph_error(ErrorCode::kInvalidArgument, "GRAPH_PORT_DECLARATION_DUPLICATE"));
     }
   }
+  // Constructing shared ownership may allocate its control block. Complete that fallible work
+  // before replacing declarations or factories so the publication sequence below is no-throw.
+  std::shared_ptr<OperatorBase> replacement_prototype{std::move(candidate.value())};
   using DeclarationMap = decltype(state->port_by_declaration_);
   static_assert(noexcept(std::declval<DeclarationMap&>().swap(std::declval<DeclarationMap&>())));
   static_assert(std::is_nothrow_move_assignable_v<std::shared_ptr<OperatorFactoryBase>>);
-  static_assert(std::is_nothrow_move_assignable_v<std::unique_ptr<OperatorBase>>);
+  static_assert(
+      std::is_nothrow_move_assignable_v<std::shared_ptr<const ParameterInputEvidenceState>>);
+  static_assert(std::is_nothrow_move_assignable_v<std::shared_ptr<OperatorBase>>);
   GraphMutationRollback::checkpoint(*state);
   for (std::size_t port_index = 0; port_index < op.ports.size(); ++port_index) {
     const auto metadata = OperatorSpecCompilerAccess::port(spec, port_index);
     PortStorage* existing = find_port(*state, op.ports[port_index]);
     existing->declaration = declarations[port_index];
+    existing->local_type_info = metadata.local_type_info;
     if (metadata.direction == PortDirection::kInput) {
       GraphPortOwnershipAccess::claim(*static_cast<const InputBase*>(metadata.declaration),
                                       state.get());
@@ -2094,7 +2993,8 @@ graph_set_operator_params(  // NOLINT(readability-function-cognitive-complexity)
   }
   state->port_by_declaration_.swap(replacement_map);
   op.factory = std::move(updated_factory.value());
-  op.prototype = std::move(candidate.value());
+  op.prototype = std::move(replacement_prototype);
+  op.parameter_input_evidence = std::move(evidence);
   state->mark_mutation();
   return {};
 }
@@ -2187,44 +3087,37 @@ void append_adjacency(GraphState& state, VertexId source, VertexId target) {
 [[nodiscard]] bool tensor_layouts_compatible(
     const std::optional<TensorRepresentation>& source,
     const std::optional<TensorRepresentation>& target) noexcept {
-  if (!source || !target) {
-    return true;
-  }
-  if (source->memory_kind && target->memory_kind && source->memory_kind != target->memory_kind) {
-    return false;
-  }
-  if (source->rank && target->rank && source->rank != target->rank) {
-    return false;
-  }
-  if (source->strides && target->strides && source->strides != target->strides) {
-    return false;
-  }
-  return !source->dtype || !target->dtype ||
-         (source->dtype->code == target->dtype->code &&
-          source->dtype->bits == target->dtype->bits &&
-          source->dtype->lanes == target->dtype->lanes);
+  return compare_tensor_layouts(source, target);
 }
 
-[[nodiscard]] bool tensor_contract_bounds_compatible(const TensorContractRecord* source,
-                                                     const TensorContractRecord* target) noexcept {
-  if (source == nullptr || target == nullptr) {
-    return true;
+[[nodiscard]] Error connection_error(const GraphState& state, const PortStorage& source,
+                                     const PortStorage& target, std::string_view token,
+                                     const TensorMismatches& mismatches) {
+  const auto endpoint = [&](const PortStorage& port) {
+    const auto owner = std::ranges::find(state.vertices_, port.record.owner, &VertexRecord::id);
+    const auto path = owner == state.vertices_.end() ? std::string{"unknown"}
+                                                     : authored_operator_path(state, *owner);
+    return diagnostic_display_text(path) + "." + diagnostic_display_text(port.record.name);
+  };
+  std::string message =
+      fmt::format("{}: cannot connect {} -> {}", token, endpoint(source), endpoint(target));
+  if (token == "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT") {
+    message +=
+        fmt::format("; source spec={}, target spec={}",
+                    source.record.graph_override.tensor_contract ? "graph override" : "setup",
+                    target.record.graph_override.tensor_contract ? "graph override" : "setup");
   }
-  if ((source->max_rank && target->max_rank && *source->max_rank > *target->max_rank) ||
-      (source->max_byte_span && target->max_byte_span &&
-       *source->max_byte_span > *target->max_byte_span)) {
-    return false;
+  for (std::size_t index = 0U; index < std::min(mismatches.size(), std::size_t{16U}); ++index) {
+    const auto& mismatch = mismatches[index];
+    message += fmt::format("; {}: provided={}, required={}",
+                           diagnostic_display_text(mismatch.field),
+                           diagnostic_display_text(mismatch.provided),
+                           diagnostic_display_text(mismatch.required));
   }
-  const std::size_t comparable_axes = std::min(source->axes.size(), target->axes.size());
-  for (std::size_t axis = 0U; axis < comparable_axes; ++axis) {
-    if (source->axes[axis].max_extent > target->axes[axis].max_extent ||
-        (source->axes[axis].max_abs_stride_bytes != 0U &&
-         target->axes[axis].max_abs_stride_bytes != 0U &&
-         source->axes[axis].max_abs_stride_bytes > target->axes[axis].max_abs_stride_bytes)) {
-      return false;
-    }
+  if (mismatches.size() > 16U) {
+    message += "; additional mismatches omitted [truncated]";
   }
-  return true;
+  return Error{ErrorCode::kIncompatible, std::move(message)};
 }
 
 template <typename T>
@@ -2238,24 +3131,72 @@ template <typename T>
 }
 
 [[nodiscard]] bool tensor_field_layouts_compatible(const PortStorage& source,
-                                                   const PortStorage& target) noexcept {
+                                                   const PortStorage& target,
+                                                   TensorMismatches& mismatches) {
   const auto& source_fields = source.record.setup.tensor_fields;
   const auto& target_fields = target.record.setup.tensor_fields;
+  bool compatible = true;
   for (const auto& target_field : target_fields) {
     const auto source_field =
         std::find_if(source_fields.begin(), source_fields.end(), [&](const auto& candidate) {
           return candidate.field_id == target_field.field_id &&
                  candidate.tensor_index == target_field.tensor_index;
         });
-    if (source_field != source_fields.end() &&
-        (!tensor_layouts_compatible(source_field->tensor_layout, target_field.tensor_layout) ||
-         !tensor_contract_bounds_compatible(
-             optional_value_pointer(source_field->tensor_contract),
-             optional_value_pointer(target_field.tensor_contract)))) {
-      return false;
+    if (source_field == source_fields.end()) {
+      continue;
+    }
+    const auto first = mismatches.size();
+    const bool layout = compare_tensor_layouts(
+        source_field->tensor_layout, target_field.tensor_layout, &mismatches);
+    const bool bounds = compare_tensor_bounds(optional_value_pointer(source_field->tensor_contract),
+                                              optional_value_pointer(target_field.tensor_contract),
+                                              &mismatches);
+    compatible = compatible && layout && bounds;
+    for (std::size_t index = first; index < mismatches.size(); ++index) {
+      mismatches[index].field = fmt::format("field[{}].tensor[{}].{}",
+                                            target_field.field_id,
+                                            target_field.tensor_index,
+                                            mismatches[index].field);
     }
   }
-  return true;
+  return compatible;
+}
+
+void append_tensor_payload_mismatches(const PayloadOptionsRecord& producer,
+                                      const PayloadOptionsRecord& boundary,
+                                      TensorMismatches* mismatches) {
+  const auto policy_name = [](InterfaceTensorEmitPolicy policy) {
+    switch (policy) {
+      case InterfaceTensorEmitPolicy::kRequireExportable:
+        return "require exportable";
+      case InterfaceTensorEmitPolicy::kCopyIfNeeded:
+        return "copy if needed";
+      case InterfaceTensorEmitPolicy::kInlineSmallHostThenCopyIfNeeded:
+        return "inline or copy";
+    }
+    return "invalid";
+  };
+  const auto bound_name = [](const auto& value) {
+    return value ? std::to_string(*value) : std::string{"not specified"};
+  };
+  if (producer.interface_tensor_emit_policy != boundary.interface_tensor_emit_policy) {
+    tensor_mismatch(mismatches,
+                    "tensor emit policy",
+                    policy_name(producer.interface_tensor_emit_policy),
+                    policy_name(boundary.interface_tensor_emit_policy));
+  }
+  if (producer.max_inline_bytes != boundary.max_inline_bytes) {
+    tensor_mismatch(mismatches,
+                    "max_inline_bytes",
+                    bound_name(producer.max_inline_bytes),
+                    bound_name(boundary.max_inline_bytes));
+  }
+  if (producer.max_tensor_byte_span != boundary.max_tensor_byte_span) {
+    tensor_mismatch(mismatches,
+                    "max_tensor_byte_span",
+                    bound_name(producer.max_tensor_byte_span),
+                    bound_name(boundary.max_tensor_byte_span));
+  }
 }
 
 [[nodiscard]] expected<PayloadOptionsRecord, Error> effective_tensor_payload(
@@ -2263,16 +3204,19 @@ template <typename T>
     std::optional<PayloadOptionsRecord> source_override = std::nullopt) {
   const auto source_contract = effective_tensor_contract(source);
   const auto target_contract = effective_tensor_contract(target);
-  if (!tensor_layouts_compatible(effective_tensor_layout(source),
-                                 effective_tensor_layout(target)) ||
-      !tensor_contract_bounds_compatible(source_contract ? &*source_contract : nullptr,
-                                         target_contract ? &*target_contract : nullptr)) {
+  TensorMismatches mismatches;
+  const bool layout = compare_tensor_layouts(
+      effective_tensor_layout(source), effective_tensor_layout(target), &mismatches);
+  const bool bounds = compare_tensor_bounds(source_contract ? &*source_contract : nullptr,
+                                            target_contract ? &*target_contract : nullptr,
+                                            &mismatches);
+  if (!layout || !bounds) {
     return make_unexpected(
-        graph_error(ErrorCode::kIncompatible, "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT"));
+        connection_error(state, source, target, "GRAPH_TENSOR_LAYOUT_EDGE_CONFLICT", mismatches));
   }
-  if (!tensor_field_layouts_compatible(source, target)) {
-    return make_unexpected(
-        graph_error(ErrorCode::kIncompatible, "GRAPH_TENSOR_FIELD_LAYOUT_EDGE_CONFLICT"));
+  if (!tensor_field_layouts_compatible(source, target, mismatches)) {
+    return make_unexpected(connection_error(
+        state, source, target, "GRAPH_TENSOR_FIELD_LAYOUT_EDGE_CONFLICT", mismatches));
   }
   std::optional<PayloadOptionsRecord> producer = std::move(source_override);
   if (!producer) {
@@ -2288,8 +3232,9 @@ template <typename T>
       (producer->interface_tensor_emit_policy != boundary->interface_tensor_emit_policy ||
        producer->max_inline_bytes != boundary->max_inline_bytes ||
        producer->max_tensor_byte_span != boundary->max_tensor_byte_span)) {
-    return make_unexpected(
-        graph_error(ErrorCode::kIncompatible, "GRAPH_TENSOR_PAYLOAD_POLICY_CONFLICT"));
+    append_tensor_payload_mismatches(*producer, *boundary, &mismatches);
+    return make_unexpected(connection_error(
+        state, source, target, "GRAPH_TENSOR_PAYLOAD_POLICY_CONFLICT", mismatches));
   }
   if (producer)
     return *producer;
@@ -2354,7 +3299,8 @@ template <typename PortBaseT>
   if (!identity)
     return make_unexpected(std::move(identity.error()));
   const bool schema = payload_identity.kind == PayloadIdentityKind::kSchema;
-  if (schema != (serialized_payload_capacity_bytes != 0U) ||
+  const bool py_object = is_py_object_payload_identity(payload_identity);
+  if ((schema && !py_object) != (serialized_payload_capacity_bytes != 0U) ||
       serialized_payload_capacity_bytes > std::numeric_limits<std::uint32_t>::max()) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_SCHEMA_CAPACITY_INVALID"));
@@ -2388,6 +3334,7 @@ template <typename PortBaseT>
               .payload_identity = std::move(payload_identity),
               .serialized_payload_capacity_bytes = serialized_payload_capacity_bytes,
           },
+      .handle_identity = std::make_shared<std::byte>(),
       .declaration = &port,
   });
   GraphMutationRollback::checkpoint(state);
@@ -2407,11 +3354,10 @@ template <typename PortBaseT>
 
 // Flow authoring validates and commits every related graph index atomically.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-expected<FlowRegistration, Error> graph_add_flow(const std::shared_ptr<GraphState>& state,
-                                                 const OutputBase* source, const InputBase* target,
-                                                 const PayloadIdentityRecord& source_identity,
-                                                 const PayloadIdentityRecord& target_identity,
-                                                 ConnectionOptions options) {
+expected<FlowRegistration, Error> graph_add_flow(
+    const std::shared_ptr<GraphState>& state, const OutputBase* source, const InputBase* target,
+    const PayloadIdentityRecord& source_identity, const PayloadIdentityRecord& target_identity,
+    ConnectionOptions options, std::optional<TensorProjectionRecord> tensor_projection) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return make_unexpected(std::move(prepared.error()));
@@ -2425,6 +3371,26 @@ expected<FlowRegistration, Error> graph_add_flow(const std::shared_ptr<GraphStat
   const void* source_owner = GraphPortOwnershipAccess::owner(*source);
   const void* target_owner = GraphPortOwnershipAccess::owner(*target);
   const std::lock_guard lock(state->mutex_);
+  const auto port_location = [&](const void* declaration, std::string_view fallback) {
+    const auto registered = state->port_by_declaration_.find(declaration);
+    const auto* port = registered != state->port_by_declaration_.end()
+                           ? find_port(*state, registered->second)
+                           : nullptr;
+    if (port != nullptr) {
+      const auto owner = std::ranges::find(state->vertices_, port->record.owner, &VertexRecord::id);
+      if (owner != state->vertices_.end()) {
+        return diagnostic_display_text(authored_operator_path(*state, *owner)) + "." +
+               diagnostic_display_text(port->record.name);
+      }
+    }
+    return fmt::format("unregistered port '{}'", diagnostic_display_text(fallback));
+  };
+  const auto contextual_error = [&](Error error) {
+    error.message += fmt::format(": attempted connection {} -> {}",
+                                 port_location(source, source->name()),
+                                 port_location(target, target->name()));
+    return make_unexpected(std::move(error));
+  };
   const auto owns_embedded_state =
       [&](const auto& self, const GraphState& candidate, const void* owner) -> bool {
     for (const auto& embedded : candidate.embedded_graphs_) {
@@ -2452,34 +3418,77 @@ expected<FlowRegistration, Error> graph_add_flow(const std::shared_ptr<GraphStat
   };
   if (!local_or_embedded_interface(source, source_owner) ||
       !local_or_embedded_interface(target, target_owner)) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_CROSS_GRAPH_PORT"));
+    return contextual_error(graph_error(ErrorCode::kInvalidArgument, "GRAPH_CROSS_GRAPH_PORT"));
   }
   auto source_id =
       find_port_by_declaration(*state, source, PortDirection::kOutput, source_identity);
   if (!source_id)
-    return make_unexpected(std::move(source_id.error()));
+    return contextual_error(std::move(source_id.error()));
   auto target_id = find_port_by_declaration(*state, target, PortDirection::kInput, target_identity);
   if (!target_id)
-    return make_unexpected(std::move(target_id.error()));
-  if (!payload_identity_exactly_equal(source_identity, target_identity)) {
-    return make_unexpected(graph_error(ErrorCode::kIncompatible, "GRAPH_PORT_TYPE_MISMATCH"));
+    return contextual_error(std::move(target_id.error()));
+  const PortStorage* source_port = find_port(*state, source_id.value());
+  const PortStorage* target_port = find_port(*state, target_id.value());
+  if (tensor_projection) {
+    if (source_identity.kind != PayloadIdentityKind::kSchema ||
+        target_identity.kind != PayloadIdentityKind::kTensor) {
+      return contextual_error(graph_error(ErrorCode::kIncompatible, "GRAPH_PORT_TYPE_MISMATCH"));
+    }
+  } else if (!payload_identity_exactly_equal(source_identity, target_identity)) {
+    return make_unexpected(connection_error(*state,
+                                            *source_port,
+                                            *target_port,
+                                            "GRAPH_PORT_TYPE_MISMATCH",
+                                            {{"payload type",
+                                              graph_payload_identity_name(source_identity),
+                                              graph_payload_identity_name(target_identity)}}));
   }
   if (std::any_of(state->edges_.begin(), state->edges_.end(), [&](const EdgeRecord& edge) {
         return edge.target == target_id.value();
       })) {
-    return make_unexpected(graph_error(ErrorCode::kIncompatible, "GRAPH_INPUT_FANIN_UNSUPPORTED"));
+    return make_unexpected(connection_error(
+        *state,
+        *source_port,
+        *target_port,
+        "GRAPH_INPUT_FANIN_UNSUPPORTED",
+        {{"input producers", "an additional producer", "one producer; input already connected"}}));
   }
-  const PortStorage* source_port = find_port(*state, source_id.value());
-  const PortStorage* target_port = find_port(*state, target_id.value());
-  if (source_port->record.serialized_payload_capacity_bytes !=
-      target_port->record.serialized_payload_capacity_bytes) {
-    return make_unexpected(graph_error(ErrorCode::kIncompatible, "GRAPH_SCHEMA_CAPACITY_MISMATCH"));
+  if (tensor_projection) {
+    // Narrowing a payload is the consumer's decision, so the Tensor input must have said it
+    // admits one. Serialized capacity is a schema fact and has no counterpart on a Tensor port.
+    const PortStorage* consumer = target_port;
+    for (std::size_t remaining = state->ports_.size();
+         consumer != nullptr && consumer->record.owner_kind == PortOwnerKind::kGraphInterface;
+         --remaining) {
+      const auto binding = std::ranges::find_if(state->interface_bindings_, [&](const auto& alias) {
+        return alias.public_port == consumer->record.id && alias.direction == PortDirection::kInput;
+      });
+      if (remaining == 0U || binding == state->interface_bindings_.end()) {
+        consumer = nullptr;
+        break;
+      }
+      consumer = find_port(*state, binding->internal_port);
+    }
+    if (consumer == nullptr || !consumer->record.setup.accepts_projected_tensor) {
+      return make_unexpected(
+          graph_error(ErrorCode::kIncompatible, "GRAPH_PROJECTED_TENSOR_NOT_ACCEPTED"));
+    }
+  } else if (source_port->record.serialized_payload_capacity_bytes !=
+             target_port->record.serialized_payload_capacity_bytes) {
+    return make_unexpected(connection_error(
+        *state,
+        *source_port,
+        *target_port,
+        "GRAPH_SCHEMA_CAPACITY_MISMATCH",
+        {{"serialized payload capacity",
+          std::to_string(source_port->record.serialized_payload_capacity_bytes),
+          std::to_string(target_port->record.serialized_payload_capacity_bytes)}}));
   }
   if ((source_owner != state.get() &&
        source_port->record.owner_kind != PortOwnerKind::kGraphInterface) ||
       (target_owner != state.get() &&
        target_port->record.owner_kind != PortOwnerKind::kGraphInterface)) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_CROSS_GRAPH_PORT"));
+    return contextual_error(graph_error(ErrorCode::kInvalidArgument, "GRAPH_CROSS_GRAPH_PORT"));
   }
   if (options.memory_conversion && !declares_tensor_semantics(*source_port) &&
       !declares_tensor_semantics(*target_port)) {
@@ -2498,6 +3507,8 @@ expected<FlowRegistration, Error> graph_add_flow(const std::shared_ptr<GraphStat
   }
   GraphMutationRollback rollback(*state);
   const EdgeId edge = state->next_edge_id();
+  auto handle_identity = std::make_shared<std::byte>();
+  state->edge_handle_identities_.reserve(state->edge_handle_identities_.size() + 1U);
   // Allocate before recording the edge so rollback cannot confuse this flow with a prior parallel
   // flow between the same vertices.
   reserve_adjacency(*state, source_port->record.owner);
@@ -2507,7 +3518,9 @@ expected<FlowRegistration, Error> graph_add_flow(const std::shared_ptr<GraphStat
       .target = target_id.value(),
       .add_flow_options = copy_connection_options(options),
       .effective_tensor_payload = std::move(effective_payload),
+      .tensor_projection = tensor_projection,
   });
+  state->edge_handle_identities_.push_back(handle_identity);
   append_adjacency(*state, source_port->record.owner, target_port->record.owner);
   state->mark_mutation();
   GraphMutationRollback::checkpoint(*state);
@@ -2517,6 +3530,7 @@ expected<FlowRegistration, Error> graph_add_flow(const std::shared_ptr<GraphStat
       .edge = edge,
       .source = source_id.value(),
       .target = target_id.value(),
+      .handle_identity = std::move(handle_identity),
   };
 }
 
@@ -2632,12 +3646,36 @@ expected<GraphPortId, Error> graph_find_port(const std::shared_ptr<GraphState>& 
   return find_port_by_declaration(*state, declaration, direction, payload_identity);
 }
 
+expected<std::shared_ptr<const void>, Error> graph_port_registration_identity(
+    const std::shared_ptr<GraphState>& state, GraphPortId port) {
+  if (!state) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const std::lock_guard lock(state->mutex_);
+  const PortStorage* found = find_port(*state, port);
+  if (found == nullptr || !found->handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_PORT_NOT_FOUND"));
+  }
+  return found->handle_identity;
+}
+
 const void* graph_port_declaration(const std::shared_ptr<GraphState>& state, GraphPortId port,
                                    PortDirection direction) noexcept {
   const std::lock_guard lock(state->mutex_);
   const PortStorage* found = find_port(*state, port);
   if (found == nullptr || found->record.direction != direction)
     return nullptr;
+  return found->declaration;
+}
+
+const void* graph_port_declaration(const std::shared_ptr<GraphState>& state, GraphPortId port,
+                                   PortDirection direction, const void* handle_identity) noexcept {
+  const std::lock_guard lock(state->mutex_);
+  const PortStorage* found = find_port(*state, port);
+  if (found == nullptr || found->record.direction != direction ||
+      found->handle_identity.get() != handle_identity) {
+    return nullptr;
+  }
   return found->declaration;
 }
 
@@ -2653,27 +3691,65 @@ const void* graph_port_declaration(const std::shared_ptr<GraphState>& state, Gra
   return found->declaration;
 }
 
+expected<FlowRegistration, Error> graph_testing_flow_registration(
+    const std::shared_ptr<GraphState>& state, GraphPortId source, GraphPortId target,
+    const void* source_identity, const void* target_identity) {
+  if (!state || source_identity == nullptr || target_identity == nullptr) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const std::lock_guard lock(state->mutex_);
+  const auto* from = find_port(*state, source);
+  const auto* to = find_port(*state, target);
+  if (from == nullptr || to == nullptr || from->handle_identity.get() != source_identity ||
+      to->handle_identity.get() != target_identity ||
+      from->record.direction != PortDirection::kOutput ||
+      to->record.direction != PortDirection::kInput) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  std::optional<FlowRegistration> found;
+  for (std::size_t index = 0U; index < state->edges_.size(); ++index) {
+    const auto& edge = state->edges_[index];
+    if (edge.source != source || edge.target != target) {
+      continue;
+    }
+    if (found || index >= state->edge_handle_identities_.size()) {
+      return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_FLOW_AMBIGUOUS"));
+    }
+    found = FlowRegistration{edge.id, source, target, state->edge_handle_identities_[index]};
+  }
+  if (!found) {
+    return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_FLOW_NOT_FOUND"));
+  }
+  return std::move(*found);
+}
+
 bool graph_flow_valid(const std::shared_ptr<GraphState>& state, EdgeId edge, GraphPortId source,
-                      GraphPortId target) noexcept {
-  if (!state || !edge)
+                      GraphPortId target, const void* handle_identity) noexcept {
+  if (!state || !edge || handle_identity == nullptr)
     return false;
   const std::lock_guard lock(state->mutex_);
   const EdgeRecord* record = find_edge(*state, edge);
-  return record != nullptr && record->source == source && record->target == target;
+  const std::size_t index = static_cast<std::size_t>(edge.value - 1U);
+  return record != nullptr && index < state->edge_handle_identities_.size() &&
+         state->edge_handle_identities_[index].get() == handle_identity &&
+         record->source == source && record->target == target;
 }
 
 namespace {
 
 template <typename Mutation>
 expected<void, Error> configure_port(const std::shared_ptr<GraphState>& state, GraphPortId id,
-                                     Mutation&& mutation) {
+                                     const void* handle_identity, Mutation&& mutation) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
   const std::lock_guard lock(state->mutex_);
   PortStorage* port = find_port(*state, id);
   if (port == nullptr) {
-    return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_PORT_NOT_FOUND"));
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  if (port->handle_identity.get() != handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
   }
   auto result = std::forward<Mutation>(mutation)(*port);
   if (!result)
@@ -2684,14 +3760,18 @@ expected<void, Error> configure_port(const std::shared_ptr<GraphState>& state, G
 
 template <typename Mutation>
 expected<void, Error> configure_edge(const std::shared_ptr<GraphState>& state, EdgeId id,
-                                     Mutation&& mutation) {
+                                     const void* handle_identity, Mutation&& mutation) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
   const std::lock_guard lock(state->mutex_);
   EdgeRecord* edge = find_edge(*state, id);
-  if (edge == nullptr) {
-    return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_FLOW_NOT_FOUND"));
+  const std::size_t index = id ? static_cast<std::size_t>(id.value - 1U) : 0U;
+  if (edge == nullptr || index >= state->edge_handle_identities_.size()) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  if (state->edge_handle_identities_[index].get() != handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
   }
   std::forward<Mutation>(mutation)(*edge);
   state->mark_mutation();
@@ -2701,18 +3781,21 @@ expected<void, Error> configure_edge(const std::shared_ptr<GraphState>& state, E
 }  // namespace
 
 expected<void, Error> graph_configure_input_queue(const std::shared_ptr<GraphState>& state,
-                                                  GraphPortId id, std::uint32_t depth) {
-  return configure_port(state, id, [depth](PortStorage& port) -> expected<void, Error> {
-    if (port.record.direction != PortDirection::kInput || depth == 0U) {
-      return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_INPUT_QUEUE_INVALID"));
-    }
-    port.record.graph_override.queue_depth = depth;
-    return {};
-  });
+                                                  GraphPortId id, const void* handle_identity,
+                                                  std::uint32_t depth) {
+  return configure_port(
+      state, id, handle_identity, [depth](PortStorage& port) -> expected<void, Error> {
+        if (port.record.direction != PortDirection::kInput || depth == 0U) {
+          return make_unexpected(
+              graph_error(ErrorCode::kInvalidArgument, "GRAPH_INPUT_QUEUE_INVALID"));
+        }
+        port.record.graph_override.queue_depth = depth;
+        return {};
+      });
 }
 
 expected<void, Error> graph_configure_input_tensor_spec(const std::shared_ptr<GraphState>& state,
-                                                        GraphPortId id,
+                                                        GraphPortId id, const void* handle_identity,
                                                         const TensorInputSpec& spec) {
   auto normalized = normalize_tensor_input_spec(spec);
   if (!normalized) {
@@ -2723,7 +3806,8 @@ expected<void, Error> graph_configure_input_tensor_spec(const std::shared_ptr<Gr
     return prepared;
   const std::lock_guard lock(state->mutex_);
   PortStorage* port = find_port(*state, id);
-  if (port == nullptr || port->record.direction != PortDirection::kInput) {
+  if (port == nullptr || port->handle_identity.get() != handle_identity ||
+      port->record.direction != PortDirection::kInput) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_INPUT_CONFIG_INVALID"));
   }
   if (!declares_tensor_semantics(*port)) {
@@ -2750,38 +3834,44 @@ expected<void, Error> graph_configure_input_tensor_spec(const std::shared_ptr<Gr
 }
 
 expected<void, Error> graph_configure_port_alias(const std::shared_ptr<GraphState>& state,
-                                                 GraphPortId id, std::string_view alias) {
+                                                 GraphPortId id, const void* handle_identity,
+                                                 std::string_view alias) {
   auto valid = validate_name(alias, "GRAPH_PORT_ALIAS_INVALID");
   if (!valid)
     return valid;
-  return configure_port(state, id, [alias](PortStorage& port) -> expected<void, Error> {
-    port.record.graph_override.diagnostic_alias = std::string(alias);
-    return {};
-  });
+  return configure_port(
+      state, id, handle_identity, [alias](PortStorage& port) -> expected<void, Error> {
+        port.record.graph_override.diagnostic_alias = std::string(alias);
+        return {};
+      });
 }
 
 expected<void, Error> graph_configure_output_emits(const std::shared_ptr<GraphState>& state,
-                                                   GraphPortId id, std::uint32_t count) {
-  return configure_port(state, id, [count](PortStorage& port) -> expected<void, Error> {
-    if (port.record.direction != PortDirection::kOutput || count == 0U) {
-      return make_unexpected(
-          graph_error(ErrorCode::kInvalidArgument, "GRAPH_OUTPUT_BOUND_INVALID"));
-    }
-    port.record.graph_override.max_emits_per_compute = count;
-    return {};
-  });
+                                                   GraphPortId id, const void* handle_identity,
+                                                   std::uint32_t count) {
+  return configure_port(
+      state, id, handle_identity, [count](PortStorage& port) -> expected<void, Error> {
+        if (port.record.direction != PortDirection::kOutput || count == 0U) {
+          return make_unexpected(
+              graph_error(ErrorCode::kInvalidArgument, "GRAPH_OUTPUT_BOUND_INVALID"));
+        }
+        port.record.graph_override.max_emits_per_compute = count;
+        return {};
+      });
 }
 
 expected<void, Error> graph_configure_output_history(const std::shared_ptr<GraphState>& state,
-                                                     GraphPortId id, std::uint32_t depth) {
-  return configure_port(state, id, [depth](PortStorage& port) -> expected<void, Error> {
-    if (port.record.direction != PortDirection::kOutput || depth == 0U) {
-      return make_unexpected(
-          graph_error(ErrorCode::kInvalidArgument, "GRAPH_OUTPUT_CONFIG_INVALID"));
-    }
-    port.record.graph_override.late_joiner_history_depth = depth;
-    return {};
-  });
+                                                     GraphPortId id, const void* handle_identity,
+                                                     std::uint32_t depth) {
+  return configure_port(
+      state, id, handle_identity, [depth](PortStorage& port) -> expected<void, Error> {
+        if (port.record.direction != PortDirection::kOutput || depth == 0U) {
+          return make_unexpected(
+              graph_error(ErrorCode::kInvalidArgument, "GRAPH_OUTPUT_CONFIG_INVALID"));
+        }
+        port.record.graph_override.late_joiner_history_depth = depth;
+        return {};
+      });
 }
 
 [[nodiscard]] expected<TensorContractRecord, Error> select_output_tensor_spec(
@@ -2791,13 +3881,22 @@ expected<void, Error> graph_configure_output_history(const std::shared_ptr<Graph
   const bool field_scoped_derivation =
       std::any_of(port.record.setup.tensor_fields.begin(),
                   port.record.setup.tensor_fields.end(),
-                  [](const auto& field) { return field.tensor_byte_span_expression.has_value(); });
+                  [](const auto& field) {
+                    return field.tensor_byte_span_expression.has_value() ||
+                           field.tensor_memory_kind_expression.has_value();
+                  });
   if (field_scoped_derivation) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_FIELD_SCOPE_REQUIRED"));
   }
-  const bool derived_output = port.record.setup.tensor_byte_span_expression.has_value();
-  if (derived_output && spec.storage == TensorOutputStorage::kPassThrough) {
+  const bool derived_byte_span = port.record.setup.tensor_byte_span_expression.has_value();
+  const bool derived_memory_kind = port.record.setup.tensor_memory_kind_expression.has_value();
+  const bool derived_output = derived_byte_span || derived_memory_kind;
+  if (derived_memory_kind && spec.representation.memory_kind) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_MEMORY_KIND_SOURCE_CONFLICT"));
+  }
+  if (derived_byte_span && spec.storage == TensorOutputStorage::kPassThrough) {
     if (!derived_refinement) {
       return make_unexpected(std::move(derived_refinement.error()));
     }
@@ -2828,6 +3927,7 @@ expected<void, Error> graph_configure_output_history(const std::shared_ptr<Graph
 
 expected<void, Error> graph_configure_output_tensor_spec(const std::shared_ptr<GraphState>& state,
                                                          GraphPortId id,
+                                                         const void* handle_identity,
                                                          const TensorOutputSpec& spec) {
   auto normalized = normalize_tensor_output_spec(spec);
   auto derived_refinement = normalize_tensor_output_spec_refinement_with_derived_byte_span(spec);
@@ -2836,7 +3936,8 @@ expected<void, Error> graph_configure_output_tensor_spec(const std::shared_ptr<G
     return prepared;
   const std::lock_guard lock(state->mutex_);
   PortStorage* port = find_port(*state, id);
-  if (port == nullptr || port->record.direction != PortDirection::kOutput) {
+  if (port == nullptr || port->handle_identity.get() != handle_identity ||
+      port->record.direction != PortDirection::kOutput) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_OUTPUT_CONFIG_INVALID"));
   }
   if (!declares_tensor_semantics(*port)) {
@@ -2907,19 +4008,22 @@ expected<void, Error> graph_configure_output_tensor_spec(const std::shared_ptr<G
 }
 
 expected<void, Error> graph_configure_output_payload(const std::shared_ptr<GraphState>& state,
-                                                     GraphPortId id, PayloadOptions options) {
+                                                     GraphPortId id, const void* handle_identity,
+                                                     PayloadOptions options) {
   PayloadOptionsRecord copied = holoscan::detail::copy_payload_options(options);
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
   const std::lock_guard lock(state->mutex_);
   PortStorage* port = find_port(*state, id);
-  if (port == nullptr || port->record.direction != PortDirection::kOutput) {
+  if (port == nullptr || port->handle_identity.get() != handle_identity ||
+      port->record.direction != PortDirection::kOutput) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_OUTPUT_CONFIG_INVALID"));
   }
   const auto layout = effective_tensor_layout(*port);
   if ((port->record.graph_override.tensor_contract ||
-       port->record.setup.tensor_byte_span_expression) &&
+       port->record.setup.tensor_byte_span_expression ||
+       port->record.setup.tensor_memory_kind_expression) &&
       payload_options_carry_tensor_transfer(copied)) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_TENSOR_TRANSFER_SOURCE_CONFLICT"));
@@ -2959,34 +4063,41 @@ expected<void, Error> graph_configure_output_payload(const std::shared_ptr<Graph
 }
 
 expected<void, Error> graph_configure_flow_policy(const std::shared_ptr<GraphState>& state,
-                                                  EdgeId id, QueuePolicy policy) {
+                                                  EdgeId id, const void* handle_identity,
+                                                  QueuePolicy policy) {
   if (!closed_enum(policy)) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_QUEUE_POLICY_INVALID"));
   }
-  return configure_edge(
-      state, id, [policy](EdgeRecord& edge) { edge.graph_override.queue_policy = policy; });
+  return configure_edge(state, id, handle_identity, [policy](EdgeRecord& edge) {
+    edge.graph_override.queue_policy = policy;
+  });
 }
 
 expected<void, Error> graph_configure_flow_depth(const std::shared_ptr<GraphState>& state,
-                                                 EdgeId id, std::uint32_t depth) {
+                                                 EdgeId id, const void* handle_identity,
+                                                 std::uint32_t depth) {
   if (depth == 0U) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_FLOW_BOUND_INVALID"));
   }
-  return configure_edge(
-      state, id, [depth](EdgeRecord& edge) { edge.graph_override.queue_depth = depth; });
+  return configure_edge(state, id, handle_identity, [depth](EdgeRecord& edge) {
+    edge.graph_override.queue_depth = depth;
+  });
 }
 
 expected<void, Error> graph_configure_flow_topic(const std::shared_ptr<GraphState>& state,
-                                                 EdgeId id, std::string_view name) {
+                                                 EdgeId id, const void* handle_identity,
+                                                 std::string_view name) {
   auto valid = validate_name(name, "GRAPH_FLOW_TOPIC_NAME_INVALID");
   if (!valid)
     return valid;
-  return configure_edge(
-      state, id, [name](EdgeRecord& edge) { edge.graph_override.topic_name = std::string(name); });
+  return configure_edge(state, id, handle_identity, [name](EdgeRecord& edge) {
+    edge.graph_override.topic_name = std::string(name);
+  });
 }
 
 expected<void, Error> graph_configure_flow_memory(const std::shared_ptr<GraphState>& state,
-                                                  EdgeId id, MemoryConversionPolicy policy) {
+                                                  EdgeId id, const void* handle_identity,
+                                                  MemoryConversionPolicy policy) {
   if (!closed_enum(policy)) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_MEMORY_POLICY_INVALID"));
   }
@@ -2995,7 +4106,9 @@ expected<void, Error> graph_configure_flow_memory(const std::shared_ptr<GraphSta
     return prepared;
   const std::lock_guard lock(state->mutex_);
   EdgeRecord* edge = find_edge(*state, id);
-  if (edge == nullptr) {
+  const std::size_t index = id ? static_cast<std::size_t>(id.value - 1U) : 0U;
+  if (edge == nullptr || index >= state->edge_handle_identities_.size() ||
+      state->edge_handle_identities_[index].get() != handle_identity) {
     return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_FLOW_NOT_FOUND"));
   }
   const PortStorage* source = find_port(*state, edge->source);
@@ -3011,12 +4124,14 @@ expected<void, Error> graph_configure_flow_memory(const std::shared_ptr<GraphSta
 }
 
 expected<void, Error> graph_configure_flow_inflight(const std::shared_ptr<GraphState>& state,
-                                                    EdgeId id, std::uint32_t count) {
+                                                    EdgeId id, const void* handle_identity,
+                                                    std::uint32_t count) {
   if (count == 0U) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_FLOW_BOUND_INVALID"));
   }
-  return configure_edge(
-      state, id, [count](EdgeRecord& edge) { edge.graph_override.max_inflight_samples = count; });
+  return configure_edge(state, id, handle_identity, [count](EdgeRecord& edge) {
+    edge.graph_override.max_inflight_samples = count;
+  });
 }
 
 namespace {
@@ -3062,7 +4177,8 @@ namespace {
       .max_rank = tensor.max_rank,
       .max_byte_span = tensor.max_byte_span,
       .axes = tensor.axes,
-      .strides = *tensor.representation.strides,
+      // Normalization guarantees a concrete stride policy for graph Tensor contracts.
+      .strides = *tensor.representation.strides,  // NOLINT(bugprone-unchecked-optional-access)
       .foreign_emit_policy = transfer.foreign_emit_policy,
       .max_inline_bytes =
           transfer.max_inline_bytes
@@ -3100,11 +4216,12 @@ namespace {
       copy_tensor_boundary_contract_record(*normalized)};
 }
 
+// Descriptor-field identity, layout, and transfer checks form one ordered schema transaction.
 [[nodiscard]] expected<std::vector<DescriptorTensorTopicFieldRecord>, Error>
-copy_descriptor_tensor_requirements(const TopicOptions& options,
-                                    const PayloadIdentityRecord& identity,
-                                    std::vector<AuthoredDescriptorTensorTopicField> authored_fields,
-                                    const std::uint16_t descriptor_tensor_field_count) {
+copy_descriptor_tensor_requirements(  // NOLINT(readability-function-cognitive-complexity)
+    const TopicOptions& options, const PayloadIdentityRecord& identity,
+    const std::vector<AuthoredDescriptorTensorTopicField>& authored_fields,
+    const std::uint16_t descriptor_tensor_field_count) {
   const bool descriptor_schema = identity.kind == PayloadIdentityKind::kSchema &&
                                  identity.payload_kind == PayloadKind::kDescriptorBacked;
   if (!descriptor_schema) {
@@ -3208,11 +4325,14 @@ copy_descriptor_tensor_requirements(const TopicOptions& options,
   if (result.tensor_fields.size() == 1U) {
     const auto& field = result.tensor_fields.front();
     result.tensor_layout = field.tensor_layout;
+    // The field construction above always installs payload options.
+    // NOLINTBEGIN(bugprone-unchecked-optional-access)
     result.payload_options = PayloadOptionsRecord{
         .max_inline_bytes = field.payload_options->max_inline_bytes,
         .max_tensor_byte_span = field.payload_options->max_tensor_byte_span,
         .interface_tensor_emit_policy = field.payload_options->interface_tensor_emit_policy,
     };
+    // NOLINTEND(bugprone-unchecked-optional-access)
     if (direction == PortDirection::kInput) {
       result.memory_conversion = field.memory_conversion;
     } else {
@@ -3273,10 +4393,10 @@ expected<GraphPortId, Error>
 register_external_topic(  // NOLINT(readability-function-cognitive-complexity)
     const std::shared_ptr<GraphState>& state, std::string_view uri, TopicOptions options,
     std::unique_ptr<PortBaseT> port, PayloadIdentityRecord payload_identity,
-    std::optional<SchemaPackagePlanRecord>
-        schema_package,  // NOLINT(performance-unnecessary-value-param)
     std::uint64_t serialized_payload_capacity_bytes,
-    std::vector<AuthoredDescriptorTensorTopicField> authored_tensor_fields,
+    // Retain the ownership boundary established by the exported import/export entry points.
+    std::vector<AuthoredDescriptorTensorTopicField>
+        authored_tensor_fields,  // NOLINT(performance-unnecessary-value-param)
     std::uint16_t descriptor_tensor_field_count, bool imported) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
@@ -3304,7 +4424,10 @@ register_external_topic(  // NOLINT(readability-function-cognitive-complexity)
   if (!identity_valid)
     return make_unexpected(std::move(identity_valid.error()));
   const bool schema = payload_identity.kind == PayloadIdentityKind::kSchema;
-  if (schema != (serialized_payload_capacity_bytes != 0U) ||
+  const bool py_object = is_py_object_payload_identity(payload_identity);
+  // Process-local Python objects intentionally pass Graph authoring so compilation can report the
+  // more specific boundary-policy diagnostic for an external topic.
+  if ((schema && !py_object) != (serialized_payload_capacity_bytes != 0U) ||
       serialized_payload_capacity_bytes > std::numeric_limits<std::uint32_t>::max()) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_SCHEMA_CAPACITY_INVALID"));
@@ -3344,7 +4467,7 @@ register_external_topic(  // NOLINT(readability-function-cognitive-complexity)
   if (!tensor)
     return make_unexpected(std::move(tensor.error()));
   auto tensor_fields = copy_descriptor_tensor_requirements(
-      options, payload_identity, std::move(authored_tensor_fields), descriptor_tensor_field_count);
+      options, payload_identity, authored_tensor_fields, descriptor_tensor_field_count);
   if (!tensor_fields)
     return make_unexpected(std::move(tensor_fields.error()));
   if (options.tensor && !options.memory_conversion && options.tensor->memory_conversion) {
@@ -3434,8 +4557,8 @@ register_external_topic(  // NOLINT(readability-function-cognitive-complexity)
               .descriptor_tensor_field_count = descriptor_tensor_field_count,
               .setup = std::move(boundary_tensor_configuration),
           },
+      .handle_identity = std::make_shared<std::byte>(),
       .declaration = owned_port,
-      .schema_package = std::move(schema_package),
   });
   GraphMutationRollback::checkpoint(*state);
   state->port_by_declaration_.emplace(owned_port, port_id);
@@ -3461,7 +4584,6 @@ register_external_topic(  // NOLINT(readability-function-cognitive-complexity)
 expected<GraphPortId, Error> graph_register_import(
     const std::shared_ptr<GraphState>& state, std::string_view uri, TopicOptions options,
     std::unique_ptr<OutputBase> port, PayloadIdentityRecord payload_identity,
-    std::optional<SchemaPackagePlanRecord> schema_package,
     std::uint64_t serialized_payload_capacity_bytes,
     std::vector<AuthoredDescriptorTensorTopicField> tensor_fields,
     std::uint16_t descriptor_tensor_field_count) {
@@ -3470,7 +4592,6 @@ expected<GraphPortId, Error> graph_register_import(
                                  std::move(options),
                                  std::move(port),
                                  std::move(payload_identity),
-                                 std::move(schema_package),
                                  serialized_payload_capacity_bytes,
                                  std::move(tensor_fields),
                                  descriptor_tensor_field_count,
@@ -3480,7 +4601,6 @@ expected<GraphPortId, Error> graph_register_import(
 expected<GraphPortId, Error> graph_register_export(
     const std::shared_ptr<GraphState>& state, std::string_view uri, TopicOptions options,
     std::unique_ptr<InputBase> port, PayloadIdentityRecord payload_identity,
-    std::optional<SchemaPackagePlanRecord> schema_package,
     std::uint64_t serialized_payload_capacity_bytes,
     std::vector<AuthoredDescriptorTensorTopicField> tensor_fields,
     std::uint16_t descriptor_tensor_field_count) {
@@ -3489,15 +4609,14 @@ expected<GraphPortId, Error> graph_register_export(
                                  std::move(options),
                                  std::move(port),
                                  std::move(payload_identity),
-                                 std::move(schema_package),
                                  serialized_payload_capacity_bytes,
                                  std::move(tensor_fields),
                                  descriptor_tensor_field_count,
                                  false);
 }
 
-expected<RegionId, Error> graph_add_region(const std::shared_ptr<GraphState>& state,
-                                           std::string_view name) {
+expected<RegionRegistration, Error> graph_add_region(const std::shared_ptr<GraphState>& state,
+                                                     std::string_view name) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return make_unexpected(std::move(prepared.error()));
@@ -3510,72 +4629,139 @@ expected<RegionId, Error> graph_add_region(const std::shared_ptr<GraphState>& st
   }
   GraphMutationRollback rollback(*state);
   const RegionId id = state->next_region_id();
+  auto handle_identity = std::make_shared<std::byte>();
+  state->region_handle_identities_.reserve(state->regions_.size() + 1U);
   state->regions_.push_back(
       RegionRecord{.id = id, .graph = state->graph_record_.id, .name = std::string(name)});
+  state->region_handle_identities_.push_back(handle_identity);
   GraphMutationRollback::checkpoint(*state);
   state->region_names_.emplace(name);
   GraphMutationRollback::checkpoint(*state);
   state->mark_mutation();
   rollback.commit();
-  return id;
+  return RegionRegistration{.id = id, .handle_identity = std::move(handle_identity)};
 }
 
 expected<void, Error> graph_region_add_operator(const std::shared_ptr<GraphState>& state,
-                                                RegionId id, std::size_t operator_index) {
-  auto prepared = state->prepare_mutation();
-  if (!prepared)
-    return prepared;
-  const std::lock_guard lock(state->mutex_);
-  if (!id || id.value > state->regions_.size() ||
-      state->regions_[static_cast<std::size_t>(id.value - 1U)].id != id ||
-      operator_index >= state->operators_.size()) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"));
-  }
-  auto& region = state->regions_[static_cast<std::size_t>(id.value - 1U)];
-  auto members = region.members;
-  const VertexId vertex = state->operators_[operator_index].vertex;
-  if (std::find(members.begin(), members.end(), vertex) != members.end()) {
-    return make_unexpected(graph_error(ErrorCode::kDuplicateName, "GRAPH_REGION_MEMBER_DUPLICATE"));
-  }
-  members.push_back(vertex);
-  std::sort(members.begin(), members.end(), [](VertexId lhs, VertexId rhs) {
-    return lhs.value < rhs.value;
-  });
-  GraphMutationRollback::checkpoint(*state);
-  region.members = std::move(members);
-  state->mark_mutation();
-  return {};
+                                                RegionId id, const void* region_handle_identity,
+                                                std::size_t operator_index) {
+  return graph_region_add_operators(
+      state, id, region_handle_identity, std::span{&operator_index, 1U});
+}
+
+expected<void, Error> graph_region_add_operators(const std::shared_ptr<GraphState>& state,
+                                                 RegionId id, const void* region_handle_identity,
+                                                 std::span<const std::size_t> operator_indexes) {
+  return graph_region_add_members(state, id, region_handle_identity, operator_indexes, {});
 }
 
 expected<void, Error> graph_region_add_embedded_graph(const std::shared_ptr<GraphState>& state,
-                                                      RegionId id, std::size_t embedded_index) {
+                                                      RegionId id,
+                                                      const void* region_handle_identity,
+                                                      std::size_t embedded_index,
+                                                      const void* graph_handle_identity) {
+  if (!graph_embedded_valid(state, embedded_index, graph_handle_identity)) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"));
+  }
+  return graph_region_add_members(
+      state, id, region_handle_identity, {}, std::span{&embedded_index, 1U});
+}
+
+expected<void, Error> graph_region_add_members(const std::shared_ptr<GraphState>& state,
+                                               RegionId id, const void* region_handle_identity,
+                                               std::span<const std::size_t> operator_indexes,
+                                               std::span<const std::size_t> embedded_indexes) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
   const std::lock_guard lock(state->mutex_);
-  if (!id || id.value > state->regions_.size() ||
-      state->regions_[static_cast<std::size_t>(id.value - 1U)].id != id ||
-      embedded_index >= state->embedded_graphs_.size()) {
+  if (!region_handle_valid(*state, id, region_handle_identity)) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"));
   }
-  auto& region = state->regions_[static_cast<std::size_t>(id.value - 1U)];
-  auto members = region.graph_members;
-  const GraphId graph = state->embedded_graphs_[embedded_index].graph_id;
-  if (std::find(members.begin(), members.end(), graph) != members.end()) {
+  if (operator_indexes.empty() && embedded_indexes.empty()) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_MEMBER_REQUIRED"));
+  }
+
+  std::vector<VertexId> added_operators;
+  added_operators.reserve(operator_indexes.size());
+  for (const std::size_t operator_index : operator_indexes) {
+    if (operator_index >= state->operators_.size()) {
+      return make_unexpected(
+          graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"));
+    }
+    added_operators.push_back(state->operators_[operator_index].vertex);
+  }
+  std::sort(added_operators.begin(), added_operators.end(), [](VertexId lhs, VertexId rhs) {
+    return lhs.value < rhs.value;
+  });
+  if (std::adjacent_find(added_operators.begin(), added_operators.end()) != added_operators.end()) {
     return make_unexpected(graph_error(ErrorCode::kDuplicateName, "GRAPH_REGION_MEMBER_DUPLICATE"));
   }
-  members.push_back(graph);
-  std::sort(members.begin(), members.end(), [](GraphId lhs, GraphId rhs) {
+
+  std::vector<GraphId> added_graphs;
+  added_graphs.reserve(embedded_indexes.size());
+  for (const std::size_t embedded_index : embedded_indexes) {
+    if (embedded_index >= state->embedded_graphs_.size()) {
+      return make_unexpected(
+          graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"));
+    }
+    added_graphs.push_back(state->embedded_graphs_[embedded_index].graph_id);
+  }
+  std::sort(added_graphs.begin(), added_graphs.end(), [](GraphId lhs, GraphId rhs) {
+    return lhs.value < rhs.value;
+  });
+  if (std::adjacent_find(added_graphs.begin(), added_graphs.end()) != added_graphs.end()) {
+    return make_unexpected(graph_error(ErrorCode::kDuplicateName, "GRAPH_REGION_MEMBER_DUPLICATE"));
+  }
+
+  auto& region = state->regions_[static_cast<std::size_t>(id.value - 1U)];
+  auto members = region.members;
+  const bool operator_assigned =
+      std::any_of(added_operators.begin(), added_operators.end(), [&](VertexId vertex) {
+        return std::binary_search(
+            members.begin(), members.end(), vertex, [](VertexId lhs, VertexId rhs) {
+              return lhs.value < rhs.value;
+            });
+      });
+  auto graph_members = region.graph_members;
+  const bool graph_assigned =
+      std::any_of(added_graphs.begin(), added_graphs.end(), [&](GraphId graph) {
+        return std::binary_search(
+            graph_members.begin(), graph_members.end(), graph, [](GraphId lhs, GraphId rhs) {
+              return lhs.value < rhs.value;
+            });
+      });
+  if (operator_assigned || graph_assigned) {
+    return make_unexpected(graph_error(ErrorCode::kDuplicateName, "GRAPH_REGION_MEMBER_DUPLICATE"));
+  }
+
+  members.reserve(members.size() + added_operators.size());
+  members.insert(members.end(), added_operators.begin(), added_operators.end());
+  std::sort(members.begin(), members.end(), [](VertexId lhs, VertexId rhs) {
+    return lhs.value < rhs.value;
+  });
+  graph_members.reserve(graph_members.size() + added_graphs.size());
+  graph_members.insert(graph_members.end(), added_graphs.begin(), added_graphs.end());
+  std::sort(graph_members.begin(), graph_members.end(), [](GraphId lhs, GraphId rhs) {
     return lhs.value < rhs.value;
   });
   GraphMutationRollback::checkpoint(*state);
-  region.graph_members = std::move(members);
-  state->mark_mutation();
+  region.members.swap(members);
+  region.graph_members.swap(graph_members);
+  // Preserve the established per-member generation for embedded-Graph batches while publishing
+  // all membership only after every member has validated.
+  const std::size_t mutation_count =
+      embedded_indexes.empty() ? 1U : operator_indexes.size() + embedded_indexes.size();
+  for (std::size_t index = 0U; index < mutation_count; ++index) {
+    state->mark_mutation();
+  }
   return {};
 }
 
 expected<void, Error> graph_region_add_constraint(const std::shared_ptr<GraphState>& state,
-                                                  RegionId id, RegionConstraint constraint) {
+                                                  RegionId id, const void* region_handle_identity,
+                                                  RegionConstraint constraint) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
@@ -3589,8 +4775,7 @@ expected<void, Error> graph_region_add_constraint(const std::shared_ptr<GraphSta
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_LATENCY_INVALID"));
   }
   const std::lock_guard lock(state->mutex_);
-  if (!id || id.value > state->regions_.size() ||
-      state->regions_[static_cast<std::size_t>(id.value - 1U)].id != id) {
+  if (!region_handle_valid(*state, id, region_handle_identity)) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"));
   }
   auto& region = state->regions_[static_cast<std::size_t>(id.value - 1U)];
@@ -3612,37 +4797,9 @@ expected<void, Error> graph_region_add_constraint(const std::shared_ptr<GraphSta
   return {};
 }
 
-expected<void, Error> graph_region_add_hint(const std::shared_ptr<GraphState>& state, RegionId id,
-                                            OptimizationHint hint) {
-  auto prepared = state->prepare_mutation();
-  if (!prepared)
-    return prepared;
-  if (!closed_enum(hint)) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_HINT_INVALID"));
-  }
-  const std::lock_guard lock(state->mutex_);
-  if (!id || id.value > state->regions_.size() ||
-      state->regions_[static_cast<std::size_t>(id.value - 1U)].id != id) {
-    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"));
-  }
-  auto& region = state->regions_[static_cast<std::size_t>(id.value - 1U)];
-  auto hints = region.hints;
-  if (std::find(hints.begin(), hints.end(), hint) != hints.end()) {
-    return make_unexpected(graph_error(ErrorCode::kDuplicateName, "GRAPH_REGION_HINT_DUPLICATE"));
-  }
-  hints.push_back(hint);
-  std::sort(hints.begin(), hints.end(), [](OptimizationHint lhs, OptimizationHint rhs) {
-    return static_cast<std::underlying_type_t<OptimizationHint>>(lhs) <
-           static_cast<std::underlying_type_t<OptimizationHint>>(rhs);
-  });
-  GraphMutationRollback::checkpoint(*state);
-  region.hints = std::move(hints);
-  state->mark_mutation();
-  return {};
-}
-
 expected<void, Error> graph_region_set_profile(const std::shared_ptr<GraphState>& state,
-                                               RegionId id, Profile profile) {
+                                               RegionId id, const void* region_handle_identity,
+                                               Profile profile) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
@@ -3650,8 +4807,7 @@ expected<void, Error> graph_region_set_profile(const std::shared_ptr<GraphState>
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_PROFILE_INVALID"));
   }
   const std::lock_guard lock(state->mutex_);
-  if (!id || id.value > state->regions_.size() ||
-      state->regions_[static_cast<std::size_t>(id.value - 1U)].id != id) {
+  if (!region_handle_valid(*state, id, region_handle_identity)) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"));
   }
   auto& region = state->regions_[static_cast<std::size_t>(id.value - 1U)];
@@ -3664,8 +4820,8 @@ expected<void, Error> graph_region_set_profile(const std::shared_ptr<GraphState>
   return {};
 }
 
-expected<PartitionId, Error> graph_add_partition(const std::shared_ptr<GraphState>& state,
-                                                 std::string_view name) {
+expected<PartitionRegistration, Error> graph_add_partition(const std::shared_ptr<GraphState>& state,
+                                                           std::string_view name) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return make_unexpected(std::move(prepared.error()));
@@ -3687,31 +4843,36 @@ expected<PartitionId, Error> graph_add_partition(const std::shared_ptr<GraphStat
   }
   GraphMutationRollback rollback(*state);
   const PartitionId id = state->next_partition_id();
+  auto handle_identity = std::make_shared<std::byte>();
+  state->partition_handle_identities_.reserve(state->partitions_.size() + 1U);
   state->partitions_.push_back(
       PartitionRecord{.id = id, .graph = state->graph_record_.id, .name = std::string(name)});
+  state->partition_handle_identities_.push_back(handle_identity);
   GraphMutationRollback::checkpoint(*state);
   state->partition_names_.emplace(name);
   GraphMutationRollback::checkpoint(*state);
   state->mark_mutation();
   rollback.commit();
-  return id;
+  return PartitionRegistration{.id = id, .handle_identity = std::move(handle_identity)};
 }
 
 expected<void, Error> graph_partition_add_operator(const std::shared_ptr<GraphState>& state,
-                                                   PartitionId id, std::size_t operator_index) {
-  return graph_partition_add_operators(state, id, std::span{&operator_index, 1U});
+                                                   PartitionId id,
+                                                   const void* partition_handle_identity,
+                                                   std::size_t operator_index) {
+  return graph_partition_add_operators(
+      state, id, partition_handle_identity, std::span{&operator_index, 1U});
 }
 
 expected<void, Error> graph_partition_add_operators(const std::shared_ptr<GraphState>& state,
                                                     PartitionId id,
+                                                    const void* partition_handle_identity,
                                                     std::span<const std::size_t> operator_indexes) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
   const std::lock_guard lock(state->mutex_);
-  if (!id || id.value > state->partitions_.size() ||
-      state->partitions_[static_cast<std::size_t>(id.value - 1U)].id != id ||
-      operator_indexes.empty()) {
+  if (!partition_handle_valid(*state, id, partition_handle_identity) || operator_indexes.empty()) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"));
   }
@@ -3766,14 +4927,68 @@ expected<void, Error> graph_partition_add_operators(const std::shared_ptr<GraphS
   return {};
 }
 
-expected<void, Error> graph_partition_include_all(const std::shared_ptr<GraphState>& state,
-                                                  PartitionId id) {
+expected<void, Error> graph_partition_add_embedded_graph(const std::shared_ptr<GraphState>& state,
+                                                         PartitionId id,
+                                                         const void* partition_handle_identity,
+                                                         std::size_t embedded_index,
+                                                         const void* graph_handle_identity) {
+  if (!graph_embedded_valid(state, embedded_index, graph_handle_identity)) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"));
+  }
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
   const std::lock_guard lock(state->mutex_);
-  if (!id || id.value > state->partitions_.size() ||
-      state->partitions_[static_cast<std::size_t>(id.value - 1U)].id != id) {
+  if (!partition_handle_valid(*state, id, partition_handle_identity) ||
+      embedded_index >= state->embedded_graphs_.size()) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"));
+  }
+  auto& partition = state->partitions_[static_cast<std::size_t>(id.value - 1U)];
+  if (partition.include_all) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT"));
+  }
+  const auto& embedded = state->embedded_graphs_[embedded_index];
+  // Child snapshots already include recursively embedded metadata. Never discard an inner
+  // declaration, even if it is empty, when assigning this subtree to a parent owner.
+  if (!embedded.state->partitions_.empty()) {
+    GraphMutationRollback::checkpoint(*state);
+    return make_unexpected(internal_partition_graph_error(embedded));
+  }
+  if (std::none_of(embedded.state->vertices_.begin(),
+                   embedded.state->vertices_.end(),
+                   [](const auto& vertex) { return vertex.kind == VertexKind::kOperator; })) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_GRAPH_EMPTY"));
+  }
+  for (const auto& candidate : state->partitions_) {
+    if (std::find(candidate.graph_members.begin(),
+                  candidate.graph_members.end(),
+                  embedded.graph_id) != candidate.graph_members.end()) {
+      return make_unexpected(
+          graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_MEMBER_DUPLICATE"));
+    }
+  }
+  auto members = partition.graph_members;
+  members.push_back(embedded.graph_id);
+  std::sort(members.begin(), members.end(), [](GraphId lhs, GraphId rhs) {
+    return lhs.value < rhs.value;
+  });
+  GraphMutationRollback::checkpoint(*state);
+  partition.graph_members = std::move(members);
+  state->mark_mutation();
+  return {};
+}
+
+expected<void, Error> graph_partition_include_all(const std::shared_ptr<GraphState>& state,
+                                                  PartitionId id,
+                                                  const void* partition_handle_identity) {
+  auto prepared = state->prepare_mutation();
+  if (!prepared)
+    return prepared;
+  const std::lock_guard lock(state->mutex_);
+  if (!partition_handle_valid(*state, id, partition_handle_identity)) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"));
   }
@@ -3786,7 +5001,7 @@ expected<void, Error> graph_partition_include_all(const std::shared_ptr<GraphSta
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_AUTOMATIC_REMAINDER_CONFLICT"));
   }
   if (partition.graph != state->graph_record_.id || !partition.members.empty() ||
-      state->partitions_.size() != 1U) {
+      !partition.graph_members.empty() || state->partitions_.size() != 1U) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_INCLUDE_ALL_CONFLICT"));
   }
@@ -3970,7 +5185,7 @@ expected<ClockKey, Error> graph_add_clock(const std::shared_ptr<GraphState>& sta
   if (!factory) {
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_CLOCK_FACTORY_INVALID"));
   }
-  auto candidate = factory->create();
+  auto candidate = factory->create(nullptr);
   if (!candidate)
     return make_unexpected(std::move(candidate.error()));
   if (!candidate.value()) {
@@ -4068,8 +5283,8 @@ expected<ClockKey, Error> graph_import_clock(const std::shared_ptr<GraphState>& 
 }
 
 expected<void, Error> graph_bind_clock_import(const std::shared_ptr<GraphState>& state,
-                                              std::size_t child_index, ClockKey child_import,
-                                              ClockKey parent_clock) {
+                                              std::size_t child_index, const void* handle_identity,
+                                              ClockKey child_import, ClockKey parent_clock) {
   auto prepared = state->prepare_mutation();
   if (!prepared)
     return prepared;
@@ -4078,7 +5293,8 @@ expected<void, Error> graph_bind_clock_import(const std::shared_ptr<GraphState>&
     return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_CLOCK_BINDING_INVALID"));
   }
   const std::lock_guard lock(state->mutex_);
-  if (child_index >= state->embedded_graphs_.size()) {
+  if (child_index >= state->embedded_graphs_.size() || handle_identity == nullptr ||
+      state->embedded_graphs_[child_index].handle_identity.get() != handle_identity) {
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_CLOCK_BINDING_HANDLE_INVALID"));
   }
@@ -4225,17 +5441,21 @@ void hash_schema(HashBuilder& hash, const std::optional<SchemaIdentityRecord>& s
   if (!schema)
     return;
   hash.add(schema->canonical_name);
-  hash.add(schema->version);
-  hash_bytes(hash, schema->schema_sha256);
-  hash_bytes(hash, schema->id.value);
+  hash.add(schema->compatibility_epoch);
+  hash_bytes(hash, schema->family_id.value);
+  hash.add(
+      std::string_view{schema->file_identifier.value.data(), schema->file_identifier.value.size()});
 }
 
 void hash_payload_identity(HashBuilder& hash, const PayloadIdentityRecord& identity) {
   hash.add(identity.kind);
   hash.add(identity.payload_kind);
+  hash.add(identity.transport_profile_tag);
   hash.add(identity.scalar.has_value());
-  if (identity.scalar)
+  if (identity.scalar) {
     hash.add(identity.scalar->kind);
+    hash.add(identity.scalar->native_object_size);
+  }
   hash_schema(hash, identity.schema);
   hash.add(identity.pod.has_value());
   if (!identity.pod)
@@ -4341,6 +5561,69 @@ void hash_payload_options(HashBuilder& hash, const std::optional<PayloadOptionsR
   hash.add(options->interface_tensor_emit_policy);
 }
 
+void hash_tensor_memory_kind_expression(
+    HashBuilder& hash, const std::optional<TensorMemoryKindExpressionRecord>& expression) {
+  if (!expression) {
+    return;
+  }
+  hash.add(std::string_view{"tensor-memory-kind-expression-v2"});
+  hash.add(expression->form);
+  hash.add(expression->parameter_field);
+  for (const std::byte byte : expression->parameter_full_id.value) {
+    hash.add_byte(std::to_integer<std::uint8_t>(byte));
+  }
+  hash.add(static_cast<std::uint64_t>(expression->parameter_member_full_ids.size()));
+  for (const auto& member_full_id : expression->parameter_member_full_ids) {
+    for (const std::byte byte : member_full_id.value) {
+      hash.add_byte(std::to_integer<std::uint8_t>(byte));
+    }
+  }
+  hash.add(expression->parameter_path);
+  hash.add(expression->parameter_schema_id);
+  hash.add(expression->parameter_schema_version);
+  hash.add(static_cast<std::uint64_t>(expression->mapping.size()));
+  for (const auto& item : expression->mapping) {
+    hash.add(item.source.kind);
+    hash.add(item.source.bit_width);
+    hash.add(item.source.raw_bits);
+    hash.add(item.memory_kind);
+  }
+}
+
+void hash_tensor_byte_span_node(HashBuilder& hash, const TensorByteSpanExpressionNodeRecord& node) {
+  hash.add(node.operation);
+  hash.add(node.left);
+  hash.add(node.right);
+  hash.add(node.value);
+  hash.add(node.depth);
+  hash.add(node.parameter_field);
+  for (const std::byte byte : node.parameter_full_id.value) {
+    hash.add_byte(std::to_integer<std::uint8_t>(byte));
+  }
+  hash.add(node.parameter_path);
+  hash.add(node.parameter_schema_id);
+  hash.add(node.parameter_schema_version);
+  hash.add(node.input_name);
+  if (!node.projection_id.empty()) {
+    hash.add(std::string_view{"tensor-byte-span-projection-v2"});
+    hash.add(node.projection_id);
+    hash.add(static_cast<std::uint64_t>(node.projection_dependencies.size()));
+    for (const auto& dependency : node.projection_dependencies) {
+      hash.add(dependency.parameter_field);
+      for (const std::byte byte : dependency.parameter_full_id.value) {
+        hash.add_byte(std::to_integer<std::uint8_t>(byte));
+      }
+      hash.add(static_cast<std::uint64_t>(dependency.parameter_member_full_ids.size()));
+      for (const auto& member_full_id : dependency.parameter_member_full_ids) {
+        for (const std::byte byte : member_full_id.value) {
+          hash.add_byte(std::to_integer<std::uint8_t>(byte));
+        }
+      }
+      hash.add(dependency.parameter_path);
+    }
+  }
+}
+
 void hash_tensor_fields(HashBuilder& hash,
                         const std::vector<TensorFieldConfigurationRecord>& fields) {
   if (fields.empty()) {
@@ -4369,21 +5652,10 @@ void hash_tensor_fields(HashBuilder& hash,
       hash.add(std::string_view{"tensor-field-byte-span-expression-v1"});
       hash.add(static_cast<std::uint64_t>(field.tensor_byte_span_expression->nodes.size()));
       for (const auto& node : field.tensor_byte_span_expression->nodes) {
-        hash.add(node.operation);
-        hash.add(node.left);
-        hash.add(node.right);
-        hash.add(node.value);
-        hash.add(node.depth);
-        hash.add(node.parameter_field);
-        for (const std::byte byte : node.parameter_full_id.value) {
-          hash.add_byte(std::to_integer<std::uint8_t>(byte));
-        }
-        hash.add(node.parameter_path);
-        hash.add(node.parameter_schema_id);
-        hash.add(node.parameter_schema_version);
-        hash.add(node.input_name);
+        hash_tensor_byte_span_node(hash, node);
       }
     }
+    hash_tensor_memory_kind_expression(hash, field.tensor_memory_kind_expression);
   }
 }
 
@@ -4435,23 +5707,15 @@ void hash_port_configuration(HashBuilder& hash, const PortConfigurationRecord& c
     hash.add(std::string_view{"tensor-byte-span-expression-v1"});
     hash.add(static_cast<std::uint64_t>(config.tensor_byte_span_expression->nodes.size()));
     for (const auto& node : config.tensor_byte_span_expression->nodes) {
-      hash.add(node.operation);
-      hash.add(node.left);
-      hash.add(node.right);
-      hash.add(node.value);
-      hash.add(node.depth);
-      hash.add(node.parameter_field);
-      for (const std::byte byte : node.parameter_full_id.value) {
-        hash.add_byte(std::to_integer<std::uint8_t>(byte));
-      }
-      hash.add(node.parameter_path);
-      hash.add(node.parameter_schema_id);
-      hash.add(node.parameter_schema_version);
-      hash.add(node.input_name);
+      hash_tensor_byte_span_node(hash, node);
     }
   }
+  hash_tensor_memory_kind_expression(hash, config.tensor_memory_kind_expression);
   hash_payload_options(hash, config.payload_options);
   hash_tensor_fields(hash, config.tensor_fields);
+  if (config.accepts_projected_tensor) {
+    hash.add(std::string_view{"accepts-projected-tensor-v1"});
+  }
 }
 
 void hash_connection(HashBuilder& hash, const ConnectionOptionsRecord& options) {
@@ -4505,6 +5769,12 @@ GraphAuthoringHash compute_graph_hash(  // NOLINT(readability-function-cognitive
     hash.add(vertex.graph.value);
     hash.add(vertex.kind);
     hash.add(vertex.name);
+    hash.add(vertex.operator_host);
+    hash.add(vertex.serialization_domain);
+    // Keep hashes of graphs without the new opt-in byte-for-byte stable relative to host metadata.
+    if (vertex.cuda_graph_capture_eligible) {
+      hash.add("cuda_graph_capture_eligible");
+    }
   }
   hash.add(static_cast<std::uint64_t>(snapshot.ports.size()));
   for (const auto& port : snapshot.ports) {
@@ -4512,6 +5782,7 @@ GraphAuthoringHash compute_graph_hash(  // NOLINT(readability-function-cognitive
     hash.add(port.owner.value);
     hash.add(port.owner_kind);
     hash.add(port.direction);
+    hash.add(port.optional);
     hash.add(port.name);
     hash_payload_identity(hash, port.payload_identity);
     hash.add(port.serialized_payload_capacity_bytes);
@@ -4528,6 +5799,11 @@ GraphAuthoringHash compute_graph_hash(  // NOLINT(readability-function-cognitive
     hash_connection(hash, edge.add_flow_options);
     hash_connection_override(hash, edge.graph_override);
     hash_payload_options(hash, edge.effective_tensor_payload);
+    if (edge.tensor_projection) {
+      hash.add(std::string_view{"tensor-projection-v1"});
+      hash.add(edge.tensor_projection->field_id);
+      hash.add(edge.tensor_projection->tensor_index);
+    }
   }
   hash.add(static_cast<std::uint64_t>(snapshot.interface_bindings.size()));
   for (const auto& binding : snapshot.interface_bindings) {
@@ -4631,9 +5907,8 @@ GraphAuthoringHash compute_graph_hash(  // NOLINT(readability-function-cognitive
       hash.add(constraint.kind());
       hash.add(constraint.latency().count());
     }
-    hash.add(static_cast<std::uint64_t>(region.hints.size()));
-    for (auto hint : region.hints)
-      hash.add(hint);
+    // Preserve the v1 identity slot formerly occupied by the removed optimization-hint list.
+    hash.add(std::uint64_t{0U});
     hash_optional(hash, region.profile);
   }
   hash.add(static_cast<std::uint64_t>(snapshot.partitions.size()));
@@ -4645,6 +5920,9 @@ GraphAuthoringHash compute_graph_hash(  // NOLINT(readability-function-cognitive
     for (const VertexId member : partition.members)
       hash.add(member.value);
     hash.add(partition.include_all);
+    hash.add(static_cast<std::uint64_t>(partition.graph_members.size()));
+    for (const GraphId member : partition.graph_members)
+      hash.add(member.value);
   }
   hash.add(snapshot.automatic_partition_remaining);
   hash.add(static_cast<std::uint64_t>(snapshot.clocks.size()));
@@ -4795,6 +6073,34 @@ using IdMap = std::unordered_map<std::uint64_t, Id>;
 
 }  // namespace
 
+expected<void, Error> graph_apply_atomic_mutation(const std::shared_ptr<GraphState>& state,
+                                                  void* context,
+                                                  GraphAtomicMutationOperation operation) {
+  if (!state || operation == nullptr) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_MUTATION_INVALID"));
+  }
+  auto prepared = graph_prepare_authoring(state);
+  if (!prepared) {
+    return prepared;
+  }
+
+  const std::lock_guard lock(state->mutex_);
+  auto rollback = std::make_unique<GraphMutationRollback>(
+      *state, GraphMutationRollback::CaptureExistingRecords{});
+  try {
+    auto result = operation(context);
+    if (result) {
+      rollback->commit();
+    } else {
+      rollback->rollback();
+    }
+    return result;
+  } catch (...) {
+    rollback->rollback();
+    throw;
+  }
+}
+
 expected<void, Error> graph_prepare_embedded_type(const std::shared_ptr<GraphState>& parent,
                                                   const std::shared_ptr<GraphState>& child,
                                                   const void* child_type_token) {
@@ -4839,6 +6145,7 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
     return make_unexpected(
         graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARTITION_AUTOMATIC_REMAINDER_CONFLICT"));
   }
+  std::shared_ptr<const void> handle_identity = std::make_shared<std::byte>(std::byte{});
 
   // Child composition and deep snapshot creation completed before this call,
   // so publication reuses that immutable snapshot without repeating its copy,
@@ -4847,6 +6154,10 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
   // essential: rollback may destroy the child Graph, whose destructor locks
   // that mutex to detach its state.
   const std::lock_guard lock(parent->mutex_);
+  if (parent->parameter_transaction_ && child_state->parameter_transaction_) {
+    return make_unexpected(
+        graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARAMETER_TRANSACTION_CONFLICT"));
+  }
   if (!child_snapshot->partitions.empty() &&
       std::any_of(parent->partitions_.begin(),
                   parent->partitions_.end(),
@@ -4908,6 +6219,9 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
         .graph = graph_ids.at(source.graph.value),
         .kind = source.kind,
         .name = source.name,
+        .operator_host = source.operator_host,
+        .serialization_domain = source.serialization_domain,
+        .cuda_graph_capture_eligible = source.cuda_graph_capture_eligible,
     });
     parent->vertex_adjacency_.emplace_back();
     parent->cycle_visit_marks_.push_back(0U);
@@ -4923,6 +6237,7 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
     PortStorage copied = source;
     copied.record.id = id;
     copied.record.owner = vertex_ids.at(source.record.owner.value);
+    copied.handle_identity = std::make_shared<std::byte>();
     copied.operator_index.reset();
     parent->ports_.push_back(std::move(copied));
     // The parent may wire only the child's declared Graph interface. Internal
@@ -4954,6 +6269,7 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
         .source_index = index,
         .vertex = vertex_ids.at(child_state->operators_[index].vertex.value),
         .factory = child_state->operators_[index].factory->clone(),
+        .parameter_input_evidence = child_state->operators_[index].parameter_input_evidence,
     });
     GraphMutationRollback::checkpoint(*parent);
   }
@@ -4963,6 +6279,7 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
         .source_index = mapping.source_index,
         .vertex = vertex_ids.at(mapping.vertex.value),
         .factory = mapping.factory->clone(),
+        .parameter_input_evidence = mapping.parameter_input_evidence,
     });
     GraphMutationRollback::checkpoint(*parent);
   }
@@ -4978,7 +6295,10 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
       return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_EMBED_CHILD_INVALID"));
     }
     reserve_adjacency(*parent, copied_source->record.owner);
+    auto handle_identity = std::make_shared<std::byte>();
+    parent->edge_handle_identities_.reserve(parent->edge_handle_identities_.size() + 1U);
     parent->edges_.push_back(std::move(copied));
+    parent->edge_handle_identities_.push_back(std::move(handle_identity));
     append_adjacency(*parent, copied_source->record.owner, copied_target->record.owner);
     GraphMutationRollback::checkpoint(*parent);
   }
@@ -5038,7 +6358,10 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
       member = vertex_ids.at(member.value);
     for (auto& member : region.graph_members)
       member = graph_ids.at(member.value);
+    auto region_handle_identity = std::make_shared<std::byte>();
+    parent->region_handle_identities_.reserve(parent->regions_.size() + 1U);
     parent->regions_.push_back(std::move(region));
+    parent->region_handle_identities_.push_back(std::move(region_handle_identity));
     GraphMutationRollback::checkpoint(*parent);
   }
 
@@ -5048,10 +6371,15 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
     partition.graph = graph_ids.at(partition.graph.value);
     for (auto& member : partition.members)
       member = vertex_ids.at(member.value);
+    for (auto& member : partition.graph_members)
+      member = graph_ids.at(member.value);
     // Partition names are Graph-scoped. The root authoring index deliberately
     // excludes embedded Graph records, whose local names may repeat in sibling
     // instances without colliding with a root partition.
+    auto partition_handle_identity = std::make_shared<std::byte>();
+    parent->partition_handle_identities_.reserve(parent->partitions_.size() + 1U);
     parent->partitions_.push_back(std::move(partition));
+    parent->partition_handle_identities_.push_back(std::move(partition_handle_identity));
     GraphMutationRollback::checkpoint(*parent);
   }
 
@@ -5132,11 +6460,47 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
       .state = child_state,
       .graph_id = embedded_root,
       .path = handle_path,
+      .handle_identity = handle_identity,
   });
-  parent->mark_mutation();
   GraphMutationRollback::checkpoint(*parent);
+  if (child_state->parameter_transaction_) {
+    try {
+      auto remapped =
+          std::make_shared<ParameterTransactionState>(*child_state->parameter_transaction_);
+      for (auto& op : remapped->operators) {
+        const auto target = vertex_ids.find(op.target.value);
+        if (target == vertex_ids.end()) {
+          return make_unexpected(
+              graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARAMETER_TRANSACTION_INVALID"));
+        }
+        op.target = target->second;
+      }
+      for (auto& scope_target : remapped->scope.operators) {
+        const auto target = vertex_ids.find(scope_target.value);
+        if (target == vertex_ids.end()) {
+          return make_unexpected(
+              graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARAMETER_TRANSACTION_INVALID"));
+        }
+        scope_target = target->second;
+      }
+      if (remapped->scope.graph) {
+        const auto target = graph_ids.find(remapped->scope.graph->value);
+        if (target == graph_ids.end()) {
+          return make_unexpected(
+              graph_error(ErrorCode::kInvalidArgument, "GRAPH_PARAMETER_TRANSACTION_INVALID"));
+        }
+        remapped->scope.graph = target->second;
+      }
+      parent->parameter_transaction_ = std::move(remapped);
+    } catch (const std::bad_alloc&) {
+      return make_unexpected(
+          graph_error(ErrorCode::kResourceExhausted, "GRAPH_PARAMETER_TRANSACTION_ALLOC_FAILED"));
+    }
+  }
+  parent->mark_mutation();
   EmbeddedGraphRegistration registration{
       .index = embedded_index,
+      .handle_identity = std::move(handle_identity),
   };
   rollback.commit();
   graph_log_noexcept([&] {
@@ -5147,24 +6511,95 @@ graph_register_embedded(  // NOLINT(readability-function-cognitive-complexity)
   return registration;
 }
 
-const Graph* graph_embedded_graph(const std::shared_ptr<GraphState>& state,
-                                  std::size_t index) noexcept {
+const Graph* graph_embedded_graph(const std::shared_ptr<GraphState>& state, std::size_t index,
+                                  const void* handle_identity) noexcept {
   const std::lock_guard lock(state->mutex_);
-  if (index >= state->embedded_graphs_.size())
+  if (index >= state->embedded_graphs_.size() || handle_identity == nullptr ||
+      state->embedded_graphs_[index].handle_identity.get() != handle_identity) {
     return nullptr;
+  }
   return state->embedded_graphs_[index].graph.get();
 }
 
-bool graph_embedded_valid(const std::shared_ptr<GraphState>& state, std::size_t index) noexcept {
-  return graph_embedded_graph(state, index) != nullptr;
+bool graph_embedded_valid(const std::shared_ptr<GraphState>& state, std::size_t index,
+                          const void* handle_identity) noexcept {
+  return graph_embedded_graph(state, index, handle_identity) != nullptr;
 }
 
 std::optional<GraphInstancePath> graph_embedded_path(const std::shared_ptr<GraphState>& state,
-                                                     std::size_t index) {
+                                                     std::size_t index,
+                                                     const void* handle_identity) {
   const std::lock_guard lock(state->mutex_);
-  if (index >= state->embedded_graphs_.size())
+  if (index >= state->embedded_graphs_.size() || handle_identity == nullptr ||
+      state->embedded_graphs_[index].handle_identity.get() != handle_identity) {
     return std::nullopt;
+  }
   return state->embedded_graphs_[index].path;
+}
+
+expected<std::vector<PortRecord>, Error> graph_embedded_interface_ports(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* handle_identity) {
+  if (!state) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->embedded_graphs_.size() || handle_identity == nullptr ||
+      state->embedded_graphs_[index].handle_identity.get() != handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const GraphId child_graph = state->embedded_graphs_[index].graph_id;
+  std::vector<PortRecord> result;
+  for (const auto& entry : state->ports_) {
+    if (entry.record.owner_kind != PortOwnerKind::kGraphInterface) {
+      continue;
+    }
+    const auto owner = std::find_if(
+        state->vertices_.begin(), state->vertices_.end(), [&](const VertexRecord& vertex) {
+          return vertex.id == entry.record.owner;
+        });
+    if (owner != state->vertices_.end() && owner->graph == child_graph) {
+      result.push_back(entry.record);
+    }
+  }
+  return result;
+}
+
+expected<PortRecord, Error> graph_find_embedded_interface_port(
+    const std::shared_ptr<GraphState>& state, std::size_t index, const void* handle_identity,
+    std::string_view name) {
+  auto ports = graph_embedded_interface_ports(state, index, handle_identity);
+  if (!ports) {
+    return make_unexpected(std::move(ports).error());
+  }
+  const auto port = std::find_if(
+      ports->begin(), ports->end(), [&](const PortRecord& record) { return record.name == name; });
+  if (port == ports->end()) {
+    return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_PORT_NOT_FOUND"));
+  }
+  return *port;
+}
+
+expected<ClockKey, Error> graph_find_embedded_clock_import(const std::shared_ptr<GraphState>& state,
+                                                           std::size_t index,
+                                                           const void* handle_identity,
+                                                           std::string_view name) {
+  if (!state) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const std::lock_guard lock(state->mutex_);
+  if (index >= state->embedded_graphs_.size() || handle_identity == nullptr ||
+      state->embedded_graphs_[index].handle_identity.get() != handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kInvalidArgument, "GRAPH_HANDLE_INVALID"));
+  }
+  const GraphId child_graph = state->embedded_graphs_[index].graph_id;
+  const auto found = std::find_if(
+      state->clock_imports_.begin(), state->clock_imports_.end(), [&](const auto& candidate) {
+        return candidate.graph == child_graph && candidate.key.name() == name;
+      });
+  if (found == state->clock_imports_.end()) {
+    return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_CLOCK_IMPORT_NOT_FOUND"));
+  }
+  return found->key;
 }
 
 std::shared_ptr<const GraphSnapshotData> graph_snapshot(const std::shared_ptr<GraphState>& state) {
@@ -5217,13 +6652,20 @@ std::shared_ptr<const GraphSnapshotData> graph_snapshot(const std::shared_ptr<Gr
 expected<TensorOutputPortConfigurator*, Error> graph_tensor_configurator(
     const std::shared_ptr<GraphState>& state, GraphPortId id) {
   const std::lock_guard lock(state->mutex_);
+  const PortStorage* port = find_port(*state, id);
+  if (port == nullptr || !port->handle_identity) {
+    return make_unexpected(graph_error(ErrorCode::kNotFound, "GRAPH_PORT_NOT_FOUND"));
+  }
   for (auto& configurator : state->tensor_configurators_) {
-    if (configurator.port_ == id)
+    if (configurator.port_ == id &&
+        configurator.handle_identity_.get() == port->handle_identity.get()) {
       return &configurator;
+    }
   }
   try {
     GraphMutationRollback::checkpoint(*state);
-    state->tensor_configurators_.push_back(TensorOutputPortConfigurator{state, id});
+    state->tensor_configurators_.push_back(
+        TensorOutputPortConfigurator{state, id, port->handle_identity});
   } catch (const std::bad_alloc&) {
     // Preserve the nonthrowing expected path even while the allocator is
     // exhausted: constructing an optional diagnostic string could throw here.
@@ -5246,6 +6688,10 @@ RegionConstraint RegionConstraint::device_compatible_ops() noexcept {
   return RegionConstraint{RegionConstraintKind::kDeviceCompatibleOperators, {}};
 }
 
+RegionConstraint RegionConstraint::cuda_graph() noexcept {
+  return RegionConstraint{RegionConstraintKind::kCudaGraph, {}};
+}
+
 RegionConstraint RegionConstraint::latency_budget(std::chrono::nanoseconds budget) {
   if (budget.count() <= 0) {
     throw RuntimeError(Error{ErrorCode::kInvalidArgument, "GRAPH_REGION_LATENCY_INVALID"});
@@ -5255,31 +6701,32 @@ RegionConstraint RegionConstraint::latency_budget(std::chrono::nanoseconds budge
 
 TensorOutputPortConfigurator& TensorOutputPortConfigurator::max_emits_per_compute(
     std::uint32_t count) {
-  apply(detail::graph_configure_output_emits(state(), port_, count));
+  apply(detail::graph_configure_output_emits(state(), port_, handle_identity_.get(), count));
   return *this;
 }
 
 TensorOutputPortConfigurator& TensorOutputPortConfigurator::late_joiner_history_depth(
     std::uint32_t depth) {
-  apply(detail::graph_configure_output_history(state(), port_, depth));
+  apply(detail::graph_configure_output_history(state(), port_, handle_identity_.get(), depth));
   return *this;
 }
 
 TensorOutputPortConfigurator& TensorOutputPortConfigurator::produces_tensor(
     const TensorOutputSpec& spec) {
-  apply(detail::graph_configure_output_tensor_spec(state(), port_, spec));
+  apply(detail::graph_configure_output_tensor_spec(state(), port_, handle_identity_.get(), spec));
   return *this;
 }
 
 TensorOutputPortConfigurator& TensorOutputPortConfigurator::payload_options(
     PayloadOptions options) {
-  apply(detail::graph_configure_output_payload(state(), port_, std::move(options)));
+  apply(detail::graph_configure_output_payload(
+      state(), port_, handle_identity_.get(), std::move(options)));
   return *this;
 }
 
 TensorOutputPortConfigurator& TensorOutputPortConfigurator::diagnostic_alias(
     std::string_view alias) {
-  apply(detail::graph_configure_port_alias(state(), port_, alias));
+  apply(detail::graph_configure_port_alias(state(), port_, handle_identity_.get(), alias));
   return *this;
 }
 
@@ -5301,18 +6748,7 @@ RegionHandle& RegionHandle::constrain(RegionConstraint constraint) {
   if (!state) {
     detail::throw_graph_error(Error{ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"});
   }
-  auto result = detail::graph_region_add_constraint(state, id_, constraint);
-  if (!result)
-    detail::throw_graph_error(std::move(result.error()));
-  return *this;
-}
-
-RegionHandle& RegionHandle::optimize(OptimizationHint hint) {
-  auto state = state_.lock();
-  if (!state) {
-    detail::throw_graph_error(Error{ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"});
-  }
-  auto result = detail::graph_region_add_hint(state, id_, hint);
+  auto result = detail::graph_region_add_constraint(state, id_, handle_identity_.get(), constraint);
   if (!result)
     detail::throw_graph_error(std::move(result.error()));
   return *this;
@@ -5323,7 +6759,7 @@ RegionHandle& RegionHandle::profile(Profile profile) {
   if (!state) {
     detail::throw_graph_error(Error{ErrorCode::kInvalidArgument, "GRAPH_REGION_HANDLE_INVALID"});
   }
-  auto result = detail::graph_region_set_profile(state, id_, profile);
+  auto result = detail::graph_region_set_profile(state, id_, handle_identity_.get(), profile);
   if (!result)
     detail::throw_graph_error(std::move(result.error()));
   return *this;
@@ -5431,14 +6867,14 @@ RegionHandle Graph::region(std::string_view name) {
   auto result = detail::graph_add_region(state_, name);
   if (!result)
     detail::throw_graph_error(std::move(result.error()));
-  return RegionHandle{state_, result.value()};
+  return RegionHandle{state_, result.value().id, std::move(result.value().handle_identity)};
 }
 
 PartitionHandle Graph::partition(std::string_view name) {
   auto result = detail::graph_add_partition(state_, name);
   if (!result)
     detail::throw_graph_error(std::move(result.error()));
-  return PartitionHandle{state_, result.value()};
+  return PartitionHandle{state_, result.value().id, std::move(result.value().handle_identity)};
 }
 
 PartitionHandle& PartitionHandle::include_all() {
@@ -5446,7 +6882,7 @@ PartitionHandle& PartitionHandle::include_all() {
   if (!state) {
     detail::throw_graph_error(Error{ErrorCode::kInvalidArgument, "GRAPH_PARTITION_HANDLE_INVALID"});
   }
-  auto result = detail::graph_partition_include_all(state, id_);
+  auto result = detail::graph_partition_include_all(state, id_, handle_identity_.get());
   if (!result)
     detail::throw_graph_error(std::move(result.error()));
   return *this;

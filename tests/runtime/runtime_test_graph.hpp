@@ -629,9 +629,12 @@ enum class RuntimeAlignedChannelScript : std::uint8_t {
   kExactBoundary,
   kMisalignmentProgress,
   kMissingHead,
+  kMisalignedMembers,
+  kSideInputReference,
 };
 
 /// @brief Share bounded observations for end-to-end aligned Channel execution tests.
+/// Used by RunSessionTest.ChannelAlignedConnectedSilentSideInputRemainsNeverSeen.
 struct RuntimeAlignedChannelProbeState {
   static void reset(RuntimeAlignedChannelScript requested);
 
@@ -652,13 +655,22 @@ struct RuntimeAlignedChannelProbeState {
   static std::atomic<std::size_t> sink_compute_count;
   static std::atomic<std::uint32_t> observed_first;
   static std::atomic<std::uint32_t> observed_second;
+  static std::atomic<std::uint32_t> observed_optional;
   static std::atomic<std::int64_t> observed_first_capture;
   static std::atomic<std::int64_t> observed_second_capture;
+  static std::atomic<std::int64_t> side_reference_capture;
+  static std::atomic<InputState> observed_optional_state;
+  static std::atomic<SelectionReason> observed_optional_reason;
+  static std::atomic<ErrorCode> observed_optional_error;
+  static std::atomic<ErrorCode> observed_optional_batch_error;
 };
 
-/// @brief Emit deterministic capture-time scripts into two process-local Channel services.
+/// @brief Emit deterministic capture-time scripts into aligned and optional Channel services.
+/// Used by RunSessionTest.ChannelAlignedSideInputUsesAlignedReferenceWhenOlderMemberArrivesLast.
 class RuntimeAlignedChannelSourceOperator final : public Operator<> {
  public:
+  explicit RuntimeAlignedChannelSourceOperator(bool finite = false) : finite_(finite) {}
+
   void setup(OperatorSpec& spec) override;
 
   [[nodiscard]] Contract contract() const override;
@@ -667,9 +679,14 @@ class RuntimeAlignedChannelSourceOperator final : public Operator<> {
 
   Output<std::uint32_t> first;
   Output<std::uint32_t> second;
+  Output<std::uint32_t> optional;
+
+ private:
+  bool finite_{};
 };
 
-/// @brief Consume one inclusive aligned tuple and retain its public observations.
+/// @brief Consume one inclusive aligned tuple and retain optional-side observations.
+/// Used by RunSessionTest.ChannelAlignedTriggerAcceptsTheInclusiveExactBoundary.
 class RuntimeAlignedChannelSinkOperator final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override;
@@ -680,6 +697,8 @@ class RuntimeAlignedChannelSinkOperator final : public Operator<> {
 
   Input<std::uint32_t> first;
   Input<std::uint32_t> second;
+  Input<std::uint32_t> optional;
+  Input<std::uint32_t> additional_optional;
 };
 
 /// @brief Record activation of an Operator whose declared ports have no Channel endpoints.
@@ -822,9 +841,13 @@ class RuntimeWindowChannelRelayOperator final : public Operator<> {
   Output<std::uint32_t> windowed;
 };
 
-/// @brief Observe the semantic anchor and the later normal/timeout activation coordinate.
+/// @brief Observe the window activation coordinate and optional compute-only side.
+/// Used by RunSessionTest.OptionalWindowSidePreservesSuccessfulAndDegradedWindowSelection.
 class RuntimeWindowChannelSinkOperator final : public Operator<> {
  public:
+  explicit RuntimeWindowChannelSinkOperator(bool optional_side = false)
+      : optional_side_(optional_side) {}
+  static inline std::atomic_uint32_t optional_checks{};
   void setup(OperatorSpec& spec) override;
 
   [[nodiscard]] Contract contract() const override;
@@ -834,6 +857,10 @@ class RuntimeWindowChannelSinkOperator final : public Operator<> {
   Input<std::uint32_t> anchor;
   Input<std::uint32_t> windowed;
   Output<std::uint32_t> output;
+  Input<std::uint32_t> side;
+
+ private:
+  bool optional_side_{};
 };
 
 /// @brief Drain every window result and its downstream EOS before natural completion.
@@ -908,6 +935,24 @@ class RuntimeClockInputReplayOperator final : public Operator<> {
  private:
   RuntimeClockInputReplayKind kind_;
   std::uint32_t replay_ordinal_{};
+};
+
+/// @brief Exercise a clock-driven Exact/SafeDefault input with no graph edge.
+/// Used by RunSessionTest.UnwiredExactSafeDefaultRunsWithNotConnectedSelection.
+class RuntimeOptionalSafeDefaultOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override;
+
+  [[nodiscard]] Contract contract() const override;
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override;
+
+  Input<std::uint32_t> optional;
+  static std::atomic<std::uint32_t> compute_count;
+  static std::atomic<InputState> observed_state;
+  static std::atomic<SelectionReason> observed_reason;
+  static std::atomic<ErrorCode> scalar_error;
+  static std::atomic<ErrorCode> batch_error;
 };
 
 enum class RuntimeInputPredicatePattern : std::uint8_t {
@@ -1066,10 +1111,14 @@ enum class RuntimeComputeCallAction : std::uint8_t {
 };
 
 /// @brief Retain compute-call progress, restart, and final-data evidence for completion tests.
+/// Used by RunSessionTest.FailedComputeCallRetainsOnlyPreviouslySuccessfulProgressAndPublication.
 struct RuntimeComputeCallChannelProbeState {
   static void reset(bool hold_first_compute = false) noexcept;
   [[nodiscard]] static std::size_t enter_source_compute();
   [[nodiscard]] static bool wait_until_source_compute();
+  /// Wait for prior publication witnesses before injecting the source failure in
+  /// RunSessionTest.FailedComputeCallRetainsOnlyPreviouslySuccessfulProgressAndPublication.
+  [[nodiscard]] static bool wait_until_sink_count(std::size_t expected_count);
   static void release_source_compute();
   static void record_sink(std::uint32_t value) noexcept;
 
@@ -1092,6 +1141,7 @@ struct RuntimeComputeCallChannelProbeState {
 };
 
 /// @brief Emit values from a zero-input source with Operator-local compute-call completion.
+/// Used by RunSessionTest.FailedComputeCallRetainsOnlyPreviouslySuccessfulProgressAndPublication.
 class RuntimeComputeCallSourceOperator final : public Operator<> {
  public:
   RuntimeComputeCallSourceOperator(
@@ -1218,6 +1268,10 @@ template <typename ClockT, typename... Args>
 [[nodiscard]] ExecutionPlan make_runtime_clock_input_replay_plan(
     RuntimeClockInputReplayKind kind, Profile profile = Profile::kStandard);
 
+/// @brief Compile a one-operator clock graph with an unwired Exact/SafeDefault input.
+/// Used by RunSessionTest.UnwiredExactSafeDefaultRunsWithNotConnectedSelection.
+[[nodiscard]] ExecutionPlan make_runtime_optional_safe_default_plan();
+
 /// @brief Compile two clock-input replay owners whose mismatch can be selected by stable ordinal.
 [[nodiscard]] ExecutionPlan make_runtime_dual_clock_input_replay_plan();
 
@@ -1227,7 +1281,7 @@ template <typename ClockT, typename... Args>
 
 [[nodiscard]] ExecutionPlan make_runtime_compute_call_channel_plan(
     std::uint64_t limit = 1U, RuntimeComputeCallAction action = RuntimeComputeCallAction::kNone,
-    std::uint64_t restart_after_successful_compute_calls = 1U);
+    std::uint64_t restart_after_successful_compute_calls = 1U, bool separate_partitions = true);
 
 [[nodiscard]] ExecutionPlan make_runtime_compute_call_chain_plan(std::uint64_t limit = 2U);
 
@@ -1236,17 +1290,25 @@ template <typename ClockT, typename... Args>
 [[nodiscard]] ExecutionPlan make_runtime_input_trigger_replay_plan(
     RuntimeInputTriggerReplayKind kind);
 
-[[nodiscard]] ExecutionPlan make_runtime_aligned_channel_plan(bool complete_manual_cover = false);
+/// @brief Compile aligned members and optional sides with configurable wiring and source EOS.
+/// Used by RunSessionTest.ChannelAlignedUnwiredSideInputDoesNotBlockNaturalCompletion.
+[[nodiscard]] ExecutionPlan make_runtime_aligned_channel_plan(bool complete_manual_cover = false,
+                                                              bool connect_optional = false,
+                                                              bool finite_source = false);
 
 /// @brief Compile one exact named source anchor and one automatic Channel consumer.
-[[nodiscard]] ExecutionPlan make_runtime_hybrid_aligned_channel_plan();
+/// Currently has no test caller; shares the aligned fixture used by
+/// RunSessionTest.ChannelAlignedTriggerAcceptsTheInclusiveExactBoundary.
+[[nodiscard]] ExecutionPlan make_runtime_hybrid_aligned_channel_plan(bool connect_optional = false);
 
 [[nodiscard]] ExecutionPlan make_runtime_mixed_channel_unconnected_port_plan();
 
 [[nodiscard]] ExecutionPlan make_runtime_activation_cut_order_plan();
 
+/// @brief Compile window closure or terminal-drain graphs with an optional compute-only side.
+/// Used by RunSessionTest.OptionalWindowSidePreservesSuccessfulAndDegradedWindowSelection.
 [[nodiscard]] ExecutionPlan make_runtime_window_channel_plan(
-    bool separate_execution_partitions = false);
+    bool separate_execution_partitions = false, bool optional_side = false);
 
 [[nodiscard]] ExecutionPlan make_runtime_multi_lane_test_plan();
 

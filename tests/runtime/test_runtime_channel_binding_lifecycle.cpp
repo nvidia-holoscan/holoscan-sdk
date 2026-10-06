@@ -561,11 +561,318 @@ TEST(RuntimeChannelBinding,
   }
 }
 
+// Share the reset/restart matrix across sequence continuity and exhaustion regressions, including
+// OutputSequenceSurvivesEveryCutoverAndOrderedClose.
+enum class SequenceCutover : std::uint8_t { kFull, kSource, kReceiver, kRestart };
+
+// Apply a boundary to the fixture's source (owner 1) and receiver (owner 2); restart affects both.
+// OutputSequenceSurvivesEveryCutoverAndOrderedClose uses this to repeat each cutover consistently.
+expected<void, Error> apply_sequence_cutover(RuntimeChannelSession& session,
+                                             const SequenceCutover cutover) {
+  const std::array affected{VertexId{1U}, VertexId{2U}};
+  switch (cutover) {
+    case SequenceCutover::kFull:
+      return session.reset();
+    case SequenceCutover::kSource:
+      return session.reset(VertexId{1U});
+    case SequenceCutover::kReceiver:
+      return session.reset(VertexId{2U});
+    case SequenceCutover::kRestart:
+      return session.commit_restart(VertexId{1U}, affected);
+  }
+  return make_unexpected(Error{ErrorCode::kInvalidArgument});
+}
+
+// Two outputs in one session have independent histories. Re-emitting a stamped sample uses the
+// destination output counter, while a new session starts both counters afresh.
+// REQ: RUNTIME-052
+TEST(RuntimeChannelBinding, OutputSequencesAreIndependentAndFreshPerSession) {
+  // Planned graph: first  --output--> input-- first-sink
+  //                second --output--> input-- second-sink
+  // Key setup: create two sessions from this plan and capture each output with a scripted
+  // publisher; reset one source, then re-emit a sample stamped with sequence 99.
+  Graph graph{"independent-output-sequences"};
+  graph.set_default_clock(graph.bind_shared_clock("clock", std::make_shared<ManualClock>(0)));
+  const auto first = graph.op<SourceOperator>("first");
+  const auto second = graph.op<SourceOperator>("second");
+  const auto first_sink = graph.op<SinkOperator>("first-sink");
+  const auto second_sink = graph.op<SinkOperator>("second-sink");
+  graph.add_flow(first->output, first_sink->input);
+  graph.add_flow(second->output, second_sink->input);
+  const auto plan = compile_with_process_local_holomq(graph, CompileOptions{});
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto state = ExecutionPlanAccess::retain(plan);
+  ASSERT_NE(state, nullptr);
+  for (const std::uint64_t run : {1U, 2U}) {
+    SCOPED_TRACE(run);
+    std::array<SourceOperator, 2U> source_operators;
+    std::array<SinkOperator, 2U> sink_operators;
+    std::vector<RuntimeChannelPortReplayRecord> ports;
+    std::vector<SourceOperator*> sources;
+    std::vector<PortId> outputs;
+    std::vector<VertexId> owners;
+    std::size_t input_index = 0U;
+    for (const auto& planned : state->ports) {
+      void* declaration = nullptr;
+      if (planned.direction == PortDirection::kOutput) {
+        ASSERT_LT(sources.size(), source_operators.size());
+        auto& source = source_operators[sources.size()];
+        declaration = &source.output;
+        sources.push_back(&source);
+        outputs.push_back(planned.id);
+        owners.push_back(planned.owner);
+      } else {
+        ASSERT_LT(input_index, sink_operators.size());
+        declaration = &sink_operators[input_index++].input;
+      }
+      ports.push_back(
+          RuntimeChannelPortReplayRecord{.port = planned.id,
+                                         .owner = planned.owner,
+                                         .direction = planned.direction,
+                                         .declaration = declaration,
+                                         .type_ops = runtime_port_type_ops<std::int32_t>()});
+    }
+    ASSERT_EQ(sources.size(), 2U);
+    auto session = RuntimeChannelSession::create(*state, ports);
+    ASSERT_TRUE(session) << runtime_error_message(session.error());
+    std::array<ScriptedInlinePublisher*, 2U> observed{};
+    for (std::size_t index = 0U; index < sources.size(); ++index) {
+      auto publisher = std::make_unique<ScriptedInlinePublisher>(
+          std::vector<channel_internal::InlinePublicationResult>{});
+      observed[index] = publisher.get();
+      std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers;
+      publishers.push_back(std::move(publisher));
+      ASSERT_TRUE(RuntimeChannelSessionTestAccess::replace_output_publishers(
+          **session, outputs[index], std::move(publishers)));
+      ASSERT_TRUE((*session)->prepare_activation(owners[index], 1U, {}));
+      for (std::size_t count = 0U; count <= index; ++count) {
+        ASSERT_TRUE(sources[index]->output.emit(std::int32_t{17}));
+      }
+      ASSERT_TRUE((*session)->retire_activation(owners[index], 1U, true));
+    }
+    ASSERT_TRUE((*session)->reset(owners[0]));
+    ASSERT_TRUE((*session)->prepare_activation(owners[0], 2U, {}));
+    ASSERT_TRUE(sources[0]->output.emit(
+        Sample<std::int32_t>{19, SampleMetadata{.sequence = 99U, .trace_id = 0xA11CEU}}));
+    ASSERT_TRUE((*session)->retire_activation(owners[0], 2U, true));
+    ASSERT_TRUE((*session)->prepare_activation(owners[1], 1U, {}));
+    ASSERT_TRUE(sources[1]->output.emit(std::int32_t{20}));
+    ASSERT_TRUE((*session)->retire_activation(owners[1], 1U, true));
+    // Key assertion: each session starts both independent histories at 1; re-emission uses the
+    // reset source's next output sequence while preserving the payload and trace_id.
+    ASSERT_EQ(observed[0]->sequences, (std::vector<std::uint64_t>{1U, 2U}));
+    ASSERT_EQ(observed[1]->sequences, (std::vector<std::uint64_t>{1U, 2U, 3U}));
+    EXPECT_EQ(observed[0]->metadata_records.back().trace_id, 0xA11CEU);
+    EXPECT_EQ(observed[0]->values.back(), 19);
+  }
+}
+
+// Resetting one fanout receiver advances only its epoch; the source still publishes one shared
+// sequence to both receivers and counts the operation once.
+// REQ: RUNTIME-052
+// REQ: RUNTIME-024
+TEST(RuntimeChannelBinding, ReceiverOnlyResetPreservesFanoutPublicationAuthority) {
+  // Source --output--+--blocking----> input-- sink (owner 2)
+  //                 +--drop-oldest-> input-- second_sink (owner 3)
+  // Key setup: publish twice, reset only owner 2, then publish once more to both receivers.
+  SessionFixture fixture;
+  fixture.add_mixed_policy_fanout();
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session);
+  ASSERT_TRUE((*session)->refresh_connections());
+  for (const std::uint64_t sequence : {1U, 2U, 3U}) {
+    ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+    ASSERT_TRUE(fixture.source.output.emit(static_cast<std::int32_t>(sequence)));
+    ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+    // Key assertion: both receivers share each publication sequence, and only the reset
+    // receiver advances its epoch; the final counter counts each fanout publication once.
+    for (const PortId input : {PortId{2U}, PortId{3U}}) {
+      ASSERT_TRUE(RuntimeChannelSessionTestAccess::receive_one(**session, input));
+      auto state = RuntimeChannelSessionTestAccess::input_reset_state(**session, input);
+      ASSERT_TRUE(state);
+      EXPECT_EQ(state->last_producer_sequence, sequence);
+      EXPECT_EQ(state->producer_epoch, input.value() == 2U && sequence == 3U ? 2U : 1U);
+    }
+    if (sequence == 2U) {
+      ASSERT_TRUE((*session)->reset(VertexId{2U}));
+    }
+  }
+  auto counter = RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+  ASSERT_TRUE(counter);
+  EXPECT_EQ(*counter, 4U);
+}
+
+// Publication identity survives each administrative boundary, including repeated empty cutovers.
+// Terminal order must work with and without a replacement data record on both delivery routes.
+// REQ: RUNTIME-052
+// REQ: RUNTIME-024
+// REQ: CHAN-136
+TEST(RuntimeChannelBinding, OutputSequenceSurvivesEveryCutoverAndOrderedClose) {
+  // Source --output--[transport or direct retained]--> input-- sink
+  // Key setup: receive sequences 1 and 2, repeat each cutover twice without data, then close
+  // with or without replacement data on both delivery routes.
+  for (const bool direct : {false, true}) {
+    for (const auto reset_kind : {SequenceCutover::kFull,
+                                  SequenceCutover::kSource,
+                                  SequenceCutover::kReceiver,
+                                  SequenceCutover::kRestart}) {
+      for (const bool replacement_data : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << direct << "/" << static_cast<int>(reset_kind) << "/" << replacement_data);
+        SessionFixture fixture;
+        if (direct) {
+          fixture.use_direct_retained_delivery();
+        }
+        auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+        ASSERT_TRUE(session) << runtime_error_message(session.error());
+        auto binding = (*session)->create_readiness_binding(
+            VertexId{2U},
+            RuntimePortBindingRequest{.plan_generation = fixture.plan.plan_generation,
+                                      .run_generation = 1U,
+                                      .kind = RuntimeEventKind::kInputArrival,
+                                      .source = make_source_id(1U),
+                                      .source_clock = ClockId{1U},
+                                      .reference_clock = ClockId{1U},
+                                      .capacity = 8U});
+        ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+        ASSERT_TRUE((*session)->refresh_connections());
+        ASSERT_TRUE((*session)->arm());
+        ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+        ASSERT_TRUE(fixture.source.output.emit(std::int32_t{101}));
+        ASSERT_TRUE(fixture.source.output.emit(std::int32_t{102}));
+        ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+        for (const std::uint64_t sequence : {1U, 2U}) {
+          auto event = wait_for_event(**session, **binding);
+          ASSERT_TRUE(event) << runtime_error_message(event.error());
+          auto record = (*session)->temporal_sample(event->port, event->source_sequence);
+          ASSERT_TRUE(record) << runtime_error_message(record.error());
+          EXPECT_EQ(record->source_sequence, sequence);
+          EXPECT_EQ(record->producer_epoch, 1U);
+          ASSERT_TRUE((*binding)->retire(event->source_sequence));
+        }
+        (*session)->cancel();
+        ASSERT_TRUE((*session)->join());
+        ASSERT_TRUE(apply_sequence_cutover(**session, reset_kind));
+        ASSERT_TRUE(apply_sequence_cutover(**session, reset_kind));
+        // Key assertion: empty cutovers advance the receiver epoch while preserving output
+        // sequence 3 as the next coordinate for replacement data or immediate EOS.
+        auto counter = RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+        ASSERT_TRUE(counter);
+        EXPECT_EQ(*counter, 3U);
+        auto state = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+        ASSERT_TRUE(state);
+        EXPECT_EQ(state->producer_epoch, 3U);
+        EXPECT_EQ(state->last_producer_sequence, 0U);
+        EXPECT_TRUE(state->subscriber_sequence_state_reset);
+        // A cutover floor authorizes only its immediate successor, never an arbitrary first EOS.
+        auto gap = RuntimeChannelSessionTestAccess::store_end_of_stream(**session, PortId{2U}, 4U);
+        ASSERT_FALSE(gap);
+        EXPECT_EQ(gap.error().code, ErrorCode::kProtocolError);
+        ASSERT_TRUE((*session)->refresh_connections());
+        auto active_generation =
+            RuntimeChannelSessionTestAccess::output_active_generation(**session, PortId{1U});
+        ASSERT_TRUE(active_generation);
+        const auto generation = *active_generation;
+        ASSERT_TRUE((*session)->arm());
+        if (replacement_data) {
+          ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, generation, {}));
+          ASSERT_TRUE(fixture.source.output.emit(std::int32_t{103}));
+          ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, generation, true));
+          auto event = wait_for_event(**session, **binding);
+          ASSERT_TRUE(event) << runtime_error_message(event.error());
+          auto record = (*session)->temporal_sample(event->port, event->source_sequence);
+          ASSERT_TRUE(record) << runtime_error_message(record.error());
+          EXPECT_EQ(record->source_sequence, 3U);
+          EXPECT_EQ(record->producer_epoch, 3U);
+          ASSERT_TRUE((*binding)->retire(event->source_sequence));
+        }
+        // Key assertion: close emits one terminal at the next sequence, and repeated close
+        // does not enqueue a duplicate terminal.
+        auto closed = (*session)->close_owner_outputs(VertexId{1U});
+        ASSERT_TRUE(closed) << runtime_error_message(closed.error());
+        auto terminal = wait_for_event(**session, **binding);
+        ASSERT_TRUE(terminal) << runtime_error_message(terminal.error());
+        EXPECT_EQ(terminal->kind, RuntimeEventKind::kInputEndOfStream);
+        ASSERT_TRUE((*binding)->retire(terminal->source_sequence));
+        ASSERT_TRUE((*session)->close_owner_outputs(VertexId{1U}));
+        auto terminal_poll = (*binding)->poll(TimePoint{1, ClockId{1U}});
+        ASSERT_FALSE(terminal_poll);
+        EXPECT_EQ(terminal_poll.error().code, ErrorCode::kClosed);
+        RuntimeEvent duplicate;
+        auto drained = (*binding)->drain(std::span<RuntimeEvent>{&duplicate, 1U});
+        ASSERT_TRUE(drained);
+        EXPECT_EQ(*drained, 0U);
+        (*session)->cancel();
+        ASSERT_TRUE((*session)->join());
+        state = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+        ASSERT_TRUE(state);
+        EXPECT_EQ(state->end_of_stream_transport_sequence, replacement_data ? 4U : 3U);
+        counter = RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+        ASSERT_TRUE(counter);
+        EXPECT_EQ(*counter, replacement_data ? 5U : 4U);
+      }
+    }
+  }
+}
+
+// Exhaustion is a session-lifetime bound, even after otherwise valid resets. Reject close before
+// any terminal endpoint effect and preserve the last permitted data coordinate.
+// REQ: RUNTIME-052
+TEST(RuntimeChannelBinding, OutputSequenceExhaustionSurvivesEveryCutover) {
+  // Source --output--[direct retained]--> input-- sink
+  // Key setup: publish the last permitted data sequence, then apply a full reset, source reset,
+  // or lifecycle restart while keeping the same session.
+  constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+  for (const auto reset_kind :
+       {SequenceCutover::kFull, SequenceCutover::kSource, SequenceCutover::kRestart}) {
+    SessionFixture fixture;
+    fixture.use_direct_retained_delivery();
+    auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+    ASSERT_TRUE(session);
+    ASSERT_TRUE(RuntimeChannelSessionTestAccess::set_output_next_sequence(
+        **session, PortId{1U}, maximum - 1U));
+    ASSERT_TRUE((*session)->refresh_connections());
+    ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+    ASSERT_TRUE(fixture.source.output.emit(std::int32_t{17}));
+    ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+    auto before = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+    ASSERT_TRUE(before);
+    EXPECT_EQ(before->last_producer_sequence, maximum - 1U);
+    auto reset = apply_sequence_cutover(**session, reset_kind);
+    ASSERT_TRUE(reset) << runtime_error_message(reset.error());
+    auto counter = RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+    ASSERT_TRUE(counter);
+    EXPECT_EQ(*counter, maximum);
+    const std::uint64_t generation = reset_kind == SequenceCutover::kFull ? 1U : 2U;
+    ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, generation, {}));
+    // Key assertion: emit and close still report exhaustion after the cutover; neither wraps
+    // the output counter nor delivers EOS to the receiver.
+    auto emit = fixture.source.output.emit(std::int32_t{18});
+    ASSERT_FALSE(emit);
+    EXPECT_EQ(emit.error().code, ErrorCode::kResourceExhausted);
+    ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, generation, true));
+    auto close = (*session)->close_owner_outputs(VertexId{1U});
+    ASSERT_FALSE(close);
+    EXPECT_EQ(close.error().code, ErrorCode::kResourceExhausted);
+    auto state = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+    ASSERT_TRUE(state);
+    EXPECT_FALSE(state->end_of_stream_received);
+    counter = RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+    ASSERT_TRUE(counter);
+    EXPECT_EQ(*counter, maximum);
+  }
+}
+
 // A full reset is one session-wide generation transition. Exhaustion in a later subscriber must
 // be discovered before an earlier subscriber loses its retained payload or advances its epoch.
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024
+// REQ: RUNTIME-052
 TEST(RuntimeChannelBinding, FullResetPreflightsEveryProducerEpochBeforeMutation) {
+  // Source --output--+--blocking----> input-- sink (owner 2)
+  //                 +--drop-oldest-> input-- second_sink (owner 3)
+  // Key setup: retain one publication in both receivers, then exhaust the later receiver's
+  // producer epoch before requesting a full reset.
   SessionFixture fixture;
   fixture.add_mixed_policy_fanout();
   auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
@@ -621,6 +928,8 @@ TEST(RuntimeChannelBinding, FullResetPreflightsEveryProducerEpochBeforeMutation)
   ASSERT_EQ(first_before->occupied_samples, 1U);
   ASSERT_EQ(second_before->occupied_samples, 1U);
 
+  // Key assertion: epoch exhaustion rejects the whole reset without changing either receiver's
+  // generations or retained sample, and the output's next sequence remains 2.
   auto reset = (*session)->reset();
   ASSERT_FALSE(reset);
   EXPECT_EQ(reset.error().code, ErrorCode::kResourceExhausted);
@@ -638,6 +947,39 @@ TEST(RuntimeChannelBinding, FullResetPreflightsEveryProducerEpochBeforeMutation)
   EXPECT_EQ(second_after->occupied_samples, second_before->occupied_samples);
   EXPECT_TRUE((*session)->temporal_sample(first_event->port, first_event->source_sequence));
   EXPECT_TRUE((*session)->temporal_sample(second_event->port, second_event->source_sequence));
+  auto output_counter =
+      RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+  ASSERT_TRUE(output_counter);
+  EXPECT_EQ(*output_counter, 2U);
+}
+
+// A frozen cutover predecessor cannot incorporate post-cutover data the receiver has not seen.
+// REQ: RUNTIME-052
+// REQ: CHAN-136
+TEST(RuntimeChannelBinding, CutoverFloorCannotHideMissingReplacementData) {
+  // Source --output--[transport]--> input-- sink
+  // Key setup: publish sequences 1 and 2, restart, then leave replacement sequence 3 queued
+  // while injecting EOS at sequence 4 directly into receiver bookkeeping.
+  SessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
+  ASSERT_TRUE(session);
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 1U, {}));
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{1}));
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{2}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 1U, true));
+  ASSERT_TRUE(apply_sequence_cutover(**session, SequenceCutover::kRestart));
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{1U}, 2U, {}));
+  ASSERT_TRUE(fixture.source.output.emit(std::int32_t{3}));
+  ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 2U, true));
+  // Key assertion: the frozen predecessor rejects EOS 4 until the receiver consumes data 3;
+  // the source's newer output counter cannot conceal the missing replacement record.
+  auto gap = RuntimeChannelSessionTestAccess::store_end_of_stream(**session, PortId{2U}, 4U);
+  ASSERT_FALSE(gap);
+  EXPECT_EQ(gap.error().code, ErrorCode::kProtocolError);
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::receive_one(**session, PortId{2U}));
+  ASSERT_TRUE(RuntimeChannelSessionTestAccess::store_end_of_stream(**session, PortId{2U}, 4U));
 }
 
 // Whole-session cleanup and ordinary slot retirement must erase the same complete set of slot
@@ -810,7 +1152,11 @@ TEST(RuntimeChannelBinding, CommitsOverlappingMultiOwnerRestartExactlyOnce) {
 // published.
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024
+// REQ: RUNTIME-052
 TEST(RuntimeChannelBinding, RejectsMalformedMultiOwnerRestartSetsWithoutMutation) {
+  // Source (owner 1) --output--> input-- sink (owner 2)
+  // Key setup: use a fresh session to submit empty, duplicate, invalid, and non-subset
+  // restart/affected owner sets.
   SessionFixture fixture;
   auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
   ASSERT_TRUE(session) << runtime_error_message(session.error());
@@ -822,6 +1168,8 @@ TEST(RuntimeChannelBinding, RejectsMalformedMultiOwnerRestartSetsWithoutMutation
   ASSERT_TRUE(input_before) << runtime_error_message(input_before.error());
   ASSERT_TRUE(output_before) << runtime_error_message(output_before.error());
 
+  // Key assertion: every malformed set reports invalid argument and preserves input state and
+  // output generation; the final output counter still starts at sequence 1.
   const auto expect_unchanged = [&] {
     const auto input_after =
         RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
@@ -857,6 +1205,10 @@ TEST(RuntimeChannelBinding, RejectsMalformedMultiOwnerRestartSetsWithoutMutation
   expect_invalid(valid_restarted, duplicate_affected);
   expect_invalid(invalid_restarted, valid_affected);
   expect_invalid(missing_restarted_owner, valid_affected);
+  auto output_counter =
+      RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+  ASSERT_TRUE(output_counter);
+  EXPECT_EQ(*output_counter, 1U);
 }
 
 // The restart union is one transaction even when a later affected receiver owns the exhausted
@@ -958,7 +1310,10 @@ TEST(RuntimeChannelBinding, PendingTransportBackpressuresAdministrativeResetWith
 // advancing any counter, and a retryable refusal must leave the payload for the ordinary pump.
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024
+// REQ: RUNTIME-052
 TEST(RuntimeChannelBinding, FullResetPendingTransportBackpressuresBeforeAnyMutation) {
+  // Source --output--[transport]--> input-- sink
+  // Key setup: leave one publication queued with the pump unarmed, then request a full reset.
   SessionFixture fixture;
   auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
   ASSERT_TRUE(session) << runtime_error_message(session.error());
@@ -981,6 +1336,8 @@ TEST(RuntimeChannelBinding, FullResetPendingTransportBackpressuresBeforeAnyMutat
 
   auto before = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
   ASSERT_TRUE(before) << runtime_error_message(before.error());
+  // Key assertion: backpressure preserves receiver state and the output counter; the ordinary
+  // pump can still deliver the queued sequence 1 under the original producer epoch.
   auto reset = (*session)->reset();
   ASSERT_FALSE(reset);
   EXPECT_EQ(reset.error().code, ErrorCode::kBackpressured);
@@ -1003,6 +1360,10 @@ TEST(RuntimeChannelBinding, FullResetPendingTransportBackpressuresBeforeAnyMutat
   ASSERT_TRUE((*binding)->retire(event->source_sequence));
   (*session)->cancel();
   ASSERT_TRUE((*session)->join());
+  auto output_counter =
+      RuntimeChannelSessionTestAccess::output_next_sequence(**session, PortId{1U});
+  ASSERT_TRUE(output_counter);
+  EXPECT_EQ(*output_counter, 2U);
 }
 
 // Accepted lifecycle restart owns a joined process-local pump and a fenced publisher. It may
@@ -1011,7 +1372,11 @@ TEST(RuntimeChannelBinding, FullResetPendingTransportBackpressuresBeforeAnyMutat
 // REQ: RUNTIME-019
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024
+// REQ: RUNTIME-052
 TEST(RuntimeChannelBinding, RestartDiscardsExactFrozenTransportBoundBeforeGenerationAdvance) {
+  // Source --output--[blocking transport queue, depth 8]--> input-- sink
+  // Key setup: fill the eight-record transport bound before restart, then emit a distinct
+  // payload in the next generation.
   SessionFixture fixture;
   auto session = RuntimeChannelSession::create(fixture.plan, fixture.replay);
   ASSERT_TRUE(session) << runtime_error_message(session.error());
@@ -1042,11 +1407,13 @@ TEST(RuntimeChannelBinding, RestartDiscardsExactFrozenTransportBoundBeforeGenera
   ASSERT_TRUE(fixture.source.output.emit(std::int32_t{999}));
   ASSERT_TRUE((*session)->retire_activation(VertexId{1U}, 2U, true));
 
+  // Key assertion: the first received record is payload 999 at epoch 2 and sequence 9, proving
+  // restart discarded the old queue without restarting the source's sequence history.
   auto event = wait_for_event(**session, **binding);
   ASSERT_TRUE(event) << runtime_error_message(event.error());
   auto temporal = (*session)->temporal_sample(event->port, event->source_sequence);
   ASSERT_TRUE(temporal) << runtime_error_message(temporal.error());
-  EXPECT_EQ(temporal->source_sequence, 1U);
+  EXPECT_EQ(temporal->source_sequence, 9U);
   EXPECT_EQ(temporal->producer_epoch, 2U);
   const std::array records{*temporal};
   const std::array selection{RuntimeChannelActivationSelection{
@@ -1379,8 +1746,8 @@ TEST(RuntimeChannelBinding, EscapedReadClaimFencesResetAndRestartBeforeMutation)
 
 // A live generic loan is an activation-scoped authority. Restart cannot advance the output or
 // receiver generations while that authority could still publish into the old generation. Once
-// the owner cancels it and retires the activation, restart re-arms both sides and sequence
-// numbering begins at one in the new producer epoch.
+// the owner cancels it and retires the activation, restart re-arms both sides. The first actual
+// publication still uses one because the canceled loan consumed no sequence authority.
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024
 TEST(RuntimeChannelBinding, LiveGenericLoanFencesRestartUntilExplicitCancellation) {

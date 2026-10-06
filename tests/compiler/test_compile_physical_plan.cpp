@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/diagnostic_registry.hpp"
 #include "physical_plan_test_support.hpp"
 
 // GTest fatal assertions establish optional preconditions that clang-tidy does not model.
@@ -18,6 +19,20 @@ namespace {
 
 using namespace physical_plan_test;
 
+// Build a local-enum identity with an explicit native width for physical-plan fixtures.
+// Representative test: CompilePhysicalPlan.LowersNativeWidthLocalEnumForDirectAndHoloMQDelivery.
+[[nodiscard]] PayloadIdentityRecord local_enum_payload(std::uint8_t native_object_size = 1U) {
+  return PayloadIdentityRecord{
+      .kind = PayloadIdentityKind::kScalar,
+      .payload_kind = PayloadKind::kInlineTyped,
+      .scalar =
+          ScalarIdentityRecord{
+              .kind = ScalarIdentityKind::kLocalEnum,
+              .native_object_size = native_object_size,
+          },
+  };
+}
+
 // Two edges with different queue policies leave source fanout unmerged; two services
 // are produced. Generic loan pool slots must cover the maximum fanout inflight demand.
 //
@@ -25,6 +40,7 @@ using namespace physical_plan_test;
 //          --[drop-oldest, depth=2, maxinflight=3, cache=2]--> right
 //
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 TEST(CompilePhysicalPlan, ResolvesCanonicalPortsEdgesFanoutCachesAndGenericLoans) {
   GraphSnapshotData snapshot;
@@ -177,6 +193,7 @@ TEST(CompilePhysicalPlan, KeepsMixedPolicySiblingEventWakesWhenOneTargetUsesAnot
 //          --[blocking, depth=2]--> right
 //
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 // REQ: CHAN-065
 // REQ: CHAN-071
@@ -360,6 +377,7 @@ TEST(CompilePhysicalPlan, SuppressesDropOldestScalarFanoutEventWakeServiceWide) 
 }
 
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 // REQ: CHAN-065
 // REQ: CHAN-096
@@ -420,7 +438,152 @@ TEST(CompilePhysicalPlan, UsesNativeBooleanWidthForPrivateProcessLocalStorage) {
             ProcessLocalHoloMQEventWakeReason::kSuppressed);
 }
 
+// REQ: GRAPH-042
 // REQ: COMPILE-009
+// REQ: COMPILE-095
+// REQ: CHAN-065
+// REQ: CHAN-096
+// REQ: CHAN-116
+// REQ: CHAN-147
+TEST(CompilePhysicalPlan, LowersNativeWidthLocalEnumForDirectAndHoloMQDelivery) {
+  // Key setup: lower a two-byte local enum first to one sink, then to a second fanout sink.
+  // Graph topology: source.out --> left.in; source.out --[fanout case only]--> right.in
+  // Key assertion: direct delivery needs no generic output loans, and both paths retain native
+  // width; the published fanout plan rejects a payload identity whose width no longer matches
+  // storage.
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{7U};
+  snapshot.vertices = {
+      vertex(1U, "source"),
+      vertex(2U, "left"),
+      vertex(3U, "right"),
+  };
+  snapshot.ports = {
+      output_port(1U, 1U, "out", local_enum_payload(2U)),
+      input_port(2U, 2U, "in", local_enum_payload(2U)),
+      input_port(3U, 3U, "in", local_enum_payload(2U)),
+  };
+  snapshot.edges = {edge(1U, 1U, 2U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const auto partitions = default_execution_partitions(snapshot);
+
+  const auto direct = lower_for_test(snapshot, 41U, profiles, {}, {}, {}, nullptr, {}, partitions);
+
+  ASSERT_TRUE(direct.errors.empty());
+  ASSERT_EQ(direct.process_local_channel_services.size(), 1U);
+  EXPECT_EQ(direct.process_local_channel_services.front().payload_size_bytes, 2U);
+  EXPECT_EQ(direct.process_local_channel_services.front().delivery_kind,
+            ProcessLocalChannelDeliveryKind::kDirectRetained);
+  EXPECT_TRUE(direct.generic_output_loans.empty());
+
+  snapshot.edges.push_back(edge(2U, 1U, 3U));
+  auto fanout = lower_for_test(snapshot, 42U, profiles, {}, {}, {}, nullptr, {}, partitions);
+
+  ASSERT_TRUE(fanout.errors.empty());
+  ASSERT_EQ(fanout.process_local_channel_services.size(), 1U);
+  EXPECT_EQ(fanout.process_local_channel_services.front().payload_size_bytes, 2U);
+  EXPECT_EQ(fanout.process_local_channel_services.front().max_subscribers, 2U);
+  EXPECT_EQ(fanout.process_local_channel_services.front().delivery_kind,
+            ProcessLocalChannelDeliveryKind::kHoloMQ);
+  ASSERT_EQ(fanout.process_local_channel_subscribers.size(), 2U);
+  ExecutionPlanState state;
+  state.plan_generation = 42U;
+  state.execution_partitions = partitions;
+  detail::publish_physical_plan_records(std::move(fanout), state);
+  EXPECT_TRUE(valid_process_local_channel_plan(state));
+  state.process_local_channel_services.front().payload_identity.scalar->native_object_size = 4U;
+  EXPECT_FALSE(valid_process_local_channel_plan(state));
+}
+
+// REQ: GRAPH-042
+// REQ: COMPILE-009
+// REQ: COMPILE-095
+// REQ: CHAN-147
+TEST(CompilePhysicalPlan, RejectsLocalEnumAcrossProcessGroups) {
+  // Key setup: connect a local-enum output and input placed in different process groups.
+  // Graph topology: source.out [process A] --> sink.in [process B]
+  // Key assertion: lowering emits the local-enum cross-process diagnostic and creates no service.
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{7U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "sink")};
+  snapshot.ports = {
+      output_port(1U, 1U, "out", local_enum_payload()),
+      input_port(2U, 2U, "in", local_enum_payload()),
+  };
+  snapshot.edges = {edge(1U, 1U, 2U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const auto placements = split_process_placements(snapshot);
+  const auto partitions = default_execution_partitions(snapshot);
+
+  const auto result = lower_physical_plan(snapshot,
+                                          41U,
+                                          profiles,
+                                          runtime_package_capability_view(),
+                                          {},
+                                          {},
+                                          {},
+                                          placements,
+                                          {},
+                                          partitions);
+
+  const auto* diagnostic =
+      find_structural_diagnostic(StructuralDiagnosticId::kChannelLocalEnumCrossProcessUnsupported);
+  ASSERT_NE(diagnostic, nullptr);
+  EXPECT_EQ(diagnostic->token, "CHANNEL_LOCAL_ENUM_CROSS_PROCESS_UNSUPPORTED");
+  EXPECT_TRUE(has_error(result, "CHANNEL_LOCAL_ENUM_CROSS_PROCESS_UNSUPPORTED"));
+  EXPECT_TRUE(result.process_local_channel_services.empty());
+  EXPECT_TRUE(result.cross_process_channel_services.empty());
+}
+
+// A copied plan must not turn a process-local C++ enum into a transport identity.
+// REQ: CHAN-147
+TEST(CompilePhysicalPlan, RejectsLocalEnumInCopiedCrossProcessPlan) {
+  // Key setup: lower a valid cross-process scalar edge, then replace its published identities
+  // with same-width local enums in a copied plan.
+  // Graph topology: source.out [process A] --> sink.in [process B]
+  // Key assertion: cross-process validation and artifact finalization both reject the enum copy.
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{7U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "sink")};
+  snapshot.ports = {output_port(1U, 1U, "out", scalar_payload()),
+                    input_port(2U, 2U, "in", scalar_payload())};
+  snapshot.edges = {edge(1U, 1U, 2U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const auto placements = split_process_placements(snapshot);
+  const auto partitions = default_execution_partitions(snapshot);
+  auto lowered = lower_physical_plan(snapshot,
+                                     41U,
+                                     profiles,
+                                     runtime_package_capability_view(),
+                                     {},
+                                     {},
+                                     {},
+                                     placements,
+                                     {},
+                                     partitions,
+                                     {});
+  ASSERT_TRUE(lowered.errors.empty());
+  auto state = published_physical_plan_state(std::move(lowered), 41U, placements);
+  ASSERT_EQ(state.payload_edges.size(), 1U);
+  ASSERT_EQ(state.channel_locality.size(), 1U);
+  ASSERT_EQ(state.cross_process_channel_services.size(), 1U);
+  // Mirror the compiler's partition-derived locality reconciliation for this physical fixture.
+  state.payload_edges.front().locality = ChannelLocalityKind::kCrossProcess;
+  state.channel_locality.front().requested = ChannelLocalityKind::kCrossProcess;
+  state.channel_locality.front().accepted = ChannelLocalityKind::kCrossProcess;
+  state.channel_locality.front().requires_runtime_attach = true;
+  ASSERT_TRUE(valid_cross_process_channel_plan(state));
+  state.payload_edges.front().payload_identity = local_enum_payload(4U);
+  state.cross_process_channel_services.front().payload_identity = local_enum_payload(4U);
+  EXPECT_FALSE(valid_cross_process_channel_plan(state));
+  state.admitted = true;
+  const auto finalized = finalize_plan_artifact(state);
+  ASSERT_FALSE(finalized);
+  EXPECT_EQ(finalized.error().message, "CROSS_PROCESS_CHANNEL_PLAN_INVALID");
+}
+
+// REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: CHAN-115
 // REQ: CHAN-116
 TEST(CompilePhysicalPlan, PreservesDropOldestDepthOnHoloMQ) {
@@ -823,6 +986,63 @@ TEST(CompilePhysicalPlan, SelectsDirectRetainedGeneratedSchemaWithHoloMQFallback
   EXPECT_FALSE(fallback.process_local_channel_services.front().event_wake);
 }
 
+// REQ: SCHEMA-003
+TEST(CompilePhysicalPlan, AdmitsDifferentSchemaBoundsWithinOneSelectedHoloMQBucket) {
+  constexpr std::uint64_t kWriterMaximum = 1024U;
+  constexpr std::uint64_t kReaderLimit = 1500U;
+  constexpr std::uint64_t kRequiredFrame = kWriterMaximum + kSchemaEnvelopeHeaderSize;
+  constexpr std::uint64_t kSelectedBucket = 2048U;
+  constexpr std::uint64_t kBucketUsableSerialized = kSelectedBucket - kSchemaEnvelopeHeaderSize;
+  static_assert(kRequiredFrame == 1064U);
+  static_assert(kBucketUsableSerialized == 2008U);
+
+  const auto payload = schema_payload();
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{7U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "sink")};
+  snapshot.ports = {
+      output_port(1U, 1U, "out", payload),
+      input_port(2U, 2U, "in", payload),
+  };
+  snapshot.ports[0].serialized_payload_capacity_bytes = kWriterMaximum;
+  snapshot.ports[1].serialized_payload_capacity_bytes = kReaderLimit;
+  snapshot.edges = {edge(1U, 1U, 2U)};
+
+  auto result = lower_for_test(snapshot,
+                               42U,
+                               standard_profiles(snapshot.vertices.size()),
+                               {},
+                               {},
+                               {},
+                               nullptr,
+                               {},
+                               {},
+                               kForceHoloMQProcessLocalInline);
+  ASSERT_TRUE(result.errors.empty());
+  ASSERT_EQ(result.process_local_channel_services.size(), 1U);
+  const auto& service = result.process_local_channel_services.front();
+  EXPECT_EQ(service.payload_size_bytes, kRequiredFrame);
+  EXPECT_EQ(service.selected_inline_bucket_bytes, kSelectedBucket);
+  auto state = published_physical_plan_state(std::move(result), 42U);
+  state.execution_partitions = default_execution_partitions(snapshot);
+  EXPECT_TRUE(valid_process_local_channel_plan(state));
+  ++state.process_local_channel_services.front().selected_inline_bucket_bytes;
+  EXPECT_FALSE(valid_process_local_channel_plan(state));
+
+  snapshot.ports[1].serialized_payload_capacity_bytes = kWriterMaximum - 1U;
+  const auto rejected = lower_for_test(snapshot,
+                                       42U,
+                                       standard_profiles(snapshot.vertices.size()),
+                                       {},
+                                       {},
+                                       {},
+                                       nullptr,
+                                       {},
+                                       {},
+                                       kForceHoloMQProcessLocalInline);
+  EXPECT_FALSE(rejected.errors.empty());
+}
+
 // A complete generated-schema fanout uses the same synchronous activation cut as scalar fanout;
 // each subscriber still verifies and materializes its own owning value from the bounded envelope.
 // REQ: CHAN-101
@@ -1057,6 +1277,7 @@ TEST(CompilePhysicalPlan, OmitsGenericLoanWhenQualifiedBehaviorEvidenceIsAbsent)
 //   [interface: public (port 1)] --binding--> operator: internal (port 2)
 //
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 TEST(CompilePhysicalPlan, ProjectsValidatedInterfaceBindingsWithoutDeclarationAddresses) {
   GraphSnapshotData snapshot;
   snapshot.generation = GraphGeneration{1U};

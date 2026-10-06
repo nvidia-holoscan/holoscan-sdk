@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <holoscan/core/parameter_input.hpp>
 #include <holoscan/params/rebind.hpp>
 
 #include <algorithm>
@@ -13,7 +14,6 @@
 #include <numeric>
 #include <optional>
 #include <ranges>
-#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -21,35 +21,11 @@
 
 #include "compiler/parameter_identity.hpp"
 #include "core/canonical_text_encoding.hpp"
-#include "core/graph_compiler_access.hpp"
-#include "core/parameter_override_set_internal.hpp"
-#include "core/parameter_rebind_support.hpp"
+#include "core/parameter_authoring_target.hpp"
+#include "core/parameter_input_internal.hpp"
 #include "core/parameter_snapshot_archive_access.hpp"
 
 namespace holoscan::params {
-namespace detail {
-
-struct ParamAdmissionContextState {
-  Profile profile{Profile::kStandard};
-};
-
-struct TargetOperator {
-  std::string path;
-  std::shared_ptr<holoscan::detail::OperatorFactoryBase> factory;
-};
-
-struct ParamRebindTargetState {
-  GraphAuthoringIdentity identity{};
-  ParamSchemaHash admission_context_digest{};
-  ParamSchemaHash selection_digest{};
-  Profile profile{Profile::kStandard};
-  ParamRebindTargetScopeKind scope_kind{ParamRebindTargetScopeKind::kWholeGraph};
-  std::vector<std::string> scope_paths;
-  std::vector<ParamRebindTargetOperatorProvenance> target_operators;
-  std::vector<TargetOperator> operators;
-};
-
-}  // namespace detail
 namespace {
 
 constexpr std::size_t kMaxMigrationSteps = 16U;
@@ -170,194 +146,6 @@ constexpr std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
   return false;
 }
 
-[[nodiscard]] bool graph_scope_exists(const holoscan::detail::GraphSnapshotData& snapshot,
-                                      std::string_view scope_path) {
-  return std::ranges::any_of(snapshot.graphs, [&](const GraphRecord& graph) {
-    return graph.path && render_segments(graph.path->segments()) == scope_path;
-  });
-}
-
-[[nodiscard]] std::optional<std::string> operator_path(
-    const holoscan::detail::GraphSnapshotData& snapshot, const VertexRecord& vertex) {
-  if (vertex.kind != VertexKind::kOperator || vertex.graph.value == 0U ||
-      vertex.graph.value > snapshot.graphs.size()) {
-    return std::nullopt;
-  }
-  const GraphRecord& graph = snapshot.graphs[vertex.graph.value - 1U];
-  if (graph.id != vertex.graph) {
-    return std::nullopt;
-  }
-  std::string result;
-  const auto append = [&](std::string_view segment) {
-    if (!result.empty()) {
-      result.push_back('/');
-    }
-    holoscan::detail::append_percent_encoded_uri_component(result, segment);
-  };
-  const auto& graph_path = graph.path;
-  if (graph_path) {
-    for (const auto& segment : graph_path->segments()) {
-      append(segment);
-    }
-  }
-  append(vertex.name);
-  return result;
-}
-
-[[nodiscard]] std::optional<std::string> operator_path(
-    const holoscan::detail::GraphSnapshotData& snapshot, VertexId owner) {
-  if (owner.value == 0U || owner.value > snapshot.vertices.size()) {
-    return std::nullopt;
-  }
-  const VertexRecord& vertex = snapshot.vertices[owner.value - 1U];
-  return vertex.id == owner ? operator_path(snapshot, vertex) : std::nullopt;
-}
-
-struct SelectedTargetOperators {
-  std::vector<VertexId> vertices;
-  std::vector<std::string> paths;
-};
-
-[[nodiscard]] ParamRebindResult<SelectedTargetOperators> select_target_operators(
-    const holoscan::detail::GraphSnapshotData& snapshot,
-    const ParamRebindTargetScopeKind scope_kind, std::span<const std::string> scope_paths) {
-  SelectedTargetOperators selected;
-  selected.vertices.reserve(std::min(snapshot.vertices.size(), kMaxOperators + 1U));
-  selected.paths.reserve(std::min(snapshot.vertices.size(), kMaxOperators + 1U));
-  for (const VertexRecord& vertex : snapshot.vertices) {
-    if (vertex.kind != VertexKind::kOperator) {
-      continue;
-    }
-    auto path = operator_path(snapshot, vertex);
-    if (!path) {
-      return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                          ParamToolErrorCode::kInvalidArgument,
-                                          "PARAM_REBIND_TARGET_OPERATOR_INVALID",
-                                          ParamRebindStage::kTargetCapture));
-    }
-    if (!target_selected(scope_kind, scope_paths, *path)) {
-      continue;
-    }
-    if (path->size() > kMaxPathBytes) {
-      return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                          ParamToolErrorCode::kInvalidArgument,
-                                          "PARAM_REBIND_TARGET_OPERATOR_INVALID",
-                                          ParamRebindStage::kTargetCapture));
-    }
-    selected.vertices.push_back(vertex.id);
-    selected.paths.push_back(std::move(*path));
-  }
-  if (selected.vertices.empty()) {
-    const bool exact_operator_scope = scope_kind == ParamRebindTargetScopeKind::kOperator ||
-                                      scope_kind == ParamRebindTargetScopeKind::kOperatorSet;
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kScopeNotFound,
-                                        ParamToolErrorCode::kTargetMismatch,
-                                        exact_operator_scope
-                                            ? "PARAM_REBIND_TARGET_OPERATOR_UNKNOWN"
-                                            : "PARAM_REBIND_TARGET_SCOPE_NOT_FOUND",
-                                        ParamRebindStage::kTargetCapture));
-  }
-  if (selected.vertices.size() > kMaxOperators) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kResourceExhausted,
-                                        "PARAM_REBIND_TARGET_OPERATOR_LIMIT",
-                                        ParamRebindStage::kTargetCapture));
-  }
-  std::ranges::sort(selected.paths);
-  const bool exact_operator_scope = scope_kind == ParamRebindTargetScopeKind::kOperator ||
-                                    scope_kind == ParamRebindTargetScopeKind::kOperatorSet;
-  if (exact_operator_scope && (selected.paths.size() != scope_paths.size() ||
-                               !std::ranges::equal(selected.paths, scope_paths))) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kScopeNotFound,
-                                        ParamToolErrorCode::kTargetMismatch,
-                                        "PARAM_REBIND_TARGET_OPERATOR_UNKNOWN",
-                                        ParamRebindStage::kTargetCapture));
-  }
-  return selected;
-}
-
-[[nodiscard]] ParamRebindResult<void> append_target_operator(
-    detail::ParamRebindTargetState& state, const holoscan::detail::GraphSnapshotData& snapshot,
-    holoscan::detail::ExecutableOperatorFactoryRecord& item) {
-  auto path = operator_path(snapshot, item.vertex);
-  if (!path || path->size() > kMaxPathBytes || !item.factory ||
-      !target_selected(state.scope_kind, state.scope_paths, *path)) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kInvalidArgument,
-                                        "PARAM_REBIND_TARGET_OPERATOR_INVALID",
-                                        ParamRebindStage::kTargetCapture));
-  }
-  const ParamSchemaDescriptor* const schema = item.factory->parameter_schema();
-  if (schema == nullptr) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kSchemaUnavailable,
-                                        ParamToolErrorCode::kNotSupported,
-                                        "PARAM_REBIND_SCHEMA_UNAVAILABLE",
-                                        ParamRebindStage::kTargetCapture,
-                                        {},
-                                        *path));
-  }
-  if (schema->stable_id.empty() || schema->stable_id.size() > kMaxSchemaIdBytes ||
-      schema->version == 0U) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kInvalidArgument,
-                                        "PARAM_REBIND_TARGET_SCHEMA_INVALID",
-                                        ParamRebindStage::kTargetCapture,
-                                        {},
-                                        *path));
-  }
-  state.target_operators.push_back(ParamRebindTargetOperatorProvenance{
-      .operator_path = *path,
-      .schema_id = std::string{schema->stable_id},
-      .schema_version = schema->version,
-      .structural_hash = schema->structural_hash,
-      .contract_hash = schema->contract_hash,
-  });
-  state.operators.push_back(
-      detail::TargetOperator{.path = std::move(*path), .factory = std::move(item.factory)});
-  return {};
-}
-
-[[nodiscard]] ParamRebindResult<void> populate_target_operators(
-    detail::ParamRebindTargetState& state, holoscan::detail::ParameterRebindGraphEvidence& captured,
-    const std::size_t expected_count) {
-  if (captured.factories.operators.size() != expected_count) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kInvalidArgument,
-                                        "PARAM_REBIND_TARGET_OPERATOR_INVALID",
-                                        ParamRebindStage::kTargetCapture));
-  }
-  state.operators.reserve(captured.factories.operators.size());
-  state.target_operators.reserve(captured.factories.operators.size());
-  for (auto& item : captured.factories.operators) {
-    auto appended = append_target_operator(state, *captured.snapshot, item);
-    if (!appended) {
-      return make_unexpected(std::move(appended.error()));
-    }
-  }
-  std::ranges::sort(state.operators, {}, &detail::TargetOperator::path);
-  std::ranges::sort(
-      state.target_operators, {}, &ParamRebindTargetOperatorProvenance::operator_path);
-  if (std::ranges::adjacent_find(state.operators, {}, &detail::TargetOperator::path) !=
-      state.operators.end()) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kInvalidArgument,
-                                        "PARAM_REBIND_TARGET_OPERATOR_DUPLICATE",
-                                        ParamRebindStage::kTargetCapture));
-  }
-  const bool exact_operator_scope = state.scope_kind == ParamRebindTargetScopeKind::kOperator ||
-                                    state.scope_kind == ParamRebindTargetScopeKind::kOperatorSet;
-  if (exact_operator_scope &&
-      (state.operators.size() != state.scope_paths.size() ||
-       !std::ranges::equal(
-           state.operators, state.scope_paths, {}, &detail::TargetOperator::path))) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kScopeNotFound,
-                                        ParamToolErrorCode::kTargetMismatch,
-                                        "PARAM_REBIND_TARGET_OPERATOR_UNKNOWN",
-                                        ParamRebindStage::kTargetCapture));
-  }
-  return {};
-}
-
 [[nodiscard]] std::string render_path(const OperatorPath& path) {
   std::string result;
   for (const auto& segment : path.segments()) {
@@ -412,71 +200,6 @@ struct SnapshotScopeSelector {
       break;
   }
   return result;
-}
-
-struct AggregateStorage {
-  const ParamTypeDescriptor* type{};
-  void* value{};
-
-  AggregateStorage(const ParamTypeDescriptor* type_arg, void* value_arg) noexcept
-      : type(type_arg), value(value_arg) {}
-  AggregateStorage(const AggregateStorage&) = delete;
-  AggregateStorage& operator=(const AggregateStorage&) = delete;
-  AggregateStorage(AggregateStorage&& other) noexcept
-      : type(std::exchange(other.type, nullptr)), value(std::exchange(other.value, nullptr)) {}
-  ~AggregateStorage() {
-    if (value != nullptr) {
-      type->destroy(value);
-      ::operator delete(value, std::align_val_t{type->object_alignment});
-    }
-  }
-
-  [[nodiscard]] std::shared_ptr<const void> release_shared() {
-    const ParamTypeDescriptor* const owned_type = std::exchange(type, nullptr);
-    void* const owned_value = std::exchange(value, nullptr);
-    return std::shared_ptr<const void>{
-        owned_value, [owned_type](const void* pointer) noexcept {
-          void* mutable_pointer = const_cast<void*>(pointer);
-          owned_type->destroy(mutable_pointer);
-          ::operator delete(mutable_pointer, std::align_val_t{owned_type->object_alignment});
-        }};
-  }
-};
-
-[[nodiscard]] expected<AggregateStorage, ParamRebindError> make_aggregate(
-    const holoscan::detail::OperatorFactoryBase& factory, ParamRebindMode mode) {
-  const ParamTypeDescriptor& type = factory.parameter_type();
-  void* storage = nullptr;
-  try {
-    storage = ::operator new(type.object_size, std::align_val_t{type.object_alignment});
-    if (mode == ParamRebindMode::kCompleteObject) {
-      type.default_construct(storage);
-    } else {
-      type.copy_construct(storage, factory.initial_parameter_value());
-    }
-    return AggregateStorage{&type, storage};
-  } catch (const std::bad_alloc&) {
-    if (storage != nullptr) {
-      ::operator delete(storage, std::align_val_t{type.object_alignment});
-    }
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kResourceExhausted,
-                                        "PARAM_REBIND_ALLOC_FAILED",
-                                        mode == ParamRebindMode::kCompleteObject
-                                            ? ParamRebindStage::kCompleteConstruction
-                                            : ParamRebindStage::kSparseConstruction));
-  } catch (...) {
-    if (storage != nullptr) {
-      ::operator delete(storage, std::align_val_t{type.object_alignment});
-    }
-    return make_unexpected(rebind_error(
-        ParamRebindErrorCode::kInvalidTarget,
-        ParamToolErrorCode::kInvalidArgument,
-        mode == ParamRebindMode::kCompleteObject ? "PARAM_REBIND_DEFAULT_CONSTRUCT_FAILED"
-                                                 : "PARAM_REBIND_BASELINE_COPY_FAILED",
-        mode == ParamRebindMode::kCompleteObject ? ParamRebindStage::kCompleteConstruction
-                                                 : ParamRebindStage::kSparseConstruction));
-  }
 }
 
 struct SnapshotOperatorIndexEntry {
@@ -914,32 +637,6 @@ struct TargetFieldMatch {
          source.codec->id.substr(std::string_view{"holoscan.config."}.size()) == expected_codec;
 }
 
-[[nodiscard]] ParamRebindProvenance make_provenance(const ParamSnapshot& snapshot,
-                                                    const detail::ParamRebindTargetState& target,
-                                                    ParamRebindMode mode) {
-  ParamRebindProvenance provenance;
-  if (const auto archive =
-          holoscan::detail::ParamSnapshotArchiveAccess::archive_identity(snapshot)) {
-    provenance.source_archive_semantic_version = archive->semantic_version;
-    provenance.source_archive_digest = archive->semantic_sha256;
-  }
-  provenance.source_plan_digest = snapshot.plan_digest();
-  provenance.source_plan_generation = snapshot.plan_generation();
-  provenance.source_run_generation = snapshot.run_generation();
-  provenance.source_catalog_digest = snapshot.catalog_digest();
-  provenance.source_scope_kind = snapshot.scope().kind();
-  provenance.source_scope_path = render_path(snapshot.scope().path());
-  provenance.mode = mode;
-  provenance.target = target.identity;
-  provenance.target_profile = target.profile;
-  provenance.admission_context_digest = target.admission_context_digest;
-  provenance.target_scope_kind = target.scope_kind;
-  provenance.target_scope_paths = target.scope_paths;
-  provenance.target_operators = target.target_operators;
-  provenance.target_selection_digest = target.selection_digest;
-  return provenance;
-}
-
 void append_operator_alias_provenance(ParamRebindProvenance& provenance,
                                       const ParamOperatorAlias& alias) {
   provenance.operator_aliases.push_back(ParamRebindOperatorAliasProvenance{
@@ -988,145 +685,10 @@ ParamRebindError::ParamRebindError(ParamRebindErrorCode code, ParamRebindStage s
   copy_text(target_schema_id, target_schema_id_, target_schema_id_size_);
 }
 
-ParamRebindResult<ParamAdmissionContext> ParamAdmissionContext::standard() {
-  try {
-    return ParamAdmissionContext{std::make_shared<const detail::ParamAdmissionContextState>()};
-  } catch (const std::bad_alloc&) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kResourceExhausted,
-                                        "PARAM_REBIND_CONTEXT_ALLOC_FAILED",
-                                        ParamRebindStage::kTargetCapture));
-  }
-}
-
-Profile ParamAdmissionContext::profile() const noexcept {
-  return state_ == nullptr ? Profile::kStandard : state_->profile;
-}
-
-ParamRebindTarget::~ParamRebindTarget() = default;
-
-GraphAuthoringIdentity ParamRebindTarget::identity() const noexcept {
-  return state_ == nullptr ? GraphAuthoringIdentity{} : state_->identity;
-}
-
-ParamRebindTargetScopeKind ParamRebindTarget::scope_kind() const noexcept {
-  return state_ == nullptr ? ParamRebindTargetScopeKind::kWholeGraph : state_->scope_kind;
-}
-
-std::span<const std::string> ParamRebindTarget::scope_paths() const noexcept {
-  return state_ == nullptr ? std::span<const std::string>{} : state_->scope_paths;
-}
-
-ParamSchemaHash ParamRebindTarget::selection_digest() const noexcept {
-  return state_ == nullptr ? ParamSchemaHash{} : state_->selection_digest;
-}
-
-ParamRebindResult<ParamRebindTarget> make_param_rebind_target(Graph& graph,
-                                                              const ParamAdmissionContext& context,
-                                                              const ParamRebindTargetScope& scope) {
-  if (context.state_ == nullptr || context.profile() != Profile::kStandard) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kProfileDenied,
-                                        ParamToolErrorCode::kNotSupported,
-                                        "PARAM_REBIND_PROFILE_UNSUPPORTED",
-                                        ParamRebindStage::kTargetCapture));
-  }
-  try {
-    auto scope_paths = canonical_scope_paths(scope);
-    if (!scope_paths) {
-      return make_unexpected(std::move(scope_paths.error()));
-    }
-    auto snapshot = holoscan::detail::GraphCompilerAccess::canonical_snapshot(graph);
-    auto state = std::make_shared<detail::ParamRebindTargetState>();
-    state->profile = context.profile();
-    state->scope_kind = scope.kind();
-    state->scope_paths = std::move(*scope_paths);
-    if (state->scope_kind == ParamRebindTargetScopeKind::kGraph &&
-        !graph_scope_exists(*snapshot, state->scope_paths.front())) {
-      return make_unexpected(rebind_error(ParamRebindErrorCode::kScopeNotFound,
-                                          ParamToolErrorCode::kTargetMismatch,
-                                          "PARAM_REBIND_TARGET_GRAPH_UNKNOWN",
-                                          ParamRebindStage::kTargetCapture,
-                                          {},
-                                          state->scope_paths.front()));
-    }
-
-    auto selected = select_target_operators(*snapshot, state->scope_kind, state->scope_paths);
-    if (!selected) {
-      return make_unexpected(std::move(selected.error()));
-    }
-
-    auto captured = holoscan::detail::capture_parameter_rebind_graph(
-        graph, std::move(snapshot), selected->vertices);
-    if (!captured) {
-      return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                          ParamToolErrorCode::kInvalidArgument,
-                                          "PARAM_REBIND_TARGET_CAPTURE_FAILED",
-                                          ParamRebindStage::kTargetCapture,
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          std::nullopt,
-                                          std::move(captured.error())));
-    }
-    state->identity = captured->snapshot->identity;
-    state->admission_context_digest = captured->admission_context_digest;
-    auto populated = populate_target_operators(*state, *captured, selected->vertices.size());
-    if (!populated) {
-      return make_unexpected(std::move(populated.error()));
-    }
-    state->selection_digest = holoscan::detail::ParamOverrideSetAccess::target_selection_digest(
-        state->scope_kind, state->scope_paths, state->target_operators);
-    return ParamRebindTarget{std::move(state)};
-  } catch (const RuntimeError& error) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kInvalidArgument,
-                                        "PARAM_REBIND_TARGET_CAPTURE_FAILED",
-                                        ParamRebindStage::kTargetCapture,
-                                        {},
-                                        {},
-                                        {},
-                                        {},
-                                        {},
-                                        {},
-                                        std::nullopt,
-                                        make_error(error)));
-  } catch (const std::bad_alloc&) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kResourceExhausted,
-                                        "PARAM_REBIND_TARGET_ALLOC_FAILED",
-                                        ParamRebindStage::kTargetCapture));
-  } catch (const std::length_error&) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kResourceExhausted,
-                                        "PARAM_REBIND_TARGET_ALLOC_FAILED",
-                                        ParamRebindStage::kTargetCapture));
-  }
-}
-
-// The conversion is intentionally a single fail-fast transaction: every branch records a distinct
-// stable diagnostic and mutates only local staging state until the final override set is built.
-// Splitting the orchestration further would obscure that ordering and duplicate the error context.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot& snapshot,
-                                                 const ParamRebindTarget& target,
-                                                 ParamRebindOptions options) {
-  if (target.state_ == nullptr) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kInvalidArgument,
-                                        "PARAM_REBIND_TARGET_EMPTY",
-                                        ParamRebindStage::kTargetCapture));
-  }
-  if (target.state_->selection_digest !=
-      holoscan::detail::ParamOverrideSetAccess::target_selection_digest(
-          target.state_->scope_kind, target.state_->scope_paths, target.state_->target_operators)) {
-    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                        ParamToolErrorCode::kTargetMismatch,
-                                        "PARAM_REBIND_TARGET_SELECTION_INVALID",
-                                        ParamRebindStage::kTargetCapture));
-  }
+// Stage snapshot fields without reading a compiler snapshot or an authored parameter baseline.
+ParamRebindResult<ParamRebindProvenance> set_params(Graph& graph, const ParamSnapshot& snapshot,
+                                                    const ParamRebindTargetScope& target_scope,
+                                                    ParamRebindOptions options) {
   if (options.mode != ParamRebindMode::kSparseContributions &&
       options.mode != ParamRebindMode::kCompleteObject) {
     return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidSnapshot,
@@ -1157,6 +719,24 @@ ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot& snapshot,
                                         "PARAM_REBIND_MIGRATION_CATALOG_UNAVAILABLE",
                                         ParamRebindStage::kMigration));
   }
+  auto scope_paths = canonical_scope_paths(target_scope);
+  if (!scope_paths)
+    return make_unexpected(std::move(scope_paths.error()));
+  auto authored = holoscan::detail::ParameterInputAccess::authoring_targets(graph);
+  if (!authored) {
+    return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
+                                        ParamToolErrorCode::kInvalidArgument,
+                                        "PARAM_REBIND_TARGET_CAPTURE_FAILED",
+                                        ParamRebindStage::kTargetCapture,
+                                        {},
+                                        {},
+                                        {},
+                                        {},
+                                        {},
+                                        {},
+                                        std::nullopt,
+                                        std::move(authored.error())));
+  }
   try {
     const OperatorAliasIndex operator_aliases = make_operator_alias_index(options.operator_aliases);
     if (!operator_aliases.valid) {
@@ -1172,205 +752,230 @@ ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot& snapshot,
                                           "PARAM_REBIND_FIELD_ALIAS_CONFLICT",
                                           ParamRebindStage::kFieldAlias));
     }
-    if (snapshot.operators().empty()) {
-      return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidSnapshot,
-                                          ParamToolErrorCode::kInvalidSnapshot,
-                                          "PARAM_REBIND_SNAPSHOT_EMPTY"));
-    }
-    const SnapshotScopeSelector scope = make_scope_selector(snapshot.scope());
-    if (!scope.valid) {
-      return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidSnapshot,
-                                          ParamToolErrorCode::kInvalidSnapshot,
-                                          "PARAM_REBIND_SOURCE_SCOPE_INVALID"));
-    }
-    const SnapshotOperatorIndex snapshot_index = make_snapshot_operator_index(snapshot);
-    if (!snapshot_index.valid) {
+    const SnapshotScopeSelector source_scope = make_scope_selector(snapshot.scope());
+    const SnapshotOperatorIndex source_index = make_snapshot_operator_index(snapshot);
+    if (!source_scope.valid || !source_index.valid || source_index.entries.empty()) {
       return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidSnapshot,
                                           ParamToolErrorCode::kInvalidSnapshot,
                                           "PARAM_REBIND_SNAPSHOT_IDENTITY_INVALID"));
     }
-    const auto outside_scope = std::ranges::find_if(
-        snapshot_index.entries, [&](const auto& entry) { return !scope.contains(entry.path); });
-    if (outside_scope != snapshot_index.entries.end()) {
+    const auto outside_source_scope =
+        std::ranges::find_if(source_index.entries,
+                             [&](const auto& entry) { return !source_scope.contains(entry.path); });
+    if (outside_source_scope != source_index.entries.end()) {
       return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidSnapshot,
                                           ParamToolErrorCode::kInvalidSnapshot,
                                           "PARAM_REBIND_SOURCE_OUTSIDE_SCOPE",
                                           ParamRebindStage::kSourceValidation,
-                                          outside_scope->path));
+                                          outside_source_scope->path));
     }
-    ParamRebindProvenance provenance = make_provenance(snapshot, *target.state_, options.mode);
+
+    std::vector<const holoscan::detail::ParameterAuthoringTarget*> targets;
+    for (const auto& target : authored->targets) {
+      if (target_selected(target_scope.kind(), *scope_paths, target.path)) {
+        targets.push_back(&target);
+      }
+    }
+    std::ranges::sort(targets, {}, [](const auto* target) { return target->path; });
+    if (targets.empty()) {
+      return make_unexpected(rebind_error(ParamRebindErrorCode::kScopeNotFound,
+                                          ParamToolErrorCode::kTargetMismatch,
+                                          "PARAM_REBIND_TARGET_SCOPE_NOT_FOUND",
+                                          ParamRebindStage::kTargetCapture));
+    }
+    const bool exact_scope = target_scope.kind() == ParamRebindTargetScopeKind::kOperator ||
+                             target_scope.kind() == ParamRebindTargetScopeKind::kOperatorSet;
+    if (exact_scope && (targets.size() != scope_paths->size() ||
+                        !std::ranges::equal(targets, *scope_paths, {}, [](const auto* target) {
+                          return target->path;
+                        }))) {
+      return make_unexpected(rebind_error(ParamRebindErrorCode::kScopeNotFound,
+                                          ParamToolErrorCode::kTargetMismatch,
+                                          "PARAM_REBIND_TARGET_OPERATOR_UNKNOWN",
+                                          ParamRebindStage::kTargetCapture));
+    }
+
+    auto transaction = std::make_shared<holoscan::detail::ParameterTransactionState>();
+    transaction->source = holoscan::detail::ParameterTransactionSource::kSnapshot;
+    transaction->scope.kind = target_scope.kind();
+    if (target_scope.kind() == ParamRebindTargetScopeKind::kWholeGraph) {
+      transaction->scope.graph = authored->root_graph;
+    } else if (target_scope.kind() == ParamRebindTargetScopeKind::kGraph) {
+      const auto scope_graph = std::ranges::find(
+          authored->graphs, scope_paths->front(), &holoscan::detail::ParameterAuthoringGraph::path);
+      if (scope_graph == authored->graphs.end()) {
+        return make_unexpected(rebind_error(ParamRebindErrorCode::kScopeNotFound,
+                                            ParamToolErrorCode::kTargetMismatch,
+                                            "PARAM_REBIND_TARGET_SCOPE_NOT_FOUND",
+                                            ParamRebindStage::kTargetCapture));
+      }
+      transaction->scope.graph = scope_graph->graph;
+    } else {
+      transaction->scope.operators.reserve(targets.size());
+      for (const auto* target : targets)
+        transaction->scope.operators.push_back(target->vertex);
+      std::ranges::sort(transaction->scope.operators, {}, &VertexId::value);
+    }
+    transaction->operators.reserve(targets.size());
+    ParamRebindProvenance& provenance = transaction->provenance;
+    if (const auto archive =
+            holoscan::detail::ParamSnapshotArchiveAccess::archive_identity(snapshot)) {
+      provenance.source_archive_semantic_version = archive->semantic_version;
+      provenance.source_archive_digest = archive->semantic_sha256;
+    }
+    provenance.source_plan_digest = snapshot.plan_digest();
+    provenance.source_plan_generation = snapshot.plan_generation();
+    provenance.source_run_generation = snapshot.run_generation();
+    provenance.source_catalog_digest = snapshot.catalog_digest();
+    provenance.source_scope_kind = snapshot.scope().kind();
+    provenance.source_scope_path = render_path(snapshot.scope().path());
+    provenance.mode = options.mode;
+    provenance.target_scope_kind = target_scope.kind();
+    provenance.target_scope_paths = *scope_paths;
+    provenance.target_operators.reserve(targets.size());
     provenance.fields.reserve(std::min<std::size_t>(kMaxFields, snapshot.operators().size() * 4U));
-    std::vector<holoscan::detail::ParamOverrideOperatorState> operators;
+
     std::vector<unsigned char> matched_sources(snapshot.operators().size());
     std::vector<unsigned char> operator_alias_used(options.operator_aliases.size());
     std::vector<unsigned char> field_alias_used(options.field_aliases.size());
     std::size_t matched_source_count{};
-    std::size_t target_field_count{};
-    for (const auto& target_operator : target.state_->operators) {
-      const ParamSchemaDescriptor* const schema = target_operator.factory->parameter_schema();
+    for (const auto* target : targets) {
+      if (!target->type) {
+        return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
+                                            ParamToolErrorCode::kInvalidArgument,
+                                            "PARAM_REBIND_TARGET_OPERATOR_INVALID",
+                                            ParamRebindStage::kTargetCapture,
+                                            {},
+                                            target->path));
+      }
+      const ParamSchemaDescriptor* const schema = target->schema;
       if (schema == nullptr) {
         return make_unexpected(rebind_error(ParamRebindErrorCode::kSchemaUnavailable,
                                             ParamToolErrorCode::kNotSupported,
                                             "PARAM_REBIND_SCHEMA_UNAVAILABLE",
                                             ParamRebindStage::kTargetCapture,
                                             {},
-                                            target_operator.path));
+                                            target->path));
       }
-      if (schema->stable_id.empty() || schema->stable_id.size() > kMaxSchemaIdBytes ||
-          schema->fields.size() > kMaxFields - target_field_count) {
-        return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
-                                            ParamToolErrorCode::kResourceExhausted,
-                                            "PARAM_REBIND_TARGET_SCHEMA_LIMIT",
-                                            ParamRebindStage::kTargetCapture,
-                                            {},
-                                            target_operator.path));
-      }
-      target_field_count += schema->fields.size();
-      const TargetFieldIndex target_fields = make_target_field_index(*schema);
+      provenance.target_operators.push_back(ParamRebindTargetOperatorProvenance{
+          .operator_path = target->path,
+          .schema_id = std::string{schema->stable_id},
+          .schema_version = schema->version,
+          .structural_hash = schema->structural_hash,
+          .contract_hash = schema->contract_hash,
+      });
       const SourceOperatorMatch source_match =
-          source_operator(snapshot_index, target_operator.path, schema->version, operator_aliases);
+          source_operator(source_index, target->path, schema->version, operator_aliases);
       if (source_match.conflict) {
         return make_unexpected(rebind_error(ParamRebindErrorCode::kAliasConflict,
                                             ParamToolErrorCode::kTargetMismatch,
                                             "PARAM_REBIND_OPERATOR_ALIAS_CONFLICT",
                                             ParamRebindStage::kOperatorAlias,
                                             {},
-                                            target_operator.path));
+                                            target->path));
       }
-      const SnapshotOperatorIndexEntry* const source_entry = source_match.source;
-      const ParamSnapshotOperatorRecord* const source =
-          source_entry == nullptr ? nullptr : source_entry->record;
+      const SnapshotOperatorIndexEntry* const source = source_match.source;
       if (source == nullptr) {
         if (options.mode == ParamRebindMode::kCompleteObject) {
-          return make_unexpected(rebind_error(ParamRebindErrorCode::kUnknownOperator,
+          return make_unexpected(rebind_error(ParamRebindErrorCode::kRequiredFieldMissing,
                                               ParamToolErrorCode::kTargetMismatch,
-                                              "PARAM_REBIND_OPERATOR_MISSING",
+                                              "PARAM_REBIND_COMPLETE_TARGET_MISSING",
                                               ParamRebindStage::kCompleteConstruction,
                                               {},
-                                              target_operator.path));
-        }
-        for (const auto& field : schema->fields) {
-          provenance.fields.push_back(ParamRebindFieldProvenance{
-              .target_operator_path = target_operator.path,
-              .target_schema_id = std::string{schema->stable_id},
-              .target_schema_version = schema->version,
-              .target_field_id = field.id,
-              .target_full_id = field.full_id,
-              .origin = ParamFieldRebindOrigin::kBaseline,
-              .disposition = ParamFieldRebindDisposition::kRetainedBaseline,
-          });
+                                              target->path));
         }
         continue;
       }
-      if (matched_sources[source_entry->ordinal] != 0U) {
+      if (matched_sources[source->ordinal] != 0U) {
         return make_unexpected(rebind_error(ParamRebindErrorCode::kAliasConflict,
                                             ParamToolErrorCode::kTargetMismatch,
                                             "PARAM_REBIND_OPERATOR_SOURCE_REUSED",
                                             ParamRebindStage::kOperatorAlias,
-                                            source_entry->path,
-                                            target_operator.path));
+                                            source->path,
+                                            target->path));
       }
-      matched_sources[source_entry->ordinal] = 1U;
+      matched_sources[source->ordinal] = 1U;
       ++matched_source_count;
-      if (source_match.alias != nullptr) {
-        if (operator_alias_used[source_match.alias_ordinal] == 0U) {
-          append_operator_alias_provenance(provenance, *source_match.alias);
-          operator_alias_used[source_match.alias_ordinal] = 1U;
-        }
+      if (source_match.alias != nullptr && operator_alias_used[source_match.alias_ordinal] == 0U) {
+        append_operator_alias_provenance(provenance, *source_match.alias);
+        operator_alias_used[source_match.alias_ordinal] = 1U;
       }
-      if (!source->effective_profile || *source->effective_profile != target.state_->profile) {
+      const ParamSnapshotOperatorRecord& source_op = *source->record;
+      if (!source_op.effective_profile) {
         return make_unexpected(rebind_error(ParamRebindErrorCode::kProfileIncompatible,
                                             ParamToolErrorCode::kTargetMismatch,
                                             "PARAM_REBIND_PROFILE_MISMATCH",
                                             ParamRebindStage::kFinalResolution,
-                                            source_entry->path,
-                                            target_operator.path,
-                                            source->schema_id,
-                                            schema->stable_id));
+                                            source->path,
+                                            target->path));
       }
       if (options.mode == ParamRebindMode::kCompleteObject &&
-          (source->schema_availability != ParamSchemaAvailability::kDeclared ||
-           source->schema_coverage != ParamSchemaCoverage::kComplete)) {
+          (source_op.schema_availability != ParamSchemaAvailability::kDeclared ||
+           source_op.schema_coverage != ParamSchemaCoverage::kComplete)) {
         return make_unexpected(rebind_error(ParamRebindErrorCode::kCoverageInsufficient,
                                             ParamToolErrorCode::kInvalidSnapshot,
                                             "PARAM_REBIND_COMPLETE_SCHEMA_REQUIRED",
                                             ParamRebindStage::kCompleteConstruction,
-                                            source_entry->path,
-                                            target_operator.path,
-                                            source->schema_id,
+                                            source->path,
+                                            target->path,
+                                            source_op.schema_id,
                                             schema->stable_id));
       }
-      if (source->schema_id != schema->stable_id || source->schema_version != schema->version ||
-          source->structural_hash != schema->structural_hash ||
-          source->contract_hash != schema->contract_hash) {
-        const bool version_alias = source_match.aliased && source->schema_id == schema->stable_id &&
-                                   source->structural_hash == schema->structural_hash &&
-                                   source->contract_hash == schema->contract_hash;
-        if (version_alias) {
-          // An exact directed path/version alias may rename an otherwise identical schema. It does
-          // not migrate a changed shape or policy contract.
-        } else {
-          return make_unexpected(rebind_error(ParamRebindErrorCode::kSchemaIncompatible,
-                                              ParamToolErrorCode::kTargetMismatch,
-                                              "PARAM_REBIND_SCHEMA_MISMATCH",
-                                              ParamRebindStage::kFinalResolution,
-                                              source_entry->path,
-                                              target_operator.path,
-                                              source->schema_id,
-                                              schema->stable_id));
-        }
-      }
-      auto aggregate = make_aggregate(*target_operator.factory, options.mode);
-      if (!aggregate) {
-        return make_unexpected(std::move(aggregate.error()));
-      }
-      const auto baseline =
-          holoscan::detail::parameter_value_digest(target_operator.factory->parameter_type(),
-                                                   schema,
-                                                   aggregate->value,
-                                                   target_operator.factory->has_no_params());
-      if (!baseline.available()) {
-        return make_unexpected(rebind_error(ParamRebindErrorCode::kFieldIncompatible,
-                                            ParamToolErrorCode::kNotSupported,
-                                            "PARAM_REBIND_VALUE_DIGEST_UNAVAILABLE",
-                                            options.mode == ParamRebindMode::kCompleteObject
-                                                ? ParamRebindStage::kCompleteConstruction
-                                                : ParamRebindStage::kSparseConstruction,
-                                            source_entry->path,
-                                            target_operator.path,
-                                            source->schema_id,
+      const bool version_alias = source_match.aliased && source_op.schema_id == schema->stable_id &&
+                                 source_op.structural_hash == schema->structural_hash &&
+                                 source_op.contract_hash == schema->contract_hash;
+      if ((source_op.schema_id != schema->stable_id ||
+           source_op.schema_version != schema->version ||
+           source_op.structural_hash != schema->structural_hash ||
+           source_op.contract_hash != schema->contract_hash) &&
+          !version_alias) {
+        return make_unexpected(rebind_error(ParamRebindErrorCode::kSchemaIncompatible,
+                                            ParamToolErrorCode::kTargetMismatch,
+                                            "PARAM_REBIND_SCHEMA_MISMATCH",
+                                            ParamRebindStage::kFinalResolution,
+                                            source->path,
+                                            target->path,
+                                            source_op.schema_id,
                                             schema->stable_id));
       }
-      std::vector<holoscan::detail::ParamOverrideFieldOriginRecord> contributions;
-      contributions.reserve(std::min(source->fields.size(), schema->fields.size()));
-      std::vector<unsigned char> contributed_fields(schema->fields.size());
-      for (const auto& field : source->fields) {
-        if (field.projection != holoscan::params::ParamProjectionStatus::kIncluded) {
+      const TargetFieldIndex fields = make_target_field_index(*schema);
+      std::vector<unsigned char> contributed(schema->fields.size());
+      const std::uint32_t provenance_begin = static_cast<std::uint32_t>(provenance.fields.size());
+      holoscan::detail::ParameterTransactionOperatorState staged{
+          .target = target->vertex,
+          .local_type_token = target->type->local_type_token,
+          .schema_id = std::string{schema->stable_id},
+          .schema_version = schema->version,
+          .structural_hash = schema->structural_hash,
+          .contract_hash = schema->contract_hash,
+          .required_source_profile = source_op.effective_profile,
+      };
+      for (const ParamSnapshotFieldRecord& source_field : source_op.fields) {
+        if (source_field.projection != ParamProjectionStatus::kIncluded)
           continue;
-        }
-        if (!field.value) {
+        if (!source_field.value) {
           return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidSnapshot,
                                               ParamToolErrorCode::kInvalidSnapshot,
                                               "PARAM_REBIND_INCLUDED_VALUE_MISSING",
                                               ParamRebindStage::kSourceValidation,
-                                              source_entry->path,
+                                              source->path,
                                               {},
-                                              source->schema_id,
+                                              source_op.schema_id,
                                               {},
-                                              field.address.field));
+                                              source_field.address.field));
         }
         const TargetFieldMatch field_match =
-            resolve_target_field(*schema, *source, field, field_aliases, target_fields);
+            resolve_target_field(*schema, source_op, source_field, field_aliases, fields);
         if (field_match.conflict) {
           return make_unexpected(rebind_error(ParamRebindErrorCode::kAliasConflict,
                                               ParamToolErrorCode::kTargetMismatch,
                                               "PARAM_REBIND_FIELD_ALIAS_CONFLICT",
                                               ParamRebindStage::kFieldAlias,
-                                              source_entry->path,
-                                              target_operator.path,
-                                              source->schema_id,
+                                              source->path,
+                                              target->path,
+                                              source_op.schema_id,
                                               schema->stable_id,
-                                              field.address.field));
+                                              source_field.address.field));
         }
         const ParamFieldDescriptor* const descriptor = field_match.descriptor;
         if (descriptor == nullptr) {
@@ -1378,11 +983,11 @@ ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot& snapshot,
                                               ParamToolErrorCode::kTargetMismatch,
                                               "PARAM_REBIND_FIELD_UNKNOWN",
                                               ParamRebindStage::kFinalResolution,
-                                              source_entry->path,
-                                              target_operator.path,
-                                              source->schema_id,
+                                              source->path,
+                                              target->path,
+                                              source_op.schema_id,
                                               schema->stable_id,
-                                              field.address.field));
+                                              source_field.address.field));
         }
         if (descriptor->visibility == ParamVisibility::kInternal ||
             descriptor->sensitivity == ParamSensitivity::kSensitive) {
@@ -1390,64 +995,67 @@ ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot& snapshot,
                                               ParamToolErrorCode::kPermissionDenied,
                                               "PARAM_REBIND_FIELD_RESTRICTED",
                                               ParamRebindStage::kFinalResolution,
-                                              source_entry->path,
-                                              target_operator.path,
-                                              source->schema_id,
+                                              source->path,
+                                              target->path,
+                                              source_op.schema_id,
                                               schema->stable_id,
-                                              field.address.field,
+                                              source_field.address.field,
                                               descriptor->id));
         }
-        if (contributed_fields[field_match.descriptor_ordinal] != 0U) {
+        if (contributed[field_match.descriptor_ordinal] != 0U) {
           return make_unexpected(rebind_error(ParamRebindErrorCode::kAliasConflict,
                                               ParamToolErrorCode::kTargetMismatch,
                                               "PARAM_REBIND_FIELD_TARGET_DUPLICATE",
                                               ParamRebindStage::kFieldAlias,
-                                              source_entry->path,
-                                              target_operator.path,
-                                              source->schema_id,
+                                              source->path,
+                                              target->path,
+                                              source_op.schema_id,
                                               schema->stable_id,
-                                              field.address.field,
+                                              source_field.address.field,
                                               descriptor->id));
         }
-        if (!scalar_type_identity_matches(field, *descriptor) ||
-            descriptor->local_operations.replace_member_from_scalar == nullptr ||
-            !descriptor->local_operations.replace_member_from_scalar(aggregate->value,
-                                                                     field.value->scalar())) {
-          return make_unexpected(rebind_error(ParamRebindErrorCode::kTypeMismatch,
-                                              ParamToolErrorCode::kInvalidArgument,
-                                              "PARAM_REBIND_FIELD_TYPE_MISMATCH",
-                                              ParamRebindStage::kFinalResolution,
-                                              source_entry->path,
-                                              target_operator.path,
-                                              source->schema_id,
-                                              schema->stable_id,
-                                              field.address.field,
-                                              descriptor->id));
+        if (!scalar_type_identity_matches(source_field, *descriptor) ||
+            descriptor->local_operations.replace_member_from_scalar == nullptr) {
+          const bool non_scalar = scalar_type_identity(*descriptor).empty();
+          return make_unexpected(rebind_error(
+              non_scalar ? ParamRebindErrorCode::kFieldIncompatible
+                         : ParamRebindErrorCode::kTypeMismatch,
+              non_scalar ? ParamToolErrorCode::kNotSupported : ParamToolErrorCode::kInvalidArgument,
+              non_scalar ? "PARAM_REBIND_FIELD_CODEC_UNAVAILABLE"
+                         : "PARAM_REBIND_FIELD_TYPE_MISMATCH",
+              ParamRebindStage::kFinalResolution,
+              source->path,
+              target->path,
+              source_op.schema_id,
+              schema->stable_id,
+              source_field.address.field,
+              descriptor->id));
         }
-        if (field_match.alias != nullptr) {
-          if (field_alias_used[field_match.alias_ordinal] == 0U) {
-            append_field_alias_provenance(provenance, *field_match.alias);
-            field_alias_used[field_match.alias_ordinal] = 1U;
-          }
+        if (field_match.alias != nullptr && field_alias_used[field_match.alias_ordinal] == 0U) {
+          append_field_alias_provenance(provenance, *field_match.alias);
+          field_alias_used[field_match.alias_ordinal] = 1U;
         }
         const ParamFieldRebindOrigin origin = field_match.aliased
                                                   ? ParamFieldRebindOrigin::kAlias
                                                   : ParamFieldRebindOrigin::kCaptured;
-        contributions.push_back(holoscan::detail::ParamOverrideFieldOriginRecord{
+        const std::uint32_t provenance_index = static_cast<std::uint32_t>(provenance.fields.size());
+        staged.fields.push_back(holoscan::detail::ParameterTransactionFieldState{
             .field = descriptor->id,
             .full_id = descriptor->full_id,
-            .origin = origin == ParamFieldRebindOrigin::kAlias
-                          ? holoscan::detail::ParamOverrideContributionOrigin::kAlias
-                          : holoscan::detail::ParamOverrideContributionOrigin::kCaptured,
+            .origin = origin,
+            .rebind_provenance_index = provenance_index,
+            .scalar_value = source_field.value->scalar(),
+            .staged_value_digest =
+                holoscan::detail::parameter_transaction_scalar_digest(source_field.value->scalar()),
         });
-        contributed_fields[field_match.descriptor_ordinal] = 1U;
+        contributed[field_match.descriptor_ordinal] = 1U;
         provenance.fields.push_back(ParamRebindFieldProvenance{
-            .source_operator_path = source_entry->path,
-            .source_schema_id = source->schema_id,
-            .source_schema_version = source->schema_version,
-            .source_field_id = field.address.field,
-            .source_full_id = field.full_id,
-            .target_operator_path = target_operator.path,
+            .source_operator_path = source->path,
+            .source_schema_id = source_op.schema_id,
+            .source_schema_version = source_op.schema_version,
+            .source_field_id = source_field.address.field,
+            .source_full_id = source_field.full_id,
+            .target_operator_path = target->path,
             .target_schema_id = std::string{schema->stable_id},
             .target_schema_version = schema->version,
             .target_field_id = descriptor->id,
@@ -1456,86 +1064,40 @@ ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot& snapshot,
             .disposition = ParamFieldRebindDisposition::kContributed,
         });
       }
-      if (options.mode == ParamRebindMode::kCompleteObject) {
-        for (std::size_t field_index = 0; field_index < schema->fields.size(); ++field_index) {
-          const auto& field = schema->fields[field_index];
-          if (field.required_on_load && contributed_fields[field_index] == 0U) {
-            return make_unexpected(rebind_error(ParamRebindErrorCode::kRequiredFieldMissing,
-                                                ParamToolErrorCode::kInvalidSnapshot,
-                                                "PARAM_REBIND_REQUIRED_FIELD_MISSING",
-                                                ParamRebindStage::kCompleteConstruction,
-                                                source_entry->path,
-                                                target_operator.path,
-                                                source->schema_id,
-                                                schema->stable_id,
-                                                {},
-                                                field.id));
-          }
-        }
-      }
-      for (std::size_t field_index = 0; field_index < schema->fields.size(); ++field_index) {
-        const auto& field = schema->fields[field_index];
-        if (contributed_fields[field_index] != 0U) {
+      for (std::size_t index = 0; index < schema->fields.size(); ++index) {
+        const ParamFieldDescriptor& field = schema->fields[index];
+        if (contributed[index] != 0U)
           continue;
+        if (options.mode == ParamRebindMode::kCompleteObject && field.required_on_load) {
+          return make_unexpected(rebind_error(ParamRebindErrorCode::kRequiredFieldMissing,
+                                              ParamToolErrorCode::kInvalidSnapshot,
+                                              "PARAM_REBIND_REQUIRED_FIELD_MISSING",
+                                              ParamRebindStage::kCompleteConstruction,
+                                              source->path,
+                                              target->path,
+                                              source_op.schema_id,
+                                              schema->stable_id,
+                                              {},
+                                              field.id));
         }
-        const bool sparse = options.mode == ParamRebindMode::kSparseContributions;
         provenance.fields.push_back(ParamRebindFieldProvenance{
-            .target_operator_path = target_operator.path,
+            .target_operator_path = target->path,
             .target_schema_id = std::string{schema->stable_id},
             .target_schema_version = schema->version,
             .target_field_id = field.id,
             .target_full_id = field.full_id,
-            .origin = sparse ? ParamFieldRebindOrigin::kBaseline : ParamFieldRebindOrigin::kDefault,
-            .disposition = sparse ? ParamFieldRebindDisposition::kRetainedBaseline
-                                  : ParamFieldRebindDisposition::kAppliedDefault,
+            .origin = options.mode == ParamRebindMode::kSparseContributions
+                          ? ParamFieldRebindOrigin::kBaseline
+                          : ParamFieldRebindOrigin::kDefault,
+            .disposition = options.mode == ParamRebindMode::kSparseContributions
+                               ? ParamFieldRebindDisposition::kRetainedBaseline
+                               : ParamFieldRebindDisposition::kAppliedDefault,
         });
       }
-      if (contributions.empty()) {
-        continue;
-      }
-      const ParamValidationResult validation =
-          target_operator.factory->parameter_type().validate_aggregate(aggregate->value);
-      if (!validation.ok()) {
-        return make_unexpected(rebind_error(ParamRebindErrorCode::kBoundsViolation,
-                                            ParamToolErrorCode::kInvalidArgument,
-                                            "PARAM_REBIND_VALIDATION_FAILED",
-                                            options.mode == ParamRebindMode::kCompleteObject
-                                                ? ParamRebindStage::kCompleteConstruction
-                                                : ParamRebindStage::kSparseConstruction,
-                                            source_entry->path,
-                                            target_operator.path,
-                                            source->schema_id,
-                                            schema->stable_id,
-                                            validation.field_id,
-                                            validation.field_id));
-      }
-      const auto resolved =
-          holoscan::detail::parameter_value_digest(target_operator.factory->parameter_type(),
-                                                   schema,
-                                                   aggregate->value,
-                                                   target_operator.factory->has_no_params());
-      if (!resolved.available()) {
-        return make_unexpected(rebind_error(ParamRebindErrorCode::kFieldIncompatible,
-                                            ParamToolErrorCode::kNotSupported,
-                                            "PARAM_REBIND_VALUE_DIGEST_UNAVAILABLE",
-                                            ParamRebindStage::kResultValidation,
-                                            source_entry->path,
-                                            target_operator.path,
-                                            source->schema_id,
-                                            schema->stable_id));
-      }
-      operators.push_back(holoscan::detail::ParamOverrideOperatorState{
-          .operator_path = target_operator.path,
-          .schema_id = std::string{schema->stable_id},
-          .schema_version = schema->version,
-          .structural_hash = schema->structural_hash,
-          .contract_hash = schema->contract_hash,
-          .local_type = &target_operator.factory->parameter_type(),
-          .resolved_value = aggregate->release_shared(),
-          .baseline_value_digest = baseline.digest,
-          .resolved_value_digest = resolved.digest,
-          .contributions = std::move(contributions),
-      });
+      staged.provenance_begin = provenance_begin;
+      staged.provenance_count =
+          static_cast<std::uint32_t>(provenance.fields.size()) - provenance_begin;
+      transaction->operators.push_back(std::move(staged));
     }
     if (matched_source_count != snapshot.operators().size()) {
       return make_unexpected(rebind_error(ParamRebindErrorCode::kUnknownOperator,
@@ -1545,51 +1107,40 @@ ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot& snapshot,
                                               ? ParamRebindStage::kCompleteConstruction
                                               : ParamRebindStage::kSparseConstruction));
     }
-    if (operators.empty()) {
+    if (transaction->operators.empty()) {
       return make_unexpected(rebind_error(ParamRebindErrorCode::kScopeNotFound,
                                           ParamToolErrorCode::kTargetMismatch,
                                           "PARAM_REBIND_NO_CONTRIBUTIONS",
                                           ParamRebindStage::kResultValidation));
     }
-    std::ranges::sort(provenance.fields, [](const auto& lhs, const auto& rhs) {
-      return std::tie(lhs.target_operator_path,
-                      lhs.target_field_id,
-                      lhs.source_operator_path,
-                      lhs.source_field_id) < std::tie(rhs.target_operator_path,
-                                                      rhs.target_field_id,
-                                                      rhs.source_operator_path,
-                                                      rhs.source_field_id);
-    });
-    return holoscan::detail::ParamOverrideSetAccess::make_complete(
-        target.state_->identity,
-        std::move(operators),
-        target.state_->admission_context_digest,
-        std::move(provenance));
+    ParamRebindProvenance report = provenance;
+    for (auto& field : provenance.fields)
+      field.target_operator_path.clear();
+    provenance.target_scope_paths.clear();
+    provenance.target_operators.clear();
+    auto attached = holoscan::detail::ParameterInputAccess::attach_transaction(
+        graph, std::shared_ptr<const holoscan::detail::ParameterTransactionState>{transaction});
+    if (!attached) {
+      return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidTarget,
+                                          ParamToolErrorCode::kTargetMismatch,
+                                          "PARAM_REBIND_ATTACH_FAILED",
+                                          ParamRebindStage::kResultValidation,
+                                          {},
+                                          {},
+                                          {},
+                                          {},
+                                          {},
+                                          {},
+                                          std::nullopt,
+                                          std::move(attached.error())));
+    }
+    return report;
   } catch (const std::bad_alloc&) {
     return make_unexpected(rebind_error(ParamRebindErrorCode::kInvalidSnapshot,
                                         ParamToolErrorCode::kResourceExhausted,
                                         "PARAM_REBIND_ALLOC_FAILED",
                                         ParamRebindStage::kResultValidation));
   }
-}
-
-ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot& snapshot, Graph& graph,
-                                                 ParamRebindOptions options) {
-  return to_overrides(snapshot, graph, ParamRebindTargetScope::whole_graph(), options);
-}
-
-ParamRebindResult<ParamOverrideSet> to_overrides(const ParamSnapshot& snapshot, Graph& graph,
-                                                 const ParamRebindTargetScope& target_scope,
-                                                 ParamRebindOptions options) {
-  auto context = ParamAdmissionContext::standard();
-  if (!context) {
-    return make_unexpected(std::move(context.error()));
-  }
-  auto target = make_param_rebind_target(graph, *context, target_scope);
-  if (!target) {
-    return make_unexpected(std::move(target.error()));
-  }
-  return to_overrides(snapshot, *target, options);
 }
 
 }  // namespace holoscan::params

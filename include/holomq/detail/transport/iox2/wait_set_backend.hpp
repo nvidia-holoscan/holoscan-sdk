@@ -8,11 +8,11 @@
 #include <holomq/detail/transport/iox2/setup_error.hpp>
 #include <holomq/detail/transport/iox2/subscriber_port.hpp>
 
-#include "iox2/callback_progression.hpp"
-#include "iox2/file_descriptor.hpp"
-#include "iox2/node.hpp"
-#include "iox2/service_type.hpp"
-#include "iox2/waitset.hpp"
+#include <iox2/callback_progression.hpp>
+#include <iox2/file_descriptor.hpp>
+#include <iox2/node.hpp>
+#include <iox2/service_type.hpp>
+#include <iox2/waitset.hpp>
 
 #include <holomq/errors.hpp>
 #include <holomq/expected.hpp>
@@ -167,7 +167,11 @@ auto Iox2WaitSetBackend::attach(std::shared_ptr<SubscriberPort<Payload>> port)
     -> holomq::expected<WaitSetHandle, holomq::Error> {
   if (port->is_attached_to_wait_set()) {
     HOLOMQ_LOG_ERROR("WaitSet attach failed: subscriber already attached");
-    return holomq::make_unexpected(holomq::Error{holomq::ErrorCode::kInvalidArgument});
+    return holomq::make_unexpected_nothrow<WaitSetHandle>(
+        holomq::ErrorCode::kInvalidArgument,
+        port->is_attached_to_readiness_handle()
+            ? "subscriber is already owned by a readiness handle"
+            : "subscriber is already owned by a wait set");
   }
 
   // A subscriber created before its publisher has not yet observed the publisher-side data

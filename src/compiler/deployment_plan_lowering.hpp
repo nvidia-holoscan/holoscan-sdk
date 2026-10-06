@@ -15,6 +15,7 @@
 #include <holoscan/core/execution_plan.hpp>
 
 #include "core/graph_snapshot.hpp"
+#include "plan_lowering_diagnostic.hpp"
 
 namespace holoscan::detail {
 
@@ -30,6 +31,8 @@ struct PlacementPlatformProbeResult {
   PlacementPlatformProbeDisposition disposition{PlacementPlatformProbeDisposition::kFailed};
   bool irq_isolation_proven{false};
   std::string evidence_id;
+  CPUAffinity effective_affinity;
+  std::optional<Error> error;
 };
 
 /// Read platform placement capability without applying process or thread state.
@@ -46,9 +49,10 @@ class PlacementPlatformProbe {
 struct DeploymentPlanLowering {
   std::vector<PlacementProbePlanRecord> placement_probes;
   std::vector<PartitionPlacementPlanRecord> placements;
+  std::vector<SupportThreadAffinityPlanRecord> support_thread_affinities;
   std::vector<ExecutionLanePlanRecord> lanes;
   std::vector<std::uint32_t> lane_by_vertex;
-  std::vector<std::string> error_tokens;
+  std::vector<PlanLoweringDiagnostic> errors;
   std::vector<std::string> warning_tokens;
 };
 

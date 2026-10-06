@@ -1,0 +1,60 @@
+The Holoscan Python API requires Linux and Python 3.12 or newer. Install a
+packaged SDK for application use, or import the package directly from an SDK
+build tree when developing the SDK itself.
+
+<Note title="You will learn">
+  - Where to find the release-specific Python package
+  - How to build and import the package from an SDK checkout
+  - How to verify the installed API and typing marker
+</Note>
+
+## Install a packaged SDK
+
+Use the distribution name and CUDA variant published with the Holoscan 5.x
+release. The complete platform, driver, package, and CUDA prerequisites are
+maintained on
+[SDK installation](/holoscan/sdk-user-guide/setup/sdk-installation#python-wheel).
+Do not reuse a Holoscan 4.x wheel name for a 5.x environment. Use an isolated
+virtual environment when the application controls its Python dependency set.
+
+## Import from an SDK build tree
+
+Python bindings are enabled by default. From a source checkout, select an
+explicit build directory and expose its package directory:
+
+```bash
+./run build --build-python true --buildpath build-holoscan
+PYTHONPATH="$PWD/build-holoscan/python/lib" python3 -c \
+  'import holoscan as hs; print(hs.__version__)'
+```
+
+The `PYTHONPATH` adjustment is for build-tree development only. An installed
+package or wheel supplies its own import path and runtime-library layout.
+
+## Verify operator discovery and typing
+
+```python
+import holoscan as hs
+
+print(hs.__version__)
+print(f"registered operators: {len(hs.registry.operators())}")
+print(hs.RealtimeClock)
+```
+
+The distribution includes `.pyi` stubs and a `py.typed` marker, so type
+checkers and editors can use the public facade signatures and generated
+operator and reusable-graph proxy definitions without a separate stub package.
+
+<Warning>
+  A third-party operator provider becomes visible only after its Python module
+  or extension is imported. If a registry lookup reports an unknown operator,
+  import the package that ships that operator before composing the graph.
+</Warning>
+
+## Recap
+
+- Use Python 3.12 or newer and follow the release's package instructions for
+  the installed CUDA major version.
+- SDK contributors can import directly from `<build>/python/lib`.
+- Stubs and `py.typed` ship with the package; operator providers register their
+  types when imported.

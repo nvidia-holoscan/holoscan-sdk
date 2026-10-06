@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -14,9 +15,12 @@
 
 #include <holoscan/core/payload_options.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
+#include <holoscan/sensor_io/image_descriptor_scratch.hpp>
+#include <holoscan/sensor_io/provenance.hpp>
 #include <holoscan/vision/custom_crop_op.hpp>
 
 #include "detail/cvcuda_tensor.hpp"
+#include "detail/image_payload.hpp"
 
 namespace holoscan::vision {
 namespace {
@@ -24,6 +28,12 @@ namespace {
 constexpr TensorRepresentation kCudaTensorRepresentation{
     .memory_kind = MemoryKind::kCudaDevice,
 };
+
+[[nodiscard]] expected<std::uint64_t, Error> crop_output_byte_span(
+    const CustomCropOpParams& params) noexcept {
+  return detail::projected_image_output_byte_span(
+      params.width, params.height, params.max_batch_size, sizeof(double));
+}
 
 [[nodiscard]] auto failure(ErrorCode code, std::string message) {
   return make_unexpected(Error{code, std::move(message)});
@@ -33,43 +43,43 @@ constexpr TensorRepresentation kCudaTensorRepresentation{
 
 class CustomCropOp::Impl {
  public:
+  std::optional<sensor_io::ImageDescriptorScratch> image_metadata;
   std::unique_ptr<cvcuda::CustomCrop> operation;
 };
 
-CustomCropOp::CustomCropOp(VisionImageCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+CustomCropOp::CustomCropOp() : impl_(std::make_unique<Impl>()) {}
 
 CustomCropOp::~CustomCropOp() = default;
 
 void CustomCropOp::setup(OperatorSpec& spec) {
-  const CustomCropOpParams& configuration = params();
-  if (configuration.width > capacity_.max_width || configuration.height > capacity_.max_height) {
-    throw RuntimeError(ErrorCode::kInvalidArgument,
-                       "CustomCropOp parameters exceed the authored output-pool capacity");
+  const auto projected_capacity = crop_output_byte_span(params());
+  if (!projected_capacity) {
+    throw RuntimeError(projected_capacity.error().code,
+                       "CustomCropOp output capacity exceeds CV-CUDA's 32-bit tensor limit");
   }
-  auto byte_span = detail::maximum_output_byte_span(
-      capacity_.max_width, capacity_.max_height, capacity_.max_batch_size, sizeof(double));
-  if (!byte_span) {
-    throw RuntimeError(byte_span.error());
-  }
+  const auto capacity = parameter_projected_byte_span<&crop_output_byte_span>(
+      "holoscan.vision.CustomCropOp.output-max-byte-span.v1",
+      param_ref<&CustomCropOpParams::width>(),
+      param_ref<&CustomCropOpParams::height>(),
+      param_ref<&CustomCropOpParams::max_batch_size>());
 
   spec.input(input, "input")
       .queue_depth(1U)
+      .tensor_field(schema::ImageTensorFields::data)
       .expects_tensor(TensorInputSpec{
           .representation = kCudaTensorRepresentation,
           .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
       });
   spec.output(output, "output")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = detail::ImageTensorView::kMaxRank,
-                  .max_byte_span = *byte_span,
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .tensor_field(schema::ImageTensorFields::data)
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          capacity);
 }
 
 Contract CustomCropOp::contract() const {
@@ -79,8 +89,19 @@ Contract CustomCropOp::contract() const {
 }
 
 void CustomCropOp::start() {
+  if (!impl_->image_metadata) {
+    auto created = sensor_io::ImageDescriptorScratch::create();
+    if (!created) {
+      throw RuntimeError(created.error());
+    }
+    impl_->image_metadata.emplace(std::move(*created));
+  }
   if (impl_->operation) {
     return;
+  }
+  auto prepared = detail::prepare_nvcv_tensor_handles(2);
+  if (!prepared) {
+    throw RuntimeError(prepared.error().code, "CustomCropOp failed to prepare NVCV Tensor handles");
   }
   try {
     impl_->operation = std::make_unique<cvcuda::CustomCrop>();
@@ -97,33 +118,28 @@ void CustomCropOp::stop() {
 
 expected<void, Error> CustomCropOp::compute(ExecutionContext& context) {
   const CustomCropOpParams& configuration = context.params<CustomCropOpParams>();
-  auto valid_width = detail::validate_authored_capacity(
-      "CustomCropOp", "width", configuration.width, capacity_.max_width);
-  if (!valid_width) {
-    return make_unexpected(std::move(valid_width).error());
-  }
-  auto valid_height = detail::validate_authored_capacity(
-      "CustomCropOp", "height", configuration.height, capacity_.max_height);
-  if (!valid_height) {
-    return make_unexpected(std::move(valid_height).error());
-  }
-  if (!impl_->operation) {
-    return failure(ErrorCode::kNotReady, "CustomCropOp CV-CUDA resource is not initialized");
+  if (!impl_->operation || !impl_->image_metadata) {
+    return failure(ErrorCode::kNotReady, "CustomCropOp resources are not initialized");
   }
   const cudaStream_t stream = context.cuda_stream().get();
   if (stream == nullptr) {
     return failure(ErrorCode::kNotSupported, "CustomCropOp requires a runtime CUDA stream");
   }
 
-  auto sample = input.receive();
+  auto sample = input.selected_sample();
   if (!sample) {
     return make_unexpected(std::move(sample).error());
   }
-  auto input_view = detail::describe_image_tensor(
-      sample->data, detail::TensorOperation::kCustomCrop, capacity_.max_batch_size);
+  auto input_view = detail::describe_image_payload(
+      sample->data(), detail::TensorOperation::kCustomCrop, configuration.max_batch_size);
   if (!input_view) {
     return make_unexpected(std::move(input_view).error());
   }
+  auto metadata_copied = impl_->image_metadata->copy_metadata_from(sample->data());
+  if (!metadata_copied) {
+    return make_unexpected(std::move(metadata_copied).error());
+  }
+  auto& image = impl_->image_metadata->image();
   auto valid_crop = detail::validate_crop_rectangle(input_view->width,
                                                     input_view->height,
                                                     configuration.x,
@@ -168,10 +184,21 @@ expected<void, Error> CustomCropOp::compute(ExecutionContext& context) {
                                                    input_view->dtype,
                                                    DLDevice{kDLCUDA, loan->device_id().value},
                                                    detail::TensorOperation::kCustomCrop,
-                                                   capacity_.max_batch_size);
+                                                   configuration.max_batch_size);
   if (!output_view) {
     return make_unexpected(std::move(output_view).error());
   }
+  auto metadata_updated = detail::update_image_metadata(
+      image,
+      *input_view,
+      *output_view,
+      detail::ImageMetadataTransform{.geometry = detail::ImageGeometryChange::kCrop,
+                                     .x = configuration.x,
+                                     .y = configuration.y});
+  if (!metadata_updated) {
+    return make_unexpected(std::move(metadata_updated).error());
+  }
+
   auto nvcv_input = detail::wrap_nvcv_tensor(*input_view);
   if (!nvcv_input) {
     return make_unexpected(std::move(nvcv_input).error());
@@ -196,7 +223,7 @@ expected<void, Error> CustomCropOp::compute(ExecutionContext& context) {
   if (!committed) {
     return make_unexpected(std::move(committed).error());
   }
-  return output.emit(std::move(*loan), detail::forward_metadata(sample->metadata));
+  return output.emit_tensor(std::move(*loan), image, sensor_io::derive_from(sample->metadata()));
 }
 
 }  // namespace holoscan::vision

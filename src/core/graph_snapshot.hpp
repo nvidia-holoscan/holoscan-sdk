@@ -226,6 +226,11 @@ canonicalize_graph_snapshot(  // NOLINT(readability-function-cognitive-complexit
 
   for (auto& partition : snapshot.partitions) {
     partition.graph = GraphId{graph_ids.at(partition.graph.value)};
+    for (auto& member : partition.graph_members)
+      member = GraphId{graph_ids.at(member.value)};
+    std::sort(partition.graph_members.begin(),
+              partition.graph_members.end(),
+              [](GraphId lhs, GraphId rhs) { return lhs.value < rhs.value; });
     for (auto& member : partition.members)
       member = VertexId{vertex_ids.at(member.value)};
     std::sort(partition.members.begin(), partition.members.end(), [](VertexId lhs, VertexId rhs) {

@@ -595,7 +595,7 @@ expected<void, LifecycleTransactionKernelError> LifecycleTransactionKernel::ackn
         return value.target == target;
       });
   const std::uint8_t bit = gate_bit(gate);
-  if (target_gate == transaction->gates.end() || (target_gate->required & bit) == 0U) {
+  if (target_gate == transaction->gates.end() || (target_gate->required & bit) == 0) {
     return make_unexpected(error(LifecycleTransactionKernelErrorCode::kInvalidTransition));
   }
   target_gate->satisfied = static_cast<std::uint8_t>(target_gate->satisfied | bit);

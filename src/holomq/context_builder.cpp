@@ -37,9 +37,9 @@ struct DefaultFdPassEndpoint {
 
 class GeneratedEndpointCleanup {
  public:
-  GeneratedEndpointCleanup(const std::string& socket_path,
-                           const std::optional<std::filesystem::path>& private_directory)
-      : socket_path_(socket_path), private_directory_(private_directory) {}
+  GeneratedEndpointCleanup(std::string socket_path,
+                           std::optional<std::filesystem::path> private_directory)
+      : socket_path_(std::move(socket_path)), private_directory_(std::move(private_directory)) {}
   GeneratedEndpointCleanup(const GeneratedEndpointCleanup&) = delete;
   GeneratedEndpointCleanup& operator=(const GeneratedEndpointCleanup&) = delete;
   ~GeneratedEndpointCleanup() {

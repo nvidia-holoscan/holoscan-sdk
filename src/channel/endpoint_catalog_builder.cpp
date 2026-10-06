@@ -98,21 +98,6 @@ template <typename Enum>
   return static_cast<Underlying>(value) <= static_cast<Underlying>(last);
 }
 
-[[nodiscard]] bool schema_equal(const SchemaIdentityRecord& left,
-                                const SchemaIdentityRecord& right) noexcept {
-  return left.canonical_name == right.canonical_name && left.version == right.version &&
-         left.schema_sha256 == right.schema_sha256 && left.id == right.id;
-}
-
-[[nodiscard]] SchemaIdentityRecord copy_schema(const SchemaIdentity& schema) {
-  return SchemaIdentityRecord{
-      .canonical_name = std::string(schema.canonical_name),
-      .version = schema.version,
-      .schema_sha256 = schema.schema_sha256,
-      .id = schema.id,
-  };
-}
-
 [[nodiscard]] expected<std::optional<TensorBoundaryContractRecord>, Error> copy_tensor_requirements(
     const TopicOptions& options, const PayloadIdentityRecord& identity) {
   if (identity.kind != PayloadIdentityKind::kTensor) {
@@ -145,7 +130,8 @@ template <typename Enum>
       .max_rank = tensor.max_rank,
       .max_byte_span = tensor.max_byte_span,
       .axes = tensor.axes,
-      .strides = *tensor.representation.strides,
+      // Normalization guarantees a concrete stride policy for catalog Tensor contracts.
+      .strides = *tensor.representation.strides,  // NOLINT(bugprone-unchecked-optional-access)
       .foreign_emit_policy = transfer.foreign_emit_policy,
       .max_inline_bytes =
           transfer.max_inline_bytes
@@ -218,7 +204,7 @@ template <typename Enum>
 
   std::optional<SchemaIdentityRecord> schema;
   if (options.schema) {
-    schema = copy_schema(*options.schema);
+    schema = make_schema_identity_record(*options.schema);
   }
   if (record.payload_identity.kind == PayloadIdentityKind::kSchema) {
     const auto& payload_schema = record.payload_identity.schema;
@@ -226,7 +212,7 @@ template <typename Enum>
       return make_unexpected(
           builder_error(ErrorCode::kInvalidArgument, "GRAPH_TOPIC_SCHEMA_INVALID"));
     }
-    if (schema && !schema_equal(*schema, payload_schema.value())) {
+    if (schema && !schema_identity_equal(*schema, payload_schema.value())) {
       return make_unexpected(
           builder_error(ErrorCode::kIncompatible, "GRAPH_TOPIC_SCHEMA_MISMATCH"));
     }
@@ -302,7 +288,7 @@ expected<void, Error> ChannelEndpointCatalog::Builder::add_topic(
       .direction = direction,
       .name_origin = EndpointNameOrigin::kExplicit,
       .payload_identity = std::move(payload_identity),
-      .serialized_payload_capacity_bytes = serialized_payload_capacity_bytes,
+      .schema_writer_max_serialized_bytes = serialized_payload_capacity_bytes,
   };
   auto applied = apply_options(record, options);
   if (!applied) {

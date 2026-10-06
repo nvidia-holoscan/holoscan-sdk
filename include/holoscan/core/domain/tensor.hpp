@@ -9,6 +9,7 @@
 #include <dlpack/dlpack.h>
 #include <cuda/stream>
 
+#include <algorithm>
 #include <array>
 #include <complex>
 #include <cstddef>
@@ -281,9 +282,11 @@ class Tensor {
   /**
    * @brief Get the device information of the Tensor.
    *
-   * @return The device information of the Tensor.
+   * @return The device information of the Tensor, or the CPU device sentinel for an empty Tensor.
    */
-  DLDevice device() const { return dl_ctx_->tensor.dl_tensor.device; }
+  DLDevice device() const {
+    return dl_ctx_ == nullptr ? DLDevice{kDLCPU, 0} : dl_ctx_->tensor.dl_tensor.device;
+  }
 
   /**
    * @brief Get the Tensor's data type information.
@@ -291,9 +294,11 @@ class Tensor {
    * For details of the DLDataType struct see the DLPack documentation:
    * https://dmlc.github.io/dlpack/latest/c_api.html#_CPPv410DLDataType
    *
-   * @return The DLDataType struct containing DLPack dtype information for the tensor.
+   * @return The DLPack dtype, or a zero-initialized dtype for an empty Tensor.
    */
-  DLDataType dtype() const { return dl_ctx_->tensor.dl_tensor.dtype; }
+  DLDataType dtype() const {
+    return dl_ctx_ == nullptr ? DLDataType{} : dl_ctx_->tensor.dl_tensor.dtype;
+  }
 
   /**
    * @brief Get the shape of the Tensor data.
@@ -354,18 +359,20 @@ class Tensor {
   /**
    * @brief Get the number of dimensions of the Tensor.
    *
-   * @return The number of dimensions.
+   * @return The number of dimensions, or zero for an empty Tensor.
    */
-  int32_t ndim() const { return dl_ctx_->tensor.dl_tensor.ndim; }
+  int32_t ndim() const { return dl_ctx_ == nullptr ? 0 : dl_ctx_->tensor.dl_tensor.ndim; }
 
   /**
    * @brief Get the byte offset from the Tensor's data pointer.
    *
    * This is the DLPack `DLTensor::byte_offset` value.
    *
-   * @return The byte offset from the Tensor's data pointer.
+   * @return The byte offset from the Tensor's data pointer, or zero for an empty Tensor.
    */
-  uint64_t byte_offset() const { return dl_ctx_->tensor.dl_tensor.byte_offset; }
+  uint64_t byte_offset() const {
+    return dl_ctx_ == nullptr ? 0U : dl_ctx_->tensor.dl_tensor.byte_offset;
+  }
 
   /**
    * @brief Get the DLPack flags of the Tensor.
@@ -499,9 +506,11 @@ class Tensor {
    * @brief Enqueue a copy of this contiguous Tensor into caller-owned host memory.
    *
    * This method does not allocate. For CUDA-backed tensors it first makes `stream` wait for the
-   * Tensor readiness stream, then enqueues a device-to-host copy on `stream`. For CPU/host-backed
-   * tensors it synchronizes producer readiness on the host and performs a host memcpy. Only
-   * contiguous Tensor layouts are supported.
+   * Tensor readiness stream, then enqueues a device-to-host copy on `stream`. Stream-aware backing
+   * storage records that stream as its retirement boundary; imported storage without that
+   * capability completes the copy before return so its producer deleter cannot run early. For
+   * CPU/host-backed tensors it synchronizes producer readiness on the host and performs a host
+   * memcpy. Only contiguous Tensor layouts are supported.
    *
    * @param destination Host-visible destination pointer.
    * @param destination_bytes Number of bytes available at `destination`.
@@ -526,6 +535,38 @@ class Tensor {
   [[nodiscard]] expected<void, Error> copy_to_host(void* destination, std::size_t destination_bytes,
                                                    ::cuda::stream_ref stream) const {
     return copy_to_host(destination, destination_bytes, stream.get());
+  }
+
+  /// @brief Allocate an owning contiguous copy on the Tensor's current device.
+  ///
+  /// CUDA copies are ordered on \p stream and the returned Tensor records that stream as its
+  /// readiness and deallocation coordinate. Host copies complete before return. The returned
+  /// Tensor has local writable authority and carries the DLPack copied flag.
+  ///
+  /// @param stream CUDA stream used for CUDA-backed copies.
+  /// @return An owning copy, or an Error for invalid metadata, unsupported storage, allocation, or
+  /// CUDA copy failure.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<Tensor, Error> copy(
+      cudaStream_t stream = nullptr) const;
+  [[nodiscard]] expected<Tensor, Error> copy(::cuda::stream_ref stream) const {
+    return copy(stream.get());
+  }
+
+  /// @brief Allocate an owning contiguous copy on a requested DLPack device.
+  ///
+  /// The first implementation accepts CPU, CUDA device, CUDA pinned-host, and CUDA managed
+  /// destinations. CUDA work is ordered on \p stream; host destinations are ready before return.
+  /// Cross-device CUDA copies use peer-copy semantics and report the CUDA failure when peer access
+  /// is unavailable.
+  ///
+  /// @param target Destination DLPack device and ordinal.
+  /// @param stream CUDA stream used for CUDA-backed copies.
+  /// @return An owning copy, or an Error for invalid metadata/device, unsupported storage,
+  /// allocation, or CUDA copy failure.
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<Tensor, Error> copy_to(
+      DLDevice target, cudaStream_t stream = nullptr) const;
+  [[nodiscard]] expected<Tensor, Error> copy_to(DLDevice target, ::cuda::stream_ref stream) const {
+    return copy_to(target, stream.get());
   }
 
   /**

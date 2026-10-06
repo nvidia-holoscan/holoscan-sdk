@@ -19,8 +19,7 @@ namespace YAML {
 class Node;
 }  // namespace YAML
 
-#include <holoscan/holoscan_core_export.h>
-
+#include <holoscan/operators/inference/holoscan_op_inference_export.h>
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/operator.hpp>
@@ -48,7 +47,7 @@ using InferenceDataVecMap = std::map<std::string, std::vector<std::string>>;
 /// authoring Graph (`graph.op<InferenceOp>("name", InferenceOpParams{...})`).
 /// InferenceOp::setup() reads `params()` to dynamically
 /// declare one Input<Tensor>/Output<Tensor> port per configured tensor name (see inference.cpp).
-struct InferenceOpParams {
+struct HOLOSCAN_OP_INFERENCE_EXPORT InferenceOpParams {
   /// Backend to use for inference. Only "trt" is supported by this TensorRT-only module.
   std::string backend{"trt"};
   /// Optional per-model backend override map. Every value must be "trt".
@@ -292,7 +291,7 @@ HOLOSCAN_PARAM_SCHEMA(
 /// CUDA-graph capture setup or replay, a blocking stream swapped out from under CUDA Graphs) use
 /// the same format. `modules/inference/README.md`, section "Fallback ladder", documents all
 /// fallback triggers, what causes them, and how to avoid each one.
-class HOLOSCAN_CORE_EXPORT InferenceOp : public holoscan::Operator<InferenceOpParams> {
+class HOLOSCAN_OP_INFERENCE_EXPORT InferenceOp : public holoscan::Operator<InferenceOpParams> {
  public:
   InferenceOp() = delete;
 

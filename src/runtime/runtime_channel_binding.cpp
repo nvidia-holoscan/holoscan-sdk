@@ -7,11 +7,14 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
+#include "core/diagnostic_reporting.hpp"
 #include "endpoint_clock_health_runtime.hpp"
 #include "runtime_channel_binding.hpp"
 #include "runtime_channel_session_impl.hpp"
@@ -39,8 +42,10 @@ void RuntimeChannelSession::Impl::cancel() noexcept {
   return status();
 }
 
-void RuntimeChannelSession::Impl::reset_sample_slot(SampleSlot& slot) noexcept {
+void RuntimeChannelSession::Impl::reset_sample_slot(SampleSlot& slot,
+                                                    DeferredSampleReleases& releases) noexcept {
   if (slot.occupied) {
+    releases.retain(slot.sample.data());
     if (slot.sample_storage_prepared) {
       slot.subscriber->input->type_ops->reset_sample_storage(slot.sample.data());
     } else {
@@ -65,6 +70,7 @@ void RuntimeChannelSession::Impl::reset_sample_slot(SampleSlot& slot) noexcept {
   // occupant's fate to a claim that was released for a record no longer here.
   slot.owed_to_released_claim = false;
   slot.refill_reserved = false;
+  slot.refill_prefix_reserved = false;
   slot.temporal = {};
 }
 
@@ -134,7 +140,7 @@ expected<void, Error> RuntimeChannelSession::bind_publish_clock(ClockRef clock) 
   // with the plan, which makes this unreachable today; it is checked here so a future composition
   // that resolves a different clock per executor fails at the binding rather than on the wire.
   if (impl_->plan_publish_clock_.valid() && clock.id() != impl_->plan_publish_clock_) {
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "Channel publish clock {} does not match the plan root default clock {} the endpoint "
         "catalog projected",
         clock.id().value,
@@ -142,6 +148,108 @@ expected<void, Error> RuntimeChannelSession::bind_publish_clock(ClockRef clock) 
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
   impl_->publish_clock_ = std::move(clock);
+  return {};
+}
+
+bool RuntimeChannelSession::restore_input_binding(const PortId input) noexcept {
+  if (impl_ == nullptr || !input) {
+    return false;
+  }
+  Impl::InputPortState* const state = impl_->find_input(input);
+  if (state == nullptr || state->declaration == nullptr || state->type_ops == nullptr ||
+      state->type_ops->bind_input == nullptr) {
+    return false;
+  }
+  state->type_ops->bind_input(state->declaration, &state->binding);
+  return true;
+}
+
+bool RuntimeChannelSession::restore_output_binding(const PortId output) noexcept {
+  if (impl_ == nullptr || !output) {
+    return false;
+  }
+  Impl::OutputState* const state = impl_->find_output(output);
+  if (state == nullptr || state->declaration == nullptr || state->type_ops == nullptr ||
+      state->type_ops->bind_output == nullptr) {
+    return false;
+  }
+  state->type_ops->bind_output(state->declaration, &state->binding);
+  return true;
+}
+
+bool RuntimeChannelSession::require_fixed_tensor(const PortId input, const void* address,
+                                                 std::span<const std::uint64_t> shape) noexcept {
+  if (impl_ == nullptr || !input || address == nullptr) {
+    return false;
+  }
+  Impl::InputPortState* const state = impl_->find_input(input);
+  if (state == nullptr || state->type_ops != runtime_port_type_ops<Tensor>() ||
+      (state->required_tensor_address != nullptr && state->required_tensor_address != address)) {
+    return false;
+  }
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    // This optional is set only through the source-tree Runtime test seam. Keeping the check in
+    // the production translation unit lets real RunSession startup exercise this noexcept path.
+    if (impl_->fixed_tensor_shape_allocations_before_failure_for_test_.has_value()) {
+      auto& remaining = *impl_->fixed_tensor_shape_allocations_before_failure_for_test_;
+      if (remaining == 0U) {
+        impl_->fixed_tensor_shape_allocations_before_failure_for_test_.reset();
+        throw std::bad_alloc{};
+      }
+      --remaining;
+    }
+#endif
+    std::vector<std::uint64_t> required_shape{shape.begin(), shape.end()};
+    state->required_tensor_shape.swap(required_shape);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (const std::bad_alloc&) {
+    return false;
+  }
+#endif
+  // Publish the address only after the owned shape is complete so rejection leaves no partial
+  // fixed-input requirement for startup rollback to discover.
+  state->required_tensor_address = address;
+  return true;
+}
+
+bool RuntimeChannelSession::clear_fixed_tensor_requirement(const PortId input,
+                                                           const void* address) noexcept {
+  if (impl_ == nullptr || !input || address == nullptr) {
+    return false;
+  }
+  Impl::InputPortState* const state = impl_->find_input(input);
+  if (state == nullptr || state->required_tensor_address != address) {
+    return false;
+  }
+  state->required_tensor_address = nullptr;
+  state->required_tensor_shape.clear();
+  return true;
+}
+
+expected<void, RuntimeFixtureObservationBindingFailure>
+RuntimeChannelSession::observe_fixture_publications(
+    std::shared_ptr<RuntimeFixtureObservation> observation) noexcept {
+  if (!impl_ || observation == nullptr || impl_->fixture_observation_ != nullptr ||
+      impl_->armed_.load(std::memory_order_acquire) || impl_->pump_thread_.joinable() ||
+      impl_->closed_.load(std::memory_order_acquire)) {
+    return make_unexpected(
+        RuntimeFixtureObservationBindingFailure{.code = ErrorCode::kInvalidArgument});
+  }
+  for (const auto& output : impl_->outputs_) {
+    if (output->type_ops->codec_family != RuntimePayloadCodecFamily::kInlinePod) {
+      return make_unexpected(RuntimeFixtureObservationBindingFailure{
+          .code = ErrorCode::kIncompatible, .owner = output->owner, .port = output->port});
+    }
+  }
+  // Quarantine already retains this complete channel owner. Keep the observation in the same
+  // closure so failed stale emits cannot dereference storage destroyed with the RunSession.
+  impl_->fixture_observation_ = std::move(observation);
+  for (const auto& output : impl_->outputs_) {
+    output->binding.ops = &Impl::OutputState::kObservedBindingOps;
+  }
   return {};
 }
 
@@ -170,6 +278,15 @@ std::optional<StructuralDiagnosticId> RuntimeChannelSession::terminal_diagnostic
   const std::uint32_t diagnostic = impl_->terminal_diagnostic_.load(std::memory_order_relaxed);
   return diagnostic == 0U ? std::nullopt
                           : std::optional{static_cast<StructuralDiagnosticId>(diagnostic)};
+}
+
+const RuntimeSupportThreadPlacementFailure*
+RuntimeChannelSession::support_thread_placement_failure() const noexcept {
+  if (!impl_ || impl_->terminal_error_.load(std::memory_order_acquire) == ErrorCode::kSuccess ||
+      !impl_->support_thread_placement_failure_.present) {
+    return nullptr;
+  }
+  return &impl_->support_thread_placement_failure_;
 }
 
 VertexId RuntimeChannelSession::terminal_owner() const noexcept {

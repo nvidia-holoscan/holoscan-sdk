@@ -64,16 +64,11 @@ struct ClockOffsetEstimate {
 /// checked integer arithmetic, with no clock read, allocation, lock, or system call. Nothing here
 /// re-measures on its own, so no sample ever pays for bracketing.
 ///
-/// Priming belongs in a \c kWarmUp body and cannot currently live there. It needs the graph clock,
-/// and the only cold route to that is \ref LifecycleContext::resolve_clock, whose resolver the
-/// runtime never installs: the lifecycle executor fills in the notification and restart resolvers
-/// of its internal callback state and leaves the clock resolver null, so every cold resolution
-/// fails with \c ErrorCode::kLifecycleInvalidCallingContext. Until Core installs that resolver, an
-/// operator has to take the clock from \c ExecutionContext::clock() and prime from its first
-/// \c compute, guarding the call with \ref settled so later activations skip it.
-/// That placement is a workaround for the Core gap and not a preference: it costs one \ref settled
-/// check on every activation and the bracketed rounds on the first one. Move priming to \c kWarmUp
-/// once cold clock resolution works.
+/// Prime in a \c kWarmUp body after resolving the admitted reference clock through
+/// \ref LifecycleContext::resolve_clock. Bind the resolved clock's identity and use its reads for
+/// the reference timestamps. Handle resolution and read failures, and check the \ref prime result
+/// before acquisition begins so the first activation uses an already-settled timestamp
+/// relationship.
 ///
 /// A device that already timestamps in the reference domain needs no measurement, and \ref
 /// bind_identity says so explicitly. That is a different statement from an unmeasured offset of
@@ -176,8 +171,8 @@ class ClockDiscipline {
   /// \ref LifecycleStatus::kRetryableFailure but does not itself retry a stage, so an operator that
   /// wants another attempt must either widen \p rounds or call \ref prime again from a later cold
   /// call or activation.
-  /// @note This belongs in a \c kWarmUp body. See the class description for why the missing Core
-  /// clock resolver currently forces it into the first \c compute instead.
+  /// @note Run this in a \c kWarmUp body after resolving the admitted reference clock through
+  /// \ref LifecycleContext::resolve_clock. Handle resolution and read failures before acquisition.
   template <TimestampSource DeviceNow, TimestampSource ReferenceNow>
   [[nodiscard]] LifecycleStatus prime(
       DeviceNow&& device_now, ReferenceNow&& reference_now,

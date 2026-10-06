@@ -14,6 +14,8 @@
 #include <nanobind/nanobind.h>
 #include <magic_enum/magic_enum.hpp>
 
+#include "module_name.hpp"
+
 namespace holoscan::python {
 
 namespace nb = nanobind;
@@ -32,10 +34,12 @@ inline std::string python_enum_value_name(std::string_view cpp_name) {
 }
 
 template <typename E, typename... Extra>
-nb::enum_<E> export_enum(nb::handle scope, const char* python_name, Extra&&... extra) {
+nb::enum_<E> export_enum(nb::module_& scope, const char* public_module, const char* python_name,
+                         Extra&&... extra) {
   static_assert(std::is_enum_v<E>);
 
-  nb::enum_<E> enum_type(scope, python_name, std::forward<Extra>(extra)...);
+  nb::enum_<E> enum_type =
+      bind_enum_in_module<E>(scope, public_module, python_name, std::forward<Extra>(extra)...);
   for (const auto& [value, name] : magic_enum::enum_entries<E>()) {
     const std::string value_name = python_enum_value_name(name);
     enum_type.value(value_name.c_str(), value);

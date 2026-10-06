@@ -24,7 +24,7 @@
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/execution_plan.hpp>
 #include <holoscan/memory/memory_buffer.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "channel/catalog_inline_payload_contract.hpp"
@@ -157,6 +157,7 @@ struct LowerForTestOptions {
   bool force_holomq_process_local_event_wake{};
   std::span<const ResolvedQueueSizing> resolved_queue_sizings{};
   std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes{};
+  CudaComputeStreamPolicy cuda_compute_stream_policy{CudaComputeStreamPolicy::kSharedProcessDevice};
 };
 inline constexpr LowerForTestOptions kForceHoloMQProcessLocalInline{
     .force_holomq_process_local_inline = true,

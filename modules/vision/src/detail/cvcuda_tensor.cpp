@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <new>
 #include <string>
 #include <utility>
 
@@ -161,6 +162,10 @@ template <typename Element>
     case TensorOperation::kConvertTo:
     case TensorOperation::kReformat:
       return is_u8 || is_s8 || is_u16 || is_s16 || is_s32 || is_f32 || is_f64;
+    case TensorOperation::kBayerDemosaic:
+      // NPP's Bayer kernels (and schema::ImageT's RGB8/RGBA8, RGB16/RGBA16 encodings) support
+      // exactly these two bit depths.
+      return is_u8 || is_u16;
   }
   return false;
 }
@@ -192,15 +197,11 @@ template <typename Element>
     case TensorOperation::kConvertTo:
     case TensorOperation::kReformat:
       return channels >= 1 && channels <= 4;
+    case TensorOperation::kBayerDemosaic:
+      // Single-channel Bayer mosaic input; three (RGB) or four (RGBA) channel output.
+      return channels == 1 || channels == 3 || channels == 4;
   }
   return false;
-}
-
-[[nodiscard]] expected<std::size_t, Error> checked_multiply(std::size_t lhs, std::size_t rhs) {
-  if (rhs != 0U && lhs > std::numeric_limits<std::size_t>::max() / rhs) {
-    return invalid_argument("Vision tensor byte span exceeds the platform limit");
-  }
-  return lhs * rhs;
 }
 
 [[nodiscard]] expected<std::int64_t, Error> checked_stride_product(std::int64_t lhs,
@@ -426,39 +427,27 @@ expected<std::array<std::int64_t, ImageTensorView::kMaxRank>, Error> contiguous_
   return strides;
 }
 
-expected<std::size_t, Error> maximum_output_byte_span(std::int32_t width, std::int32_t height,
-                                                      std::uint32_t max_batch_size,
-                                                      std::size_t max_element_size) {
+expected<std::uint64_t, Error> projected_image_output_byte_span(
+    std::int32_t width, std::int32_t height, std::uint32_t max_batch_size,
+    std::size_t max_element_size) noexcept {
   if (width <= 0 || height <= 0 || max_batch_size == 0U || max_batch_size > kMaximumBatchSize ||
       max_element_size == 0U) {
-    return invalid_argument("Vision output allocation dimensions are outside the supported range");
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
   }
-  expected<std::size_t, Error> span = static_cast<std::size_t>(width);
-  for (const std::size_t factor : {static_cast<std::size_t>(height),
-                                   static_cast<std::size_t>(max_batch_size),
-                                   std::size_t{4U},
-                                   max_element_size}) {
-    span = checked_multiply(*span, factor);
-    if (!span) {
-      return make_unexpected(std::move(span).error());
+  std::uint64_t span = static_cast<std::uint64_t>(width);
+  for (const std::uint64_t factor : {static_cast<std::uint64_t>(height),
+                                     static_cast<std::uint64_t>(max_batch_size),
+                                     std::uint64_t{4U},
+                                     static_cast<std::uint64_t>(max_element_size)}) {
+    if (span > std::numeric_limits<std::uint64_t>::max() / factor) {
+      return make_unexpected(Error{ErrorCode::kArithmeticOverflow});
     }
+    span *= factor;
   }
-  if (*span > static_cast<std::size_t>(kMaxCvCudaTensorByteSpan)) {
-    return invalid_argument("Vision output allocation exceeds CV-CUDA's 32-bit limit");
+  if (span > static_cast<std::uint64_t>(kMaxCvCudaTensorByteSpan)) {
+    return make_unexpected(Error{ErrorCode::kNotSupported});
   }
   return span;
-}
-
-expected<void, Error> validate_authored_capacity(std::string_view operator_name,
-                                                 std::string_view field_name,
-                                                 std::int64_t active_value,
-                                                 std::int64_t authored_maximum) {
-  if (active_value <= authored_maximum) {
-    return {};
-  }
-  std::string message{operator_name};
-  message.append(" ").append(field_name).append(" exceeds the authored output-pool capacity");
-  return invalid_argument(std::move(message));
 }
 
 expected<void, Error> validate_crop_rectangle(std::int64_t input_width, std::int64_t input_height,
@@ -517,7 +506,7 @@ expected<nvcv::Tensor, Error> wrap_nvcv_tensor(const void* data,
     buffer.basePtr = reinterpret_cast<NVCVByte*>(const_cast<void*>(data));
     const nvcv::TensorShape tensor_shape(
         shape.data(), static_cast<std::int32_t>(shape.size()), layout);
-    // CV-CUDA 0.17.x copies this descriptor synchronously and the wrapper has no cleanup
+    // CV-CUDA 0.18.x copies this descriptor synchronously and the wrapper has no cleanup
     // callback, so it neither owns nor releases the Holoscan backing allocation. Revalidate this
     // assumption, plus asynchronous metadata/workspace retention, for every new CV-CUDA operator
     // and supported CV-CUDA version before relying on callback-lifetime wrapper destruction.
@@ -525,6 +514,38 @@ expected<nvcv::Tensor, Error> wrap_nvcv_tensor(const void* data,
   } catch (const nvcv::Exception& exception) {
     return make_unexpected(Error{
         ErrorCode::kFailure, std::string("CV-CUDA tensor wrapping failed: ") + exception.what()});
+  }
+}
+
+expected<void, Error> prepare_nvcv_tensor_handles(std::size_t count) noexcept {
+  if (count == 0 || count > 3) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  try {
+    // NVCV 0.18 wraps/validates metadata without dereferencing the base address or querying CUDA.
+    // The placeholder is never submitted to a GPU operation; destroy every wrapper before it
+    // leaves scope. Revalidate when changing HOLOSCAN_VISION_CVCUDA_VERSION_MIN/MAX in
+    // public/modules/vision/cmake/CVCUDAVersion.cmake.
+    std::byte placeholder{};
+    constexpr std::array<std::int64_t, 3> kShape{1, 1, 1};
+    nvcv::TensorDataStridedCuda::Buffer buffer{};
+    buffer.basePtr = reinterpret_cast<NVCVByte*>(&placeholder);
+    std::fill_n(buffer.strides, 3, 1);
+    const nvcv::TensorDataStridedCuda data{
+        nvcv::TensorShape{kShape.data(), 3, "HWC"}, nvcv::TYPE_U8, buffer};
+    std::array<nvcv::Tensor, 3> handles{};
+    for (std::size_t index = 0; index != count; ++index) {
+      handles[index] = nvcv::TensorWrapData(data);
+    }
+    return {};
+  } catch (const nvcv::Exception& exception) {
+    return make_unexpected(Error{exception.code() == nvcv::Status::ERROR_OUT_OF_MEMORY
+                                     ? ErrorCode::kResourceExhausted
+                                     : ErrorCode::kFailure});
+  } catch (const std::bad_alloc&) {
+    return make_unexpected(Error{ErrorCode::kResourceExhausted});
+  } catch (...) {
+    return make_unexpected(Error{ErrorCode::kFailure});
   }
 }
 

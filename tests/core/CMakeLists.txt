@@ -3,6 +3,39 @@
 
 include(GoogleTest)
 
+add_executable(diagnostic_logging_test test_diagnostic_logging.cpp ../common/allocation_counter.cpp)
+target_include_directories(diagnostic_logging_test PRIVATE ${holoscan_SOURCE_DIR}/src ${holoscan_SOURCE_DIR}/tests)
+holoscan_configure_test_clang_tidy(diagnostic_logging_test)
+target_link_libraries(diagnostic_logging_test PRIVATE holoscan::core GTest::gtest_main)
+gtest_discover_tests(diagnostic_logging_test
+    DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX DIAGNOSTIC_LOGGING.
+    WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+)
+
+# Verify that the fixture isolates itself from inherited policy environment values.
+foreach(policy_environment IN ITEMS ON OFF invalid)
+    add_test(NAME DIAGNOSTIC_LOGGING.fixture_isolation_${policy_environment}
+        COMMAND ${CMAKE_COMMAND} -E env
+            "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING=${policy_environment}"
+            $<TARGET_FILE:diagnostic_logging_test> "--gtest_filter=DiagnosticLogging.*"
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+endforeach()
+
+# Unlike first-access policy probes, these cases test isolation from logger overrides.
+foreach(logger_environment IN ITEMS OFF ERROR WARN)
+    add_test(NAME DIAGNOSTIC_LOGGING.logger_fixture_isolation_${logger_environment}
+        COMMAND ${CMAKE_COMMAND} -E env
+            "HOLOSCAN_LOG_LEVEL=${logger_environment}"
+            "HOLOSCAN_LOG_FORMAT=inherited: %v"
+            $<TARGET_FILE:diagnostic_logging_test>
+            "--gtest_filter=DiagnosticLogging.*:DiagnosticLoggingEnvironment.*:DiagnosticPolicyDeathTest.*"
+            --gtest_shuffle --gtest_repeat=3
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+endforeach()
+
 add_executable(diagnostic_format_test test_diagnostic.cpp)
 holoscan_configure_test_clang_tidy(diagnostic_format_test)
 
@@ -187,6 +220,7 @@ gtest_discover_tests(lifecycle_test
 )
 
 add_executable(graph_test
+    test_graph_partition_instances.cpp
     test_graph.cpp
     test_graph_tensor_schema.cpp
 )
@@ -299,7 +333,12 @@ gtest_discover_tests(temporal_contract_records_test
     WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
 
-add_executable(parameter_test test_parameter.cpp test_parameter_hash.cpp test_parameter_wide.cpp)
+add_executable(parameter_test
+    test_hosted_parameter_snapshot.cpp
+    test_parameter.cpp
+    test_parameter_hash.cpp
+    test_parameter_wide.cpp
+)
 holoscan_configure_test_clang_tidy(parameter_test)
 
 target_include_directories(parameter_test
@@ -344,9 +383,11 @@ target_include_directories(parameter_dso_test PRIVATE ${holoscan_SOURCE_DIR}/src
 target_link_libraries(parameter_dso_test
     PRIVATE
         holoscan::core
+        holoscan::params
         parameter_dso_test_plugin
         GTest::gtest_main
 )
+target_compile_definitions(parameter_dso_test PRIVATE HOLOSCAN_PARAMETER_DSO_PARAMS_TESTS=1)
 
 gtest_discover_tests(parameter_dso_test
     DISCOVERY_MODE PRE_TEST
@@ -385,14 +426,14 @@ function(holoscan_add_expected_compile_fail_test test_name source_name diagnosti
     add_test(NAME "EXPECTED_COMPILE_FAIL.${test_name}"
         COMMAND ${CMAKE_COMMAND}
             -DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}
-            -DHOLOSCAN_BUILD_CONFIG=$<CONFIG>
+            -DCMAKE_BUILD_TYPE=$<CONFIG>
             -DHOLOSCAN_TARGET=${target_name}
             -DHOLOSCAN_EXPECTED_DIAGNOSTIC=${diagnostic_fragment}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/expected_compile_fail/verify_compile_failure.cmake
     )
-    set_tests_properties("EXPECTED_COMPILE_FAIL.${test_name}" PROPERTIES
-        RESOURCE_LOCK expected_compile_fail_build
-    )
+    # These probes rebuild in the SDK tree and may relink its shared libraries.
+    # Exclude running SDK tests as well as other build-mutating probes.
+    set_tests_properties("EXPECTED_COMPILE_FAIL.${test_name}" PROPERTIES RUN_SERIAL TRUE)
 endfunction()
 
 holoscan_add_expected_compile_fail_test(
@@ -421,6 +462,71 @@ holoscan_add_expected_compile_fail_test(
     "parameter schema requires an exact default-initializable copyable aggregate"
 )
 holoscan_add_expected_compile_fail_test(
+    parameter_schema_codec_requires_complete
+    parameter_schema_codec_requires_complete.cpp
+    "Schema-derived object codecs require a complete parameter schema"
+)
+holoscan_add_expected_compile_fail_test(
+    parameter_schema_codec_requires_codable_fields
+    parameter_schema_codec_requires_codable_fields.cpp
+    "Schema-derived object codecs require ConfigCodable, writable schema fields"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_memory_kind_direct_requires_exact_type
+    tensor_memory_kind_direct_requires_exact_type.cpp
+    "direct parameter_memory_kind requires an exact MemoryKind field"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_throwing
+    tensor_byte_span_projector_throwing.cpp
+    "parameter byte-span projector must be declared noexcept"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_wrong_result
+    tensor_byte_span_projector_wrong_result.cpp
+    "parameter byte-span projector must return expected<uint64_t, Error>"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_wrong_params
+    tensor_byte_span_projector_wrong_params.cpp
+    "parameter byte-span projector dependencies must belong to its exact Params type"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_no_dependencies
+    tensor_byte_span_projector_no_dependencies.cpp
+    "parameter byte-span projector requires at least one Parameter dependency"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_nonstatic
+    tensor_byte_span_projector_nonstatic.cpp
+    "parameter byte-span projector must be a free or static function taking const Params&"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_wrong_arity
+    tensor_byte_span_projector_wrong_arity.cpp
+    "parameter byte-span projector must be a free or static function taking const Params&"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_stateful_function_object
+    tensor_byte_span_projector_stateful_function_object.cpp
+    "parameter byte-span projector must be a free or static function taking const Params&"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_capturing_lambda
+    tensor_byte_span_projector_capturing_lambda.cpp
+    "HOLOSCAN_ACCEPT_ANY_DIAGNOSTIC"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_std_function
+    tensor_byte_span_projector_std_function.cpp
+    "HOLOSCAN_ACCEPT_ANY_DIAGNOSTIC"
+)
+holoscan_add_expected_compile_fail_test(
+    tensor_byte_span_projector_null
+    tensor_byte_span_projector_null.cpp
+    "parameter byte-span projector must not be null"
+)
+holoscan_add_expected_compile_fail_test(
     parameter_throwing_field_destructor
     parameter_throwing_field_destructor.cpp
     "declared parameter fields must be nothrow-destructible for staged updates"
@@ -444,6 +550,16 @@ holoscan_add_expected_compile_fail_test(
     parameter_invalid_allowed_value
     parameter_invalid_allowed_value.cpp
     "invalid parameter field policy or constraint"
+)
+holoscan_add_expected_compile_fail_test(
+    parameter_empty_named_enum_domain
+    parameter_empty_named_enum_domain.cpp
+    "invalid parameter field policy or constraint"
+)
+holoscan_add_expected_compile_fail_test(
+    parameter_optional_sequence_element
+    parameter_optional_sequence_element.cpp
+    "only top-level std::optional parameter fields are supported"
 )
 holoscan_add_expected_compile_fail_test(
     parameter_constraint_inapplicable
@@ -593,6 +709,21 @@ holoscan_add_expected_compile_fail_test(
     graph_flow_payload_mismatch
     graph_flow_payload_mismatch.cpp
     "HOLOSCAN_ACCEPT_ANY_DIAGNOSTIC"
+)
+# REQ: GRAPH-043
+holoscan_add_expected_compile_fail_test(
+    graph_flow_ambiguous_tensor_projection
+    graph_flow_ambiguous_tensor_projection.cpp
+    "declares more than one Tensor field"
+)
+# This fixture models its schema on a descriptor-backed root, so it needs the
+# generated schema headers. Without them the translation unit dies on a missing
+# include before the compiler ever reaches the ambiguity static_assert, and the
+# test would then fail for the wrong reason.
+target_link_libraries(expected_compile_fail_graph_flow_ambiguous_tensor_projection
+    PRIVATE
+        holoscan::schema
+        holoscan::sensor_io
 )
 holoscan_add_expected_compile_fail_test(
     graph_application_type
@@ -787,3 +918,24 @@ gtest_discover_tests(tensor_device_test
     TEST_PREFIX TENSOR_DEVICE.
     WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
+
+if(HOLOSCAN_BUILD_TESTING_LIBRARY)
+    add_executable(operator_test_harness_test
+      test_operator_test_harness.cpp
+      test_operator_test_tensor_edge_cases.cpp
+      test_operator_test_native.cpp
+      test_operator_test_managed.cpp
+      test_operator_test_managed_tensor.cpp
+      test_operator_test_restart.cpp
+      test_operator_test_helper_restart.cpp
+      test_operator_test_clock.cpp
+      $<TARGET_OBJECTS:holoscan_testing_private_objects>)
+    target_include_directories(operator_test_harness_test PRIVATE ${holoscan_SOURCE_DIR}/src)
+    holoscan_configure_test_clang_tidy(operator_test_harness_test)
+    target_link_libraries(operator_test_harness_test PRIVATE holoscan::testing holoscan::schema GTest::gtest_main)
+    gtest_discover_tests(operator_test_harness_test
+        DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX OPERATOR_TESTING.
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+endif()

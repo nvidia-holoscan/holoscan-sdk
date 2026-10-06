@@ -24,6 +24,7 @@
 #include <utility>
 
 #include <holoscan/logger/logger.hpp>
+#include "core/diagnostic_reporting.hpp"
 
 namespace holoscan {
 namespace {
@@ -103,8 +104,8 @@ CudaMemoryResourceAllocator::CudaMemoryResourceAllocator(
 CudaMemoryResourceAllocator::~CudaMemoryResourceAllocator() {
   auto result = deinitialize_pool();
   if (!result) {
-    HOLOSCAN_LOG_ERROR("Failed to deinitialize CUDA memory resource allocator: {}",
-                       runtime_error_message(result.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to deinitialize CUDA memory resource allocator: {}",
+                                 runtime_error_message(result.error()));
   }
 }
 
@@ -346,7 +347,7 @@ expected<void, Error> CudaMemoryResourceAllocator::deinitialize_pool() {
   stage_ = AllocatorStage::kDeinitializationInProgress;
   std::string cleanup_error_message;
   auto remember_cleanup_error = [&cleanup_error_message](const std::string& message) {
-    HOLOSCAN_LOG_ERROR("{}", message);
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("{}", message);
     if (cleanup_error_message.empty()) {
       cleanup_error_message = message;
     }
@@ -364,7 +365,7 @@ expected<void, Error> CudaMemoryResourceAllocator::deinitialize_pool() {
   {
     const std::unique_lock<std::shared_mutex> lock(shared_mutex_);
     if (!pool_map_.empty()) {
-      HOLOSCAN_LOG_WARN("CCCL allocator still has unreleased memory");
+      HOLOSCAN_LOG_AUTOMATIC_WARN("CCCL allocator still has unreleased memory");
     }
 
     for (const auto& [pointer, info] : pool_map_) {
@@ -521,7 +522,7 @@ expected<std::byte*, Error> CudaMemoryResourceAllocator::allocate(uint64_t size,
     pool_map_.emplace(byte_pointer, AllocationInfo{static_cast<size_t>(size), storage_type});
     return byte_pointer;
   } catch (const std::exception& e) {
-    HOLOSCAN_LOG_ERROR("Unexpected error while allocating memory: {}", e.what());
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Unexpected error while allocating memory: {}", e.what());
     return unexpected_runtime_error(ErrorCode::kFailure,
                                     fmt::format("CCCL allocation failed: {}", e.what()));
   }
@@ -554,7 +555,7 @@ expected<std::byte*, Error> CudaMemoryResourceAllocator::allocate_async_impl(
                       AllocationInfo{static_cast<size_t>(size), MemoryStorageType::kDevice});
     return byte_pointer;
   } catch (const std::exception& e) {
-    HOLOSCAN_LOG_ERROR("Unexpected error while allocating async memory: {}", e.what());
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Unexpected error while allocating async memory: {}", e.what());
     return unexpected_runtime_error(ErrorCode::kFailure,
                                     fmt::format("CCCL async allocation failed: {}", e.what()));
   }
@@ -578,7 +579,7 @@ expected<void, Error> CudaMemoryResourceAllocator::free_async_impl(std::byte* po
     pool_map_.erase(it);
     return {};
   } catch (const std::exception& e) {
-    HOLOSCAN_LOG_ERROR("Unexpected error during async deallocation: {}", e.what());
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Unexpected error during async deallocation: {}", e.what());
     return unexpected_runtime_error(ErrorCode::kFailure,
                                     fmt::format("CCCL async deallocation failed: {}", e.what()));
   }
@@ -601,7 +602,7 @@ expected<void, Error> CudaMemoryResourceAllocator::free(std::byte* pointer) {
     pool_map_.erase(it);
     return {};
   } catch (const std::exception& e) {
-    HOLOSCAN_LOG_ERROR("Unexpected error during deallocation: {}", e.what());
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Unexpected error during deallocation: {}", e.what());
     return unexpected_runtime_error(ErrorCode::kFailure,
                                     fmt::format("CCCL deallocation failed: {}", e.what()));
   }

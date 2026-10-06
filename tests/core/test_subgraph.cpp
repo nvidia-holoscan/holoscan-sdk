@@ -110,6 +110,38 @@ class AuthoredOrderLeafGraph final : public Graph {
   std::string label_;
 };
 
+class CaptureEligibleEmbeddingOp final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.cuda_graph_capture_eligible(); }
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+class CaptureEligibleGraph final : public Graph {
+ protected:
+  void compose() override { (void)op<CaptureEligibleEmbeddingOp>("capture"); }
+};
+
+class MoveOnlyGraph final : public Graph {
+ public:
+  explicit MoveOnlyGraph(std::unique_ptr<int> value) : value_(std::move(value)) {}
+
+  [[nodiscard]] int value() const noexcept { return *value_; }
+
+ protected:
+  void compose() override {}
+
+ private:
+  std::unique_ptr<int> value_;
+};
+
+class AuthoringHandleGraph final : public Graph {
+ public:
+  explicit AuthoringHandleGraph(const OperatorHandle<EmbeddingOp>&) {}
+
+ protected:
+  void compose() override {}
+};
+
 class ImportedClockGraph final : public Graph {
  public:
   [[nodiscard]] ClockKey clock_import() const noexcept { return clock_import_; }
@@ -299,6 +331,38 @@ void IndirectRecursiveGraphA::compose() {
 void IndirectRecursiveGraphB::compose() {
   (void)embed<IndirectRecursiveGraphA>("a");
 }
+
+struct HostedGraphTypeIdentity {
+  const void* value{};
+};
+
+// LanguageHostedGraph models one C++ adapter hosting multiple logical graph types. Its explicit
+// identity lets the recursion guard distinguish valid cross-type nesting without admitting a
+// logical self-cycle.
+// Representative test: SubgraphEmbedding.HostedTypeIdentityPreservesRecursionChecks.
+class LanguageHostedGraph final : public Graph {
+ public:
+  LanguageHostedGraph(const HostedGraphTypeIdentity& identity,
+                      const std::vector<HostedGraphTypeIdentity>& descendants)
+      : identity_(identity), descendants_(descendants) {}
+
+ protected:
+  [[nodiscard]] const void* embedding_type_identity() const noexcept override {
+    return identity_.value;
+  }
+
+  void compose() override {
+    if (!descendants_.empty()) {
+      const std::vector<HostedGraphTypeIdentity> remaining(descendants_.begin() + 1U,
+                                                           descendants_.end());
+      (void)embed<LanguageHostedGraph>("child", descendants_.front(), remaining);
+    }
+  }
+
+ private:
+  HostedGraphTypeIdentity identity_;
+  std::vector<HostedGraphTypeIdentity> descendants_;
+};
 
 // Executes callable(), catches the first RuntimeError, and returns it as an Error value.
 // If no exception is thrown the test fails immediately via ADD_FAILURE().
@@ -619,7 +683,15 @@ static_assert(std::same_as<decltype(std::declval<const GraphHandle<ReusableGraph
                            const ReusableGraph*>);
 static_assert(std::same_as<decltype(std::declval<const GraphHandle<ReusableGraph>&>().path()),
                            std::optional<GraphInstancePath>>);
-static_assert(!detail::GraphOwnedCapture<GraphHandle<ReusableGraph>>);
+static_assert(!detail::ShallowCapture<GraphHandle<ReusableGraph>>);
+
+template <typename G, typename... Args>
+concept EmbeddableWith = requires(Graph& graph, Args&&... args) {
+  graph.template embed<G>("child", std::forward<Args>(args)...);
+};
+
+static_assert(EmbeddableWith<MoveOnlyGraph, std::unique_ptr<int>>);
+static_assert(!EmbeddableWith<AuthoringHandleGraph, OperatorHandle<EmbeddingOp>>);
 
 // REQ: GRAPH-021
 // Topology:
@@ -643,10 +715,12 @@ TEST(SubgraphEmbedding, ParentWiresOnlyCopiedInterfacesAndRejectsLeakedInternalP
 
   const Error internal_target =
       capture_graph_error([&] { (void)parent.add_flow(source->output, child->first()->input); });
-  EXPECT_EQ(internal_target.message, "GRAPH_PORT_NOT_FOUND");
+  EXPECT_TRUE(internal_target.message.starts_with("GRAPH_PORT_NOT_FOUND"));
+  EXPECT_NE(internal_target.message.find("source.output"), std::string::npos);
   const Error internal_source =
       capture_graph_error([&] { (void)parent.add_flow(child->second()->output, target->input); });
-  EXPECT_EQ(internal_source.message, "GRAPH_PORT_NOT_FOUND");
+  EXPECT_TRUE(internal_source.message.starts_with("GRAPH_PORT_NOT_FOUND"));
+  EXPECT_NE(internal_source.message.find("target.input"), std::string::npos);
   const Error internal_configuration =
       capture_graph_error([&] { (void)parent.configure(child->first()->input); });
   EXPECT_EQ(internal_configuration.message, "GRAPH_PORT_NOT_FOUND");
@@ -668,6 +742,16 @@ TEST(SubgraphEmbedding, ParentWiresOnlyCopiedInterfacesAndRejectsLeakedInternalP
 }
 
 // REQ: GRAPH-021
+// REQ: GRAPH-036
+TEST(SubgraphEmbedding, OneShotConstructionAcceptsMoveOnlyOwnership) {
+  Graph parent{"parent"};
+  auto child = parent.embed<MoveOnlyGraph>("owned", std::make_unique<int>(42));
+
+  ASSERT_TRUE(child);
+  EXPECT_EQ(child->value(), 42);
+}
+
+// REQ: GRAPH-021
 // Topology:
 //   parent:  source --[out → child.exported_input]
 //            child.unexported_input and child.unexported_output: C++ public but not exported.
@@ -679,14 +763,12 @@ TEST(SubgraphEmbedding, PublicPortsRemainPrivateUntilExplicitlyExported) {
 
   // Public C++ visibility permits typed access but does not grant parent wiring authority.
   (void)parent.add_flow(source->output, child->exported_input);
-  EXPECT_EQ(capture_graph_error([&] {
-              (void)parent.add_flow(source->output, child->unexported_input);
-            }).message,
-            "GRAPH_PORT_NOT_FOUND");
-  EXPECT_EQ(capture_graph_error([&] {
-              (void)parent.add_flow(child->unexported_output, target->input);
-            }).message,
-            "GRAPH_PORT_NOT_FOUND");
+  EXPECT_TRUE(capture_graph_error([&] {
+                (void)parent.add_flow(source->output, child->unexported_input);
+              }).message.starts_with("GRAPH_PORT_NOT_FOUND"));
+  EXPECT_TRUE(capture_graph_error([&] {
+                (void)parent.add_flow(child->unexported_output, target->input);
+              }).message.starts_with("GRAPH_PORT_NOT_FOUND"));
   EXPECT_EQ(capture_graph_error([&] { (void)parent.configure(child->unexported_input); }).message,
             "GRAPH_PORT_NOT_FOUND");
 
@@ -900,7 +982,8 @@ TEST(SubgraphEmbedding, ConstructionAndCompositionFailuresDoNotPublishParentStat
 
     const Error failure =
         capture_graph_error([&] { std::forward<decltype(attempt)>(attempt)(parent); });
-    EXPECT_EQ(failure.message, expected_error);
+    EXPECT_TRUE(failure.message.starts_with(expected_error)) << failure.message;
+    EXPECT_NE(failure.message.find("graph instance=candidate"), std::string::npos);
     expect_same_authoring_state(before, parent.view());
 
     // Failure must not consume the requested name or prevent a clean retry.
@@ -1033,7 +1116,7 @@ TEST(SubgraphEmbedding, NestedInterfaceAndLifecycleAuthorityRemainScoped) {
 
   const Error leaked_interface =
       capture_graph_error([&] { (void)parent.add_flow(source->output, left->leaf()->input); });
-  EXPECT_EQ(leaked_interface.message, "GRAPH_PORT_NOT_FOUND");
+  EXPECT_TRUE(leaked_interface.message.starts_with("GRAPH_PORT_NOT_FOUND"));
 
   const std::size_t dependency_count = parent.view().lifecycle_dependencies().size();
   const std::size_t permission_count = parent.view().lifecycle_restart_permissions().size();
@@ -1123,6 +1206,22 @@ TEST(SubgraphEmbedding, RepeatedEmbedsRetainIndependentFactories) {
       EXPECT_EQ(conversion.conversion.offset_ns, 3);
     }
   }
+}
+
+// REQ: OPERATOR-051
+TEST(SubgraphEmbedding, CaptureEligibilityPropagatesThroughCanonicalEmbeddedFactories) {
+  Graph parent{"capture-eligibility-embedding"};
+  (void)parent.embed<CaptureEligibleGraph>("child");
+
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(parent);
+  ASSERT_TRUE(snapshot);
+  ASSERT_EQ(snapshot->vertices.size(), 1U);
+  EXPECT_TRUE(snapshot->vertices.front().cuda_graph_capture_eligible);
+
+  const auto factories = detail::GraphCompilerAccess::executable_factories(parent, *snapshot);
+  ASSERT_EQ(factories.operators.size(), 1U);
+  EXPECT_TRUE(factories.operators.front().cuda_graph_capture_eligible);
+  EXPECT_FALSE(factories.operators.front().root_operator_index.has_value());
 }
 
 // REQ: GRAPH-026
@@ -1275,6 +1374,34 @@ TEST(SubgraphEmbedding, RejectsInvalidDuplicateAndRecursiveEmbedding) {
             }).message,
             "GRAPH_EMBED_CYCLE");
   EXPECT_EQ(indirect.view().graphs().size(), 1U);
+}
+
+// REQ: GRAPH-020
+//   hosted-nesting                    hosted-recursion
+//   `-- parent(type A)                `-- parent(type A)
+//       `-- child(type B)                 `-- child(type B)
+//                                            `-- child(type A) [rejected]
+TEST(SubgraphEmbedding, HostedTypeIdentityPreservesRecursionChecks) {
+  // Key setup: Embed distinct hosted logical types, then attempt an indirect A -> B -> A cycle.
+  static constexpr std::byte kLogicalTypeA{};
+  static constexpr std::byte kLogicalTypeB{};
+  const HostedGraphTypeIdentity type_a{&kLogicalTypeA};
+  const HostedGraphTypeIdentity type_b{&kLogicalTypeB};
+
+  Graph nested{"hosted-nesting"};
+  (void)nested.embed<LanguageHostedGraph>(
+      "parent", type_a, std::vector<HostedGraphTypeIdentity>{type_b});
+  EXPECT_EQ(nested.view().graphs().size(), 3U);
+
+  Graph recursive{"hosted-recursion"};
+  const Error recursive_error = capture_graph_error([&] {
+    (void)recursive.embed<LanguageHostedGraph>(
+        "parent", type_a, std::vector<HostedGraphTypeIdentity>{type_b, type_a});
+  });
+
+  // Key assertion: Cross-type nesting succeeds while indirect logical recursion fails closed.
+  EXPECT_EQ(recursive_error.message, "GRAPH_EMBED_CYCLE");
+  EXPECT_EQ(recursive.view().graphs().size(), 1U);
 }
 
 }  // namespace

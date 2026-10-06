@@ -12,14 +12,15 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "compiler/cuda_execution_plan_validation.hpp"
 #include "compiler/detail/checked_arithmetic.hpp"
 #include "compiler/execution_plan_contracts.hpp"
 #include "compiler/execution_plan_identity.hpp"
+#include "compiler/operator_cuda_device_obligations.hpp"
 #include "compiler/physical_plan_lowering_internal.hpp"
 
 namespace holoscan::detail {
@@ -38,6 +39,7 @@ void assign_linear_tensor_streams(
     const PhysicalPlanLoweringResult& result,
     std::span<const VertexProcessPlacementPlanRecord> process_placements,
     const std::vector<TensorDeviceResourcePlanRecord>& resources,
+    std::span<const OperatorCudaStreamBindingPlanRecord> bindings,
     std::vector<CudaComputeStreamPlanRecord>& streams) {
   std::vector<TensorStreamCandidate> candidates;
   candidates.reserve(result.payload_edges.size());
@@ -219,7 +221,24 @@ void assign_linear_tensor_streams(
         !resource_ambiguous[source_index] && !resource_ambiguous[target_index] &&
         resource_by_vertex[source_index] == candidate.resource_index &&
         resource_by_vertex[target_index] == candidate.resource_index) {
-      streams[candidate.resource_index].fused_linear_edges.push_back(candidate.edge);
+      const auto source_binding =
+          std::find_if(bindings.begin(), bindings.end(), [&](const auto& row) {
+            return row.operator_vertex == candidate.source;
+          });
+      const auto target_binding =
+          std::find_if(bindings.begin(), bindings.end(), [&](const auto& row) {
+            return row.operator_vertex == candidate.target;
+          });
+      if (source_binding == bindings.end() || target_binding == bindings.end() ||
+          source_binding->stream_id != target_binding->stream_id) {
+        continue;
+      }
+      const auto stream = std::find_if(streams.begin(), streams.end(), [&](const auto& row) {
+        return row.stream_id == source_binding->stream_id;
+      });
+      if (stream != streams.end()) {
+        stream->fused_linear_edges.push_back(candidate.edge);
+      }
     }
   }
   for (auto& stream : streams) {
@@ -231,7 +250,8 @@ void assign_linear_tensor_streams(
 
 /// Reject an Operator whose Tensor inputs and outputs require distinct compute streams.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void validate_operator_device_obligations(PhysicalPlanLoweringResult& result) {
+[[nodiscard]] std::vector<std::optional<DeviceId>> resolve_operator_device_obligations(
+    PhysicalPlanLoweringResult& result) {
   std::vector<std::optional<DeviceId>> device_by_vertex;
   std::vector<PortId> source_by_vertex;
   for (const auto& port : result.ports) {
@@ -246,6 +266,9 @@ void validate_operator_device_obligations(PhysicalPlanLoweringResult& result) {
     if (!owner || !device.valid() || owner.value > device_by_vertex.size()) {
       return;
     }
+    if (rejected_vertices.contains(owner.value)) {
+      return;
+    }
     auto& selected = device_by_vertex[static_cast<std::size_t>(owner.value - 1U)];
     auto& selected_source = source_by_vertex[static_cast<std::size_t>(owner.value - 1U)];
     if (!selected) {
@@ -253,9 +276,10 @@ void validate_operator_device_obligations(PhysicalPlanLoweringResult& result) {
       selected_source = port;
       return;
     }
-    if (*selected == device || !rejected_vertices.insert(owner.value).second) {
+    if (*selected == device) {
       return;
     }
+    rejected_vertices.insert(owner.value);
     reject_physical_plan(result,
                          kTensorDeviceBindingInvalid,
                          DiagnosticSource{.vertex = owner, .port = port},
@@ -266,81 +290,26 @@ void validate_operator_device_obligations(PhysicalPlanLoweringResult& result) {
                              ",conflicting_port=" + std::to_string(port.value()) +
                              ",conflicting_device=" + std::to_string(device.value) +
                              ",reason=operator_device_conflict");
+    // A rejected multi-device Operator has no realizable exact stream binding. Retain the
+    // diagnostic and omit it from the otherwise inspectable rejected-plan binding table.
+    selected.reset();
   };
-  const auto port_owner = [&](PortId id) -> VertexId {
-    if (!id || id.value() > result.ports.size()) {
-      return {};
-    }
-    const auto& port = result.ports[static_cast<std::size_t>(id.value() - 1U)];
-    return port.id == id && port.owner_kind == PortOwnerKind::kOperator ? port.owner : VertexId{};
-  };
-  std::unordered_map<std::uint64_t, PortId> interface_aliases;
-  interface_aliases.reserve(result.interface_bindings.size());
-  for (const auto& binding : result.interface_bindings) {
-    interface_aliases.emplace(binding.public_port.value(), binding.internal_port);
-  }
-  const auto interface_owner = [&](PortId id) -> VertexId {
-    for (std::size_t depth = 0U; depth <= result.interface_bindings.size(); ++depth) {
-      const VertexId owner = port_owner(id);
-      if (owner) {
-        return owner;
-      }
-      const auto alias = interface_aliases.find(id.value());
-      if (alias == interface_aliases.end()) {
-        return {};
-      }
-      id = alias->second;
-    }
-    return {};
-  };
-
-  for (const auto& allocation : result.tensor_allocations) {
-    bind_device(port_owner(allocation.output), allocation.output, allocation.device);
-  }
-  for (const auto& allocation : result.tensor_field_allocations) {
-    bind_device(port_owner(allocation.output), allocation.output, allocation.device);
-  }
-  std::unordered_map<std::string_view, const ProcessLocalChannelServicePlanRecord*>
-      process_local_service_by_id;
-  process_local_service_by_id.reserve(result.process_local_channel_services.size());
-  for (const auto& service : result.process_local_channel_services) {
-    process_local_service_by_id.emplace(service.service_id, &service);
-  }
-  for (const auto& subscriber : result.process_local_channel_subscribers) {
-    const auto service = process_local_service_by_id.find(subscriber.service_id);
-    if (service != process_local_service_by_id.end() &&
-        service->second->source == subscriber.source && service->second->tensor_payload) {
-      const auto view = tensor_service_contract_view(*service->second);
-      for_each_tensor_service_storage(view, [&](TensorServiceStorageView storage) {
-        bind_device(port_owner(subscriber.target), subscriber.target, storage.device);
+  const auto obligations =
+      collect_operator_cuda_device_obligations(OperatorCudaDeviceObligationView{
+          .ports = result.ports,
+          .interface_bindings = result.interface_bindings,
+          .tensor_allocations = result.tensor_allocations,
+          .tensor_field_allocations = result.tensor_field_allocations,
+          .process_local_services = result.process_local_channel_services,
+          .process_local_subscribers = result.process_local_channel_subscribers,
+          .cross_process_services = result.cross_process_channel_services,
+          .cross_process_subscribers = result.cross_process_channel_subscribers,
+          .tensor_interface_pools = result.tensor_interface_pools,
       });
-    }
+  for (const auto& obligation : obligations) {
+    bind_device(obligation.operator_vertex, obligation.source_port, obligation.device);
   }
-  for (const auto& service : result.cross_process_channel_services) {
-    if (service.tensor_payload) {
-      const auto view = tensor_service_contract_view(service);
-      const auto bind_target = [&](const PortId target) {
-        for_each_tensor_service_storage(view, [&](TensorServiceStorageView storage) {
-          bind_device(port_owner(target), target, storage.device);
-        });
-      };
-      if (!view.tensor_fields.empty() || descriptor_tensor_schema_service(view)) {
-        for_each_tensor_service_storage(view, [&](TensorServiceStorageView storage) {
-          bind_device(port_owner(service.source), service.source, storage.device);
-        });
-      }
-      bind_target(service.target);
-      for (const auto& subscriber : result.cross_process_channel_subscribers) {
-        if (subscriber.service_id == service.service_id && subscriber.source == service.source &&
-            subscriber.target != service.target) {
-          bind_target(subscriber.target);
-        }
-      }
-    }
-  }
-  for (const auto& pool : result.tensor_interface_pools) {
-    bind_device(interface_owner(pool.graph_port), pool.graph_port, pool.device);
-  }
+  return device_by_vertex;
 }
 
 }  // namespace
@@ -348,7 +317,9 @@ void validate_operator_device_obligations(PhysicalPlanLoweringResult& result) {
 // Device-resource aggregation is one compile-cold join across all Tensor pool families.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void lower_device_resources(PhysicalPlanLoweringResult& result, PlanGenerationId plan_generation,
-                            std::span<const VertexProcessPlacementPlanRecord> process_placements) {
+                            std::span<const VertexProcessPlacementPlanRecord> process_placements,
+                            std::span<const ExecutionPartitionRecord> execution_partitions,
+                            CudaComputeStreamPolicy stream_policy) {
   std::vector<TensorDeviceResourcePlanRecord> device_resources;
   const auto append_device_pool = [&](ProcessGroupId process_group,
                                       DeviceId device,
@@ -409,45 +380,171 @@ void lower_device_resources(PhysicalPlanLoweringResult& result, PlanGenerationId
     return true;
   };
   bool device_resources_valid = true;
-  validate_operator_device_obligations(result);
+  const auto operator_devices = resolve_operator_device_obligations(result);
+  result.operator_cuda_stream_bindings.reserve(operator_devices.size());
+  for (std::size_t index = 0U; index < operator_devices.size(); ++index) {
+    if (!operator_devices[index]) {
+      continue;
+    }
+    const VertexId vertex{index + 1U};
+    const auto process_group = process_group_for(process_placements, vertex);
+    const auto owns_vertex = [&](const auto& row) {
+      return std::find(row.members.begin(), row.members.end(), vertex) != row.members.end();
+    };
+    const auto partition =
+        std::find_if(execution_partitions.begin(), execution_partitions.end(), owns_vertex);
+    const auto partition_count =
+        std::count_if(execution_partitions.begin(), execution_partitions.end(), owns_vertex);
+    if (!process_group || partition_count != 1) {
+      std::vector<DiagnosticMismatch> mismatches;
+      if (!process_group) {
+        mismatches.push_back({.field = "process_group",
+                              .provided = "missing",
+                              .required = "one accepted process group"});
+      }
+      if (partition_count != 1) {
+        mismatches.push_back({.field = "execution_partition",
+                              .provided = partition_count == 0 ? "missing" : "duplicate",
+                              .required = "exactly one accepted execution partition"});
+      }
+      reject_physical_plan(result,
+                           "CUDA_STREAM_PARTITION_UNBOUND",
+                           DiagnosticSource{.vertex = vertex},
+                           "/vertices/" + std::to_string(vertex.value) + "/cuda_stream_binding",
+                           "one accepted process group and exactly one execution partition",
+                           "invalid process or partition join",
+                           DiagnosticDetail{
+                               .operation = DiagnosticOperation::kCompile,
+                               .error = Error{ErrorCode::kIncompatible,
+                                              "CUDA-active operator has no exact stream owner"},
+                               .mismatches = std::move(mismatches),
+                           });
+      continue;
+    }
+    const std::string stream_id =
+        stream_policy == CudaComputeStreamPolicy::kPerExecutionPartition
+            ? tensor_partition_compute_stream_id(
+                  plan_generation, *process_group, *operator_devices[index], partition->id)
+            : tensor_compute_stream_id(plan_generation, *process_group, *operator_devices[index]);
+    result.operator_cuda_stream_bindings.push_back(OperatorCudaStreamBindingPlanRecord{
+        .plan_generation = plan_generation,
+        .run_generation = 0U,
+        .operator_vertex = vertex,
+        .process_group = *process_group,
+        .partition = partition->id,
+        .device = *operator_devices[index],
+        .stream_id = stream_id,
+    });
+  }
+  const auto release_stream_capacity = [&](PortId output,
+                                           std::optional<std::uint16_t>
+                                               tensor_index,
+                                           ProcessGroupId allocator_process_group,
+                                           DeviceId device,
+                                           std::uint32_t& capacity) -> bool {
+    const auto output_port = std::ranges::find(result.ports, output, &PortPlanRecord::id);
+    const VertexId allocating_producer =
+        output_port == result.ports.end() ? VertexId{} : output_port->owner;
+    const auto derived =
+        tensor_output_release_stream_capacity(result.process_local_channel_services,
+                                              result.cross_process_channel_services,
+                                              result.operator_cuda_stream_bindings,
+                                              allocating_producer,
+                                              output,
+                                              tensor_index,
+                                              allocator_process_group,
+                                              device);
+    if (!derived) {
+      return false;
+    }
+    capacity = *derived;
+    return true;
+  };
+  for (auto& pool : result.tensor_allocations) {
+    if (!release_stream_capacity(pool.output,
+                                 std::nullopt,
+                                 pool.allocator_process_group,
+                                 pool.device,
+                                 pool.release_stream_capacity)) {
+      reject_physical_plan(
+          result,
+          "TENSOR_RELEASE_STREAM_CAPACITY_MISMATCH",
+          DiagnosticSource{.port = pool.output},
+          "/tensor_allocations/" + std::to_string(pool.output.value()) + "/release_stream_capacity",
+          "checked process/device forwarding and descriptor-staging stream bound",
+          "overflow",
+          DiagnosticDetail{
+              .operation = DiagnosticOperation::kCompile,
+              .error = Error{ErrorCode::kResourceExhausted,
+                             "CUDA release stream capacity exceeds the representable bound"},
+              .mismatches = {{.field = "release_stream_capacity",
+                              .provided = "overflow",
+                              .required = "representable uint32_t capacity"}},
+          });
+    }
+  }
+  for (auto& pool : result.tensor_field_allocations) {
+    if (!release_stream_capacity(pool.output,
+                                 pool.tensor_index,
+                                 pool.allocator_process_group,
+                                 pool.device,
+                                 pool.release_stream_capacity)) {
+      reject_physical_plan(
+          result,
+          "TENSOR_RELEASE_STREAM_CAPACITY_MISMATCH",
+          DiagnosticSource{.port = pool.output},
+          "/tensor_field_allocations/" + std::to_string(pool.output.value()) +
+              "/release_stream_capacity",
+          "checked process/device forwarding and descriptor-staging stream bound",
+          "overflow",
+          DiagnosticDetail{
+              .operation = DiagnosticOperation::kCompile,
+              .error = Error{ErrorCode::kResourceExhausted,
+                             "CUDA release stream capacity exceeds the representable bound"},
+              .mismatches = {{.field = "release_stream_capacity",
+                              .provided = "overflow",
+                              .required = "representable uint32_t capacity"}},
+          });
+    }
+  }
   for (const auto& pool : result.tensor_allocations) {
-    device_resources_valid =
-        device_resources_valid && append_device_pool(pool.allocator_process_group,
-                                                     pool.device,
-                                                     pool.allocator_root_id,
-                                                     pool.slot_count,
-                                                     pool.max_outstanding_loans,
-                                                     pool.control_capacity,
-                                                     pool.readiness_capacity,
-                                                     pool.release_capacity,
-                                                     pool.retirement_capacity,
-                                                     pool.quarantine_capacity);
+    const bool pool_valid = append_device_pool(pool.allocator_process_group,
+                                               pool.device,
+                                               pool.allocator_root_id,
+                                               pool.slot_count,
+                                               pool.max_outstanding_loans,
+                                               pool.control_capacity,
+                                               pool.readiness_capacity,
+                                               pool.release_capacity,
+                                               pool.retirement_capacity,
+                                               pool.quarantine_capacity);
+    device_resources_valid = pool_valid && device_resources_valid;
   }
   for (const auto& pool : result.tensor_field_allocations) {
-    device_resources_valid =
-        device_resources_valid && append_device_pool(pool.allocator_process_group,
-                                                     pool.device,
-                                                     pool.allocator_root_id,
-                                                     pool.slot_count,
-                                                     pool.max_outstanding_loans,
-                                                     pool.control_capacity,
-                                                     pool.readiness_capacity,
-                                                     pool.release_capacity,
-                                                     pool.retirement_capacity,
-                                                     pool.quarantine_capacity);
+    const bool pool_valid = append_device_pool(pool.allocator_process_group,
+                                               pool.device,
+                                               pool.allocator_root_id,
+                                               pool.slot_count,
+                                               pool.max_outstanding_loans,
+                                               pool.control_capacity,
+                                               pool.readiness_capacity,
+                                               pool.release_capacity,
+                                               pool.retirement_capacity,
+                                               pool.quarantine_capacity);
+    device_resources_valid = pool_valid && device_resources_valid;
   }
   for (const auto& pool : result.tensor_interface_pools) {
-    device_resources_valid =
-        device_resources_valid && append_device_pool(pool.allocator_process_group,
-                                                     pool.device,
-                                                     pool.allocator_root_id,
-                                                     pool.slot_count,
-                                                     pool.publisher_loan_capacity,
-                                                     pool.control_capacity,
-                                                     pool.readiness_capacity,
-                                                     pool.release_capacity,
-                                                     pool.retirement_capacity,
-                                                     pool.quarantine_capacity);
+    const bool pool_valid = append_device_pool(pool.allocator_process_group,
+                                               pool.device,
+                                               pool.allocator_root_id,
+                                               pool.slot_count,
+                                               pool.publisher_loan_capacity,
+                                               pool.control_capacity,
+                                               pool.readiness_capacity,
+                                               pool.release_capacity,
+                                               pool.retirement_capacity,
+                                               pool.quarantine_capacity);
+    device_resources_valid = pool_valid && device_resources_valid;
   }
   // A stream-ordered cross-process Tensor service can need a process-local stream without owning
   // a payload pool. Materialize those resources from the same per-group/device predicate used by
@@ -497,7 +594,9 @@ void lower_device_resources(PhysicalPlanLoweringResult& result, PlanGenerationId
   }
   if (!device_resources_valid) {
     reject_physical_plan(result, kTensorOverflow);
-    return;
+    // Retain the bounded aggregate prefix and continue emitting matching stream/binding evidence.
+    // The diagnostic keeps the plan non-executable, while a structurally complete rejected plan
+    // remains serializable and inspectable instead of failing artifact validation.
   }
   std::sort(
       device_resources.begin(), device_resources.end(), [](const auto& left, const auto& right) {
@@ -505,23 +604,51 @@ void lower_device_resources(PhysicalPlanLoweringResult& result, PlanGenerationId
                    ? left.device.value < right.device.value
                    : left.process_group.value < right.process_group.value;
       });
-  result.cuda_compute_streams.reserve(device_resources.size());
-  for (const auto& resource : device_resources) {
-    result.cuda_compute_streams.push_back(CudaComputeStreamPlanRecord{
-        .plan_generation = resource.plan_generation,
-        .run_generation = resource.run_generation,
-        .process_group = resource.process_group,
-        .device = resource.device,
-        .owner_id = resource.allocator_root_id,
-        .partition = std::nullopt,
-        .stream_id = tensor_compute_stream_id(
-            resource.plan_generation, resource.process_group, resource.device),
-        .green_context_id = std::nullopt,
-        .materialize_before = resource.materialize_before,
-    });
+  if (stream_policy == CudaComputeStreamPolicy::kSharedProcessDevice) {
+    result.cuda_compute_streams.reserve(device_resources.size());
+    for (const auto& resource : device_resources) {
+      result.cuda_compute_streams.push_back(CudaComputeStreamPlanRecord{
+          .plan_generation = resource.plan_generation,
+          .run_generation = resource.run_generation,
+          .process_group = resource.process_group,
+          .device = resource.device,
+          .owner_id = resource.allocator_root_id,
+          .partition = std::nullopt,
+          .stream_id = tensor_compute_stream_id(
+              resource.plan_generation, resource.process_group, resource.device),
+          .green_context_id = std::nullopt,
+          .materialize_before = resource.materialize_before,
+      });
+    }
+  } else {
+    result.cuda_compute_streams.reserve(result.operator_cuda_stream_bindings.size());
+    for (const auto& binding : result.operator_cuda_stream_bindings) {
+      if (std::any_of(result.cuda_compute_streams.begin(),
+                      result.cuda_compute_streams.end(),
+                      [&](const auto& row) { return row.stream_id == binding.stream_id; })) {
+        continue;
+      }
+      result.cuda_compute_streams.push_back(CudaComputeStreamPlanRecord{
+          .plan_generation = plan_generation,
+          .run_generation = 0U,
+          .process_group = binding.process_group,
+          .device = binding.device,
+          .owner_id = "partition." + std::to_string(binding.partition.value),
+          .partition = binding.partition,
+          .stream_id = binding.stream_id,
+          .green_context_id = std::nullopt,
+          .materialize_before = LifecycleStage::kArm,
+      });
+    }
+    std::sort(result.cuda_compute_streams.begin(),
+              result.cuda_compute_streams.end(),
+              canonical_cuda_compute_stream_order);
   }
-  assign_linear_tensor_streams(
-      result, process_placements, device_resources, result.cuda_compute_streams);
+  assign_linear_tensor_streams(result,
+                               process_placements,
+                               device_resources,
+                               result.operator_cuda_stream_bindings,
+                               result.cuda_compute_streams);
   result.tensor_device_resources = std::move(device_resources);
 }
 

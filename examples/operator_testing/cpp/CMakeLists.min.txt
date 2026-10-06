@@ -1,0 +1,81 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+project(holoscan_operator_testing LANGUAGES CXX)
+include(CTest)
+find_package(holoscan CONFIG REQUIRED COMPONENTS testing sensor_io)
+add_executable(operator_testing operator_testing.cpp)
+target_link_libraries(operator_testing PRIVATE holoscan::testing)
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_OPERATOR_TESTING_TEST COMMAND operator_testing)
+    set_tests_properties(EXAMPLE_CPP_OPERATOR_TESTING_TEST PROPERTIES
+        LABELS "examples;testing" TIMEOUT 60
+        PASS_REGULAR_EXPRESSION "operator_testing example complete")
+endif()
+option(OPERATOR_TESTING_WITH_GTEST "Build the GoogleTest example" OFF)
+if(OPERATOR_TESTING_WITH_GTEST)
+    find_package(GTest CONFIG REQUIRED)
+    add_executable(operator_testing_gtest operator_testing_gtest.cpp)
+    target_link_libraries(operator_testing_gtest PRIVATE holoscan::testing GTest::gtest_main)
+    include(GoogleTest)
+    gtest_discover_tests(operator_testing_gtest DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX OPERATOR_TESTING_GTEST.
+        PROPERTIES LABELS "examples;testing;gtest" TIMEOUT 60)
+endif()
+
+add_executable(operator_testing_tensor tensor_snapshot.cpp)
+target_link_libraries(operator_testing_tensor PRIVATE holoscan::testing)
+add_executable(operator_testing_image image_snapshot.cpp)
+target_link_libraries(operator_testing_image PRIVATE holoscan::testing holoscan::sensor_io)
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_OPERATOR_TESTING_TENSOR_TEST COMMAND operator_testing_tensor)
+    add_test(NAME EXAMPLE_CPP_OPERATOR_TESTING_IMAGE_TEST COMMAND operator_testing_image)
+    set_tests_properties(EXAMPLE_CPP_OPERATOR_TESTING_TENSOR_TEST EXAMPLE_CPP_OPERATOR_TESTING_IMAGE_TEST
+        PROPERTIES LABELS "examples;testing" TIMEOUT 60)
+endif()
+
+set(OPERATOR_TESTING_DEVICE_ID "0" CACHE STRING "CUDA device ordinal used by operator testing examples")
+add_executable(operator_testing_device device_inputs.cpp)
+target_link_libraries(operator_testing_device PRIVATE holoscan::testing)
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_OPERATOR_TESTING_DEVICE_TEST
+        COMMAND operator_testing_device "${OPERATOR_TESTING_DEVICE_ID}")
+    add_test(NAME EXAMPLE_CPP_OPERATOR_TESTING_GREEN_CONTEXT_TEST
+        COMMAND operator_testing_device "${OPERATOR_TESTING_DEVICE_ID}" --green-context)
+    set_tests_properties(EXAMPLE_CPP_OPERATOR_TESTING_DEVICE_TEST
+        EXAMPLE_CPP_OPERATOR_TESTING_GREEN_CONTEXT_TEST
+        PROPERTIES LABELS "examples;testing;cuda" TIMEOUT 60 SKIP_RETURN_CODE 77)
+endif()
+
+
+holoscan_add_flatbuffer_schema(
+    TARGET operator_testing_schema_generated
+    SCHEMA paired_frame.fbs
+    MAX_SERIALIZED_SIZE 768)
+add_executable(operator_testing_schema schema_snapshot.cpp)
+target_link_libraries(operator_testing_schema PRIVATE holoscan::testing operator_testing_schema_generated)
+add_executable(operator_testing_lifecycle lifecycle_outputs.cpp)
+target_link_libraries(operator_testing_lifecycle PRIVATE holoscan::testing)
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_OPERATOR_TESTING_SCHEMA_TEST COMMAND operator_testing_schema)
+    add_test(NAME EXAMPLE_CPP_OPERATOR_TESTING_LIFECYCLE_TEST COMMAND operator_testing_lifecycle)
+    set_tests_properties(EXAMPLE_CPP_OPERATOR_TESTING_SCHEMA_TEST EXAMPLE_CPP_OPERATOR_TESTING_LIFECYCLE_TEST
+        PROPERTIES LABELS "examples;testing" TIMEOUT 60)
+endif()
+
+add_executable(operator_testing_clock controlled_clock.cpp)
+target_link_libraries(operator_testing_clock PRIVATE holoscan::testing)
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_OPERATOR_TESTING_CLOCK_TEST COMMAND operator_testing_clock)
+    set_tests_properties(EXAMPLE_CPP_OPERATOR_TESTING_CLOCK_TEST
+        PROPERTIES LABELS "examples;testing" TIMEOUT 60)
+endif()
+
+add_executable(operator_testing_restart managed_restart.cpp)
+target_link_libraries(operator_testing_restart PRIVATE holoscan::testing)
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_OPERATOR_TESTING_RESTART_TEST COMMAND operator_testing_restart)
+    set_tests_properties(EXAMPLE_CPP_OPERATOR_TESTING_RESTART_TEST
+        PROPERTIES LABELS "examples;testing" TIMEOUT 60)
+endif()

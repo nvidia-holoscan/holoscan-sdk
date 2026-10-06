@@ -53,7 +53,30 @@ are deliberately boring so the graph-scope policy is the whole lesson. If
 you have not built a multi-operator graph yet, start at
 [`first_pipeline`](../first_pipeline/README.md) (E01).
 
-## Build
+## Python run
+
+The Python variant implements both source and sink Operators natively and
+composes the same queue policies, configurators, explicit partitions,
+constrained region, and clock conversion:
+
+```bash
+PYTHONPATH=<build>/python/lib python3 python/graph_composition.py
+```
+
+From an examples-enabled SDK install, configure and test the Python directory
+as a standalone project:
+
+```bash
+cmake -B python/build -S python -Dholoscan_DIR=<prefix>/lib/cmake/holoscan
+cmake --build python/build --target python_graph_composition
+ctest --test-dir python/build -R EXAMPLE_PYTHON_GRAPH_COMPOSITION_TEST
+```
+
+The Python program checks admission, bounded backpressure, and clean
+cooperative termination. Use the C++ variant for the record-by-record
+`GraphView` and measured drop-count walkthrough below.
+
+## C++ build
 
 From this `cpp/` folder:
 
@@ -65,11 +88,15 @@ cmake --build build
 The `-Dholoscan_DIR=` hint is only needed when the SDK is installed outside
 the default search prefixes listed in `CMakeLists.min.txt`.
 
-## Run
+## C++ run
 
 ```bash
 ./build/graph_composition
 ```
+
+Use `./build/graph_composition --plan-json` to print the admitted canonical
+plan JSON to stdout without printing the `GraphView` or starting the runtime.
+The cross-language parity test uses this cold mode.
 
 Or through CTest:
 

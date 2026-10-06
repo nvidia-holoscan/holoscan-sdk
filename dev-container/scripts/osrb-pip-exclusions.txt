@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The CUDA-specific wheel has no matching PyPI source distribution. Its exact
+# official upstream source archive and provenance are embedded separately under
+# /opt/sources/pytorch/.
+torch==2.11.0+cu130

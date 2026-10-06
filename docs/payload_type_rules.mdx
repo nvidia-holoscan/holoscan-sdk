@@ -16,7 +16,7 @@ serialization or "channel" code on the pipeline path.
   - The primary payload families: fixed-width scalars, generated schema types, and `Tensor`
   - Why `std::int32_t` is allowed but `int` and `long` are not
   - Where the experimental raw-POD escape hatch fits
-  - How payload identity is pinned between producer and consumer, and what happens on a
+  - How each payload family is admitted between producer and consumer, and what happens on a
     mismatch
 </Note>
 
@@ -58,8 +58,7 @@ The scalar catalog is closed and exact:
   alias.** Their width varies by platform and ABI, so the samples they describe are not
   portable — the payload catalog admits only the fixed-width spellings. Write
   `holoscan::Output<std::int32_t>`, not `holoscan::Output<int>`, even on platforms where
-  the two happen to be the same type. The same rule applies to local `enum` types: give
-  the port the fixed-width underlying type and convert at the edge of `compute()`.
+  the two happen to be the same type.
 </Warning>
 
 Scalars need no declaration of any kind — declare the port and emit:
@@ -68,6 +67,12 @@ Scalars need no declaration of any kind — declare the port and emit:
 holoscan::Output<std::int32_t> output;   // fixed-width: portable
 holoscan::Input<std::int32_t> input;
 ```
+
+A scoped enum may cross a typed Graph edge when both operators execute in the
+same process. The Graph records its native width and preserves its exact C++
+type during Runtime replay. This identity is intentionally local: for an
+external topic or a cross-process edge, give the port the enum's fixed-width
+underlying type and convert at the edge of `compute()`.
 
 ## Generated schema types
 
@@ -84,7 +89,7 @@ also ships several ready-to-use types with no generation step:
 
 `ImageT` and `ImuT` are the sensor payloads, and the two that share a `Header`. They are
 owned by the `holoscan::sensor_io` library rather than by Core, so carrying either one
-means linking that library and installing the `holoscan-sensor-io` component; their type
+means linking that library, which is installed by the `holoscan-sensor-io` component (required alongside `holoscan-core`); their type
 names stay `holoscan::schema::*` because a FlatBuffers namespace is part of the wire
 identity. `ImageT` is descriptor-backed — its pixels live in a Core `Tensor` rather than
 inside the FlatBuffer — so a port emitting one declares Tensor layout and allocation
@@ -134,35 +139,38 @@ lifecycle — `allocate_tensor()` borrows a slot from a preallocated pool, and a
 [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth) for the
 pool and stream-ordering rules.
 
-## Identity is pinned exactly
+## Payload admission is family-specific
 
 <Warning>
-  **Developer preview: no type negotiation or version evolution yet.** Payload identity is
-  matched exactly between producer and consumer — there is no negotiation protocol, no
-  field-evolution policy, and no cross-version compatibility layer in this release. A
-  schema registry and versioned evolution are planned for a later release, and the
-  identity-matching API may evolve in upcoming releases.
+  **Developer preview: no runtime type negotiation.** Producers and consumers must arrive with
+  compatible contracts; the Runtime does not discover or negotiate them. Application-owned schema
+  evolution is checked against a maintained source baseline at build/release time, but cross-release
+  N/N+1 endpoint compatibility is not yet a supported deployment contract. These APIs may evolve in
+  upcoming releases.
 </Warning>
 
-Every payload type has an identity, and the producer's identity must equal the consumer's
-identity exactly:
+Every payload family has an admission contract:
 
-| Family | Identity that must match |
+| Family | Admission contract |
 |---|---|
 | Fixed-width scalar | The exact scalar type |
 | Experimental raw POD | Manually authored canonical name + version, plus the field layout |
-| Schema type | Canonical name + version + schema hash + stable 128-bit schema id (generated from the schema package) |
+| Schema type | Stable root-family name + compatibility epoch + derived 128-bit family id + four-byte file identifier; descriptor-Tensor schemas also require the exact carriage profile |
 | Tensor | The `Tensor` type itself; element type and geometry are carried per sample |
 
 Inside one process this is largely enforced by the C++ type system: `add_flow()` connects
-an `Output<T>` to an `Input<T>` of the same `T`. The identity rules matter most at process
-boundaries, where the type system cannot reach, and there the agreement is checked twice.
-Attaching an endpoint compares the complete identity and refuses a mismatch with a typed
-`kIncompatible` error, so a wrong peer never reaches steady state. Every received frame
-then revalidates the identity its envelope carries and fails with a typed `kProtocolError`;
-neither failure lets a payload byte reach `compute()`. Experimental raw-POD users must bump
-the manually authored version whenever layout or semantics change and roll out producer and
-consumer together.
+an `Output<T>` to an `Input<T>` of the same `T`. The admission rules matter most at process
+boundaries, where the type system cannot reach, and there the agreement is checked twice. Attaching
+an endpoint compares the complete contract and refuses a mismatch with a typed `kIncompatible`
+error, so a wrong peer never reaches steady state. Every received frame then revalidates the schema
+identity and endpoint generation carried by its envelope and fails with a typed `kProtocolError`;
+neither failure lets a payload byte reach `compute()`.
+
+Schema identity deliberately does not include a compiled-schema digest, generated C++ spelling,
+schema revision counter, or `flatc` patch version. A compatible source edit retains its family
+identity; an intentional incompatible edit moves the compatibility epoch or defines a new root
+family. Experimental raw-POD users must instead bump the manually authored version whenever layout
+or semantics change and roll out producer and consumer together.
 
 Malformed external frames are handled the same way: verification happens before delivery,
 so your operator only ever receives payloads that match its declared type exactly. See
@@ -180,10 +188,9 @@ for feeding a graph from an external process.
 - Always spell scalars fixed-width: `std::int32_t`, never `int` or `long`.
 - Raw POD is an experimental expert escape hatch with manual identity, layout,
   compatibility, and rollout responsibilities.
-- Identity is pinned exactly between producer and consumer: across processes a peer whose
-  identity differs is refused at attach with `kIncompatible`, and a frame whose envelope
-  identity differs fails with `kProtocolError` before delivery. There is no negotiation or
-  version evolution in this release.
+- Payload admission is family-specific and never negotiated at runtime. Schema families can retain
+  identity across build-time-validated compatible edits; incompatible changes require a new epoch
+  or root family.
 
 Next: [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
 walks through defining and generating an application-owned message.

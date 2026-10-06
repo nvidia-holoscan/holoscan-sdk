@@ -67,6 +67,8 @@ class EmptySink final : public Operator<> {
 using SourceOperator = EmptySource<std::int32_t>;
 using SinkOperator = EmptySink<std::int32_t>;
 
+// Script publication, refresh, and terminal outcomes without a backend race. For example,
+// ExhaustedRequiredExportAbandonmentReturnsClosed removes the accepted recipient at refresh.
 class ScriptedInlinePublisher final : public channel_internal::InlinePayloadPublisher {
  public:
   explicit ScriptedInlinePublisher(std::vector<channel_internal::InlinePublicationResult> results,
@@ -85,6 +87,9 @@ class ScriptedInlinePublisher final : public channel_internal::InlinePayloadPubl
   std::vector<std::vector<std::byte>> payloads;
   std::vector<SampleMetadata> metadata_records;
   std::size_t close_count{};
+  std::size_t refresh_count{};
+  bool subscribers_present{true};
+  bool remove_subscribers_on_refresh{};
 
  private:
   std::vector<channel_internal::InlinePublicationResult> results_;

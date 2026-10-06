@@ -129,10 +129,11 @@ concept HasAuthoringGeneration = requires(T value) { value.generation; };
 
 // REQ: COMPILE-004
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 TEST(PartitioningPrivacyTest, PrivateHeadersAndNeutralNames) {
   EXPECT_EQ(detail::partitioning::kSerialBaselineAlgorithmId, "holoscan.partition.serial_baseline");
   EXPECT_EQ(detail::partitioning::kSourceChainAlgorithmId, "holoscan.partition.source_chain");
-  EXPECT_EQ(detail::partitioning::kPartitionPlannerInterfaceVersion, 2U);
+  EXPECT_EQ(detail::partitioning::kPartitionPlannerInterfaceVersion, 3U);
   EXPECT_EQ(detail::partitioning::kPartitionAlgorithmVersion, 1U);
   EXPECT_EQ(detail::partitioning::partition_environment_variable(),
             "HOLOSCAN_EXPERIMENTAL_PARTITION_ALGORITHM");
@@ -193,6 +194,7 @@ TEST(SerialBaselinePartitionPlannerTest, ProducesCoarsestLegalDomainCover) {
 
 // REQ: COMPILE-004
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 TEST(PartitioningPublicSurfaceTest, NoPublicSelectorOrPrivateHeaderLeak) {
   static_assert(!HasPartitionSelector<CompileOptions>);
   EXPECT_FALSE((std::is_constructible_v<PartitioningPass, CompileOptions>));
@@ -358,6 +360,191 @@ TEST(SourceChainPartitionPlannerTest, PreservesDeviceRegionRoleAndLifecycleBound
   auto result = test::run_source_chain(storage.problem());
   ASSERT_TRUE(result);
   EXPECT_EQ(result->partitions.size(), 5U);
+}
+
+// Rejoining a serialization domain after fan-out would make the partition quotient cyclic, so the
+// terminal domain member is split from the source.
+//
+//   v1[d] --> v2 --\
+//      \----> v3 ----> v4[d]
+//
+// REQ: COMPILE-093
+TEST(SourceChainPartitionPlannerTest, SerializationDomainSplitPreservesAcyclicQuotient) {
+  test::PartitionProblemStorage storage{4U, {{0U, 1U}, {0U, 2U}, {1U, 3U}, {2U, 3U}}};
+  storage.vertices[0].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  storage.vertices[3].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+
+  const auto result = test::run_source_chain(storage.problem());
+
+  // Key assertion: the legal split is accepted without contracting the diamond into a cycle.
+  ASSERT_TRUE(result) << result.error().message;
+  EXPECT_EQ(result->partitions.size(), 4U);
+  EXPECT_NE(partition_of(*result, 1U), partition_of(*result, 4U));
+  EXPECT_EQ(result->decisions[3].decision, PartitionDecisionKind::kSerializationDomain);
+}
+
+// A mandatory boundary remains authoritative between connected members of one serialization
+// domain.
+//
+//   v1[d] --> |readiness| v2[d]
+//
+// REQ: COMPILE-093
+TEST(SourceChainPartitionPlannerTest, SerializationDomainSplitPreservesMandatoryBoundary) {
+  test::PartitionProblemStorage storage{2U, {{0U, 1U}}};
+  storage.vertices[0].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  storage.vertices[1].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  storage.vertices[1].boundary_before.add(PartitionBoundary::kReadiness);
+
+  const auto result = test::run_source_chain(storage.problem());
+
+  // Key assertion: the serialization request cannot erase the readiness boundary.
+  ASSERT_TRUE(result) << result.error().message;
+  EXPECT_EQ(result->partitions.size(), 2U);
+  EXPECT_NE(partition_of(*result, 1U), partition_of(*result, 2U));
+}
+
+// Incompatible execution domains remain separate even when disconnected Operators request the
+// same serialization domain.
+//
+//   v1[d, execution=1]   v2[d, execution=2]
+//
+// REQ: COMPILE-093
+TEST(SourceChainPartitionPlannerTest, SerializationDomainSplitPreservesExecutionDomain) {
+  test::PartitionProblemStorage storage{2U};
+  storage.vertices[0].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  storage.vertices[1].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  storage.vertices[1].execution_domain = detail::partitioning::ExecutionDomainKey{2U};
+
+  const auto result = test::run_source_chain(storage.problem());
+
+  // Key assertion: serialization cannot merge incompatible execution domains.
+  ASSERT_TRUE(result) << result.error().message;
+  EXPECT_EQ(result->partitions.size(), 2U);
+  EXPECT_NE(partition_of(*result, 1U), partition_of(*result, 2U));
+}
+
+// A later compatible member reuses the first legal split for its serialization domain.
+//
+//   v1[d, execution=1]   v2[d, execution=2]   v3[d, execution=2]
+//
+// REQ: COMPILE-093
+TEST(SourceChainPartitionPlannerTest, SerializationDomainReusesCompatibleSplitCandidate) {
+  test::PartitionProblemStorage storage{3U};
+  for (auto& vertex : storage.vertices) {
+    vertex.serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  }
+  storage.vertices[1].execution_domain = detail::partitioning::ExecutionDomainKey{2U};
+  storage.vertices[2].execution_domain = detail::partitioning::ExecutionDomainKey{2U};
+
+  const auto result = test::run_source_chain(storage.problem());
+
+  // Key assertion: the second legal candidate is reused instead of creating a third partition.
+  ASSERT_TRUE(result) << result.error().message;
+  ASSERT_EQ(result->partitions.size(), 2U);
+  EXPECT_NE(partition_of(*result, 1U), partition_of(*result, 2U));
+  EXPECT_EQ(partition_of(*result, 2U), partition_of(*result, 3U));
+}
+
+// A serialization-domain member does not exempt unrelated plain members from chain validation.
+//
+//   v1[d]   v2   (an invalid disconnected mixed partition)
+//
+// REQ: COMPILE-093
+TEST(PartitionPlanValidatorTest, RejectsDisconnectedMixedSerializationPartition) {
+  test::PartitionProblemStorage storage{2U};
+  storage.vertices[0].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  const detail::partitioning::SourceChainPartitionPlanner planner;
+  auto proposal = planner.propose(storage.problem());
+  ASSERT_TRUE(proposal);
+  ASSERT_EQ(proposal->assignments.size(), 2U);
+  ASSERT_EQ(proposal->decisions.size(), 2U);
+  proposal->assignments[1].partition = proposal->assignments[0].partition;
+  proposal->decisions[1].partition = proposal->decisions[0].partition;
+
+  const auto result = detail::partitioning::validate_partition_proposal(
+      storage.problem(), planner.descriptor(), *proposal);
+
+  // Key assertion: mixed partitions retain ordinary connectivity validation.
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().message, "PARTITION_COVER_INVALID");
+}
+
+// A native tail makes the first serialization partition structural, so a later disconnected root
+// starts another same-domain candidate instead of invalidating the generated cover.
+//
+//   v1[d] -> v2       v3[d]
+//
+// REQ: COMPILE-093
+TEST(SourceChainPartitionPlannerTest, NativeTailBeforeAnotherSerializedRoot) {
+  test::PartitionProblemStorage storage{3U, {{0U, 1U}}};
+  storage.vertices[0].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  storage.vertices[2].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+
+  const auto result = test::run_source_chain(storage.problem());
+
+  ASSERT_TRUE(result) << result.error().message;
+  EXPECT_EQ(partition_of(*result, 1U), partition_of(*result, 2U));
+  EXPECT_NE(partition_of(*result, 1U), partition_of(*result, 3U));
+}
+
+// A disconnected serialized root may share a pure serialization partition, but its presence keeps
+// a later native tail from turning that partition into an invalid disconnected mixed cover.
+//
+//   v1[d] -> v3       v2[d]
+//
+// REQ: COMPILE-093
+TEST(SourceChainPartitionPlannerTest, NativeTailAfterAnotherSerializedRoot) {
+  test::PartitionProblemStorage storage{3U, {{0U, 2U}}};
+  storage.vertices[0].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  storage.vertices[1].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+
+  const auto result = test::run_source_chain(storage.problem());
+
+  ASSERT_TRUE(result) << result.error().message;
+  EXPECT_EQ(partition_of(*result, 1U), partition_of(*result, 2U));
+  EXPECT_NE(partition_of(*result, 1U), partition_of(*result, 3U));
+}
+
+// Two ordinary serialized roots with native tails remain admissible without placing disconnected
+// native work in one mixed partition.
+//
+//   v1[d] -> v2       v3[d] -> v4
+//
+// REQ: COMPILE-093
+TEST(SourceChainPartitionPlannerTest, TwoSerializedRootsWithNativeTails) {
+  test::PartitionProblemStorage storage{4U, {{0U, 1U}, {2U, 3U}}};
+  storage.vertices[0].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  storage.vertices[2].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+
+  const auto result = test::run_source_chain(storage.problem());
+
+  ASSERT_TRUE(result) << result.error().message;
+  EXPECT_EQ(partition_of(*result, 1U), partition_of(*result, 2U));
+  EXPECT_EQ(partition_of(*result, 3U), partition_of(*result, 4U));
+  EXPECT_NE(partition_of(*result, 1U), partition_of(*result, 3U));
+}
+
+// Disconnected compatible members still share their canonical serialization partition.
+//
+//   v1[d]   v2[d]
+//
+// REQ: COMPILE-093
+TEST(SourceChainPartitionPlannerTest, SerializationDomainRejectsAnUnnecessarySplit) {
+  test::PartitionProblemStorage storage{2U};
+  storage.vertices[0].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  storage.vertices[1].serialization_domain = detail::partitioning::SerializationDomainKey{1U};
+  const detail::partitioning::SourceChainPartitionPlanner planner;
+  auto proposal = planner.propose(storage.problem());
+  ASSERT_TRUE(proposal);
+  proposal->assignments[1].partition = CandidatePartitionId{2U};
+  proposal->decisions[1].partition = CandidatePartitionId{2U};
+
+  const auto result = detail::partitioning::validate_partition_proposal(
+      storage.problem(), planner.descriptor(), *proposal);
+
+  // Key assertion: validator independence prevents a gratuitous same-domain split.
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().message, "PARTITION_COVER_INVALID");
 }
 
 // Canonical IDs must be stable regardless of the internal ordering of proposal assignments.

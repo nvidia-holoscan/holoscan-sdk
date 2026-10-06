@@ -12,11 +12,11 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/errors.hpp"
-#include "holoscan/core/expected.hpp"
-#include "holoscan/holoscan_sensor_io_export.h"
-#include "holoscan/schema/descriptor_flatbuffer_payload.hpp"
+#include <holoscan/holoscan_sensor_io_export.h>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/expected.hpp>
+#include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
 
 #include "image_generated.h"
 
@@ -28,6 +28,10 @@ namespace holoscan::schema {
 /// more without letting a malformed or hostile producer size a heap allocation on the receive path.
 /// Authoring and decoding share this bound so a layout that builds cannot fail to decode.
 constexpr std::size_t kMaximumImagePlanes = 4U;
+
+/// @brief Indicate that an image's real precision is unknown.
+/// Unlike zero, this value makes no claim about the component's container width.
+inline constexpr std::uint8_t kUnknownImageSignificantBits = 255U;
 
 /** @brief Options encoded into serialized Image metadata. */
 struct ImageMetadataOptions {
@@ -47,7 +51,9 @@ struct ImageMetadataOptions {
   uint64_t device_sequence = 0;
   /// Color primaries and transfer function the samples are encoded against.
   ColorSpace color_space = ColorSpace_UNSPECIFIED;
-  /// Bits of real precision per component; zero when it equals the container width.
+  /// Bits of real precision per component; zero when it equals the container width,
+  /// or \ref kUnknownImageSignificantBits when unknown. This does not specify a code range
+  /// or the alignment of valid bits within the container.
   uint8_t significant_bits = 0;
   /// Column of the first pixel within the full sensor frame.
   int32_t roi_offset_x = 0;
@@ -105,7 +111,7 @@ struct ImageTensorMetadata {
 /// @return Serialized FlatBuffer bytes on success, or Error for incompatible Tensor metadata.
 /// @note Tensor data bytes are never serialized by this helper, including while a
 /// \ref WithTensorMaterialization or \ref WithTensorGather scope is active. The returned metadata
-/// is bounded by \c flatbuffer_default_descriptor_metadata_capacity_v<Image>; an oversized frame
+/// is bounded by \c flatbuffer_descriptor_metadata_capacity_v<Image>; an oversized frame
 /// identifier or future metadata returns \c ErrorCode::kResourceExhausted.
 /// @note Returns \c ErrorCode::kInvalidArgument for a descriptor the schema gives no meaning to: a
 /// non-positive height or width, an \c encoding or \c color_space outside its enumeration, a
@@ -140,6 +146,8 @@ struct ImageTensorMetadata {
 /// than by the Tensor element type, which is what lets P010 report the 10 bits it is defined to
 /// carry while being delivered as a flat byte buffer. \c ImageEncoding_CUSTOM states no
 /// organization and keeps the weaker bound of the widest component any element type provides.
+/// The sentinel \ref kUnknownImageSignificantBits is accepted for every encoding and makes no
+/// precision claim; zero continues to mean full container width.
 /// @note The Tensor element must be scalar: channels belong in the Tensor shape, and every encoding
 /// except \c ImageEncoding_CUSTOM already fixes the component organization of a sample, so a
 /// vectorized element states it a second time with nothing to relate the two. A four-lane \c uint8
@@ -166,10 +174,5 @@ build_image_metadata(const holoscan::Tensor& tensor, const ImageMetadataOptions&
 /// so descriptor-backed paths cannot silently carry a second materialized payload representation.
 [[nodiscard]] HOLOSCAN_SENSOR_IO_EXPORT expected<ImageTensorMetadata, Error> image_tensor_metadata(
     const ImageMetadataView& view);
-
-/// @brief Decode the generated Image Tensor member through the common descriptor adapter.
-template <>
-struct DescriptorFlatBufferTensorViewTraits<Image>
-    : DescriptorFlatBufferTensorViewAdapter<Image, &Image::data> {};
 
 }  // namespace holoscan::schema

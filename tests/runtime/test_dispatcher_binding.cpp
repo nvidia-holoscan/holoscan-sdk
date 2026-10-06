@@ -453,6 +453,183 @@ TEST(DispatcherBindingTest, SourceCreditPreflightPreservesPendingSingleCreditIng
   EXPECT_EQ(unknown.error().code, ErrorCode::kNotFound);
 }
 
+// REQ: RUNTIME-007
+TEST(DispatcherBindingTest, EndOfStreamWaitsForAcceptedPrefixWithFutureCaptureTimes) {
+  for (const bool constrained : {false, true}) {
+    auto input = source_binding(0U, detail::RuntimeEventKind::kInputArrival, 3U);
+    auto unrelated = source_binding(1U, detail::RuntimeEventKind::kClockTick);
+    unrelated.vertex = VertexId{2U};
+    unrelated.receiver_index = 1U;
+    auto fenced_input = source_binding(2U, detail::RuntimeEventKind::kInputArrival);
+    fenced_input.vertex = VertexId{3U};
+    fenced_input.receiver_index = 2U;
+    const std::array sources{input, unrelated, fenced_input};
+    auto coordinator = detail::RuntimeCandidateCoordinator::create(sources, 3U, 5U);
+    ASSERT_TRUE(coordinator);
+    detail::BoundedEventPortBinding input_binding{3U, input.source};
+    detail::BoundedEventPortBinding other_binding{1U, unrelated.source};
+    ASSERT_TRUE(input_binding.push(runtime_event(input, 1U, 100)));
+    ASSERT_TRUE(input_binding.push(runtime_event(input, 2U, 5)));
+    auto terminal = runtime_event(input, 3U, 0);
+    terminal.kind = detail::RuntimeEventKind::kInputEndOfStream;
+    ASSERT_TRUE(input_binding.push(terminal));
+    ASSERT_EQ(coordinator->ingest(input_binding), 3U);
+    const std::array fences{detail::RuntimeCandidateInputFence{
+        fenced_input.vertex, fenced_input.source, fenced_input.port}};
+    const auto freeze = [&]() {
+      return constrained ? coordinator->freeze_next_constrained(fences)
+                         : coordinator->freeze_next();
+    };
+
+    auto second_data = freeze();
+    ASSERT_TRUE(second_data);
+    ASSERT_EQ(second_data->witness.kind, detail::RuntimeEventKind::kInputArrival);
+    EXPECT_EQ(second_data->witness.source_sequence, 2U);
+    EXPECT_EQ(second_data->witness.reference_time.timestamp_ns, 5);
+    ASSERT_TRUE(coordinator->retire(*second_data));
+    auto first_data = freeze();
+    ASSERT_TRUE(first_data);
+    EXPECT_EQ(first_data->witness.source_sequence, 1U);
+    EXPECT_EQ(first_data->witness.reference_time.timestamp_ns, 100);
+
+    // Freezing is insufficient: the accepted predecessor must actually retire.
+    const auto blocked = freeze();
+    ASSERT_FALSE(blocked);
+    EXPECT_EQ(blocked.error().code, ErrorCode::kNotReady);
+    EXPECT_EQ(coordinator->pending_count(), 1U);
+    EXPECT_EQ(coordinator->outstanding_count(), 2U);
+
+    // Repeated polling while the predecessor is held cannot spend another source credit, grow
+    // terminal storage, or allocate a retry record. Exercise both ordinary and constrained freeze.
+    bool bounded_retry = true;
+    std::size_t retry_allocations = 0U;
+    {
+      const test::ScopedAllocationCounter counter;
+      for (std::size_t attempt = 0U; attempt < 32U; ++attempt) {
+        const auto retry = freeze();
+        const auto credit = coordinator->source_credit_remaining(input.source);
+        bounded_retry = bounded_retry && !retry && retry.error().code == ErrorCode::kNotReady &&
+                        coordinator->pending_count() == 1U &&
+                        coordinator->outstanding_count() == 2U && credit && *credit == 1U;
+      }
+      retry_allocations = counter.count();
+    }
+    EXPECT_TRUE(bounded_retry);
+    EXPECT_EQ(retry_allocations, 0U);
+
+    ASSERT_TRUE(other_binding.push(runtime_event(unrelated, 1U, 200)));
+    ASSERT_EQ(coordinator->ingest(other_binding), 1U);
+    auto other = freeze();
+    ASSERT_TRUE(other);
+    EXPECT_EQ(other->witness.source, unrelated.source);
+    ASSERT_TRUE(coordinator->retire(*other));
+
+    ASSERT_TRUE(coordinator->retire(*first_data));
+    auto eos = freeze();
+    ASSERT_TRUE(eos);
+    EXPECT_EQ(eos->witness.kind, detail::RuntimeEventKind::kInputEndOfStream);
+    EXPECT_EQ(eos->witness.source_sequence, 3U);
+    EXPECT_EQ(eos->witness.reference_time.timestamp_ns, 0);
+    ASSERT_TRUE(coordinator->rearm_terminal_successor(*eos));
+    EXPECT_EQ(eos->witness.source_sequence, 3U);
+    EXPECT_EQ(coordinator->outstanding_count(), 1U);
+    ASSERT_TRUE(coordinator->retire(*eos));
+    EXPECT_EQ(coordinator->outstanding_count(), 0U);
+  }
+}
+
+// REQ: RUNTIME-007
+// REQ: RUNTIME-043
+// Two non-trigger freshness prefixes fence only their common owner. The globally earlier witness
+// from an unrelated owner must still run first, while each fenced input contributes only its
+// oldest source-sequence arrival even when its capture/reference coordinates move backwards.
+TEST(DispatcherBindingTest, InputFencesPreserveGlobalOrderAndEachSourcePrefix) {
+  auto first_input = source_binding(0U, detail::RuntimeEventKind::kInputArrival, 3U);
+  auto second_input = source_binding(1U, detail::RuntimeEventKind::kInputArrival);
+  second_input.vertex = first_input.vertex;
+  second_input.receiver_index = first_input.receiver_index;
+  auto fenced_trigger = source_binding(2U, detail::RuntimeEventKind::kClockTick);
+  fenced_trigger.vertex = first_input.vertex;
+  fenced_trigger.receiver_index = first_input.receiver_index;
+  auto unrelated = source_binding(3U, detail::RuntimeEventKind::kClockTick);
+  unrelated.vertex = VertexId{2U};
+  unrelated.receiver_index = 1U;
+  const std::array sources{first_input, second_input, fenced_trigger, unrelated};
+  auto coordinator = detail::RuntimeCandidateCoordinator::create(sources, 2U, 6U);
+  ASSERT_TRUE(coordinator);
+
+  detail::BoundedEventPortBinding first_binding{3U, first_input.source};
+  detail::BoundedEventPortBinding second_binding{1U, second_input.source};
+  detail::BoundedEventPortBinding trigger_binding{1U, fenced_trigger.source};
+  detail::BoundedEventPortBinding unrelated_binding{1U, unrelated.source};
+  ASSERT_TRUE(first_binding.push(runtime_event(first_input, 1U, 100)));
+  ASSERT_TRUE(first_binding.push(runtime_event(first_input, 2U, 5)));
+  auto terminal = runtime_event(first_input, 3U, 0);
+  terminal.kind = detail::RuntimeEventKind::kInputEndOfStream;
+  ASSERT_TRUE(first_binding.push(terminal));
+  ASSERT_TRUE(second_binding.push(runtime_event(second_input, 1U, 50)));
+  ASSERT_TRUE(trigger_binding.push(runtime_event(fenced_trigger, 1U, 1)));
+  ASSERT_TRUE(unrelated_binding.push(runtime_event(unrelated, 1U, 10)));
+  ASSERT_EQ(coordinator->ingest(first_binding), 3U);
+  ASSERT_EQ(coordinator->ingest(second_binding), 1U);
+  ASSERT_EQ(coordinator->ingest(trigger_binding), 1U);
+  ASSERT_EQ(coordinator->ingest(unrelated_binding), 1U);
+
+  const std::array fences{
+      detail::RuntimeCandidateInputFence{first_input.vertex, first_input.source, first_input.port},
+      detail::RuntimeCandidateInputFence{
+          second_input.vertex, second_input.source, second_input.port},
+  };
+  auto freeze_constrained = [&]() { return coordinator->freeze_next_constrained(fences); };
+
+  auto frozen = freeze_constrained();
+  ASSERT_TRUE(frozen);
+  EXPECT_EQ(frozen->witness.source, unrelated.source);
+  EXPECT_EQ(frozen->witness.reference_time.timestamp_ns, 10);
+  ASSERT_TRUE(coordinator->retire(*frozen));
+
+  frozen = freeze_constrained();
+  ASSERT_TRUE(frozen);
+  EXPECT_EQ(frozen->witness.source, second_input.source);
+  EXPECT_EQ(frozen->witness.reference_time.timestamp_ns, 50);
+  ASSERT_TRUE(coordinator->retire(*frozen));
+
+  frozen = freeze_constrained();
+  ASSERT_TRUE(frozen);
+  EXPECT_EQ(frozen->witness.source, first_input.source);
+  EXPECT_EQ(frozen->witness.source_sequence, 1U);
+  EXPECT_EQ(frozen->witness.reference_time.timestamp_ns, 100);
+  ASSERT_TRUE(coordinator->retire(*frozen));
+
+  frozen = freeze_constrained();
+  ASSERT_TRUE(frozen);
+  EXPECT_EQ(frozen->witness.source, first_input.source);
+  EXPECT_EQ(frozen->witness.source_sequence, 2U);
+  EXPECT_EQ(frozen->witness.reference_time.timestamp_ns, 5);
+  ASSERT_TRUE(coordinator->retire(*frozen));
+
+  // EOS shares the input prefix but is not a refill prerequisite. It cannot overtake either
+  // arrival, and remains pending with the owner's trigger while the input fence is active.
+  const auto fenced_terminal = freeze_constrained();
+  ASSERT_FALSE(fenced_terminal);
+  EXPECT_EQ(fenced_terminal.error().code, ErrorCode::kNotReady);
+
+  auto end_of_stream = coordinator->freeze_next();
+  ASSERT_TRUE(end_of_stream);
+  EXPECT_EQ(end_of_stream->witness.kind, detail::RuntimeEventKind::kInputEndOfStream);
+  EXPECT_EQ(end_of_stream->witness.source_sequence, 3U);
+  EXPECT_EQ(end_of_stream->witness.reference_time.timestamp_ns, 0);
+  ASSERT_TRUE(coordinator->retire(*end_of_stream));
+
+  // Key assertion: the fenced owner's trigger remained pending until both input prefixes and EOS
+  // were drained. Removing the fences restores its ordinary eligibility without losing identity.
+  auto trigger = coordinator->freeze_next();
+  ASSERT_TRUE(trigger);
+  EXPECT_EQ(trigger->witness.source, fenced_trigger.source);
+  EXPECT_EQ(trigger->witness.reference_time.timestamp_ns, 1);
+  ASSERT_TRUE(coordinator->retire(*trigger));
+}
+
 TEST(DispatcherBindingTest, TriggerWitnessReferenceExcludesTerminalButPreservesData) {
   auto source = source_binding(0U, detail::RuntimeEventKind::kInputArrival, 2U);
   source.port = {};
@@ -510,6 +687,47 @@ TEST(DispatcherBindingTest, CausalSuccessorUsesTheExactParentLogicalCoordinate) 
   EXPECT_EQ(successor->candidate.ready.tag_time.microstep, parent.microstep + 1U);
   EXPECT_EQ(successor->witness.reference_time, (TimePoint{250, sources[1].reference_clock}));
   ASSERT_TRUE(coordinator->retire(*successor));
+}
+
+// REQ: RUNTIME-007
+// The causal path may omit a repeated prefix scan only after its sole-credit proof excludes a
+// held predecessor. The same EOS remains pending on rejection and becomes eligible after retire.
+TEST(DispatcherBindingTest, CausalEndOfStreamRequiresRetiredSolePredecessor) {
+  const auto source = source_binding(0U, detail::RuntimeEventKind::kInputArrival, 2U);
+  auto coordinator = detail::RuntimeCandidateCoordinator::create({&source, 1U}, 1U, 2U);
+  ASSERT_TRUE(coordinator);
+  detail::BoundedEventPortBinding binding{2U, source.source};
+  ASSERT_TRUE(binding.push(runtime_event(source, 1U, 100)));
+  ASSERT_EQ(coordinator->ingest(binding), 1U);
+  auto predecessor = coordinator->freeze_next();
+  ASSERT_TRUE(predecessor);
+  const TagTime parent = predecessor->candidate.ready.tag_time;
+
+  auto terminal = runtime_event(source, 2U, 0);
+  terminal.kind = detail::RuntimeEventKind::kInputEndOfStream;
+  ASSERT_TRUE(binding.push(terminal));
+  ASSERT_EQ(coordinator->ingest(binding), 1U);
+  const auto held = coordinator->freeze_causal_next(source.source, parent);
+  ASSERT_FALSE(held);
+  EXPECT_EQ(held.error().code, ErrorCode::kProtocolError);
+  EXPECT_EQ(coordinator->pending_count(), 1U);
+  EXPECT_EQ(coordinator->outstanding_count(), 2U);
+  const auto ordinary = coordinator->freeze_next();
+  ASSERT_FALSE(ordinary);
+  EXPECT_EQ(ordinary.error().code, ErrorCode::kNotReady);
+
+  ASSERT_TRUE(coordinator->retire(*predecessor));
+  auto successor = coordinator->freeze_causal_next(source.source, parent);
+  ASSERT_TRUE(successor);
+  EXPECT_EQ(successor->witness.kind, detail::RuntimeEventKind::kInputEndOfStream);
+  EXPECT_EQ(successor->witness.source_sequence, 2U);
+  EXPECT_EQ(successor->witness.reference_time, (TimePoint{0, source.reference_clock}));
+  EXPECT_EQ(successor->candidate.ready.tag_time.logical_ns, parent.logical_ns);
+  EXPECT_EQ(successor->candidate.ready.tag_time.microstep, parent.microstep + 1U);
+  EXPECT_EQ(coordinator->pending_count(), 0U);
+  EXPECT_EQ(coordinator->outstanding_count(), 1U);
+  ASSERT_TRUE(coordinator->retire(*successor));
+  EXPECT_EQ(coordinator->outstanding_count(), 0U);
 }
 
 // REQ: RUNTIME-007
@@ -1228,6 +1446,18 @@ TEST(DispatcherBindingTest, PlanBackedScalarAndDrainSelectorsCommitOnlyAcceptedC
   ASSERT_EQ(held_latest->selected().size(), 1U);
   EXPECT_EQ(held_latest->selected().front(), temporal_sample(50, 1U, 1U));
   ASSERT_TRUE(held_latest->finish(true));
+  // A newer cache candidate can be too old for LatestWithin while the independent fallback
+  // reaches its own inclusive age boundary. Reusing it must not renew that boundary.
+  ASSERT_TRUE(reuse_latest->push(temporal_sample(80, 2U, 2U)));
+  auto boundary_reuse = reuse_latest->begin(TimePoint{100, kRuntimeClock}, 3U, 1U);
+  ASSERT_TRUE(boundary_reuse);
+  EXPECT_EQ(boundary_reuse->selection().state, InputState::kReused);
+  ASSERT_TRUE(boundary_reuse->finish(true));
+  auto expired_reuse = reuse_latest->begin(TimePoint{101, kRuntimeClock}, 4U, 1U);
+  ASSERT_TRUE(expired_reuse);
+  EXPECT_EQ(expired_reuse->selection().state, InputState::kAbsent);
+  EXPECT_TRUE(expired_reuse->selected().empty());
+  ASSERT_TRUE(expired_reuse->finish(false));
 
   auto drain_plan = selection_plan(InputSelectorKind::kDrainAll, PortId{2U}, 3U, 3U);
   auto drain = detail::RuntimeInputSelectionState::create(drain_plan);
@@ -1529,6 +1759,35 @@ TEST(DispatcherBindingTest, ReuseReplacementTransactionFencesSelectionAndRestore
   auto committed = state->copy_payload_claims(claims);
   ASSERT_TRUE(committed);
   EXPECT_EQ(*committed, 0U);
+}
+
+// REQ: RUNTIME-050
+TEST(DispatcherBindingTest, CacheReplacementTransactionRestoresOrCommitsOneExactRecord) {
+  auto plan = selection_plan(InputSelectorKind::kLatestWithin, PortId{1U}, 1U, 1U);
+  plan.max_age_ns = 1000;
+  auto state = detail::RuntimeInputSelectionState::create(plan);
+  ASSERT_TRUE(state);
+  const auto retained = temporal_sample(10, 1U, 1U);
+  ASSERT_TRUE(state->push(retained));
+
+  {
+    auto replacement = state->reserve_cache_replacement(retained);
+    ASSERT_TRUE(replacement);
+    auto concurrent = state->begin(TimePoint{11, kRuntimeClock}, 1U, 1U);
+    ASSERT_FALSE(concurrent);
+    EXPECT_EQ(concurrent.error().code, ErrorCode::kBackpressured);
+  }
+  std::array<detail::TemporalSampleRecord, 1U> claims{};
+  auto restored = state->copy_payload_claims(claims);
+  ASSERT_TRUE(restored);
+  ASSERT_EQ(*restored, 1U);
+  EXPECT_EQ(claims.front(), retained);
+
+  auto replacement = state->reserve_cache_replacement(retained);
+  ASSERT_TRUE(replacement);
+  replacement->commit();
+  EXPECT_EQ(state->retained_count(), 0U);
+  EXPECT_TRUE(state->push(temporal_sample(20, 2U, 2U)));
 }
 
 // REQ: RUNTIME-043

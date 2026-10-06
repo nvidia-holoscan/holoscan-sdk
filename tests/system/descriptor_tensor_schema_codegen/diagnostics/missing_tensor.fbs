@@ -8,3 +8,4 @@ table MissingTensor {
 }
 
 root_type MissingTensor;
+file_identifier "DMT1";

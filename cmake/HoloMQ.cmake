@@ -96,11 +96,20 @@ set(HOLOMQ_LIBRARY_SOURCES
     "${HOLOMQ_SRC}/wait_trigger.cpp"
 )
 
+holoscan_select_native_descriptor_readiness_source(
+    _holomq_readiness_handle_source
+    "${HOLOMQ_SRC}/readiness_handle_linux.cpp"
+    "${HOLOMQ_SRC}/readiness_handle_unsupported.cpp"
+)
+list(APPEND HOLOMQ_LIBRARY_SOURCES "${_holomq_readiness_handle_source}")
+
 list(APPEND HOLOMQ_LIBRARY_SOURCES "${HOLOMQ_SRC}/transport/iox2/runtime.cpp")
 list(APPEND HOLOMQ_LIBRARY_SOURCES "${HOLOMQ_SRC}/transport/iox2/wait_set_backend.cpp")
 list(APPEND HOLOMQ_LIBRARY_SOURCES "${HOLOMQ_SRC}/transport/iox2/log_bridge.cpp")
 
 function(holomq_apply_public_interface target_name)
+    holoscan_platform_has_native_descriptor_readiness(
+        _holomq_has_native_descriptor_readiness)
     target_compile_features(${target_name} PUBLIC cxx_std_20)
     target_include_directories(${target_name}
         PUBLIC
@@ -112,6 +121,7 @@ function(holomq_apply_public_interface target_name)
     )
     target_compile_definitions(${target_name}
         PUBLIC
+            "HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS=${_holomq_has_native_descriptor_readiness}"
             "HOLOMQ_TRANSPORT_${HOLOMQ_TRANSPORT_UPPER}=1"
             $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:HOLOMQ_STATIC_DEFINE>
     )
@@ -127,6 +137,7 @@ function(holomq_apply_public_interface target_name)
     else()
         target_link_libraries(${target_name} PUBLIC iceoryx2-cxx::static-lib-cxx)
     endif()
+    unset(_holomq_has_native_descriptor_readiness)
 endfunction()
 
 # Compile once into an OBJECT library, then link the configured SDK artifact.
@@ -228,5 +239,6 @@ if(BUILD_SHARED_LIBS
 endif()
 unset(_holomq_symbol_check_script)
 unset(_holomq_symbol_baseline)
+unset(_holomq_readiness_handle_source)
 
-list(APPEND HOLOSCAN_INSTALL_TARGETS holomq)
+list(APPEND HOLOSCAN_HOLOMQ_INSTALL_TARGETS holomq)

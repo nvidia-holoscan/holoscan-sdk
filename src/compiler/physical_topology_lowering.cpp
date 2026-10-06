@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "compiler/channel_payload_contracts.hpp"
 #include "compiler/detail/checked_arithmetic.hpp"
 #include "compiler/execution_plan_contracts.hpp"
 #include "compiler/physical_plan_lowering_internal.hpp"
@@ -31,6 +32,8 @@ constexpr std::string_view kPortInvalid{"PHYSICAL_PORT_CONTRACT_INVALID"};
 constexpr std::string_view kEdgeInvalid{"PHYSICAL_EDGE_CONTRACT_INVALID"};
 constexpr std::string_view kBindingInvalid{"PHYSICAL_INTERFACE_BINDING_INVALID"};
 constexpr std::string_view kTensorConversionUnsupported{"PHYSICAL_TENSOR_CONVERSION_UNSUPPORTED"};
+constexpr std::string_view kTensorProjectionDeliveryUnsupported{
+    "PHYSICAL_TENSOR_PROJECTION_DELIVERY_UNSUPPORTED"};
 constexpr std::string_view kTensorDeviceBindingUnexpected{
     "PHYSICAL_TENSOR_DEVICE_BINDING_UNEXPECTED"};
 constexpr std::string_view kDeviceUnresolved{"IMPLICIT_DEVICE_ZERO_REJECTED"};
@@ -44,13 +47,19 @@ constexpr std::string_view kTensorPoolBoundsInvalid{"PHYSICAL_TENSOR_ALLOCATION_
   switch (payload.kind) {
     case PayloadIdentityKind::kScalar:
       return payload.scalar && !payload.schema && !payload.pod &&
-             enum_at_most(payload.scalar->kind, ScalarIdentityKind::kLocalEnum);
+             enum_at_most(payload.scalar->kind, ScalarIdentityKind::kLocalEnum) &&
+             (payload.scalar->kind == ScalarIdentityKind::kLocalEnum
+                  ? payload.scalar->native_object_size == 1U ||
+                        payload.scalar->native_object_size == 2U ||
+                        payload.scalar->native_object_size == 4U ||
+                        payload.scalar->native_object_size == 8U
+                  : payload.scalar->native_object_size == 0U);
     case PayloadIdentityKind::kTensor:
       return !payload.scalar && !payload.schema && !payload.pod &&
              payload.payload_kind == PayloadKind::kDescriptorBacked;
     case PayloadIdentityKind::kSchema:
       return !payload.scalar && payload.schema && !payload.pod &&
-             !payload.schema->canonical_name.empty() && payload.schema->version != 0U;
+             valid_schema_identity(*payload.schema);
     case PayloadIdentityKind::kPod:
       return !payload.scalar && !payload.schema && payload.pod && payload.pod->object_size != 0U &&
              payload.pod->object_alignment != 0U && !payload.pod->fields.empty();
@@ -114,7 +123,7 @@ constexpr std::string_view kTensorPoolBoundsInvalid{"PHYSICAL_TENSOR_ALLOCATION_
     return endpoint.boundary_port.value() == topic.graph_port.value && endpoint.uri == topic.uri &&
            endpoint.direction == direction &&
            payload_identity_exactly_equal(endpoint.payload_identity, topic.payload_identity) &&
-           endpoint.serialized_payload_capacity_bytes == topic.serialized_payload_capacity_bytes;
+           endpoint.schema_writer_max_serialized_bytes == topic.serialized_payload_capacity_bytes;
   });
   if (found == endpoints.end() || found->service.empty() ||
       !enum_at_most(found->attach.peer, PeerRequirement::kRequired)) {
@@ -288,7 +297,7 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
         port.direction == PortDirection::kInput ? queue_for_input(port) : 0U;
     const std::uint32_t burst =
         port.direction == PortDirection::kOutput ? resolved_burst(port) : 0U;
-    const bool schema = port.payload_identity.kind == PayloadIdentityKind::kSchema;
+    const bool schema = schema_requires_serialized_payload_capacity(port.payload_identity);
     if (port.id.value != index + 1U || !port.owner || port.owner.value > snapshot.vertices.size() ||
         !enum_at_most(port.owner_kind, PortOwnerKind::kExportedTopic) ||
         !enum_at_most(port.direction, PortDirection::kOutput) || port.name.empty() ||
@@ -335,6 +344,7 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
         .owner = port.owner,
         .owner_kind = port.owner_kind,
         .direction = port.direction,
+        .optional = port.optional,
         .local_name = port.name,
         .payload_identity = port.payload_identity,
         .serialized_payload_capacity_bytes = port.serialized_payload_capacity_bytes,
@@ -382,14 +392,27 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
   std::vector<bool> drain_by_output(snapshot.ports.size(), false);
   std::vector<bool> copy_by_output(snapshot.ports.size(), false);
   std::vector<bool> reexport_by_output(snapshot.ports.size(), false);
+  std::vector<std::pair<const EdgeRecord*, PayloadEdgePlanRecord>> candidates;
+  candidates.reserve(snapshot.edges.size());
   for (const auto& edge : snapshot.edges) {
     const GraphPortId source_id = resolve_interface_port(snapshot, edge.source);
     const GraphPortId target_id = resolve_interface_port(snapshot, edge.target);
     const auto* source = find_port(snapshot, source_id);
     const auto* target = find_port(snapshot, target_id);
+    // A projected edge narrows a descriptor-backed schema to one of its Tensor members, so its
+    // endpoint identities differ by construction. The Graph already validated the field against
+    // the producer inventory and confirmed the consumer admits a projected Tensor.
+    const bool endpoints_compatible =
+        source != nullptr && target != nullptr &&
+        (edge.tensor_projection
+             ? (source->payload_identity.kind == PayloadIdentityKind::kSchema &&
+                target->payload_identity.kind == PayloadIdentityKind::kTensor &&
+                target->setup.accepts_projected_tensor &&
+                edge.tensor_projection->tensor_index < source->descriptor_tensor_field_count)
+             : payload_identity_exactly_equal(source->payload_identity, target->payload_identity));
     if (!source_id || !target_id || source == nullptr || target == nullptr ||
         source->direction != PortDirection::kOutput || target->direction != PortDirection::kInput ||
-        !payload_identity_exactly_equal(source->payload_identity, target->payload_identity) ||
+        !endpoints_compatible ||
         !enum_at_most(edge.add_flow_options.queue_policy, QueuePolicy::kDropOldest) ||
         (edge.graph_override.queue_policy &&
          !enum_at_most(*edge.graph_override.queue_policy, QueuePolicy::kDropOldest))) {
@@ -397,7 +420,17 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
           result,
           kEdgeInvalid,
           source_for(
-              snapshot, source != nullptr ? source->owner : VertexId{}, PortId{edge.source.value}));
+              snapshot, source != nullptr ? source->owner : VertexId{}, PortId{edge.source.value}),
+          "/edges/" + std::to_string(edge.id.value));
+      result.errors.back().detail = physical_edge_detail(snapshot, target, source);
+      result.errors.back().detail->error.message =
+          source == nullptr || target == nullptr ? "connection references a missing port"
+          : source->direction != PortDirection::kOutput ||
+                  target->direction != PortDirection::kInput
+              ? "connection requires an output producer and an input consumer"
+          : !payload_identity_exactly_equal(source->payload_identity, target->payload_identity)
+              ? "producer and consumer payload identities differ"
+              : "connection has an invalid queue policy";
       continue;
     }
     if (!effective_profile_for_vertex(effective_profiles, source->owner) ||
@@ -446,20 +479,110 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
                            source_for(snapshot, target->owner, PortId{target_id.value}));
       continue;
     }
-    result.payload_edges.push_back(PayloadEdgePlanRecord{
-        .edge = edge.id,
-        .source = PortId{source_id.value},
-        .target = PortId{target_id.value},
-        .payload_identity = source->payload_identity,
-        .queue_policy = policy,
-        .queue_depth = queue,
-        .max_inflight_samples = maximum,
-        .producer_max_emits_per_compute = burst,
-        .fanout = fanout[static_cast<std::size_t>(source_id.value - 1U)],
-        .cache_capacity = cache,
-        .locality = locality,
-        .disposition = PlanDisposition::kAccepted,
+    candidates.emplace_back(
+        &edge,
+        PayloadEdgePlanRecord{
+            .edge = edge.id,
+            .source = PortId{source_id.value},
+            .target = PortId{target_id.value},
+            // Retain the source schema identity so Runtime binds the producer's descriptor service.
+            // Record the consumer's selected Tensor separately from that service identity.
+            .payload_identity = source->payload_identity,
+            .queue_policy = policy,
+            .queue_depth = queue,
+            .max_inflight_samples = maximum,
+            .producer_max_emits_per_compute = burst,
+            .fanout = fanout[static_cast<std::size_t>(source_id.value - 1U)],
+            .cache_capacity = cache,
+            .locality = locality,
+            .disposition = PlanDisposition::kAccepted,
+            .tensor_projection = edge.tensor_projection,
+        });
+  }
+
+  // One callback can publish sibling samples that participate in the same downstream temporal
+  // decision. Mixing direct retention with HoloMQ would order those samples by materialization
+  // time rather than the callback's publication order. Keep each producer/consumer Operator pair
+  // on HoloMQ whenever an ordinary edge in that pair requires the general transport path.
+  // Projected candidates requiring HoloMQ are rejected below and must not force sibling transport.
+  std::set<std::pair<std::uint64_t, std::uint64_t>> holomq_activation_pairs;
+  const auto collect_holomq_activation_pairs = [&] {
+    holomq_activation_pairs.clear();
+    for (const auto& [authored, edge] : candidates) {
+      if (edge.tensor_projection || edge.locality != ChannelLocalityKind::kProcessLocal ||
+          process_local_channel_delivery_kind(edge) != ProcessLocalChannelDeliveryKind::kHoloMQ) {
+        continue;
+      }
+      const auto* source = find_port(snapshot, GraphPortId{edge.source.value()});
+      const auto* target = find_port(snapshot, GraphPortId{edge.target.value()});
+      if (source != nullptr && target != nullptr &&
+          source->owner_kind == PortOwnerKind::kOperator &&
+          target->owner_kind == PortOwnerKind::kOperator) {
+        holomq_activation_pairs.emplace(source->owner.value, target->owner.value);
+      }
+    }
+  };
+  collect_holomq_activation_pairs();
+
+  std::unordered_set<std::uint64_t> rejected_projection_sources;
+  for (const auto& [authored, candidate] : candidates) {
+    if (!candidate.tensor_projection) {
+      continue;
+    }
+    const auto* source = find_port(snapshot, GraphPortId{candidate.source.value()});
+    const auto* target = find_port(snapshot, GraphPortId{candidate.target.value()});
+    const auto source_group = process_group_for(process_placements, source->owner);
+    const auto target_group = process_group_for(process_placements, target->owner);
+    // Keep conversion rejection in family admission: dropping only the projection would leave
+    // ordinary schema arms with the authored fanout but potentially no realizable service.
+    if (candidate.locality == ChannelLocalityKind::kProcessLocal && source_group && target_group &&
+        *source_group == *target_group &&
+        resolved_memory_conversion(*authored, *target) != MemoryConversionPolicy::kDefault) {
+      reject_physical_plan(result,
+                           kTensorConversionUnsupported,
+                           source_for(snapshot, target->owner, candidate.target));
+      rejected_projection_sources.insert(candidate.source.value());
+      continue;
+    }
+    if (candidate.locality != ChannelLocalityKind::kProcessLocal || !source_group ||
+        !target_group || *source_group != *target_group ||
+        physical_process_local_delivery_kind(holomq_activation_pairs,
+                                             candidate,
+                                             *source,
+                                             *target,
+                                             force_holomq_process_local_inline) !=
+            ProcessLocalChannelDeliveryKind::kDirectRetained) {
+      reject_physical_plan(result,
+                           kTensorProjectionDeliveryUnsupported,
+                           source_for(snapshot, target->owner, candidate.target),
+                           "/edges/" + std::to_string(candidate.edge.value) + "/tensor_projection",
+                           "one direct retained same-process Tensor subscriber",
+                           "unsupported projected delivery");
+      rejected_projection_sources.insert(candidate.source.value());
+    }
+  }
+  if (!rejected_projection_sources.empty()) {
+    // The ordinary arms share the authored fanout and may also be unrealizable (for example,
+    // an oversized schema envelope forced onto HoloMQ). Omit the entire source-port family
+    // before publishing bindings or capacity records, preserving the Graph and diagnostics.
+    std::erase_if(candidates, [&](const auto& item) {
+      return rejected_projection_sources.contains(item.second.source.value());
     });
+    // Rejected families cannot force independent outputs onto HoloMQ. Surviving ordinary
+    // HoloMQ siblings still govern delivery; rejected projections are never re-admitted.
+    collect_holomq_activation_pairs();
+  }
+
+  for (const auto& [authored, candidate] : candidates) {
+    const auto& edge = *authored;
+    const GraphPortId source_id{candidate.source.value()};
+    const GraphPortId target_id{candidate.target.value()};
+    const auto* source = find_port(snapshot, source_id);
+    result.payload_edges.push_back(candidate);
+    const auto locality = candidate.locality;
+    const auto policy = candidate.queue_policy;
+    const auto queue = candidate.queue_depth;
+    const auto cache = candidate.cache_capacity;
     result.channel_locality.push_back(ChannelLocalityRecord{
         .edge = edge.id,
         .requested = locality,
@@ -490,6 +613,18 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
       }
       reuse_by_output[output_index] = reuse_by_output[output_index] ||
                                       selection.missing == TemporalRecordMissingKind::kReuseLast;
+      // The depth-one freshness path preserves ReuseLast beside the ordinary cache row.
+      if (policy == QueuePolicy::kDropOldest &&
+          selection.selector == InputSelectorKind::kLatestWithin &&
+          selection.cache_capacity == 1U &&
+          selection.missing == TemporalRecordMissingKind::kReuseLast) {
+        if (!checked_add(cache_by_output[output_index], 1U, next)) {
+          reject_physical_plan(
+              result, kQueueInvalid, source_for(snapshot, source->owner, PortId{source_id.value}));
+        } else {
+          cache_by_output[output_index] = next;
+        }
+      }
       drain_by_output[output_index] =
           drain_by_output[output_index] || selection.selector == InputSelectorKind::kDrainAll;
     }
@@ -507,23 +642,6 @@ ProcessLocalChannelDeliveryKind physical_process_local_delivery_kind(
         reexport_by_output[output_index] || exported_by_port.contains(edge.target.value);
   }
 
-  // One callback can publish sibling samples that participate in the same downstream temporal
-  // decision. Mixing direct retention with HoloMQ would order those samples by materialization
-  // time rather than the callback's publication order. Keep each producer/consumer Operator pair
-  // on HoloMQ whenever any edge in that pair requires the general transport path.
-  std::set<std::pair<std::uint64_t, std::uint64_t>> holomq_activation_pairs;
-  for (const auto& edge : result.payload_edges) {
-    if (edge.locality != ChannelLocalityKind::kProcessLocal ||
-        process_local_channel_delivery_kind(edge) != ProcessLocalChannelDeliveryKind::kHoloMQ) {
-      continue;
-    }
-    const auto* source = find_port(snapshot, GraphPortId{edge.source.value()});
-    const auto* target = find_port(snapshot, GraphPortId{edge.target.value()});
-    if (source != nullptr && target != nullptr && source->owner_kind == PortOwnerKind::kOperator &&
-        target->owner_kind == PortOwnerKind::kOperator) {
-      holomq_activation_pairs.emplace(source->owner.value, target->owner.value);
-    }
-  }
   for (const auto& edge : result.payload_edges) {
     const bool tensor_backed = is_tensor_backed_payload(edge.payload_identity);
     const auto* source = find_port(snapshot, GraphPortId{edge.source.value()});

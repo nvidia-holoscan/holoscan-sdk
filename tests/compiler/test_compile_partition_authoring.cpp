@@ -16,6 +16,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -174,6 +175,42 @@ class PartitionMultiDeviceTensorSourceOperator final : public Operator<> {
   Output<Tensor> second;
 };
 
+class AtomicMultiDeviceTensorGraph final : public Graph {
+ protected:
+  void compose() override {
+    test::add_compile_test_default_clock(*this);
+    (void)op<PartitionMultiDeviceTensorSourceOperator>("source");
+  }
+};
+
+// REQ: COMPILE-075
+TEST(CompilePartitionAuthoring, AtomicInstanceMultiOutputDeviceDomainsAgreeAcrossCoverModes) {
+  for (const bool automatic : {false, true}) {
+    for (const bool conflict : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "automatic=" << automatic << " conflict=" << conflict);
+      Graph graph{"root"};
+      test::add_compile_test_default_clock(graph);
+      graph.partition("owner").add(graph.embed<AtomicMultiDeviceTensorGraph>("child"));
+      if (automatic) {
+        (void)graph.op<test::CompileTestOperator>("peer");
+        graph.auto_partition_remaining();
+      }
+      CompileOptions options;
+      options.deployment.bind_tensor_output_device({"child/source", "first", DeviceId{0}})
+          .bind_tensor_output_device({"child/source", "second", DeviceId{conflict ? 1 : 0}});
+      const auto plan = compile(graph, std::move(options));
+      if (conflict) {
+        EXPECT_FALSE(plan.ok());
+        EXPECT_TRUE(test::has_diagnostic(plan, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE"));
+        EXPECT_TRUE(plan.execution_partitions().empty());
+        EXPECT_TRUE(plan.execution_lanes().empty());
+      } else {
+        EXPECT_TRUE(plan.ok()) << plan.json();
+      }
+    }
+  }
+}
+
 // Keeps the only graph edge scalar while two disconnected Tensor outputs contribute an exact
 // intrinsic multi-device conflict to the source vertex.
 class PartitionMultiDeviceScalarSourceOperator final : public Operator<> {
@@ -203,7 +240,8 @@ class PartitionMultiDeviceScalarSourceOperator final : public Operator<> {
   Output<std::uint32_t> scalar;
 };
 
-[[nodiscard]] ExecutionPlan compile_zero_binding_tensor_graph() {
+[[nodiscard]] ExecutionPlan compile_zero_binding_tensor_graph(
+    std::optional<CudaComputeStreamPolicy> policy = std::nullopt) {
   Graph graph{"ordinary-tensor-stream"};
   test::add_compile_test_default_clock(graph);
   graph.op<PartitionTensorSourceOperator>("source");
@@ -224,7 +262,11 @@ class PartitionMultiDeviceScalarSourceOperator final : public Operator<> {
   }};
   auto evidence = detail::runtime_compile_evidence_view();
   evidence.tensor_device_bindings = devices;
-  return detail::compile_with_runtime_evidence(graph, {}, evidence);
+  CompileOptions options;
+  if (policy) {
+    options.cuda_execution.compute_stream_policy = *policy;
+  }
+  return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
 }
 
 // Declares a CUDA-device Tensor consumer used to exercise stream planning across a partition edge.
@@ -249,6 +291,67 @@ class PartitionTensorSinkOperator final : public Operator<> {
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
 
   Input<Tensor> input;
+};
+
+// Forwards the received Tensor without declaring a new pool. Downstream instances therefore
+// become CUDA-active only when explicit Green Context placement supplies their final bindings.
+class PartitionPassThroughTensorOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    const TensorRepresentation representation{
+        .memory_kind = MemoryKind::kCudaDevice,
+        .dtype = DLDataType{kDLUInt, 8U, 1U},
+    };
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{.representation = representation});
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = representation,
+            .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 16U},
+            .storage = TensorOutputStorage::kPassThrough,
+        });
+  }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  expected<void, Error> compute([[maybe_unused]] ExecutionContext&) override { return {}; }
+
+  Input<Tensor> input;
+  Output<Tensor> output;
+};
+
+// Two individually representable CUDA pools whose same-device aggregate exceeds uint32_t.
+// Compilation must retain the diagnosed rejected plan without granting runtime authority.
+class PartitionAggregateOverflowTensorSourceOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    const TensorOutputSpec tensor{
+        .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                           .dtype = DLDataType{kDLUInt, 8U, 1U}},
+        .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 1U},
+        .storage = TensorOutputStorage::kRuntimePool,
+    };
+    constexpr std::uint32_t kMaximumEmits = 1U << 30U;
+    spec.output(first, "first").max_emits_per_compute(kMaximumEmits).produces_tensor(tensor);
+    spec.output(second, "second").max_emits_per_compute(kMaximumEmits).produces_tensor(tensor);
+  }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = std::chrono::milliseconds{1}});
+    return result;
+  }
+
+  expected<void, Error> compute([[maybe_unused]] ExecutionContext&) override { return {}; }
+
+  Output<Tensor> first;
+  Output<Tensor> second;
 };
 
 class PartitionTensorSinkGraph final : public Graph {
@@ -695,7 +798,8 @@ struct CanonicalPartitionEvidence {
 
 // Graph topology (source and sink are in separate execution partitions):
 //   source --> sink
-[[nodiscard]] ExecutionPlan compile_green_context_tensor_service() {
+[[nodiscard]] ExecutionPlan compile_green_context_tensor_service(
+    CudaComputeStreamPolicy policy = CudaComputeStreamPolicy::kPerExecutionPartition) {
   Graph graph{"green-context-tensor-service"};
   test::add_compile_test_default_clock(graph);
   const auto source = graph.op<PartitionTensorSourceOperator>("source");
@@ -732,7 +836,71 @@ struct CanonicalPartitionEvidence {
   evidence.tensor_device_bindings = devices;
   evidence.cuda_green_context_capabilities = capabilities;
   CompileOptions options;
+  options.cuda_execution.compute_stream_policy = policy;
   options.deployment.bind_cuda_green_context("source", {.device = DeviceId{0}, .sm_count = 16U});
+  return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+}
+
+// Graph topology (one Operator per explicit Green Context partition):
+//   source --> relay-a --> relay-b --> relay-c --> sink
+// Only the source owns a Tensor pool; the relays forward its original backing.
+[[nodiscard]] ExecutionPlan compile_green_context_forwarding_chain(CudaComputeStreamPolicy policy) {
+  Graph graph{"green-context-forwarding-chain"};
+  test::add_compile_test_default_clock(graph);
+  const auto source = graph.op<PartitionTensorSourceOperator>("source");
+  const auto relay_a = graph.op<PartitionPassThroughTensorOperator>("relay-a");
+  const auto relay_b = graph.op<PartitionPassThroughTensorOperator>("relay-b");
+  const auto relay_c = graph.op<PartitionPassThroughTensorOperator>("relay-c");
+  const auto sink = graph.op<PartitionTensorSinkOperator>("sink");
+  graph.add_flow(source->output, relay_a->input);
+  graph.add_flow(relay_a->output, relay_b->input);
+  graph.add_flow(relay_b->output, relay_c->input);
+  graph.add_flow(relay_c->output, sink->input);
+  graph.partition("source").add(source);
+  graph.partition("relay-a").add(relay_a);
+  graph.partition("relay-b").add(relay_b);
+  graph.partition("relay-c").add(relay_c);
+  graph.partition("sink").add(sink);
+
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  if (!snapshot) {
+    throw RuntimeError{Error{ErrorCode::kFailure, "canonical Tensor chain unavailable"}};
+  }
+  const auto source_vertex =
+      std::find_if(snapshot->vertices.begin(), snapshot->vertices.end(), [](const auto& vertex) {
+        return vertex.kind == VertexKind::kOperator && vertex.name == "source";
+      });
+  const auto output =
+      std::find_if(snapshot->ports.begin(), snapshot->ports.end(), [&](const auto& port) {
+        return source_vertex != snapshot->vertices.end() && port.owner == source_vertex->id &&
+               port.direction == PortDirection::kOutput;
+      });
+  if (output == snapshot->ports.end()) {
+    throw RuntimeError{Error{ErrorCode::kFailure, "source Tensor output unavailable"}};
+  }
+  const std::array devices{detail::TensorDeviceBindingRecord{
+      .port = PortId{output->id.value},
+      .device = DeviceId{0},
+  }};
+  const std::array capabilities{detail::CudaGreenContextCapabilityEvidence{
+      .device = DeviceId{0},
+      .deployment_device_id = "gpu.test.uuid.forwarding",
+      .total_sm_count = 40U,
+      .min_sm_partition_size = 8U,
+      .sm_coscheduled_alignment = 8U,
+      .max_structured_context_count = 5U,
+      .evidence_id = "test.cuda.green_context.capability.forwarding/v1",
+      .probe_status = PlacementProbeStatus::kPassed,
+  }};
+  auto evidence = detail::runtime_compile_evidence_view();
+  evidence.tensor_device_bindings = devices;
+  evidence.cuda_green_context_capabilities = capabilities;
+  CompileOptions options;
+  options.cuda_execution.compute_stream_policy = policy;
+  for (const std::string_view partition : {"source", "relay-a", "relay-b", "relay-c", "sink"}) {
+    options.deployment.bind_cuda_green_context(
+        partition, CudaGreenContextPlacement{.device = DeviceId{0}, .sm_count = 8U});
+  }
   return detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
 }
 
@@ -1201,6 +1369,79 @@ TEST(CompilePartitionAuthoring, GreenContextRejectsTensorPlacementDeviceConflict
 }
 
 // REQ: COMPILE-063
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+TEST(CompilePartitionAuthoring,
+     GreenContextRejectsConflictingSourceDeviceObligationsBeforeBinding) {
+  for (const CudaComputeStreamPolicy policy : {CudaComputeStreamPolicy::kSharedProcessDevice,
+                                               CudaComputeStreamPolicy::kPerExecutionPartition}) {
+    for (const DeviceId requested_device : {DeviceId{0}, DeviceId{1}}) {
+      SCOPED_TRACE(::testing::Message() << "policy=" << static_cast<std::uint32_t>(policy)
+                                        << " requested_device=" << requested_device.value);
+      Graph graph{"green-context-conflicting-source-devices"};
+      test::add_compile_test_default_clock(graph);
+      const auto source = graph.op<PartitionMultiDeviceTensorSourceOperator>("source");
+      graph.partition("dedicated").add(source);
+      const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+      ASSERT_TRUE(snapshot);
+      std::vector<detail::TensorDeviceBindingRecord> devices;
+      for (const auto& port : snapshot->ports) {
+        if (port.direction != PortDirection::kOutput || !port.setup.tensor_layout) {
+          continue;
+        }
+        devices.push_back(detail::TensorDeviceBindingRecord{
+            .port = PortId{port.id.value},
+            .device = port.name == "first" ? DeviceId{0} : DeviceId{1},
+        });
+      }
+      ASSERT_EQ(devices.size(), 2U);
+      const std::array capabilities{
+          detail::CudaGreenContextCapabilityEvidence{
+              .device = DeviceId{0},
+              .deployment_device_id = "gpu.test.uuid.conflict.0",
+              .total_sm_count = 80U,
+              .min_sm_partition_size = 8U,
+              .sm_coscheduled_alignment = 8U,
+              .max_structured_context_count = 10U,
+              .evidence_id = "test.cuda.green_context.capability.conflict.0/v1",
+              .probe_status = PlacementProbeStatus::kPassed,
+          },
+          detail::CudaGreenContextCapabilityEvidence{
+              .device = DeviceId{1},
+              .deployment_device_id = "gpu.test.uuid.conflict.1",
+              .total_sm_count = 80U,
+              .min_sm_partition_size = 8U,
+              .sm_coscheduled_alignment = 8U,
+              .max_structured_context_count = 10U,
+              .evidence_id = "test.cuda.green_context.capability.conflict.1/v1",
+              .probe_status = PlacementProbeStatus::kPassed,
+          },
+      };
+      auto evidence = detail::runtime_compile_evidence_view();
+      evidence.tensor_device_bindings = devices;
+      evidence.cuda_green_context_capabilities = capabilities;
+      CompileOptions options;
+      options.cuda_execution.compute_stream_policy = policy;
+      options.deployment.bind_cuda_green_context(
+          "dedicated", CudaGreenContextPlacement{.device = requested_device, .sm_count = 16U});
+
+      const ExecutionPlan plan =
+          detail::compile_with_runtime_evidence(graph, std::move(options), evidence);
+
+      ASSERT_FALSE(plan.ok());
+      EXPECT_TRUE(test::has_diagnostic(plan, "PHYSICAL_TENSOR_DEVICE_BINDING_INVALID"));
+      ASSERT_EQ(plan.cuda_green_context_requests().size(), 1U);
+      EXPECT_EQ(plan.cuda_green_context_requests().front().reason,
+                detail::diagnostic_id("CUDA_GREEN_CONTEXT_PARTITION_MULTI_DEVICE"));
+      EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
+      EXPECT_TRUE(plan.cuda_green_context_pools().empty());
+      EXPECT_TRUE(plan.operator_cuda_stream_bindings().empty());
+      EXPECT_FALSE(plan.json().empty());
+    }
+  }
+}
+
+// REQ: COMPILE-063
 TEST(CompilePartitionAuthoring, GreenContextExactGroupMayConsumeFullDeviceWithoutResidualWork) {
   // Key setup: assign one exact 80-SM group on an 80-SM device with no other CUDA work.
   const ExecutionPlan plan = compile_single_green_context(80U, 80U, false);
@@ -1431,6 +1672,82 @@ TEST(CompilePartitionAuthoring, GreenContextOmitsProcessLocalNoCopyServiceStream
   EXPECT_TRUE(sink->fused_linear_edges.empty());
 }
 
+// REQ: CHAN-134
+// REQ: COMPILE-063
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: TENSOR-STORAGE-014
+TEST(CompilePartitionAuthoring, GreenContextResolvesExactTensorBindingsUnderBothOrdinaryPolicies) {
+  std::optional<std::vector<TensorDeviceResourcePlanRecord>> expected_device_resources;
+  const auto resource_geometry = [](const TensorDeviceResourcePlanRecord& resource) {
+    return std::tie(resource.run_generation,
+                    resource.process_group,
+                    resource.device,
+                    resource.pool_count,
+                    resource.slot_capacity,
+                    resource.loan_credit_capacity,
+                    resource.control_capacity,
+                    resource.readiness_capacity,
+                    resource.release_capacity,
+                    resource.retirement_capacity,
+                    resource.quarantine_capacity,
+                    resource.materialize_before,
+                    resource.gpu_resident_backend_selected,
+                    resource.fallback_rejected);
+  };
+  for (const CudaComputeStreamPolicy policy : {CudaComputeStreamPolicy::kSharedProcessDevice,
+                                               CudaComputeStreamPolicy::kPerExecutionPartition}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+    const ExecutionPlan plan = compile_green_context_tensor_service(policy);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    EXPECT_EQ(plan.cuda_compute_stream_policy(), policy);
+    ASSERT_EQ(plan.cuda_compute_streams().size(), 2U);
+    ASSERT_EQ(plan.operator_cuda_stream_bindings().size(), 2U);
+    EXPECT_TRUE(std::ranges::all_of(plan.cuda_compute_streams(), [](const auto& stream) {
+      return stream.partition.has_value() && stream.green_context_id.has_value() &&
+             stream.fused_linear_edges.empty();
+    }));
+    EXPECT_NE(plan.operator_cuda_stream_bindings()[0].stream_id,
+              plan.operator_cuda_stream_bindings()[1].stream_id);
+    if (expected_device_resources) {
+      EXPECT_TRUE(std::ranges::equal(plan.tensor_device_resources(),
+                                     *expected_device_resources,
+                                     {},
+                                     resource_geometry,
+                                     resource_geometry));
+    } else {
+      expected_device_resources = std::vector<TensorDeviceResourcePlanRecord>{
+          plan.tensor_device_resources().begin(), plan.tensor_device_resources().end()};
+    }
+  }
+}
+
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: TENSOR-STORAGE-015
+TEST(CompilePartitionAuthoring, GreenOnlyForwardingDomainSetsFinalReleaseCapacity) {
+  for (const CudaComputeStreamPolicy policy : {CudaComputeStreamPolicy::kSharedProcessDevice,
+                                               CudaComputeStreamPolicy::kPerExecutionPartition}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+    const ExecutionPlan plan = compile_green_context_forwarding_chain(policy);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.tensor_allocations().size(), 1U);
+    ASSERT_EQ(plan.cuda_green_context_assignments().size(), 5U);
+    ASSERT_EQ(plan.operator_cuda_stream_bindings().size(), 5U);
+    ASSERT_EQ(plan.cuda_compute_streams().size(), 5U);
+    EXPECT_EQ(plan.tensor_allocations().front().release_stream_capacity, 9U);
+    EXPECT_TRUE(std::ranges::all_of(plan.cuda_compute_streams(), [](const auto& stream) {
+      return stream.partition.has_value() && stream.green_context_id.has_value();
+    }));
+    std::vector<std::string_view> stream_ids;
+    for (const auto& binding : plan.operator_cuda_stream_bindings()) {
+      stream_ids.push_back(binding.stream_id);
+    }
+    std::ranges::sort(stream_ids);
+    EXPECT_EQ(std::ranges::unique(stream_ids).begin(), stream_ids.end());
+  }
+}
+
 // REQ: COMPILE-063
 TEST(CompilePartitionAuthoring, GreenContextReplacementStreamRetainsFusedEdgeOwnership) {
   // Graph topology (both operators are fused into one execution partition):
@@ -1459,24 +1776,165 @@ TEST(CompilePartitionAuthoring, GreenContextReplacementStreamRetainsFusedEdgeOwn
 }
 
 // REQ: COMPILE-063
+// REQ: COMPILE-086
+// REQ: COMPILE-090
 TEST(CompilePartitionAuthoring, ZeroBindingTensorGraphKeepsOneOrdinaryStream) {
   // Graph topology:
   //   source   (isolated CUDA Tensor producer)
   // Key setup: compile one device-backed Tensor source without a Green Context binding.
   const ExecutionPlan plan = compile_zero_binding_tensor_graph();
   ASSERT_TRUE(plan.ok()) << plan.json();
-  // Key assertion: lowering emits one ordinary service stream and no Green Context records.
+  // Key assertion: the default emits one partition-owned ordinary stream and no Green Context
+  // records for the graph's single active execution partition.
   EXPECT_TRUE(plan.cuda_green_context_pools().empty());
   EXPECT_TRUE(plan.cuda_green_context_resources().empty());
   EXPECT_TRUE(plan.cuda_green_context_assignments().empty());
   ASSERT_EQ(plan.cuda_compute_streams().size(), 1U);
+  ASSERT_EQ(plan.tensor_allocations().size(), 1U);
+  EXPECT_EQ(plan.tensor_allocations().front().release_stream_capacity, 1U);
   EXPECT_FALSE(plan.cuda_compute_streams().front().green_context_id);
-  EXPECT_FALSE(plan.cuda_compute_streams().front().partition);
+  ASSERT_TRUE(plan.cuda_compute_streams().front().partition);
   EXPECT_EQ(plan.cuda_compute_streams().front().owner_id,
-            plan.tensor_device_resources().front().allocator_root_id);
+            "partition." + std::to_string(plan.cuda_compute_streams().front().partition->value));
 }
 
 // REQ: COMPILE-063
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+TEST(CompilePartitionAuthoring, PublicCudaPolicyRetainsExactPartitionBinding) {
+  // Key setup: select per-partition CUDA streams for one isolated Tensor producer through the
+  // public compile option.
+  const ExecutionPlan plan =
+      compile_zero_binding_tensor_graph(CudaComputeStreamPolicy::kPerExecutionPartition);
+  const ExecutionPlan shared =
+      compile_zero_binding_tensor_graph(CudaComputeStreamPolicy::kSharedProcessDevice);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_TRUE(shared.ok()) << shared.json();
+
+  // Key assertion: the accepted policy and exact Operator join remain inspectable without
+  // reverse-engineering partition or stream identifiers.
+  EXPECT_EQ(plan.cuda_compute_stream_policy(), CudaComputeStreamPolicy::kPerExecutionPartition);
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 1U);
+  ASSERT_EQ(plan.operator_cuda_stream_bindings().size(), 1U);
+  ASSERT_TRUE(plan.cuda_compute_streams().front().partition);
+  EXPECT_EQ(plan.operator_cuda_stream_bindings().front().partition,
+            *plan.cuda_compute_streams().front().partition);
+  EXPECT_EQ(plan.operator_cuda_stream_bindings().front().stream_id,
+            plan.cuda_compute_streams().front().stream_id);
+  EXPECT_NE(plan.digest(), shared.digest());
+}
+
+// REQ: COMPILE-063
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+TEST(CompilePartitionAuthoring, RejectsUnknownCudaComputeStreamPolicy) {
+  // Key setup: pass a value outside the closed public CUDA stream-policy enum.
+  const ExecutionPlan plan =
+      compile_zero_binding_tensor_graph(static_cast<CudaComputeStreamPolicy>(255U));
+
+  // Key assertion: compilation rejects the value with a stable public diagnostic while leaving
+  // the rejected plan safe to inspect.
+  EXPECT_FALSE(plan.ok());
+  EXPECT_TRUE(test::has_diagnostic(plan, "CUDA_STREAM_POLICY_VIOLATION"));
+  EXPECT_EQ(plan.cuda_compute_stream_policy(), static_cast<CudaComputeStreamPolicy>(255U));
+  const auto diagnostic = std::ranges::find_if(plan.diagnostics(), [](const auto& row) {
+    return row.token == "CUDA_STREAM_POLICY_VIOLATION";
+  });
+  ASSERT_NE(diagnostic, plan.diagnostics().end());
+  ASSERT_TRUE(diagnostic->detail);
+  EXPECT_EQ(diagnostic->detail->operation, DiagnosticOperation::kCompile);
+  EXPECT_EQ(diagnostic->detail->error.code, ErrorCode::kInvalidArgument);
+  ASSERT_EQ(diagnostic->detail->mismatches.size(), 1U);
+  EXPECT_EQ(diagnostic->detail->mismatches.front().field, "compute_stream_policy");
+  EXPECT_EQ(diagnostic->detail->mismatches.front().provided, "255");
+  EXPECT_EQ(diagnostic->detail->mismatches.front().required,
+            "kPerExecutionPartition or kSharedProcessDevice");
+  try {
+    plan.require_no_errors();
+    FAIL() << "rejected plan did not throw";
+  } catch (const CompileError& error) {
+    EXPECT_NE(std::string_view{error.what()}.find("compute_stream_policy"), std::string_view::npos);
+    EXPECT_NE(std::string_view{error.what()}.find("255"), std::string_view::npos);
+  }
+}
+
+// REQ: COMPILE-001
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+TEST(CompilePartitionAuthoring, AggregateCudaPoolOverflowRetainsInspectableRejectedPlan) {
+  for (const CudaComputeStreamPolicy policy : {CudaComputeStreamPolicy::kSharedProcessDevice,
+                                               CudaComputeStreamPolicy::kPerExecutionPartition}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+    Graph graph{"aggregate-cuda-pool-overflow"};
+    test::add_compile_test_default_clock(graph);
+    const auto overflow = graph.op<PartitionAggregateOverflowTensorSourceOperator>("a_overflow");
+    const auto other = graph.op<PartitionTensorSourceOperator>("z_other");
+    graph.partition("overflow").add(overflow);
+    graph.partition("other").add(other);
+
+    CompileOptions options;
+    options.cuda_execution.compute_stream_policy = policy;
+    options.deployment.bind_tensor_output_device({"a_overflow", "first", DeviceId{0}})
+        .bind_tensor_output_device({"a_overflow", "second", DeviceId{0}})
+        .bind_tensor_output_device({"z_other", "output", DeviceId{1}});
+
+    std::optional<ExecutionPlan> plan;
+    EXPECT_NO_THROW(plan.emplace(compile(graph, std::move(options))));
+    ASSERT_TRUE(plan);
+    EXPECT_FALSE(plan->ok());
+    EXPECT_FALSE(plan->json().empty());
+    EXPECT_TRUE(test::has_diagnostic(*plan, "PHYSICAL_TENSOR_CAPACITY_OVERFLOW"));
+    ASSERT_EQ(plan->tensor_device_resources().size(), 2U);
+    EXPECT_TRUE(std::ranges::equal(plan->tensor_device_resources(),
+                                   std::array{DeviceId{0}, DeviceId{1}},
+                                   {},
+                                   &TensorDeviceResourcePlanRecord::device));
+    ASSERT_EQ(plan->operator_cuda_stream_bindings().size(), 2U);
+    EXPECT_EQ(std::ranges::count(plan->operator_cuda_stream_bindings(),
+                                 DeviceId{0},
+                                 &OperatorCudaStreamBindingPlanRecord::device),
+              1U);
+    EXPECT_EQ(std::ranges::count(plan->operator_cuda_stream_bindings(),
+                                 DeviceId{1},
+                                 &OperatorCudaStreamBindingPlanRecord::device),
+              1U);
+    ASSERT_EQ(plan->cuda_compute_streams().size(), 2U);
+    for (const auto& binding : plan->operator_cuda_stream_bindings()) {
+      const auto stream = std::ranges::find(
+          plan->cuda_compute_streams(), binding.stream_id, &CudaComputeStreamPlanRecord::stream_id);
+      ASSERT_NE(stream, plan->cuda_compute_streams().end());
+      EXPECT_EQ(stream->process_group, binding.process_group);
+      EXPECT_EQ(stream->device, binding.device);
+    }
+  }
+}
+
+TEST(CompilePartitionAuthoring, CudaStreamDefaultsAndOrderingUsePartitionSemantics) {
+  EXPECT_EQ(ExecutionPlan{}.cuda_compute_stream_policy(),
+            CudaComputeStreamPolicy::kPerExecutionPartition);
+
+  std::vector<CudaComputeStreamPlanRecord> streams{
+      {.process_group = ProcessGroupId{1U},
+       .device = DeviceId{0},
+       .owner_id = "partition.10",
+       .partition = ExecutionPartitionId{10U}},
+      {.process_group = ProcessGroupId{1U},
+       .device = DeviceId{0},
+       .owner_id = "partition.2",
+       .partition = ExecutionPartitionId{2U}},
+  };
+  std::sort(streams.begin(), streams.end(), detail::canonical_cuda_compute_stream_order);
+
+  ASSERT_EQ(streams.size(), 2U);
+  ASSERT_TRUE(streams[0].partition);
+  ASSERT_TRUE(streams[1].partition);
+  EXPECT_EQ(*streams[0].partition, ExecutionPartitionId{2U});
+  EXPECT_EQ(*streams[1].partition, ExecutionPartitionId{10U});
+}
+
+// REQ: COMPILE-063
+// REQ: COMPILE-086
+// REQ: COMPILE-090
 TEST(CompilePartitionAuthoring, ZeroBindingArtifactMatchesNormalizedBaseline) {
   // Graph topology:
   //   source   (isolated CUDA Tensor producer)
@@ -1484,6 +1942,7 @@ TEST(CompilePartitionAuthoring, ZeroBindingArtifactMatchesNormalizedBaseline) {
   // fixed values, and regenerate the complete canonical artifact before comparing it.
   const ExecutionPlan plan = compile_zero_binding_tensor_graph();
   ASSERT_TRUE(plan.ok()) << plan.json();
+  EXPECT_EQ(plan.cuda_compute_stream_policy(), CudaComputeStreamPolicy::kPerExecutionPartition);
   const auto accepted = detail::ExecutionPlanAccess::retain(plan);
   ASSERT_TRUE(accepted);
   auto normalized = std::make_shared<detail::ExecutionPlanState>(*accepted);
@@ -1494,7 +1953,7 @@ TEST(CompilePartitionAuthoring, ZeroBindingArtifactMatchesNormalizedBaseline) {
   const ExecutionPlan normalized_plan = detail::ExecutionPlanAccess::make(std::move(normalized));
 
   const std::string golden_path = std::string(HOLOSCAN_COMPILER_TEST_DATA_DIR) +
-                                  "/zero_binding_tensor_graph.v4.normalized.json";
+                                  "/zero_binding_tensor_graph.v8.normalized.json";
   std::ifstream golden_stream{golden_path, std::ios::binary};
   ASSERT_TRUE(golden_stream.is_open()) << golden_path;
   const std::string golden{std::istreambuf_iterator<char>{golden_stream},
@@ -1514,7 +1973,7 @@ TEST(CompilePartitionAuthoring, GreenContextArtifactMatchesFeatureRichNormalized
   // Graph topology (each node is in the named execution partition):
   //   source(alpha) --> target(beta)
   // Key setup: compile accepted dedicated and residual Green Context records, replace its
-  // environment-derived identities with fixed values, and regenerate the complete schema-v4
+  // environment-derived identities with fixed values, and regenerate the complete schema-v7
   // artifact.
   const ExecutionPlan plan = compile_green_context_partitions(false);
   ASSERT_TRUE(plan.ok()) << plan.json();
@@ -1528,7 +1987,7 @@ TEST(CompilePartitionAuthoring, GreenContextArtifactMatchesFeatureRichNormalized
   const ExecutionPlan normalized_plan = detail::ExecutionPlanAccess::make(std::move(normalized));
 
   const std::string golden_path =
-      std::string(HOLOSCAN_COMPILER_TEST_DATA_DIR) + "/green_context_partitions.v4.normalized.json";
+      std::string(HOLOSCAN_COMPILER_TEST_DATA_DIR) + "/green_context_partitions.v8.normalized.json";
   std::ifstream golden_stream{golden_path, std::ios::binary};
   ASSERT_TRUE(golden_stream.is_open()) << golden_path;
   const std::string golden{std::istreambuf_iterator<char>{golden_stream},
@@ -1706,6 +2165,52 @@ TEST(CompilePartitionAuthoring, GreenContextValidationRejectsOrdinaryStreamOnOwn
 
   // Key assertion: plan validation fails closed instead of materializing a primary-context stream
   // beside the structured Green Context family.
+  EXPECT_FALSE(detail::validate_cuda_execution_plan_records(candidate));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextBindingCannotNameAnotherPartitionsStream) {
+  // Key setup: retain a valid two-partition Green Context plan, then redirect one Operator binding
+  // to the other partition's materialized stream on the same process and device.
+  const ExecutionPlan plan = compile_green_context_partitions(false);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto baseline = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(baseline);
+  auto candidate = *baseline;
+  ASSERT_EQ(candidate.cuda_compute_streams.size(), 2U);
+  ASSERT_EQ(candidate.operator_cuda_stream_bindings.size(), 2U);
+  candidate.operator_cuda_stream_bindings.front().stream_id =
+      candidate.cuda_compute_streams.back().stream_id;
+
+  // Key assertion: matching process/device facts cannot authorize a cross-partition binding.
+  EXPECT_FALSE(detail::validate_cuda_execution_plan_records(candidate));
+}
+
+// REQ: COMPILE-063
+TEST(CompilePartitionAuthoring, GreenContextValidationRejectsConflictingOperatorDeviceEvidence) {
+  const ExecutionPlan plan = compile_green_context_residual_partitions(2U);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto baseline = detail::ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(baseline);
+  auto candidate = *baseline;
+  ASSERT_FALSE(candidate.tensor_allocations.empty());
+  const PortId output = candidate.tensor_allocations.front().output;
+  const auto port = std::ranges::find(candidate.ports, output, &PortPlanRecord::id);
+  ASSERT_NE(port, candidate.ports.end());
+  const VertexId owner = port->owner;
+  ASSERT_TRUE(
+      std::ranges::any_of(candidate.cuda_green_context_assignments, [&](const auto& assignment) {
+        const auto partition = std::ranges::find(
+            candidate.execution_partitions, assignment.partition, &ExecutionPartitionRecord::id);
+        return partition != candidate.execution_partitions.end() &&
+               std::ranges::find(partition->members, owner) != partition->members.end();
+      }));
+  candidate.tensor_allocations.front().device = DeviceId{1};
+  std::erase_if(candidate.operator_cuda_stream_bindings,
+                [&](const auto& binding) { return binding.operator_vertex == owner; });
+
+  // Key assertion: removing the conflicting Operator from both bookkeeping sets cannot make an
+  // unbound, ambiguously placed CUDA Operator pass exact plan validation.
   EXPECT_FALSE(detail::validate_cuda_execution_plan_records(candidate));
 }
 

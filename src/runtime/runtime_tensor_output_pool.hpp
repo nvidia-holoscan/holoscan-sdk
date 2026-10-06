@@ -96,6 +96,11 @@ class RuntimeTensorOutputResources final {
   /// Return the number of active direct Tensor output pools.
   [[nodiscard]] std::size_t output_pool_count() const noexcept;
 
+  [[nodiscard]] expected<RuntimeFixedTensorAddress, Error> fixed_output_address(
+      PortId output) noexcept;
+  [[nodiscard]] expected<bool, Error> fixed_output_available(PortId output) noexcept;
+  [[nodiscard]] bool restore_output_binding(PortId output) noexcept;
+
  private:
   explicit RuntimeTensorOutputResources(std::unique_ptr<Impl> impl) noexcept;
 

@@ -10,10 +10,10 @@
 
 #include <flatbuffers/flatbuffer_builder.h>
 
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/errors.hpp"
-#include "holoscan/core/expected.hpp"
-#include "holoscan/holoscan_schema_export.h"
+#include <holoscan/holoscan_schema_export.h>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/expected.hpp>
 
 #include "tensor_generated.h"
 

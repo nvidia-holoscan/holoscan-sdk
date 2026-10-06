@@ -220,14 +220,21 @@ def test_docs_core_runtime_plan_contains_only_documented_production_rows(
     assert {case.domain for case in cases} == {"intraprocess", "interprocess"}
     assert all("--repetitions" in case.command for case in cases)
     assert all(case.command[case.command.index("--repetitions") + 1] == "7" for case in cases)
-    fanout = by_id["graph_intraprocess_docs_pod_1to4_throughput"].command
-    assert fanout[fanout.index("--operator-lanes") + 1] == "shared"
-    assert "--sink-cpus" not in fanout
-    assert fanout[fanout.index("--controller-cpu") + 1] == "1"
-    assert "--channel-pump-cpu" not in fanout
-    assert fanout[fanout.index("--notification-driver-cpu") + 1] == "2"
-    assert "--force-holomq-event-wake" not in fanout
-    assert by_id["graph_intraprocess_docs_pod_1to4_throughput"].required_cpus == 3
+    for fanout in (2, 4):
+        for workload, required_cpus in (("latency", 1), ("throughput", 2)):
+            shared = by_id[f"graph_intraprocess_docs_pod_1to{fanout}_{workload}"]
+            command = shared.command
+            assert command[command.index("--operator-lanes") + 1] == "shared"
+            assert "--sink-cpus" not in command
+            assert "--source-cpu" not in command
+            assert command[command.index("--controller-cpu") + 1] == "0"
+            assert "--channel-pump-cpu" not in command
+            assert "--force-holomq-event-wake" not in command
+            assert shared.required_cpus == required_cpus
+            if workload == "throughput":
+                assert command[command.index("--notification-driver-cpu") + 1] == "1"
+            else:
+                assert "--notification-driver-cpu" not in command
     separate_fanout = by_id["graph_intraprocess_docs_pod_1to4_per_sink_throughput"].command
     assert separate_fanout[separate_fanout.index("--operator-lanes") + 1] == "per_sink"
     assert separate_fanout[separate_fanout.index("--sink-cpus") + 1] == "1,2,3,4"

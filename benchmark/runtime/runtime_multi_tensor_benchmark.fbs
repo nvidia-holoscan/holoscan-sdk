@@ -12,3 +12,4 @@ table MultiTensorMessage {
 }
 
 root_type MultiTensorMessage;
+file_identifier "RMTF";

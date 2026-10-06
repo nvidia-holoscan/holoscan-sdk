@@ -17,6 +17,8 @@
 
 #include "run_session_internal.hpp"
 
+#include "runtime_cuda_graph_diagnostics.hpp"
+#include "runtime_cuda_graph_region_resources.hpp"
 #include "runtime_test_access.hpp"
 
 namespace holoscan::detail {
@@ -224,6 +226,10 @@ template <bool TraceCallback>
   }
   task.admission = ComputeAdmissionDisposition::kAdmitted;
   expected<void, Error> result;
+  task.context->operator_path = task.instance->canonical_operator_path;
+  if (task.instance->has_output_ports) {
+    task.instance->tensor_failure.port = {};
+  }
   if constexpr (TraceCallback) {
     task.phase_counters->trace(RuntimePhaseTracePoint::kComputeCallbackEntered,
                                task.selection->receiver_index,
@@ -237,11 +243,26 @@ template <bool TraceCallback>
       const ParamGeneralControlContextScope general_control_scope;
       const nvtx3::unique_range_in<holoscan::profiler::holoscan_operator_domain> compute_range{
           task.instance->compute_nvtx_message, nvtx3::color{nvtx3::rgb{118, 185, 0}}};
-      result = OperatorRuntimeAccess::invoke(*task.instance->op, *task.context);
+      OperatorBase* const target =
+          task.instance->fused_cuda_graph_operator != nullptr
+              ? static_cast<OperatorBase*>(task.instance->fused_cuda_graph_operator)
+              : task.instance->op.get();
+      result = OperatorRuntimeAccess::invoke(*target, *task.context);
+    }
+    if (!result) {
+      task.callback_failed = true;
+      // Capture is consumed only for a failed callback. Reset on that cold path so successful
+      // activations do not maintain the reserved cause buffer.
+      auto& failure_capture = task.instance->failure_capture;
+      failure_capture.clear();
+      failure_capture.append(result.error().code, result.error().message);
     }
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   } catch (...) {
-    result = make_unexpected(Error{ErrorCode::kFailure});
+    task.callback_failed = true;
+    auto& failure_capture = task.instance->failure_capture;
+    failure_capture.capture_exception();
+    result = make_unexpected(Error{failure_capture.causes[0].code});
   }
 #endif
   if constexpr (TraceCallback) {
@@ -250,9 +271,19 @@ template <bool TraceCallback>
                                task.selection->ready.stable_source_id,
                                task.source_sequence);
   }
-  if (!selected_device.restore_after_callback()) {
-    result = make_unexpected(
-        Error{ErrorCode::kNotSupported, "RUNTIME_COMPUTE_CUDA_DEVICE_RESTORE_FAILED"});
+  if (task.cuda_device.valid()) {
+    const bool device_restored = selected_device.restore_after_callback();
+    const auto& cuda_test_control =
+        task.session->plan_->executable_factories.test_cuda_execution_control;
+    const bool injected_restore_failure =
+        cuda_test_control != nullptr &&
+        cuda_test_control->should_fail(RuntimeCudaExecutionFailurePoint::kComputeDeviceRestore);
+    if (!device_restored || injected_restore_failure) {
+      task.cuda_device_restore_failed = true;
+      if (result) {
+        result = make_unexpected(Error{ErrorCode::kNotSupported});
+      }
+    }
   }
   task.completed_selection = task.dispatcher->complete(*task.selection).has_value();
   if (result && task.completed_selection && task.direct_continuation_enabled &&
@@ -272,6 +303,58 @@ template <bool TraceCallback>
     }
   }
   return result;
+}
+
+expected<void, Error> RunSessionState::invoke_cuda_graph_capture_member(
+    void* state, RuntimeOperatorInstance& instance, const DeviceId device,
+    cudaStream_t stream) noexcept {
+  auto* const session = static_cast<RunSessionState*>(state);
+  if (session == nullptr || session->graph_exec_ == nullptr || instance.op == nullptr ||
+      !device.valid() || stream == nullptr) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument, "CUDA_GRAPH_CAPTURE_BINDING_INVALID"});
+  }
+  ScopedComputeCudaDevice selected_device{device};
+  if (!selected_device.active()) {
+    return make_unexpected(
+        Error{ErrorCode::kNotSupported, "RUNTIME_COMPUTE_CUDA_DEVICE_UNAVAILABLE"});
+  }
+  ExecutionContextState context;
+  context.tag = Tag{.sequence = 1U, .generation = 1U};
+  context.clock = session->graph_exec_->default_clock();
+  context.cuda_stream = stream;
+  context.cancellation_source = &session->stop_requested_;
+  context.pinned_params = &instance.static_parameter_header;
+  context.self = OperatorRef{.id = instance.operator_id,
+                             .plan_generation = session->plan_->plan_generation,
+                             .run_generation = session->run_generation_};
+  context.operator_path = instance.canonical_operator_path;
+  const RuntimeCallbackContextScope callback_scope{RuntimeCallbackIdentity{
+      .context = RuntimeCallbackContext::kCompute,
+      .operator_id = instance.operator_id,
+      .tag = context.tag,
+      .state_generation = context.tag.generation,
+  }};
+  expected<void, Error> captured;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    const ParamGeneralControlContextScope general_control_scope;
+    captured = OperatorRuntimeAccess::invoke(*instance.op, context);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (...) {
+    captured = make_unexpected(Error{ErrorCode::kFailure, "CUDA_GRAPH_CAPTURE_CALLBACK_FAILED"});
+  }
+#endif
+  const bool restored = selected_device.restore_after_callback();
+  if (!captured) {
+    return captured;
+  }
+  if (!restored) {
+    return make_unexpected(
+        Error{ErrorCode::kNotSupported, "RUNTIME_COMPUTE_CUDA_DEVICE_RESTORE_FAILED"});
+  }
+  return {};
 }
 
 [[nodiscard]] expected<void, Error> RunSessionState::retire_frozen_source(
@@ -313,10 +396,9 @@ void RunSessionState::clear_input_selection_scratch(ReadyRunState& state,
     RuntimeInputSelectionState::Transaction& transaction) noexcept {
   const InputSelection selection = transaction.selection();
   const auto selected = transaction.selected();
-  // freeze_next orders by reference time first, so an unfrozen candidate older than the witness
-  // that did freeze would contradict that ordering outright. Reading the coordinate here is what
-  // separates "the successor was left pending" from "the pending event is a later witness and
-  // the successor was never created at all".
+  // Record the conservative pending-coordinate bound for diagnostic context. An older pending
+  // EOS may be ineligible while its accepted data prefix retires, so this coordinate alone does
+  // not establish an ordering violation or prove that a particular successor was created.
   std::int64_t pending_oldest_reference_ns = 0;
   if (state.coordinator != nullptr) {
     const auto oldest = state.coordinator->oldest_pending_reference();
@@ -384,6 +466,20 @@ void RunSessionState::clear_input_selection_scratch(ReadyRunState& state,
     ReadyRunState& state, ReadyRunState::InputSelectorSlot& slot, TimePoint reference_time,
     TimePoint& semantic_reference, std::optional<TimePoint> future_reference_lower_bound) noexcept {
   slot.selection_reference_ns = reference_time.timestamp_ns;
+  if (!slot.connected) {
+    // permanent topology absence is already frozen. Expose the explicit
+    // degraded contract without opening a selector transaction or manufacturing payload work.
+    const InputSelection selection{InputState::kSafeDefault, SelectionReason::kNotConnected};
+    state.selection.input_selections.push_back(selection);
+    state.selection.channel_selections.push_back(RuntimeChannelActivationSelection{
+        .port = slot.input,
+        .selection = selection,
+        .samples = {},
+        .batch = false,
+        .destructive = false,
+    });
+    return {};
+  }
   auto transaction = slot.selector.begin(
       reference_time, slot.arrival_watermark, slot.producer_epoch, future_reference_lower_bound);
   if (!transaction) {
@@ -577,13 +673,14 @@ RunSessionState::prepare_nonpredicate_input_selections(ReadyRunState& state,
       }
       continue;
     }
-    auto appended = append_input_selection(state,
-                                           slot,
-                                           bracketed_transaction_index.has_value()
-                                               ? semantic_reference
-                                               : candidate.witness.reference_time,
-                                           semantic_reference,
-                                           future_reference_lower_bound);
+    auto appended = append_input_selection(
+        state,
+        slot,
+        aligned != state.aligned_selectors.end() || bracketed_transaction_index.has_value()
+            ? semantic_reference
+            : candidate.witness.reference_time,
+        semantic_reference,
+        future_reference_lower_bound);
     if (!appended) {
       if (appended.error().code == ErrorCode::kNotReady) {
         return SelectionPreparation::kNoFire;
@@ -694,7 +791,7 @@ RunSessionState::select_predicate_compute_inputs(void* opaque, TimePoint referen
 
 // Execute the exact callback transaction admitted by ClosedIslandActivationPlanRecord.
 //
-// This is deliberately narrower than dispatch_ready(): it accepts no predicate, deadline,
+// This is deliberately narrower than dispatch_ready_impl(): it accepts no predicate, deadline,
 // mutable Parameter, lifecycle, or Tensor state. Both the ordinary one-dispatch-per-callback
 // control and the two-callback composite call this function, so changing lane-task geometry
 // cannot silently change selection, Channel preparation, callback context, or retirement.
@@ -998,9 +1095,12 @@ void RunSessionState::run_closed_island_activation_transaction(
     return;
   }
 
+  if (!computed) {
+    append_compute_diagnostics(instance, invocation, computed.error(), result.callback_identity);
+  }
   result.callback_attempted = true;
   result.callback_completed = computed.has_value();
-  result.error = computed ? Error{ErrorCode::kSuccess} : computed.error();
+  result.error = computed ? Error{ErrorCode::kSuccess} : std::move(computed.error());
   result.direct_continuation_receipt = std::move(invocation.direct_continuation_receipt);
   result.direct_continuation_clock_failed = invocation.direct_continuation_clock_failed;
   const bool activation_retired =
@@ -1032,32 +1132,19 @@ void RunSessionState::run_closed_island_activation_transaction(
   if (!activation_retired) {
     append_diagnostic("RUNTIME_LIFECYCLE_CALLBACK_FAILED", instance.vertex);
     static_cast<void>(cancel_ready_sources(state));
-    result.error = Error{ErrorCode::kFailure, "RUNTIME_LIFECYCLE_CALLBACK_FAILED"};
+    if (computed) {
+      result.error = Error{ErrorCode::kFailure, "RUNTIME_LIFECYCLE_CALLBACK_FAILED"};
+    }
     return;
   }
   result.activation_retired = true;
   result.activation_cut_completed = computed.has_value();
   if (!computed) {
-    const RuntimeDiagnosticDetail detail{
-        .present = true,
-        .error = computed.error(),
-        .operator_id = instance.operator_id,
-        .source = frozen.witness.source,
-        .source_sequence = frozen.witness.source_sequence,
-        .tag = frozen.candidate.tag,
-        .tag_time = frozen.candidate.ready.tag_time,
-        .reference_time = frozen.witness.reference_time,
-        .state_generation = frozen.candidate.tag.generation,
-    };
-    append_diagnostic(
-        "RUNTIME_OPERATOR_CALLBACK_FAILED", instance.vertex, "operator_compute", &detail);
     static_cast<void>(cancel_ready_sources(state));
     return;
   }
   if (invocation.direct_continuation_error.code != ErrorCode::kSuccess) {
-    const RuntimeDiagnosticDetail detail{
-        .present = true,
-        .error = invocation.direct_continuation_error,
+    const RuntimeCallbackIdentity identity{
         .operator_id = instance.operator_id,
         .source = frozen.witness.source,
         .source_sequence = frozen.witness.source_sequence,
@@ -1066,12 +1153,13 @@ void RunSessionState::run_closed_island_activation_transaction(
         .reference_time = frozen.witness.reference_time,
         .state_generation = frozen.candidate.tag.generation,
     };
-    append_diagnostic(invocation.direct_continuation_clock_failed
-                          ? std::string_view{"RUNTIME_CLOCK_READ_FAILED"}
-                          : std::string_view{"RUNTIME_READINESS_BINDING_UNAVAILABLE"},
-                      instance.vertex,
-                      "direct_continuation",
-                      &detail);
+    append_callback_diagnostic(invocation.direct_continuation_clock_failed
+                                   ? std::string_view{"RUNTIME_CLOCK_READ_FAILED"}
+                                   : std::string_view{"RUNTIME_READINESS_BINDING_UNAVAILABLE"},
+                               instance.vertex,
+                               "direct_continuation",
+                               invocation.direct_continuation_error,
+                               identity);
     static_cast<void>(cancel_ready_sources(state));
     result.error = std::move(invocation.direct_continuation_error);
     return;
@@ -1258,10 +1346,12 @@ void RunSessionState::run_direct_composite_lane(
               successor_frozen.witness.source_sequence);
 }
 
+// Keep one scheduler source body. The cold owner-loop selection calls the specialization directly;
+// an ordinary dispatch batch neither constructs evidence records nor tests an observer pointer.
+template <bool Observed>
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] RunTermination RunSessionState::dispatch_ready(GraphExec& exec,
-                                                             ReadyRunState& state) noexcept {
+[[nodiscard]] RunTermination RunSessionState::dispatch_ready_impl(GraphExec& exec,
+                                                                  ReadyRunState& state) noexcept {
   while (state.dispatcher->active_count() != 0U) {
     if (stop_requested_.load(std::memory_order_acquire)) {
       state.dispatcher->cancel_all();
@@ -1290,7 +1380,7 @@ void RunSessionState::run_direct_composite_lane(
       }
     }
     if (!state.partition_owner_execution && !process_pending_restarts(exec, state)) {
-      append_diagnostic(exec.lifecycle_failure_token());
+      append_lifecycle_diagnostics(exec);
       static_cast<void>(cancel_ready_sources(state));
       return RunTermination::kFailed;
     }
@@ -1467,7 +1557,7 @@ void RunSessionState::run_direct_composite_lane(
       }
       if (!state.partition_owner_execution && lifecycle_control_->enabled() &&
           !process_pending_restarts(exec, state)) {
-        append_diagnostic(exec.lifecycle_failure_token(), instance.vertex);
+        append_lifecycle_diagnostics(exec);
         static_cast<void>(cancel_ready_sources(state));
         return RunTermination::kFailed;
       }
@@ -1478,6 +1568,11 @@ void RunSessionState::run_direct_composite_lane(
       }
       continue;
     }
+    FixtureActivationObservation<Observed> fixture_activation{
+        fixture_observation_.get(), [&]() noexcept {
+          return FixtureObservationRecord{
+              .owner = instance.vertex, .witness = frozen->witness, .tag = frozen->candidate.tag};
+        }};
     trace_phase(RuntimePhaseTracePoint::kCandidateSelected,
                 selected->receiver_index,
                 frozen->witness.source,
@@ -1532,6 +1627,7 @@ void RunSessionState::run_direct_composite_lane(
     clear_input_selection_scratch(state, *frozen, semantic_reference);
     const std::uint64_t activation_generation =
         state.activation_selections[selected->receiver_index].generation();
+    fixture_activation.generation(activation_generation);
     const bool channel_activation_required =
         state.channels != nullptr &&
         selected->receiver_index < state.channel_activation_owners.size() &&
@@ -1551,6 +1647,7 @@ void RunSessionState::run_direct_composite_lane(
                                     : SelectionPreparation::kFailed;
       }
     }
+    fixture_activation.select_inputs(state.selection.channel_selections);
     const std::size_t predicate_selector_transaction_count =
         state.selection.selector_transactions.size();
     const std::size_t predicate_channel_selection_count = state.selection.channel_selections.size();
@@ -1582,7 +1679,29 @@ void RunSessionState::run_direct_composite_lane(
         static_cast<void>(finish_input_selections(state, false));
         static_cast<void>(
             state.channels->retire_activation(instance.vertex, activation_generation, false));
-        append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", instance.vertex);
+        const std::string_view token =
+            registered_token_or(tensor_access.error().message, "RUNTIME_PORT_BINDING_UNAVAILABLE");
+        if (token == kCUDAGraphRuntimeIngressMismatch && plan_ != nullptr) {
+          const auto* region =
+              find_unique_cuda_graph_execution_region_by_member(*plan_, instance.vertex);
+          const CUDAGraphRuntimeRegionIdentity identity{
+              .graph = region != nullptr ? region->graph : GraphId{},
+              .region = region != nullptr ? region->region : RegionId{},
+              .fused_operator = instance.vertex,
+          };
+          append_diagnostic(
+              token,
+              instance.vertex,
+              "cuda_graph_ingress",
+              nullptr,
+              "captured fixed Tensor address and shape",
+              cuda_graph_region_failure_evidence(identity, tensor_access.error()),
+              ::holoscan::DiagnosticSeverity::kError,
+              identity.graph,
+              region != nullptr && region->ingress ? region->ingress->target_port : PortId{});
+        } else {
+          append_diagnostic(token, instance.vertex);
+        }
         static_cast<void>(cancel_ready_sources(state));
         return RunTermination::kFailed;
       }
@@ -1607,6 +1726,7 @@ void RunSessionState::run_direct_composite_lane(
         static_cast<void>(cancel_ready_sources(state));
         return RunTermination::kFailed;
       }
+      fixture_activation.finish(FixtureCandidateOutcome::kSuppressed);
       continue;
     }
     ActivationStatus predicate_status{ActivationReason::kNominal, OnViolation::kEmitWitness};
@@ -1682,11 +1802,9 @@ void RunSessionState::run_direct_composite_lane(
               .select = &select_predicate_compute_inputs,
           },
           state.predicate_receivers[selected->receiver_index]);
+      fixture_activation.select_inputs(state.selection.channel_selections);
       if (!decision) {
-        const RuntimeDiagnosticDetail detail{
-            .present = true,
-            .error = decision.error(),
-            .predicate_id = predicate_trigger != nullptr ? predicate_trigger->id : std::string{},
+        const RuntimeCallbackIdentity identity{
             .operator_id = instance.operator_id,
             .source = frozen->witness.source,
             .source_sequence = frozen->witness.source_sequence,
@@ -1696,8 +1814,14 @@ void RunSessionState::run_direct_composite_lane(
             .state_generation =
                 predicate_trigger != nullptr ? predicate_trigger->state_generation : 0U,
         };
-        append_diagnostic(
-            "RUNTIME_OPERATOR_CALLBACK_FAILED", instance.vertex, "predicate_runtime", &detail);
+        append_callback_diagnostic("RUNTIME_OPERATOR_CALLBACK_FAILED",
+                                   instance.vertex,
+                                   "predicate_runtime",
+                                   decision.error(),
+                                   identity,
+                                   predicate_trigger != nullptr
+                                       ? std::string_view{predicate_trigger->id}
+                                       : std::string_view{});
         static_cast<void>(finish_input_selections(state, false));
         if (channel_activation_prepared) {
           static_cast<void>(
@@ -1709,10 +1833,7 @@ void RunSessionState::run_direct_composite_lane(
         return RunTermination::kFailed;
       }
       if (decision->disposition == PredicateCandidateDisposition::kEvaluatorError) {
-        const RuntimeDiagnosticDetail detail{
-            .present = true,
-            .error = decision->evaluator_error,
-            .predicate_id = std::string(decision->predicate_id),
+        const RuntimeCallbackIdentity identity{
             .operator_id = decision->operator_id,
             .source = decision->source.source,
             .source_sequence = decision->source.source_sequence,
@@ -1721,8 +1842,12 @@ void RunSessionState::run_direct_composite_lane(
             .reference_time = decision->source.reference_time,
             .state_generation = decision->state_generation,
         };
-        append_diagnostic(
-            "RUNTIME_OPERATOR_CALLBACK_FAILED", instance.vertex, "predicate_evaluator", &detail);
+        append_callback_diagnostic("RUNTIME_OPERATOR_CALLBACK_FAILED",
+                                   instance.vertex,
+                                   "predicate_evaluator",
+                                   decision->evaluator_error,
+                                   identity,
+                                   decision->predicate_id);
         static_cast<void>(finish_input_selections(state, false));
         if (channel_activation_prepared) {
           static_cast<void>(
@@ -1758,6 +1883,7 @@ void RunSessionState::run_direct_composite_lane(
           static_cast<void>(cancel_ready_sources(state));
           return RunTermination::kFailed;
         }
+        fixture_activation.finish(FixtureCandidateOutcome::kSuppressed);
         continue;
       }
       if (channel_activation_required &&
@@ -1980,45 +2106,39 @@ void RunSessionState::run_direct_composite_lane(
         .invoke = state.compute_lane_invoke,
         .callback_identity = source_identity,
     };
+    // For the observed single-partition profile, this call completes before the Runtime owner
+    // resumes. The selected lane alone writes publication scratch while the owner waits; inline
+    // invocation writes it on the owner itself. Retirement below commits only after that join.
     const expected<void, Error> computed =
         state.uses_inline_invoke() ? invoke_inline_owner_task(lane_task)
                                    : state.lanes->dispatch(instance.execution_lane, lane_task);
+    fixture_activation.admitted(invocation.admission == ComputeAdmissionDisposition::kAdmitted);
     trace_phase(RuntimePhaseTracePoint::kComputeDispatchReturned,
                 selected->receiver_index,
                 source_identity.source,
                 source_identity.source_sequence);
     if (invocation.deadline_gate &&
         invocation.deadline_gate->disposition != DeadlineGateDisposition::kInvokeNominal) {
-      const RuntimeDiagnosticDetail detail{
+      const RuntimeDeadlineMissDiagnostic deadline_detail{
           .present = true,
-          .operator_id = instance.operator_id,
-          .source = frozen->witness.source,
-          .source_sequence = frozen->witness.source_sequence,
-          .tag = frozen->candidate.tag,
-          .tag_time = frozen->candidate.ready.tag_time,
+          .source_coordinate = deadline->deadline->source_coordinate,
+          .source_decision_time = frozen->witness.source_decision_time,
           .reference_time = frozen->witness.reference_time,
-          .state_generation = frozen->candidate.tag.generation,
-          .deadline_miss =
-              RuntimeDeadlineMissDiagnostic{
-                  .present = true,
-                  .source_coordinate = deadline->deadline->source_coordinate,
-                  .source_decision_time = frozen->witness.source_decision_time,
-                  .reference_time = frozen->witness.reference_time,
-                  .budget_ns = deadline_budget_ns,
-                  .latest_start = invocation.deadline_gate->latest_start,
-                  .dispatch_start = invocation.deadline_gate->dispatch_start,
-                  .checked_lateness_ns = invocation.deadline_gate->checked_lateness_ns,
-                  .action = deadline->deadline->action,
-                  .callback_count = deadline->deadline->callback_count_if_late,
-              },
+          .budget_ns = deadline_budget_ns,
+          .latest_start = invocation.deadline_gate->latest_start,
+          .dispatch_start = invocation.deadline_gate->dispatch_start,
+          .checked_lateness_ns = invocation.deadline_gate->checked_lateness_ns,
+          .action = deadline->deadline->action,
+          .callback_count = deadline->deadline->callback_count_if_late,
       };
-      append_diagnostic("DEADLINE_MISS",
-                        instance.vertex,
-                        "latest_start",
-                        &detail,
-                        {},
-                        {},
-                        ::holoscan::DiagnosticSeverity::kWarning);
+      append_callback_diagnostic("DEADLINE_MISS",
+                                 instance.vertex,
+                                 "latest_start",
+                                 Error{ErrorCode::kSuccess},
+                                 source_identity,
+                                 {},
+                                 &deadline_detail,
+                                 ::holoscan::DiagnosticSeverity::kWarning);
     }
     switch (invocation.admission) {
       case ComputeAdmissionDisposition::kDeadlineReadFailed:
@@ -2028,9 +2148,7 @@ void RunSessionState::run_direct_composite_lane(
         return RunTermination::kFailed;
       case ComputeAdmissionDisposition::kDeadlineEvaluationFailed: {
         static_cast<void>(abort_selection());
-        const RuntimeDiagnosticDetail detail{
-            .present = true,
-            .error = std::move(invocation.admission_error),
+        const RuntimeCallbackIdentity identity{
             .operator_id = instance.operator_id,
             .source = frozen->witness.source,
             .source_sequence = frozen->witness.source_sequence,
@@ -2039,8 +2157,11 @@ void RunSessionState::run_direct_composite_lane(
             .reference_time = frozen->witness.reference_time,
             .state_generation = frozen->candidate.tag.generation,
         };
-        append_diagnostic(
-            "RUNTIME_DEADLINE_EVALUATION_FAILED", instance.vertex, "latest_start", &detail);
+        append_callback_diagnostic("RUNTIME_DEADLINE_EVALUATION_FAILED",
+                                   instance.vertex,
+                                   "latest_start",
+                                   invocation.admission_error,
+                                   identity);
         static_cast<void>(cancel_ready_sources(state));
         return RunTermination::kFailed;
       }
@@ -2094,6 +2215,9 @@ void RunSessionState::run_direct_composite_lane(
       case ComputeAdmissionDisposition::kAdmitted:
         break;
     }
+    if (!computed) {
+      append_compute_diagnostics(instance, invocation, computed.error(), source_identity);
+    }
     const bool activation_retired =
         invocation.completion_index == kNoCompletionIndex &&
                 frozen->witness.kind != RuntimeEventKind::kInputEndOfStream &&
@@ -2121,19 +2245,6 @@ void RunSessionState::run_direct_composite_lane(
                                                      invocation.completion_index);
     invocation.callback_claim.release();
     if (!computed) {
-      const RuntimeDiagnosticDetail detail{
-          .present = true,
-          .error = computed.error(),
-          .operator_id = instance.operator_id,
-          .source = frozen->witness.source,
-          .source_sequence = frozen->witness.source_sequence,
-          .tag = frozen->candidate.tag,
-          .tag_time = frozen->candidate.ready.tag_time,
-          .reference_time = frozen->witness.reference_time,
-          .state_generation = frozen->candidate.tag.generation,
-      };
-      append_diagnostic(
-          "RUNTIME_OPERATOR_CALLBACK_FAILED", instance.vertex, "operator_compute", &detail);
       static_cast<void>(cancel_ready_sources(state));
       return RunTermination::kFailed;
     }
@@ -2142,10 +2253,9 @@ void RunSessionState::run_direct_composite_lane(
       static_cast<void>(cancel_ready_sources(state));
       return RunTermination::kFailed;
     }
+    fixture_activation.finish(FixtureCandidateOutcome::kRetired);
     if (invocation.direct_continuation_error.code != ErrorCode::kSuccess) {
-      const RuntimeDiagnosticDetail detail{
-          .present = true,
-          .error = std::move(invocation.direct_continuation_error),
+      const RuntimeCallbackIdentity identity{
           .operator_id = instance.operator_id,
           .source = frozen->witness.source,
           .source_sequence = frozen->witness.source_sequence,
@@ -2154,18 +2264,19 @@ void RunSessionState::run_direct_composite_lane(
           .reference_time = frozen->witness.reference_time,
           .state_generation = frozen->candidate.tag.generation,
       };
-      append_diagnostic(invocation.direct_continuation_clock_failed
-                            ? std::string_view{"RUNTIME_CLOCK_READ_FAILED"}
-                            : std::string_view{"RUNTIME_READINESS_BINDING_UNAVAILABLE"},
-                        instance.vertex,
-                        "direct_continuation",
-                        &detail);
+      append_callback_diagnostic(invocation.direct_continuation_clock_failed
+                                     ? std::string_view{"RUNTIME_CLOCK_READ_FAILED"}
+                                     : std::string_view{"RUNTIME_READINESS_BINDING_UNAVAILABLE"},
+                                 instance.vertex,
+                                 "direct_continuation",
+                                 invocation.direct_continuation_error,
+                                 identity);
       static_cast<void>(cancel_ready_sources(state));
       return RunTermination::kFailed;
     }
     if (!state.partition_owner_execution && lifecycle_control_->enabled() &&
         !process_pending_restarts(exec, state)) {
-      append_diagnostic(exec.lifecycle_failure_token(), instance.vertex);
+      append_lifecycle_diagnostics(exec);
       static_cast<void>(cancel_ready_sources(state));
       return RunTermination::kFailed;
     }
@@ -2287,9 +2398,7 @@ RunSessionState::select_compute_lane_with_completion_invoke(
   if (state.channels != nullptr) {
     auto cut = state.channels->flush_process_local_activation_cut();
     if (!cut) {
-      const RuntimeDiagnosticDetail detail{
-          .present = true,
-          .error = cut.error(),
+      const RuntimeCallbackIdentity identity{
           .operator_id = instance.operator_id,
           .source = frozen.witness.source,
           .source_sequence = frozen.witness.source_sequence,
@@ -2298,10 +2407,11 @@ RunSessionState::select_compute_lane_with_completion_invoke(
           .reference_time = frozen.witness.reference_time,
           .state_generation = selection.tag.generation,
       };
-      append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE",
-                        instance.vertex,
-                        "post_compute_channel_cut",
-                        &detail);
+      append_callback_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE",
+                                 instance.vertex,
+                                 "post_compute_channel_cut",
+                                 cut.error(),
+                                 identity);
       return false;
     }
   }
@@ -2376,9 +2486,7 @@ RunSessionState::select_compute_lane_with_completion_invoke(
   if (state.channels != nullptr) {
     auto cut = state.channels->flush_process_local_activation_cut();
     if (!cut) {
-      const RuntimeDiagnosticDetail detail{
-          .present = true,
-          .error = cut.error(),
+      const RuntimeCallbackIdentity identity{
           .operator_id = instance.operator_id,
           .source = frozen.witness.source,
           .source_sequence = frozen.witness.source_sequence,
@@ -2389,10 +2497,11 @@ RunSessionState::select_compute_lane_with_completion_invoke(
           .reference_time = frozen.witness.reference_time,
           .state_generation = selection.tag.generation,
       };
-      append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE",
-                        instance.vertex,
-                        "post_compute_channel_cut",
-                        &detail);
+      append_callback_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE",
+                                 instance.vertex,
+                                 "post_compute_channel_cut",
+                                 cut.error(),
+                                 identity);
       return false;
     }
   }
@@ -2434,7 +2543,7 @@ RunSessionState::select_compute_lane_with_completion_invoke(
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
   for (auto& slot : state.input_selectors) {
-    if (slot.owner != owner) {
+    if (slot.owner != owner || !slot.connected) {
       continue;
     }
     if (!slot.end_of_stream_received) {
@@ -2459,7 +2568,7 @@ RunSessionState::select_compute_lane_with_completion_invoke(
     }
   }
   for (auto& slot : state.input_selectors) {
-    if (slot.owner != owner) {
+    if (slot.owner != owner || !slot.connected) {
       continue;
     }
     if (state.channels == nullptr) {
@@ -2474,5 +2583,11 @@ RunSessionState::select_compute_lane_with_completion_invoke(
   }
   return {};
 }
+
+// Definitions live in this translation unit; owner loops call the selected specialization directly.
+template RunTermination RunSessionState::dispatch_ready_impl<false>(GraphExec&,
+                                                                    ReadyRunState&) noexcept;
+template RunTermination RunSessionState::dispatch_ready_impl<true>(GraphExec&,
+                                                                   ReadyRunState&) noexcept;
 
 }  // namespace holoscan::detail

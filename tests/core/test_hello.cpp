@@ -8,7 +8,7 @@
 #include <iostream>
 #include <sstream>
 
-#include "holoscan/holoscan.hpp"
+#include <holoscan/holoscan.hpp>
 
 namespace {
 

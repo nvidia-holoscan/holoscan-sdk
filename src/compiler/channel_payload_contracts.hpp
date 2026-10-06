@@ -14,6 +14,12 @@
 
 namespace holoscan::detail {
 
+/// Return whether a schema identity requires bounded serialized storage on every port.
+[[nodiscard]] inline bool schema_requires_serialized_payload_capacity(
+    const PayloadIdentityRecord& identity) noexcept {
+  return identity.kind == PayloadIdentityKind::kSchema && !is_py_object_payload_identity(identity);
+}
+
 /// Return the fixed native object width for a supported scalar payload identity.
 [[nodiscard]] inline std::optional<std::uint64_t> scalar_payload_size_bytes(
     const PayloadIdentityRecord& identity) noexcept {
@@ -40,7 +46,15 @@ namespace holoscan::detail {
     case ScalarIdentityKind::kFloat64:
       return 8U;
     case ScalarIdentityKind::kLocalEnum:
-      return std::nullopt;
+      switch (identity.scalar->native_object_size) {
+        case 1U:
+        case 2U:
+        case 4U:
+        case 8U:
+          return identity.scalar->native_object_size;
+        default:
+          return std::nullopt;
+      }
   }
   return std::nullopt;
 }
@@ -49,6 +63,11 @@ namespace holoscan::detail {
 [[nodiscard]] inline std::optional<std::uint64_t> channel_payload_size_bytes(
     const PayloadIdentityRecord& identity, std::uint64_t serialized_payload_capacity_bytes,
     bool process_local_schema_envelope) noexcept {
+  if (is_py_object_payload_identity(identity)) {
+    return process_local_schema_envelope && serialized_payload_capacity_bytes == 0U
+               ? std::optional<std::uint64_t>{0U}
+               : std::nullopt;
+  }
   if (identity.kind == PayloadIdentityKind::kSchema && identity.schema &&
       serialized_payload_capacity_bytes != 0U) {
     if (identity.payload_kind == PayloadKind::kDescriptorBacked) {

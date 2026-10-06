@@ -11,6 +11,7 @@
 
 #include "infer_manager.hpp"
 
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -22,6 +23,7 @@ namespace inference {
 // to the global g_managers map.
 namespace {
 std::mutex g_managers_mutex;
+std::map<std::string, std::shared_ptr<ManagerInfer>> g_managers;
 }  // namespace
 
 InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs,
@@ -56,12 +58,12 @@ InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inf
   }
 
   try {
-    g_manager = g_managers.at(unique_id_);
+    const auto& manager = g_managers.at(unique_id_);
 
     if (inference_specs->gpu_resident_inference_) {
-      status = g_manager->execute_gr_inference(inference_specs, cuda_stream);
+      status = manager->execute_gr_inference(inference_specs, cuda_stream);
     } else {
-      status = g_manager->execute_inference(inference_specs, cuda_stream);
+      status = manager->execute_inference(inference_specs, cuda_stream);
     }
   } catch (const std::exception& e) {
     status.set_code(holoinfer_code::H_ERROR);
@@ -276,15 +278,15 @@ InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& 
     node.key() = std::move(unique_id_name);
     g_managers.insert(std::move(node));
 
-    g_manager = g_managers.at(unique_id_);
-    status = g_manager->set_inference_params(inference_specs);
+    const auto& manager = g_managers.at(unique_id_);
+    status = manager->set_inference_params(inference_specs);
 
     // Cache the resolved manager pointer under the same lock that created the
     // binding, so subsequent execute_inference() / get_output_dimensions() calls can use the
     // cached pointer with no further synchronization. See the InferContext header for
     // thread-safety preconditions.
     if (status.get_code() == holoinfer_code::H_SUCCESS) {
-      cached_manager_ = g_manager;
+      cached_manager_ = manager;
     }
   } catch (const std::exception& e) {
     status.set_code(holoinfer_code::H_ERROR);
@@ -312,14 +314,10 @@ InferContext::InferContext() {
 
 InferContext::~InferContext() {
   std::lock_guard<std::mutex> lock(g_managers_mutex);
-  // Clear the cached pointer BEFORE we erase from g_managers, so that any other
-  // thread that might still hold a reference to this InferContext sees the cache invalidate
-  // first and falls back to the slow path (which acquires the lock and observes the missing
-  // entry).
+  // Release both context and registry ownership. Callers must stop using this
+  // context before destroying it; resetting the cache does not synchronize readers.
   cached_manager_.reset();
   if (g_managers.find(unique_id_) != g_managers.end()) {
-    g_manager = g_managers.at(unique_id_);
-    g_manager.reset();
     g_managers.erase(unique_id_);
   }
 }
@@ -334,8 +332,7 @@ DimType InferContext::get_output_dimensions() const {
     return cached_manager_->get_output_dimensions();
   }
   std::lock_guard<std::mutex> lock(g_managers_mutex);
-  g_manager = g_managers.at(unique_id_);
-  return g_manager->get_output_dimensions();
+  return g_managers.at(unique_id_)->get_output_dimensions();
 }
 
 DimType InferContext::get_input_dimensions() const {
@@ -343,8 +340,7 @@ DimType InferContext::get_input_dimensions() const {
     return cached_manager_->get_input_dimensions();
   }
   std::lock_guard<std::mutex> lock(g_managers_mutex);
-  g_manager = g_managers.at(unique_id_);
-  return g_manager->get_input_dimensions();
+  return g_managers.at(unique_id_)->get_input_dimensions();
 }
 
 }  // namespace inference

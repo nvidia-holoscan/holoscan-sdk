@@ -57,6 +57,118 @@ const ExecutionPartitionRecord* find_execution_partition_by_member(const Executi
   return found == plan.execution_partitions.end() ? nullptr : &*found;
 }
 
+const ExecutionPartitionRecord* find_unique_execution_partition_by_member(
+    const ExecutionPlanState& plan, VertexId member) noexcept {
+  const ExecutionPartitionRecord* result{};
+  for (const auto& partition : plan.execution_partitions) {
+    const bool contains_member = std::binary_search(
+        partition.members.begin(), partition.members.end(), member, [](VertexId lhs, VertexId rhs) {
+          return lhs.value < rhs.value;
+        });
+    if (!contains_member) {
+      continue;
+    }
+    if (result != nullptr) {
+      return nullptr;
+    }
+    result = &partition;
+  }
+  return result;
+}
+
+const CUDAGraphCapturePlanRecord* find_unique_cuda_graph_capture_plan_by_region(
+    const ExecutionPlanState& plan, GraphId graph, RegionId region) noexcept {
+  const CUDAGraphCapturePlanRecord* result{};
+  for (const auto& candidate : plan.cuda_graph_capture_plans) {
+    if (candidate.graph != graph || candidate.region != region) {
+      continue;
+    }
+    if (result != nullptr) {
+      return nullptr;
+    }
+    result = &candidate;
+  }
+  return result;
+}
+
+bool cuda_graph_uses_fixed_output_address(const ExecutionPlanState& plan,
+                                          const ProcessGroupId process_group,
+                                          const PortId output) noexcept {
+  return std::ranges::any_of(plan.cuda_graph_execution_regions, [&](const auto& region) {
+    return region.process_group == process_group &&
+           std::ranges::any_of(region.buffers,
+                               [&](const auto& buffer) { return buffer.source_port == output; });
+  });
+}
+
+DeviceId cuda_graph_fixed_output_device(const ExecutionPlanState& plan,
+                                        const ProcessGroupId process_group,
+                                        const PortId output) noexcept {
+  DeviceId result;
+  for (const auto& region : plan.cuda_graph_execution_regions) {
+    if (region.process_group != process_group) {
+      continue;
+    }
+    const bool uses_output = std::ranges::any_of(
+        region.buffers, [&](const auto& buffer) { return buffer.source_port == output; });
+    if (!uses_output) {
+      continue;
+    }
+    if (!region.device.valid() || (result.valid() && result != region.device)) {
+      return {};
+    }
+    result = region.device;
+  }
+  return result;
+}
+
+const CUDAGraphExecutionRegionPlanRecord* find_unique_cuda_graph_execution_region_by_member(
+    const ExecutionPlanState& plan, VertexId member) noexcept {
+  const CUDAGraphExecutionRegionPlanRecord* result{};
+  for (const auto& candidate : plan.cuda_graph_execution_regions) {
+    const auto* capture_plan =
+        find_unique_cuda_graph_capture_plan_by_region(plan, candidate.graph, candidate.region);
+    if (capture_plan == nullptr) {
+      continue;
+    }
+    const bool contains_member =
+        std::any_of(capture_plan->members.begin(),
+                    capture_plan->members.end(),
+                    [&](const auto& capture_member) { return capture_member.vertex == member; });
+    if (!contains_member) {
+      continue;
+    }
+    if (result != nullptr) {
+      return nullptr;
+    }
+    result = &candidate;
+  }
+  return result;
+}
+
+bool is_cuda_graph_internal_execution_edge(const ExecutionPlanState& plan, EdgeId edge) noexcept {
+  bool found{};
+  for (const auto& execution_region : plan.cuda_graph_execution_regions) {
+    const auto* capture_plan = find_unique_cuda_graph_capture_plan_by_region(
+        plan, execution_region.graph, execution_region.region);
+    if (capture_plan == nullptr) {
+      continue;
+    }
+    const bool is_internal =
+        std::any_of(capture_plan->internal_edges.begin(),
+                    capture_plan->internal_edges.end(),
+                    [&](const auto& candidate) { return candidate.edge == edge; });
+    if (!is_internal) {
+      continue;
+    }
+    if (found) {
+      return false;
+    }
+    found = true;
+  }
+  return found;
+}
+
 const ExecutionPartitionRecord* find_execution_partition_by_id(const ExecutionPlanState& plan,
                                                                ExecutionPartitionId id) noexcept {
   if (!id || id.value > plan.execution_partitions.size()) {
@@ -73,6 +185,21 @@ const VertexProcessPlacementPlanRecord* find_vertex_process_placement_by_vertex(
                    plan.vertex_process_placements.end(),
                    [vertex](const auto& placement) { return placement.vertex == vertex; });
   return found == plan.vertex_process_placements.end() ? nullptr : &*found;
+}
+
+const VertexProcessPlacementPlanRecord* find_unique_vertex_process_placement_by_vertex(
+    const ExecutionPlanState& plan, VertexId vertex) noexcept {
+  const VertexProcessPlacementPlanRecord* result{};
+  for (const auto& placement : plan.vertex_process_placements) {
+    if (placement.vertex != vertex) {
+      continue;
+    }
+    if (result != nullptr) {
+      return nullptr;
+    }
+    result = &placement;
+  }
+  return result;
 }
 
 const VertexRecord* find_vertex_by_id(const ExecutionPlanState& plan, VertexId id) noexcept {

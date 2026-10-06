@@ -17,7 +17,7 @@
 // --benchmark runs every available renderer back to back over an identical
 // per-frame text workload (imgui, monospace triangles, and monospace fill
 // rect when the extension exists) and prints a timing breakdown per renderer
-// (mean/std/p95/p99/max), measured like examples/rhi/cuda_interop_benchmark: GPU
+// (mean/std/p95/p99/max), measured like examples/core/cuda_interop_benchmark: GPU
 // render spans via timestamp queries, upload spans via CUDA events on the
 // shared stream, text build cost and frame-to-frame period on the host clock.
 
@@ -40,7 +40,7 @@
 
 #include <cuda.h>
 
-#include <holoviz/rhi.hpp>
+#include <holoviz/holoviz.hpp>
 #include <holoviz/text.hpp>
 
 #include "cuda_event_ring.hpp"
@@ -62,7 +62,6 @@
     }                                                                    \
   }
 
-namespace rhi = holoviz::rhi;
 namespace text = holoviz::text;
 
 namespace {
@@ -119,7 +118,8 @@ struct BenchmarkResult {
 /// The identical per-frame workload both renderers draw: an FPS-style header,
 /// a centered title, and a HUD block of lines. Every line embeds the frame
 /// index so the text differs each frame and nothing can be cached.
-void add_benchmark_text(text::TextRenderer& renderer, rhi::Extent2D extent, uint64_t frame_index) {
+void add_benchmark_text(text::TextRenderer& renderer, holoviz::Extent2D extent,
+                        uint64_t frame_index) {
   char line[96];
   std::snprintf(line, sizeof(line), "frame %09llu", static_cast<unsigned long long>(frame_index));
   CHECK_ERROR(renderer.add_text({.position = {20.0F, 20.0F}, .size_px = 20.0F}, line));
@@ -144,14 +144,14 @@ void add_benchmark_text(text::TextRenderer& renderer, rhi::Extent2D extent, uint
 }
 
 /// Run one renderer through warmup + a timed measurement window, instrumented
-/// like examples/rhi/cuda_interop_benchmark.
+/// like examples/core/cuda_interop_benchmark.
 BenchmarkResult run_benchmark_pass(
     const std::string& label,
     const std::function<holoviz::expected<text::TextRenderer>()>& create_renderer,
-    rhi::Window& window, rhi::Device& device, rhi::Swapchain& swapchain,
-    rhi::RenderPass& render_pass, rhi::QueryPool& query_pool,
-    std::vector<rhi::CommandList>& command_lists, std::vector<rhi::SubmitSyncToken>& sync_tokens,
-    CUstream cuda_stream) {
+    holoviz::Window& window, holoviz::Device& device, holoviz::Swapchain& swapchain,
+    holoviz::RenderPass& render_pass, holoviz::QueryPool& query_pool,
+    std::vector<holoviz::CommandList>& command_lists,
+    std::vector<holoviz::SubmitSyncToken>& sync_tokens, CUstream cuda_stream) {
   auto renderer_result = create_renderer();
   if (!renderer_result) {
     throw std::runtime_error("Error: " + renderer_result.error().message);
@@ -173,9 +173,10 @@ BenchmarkResult run_benchmark_pass(
   holoviz::examples::MeasuredQueryTracker query_tracker(swapchain_image_count);
 
   // Renderer-slot reuse tokens, one per buffer slot (the renderer's frames_in_flight, NOT per
-  // swapchain image), keyed by the frame counter — see ImGuiBackend::begin_frame.
+  // swapchain image), keyed by the frame counter — see imgui::Renderer::begin_frame.
   const uint32_t renderer_frames_in_flight = swapchain_image_count + 1;
-  std::vector<rhi::SubmitSyncToken> slot_tokens(renderer_frames_in_flight, rhi::SubmitSyncToken{});
+  std::vector<holoviz::SubmitSyncToken> slot_tokens(renderer_frames_in_flight,
+                                                    holoviz::SubmitSyncToken{});
 
   std::vector<double> cpu_build_ms;
   std::vector<double> cuda_upload_ms;
@@ -186,14 +187,14 @@ BenchmarkResult run_benchmark_pass(
   auto last_frame_end = std::chrono::steady_clock::now();
 
   const auto render_frame = [&]() {
-    rhi::poll_window_events();
+    holoviz::poll_window_events();
     if (window.close_requested().value()) {
       throw std::runtime_error("window closed during benchmark");
     }
 
     auto acquired = swapchain.acquire(std::chrono::milliseconds(100)).value();
     auto& command_list = command_lists[acquired.image_index];
-    const rhi::Extent2D extent = swapchain.extent().value();
+    const holoviz::Extent2D extent = swapchain.extent().value();
 
     // reset() blocks until this slot's previous submit completed, which is
     // also the submit that resolved its query range — safe to read now.
@@ -222,7 +223,7 @@ BenchmarkResult run_benchmark_pass(
     CHECK_ERROR(renderer.begin_frame(extent, renderer_slot, slot_tokens[renderer_slot]));
     add_benchmark_text(renderer, extent, frame_index);
     upload_ring.record_start(frame_index, cuda_stream);
-    const rhi::ExternalSyncToken text_token = renderer.end_frame().value();
+    const holoviz::ExternalSyncToken text_token = renderer.end_frame().value();
     upload_ring.record_end(frame_index, cuda_stream);
     if (collecting) {
       cpu_build_ms.push_back(
@@ -233,20 +234,20 @@ BenchmarkResult run_benchmark_pass(
     auto current_image = swapchain.image(acquired.image_index).value();
     CHECK_ERROR(render_pass.set_render_image(current_image, 0, {0.05F, 0.07F, 0.12F, 1.0F}));
 
-    const rhi::Rect2D render_area{0, 0, extent.width, extent.height};
+    const holoviz::Rect2D render_area{0, 0, extent.width, extent.height};
     CHECK_ERROR(command_list.begin());
     CHECK_ERROR(command_list.reset_queries(query_pool, 2 * acquired.image_index, 2));
     CHECK_ERROR(command_list.write_timestamp(
-        query_pool, 2 * acquired.image_index, rhi::TimestampLocation::kStart));
+        query_pool, 2 * acquired.image_index, holoviz::TimestampLocation::kStart));
     CHECK_ERROR(command_list.begin_render(render_pass, render_area));
     CHECK_ERROR(renderer.record(command_list, extent));
     CHECK_ERROR(command_list.end_render());
     CHECK_ERROR(command_list.write_timestamp(
-        query_pool, 2 * acquired.image_index + 1, rhi::TimestampLocation::kEnd));
+        query_pool, 2 * acquired.image_index + 1, holoviz::TimestampLocation::kEnd));
     CHECK_ERROR(command_list.resolve_queries(query_pool, 2 * acquired.image_index, 2));
     CHECK_ERROR(command_list.end());
 
-    rhi::SubmitDesc submit_desc{
+    holoviz::SubmitDesc submit_desc{
         .wait_submit_sync_tokens = {&sync_tokens[acquired.image_index], 1},
         .wait_external_sync_tokens = {&text_token, 1},
         .command_lists = {&command_list, 1},
@@ -455,10 +456,10 @@ int main(int argc, char** argv) {
                             : fillrect  ? "Holoviz Text Demo (monospace fill-rect)"
                             : monospace ? "Holoviz Text Demo (monospace)"
                                         : "Holoviz Text Demo";
-  auto window = rhi::create_window({.title = title, .size = {800, 600}}).value();
+  auto window = holoviz::create_window({.title = title, .size = {800, 600}}).value();
   auto surface = window.create_surface().value();
   auto device =
-      rhi::create_device_for_surface({.cuda_device = cu_dev, .cuda_context = cu_ctx}, surface)
+      holoviz::create_device_for_surface({.cuda_device = cu_dev, .cuda_context = cu_ctx}, surface)
           .value();
 
   // The benchmark needs the fastest present mode the surface supports; a
@@ -471,7 +472,7 @@ int main(int argc, char** argv) {
     // differences, hence the note.
     auto latest_ready = device.create_swapchain({
         .surface = surface,
-        .present_mode = rhi::PresentMode::kFIFOLatestReady,
+        .present_mode = holoviz::PresentMode::kFIFOLatestReady,
         .image_count = 3,
     });
     if (latest_ready) {
@@ -480,7 +481,7 @@ int main(int argc, char** argv) {
     }
     auto mailbox = device.create_swapchain({
         .surface = surface,
-        .present_mode = rhi::PresentMode::kMailbox,
+        .present_mode = holoviz::PresentMode::kMailbox,
         .image_count = 3,
     });
     if (mailbox) {
@@ -492,29 +493,31 @@ int main(int argc, char** argv) {
     return device
         .create_swapchain({
             .surface = surface,
-            .present_mode = rhi::PresentMode::kFIFO,
+            .present_mode = holoviz::PresentMode::kFIFO,
             .image_count = 3,
         })
         .value();
   }();
   const uint32_t swapchain_image_count = swapchain.image_count().value();
 
-  rhi::RenderPassDesc render_pass_desc{.render_targets = {{
-                                           .format = swapchain.format().value(),
-                                       }}};
+  holoviz::RenderPassDesc render_pass_desc{.render_targets = {{
+                                               .format = swapchain.format().value(),
+                                           }}};
   auto render_pass = device.create_render_pass(render_pass_desc).value();
 
-  std::vector<rhi::CommandList> command_lists;
+  std::vector<holoviz::CommandList> command_lists;
   for (uint32_t i = 0; i < swapchain_image_count; ++i) {
     command_lists.push_back(
-        device.create_command_list({.type = rhi::CommandListType::kTransient}).value());
+        device.create_command_list({.type = holoviz::CommandListType::kTransient}).value());
   }
-  std::vector<rhi::SubmitSyncToken> sync_tokens(swapchain_image_count, rhi::SubmitSyncToken{});
+  std::vector<holoviz::SubmitSyncToken> sync_tokens(swapchain_image_count,
+                                                    holoviz::SubmitSyncToken{});
   // Renderer-slot reuse tokens, one per buffer slot (frames_in_flight, NOT per swapchain
-  // image), keyed by the frame counter — see ImGuiBackend::begin_frame. The benchmark path
+  // image), keyed by the frame counter — see imgui::Renderer::begin_frame. The benchmark path
   // keeps its own per-pass array inside run_benchmark_pass.
   const uint32_t renderer_frames_in_flight = swapchain_image_count + 1;
-  std::vector<rhi::SubmitSyncToken> slot_tokens(renderer_frames_in_flight, rhi::SubmitSyncToken{});
+  std::vector<holoviz::SubmitSyncToken> slot_tokens(renderer_frames_in_flight,
+                                                    holoviz::SubmitSyncToken{});
   uint32_t frame_counter = 0;
 
   if (benchmark) {
@@ -593,7 +596,7 @@ int main(int argc, char** argv) {
   auto last_frame_time = std::chrono::steady_clock::now();
 
   while (!window.close_requested().value()) {
-    rhi::poll_window_events();
+    holoviz::poll_window_events();
 
     const auto now = std::chrono::steady_clock::now();
     const float delta_seconds = std::chrono::duration<float>(now - last_frame_time).count();
@@ -604,7 +607,7 @@ int main(int argc, char** argv) {
 
     auto acquired = swapchain.acquire(std::chrono::milliseconds(100)).value();
     auto& command_list = command_lists[acquired.image_index];
-    const rhi::Extent2D extent = swapchain.extent().value();
+    const holoviz::Extent2D extent = swapchain.extent().value();
 
     // Rebuild the frame's text and start the async CUDA upload.
     const uint32_t renderer_slot = frame_counter % renderer_frames_in_flight;
@@ -621,20 +624,20 @@ int main(int argc, char** argv) {
             .anchor = text::Anchor::kMiddleCenter,
         },
         "Hello, Holoviz!"));
-    const rhi::ExternalSyncToken text_token = text_renderer.end_frame().value();
+    const holoviz::ExternalSyncToken text_token = text_renderer.end_frame().value();
 
     CHECK_ERROR(command_list.reset(std::chrono::milliseconds(100)));
     auto current_image = swapchain.image(acquired.image_index).value();
     CHECK_ERROR(render_pass.set_render_image(current_image, 0, {0.05F, 0.07F, 0.12F, 1.0F}));
 
-    const rhi::Rect2D render_area{0, 0, extent.width, extent.height};
+    const holoviz::Rect2D render_area{0, 0, extent.width, extent.height};
     CHECK_ERROR(command_list.begin());
     CHECK_ERROR(command_list.begin_render(render_pass, render_area));
     CHECK_ERROR(text_renderer.record(command_list, extent));
     CHECK_ERROR(command_list.end_render());
     CHECK_ERROR(command_list.end());
 
-    rhi::SubmitDesc submit_desc{
+    holoviz::SubmitDesc submit_desc{
         .wait_submit_sync_tokens = {&sync_tokens[acquired.image_index], 1},
         .wait_external_sync_tokens = {&text_token, 1},
         .command_lists = {&command_list, 1},

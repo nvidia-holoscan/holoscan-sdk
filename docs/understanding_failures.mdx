@@ -90,10 +90,10 @@ from untrusted descriptions and must survive a bad one.
 `holoscan::compile()` does not throw on admission failure. It returns a fully
 queryable **rejected** `ExecutionPlan`: `plan.ok()` is `false`, and
 `plan.diagnostics()` tells you why — as structured records, in canonical order,
-suitable for tooling and CI diffing. The only compile-surface throw is
-`plan.require_no_errors()` (and attempting to run a rejected plan), which
-raises `holoscan::CompileError` for callers that cannot proceed without an
-admitted plan.
+suitable for tooling and CI diffing. `plan.require_no_errors()` and attempting to run a rejected plan raise
+`holoscan::CompileError`. Exceptions from earlier composition, setup, or
+resource acquisition can propagate before a result exists; handle those at
+the application boundary while retaining their original type and explanation.
 
 ```cpp
 #include <holoscan/core/compile.hpp>
@@ -101,13 +101,9 @@ admitted plan.
 #include <holoscan/core/execution_plan.hpp>
 
 const holoscan::ExecutionPlan plan = holoscan::compile(graph);
-
+holoscan::log_diagnostics(plan);  // Includes warnings even when plan.ok() is true.
 if (!plan.ok()) {
-  for (const holoscan::Diagnostic& d : plan.diagnostics()) {
-    if (d.severity != holoscan::DiagnosticSeverity::kError) continue;  // skip warnings
-    log_error(holoscan::format_diagnostic(d, plan.graph()));
-  }
-  return;  // never run a rejected plan
+  return;  // Never run a rejected plan.
 }
 ```
 
@@ -138,6 +134,13 @@ composing. For the full compile workflow, see
 
 ## Style 3: the run fails closed
 
+A fatal invariant violation, such as calling a session wait from its own Runtime
+callback, terminates the process instead of producing a recoverable result.
+Its best-effort ERROR message bypasses the automatic-report opt-out, including
+API `false` and launch-time `OFF`, but respects normal logger filtering.
+Formatting or sink failure cannot prevent termination. There is no retained
+record or post-abort `log_diagnostics()` replay for these paths.
+
 `holoscan::run()` returns `0` for natural `kCompleted` or explicit
 `kRequestedCompleted`; a compiler-accepted empty graph is one natural
 zero-work example. A recurring nonempty graph does not complete naturally.
@@ -152,30 +155,103 @@ The only exceptions at this boundary are `holoscan::CompileError` for a
 default-constructed/no-state or rejected plan wrapper (check `plan.ok()` first)
 and `std::system_error` if the platform join fails. A plan produced by compiling
 an empty graph is distinct: when admitted, it completes as a zero-work run.
-Everything else — startup exhaustion, missing bindings, execution failure —
-arrives through the terminal state plus diagnostics:
+Ordinary startup exhaustion, missing bindings, and execution failures
+arrive through the terminal state plus diagnostics:
 
 ```cpp
 #include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/execution_plan.hpp>
 #include <holoscan/core/run_session.hpp>
 
+// Choose caller-owned presentation before launching.
+holoscan::set_automatic_diagnostic_logging_enabled(false);
 holoscan::RunSession session = holoscan::run_async(plan);
 session.wait();
-
-if (session.termination() == holoscan::RunTermination::kFailed) {
-  for (const holoscan::Diagnostic& diagnostic : session.diagnostics()) {
-    log_error(holoscan::format_diagnostic(diagnostic, plan.graph()));
-  }
-}
+holoscan::log_diagnostics(session.diagnostics(), plan.graph());
 ```
 
-`format_diagnostic()` resolves a nonzero source vertex against the immutable
-compiled graph and includes the diagnostic's populated public fields. Passing
-the compiled graph view prevents mixing its canonical IDs with source graph
-IDs. Use the rendered text for people, not program decisions: branch, grep, and
-assert on the structured token and fields rather than parsing the rendered
-line.
+Automatic reports default to enabled and need no helper call. The example
+opts out so its explicit terminal report does not duplicate the SDK summary;
+`HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING=ON` overrides that API preference.
+`run_async()` returning does not mean startup is complete. The helper reports
+only the supplied prefix, without waiting, subscribing, draining, or replaying.
+Calling it after `wait()` gives it the complete retained terminal records.
+Inspection and repeated waits do not print; repeated helper calls may print again.
+
+`format_diagnostic()` resolves primary and related endpoint identities against
+the immutable compiled graph and includes the diagnostic's populated public
+fields. Pass the compiled graph from the diagnostic's plan: its canonical IDs
+are distinct from source graph IDs. With an empty compiled graph view, numeric
+identities and owned names remain available. Related identities use
+`related_graph_generation`, `related_graph`, `related_vertex_id`, and
+`related_port_id`; related names prefer owned detail over graph lookup.
+
+A primary port name copied into the detail appears once when it matches the
+compiled name. If the two nonempty names differ, the output preserves the
+compiled `port_name` and the owned `captured_port_name`. Use the rendered text
+for people, not program decisions: branch, grep, and assert on the structured
+token and fields rather than parsing the rendered line.
+
+### Original causes and operator locations
+
+Callback failures include optional owning `Diagnostic::detail` evidence: the
+qualified operator path, operation, lifecycle stage and phase, original error
+code/message, and available nested causes. The normal failed-session ERROR
+report renders the same evidence; DEBUG logging is not required. Names and
+messages survive operator cleanup and destruction of the source graph.
+
+For example, a `start()` exception explaining an unsupported image format is
+reported against the responsible operator's `kStart` stage, rather than only a
+numeric lifecycle node. Tensor connection errors identify both ports and the
+incompatible fields with provided and required values. Core preserves the
+module's explanation; it does not infer image-format semantics itself.
+
+Concrete Tensor output is validated again when it is emitted. If an output is
+declared as `cuda_device` but compute emits a host Tensor and propagates that
+rejection, the callback diagnostic names the output and records `memory_kind`,
+provided `host`, and required `cuda_device`. The first rejected output in the
+callback supplies this supplemental context. Handling the rejection and returning
+success does not emit a failure report; a later activation starts with fresh
+context. If that same callback returns a different Error, its original code and
+message remain the primary error.
+
+A valid partition's callback failure is reported as an operator failure.
+`RUNTIME_COMPUTE_DISPATCH_FAILED` instead identifies a dispatch rejection before
+callback entry and retains its original Error. `RUNTIME_COMPUTE_CUDA_DEVICE_RESTORE_FAILED`
+identifies failed device restoration after a callback: it is a separate runtime
+record, linked to that operator's failed callback when present. If compute
+succeeded, restoration is the primary failure. Genuine nested exceptions stay
+in `detail.causes`; cleanup failures are separate records.
+
+
+Rollback, restoration, and teardown errors have distinct roles. When a later
+failure refers to an earlier retained primary record,
+`detail.primary_diagnostic_index` is a zero-based index in that report, not a
+registry `DiagnosticId`. Restart failures also retain `detail.transaction_id`,
+which can be correlated with lifecycle receipts. A failed restart that restores
+the previous generation remains warning evidence rather than a terminal run
+failure. Report formatting puts errors before warnings while retaining their
+relative order; causal indices still refer to the original diagnostic sequence.
+Runtime resource cleanup, including CUDA quiesce and shutdown, uses the teardown
+role even when it is not a lifecycle callback. A cleanup failure with no earlier
+retained terminal failure has no primary diagnostic index.
+
+Cause capture is bounded to 4096 bytes and four cause entries. Truncation or
+unavailable optional detail is explicit. Session diagnostics retain at most
+sixteen records, reserving space for the first terminal failure and an overflow
+marker; overflow from advisory records may become visible only at finalization.
+The overflow marker is a warning when only warnings were lost, even if a separate
+terminal error was retained. Losing an error record produces an error-severity
+marker. Advisory overflow alone does not fail a run.
+`format_diagnostics(records, graph)` renders a report capped at 16384 bytes.
+Terminal control characters in messages are escaped. Do not include secrets in
+exception or error messages.
+
+Supplemental detail is available through the in-memory APIs and formatters; it
+is not serialized in canonical execution-plan JSON and does not affect the plan
+digest. Stable tokens and existing structural fields remain the machine-readable
+classification. Adding the public detail field requires consumers to rebuild
+against the updated SDK, without changing operator callback signatures.
 
 Runtime tokens you are likely to meet:
 
@@ -285,27 +361,97 @@ Its transient sibling is `kBackpressured` — a channel or queue momentarily
 full. Backpressure is a normal flow-control outcome you retry or shed;
 `kResourceExhausted` from a pool means a sizing decision needs revisiting.
 
+### Backpressure is about simultaneous retention, not just average rate
+
+This behavior is **not specific to borrowed inputs or Tensor output loans**.
+Input access reads a selection that Runtime froze before `compute()`; neither
+owning `receive()` nor borrowed `selected_sample()` pops and frees a live queue
+position. Runtime protects the selected input through callback retirement.
+Owning read claims, temporal retention, and asynchronous Tensor work can have
+additional lifetime costs beyond that callback.
+
+A producer that is faster than its consumer for a sustained interval will fill
+a finite lossless queue. But even a slower producer can encounter transient
+pressure from bursts, scheduling jitter, a slow fanout recipient, or overlap
+with a still-active consumer. For example, with separate producer and consumer
+partitions and a depth-one direct blocking edge:
+
+1. The consumer processes message 1 in its sole typed receive slot.
+2. It signals “processed” from inside `compute()`, before Runtime retires the
+   selected input.
+3. Another partition publishes message 2 before that retirement completes.
+4. Publication returns `kBackpressured`; overwriting message 1 would violate
+   the active consumer's lifetime guarantee.
+
+This can happen with only one new message following each acknowledgment, even
+when average processing capacity is ample. Finishing a read, releasing a local
+view, or setting an application flag is not proof that Runtime has retired the
+selection. Transport buffering may absorb this overlap in one configuration;
+do not depend on that extra staging or change partitions to conceal a missing
+flow-control guarantee.
+
+### Size capacity and choose the pressure policy explicitly
+
+- **Size for a bounded burst and retention interval.** Count simultaneous
+  unread and active/retained work, not just average messages per second. On a
+  direct blocking edge, the active selection occupies typed delivery capacity:
+  one active message plus one additional admitted message requires room for
+  that overlap. Depth two covers that particular bound, not arbitrary workloads.
+  Temporal windows, fanout and retained Tensor backing also affect their own
+  compiler-derived storage bounds. Inspect the accepted plan and
+  [Tensor sizing guidance](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth)
+  rather than assuming queue depth alone is the Tensor pool size.
+- **No finite queue fixes sustained overload.** Reduce the admitted source
+  rate, increase processing capacity, or deliberately permit loss. Increasing
+  depth trades memory and latency for tolerance of a finite burst or stall.
+- **For lossy processing, make loss intentional.** Select `kDropOldest` when
+  replacing unread samples matches the application contract, or explicitly
+  count and drop a pre-submit rejected output. Lossy queues still must not
+  overwrite active borrowed data or unresolved Tensor backing.
+- **For lossless processing, preserve work and admission authority.** Use a
+  proven in-flight bound or credits that reflect actual available capacity.
+  Explicit deferred retry needs bounded owning pending state, a guaranteed
+  retry trigger independent of new input, and upstream admission control.
+  Merely returning success on pressure does not preserve an `OnEach` input for
+  later processing. There is no general automatic lossless callback-retry API.
+
+<Warning>
+  **Retryable publication does not mean retryable `compute()`.** Returning
+  `kBackpressured` from `compute()` (including through `HOLOSCAN_TRY`) fails the
+  run; Runtime does not replay that callback. `kBlocking` is a lossless queue
+  policy, not a guarantee that a graph-bound emit waits until it succeeds.
+  Input readiness and successful `allocate_tensor()` do not reserve downstream
+  publication capacity. Do not spin or wait inside `compute()` for another
+  activation to free a slot: that activation may need the same execution owner.
+
+  A scalar borrow cannot be retained across activations. `emit_tensor()`
+  consumes its Tensor loan on **every** outcome, including pre-submit pressure;
+  a later explicit retry needs fresh output authority and preserved or
+  reconstructible data. By-value `emit()` likewise does not restore a consumed
+  argument. Never retry `kPublicationPartial` or `kPublicationIndeterminate`:
+  a recipient may already have observed the output.
+</Warning>
+
 ## Error-code branching recap
 
 Inside operators and application glue, fallible calls return
 `holoscan::expected<T, Error>`; you branch on `Error::code`, never on message
 text — codes are the stable identity, messages are human context:
 
+For example, this fragment inside `compute()` deliberately drops a rejected
+frame; `dropped_frames_` is an operator-owned counter. It is **not** a lossless
+retry implementation:
+
 ```cpp
 auto result = output_.emit(std::move(frame));
 if (!result) {
-  switch (result.error().code) {
-    case holoscan::ErrorCode::kBackpressured:
-      // momentarily full — drop or retry next activation
-      break;
-    case holoscan::ErrorCode::kResourceExhausted:
-      // a bound is undersized — count it; revisit pool/queue sizing
-      break;
-    default:
-      log_error(holoscan::runtime_error_message(result.error()));
-      break;
+  if (result.error().code == holoscan::ErrorCode::kBackpressured) {
+    ++dropped_frames_;
+    return {};  // intentional loss; this input will not be retried
   }
+  return holoscan::make_unexpected(std::move(result).error());
 }
+return {};
 ```
 
 `runtime_error_message(error)` renders `"<code name>: <message>"` for logs,

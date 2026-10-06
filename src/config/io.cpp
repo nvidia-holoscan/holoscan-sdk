@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
@@ -47,7 +48,6 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <cerrno>
 #endif
 
 namespace holoscan::config_io {
@@ -950,17 +950,17 @@ class YamlNodeConverter {
     if (source->style == YamlScalarStyle::kSingleQuoted ||
         source->style == YamlScalarStyle::kDoubleQuoted) {
       return finish_scalar(
-          *source, path, diagnostic_mark, config::ConfigValue::string(node.Scalar(), limits_));
+          *source, path, diagnostic_mark, config::ConfigValue::try_string(node.Scalar(), limits_));
     }
     const auto text = source->bytes;
     if (text == "null" || text == "~") {
       return finish_scalar(*source, path, diagnostic_mark, config::ConfigValue::null());
     }
     if (text == "true") {
-      return finish_scalar(*source, path, diagnostic_mark, config::ConfigValue::boolean(true));
+      return finish_scalar(*source, path, diagnostic_mark, config::ConfigValue::try_boolean(true));
     }
     if (text == "false") {
-      return finish_scalar(*source, path, diagnostic_mark, config::ConfigValue::boolean(false));
+      return finish_scalar(*source, path, diagnostic_mark, config::ConfigValue::try_boolean(false));
     }
     const bool numeric_like = config::detail::yaml_numeric_candidate(text, true);
     if (numeric_like) {
@@ -981,7 +981,7 @@ class YamlNodeConverter {
                                             diagnostic_mark));
     }
     return finish_scalar(
-        *source, path, diagnostic_mark, config::ConfigValue::string(node.Scalar(), limits_));
+        *source, path, diagnostic_mark, config::ConfigValue::try_string(node.Scalar(), limits_));
   }
 
   [[nodiscard]] config::ConfigResult<DecodedYamlKey> decode_key(const YAML::Node& node,
@@ -1027,7 +1027,7 @@ class YamlNodeConverter {
                                             *source,
                                             diagnostic_mark));
     }
-    auto checked = config::ConfigValue::string(node.Scalar(), limits_);
+    auto checked = config::ConfigValue::try_string(node.Scalar(), limits_);
     if (!checked) {
       return tl::make_unexpected(
           contextualize(checked.error(), parent_path, *source, diagnostic_mark));
@@ -1060,7 +1060,7 @@ class YamlNodeConverter {
       }
       values.push_back(std::move(*converted));
     }
-    auto result = config::ConfigValue::array(values, limits_);
+    auto result = config::ConfigValue::try_array(values, limits_);
     return result ? result
                   : config::ConfigResult<config::ConfigValue>{
                         tl::make_unexpected(contextualize(result.error(), path, diagnostic_mark))};
@@ -1119,14 +1119,14 @@ class YamlNodeConverter {
     for (std::size_t index = 0; index < keys.size(); ++index) {
       entries.push_back({keys[index], values[index]});
     }
-    auto object = config::ConfigValue::object(entries, limits_);
+    auto object = config::ConfigValue::try_object(entries, limits_);
     if (!object) {
       return tl::make_unexpected(contextualize(object.error(), path, diagnostic_mark));
     }
     const auto object_view = object->view();
     bool reserved_envelope = false;
     if (object_view.size() == 1U) {
-      auto reserved_key = object_view.key(0);
+      auto reserved_key = object_view.try_key(0);
       reserved_envelope = reserved_key && (*reserved_key == "$holoscan.config.scalar/v1" ||
                                            *reserved_key == "$holoscan.config.object/v1");
     }
@@ -1348,7 +1348,7 @@ void append_json_string(std::string& output, std::string_view value) {
                                                        "serialization output limit exceeded",
                                                        config::ConfigOperationStage::kSerialize))};
     case config::ConfigValueKind::kBool: {
-      auto item = value.as_bool();
+      auto item = value.try_as_bool();
       if (!item)
         return tl::make_unexpected(item.error());
       auto status = add(*item ? 4U : 5U);
@@ -1356,7 +1356,7 @@ void append_json_string(std::string& output, std::string_view value) {
                     : config::ConfigResult<std::size_t>{tl::make_unexpected(status.error())};
     }
     case config::ConfigValueKind::kSignedInteger: {
-      auto item = value.as_signed_integer();
+      auto item = value.try_as_signed_integer();
       if (!item)
         return tl::make_unexpected(item.error());
       std::array<char, 32> text{};
@@ -1364,7 +1364,7 @@ void append_json_string(std::string& output, std::string_view value) {
       return scalar_envelope("i64", static_cast<std::size_t>(rendered.ptr - text.data()));
     }
     case config::ConfigValueKind::kUnsignedInteger: {
-      auto item = value.as_unsigned_integer();
+      auto item = value.try_as_unsigned_integer();
       if (!item)
         return tl::make_unexpected(item.error());
       std::array<char, 32> text{};
@@ -1372,7 +1372,7 @@ void append_json_string(std::string& output, std::string_view value) {
       return scalar_envelope("u64", static_cast<std::size_t>(rendered.ptr - text.data()));
     }
     case config::ConfigValueKind::kFloating: {
-      auto item = value.as_floating();
+      auto item = value.try_as_floating();
       if (!item)
         return tl::make_unexpected(item.error());
       std::array<char, 128> text{};
@@ -1386,7 +1386,7 @@ void append_json_string(std::string& output, std::string_view value) {
       return scalar_envelope("f64", static_cast<std::size_t>(rendered.ptr - text.data()));
     }
     case config::ConfigValueKind::kString: {
-      auto item = value.as_string();
+      auto item = value.try_as_string();
       if (!item)
         return tl::make_unexpected(item.error());
       return json_string_size(*item, limits);
@@ -1401,7 +1401,7 @@ void append_json_string(std::string& output, std::string_view value) {
       if (!status)
         return tl::make_unexpected(status.error());
       for (std::size_t index = 0; index < value.size(); ++index) {
-        auto child = value.element(index);
+        auto child = value.try_element(index);
         if (!child)
           return tl::make_unexpected(child.error());
         auto child_size = canonical_size(*child, limits, depth + 1U, nodes);
@@ -1420,7 +1420,7 @@ void append_json_string(std::string& output, std::string_view value) {
                                            config::ConfigOperationStage::kSerialize));
       }
       bool collision = value.size() == 1U;
-      auto first_key = collision ? value.key(0) : config::ConfigResult<std::string_view>{""};
+      auto first_key = collision ? value.try_key(0) : config::ConfigResult<std::string_view>{""};
       if (!first_key)
         return tl::make_unexpected(first_key.error());
       collision = collision && (*first_key == "$holoscan.config.scalar/v1" ||
@@ -1429,7 +1429,7 @@ void append_json_string(std::string& output, std::string_view value) {
         constexpr std::string_view prefix{"{\"$holoscan.config.object/v1\":[["};
         constexpr std::string_view suffix{"]]}"};
         auto key_size = json_string_size(*first_key, limits);
-        auto child = value.element(0);
+        auto child = value.try_element(0);
         if (!key_size)
           return tl::make_unexpected(key_size.error());
         if (!child)
@@ -1451,8 +1451,8 @@ void append_json_string(std::string& output, std::string_view value) {
       if (!status)
         return tl::make_unexpected(status.error());
       for (std::size_t index = 0; index < value.size(); ++index) {
-        auto key = value.key(index);
-        auto child = value.element(index);
+        auto key = value.try_key(index);
+        auto child = value.try_element(index);
         if (!key)
           return tl::make_unexpected(key.error());
         if (!child)
@@ -1510,7 +1510,7 @@ void append_json_string(std::string& output, std::string_view value) {
       output += "null";
       break;
     case config::ConfigValueKind::kBool: {
-      auto item = value.as_bool();
+      auto item = value.try_as_bool();
       if (!item) {
         return tl::make_unexpected(item.error());
       }
@@ -1518,7 +1518,7 @@ void append_json_string(std::string& output, std::string_view value) {
       break;
     }
     case config::ConfigValueKind::kSignedInteger: {
-      auto item = value.as_signed_integer();
+      auto item = value.try_as_signed_integer();
       if (!item) {
         return tl::make_unexpected(item.error());
       }
@@ -1526,7 +1526,7 @@ void append_json_string(std::string& output, std::string_view value) {
       break;
     }
     case config::ConfigValueKind::kUnsignedInteger: {
-      auto item = value.as_unsigned_integer();
+      auto item = value.try_as_unsigned_integer();
       if (!item) {
         return tl::make_unexpected(item.error());
       }
@@ -1534,7 +1534,7 @@ void append_json_string(std::string& output, std::string_view value) {
       break;
     }
     case config::ConfigValueKind::kFloating: {
-      auto item = value.as_floating();
+      auto item = value.try_as_floating();
       if (!item) {
         return tl::make_unexpected(item.error());
       }
@@ -1550,7 +1550,7 @@ void append_json_string(std::string& output, std::string_view value) {
       break;
     }
     case config::ConfigValueKind::kString: {
-      auto item = value.as_string();
+      auto item = value.try_as_string();
       if (!item) {
         return tl::make_unexpected(item.error());
       }
@@ -1573,7 +1573,7 @@ void append_json_string(std::string& output, std::string_view value) {
         if (index != 0) {
           output.push_back(',');
         }
-        auto child = value.element(index);
+        auto child = value.try_element(index);
         if (!child) {
           return tl::make_unexpected(child.error());
         }
@@ -1596,14 +1596,14 @@ void append_json_string(std::string& output, std::string_view value) {
         order[index] = index;
       }
       std::sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right) {
-        const auto left_key = value.key(left);
-        const auto right_key = value.key(right);
+        const auto left_key = value.try_key(left);
+        const auto right_key = value.try_key(right);
         return left_key && right_key && unsigned_less(*left_key, *right_key);
       });
       bool collision = value.size() == 1U;
       std::string_view only_key;
       if (collision) {
-        auto key = value.key(0);
+        auto key = value.try_key(0);
         collision =
             key && (*key == "$holoscan.config.scalar/v1" || *key == "$holoscan.config.object/v1");
         if (key) {
@@ -1614,7 +1614,7 @@ void append_json_string(std::string& output, std::string_view value) {
         output += "{\"$holoscan.config.object/v1\":[[";
         append_json_string(output, only_key);
         output.push_back(',');
-        auto child = value.element(0);
+        auto child = value.try_element(0);
         if (!child) {
           return tl::make_unexpected(child.error());
         }
@@ -1629,8 +1629,8 @@ void append_json_string(std::string& output, std::string_view value) {
           if (position != 0) {
             output.push_back(',');
           }
-          auto key = value.key(order[position]);
-          auto child = value.element(order[position]);
+          auto key = value.try_key(order[position]);
+          auto child = value.try_element(order[position]);
           if (!key) {
             return tl::make_unexpected(key.error());
           }
@@ -1664,9 +1664,15 @@ void append_json_string(std::string& output, std::string_view value) {
 
 [[nodiscard]] config::ConfigResult<std::string> read_file(const std::filesystem::path& path,
                                                           std::size_t maximum_bytes) {
+  errno = 0;
   std::ifstream input(path, std::ios::binary);
   if (!input) {
-    return tl::make_unexpected(failure(config::ConfigErrorCode::kIoError,
+    const int open_error = errno;
+    const config::ConfigErrorCode code =
+        open_error == ENOENT || open_error == ENOTDIR ? config::ConfigErrorCode::kPathNotFound
+        : open_error == EACCES || open_error == EPERM ? config::ConfigErrorCode::kPermissionDenied
+                                                      : config::ConfigErrorCode::kIoError;
+    return tl::make_unexpected(failure(code,
                                        "unable to open configuration file",
                                        config::ConfigOperationStage::kParse,
                                        config::ConfigDestinationState::kNotApplicable,
@@ -2146,8 +2152,12 @@ struct DestinationObservation {
 
 }  // namespace
 
-config::ConfigResult<config::Document> parse(std::string_view source, Format format,
-                                             ParseOptions options) {
+config::Document parse(std::string_view source, Format format, ParseOptions options) {
+  return config::detail::value_or_throw(try_parse(source, format, options));
+}
+
+config::ConfigResult<config::Document> try_parse(std::string_view source, Format format,
+                                                 ParseOptions options) {
   return parse_document(source, {}, format, options);
 }
 
@@ -2199,8 +2209,12 @@ config::ConfigResult<config::Document> detail::parse_generated_canonical_json(
   }
 }
 
-config::ConfigResult<config::Document> load(const std::filesystem::path& path, Format format,
-                                            ParseOptions options) {
+config::Document load(const std::filesystem::path& path, Format format, ParseOptions options) {
+  return config::detail::value_or_throw(try_load(path, format, options));
+}
+
+config::ConfigResult<config::Document> try_load(const std::filesystem::path& path, Format format,
+                                                ParseOptions options) {
   try {
     if (!valid_format(format) || !valid_parse_options(options)) {
       return tl::make_unexpected(failure(config::ConfigErrorCode::kInvalidArgument,
@@ -2214,7 +2228,7 @@ config::ConfigResult<config::Document> load(const std::filesystem::path& path, F
     if (format == Format::kJson) {
       // Preserve the existing JSON diagnostic behavior; Task 31 adds source-name evidence only to
       // the amended YAML path.
-      return parse(*bytes, format, options);
+      return try_parse(*bytes, format, options);
     }
     const auto source_name = path.string();
     return parse_document(*bytes, source_name, format, options);
@@ -2236,8 +2250,12 @@ config::ConfigResult<config::Document> load(const std::filesystem::path& path, F
   }
 }
 
-config::ConfigResult<std::string> serialize(const config::Document& document, Format format,
-                                            SerializeOptions options) {
+std::string serialize(const config::Document& document, Format format, SerializeOptions options) {
+  return config::detail::value_or_throw(try_serialize(document, format, options));
+}
+
+config::ConfigResult<std::string> try_serialize(const config::Document& document, Format format,
+                                                SerializeOptions options) {
   try {
     if (!valid_format(format) || !valid_output_limits(options.output_limits)) {
       return tl::make_unexpected(failure(config::ConfigErrorCode::kInvalidArgument,
@@ -2286,9 +2304,14 @@ config::ConfigResult<std::string> serialize(const config::Document& document, Fo
   }
 }
 
-config::ConfigResult<SaveResult> save(const config::Document& document,
-                                      const std::filesystem::path& path, Format format,
-                                      SaveOptions options) {
+SaveResult save(const config::Document& document, const std::filesystem::path& path, Format format,
+                SaveOptions options) {
+  return config::detail::value_or_throw(try_save(document, path, format, options));
+}
+
+config::ConfigResult<SaveResult> try_save(const config::Document& document,
+                                          const std::filesystem::path& path, Format format,
+                                          SaveOptions options) {
   config::ConfigOperationStage boundary_stage = config::ConfigOperationStage::kValidate;
   try {
     if (!valid_output_limits(options.output_limits) || options.guard_timeout.count() < 0 ||
@@ -2300,7 +2323,7 @@ config::ConfigResult<SaveResult> save(const config::Document& document,
                                          config::ConfigDestinationState::kUnchanged));
     }
     boundary_stage = config::ConfigOperationStage::kSerialize;
-    auto bytes = serialize(document, format, {.output_limits = options.output_limits});
+    auto bytes = try_serialize(document, format, {.output_limits = options.output_limits});
     if (!bytes) {
       auto error = bytes.error();
       return tl::make_unexpected(

@@ -40,6 +40,8 @@ struct UnfinishedSettings {
   std::int32_t count{0};
 };
 
+struct ThrowingConfigOperation {};
+
 struct EmptySettings {};
 
 struct DuplicateRequiredSettings {
@@ -216,7 +218,22 @@ struct holoscan::config::ConfigCodec<holoscan::config::test::UnfinishedSettings>
       return tl::make_unexpected(count.error());
     }
     const std::array entries{ConfigObjectEntry{"count", *count}};
-    return ConfigValue::object(entries);
+    return ConfigValue::try_object(entries);
+  }
+};
+
+template <>
+struct holoscan::config::ConfigCodec<holoscan::config::test::ThrowingConfigOperation> {
+  static ConfigResult<test::ThrowingConfigOperation> decode(ConfigView view, const DecodeOptions&,
+                                                            DecodeContext&) {
+    static_cast<void>(view.as_string());
+    return test::ThrowingConfigOperation{};
+  }
+
+  static ConfigResult<ConfigValue> encode(const test::ThrowingConfigOperation&,
+                                          const EncodeOptions&, EncodeContext&) {
+    const std::string invalid_utf8{"\xC0\x80", 2};
+    return ConfigValue::string(invalid_utf8);
   }
 };
 
@@ -224,6 +241,7 @@ namespace holoscan::config::test {
 namespace {
 
 // REQ: CONFIG-006
+// REQ: CONFIG-021
 static_assert(ConfigCodable<Settings>);
 static_assert(ConfigCodable<EmptySettings>);
 static_assert(ConfigCodable<MoveOnlyValue>);
@@ -243,123 +261,161 @@ static_assert(!ConfigCodable<std::filesystem::path>);
 static_assert(ConfigCodable<std::map<std::string, std::int32_t>>);
 static_assert(ConfigCodable<std::map<std::string, std::int32_t, std::less<>>>);
 
+TEST(ConfigCodec, ThrowingCompleteOperationsPreserveCodecConfigErrors) {
+  // REQ: CONFIG-020
+  // REQ: CONFIG-021
+  const ConfigValue boolean = ConfigValue::boolean(true);
+  auto decode_failure = try_decode_config<ThrowingConfigOperation>(boolean.view());
+  ASSERT_FALSE(decode_failure);
+  EXPECT_EQ(decode_failure.error().code(), ConfigErrorCode::kTypeMismatch);
+  try {
+    static_cast<void>(decode_config<ThrowingConfigOperation>(boolean.view()));
+    FAIL() << "expected codec decode rejection";
+  } catch (const ConfigException& exception) {
+    EXPECT_EQ(exception.error().code(), ConfigErrorCode::kTypeMismatch);
+  }
+
+  auto encode_failure = try_encode_config(ThrowingConfigOperation{});
+  ASSERT_FALSE(encode_failure);
+  EXPECT_EQ(encode_failure.error().code(), ConfigErrorCode::kInvalidUtf8);
+  try {
+    static_cast<void>(encode_config(ThrowingConfigOperation{}));
+    FAIL() << "expected codec encode rejection";
+  } catch (const ConfigException& exception) {
+    EXPECT_EQ(exception.error().code(), ConfigErrorCode::kInvalidUtf8);
+  }
+}
+
 TEST(ConfigCodec, ExplicitWholeObjectCodecRoundTripsWithoutSchema) {
   // REQ: CONFIG-006
   const Settings source{.count = 7, .name = "camera"};
-  auto encoded = encode_config(source);
-  ASSERT_TRUE(encoded);
-  auto decoded = decode_config<Settings>(encoded->view());
-  ASSERT_TRUE(decoded);
-  EXPECT_EQ(*decoded, source);
-  auto document_result = Document::from_value(*encoded);
-  ASSERT_TRUE(document_result);
-  const Document document = std::move(*document_result);
-  EXPECT_EQ(document.get<Settings>("").value(), source);
+  const ConfigValue encoded = encode_config(source);
+  EXPECT_EQ(decode_config<Settings>(encoded.view()), source);
+  const Document document = Document::from_value(encoded);
+  EXPECT_EQ(document.get<Settings>(""), source);
+  const Settings replacement{.count = 8, .name = "replacement"};
+  EXPECT_EQ(document.replace("", replacement).get<Settings>(""), replacement);
 
-  auto count = ConfigValue::signed_integer(3);
+  auto count = ConfigValue::try_signed_integer(3);
   ASSERT_TRUE(count);
   const std::array entries{ConfigObjectEntry{"count", *count}};
-  auto defaults = ConfigValue::object(entries);
+  auto defaults = ConfigValue::try_object(entries);
   ASSERT_TRUE(defaults);
-  EXPECT_EQ(decode_config<Settings>(defaults->view()).value(), (Settings{.count = 3, .name = ""}));
+  EXPECT_EQ(try_decode_config<Settings>(defaults->view()).value(),
+            (Settings{.count = 3, .name = ""}));
 
   const std::array<ConfigObjectEntry, 0> no_entries{};
-  auto missing_required = ConfigValue::object(no_entries);
+  auto missing_required = ConfigValue::try_object(no_entries);
   ASSERT_TRUE(missing_required);
-  auto failure = decode_config<Settings>(missing_required->view());
+  auto failure = try_decode_config<Settings>(missing_required->view());
   ASSERT_FALSE(failure);
   EXPECT_EQ(failure.error().path(), "/count");
 
-  auto encoded_defaults = encode_config(Settings{.count = 3});
+  auto encoded_defaults = try_encode_config(Settings{.count = 3});
   ASSERT_TRUE(encoded_defaults);
   EXPECT_EQ(encoded_defaults->view().size(), 2U);
-  EXPECT_EQ(encoded_defaults->view().key(1).value(), "name");
+  EXPECT_EQ(encoded_defaults->view().try_key(1).value(), "name");
 
-  auto encoded_empty = encode_config(EmptySettings{});
+  auto encoded_empty = try_encode_config(EmptySettings{});
   ASSERT_TRUE(encoded_empty);
   EXPECT_EQ(encoded_empty->kind(), ConfigValueKind::kObject);
   EXPECT_EQ(encoded_empty->view().size(), 0U);
-  EXPECT_TRUE(decode_config<EmptySettings>(encoded_empty->view()));
+  EXPECT_TRUE(try_decode_config<EmptySettings>(encoded_empty->view()));
 
   const MoveOnlySettings move_only_source{MoveOnlyValue{11}};
-  auto encoded_move_only = encode_config(move_only_source);
+  auto encoded_move_only = try_encode_config(move_only_source);
   ASSERT_TRUE(encoded_move_only);
-  auto decoded_move_only = decode_config<MoveOnlySettings>(encoded_move_only->view());
+  auto decoded_move_only = try_decode_config<MoveOnlySettings>(encoded_move_only->view());
   ASSERT_TRUE(decoded_move_only);
   EXPECT_EQ(decoded_move_only->value.value, 11);
 
-  auto scalar = ConfigValue::signed_integer(3);
+  auto throwing_decoded_move_only = decode_config<MoveOnlySettings>(encoded_move_only->view());
+  EXPECT_EQ(throwing_decoded_move_only.value.value, 11);
+  const Document move_only_document = Document::from_value(*encoded_move_only);
+  auto throwing_get_move_only = move_only_document.get<MoveOnlySettings>(Path::root());
+  EXPECT_EQ(throwing_get_move_only.value.value, 11);
+  auto throwing_patch_move_only =
+      move_only_document.patch<MoveOnlySettings>(Path::root(), MoveOnlySettings{MoveOnlyValue{7}});
+  EXPECT_EQ(throwing_patch_move_only.value.value, 11);
+
+  auto scalar = ConfigValue::try_signed_integer(3);
   ASSERT_TRUE(scalar);
-  auto empty_object_failure = decode_config<EmptySettings>(scalar->view());
+  auto empty_object_failure = try_decode_config<EmptySettings>(scalar->view());
   ASSERT_FALSE(empty_object_failure);
   EXPECT_EQ(empty_object_failure.error().code(), ConfigErrorCode::kTypeMismatch);
 }
 
 TEST(ConfigCodec, StrictNumericPolicyRejectsNarrowingAndCheckedLossyIsExplicit) {
   // REQ: CONFIG-007
-  auto floating = ConfigValue::floating(1.25);
+  auto floating = ConfigValue::try_floating(1.25);
   ASSERT_TRUE(floating);
-  EXPECT_EQ(decode_config<float>(floating->view()).value(), 1.25F);
-  EXPECT_FALSE(decode_config<std::int32_t>(floating->view()));
-  auto integral = ConfigValue::floating(3.0);
+  EXPECT_EQ(try_decode_config<float>(floating->view()).value(), 1.25F);
+  EXPECT_FALSE(try_decode_config<std::int32_t>(floating->view()));
+  auto integral = ConfigValue::try_floating(3.0);
   ASSERT_TRUE(integral);
-  EXPECT_EQ(decode_config<std::int32_t>(integral->view(),
-                                        DecodeOptions{MissingValuePolicy::kReject,
-                                                      UnknownFieldPolicy::kReject,
-                                                      NumericConversionPolicy::kAllowCheckedLossy})
-                .value(),
-            3);
+  EXPECT_EQ(
+      try_decode_config<std::int32_t>(integral->view(),
+                                      DecodeOptions{MissingValuePolicy::kReject,
+                                                    UnknownFieldPolicy::kReject,
+                                                    NumericConversionPolicy::kAllowCheckedLossy})
+          .value(),
+      3);
 }
 
 TEST(ConfigCodec, BuiltinContainersPreserveOrderAndDeterministicMapKeys) {
   // REQ: CONFIG-008
   const std::vector<std::int32_t> values{1, 2, 3};
-  auto encoded = encode_config(values);
+  auto encoded = try_encode_config(values);
   ASSERT_TRUE(encoded);
-  EXPECT_EQ(decode_config<std::vector<std::int32_t>>(encoded->view()).value(), values);
+  EXPECT_EQ(try_decode_config<std::vector<std::int32_t>>(encoded->view()).value(), values);
 
   const std::map<std::string, std::int32_t> mapping{{"b", 2}, {"a", 1}};
-  auto map_value = encode_config(mapping);
+  auto map_value = try_encode_config(mapping);
   ASSERT_TRUE(map_value);
-  EXPECT_EQ(decode_config<std::remove_cvref_t<decltype(mapping)>>(map_value->view()).value(),
-            mapping);
+  const auto decoded_mapping =
+      try_decode_config<std::remove_cvref_t<decltype(mapping)>>(map_value->view());
+  EXPECT_EQ(decoded_mapping.value(), mapping);
 
   const std::map<std::string, std::int32_t, std::less<>> transparent_mapping{{"d", 4}, {"c", 3}};
-  auto transparent_value = encode_config(transparent_mapping);
+  auto transparent_value = try_encode_config(transparent_mapping);
   ASSERT_TRUE(transparent_value);
-  EXPECT_EQ(
-      decode_config<std::remove_cvref_t<decltype(transparent_mapping)>>(transparent_value->view())
-          .value(),
-      transparent_mapping);
+  EXPECT_EQ(try_decode_config<std::remove_cvref_t<decltype(transparent_mapping)>>(
+                transparent_value->view())
+                .value(),
+            transparent_mapping);
 }
 
 TEST(ConfigCodec, TypedPatchMergesObjectsAndLeavesBaselineUnchangedOnFailure) {
   // REQ: CONFIG-009
   const Settings baseline{.count = 1, .name = "stable"};
-  auto count = ConfigValue::signed_integer(4);
+  auto count = ConfigValue::try_signed_integer(4);
   ASSERT_TRUE(count);
   std::array entries{ConfigObjectEntry{"count", *count}};
-  auto patch = ConfigValue::object(entries);
+  auto patch = ConfigValue::try_object(entries);
   ASSERT_TRUE(patch);
-  auto document_result = Document::from_value(*patch);
+  auto document_result = Document::try_from_value(*patch);
   ASSERT_TRUE(document_result);
   const Document document = std::move(*document_result);
-  auto updated = document.patch(Path::root(), baseline);
-  ASSERT_TRUE(updated);
-  EXPECT_EQ(updated->count, 4);
-  EXPECT_EQ(updated->name, "stable");
+  const auto updated = document.patch(Path::root(), baseline);
+  EXPECT_EQ(updated.count, 4);
+  EXPECT_EQ(updated.name, "stable");
+
+  const Document invalid_patch = Document::from_value(ConfigValue::boolean(true));
+  auto rejected = invalid_patch.try_patch(Path::root(), baseline);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code(), ConfigErrorCode::kTypeMismatch);
   EXPECT_EQ(baseline.count, 1);
 }
 
 TEST(ConfigCodec, PackageContextPreservesNestedPathsAndRequiresDecoderFinish) {
   // REQ: CONFIG-006, CONFIG-009
   // Key setup: array whose element is the wrong type to produce a nested decode error.
-  auto text = ConfigValue::string("not-an-integer");
+  auto text = ConfigValue::try_string("not-an-integer");
   ASSERT_TRUE(text);
   const std::array values{*text};
-  auto array = ConfigValue::array(values);
+  auto array = ConfigValue::try_array(values);
   ASSERT_TRUE(array);
-  auto nested_failure = decode_config<std::vector<std::int32_t>>(array->view());
+  auto nested_failure = try_decode_config<std::vector<std::int32_t>>(array->view());
   ASSERT_FALSE(nested_failure);
   // Key assertion: error path carries the child index ("/0") and kTypeMismatch.
   EXPECT_EQ(nested_failure.error().path(), "/0");
@@ -367,12 +423,12 @@ TEST(ConfigCodec, PackageContextPreservesNestedPathsAndRequiresDecoderFinish) {
   EXPECT_EQ(nested_failure.error().cause_count(), 1U);
 
   // Key setup: valid object fed to UnfinishedSettings codec which never calls finish().
-  auto count = ConfigValue::signed_integer(7);
+  auto count = ConfigValue::try_signed_integer(7);
   ASSERT_TRUE(count);
   const std::array entries{ConfigObjectEntry{"count", *count}};
-  auto object = ConfigValue::object(entries);
+  auto object = ConfigValue::try_object(entries);
   ASSERT_TRUE(object);
-  auto unfinished = decode_config<UnfinishedSettings>(object->view());
+  auto unfinished = try_decode_config<UnfinishedSettings>(object->view());
   ASSERT_FALSE(unfinished);
   // Key assertion: missing finish() surfaces as kCodecFailure at the package boundary.
   EXPECT_EQ(unfinished.error().code(), ConfigErrorCode::kCodecFailure);
@@ -386,20 +442,27 @@ TEST(ConfigCodec, NumericMatrixRequiresLosslessDefaultsAndClosedCheckedLossyMode
                                      NumericConversionPolicy::kAllowCheckedLossy};
   // Key assertion: default policy rejects any narrowing; checked-lossy mode accepts
   //               representable conversions but still rejects fractional and underflow.
-  const auto large_integer = ConfigValue::signed_integer(16'777'217);
+  const auto large_integer = ConfigValue::try_signed_integer(16'777'217);
   ASSERT_TRUE(large_integer);
-  EXPECT_FALSE(decode_config<float>(large_integer->view()));
-  EXPECT_TRUE(decode_config<float>(large_integer->view(), checked));
+  EXPECT_FALSE(try_decode_config<float>(large_integer->view()));
+  EXPECT_TRUE(try_decode_config<float>(large_integer->view(), checked));
 
-  auto fractional = ConfigValue::floating(3.5);
+  for (const std::uint64_t exact : {0ULL, 16'777'216ULL, 16'777'218ULL, 1ULL << 63U}) {
+    const auto value = ConfigValue::try_unsigned_integer(exact);
+    ASSERT_TRUE(value);
+    EXPECT_TRUE(try_decode_config<float>(value->view()));
+  }
+
+  auto fractional = ConfigValue::try_floating(3.5);
   ASSERT_TRUE(fractional);
-  EXPECT_FALSE(decode_config<std::int32_t>(fractional->view(), checked));
-  auto underflow = ConfigValue::floating(std::numeric_limits<double>::denorm_min());
+  EXPECT_FALSE(try_decode_config<std::int32_t>(fractional->view(), checked));
+  auto underflow = ConfigValue::try_floating(std::numeric_limits<double>::denorm_min());
   ASSERT_TRUE(underflow);
-  EXPECT_FALSE(decode_config<float>(underflow->view(), checked));
-  auto maximum = ConfigValue::unsigned_integer(std::numeric_limits<std::uint64_t>::max());
+  EXPECT_FALSE(try_decode_config<float>(underflow->view(), checked));
+  auto maximum = ConfigValue::try_unsigned_integer(std::numeric_limits<std::uint64_t>::max());
   ASSERT_TRUE(maximum);
-  EXPECT_FALSE(decode_config<std::int64_t>(maximum->view()));
+  EXPECT_FALSE(try_decode_config<std::int64_t>(maximum->view()));
+  EXPECT_FALSE(try_decode_config<float>(maximum->view()));
 }
 
 }  // namespace

@@ -75,6 +75,8 @@ class TensorAccess {
       const Tensor& tensor) noexcept;
   [[nodiscard]] HOLOSCAN_CORE_EXPORT static cudaStream_t readiness_stream(
       const Tensor& tensor) noexcept;
+  [[nodiscard]] HOLOSCAN_CORE_EXPORT static bool tracks_deallocation_stream(
+      const Tensor& tensor) noexcept;
   [[nodiscard]] HOLOSCAN_CORE_EXPORT static Tensor from_context(
       std::shared_ptr<DLManagedTensorContext> context, TensorAuthority authority);
   HOLOSCAN_CORE_EXPORT static void replace_context(Tensor& tensor,

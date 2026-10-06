@@ -7,11 +7,12 @@ Build and validate Holoscan SDK Fern documentation.
 User guide pages are committed as ``*.mdx`` under ``docs/`` in the public repository
 and ``public/docs/`` in the internal source repository. Fern config
 (``fern.config.json``, ``docs.yml``, ``index.yml``, ``assets/``, ``dist/``) lives under
-the detected documentation root. C++ API pages are generated under
+the detected documentation root. C++ and Python API pages are generated under
 ``fern/generated/`` there (gitignored).
 
-1. Optionally remove prior C++ API MDX under ``generated/``.
-2. With ``--with-library-mdx``: ``fern docs md generate --local`` +
+1. Optionally remove prior generated API MDX under ``generated/``.
+2. With ``--with-library-mdx``: project the public Python facade stubs into a
+   parser input, then run ``fern docs md generate --local`` and
    ``fix_generated_library_mdx.py``.
 3. ``check_doc_links.py`` (internal link validation, which ``fern check`` does not cover).
 4. ``fern check --local --warnings`` (local validation), ``fern docs dev`` (``--preview``),
@@ -36,15 +37,17 @@ Usage (from holoscan-sdk repo root):
     --repository-checkout /path/to/release-checkout \
     --no-docker --publish --skip-library-mdx
 
-``--skip-library-mdx`` reuses an existing local generated C++ API MDX tree; it
+``--skip-library-mdx`` reuses an existing local generated API MDX tree; it
 does not exclude that tree from validation, preview, or publication. Production
-reuse requires a non-empty C++ API tree and verifies that every generated MDX
-file is already post-processed.
+reuse requires non-empty C++ and Python API trees and verifies that every
+generated MDX file is already post-processed.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
+import fcntl
 import json
 import os
 import re
@@ -53,7 +56,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import tempfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -96,6 +99,10 @@ FERN_API_VERSION = "5.89.3"
 EXTERNAL_FERN_DIR_MOUNT = Path("/mnt/fern_dir")
 EXTERNAL_PREVIEW_URL_FILE_MOUNT = Path("/mnt/fern_preview_url")
 PREVIEW_URL_FILE = ".fern-preview-url"
+PYTHON_API_INPUT_DIR = ".python-api-reference"
+_UNPACK_PARAMS_RE = re.compile(
+    r",[ \t]+\*\*params:[ \t]+Unpack\[(?P<params>[A-Za-z_][A-Za-z0-9_]*)\]"
+)
 _PREVIEW_URL_RE = re.compile(
     r"https://[^\s\"'<>)\]]+\.docs\.buildwithfern\.com[^\s\"'<>)\]]*",
     re.IGNORECASE,
@@ -107,6 +114,10 @@ _TOKENLESS_LIBRARY_MARKERS = (
 _TOKENLESS_API_NAVIGATION_MARKERS = (
     "# holoscan-tokenless-api-navigation:begin",
     "# holoscan-tokenless-api-navigation:end",
+)
+_TOKENLESS_PYTHON_API_NAVIGATION_MARKERS = (
+    "# holoscan-tokenless-python-api-navigation:begin",
+    "# holoscan-tokenless-python-api-navigation:end",
 )
 _TOKENLESS_AUTHORED_PATH_RE = re.compile(
     r"^(?P<prefix>[ \t]*path:[ \t]+)"
@@ -125,7 +136,7 @@ USAGE_EXAMPLES = r"""pipeline phases:
     build_holoscan_docs.py --no-docker
       -> run the same pipeline with tools installed directly on the host
 
-  C++ API output selection:
+  Library API output selection:
 
     neither flag          automatic: generate when Fern auth is detected,
                           otherwise reuse an existing local output tree
@@ -133,14 +144,15 @@ USAGE_EXAMPLES = r"""pipeline phases:
                           local library input
     --skip-library-mdx    reuse the existing local output tree
 
-  docs.yml configures ../../include/holoscan as the C++ API source. Fern parses
-  the selected checkout with --local and writes the generated MDX into its
-  fern/generated directory. This keeps user-guide and API content on the same
-  source revision, including revisions that are not published on GitHub.
+  docs.yml configures the local C++ source and a transient Python source tree
+  projected from the selected checkout's public facade stubs. Fern parses them
+  with --local and writes the generated MDX into fern/generated. This keeps
+  user-guide and API content on the same source revision, including revisions
+  that are not published on GitHub.
 
   Common pipeline and selected final action:
 
-    generate or reuse local C++ API MDX
+    generate or reuse local API MDX
       |
       v
     post-process local MDX
@@ -162,10 +174,10 @@ USAGE_EXAMPLES = r"""pipeline phases:
   workflow checks its plan-listed public routes before the GitHub Release.
 
 examples:
-  Generate the C++ API output and run local Fern validation:
+  Generate the C++ and Python API output and run local Fern validation:
     python3 docs/scripts/build_holoscan_docs.py --with-library-mdx
 
-  Publish using an existing generated C++ API output tree:
+  Publish using existing generated API output trees:
     python3 docs/scripts/build_holoscan_docs.py --no-docker \
       --skip-library-mdx \
       --publish
@@ -575,6 +587,133 @@ def _clean_generated_api_docs(*, generated_docs: Path, preserve: bool = False) -
     _print_detail(f"Removed: {_repo_relative(generated_docs)}")
 
 
+def _python_stub_package_root() -> Path:
+    """Return the selected checkout's public Holoscan stub package."""
+    for candidate in (
+        REPO / "public" / "python" / "holoscan",
+        REPO / "python" / "holoscan",
+    ):
+        if candidate.is_dir():
+            return candidate
+    raise ValueError("public Python stub package not found in the selected checkout")
+
+
+def _expand_unpack_params_for_fern(source: str) -> str:
+    """Expand generated ``Unpack[TypedDict]`` kwargs for Fern's parser."""
+    # Some public stubs use Python 3.12 syntax while the docs image currently
+    # provides Python 3.11. Files without an Unpack signature need no AST
+    # transformation and should pass through to Fern unchanged.
+    if _UNPACK_PARAMS_RE.search(source) is None:
+        return source
+
+    try:
+        module = ast.parse(source)
+    except SyntaxError as error:
+        raise ValueError("unable to parse a projected Python facade stub") from error
+
+    typed_dicts: dict[str, list[tuple[str, str]]] = {}
+    for node in module.body:
+        if isinstance(node, ast.ClassDef):
+            if not any(
+                (isinstance(base, ast.Name) and base.id == "TypedDict")
+                or (isinstance(base, ast.Attribute) and base.attr == "TypedDict")
+                for base in node.bases
+            ):
+                continue
+            fields: list[tuple[str, str]] = []
+            for statement in node.body:
+                if not isinstance(statement, ast.AnnAssign) or not isinstance(
+                    statement.target, ast.Name
+                ):
+                    continue
+                annotation = ast.get_source_segment(source, statement.annotation)
+                if annotation is not None:
+                    fields.append((statement.target.id, annotation))
+            typed_dicts[node.name] = fields
+            continue
+
+        if (
+            not isinstance(node, ast.Assign)
+            or len(node.targets) != 1
+            or not isinstance(node.targets[0], ast.Name)
+            or not isinstance(node.value, ast.Call)
+            or not (
+                isinstance(node.value.func, ast.Name) and node.value.func.id == "TypedDict"
+            )
+            or len(node.value.args) < 2
+            or not isinstance(node.value.args[1], ast.Dict)
+        ):
+            continue
+        fields = []
+        for key, annotation_node in zip(
+            node.value.args[1].keys, node.value.args[1].values, strict=True
+        ):
+            if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                raise ValueError("functional TypedDict fields must have string names")
+            annotation = ast.get_source_segment(source, annotation_node)
+            if annotation is None:
+                raise ValueError("unable to recover a functional TypedDict annotation")
+            fields.append((key.value, annotation))
+        typed_dicts[node.targets[0].id] = fields
+
+    def replace(match: re.Match[str]) -> str:
+        fields = typed_dicts.get(match.group("params"))
+        if fields is None:
+            raise ValueError(f"unknown TypedDict in Unpack: {match.group('params')}")
+        if not fields:
+            return ""
+        reserved = {"self", "graph", "instance_name"}
+        collisions = sorted(name for name, _ in fields if name in reserved)
+        if collisions:
+            raise ValueError(
+                "registry parameter names collide with the proxy call signature: "
+                + ", ".join(collisions)
+            )
+        parameters = ", ".join(
+            f"{name}: {annotation} = ..." for name, annotation in fields
+        )
+        return f", *, {parameters}"
+
+    expanded = _UNPACK_PARAMS_RE.sub(replace, source)
+    try:
+        ast.parse(expanded)
+    except SyntaxError as error:
+        raise ValueError("expanded Python facade stub is not valid syntax") from error
+    return expanded
+
+
+def _public_python_api_input() -> Path:
+    """Project public ``.pyi`` facades into a Fern-friendly parser tree."""
+    source_root = _python_stub_package_root()
+    input_root = DOCS_ROOT / PYTHON_API_INPUT_DIR
+    package_root = input_root / "holoscan"
+    if input_root.exists():
+        shutil.rmtree(input_root)
+    package_root.mkdir(parents=True)
+    (input_root / "pyproject.toml").write_text(
+        '[project]\nname = "holoscan"\nversion = "0"\nrequires-python = ">=3.12"\n',
+        encoding="utf-8",
+    )
+
+    copied = 0
+    for stub in sorted(source_root.rglob("*.pyi")):
+        relative = stub.relative_to(source_root)
+        if any(part.startswith("_") and part != "__init__.pyi" for part in relative.parts):
+            continue
+        destination = package_root / relative.with_suffix(".py")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            _expand_unpack_params_for_fern(stub.read_text(encoding="utf-8")),
+            encoding="utf-8",
+        )
+        copied += 1
+    if copied == 0:
+        shutil.rmtree(input_root)
+        raise ValueError(f"no public Python facade stubs found under {source_root}")
+
+    return package_root
+
+
 def _fern_auth_token() -> str | None:
     token = os.environ.get("FERN_TOKEN")
     if token:
@@ -672,18 +811,23 @@ def _tokenless_fern_project(fern_dir: Path) -> Iterator[Path]:
             ),
         )
         filters = (
-            (effective_dir / "docs.yml", _TOKENLESS_LIBRARY_MARKERS),
-            (effective_dir / "index.yml", _TOKENLESS_API_NAVIGATION_MARKERS),
+            (effective_dir / "docs.yml", (_TOKENLESS_LIBRARY_MARKERS,)),
+            (
+                effective_dir / "index.yml",
+                (_TOKENLESS_API_NAVIGATION_MARKERS, _TOKENLESS_PYTHON_API_NAVIGATION_MARKERS),
+            ),
         )
-        for config_path, markers in filters:
+        for config_path, marker_pairs in filters:
             if not config_path.is_file():
                 raise ValueError(f"tokenless Fern project is missing {config_path}")
-            filtered_text = _strip_marked_block(
-                config_path.read_text(encoding="utf-8"),
-                begin_marker=markers[0],
-                end_marker=markers[1],
-                source=config_path,
-            )
+            filtered_text = config_path.read_text(encoding="utf-8")
+            for begin_marker, end_marker in marker_pairs:
+                filtered_text = _strip_marked_block(
+                    filtered_text,
+                    begin_marker=begin_marker,
+                    end_marker=end_marker,
+                    source=config_path,
+                )
             if config_path.name == "index.yml":
                 filtered_text = _rebase_tokenless_authored_paths(
                     filtered_text,
@@ -698,10 +842,10 @@ def _needs_tokenless_fern_project(
     *,
     local_fern_action: bool,
     with_library_mdx: bool,
-    cpp_api_present: bool,
+    library_api_present: bool,
 ) -> bool:
     """Return whether a local Fern action needs API config removed."""
-    return local_fern_action and not with_library_mdx and not cpp_api_present
+    return local_fern_action and not with_library_mdx and not library_api_present
 
 
 def _run_local_fern_action(args: argparse.Namespace, *, fern_dir: Path) -> int:
@@ -752,6 +896,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
     )
     generated_docs = fern_dir / "generated"
     cpp_api_docs = generated_docs / "api-reference" / "cpp"
+    python_api_docs = generated_docs / "api-reference" / "python"
 
     if not SOURCE.is_dir():
         print(f"error: missing source directory: {SOURCE}", file=sys.stderr)
@@ -784,16 +929,17 @@ def run_pipeline(args: argparse.Namespace) -> int:
     _print_detail(f"Fern CLI:   {_configured_fern_version(fern_dir)}")
 
     if args.with_library_mdx:
-        _print_section("C++ API generation: input")
-        _print_detail("Library:       holoscan-cpp")
+        _print_section("Library API generation: input")
+        _print_detail("Libraries:     holoscan-cpp, holoscan-python")
         _print_detail(f"Configuration: {fern_dir / 'docs.yml'}")
-        _print_detail(f"Output:        {cpp_api_docs}")
+        _print_detail(f"C++ output:    {cpp_api_docs}")
+        _print_detail(f"Python output: {python_api_docs}")
 
     if not args.no_clean:
         _print_section(
-            "C++ API generation: cleanup"
+            "Library API generation: cleanup"
             if args.with_library_mdx
-            else "C++ API generation: reuse"
+            else "Library API generation: reuse"
         )
         _clean_generated_api_docs(
             generated_docs=generated_docs,
@@ -805,19 +951,25 @@ def run_pipeline(args: argparse.Namespace) -> int:
         if not FIX_LIBRARY_MDX.is_file():
             print(f"error: missing post-process script: {FIX_LIBRARY_MDX}", file=sys.stderr)
             return 2
-        _print_section("C++ API generation")
+        _print_section("Library API generation")
         _print_detail(f"Working directory: {DOCS_ROOT}")
         _print_detail("Running: fern docs md generate --local")
         tmpdir = Path(tempfile.mkdtemp(prefix=".fern-library-", dir=DOCS_ROOT))
         env = os.environ.copy()
         env["TMPDIR"] = str(tmpdir)
-        result = _run(
-            [fern_exe, "docs", "md", "generate", "--local"],
-            cwd=DOCS_ROOT,
-            env=env,
-            check=False,
-            show_command=args.verbose,
-        )
+        try:
+            python_input = _public_python_api_input()
+            _print_detail(f"Python stubs: {_repo_relative(python_input)}")
+            result = _run(
+                [fern_exe, "docs", "md", "generate", "--local"],
+                cwd=DOCS_ROOT,
+                env=env,
+                check=False,
+                show_command=args.verbose,
+            )
+        except ValueError as exc:
+            print(f"error: unable to prepare Python API input: {exc}", file=sys.stderr)
+            return 2
         if result.returncode:
             print(
                 f"error: fern docs md generate --local exited with {result.returncode}.",
@@ -830,10 +982,29 @@ def run_pipeline(args: argparse.Namespace) -> int:
     cpp_api_present = cpp_api_docs.is_dir() and any(
         path.is_file() for path in cpp_api_docs.rglob("*.mdx")
     )
-    if args.publish and not cpp_api_present:
+    python_api_present = python_api_docs.is_dir() and any(
+        path.is_file() for path in python_api_docs.rglob("*.mdx")
+    )
+    library_api_present = cpp_api_present and python_api_present
+    if library_api_present and not args.with_library_mdx:
+        try:
+            _public_python_api_input()
+        except ValueError as exc:
+            print(f"error: unable to prepare Python API input: {exc}", file=sys.stderr)
+            return 2
+    if args.publish and not library_api_present:
+        missing_api_docs = [
+            str(path)
+            for path, present in (
+                (cpp_api_docs, cpp_api_present),
+                (python_api_docs, python_api_present),
+            )
+            if not present
+        ]
         print(
-            "error: production publication requires a non-empty generated C++ API "
-            f"MDX tree at {cpp_api_docs}. Run with --with-library-mdx first.",
+            "error: production publication requires non-empty generated C++ and "
+            f"Python API MDX trees; missing: {', '.join(missing_api_docs)}. "
+            "Run with --with-library-mdx first.",
             file=sys.stderr,
         )
         return 1
@@ -843,7 +1014,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
         return 2
 
     if generated_docs.is_dir():
-        _print_section("C++ API generation: post-processing")
+        _print_section("Library API generation: post-processing")
         _print_detail(f"Working directory: {generated_docs}")
         _print_detail(f"Running: {FIX_LIBRARY_MDX.name}")
         fix_command = [
@@ -891,15 +1062,18 @@ def run_pipeline(args: argparse.Namespace) -> int:
         _print_section("Internal link checks")
         _print_detail(f"Working directory: {REPO}")
         _print_detail(f"Running: {CHECK_DOC_LINKS.name}")
+        link_command = [
+            sys.executable,
+            str(CHECK_DOC_LINKS),
+            "--docs-root",
+            str(SOURCE),
+            "--fern-dir",
+            str(fern_dir),
+        ]
+        if args.with_library_mdx or library_api_present or args.publish or args.publish_preview:
+            link_command.append("--require-generated")
         link_check = _run(
-            [
-                sys.executable,
-                str(CHECK_DOC_LINKS),
-                "--docs-root",
-                str(SOURCE),
-                "--fern-dir",
-                str(fern_dir),
-            ],
+            link_command,
             check=False,
             indent_output=True,
             show_command=args.verbose,
@@ -978,10 +1152,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
     if _needs_tokenless_fern_project(
         local_fern_action=local_fern_action,
         with_library_mdx=args.with_library_mdx,
-        cpp_api_present=cpp_api_present,
+        library_api_present=library_api_present,
     ):
         print(
-            "No generated C++ API MDX found; omitting the API reference from "
+            "A generated API MDX tree is missing; omitting the API reference from "
             "this local Fern action.",
             flush=True,
         )
@@ -1024,20 +1198,42 @@ def _mount_host_fern_auth(*, docker_home: Path, docker_mounts: list[str]) -> Non
 
 @contextmanager
 def _external_docker_home(
-    *, watched_roots: tuple[Path, ...], docker_mounts: list[str]
+    *, watched_roots: tuple[Path, ...], docker_mounts: list[str], reuse: bool = False
 ) -> Iterator[Path]:
-    """Yield a mounted per-run HOME outside Fern's watched content roots."""
-    with TemporaryDirectory(prefix="holoscan-docs-home-") as tmpdir:
-        docker_home = Path(tmpdir).resolve()
-        overlapping_root = next(
-            (root for root in watched_roots if _is_under(docker_home, root.resolve())),
-            None,
+    """Mount an isolated Fern HOME, retaining it only for local previews."""
+    # The publishing helper supplies <work-dir>/fern-state. Standalone runs use
+    # home rather than the host's TMPDIR, which a Docker VM may not share.
+    fern_state_dir = Path(
+        os.environ.get("HOLOSCAN_DOCS_FERN_STATE_DIR") or Path.home() / ".cache/holoscan-docs"
+    ).expanduser().resolve()
+    overlapping_root = next(
+        (root for root in watched_roots if _is_under(fern_state_dir, root.resolve())),
+        None,
+    )
+    if overlapping_root is not None:
+        raise ValueError(
+            f"Fern state directory {fern_state_dir} overlaps watched content "
+            f"root {overlapping_root.resolve()}"
         )
-        if overlapping_root is not None:
-            raise ValueError(
-                f"temporary Docker HOME {docker_home} overlaps watched content "
-                f"root {overlapping_root.resolve()}"
-            )
+    fern_state_dir.mkdir(parents=True, exist_ok=True)
+    with ExitStack() as stack:
+        if reuse:
+            docker_home = fern_state_dir
+            # Keep the lock file to avoid inode-replacement races. Closing its
+            # descriptor releases the lock, including on interruption.
+            lock = stack.enter_context((fern_state_dir / ".lock").open("a"))
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError(
+                    f"Fern state directory {fern_state_dir} is already in use; "
+                    "stop the other preview or select another work directory"
+                ) from exc
+        else:
+            docker_home = Path(stack.enter_context(
+                TemporaryDirectory(prefix="run-", dir=fern_state_dir)
+            ))
+        (docker_home / "tmp").mkdir(exist_ok=True)
         docker_mounts.append(f"{docker_home}:{docker_home}")
         yield docker_home
 
@@ -1053,17 +1249,31 @@ def _run_docker_container(
     docker_options: list[str],
     shell_cmd: str,
 ) -> int:
-    with _external_docker_home(
-        watched_roots=(repo_root, script_repo, fern_dir.parent),
-        docker_mounts=docker_mounts,
-    ) as docker_home:
-        docker_env = [f"-eHOME={docker_home}"]
+    with (
+        _external_docker_home(
+            watched_roots=(repo_root, script_repo, fern_dir.parent),
+            docker_mounts=docker_mounts,
+            reuse=args.preview,
+        ) as docker_home,
+        TemporaryDirectory(prefix="parser-", dir=docker_home / "tmp") as docker_tmp,
+    ):
+        # Sibling parser containers must see temporary files at the same absolute
+        # path as the docs container, not in its private /tmp filesystem.
+        docker_env = [f"-eHOME={docker_home}", f"-eTMPDIR={docker_tmp}"]
         if os.environ.get("CI"):
             docker_env.append("-eCI=1")
+        if "NODE_OPTIONS" in os.environ:
+            docker_env.append("-eNODE_OPTIONS")
+        elif args.preview:
+            # Large previews can exceed Node's default heap. This is our local
+            # preview default, not a Fern requirement; explicit settings win.
+            # https://buildwithfern.com/learn/docs/preview-publish/preview-changes
+            # https://nodejs.org/download/release/v22.12.0/docs/api/cli.html#--max-old-space-sizesize-in-mib
+            docker_env.append("-eNODE_OPTIONS=--max-old-space-size=4096")
 
         # Share Fern authentication with the container. Prefer an explicit
         # ``FERN_TOKEN`` and otherwise mount only the host credential files.
-        # Mutable Fern state remains in the external per-run HOME so its own
+        # Mutable Fern state remains in the external isolated HOME so its own
         # debug log cannot retrigger a docs-tree watcher.
         if os.environ.get("FERN_TOKEN"):
             docker_env.append("-eFERN_TOKEN")
@@ -1132,26 +1342,31 @@ def _container_docker_options(*, image: str, with_library_mdx: bool) -> list[str
     if not with_library_mdx:
         return []
 
-    socket_mount = f"{_active_docker_socket()}:/var/run/docker.sock"
-    result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "-v",
-            socket_mount,
-            image,
-            "stat",
-            "-c",
-            "%g",
-            "/var/run/docker.sock",
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    socket_gid = result.stdout.strip()
-    if result.returncode or not socket_gid.isdigit():
+    # Bind sources are resolved by the daemon. A VM-backed runtime such as
+    # Colima can expose a host proxy on Linux or macOS, so try the daemon-side
+    # default if the active path cannot be mounted. Prefer native/rootless paths.
+    socket_paths = dict.fromkeys([_active_docker_socket(), "/var/run/docker.sock"])
+    for socket_path in socket_paths:
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--mount",
+                f"type=bind,source={socket_path},target=/var/run/docker.sock",
+                image,
+                "sh",
+                "-c",
+                "test -S /var/run/docker.sock && stat -c %g /var/run/docker.sock",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        socket_gid = result.stdout.strip()
+        if not result.returncode and socket_gid.isdigit():
+            break
+    else:
         detail = result.stderr.strip().splitlines()
         suffix = f": {detail[-1]}" if detail else ""
         raise RuntimeError(f"could not inspect the Docker daemon socket{suffix}")
@@ -1160,7 +1375,7 @@ def _container_docker_options(*, image: str, with_library_mdx: bool) -> list[str
         "--group-add",
         socket_gid,
         "-v",
-        socket_mount,
+        f"{socket_path}:/var/run/docker.sock",
     ]
 
 
@@ -1267,8 +1482,10 @@ def _run_in_docker(args: argparse.Namespace) -> int:
         pipeline_args.append("--verbose")
 
     pipeline_cmd = " ".join(shlex.quote(part) for part in pipeline_args)
+    # A failed write usually means the mounted HOME is not usable by this UID.
+    # Report that failure instead of hiding it behind a later Git trust error.
     shell_cmd = (
-        f"git config --global --add safe.directory {shlex.quote(str(REPO))} 2>/dev/null || true; "
+        f"git config --global --replace-all safe.directory {shlex.quote(str(REPO))} && "
         f"{pipeline_cmd}"
     )
     try:
@@ -1291,7 +1508,7 @@ def _run_in_docker(args: argparse.Namespace) -> int:
         return 2
     except RuntimeError as exc:
         print(
-            f"error: Docker-container C++ API generation {exc}; "
+            f"error: Docker-container library API generation {exc}; "
             "use a local Docker daemon or run with --no-docker.",
             file=sys.stderr,
         )
@@ -1341,24 +1558,23 @@ def main() -> int:
     parser.add_argument(
         "--no-clean",
         action="store_true",
-        help="Skip removing prior C++ API MDX under generated/.",
+        help="Skip removing prior API MDX under generated/.",
     )
     parser.add_argument(
         "--with-library-mdx",
         action="store_true",
         help=(
-            "Generate fresh C++ API MDX in the selected local fern/generated tree "
-            "using the configured library input. The configured public Git repository "
-            "is parsed on Fern's servers and requires authentication."
+            "Generate fresh C++ and Python API MDX in the selected local "
+            "fern/generated tree using the configured library inputs."
         ),
     )
     parser.add_argument(
         "--skip-library-mdx",
         action="store_true",
         help=(
-            "Reuse the existing local fern/generated C++ API MDX tree. "
-            "The tree remains included in Fern output. Production publication "
-            "requires it to be non-empty and fully post-processed."
+            "Reuse the existing local fern/generated API MDX trees. "
+            "The trees remain included in Fern output. Production publication "
+            "requires them to be non-empty and fully post-processed."
         ),
     )
     parser.add_argument(

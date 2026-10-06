@@ -20,6 +20,7 @@
 
 #include <holoscan/logger/logger.hpp>
 
+#include "core/diagnostic_reporting.hpp"
 #include "cuda_driver_entry_points.hpp"
 
 namespace holoscan {
@@ -75,8 +76,8 @@ CudaStreamPool::StreamLease& CudaStreamPool::StreamLease::operator=(
 CudaStreamPool::StreamLease::~StreamLease() {
   auto result = release();
   if (!result) {
-    HOLOSCAN_LOG_ERROR("Failed to release CUDA stream lease: {}",
-                       runtime_error_message(result.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to release CUDA stream lease: {}",
+                                 runtime_error_message(result.error()));
   }
 }
 
@@ -130,8 +131,8 @@ CudaStreamPool::CudaStreamPool(int32_t device_id, uint32_t stream_flags, int32_t
 CudaStreamPool::~CudaStreamPool() {
   auto result = deinitialize_pool();
   if (!result) {
-    HOLOSCAN_LOG_ERROR("Failed to deinitialize CUDA stream pool: {}",
-                       runtime_error_message(result.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to deinitialize CUDA stream pool: {}",
+                                 runtime_error_message(result.error()));
   }
 }
 
@@ -155,7 +156,7 @@ expected<void, Error> CudaStreamPool::deinitialize_pool() {
   stage_ = AllocatorStage::kDeinitializationInProgress;
 
   if (!allocated_streams_.empty()) {
-    HOLOSCAN_LOG_WARN("CudaStreamPool still has leased streams");
+    HOLOSCAN_LOG_AUTOMATIC_WARN("CudaStreamPool still has leased streams");
   }
   alive_token_.reset();
   allocated_streams_.clear();

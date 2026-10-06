@@ -7,8 +7,8 @@
 //
 // Active cases cover direct scalar depths one through three, internal transported scalar delivery,
 // ReuseLast supersession, finite terminal drain, the original high-rate selection-loss regression,
-// and mixed-source recovery. External raw Tensor and descriptor-schema coverage remains in the
-// dedicated external-Channel suite.
+// mixed-source recovery, and one CUDA Tensor parity case. External raw Tensor and descriptor-
+// schema coverage remains in the dedicated external-Channel suite.
 
 #include <algorithm>
 #include <array>
@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -26,14 +27,19 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
+#include <cuda_runtime_api.h>
+
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <gtest/gtest.h>
 
 #include <holoscan/core/compile.hpp>
 #include <holoscan/core/connection_options.hpp>
+#include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/operator.hpp>
@@ -41,12 +47,16 @@
 #include <holoscan/core/run.hpp>
 #include <holoscan/core/run_session.hpp>
 #include <holoscan/core/temporal_contract.hpp>
+#include <holoscan/core/tensor_output_loan.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "compiler/compile_internal.hpp"
+#include "compiler/execution_plan_state.hpp"
 #include "runtime/port_binding.hpp"
+#include "runtime/run_session_internal.hpp"
 #include "runtime/runtime_channel_binding.hpp"
 #include "runtime/runtime_channel_binding_test_access.hpp"
+#include "runtime/runtime_diagnostic_sink.hpp"
 #include "runtime/runtime_phase_counters.hpp"
 #include "runtime/runtime_test_access.hpp"
 #include "support/host_unique_test_name.hpp"
@@ -78,6 +88,23 @@ constexpr std::uint64_t kMaximumFreshSampleLag = 5U;
 // samples entirely produces no further activations, and waiting out a long budget for that answer
 // would dominate the suite.
 constexpr std::chrono::seconds kActivationBudget{10};
+
+class ScopedCudaDeviceRestore final {
+ public:
+  explicit ScopedCudaDeviceRestore(const int device) noexcept : device_(device) {}
+
+  ScopedCudaDeviceRestore(const ScopedCudaDeviceRestore&) = delete;
+  ScopedCudaDeviceRestore& operator=(const ScopedCudaDeviceRestore&) = delete;
+
+  ~ScopedCudaDeviceRestore() {
+    if (device_ >= 0) {
+      static_cast<void>(cudaSetDevice(device_));
+    }
+  }
+
+ private:
+  int device_{-1};
+};
 
 [[nodiscard]] bool wait_for_terminal(const RunSession& session) {
   const auto deadline = std::chrono::steady_clock::now() + kActivationBudget;
@@ -425,12 +452,22 @@ class CrossSourceFreshnessConsumer final : public Operator<> {
   Input<std::uint64_t> data_;
 };
 
-// Publishes its own activation count, stamped with the activation coordinate so the consumer can
-// age the selected sample without a second clock read.
-template <std::int64_t PeriodUs = 20000>
+// Stamp scheduled coordinates by default. Actual capture time models a camera callback that can
+// publish just after a coincident consumer tick.
+template <std::int64_t PeriodUs = 20000, bool CaptureNow = false, typename Payload = std::uint64_t>
 class FreshnessSource final : public Operator<> {
  public:
-  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
+  void setup(OperatorSpec& spec) override {
+    auto& port = spec.output(output, "output");
+    if constexpr (std::is_same_v<Payload, Tensor>) {
+      port.produces_tensor(
+          TensorOutputSpec{.representation = {.memory_kind = MemoryKind::kHost,
+                                              .dtype = DLDataType{kDLUInt, 64U, 1U},
+                                              .rank = 1U},
+                           .bounds = tensor_bounds(sizeof(std::uint64_t)),
+                           .storage = TensorOutputStorage::kRuntimePool});
+    }
+  }
 
   [[nodiscard]] Contract contract() const override {
     Contract result;
@@ -439,19 +476,44 @@ class FreshnessSource final : public Operator<> {
   }
 
   [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
-    const TimePoint activation = context.activation_time();
+    TimePoint activation = context.activation_time();
+    if constexpr (CaptureNow) {
+      auto captured = context.clock().now();
+      if (!captured) {
+        return make_unexpected(std::move(captured).error());
+      }
+      activation = *captured;
+    }
     ++published_;
     FreshnessProbe::published.store(published_, std::memory_order_relaxed);
-    return output.emit(Sample<std::uint64_t>{
-        published_,
-        SampleMetadata{
-            .capture_timestamp_ns = activation.timestamp_ns,
-            .source_clock_id = activation.clock_id,
-        },
-    });
+    if constexpr (std::is_same_v<Payload, Tensor>) {
+      constexpr std::array<std::int64_t, 1U> kShape{1};
+      auto loan = output.allocate_tensor(
+          TensorLoanRequest{.shape = kShape, .dtype = DLDataType{kDLUInt, 64U, 1U}});
+      if (!loan) {
+        return make_unexpected(std::move(loan).error());
+      }
+      auto committed = loan->write_host_and_commit(
+          [this](const TensorOutputWriteGuard& writer) -> expected<void, Error> {
+            std::memcpy(writer.data(), &published_, sizeof(published_));
+            return {};
+          });
+      if (!committed) {
+        return make_unexpected(std::move(committed).error());
+      }
+      return output.emit(std::move(*loan), EmitOptions{.capture_time = activation});
+    } else {
+      return output.emit(Sample<std::uint64_t>{
+          published_,
+          SampleMetadata{
+              .capture_timestamp_ns = activation.timestamp_ns,
+              .source_clock_id = activation.clock_id,
+          },
+      });
+    }
   }
 
-  Output<std::uint64_t> output;
+  Output<Payload> output;
 
  private:
   std::uint64_t published_{};
@@ -460,15 +522,23 @@ class FreshnessSource final : public Operator<> {
 // Depth is a template parameter rather than a constructor argument because queue_depth is authored
 // in setup(), before any instance state is available.
 template <std::uint32_t Depth, MissingPolicy Missing = MissingPolicy::kSkip,
-          std::int64_t PeriodUs = 250000>
+          std::int64_t PeriodUs = 250000, typename Payload = std::uint64_t,
+          std::int64_t MaxAgeNs = kMaxSampleAge.count()>
 class FreshnessConsumer final : public Operator<> {
  public:
-  void setup(OperatorSpec& spec) override { spec.input(data, "data").queue_depth(Depth); }
+  void setup(OperatorSpec& spec) override {
+    auto& port = spec.input(data, "data").queue_depth(Depth);
+    if constexpr (std::is_same_v<Payload, Tensor>) {
+      port.expects_tensor(TensorInputSpec{.representation = {.memory_kind = MemoryKind::kHost,
+                                                             .dtype = DLDataType{kDLUInt, 64U, 1U},
+                                                             .rank = 1U}});
+    }
+  }
 
   [[nodiscard]] Contract contract() const override {
     Contract result;
     result.trigger(OnClock{.period = std::chrono::microseconds{PeriodUs}})
-        .input(data, LatestWithin{.max_age = kMaxSampleAge});
+        .input(data, LatestWithin{.max_age = std::chrono::nanoseconds{MaxAgeNs}});
     if constexpr (Missing == MissingPolicy::kReuseLast) {
       // Longer than the whole run, so reuse never expires and the reuse claim is continuously
       // held. The question under test is whether a newer sample can be admitted while it is held,
@@ -499,16 +569,71 @@ class FreshnessConsumer final : public Operator<> {
     }
     const std::int64_t age_ns = context.activation_time().timestamp_ns -
                                 static_cast<std::int64_t>(sample->metadata.capture_timestamp_ns);
+    const std::uint64_t value = [&] {
+      if constexpr (std::is_same_v<Payload, Tensor>) {
+        std::uint64_t result{};
+        std::memcpy(&result, sample->data.data(), sizeof(result));
+        return result;
+      } else {
+        return sample->data;
+      }
+    }();
     FreshnessProbe::record({.selected = true,
                             .selection_state = data.selection().state,
                             .age_ns = age_ns,
-                            .value = sample->data,
+                            .value = value,
                             .published = FreshnessProbe::published.load(std::memory_order_relaxed),
                             .activation_time_ns = context.activation_time().timestamp_ns});
     return {};
   }
 
-  Input<std::uint64_t> data;
+  Input<Payload> data;
+};
+
+class StallingClockSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output").max_emits_per_compute(1U);
+  }
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 10ms});
+    return result;
+  }
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto now = context.clock().now();
+    if (!now) {
+      return make_unexpected(std::move(now).error());
+    }
+    if (!start_) {
+      start_ = *now;
+    }
+    const std::int64_t elapsed_ms = (now->timestamp_ns - start_->timestamp_ns) / 1000000;
+    const SampleMetadata stamped{.capture_timestamp_ns = now->timestamp_ns,
+                                 .source_clock_id = now->clock_id};
+    if (!first_sent_ && elapsed_ms >= 220) {
+      first_sent_ = true;
+      return output.emit(Sample<std::uint64_t>{1U, stamped});
+    }
+    if (first_sent_ && !second_sent_ && elapsed_ms >= 480) {
+      second_sent_ = true;
+      return output.emit(Sample<std::uint64_t>{2U, stamped});
+    }
+    if (second_sent_ && !stalled_ && elapsed_ms >= 520) {
+      // The controller has had ~40 ms of rounds to reconcile sample 2. Now stall it for more
+      // than two consumer periods (300 ms each) so the next drained tick coalesces.
+      stalled_ = true;
+      std::this_thread::sleep_for(700ms);
+    }
+    return {};
+  }
+  Output<std::uint64_t> output;
+
+ private:
+  std::optional<TimePoint> start_;
+  bool first_sent_{};
+  bool second_sent_{};
+  bool stalled_{};
 };
 
 enum class Realization : std::uint8_t { kDirect, kForcedHoloMq };
@@ -660,6 +785,7 @@ enum class FiniteReuseWitness : std::uint8_t {
   kMatching,
   kIneligibleOnly,
   kZeroCoordinate,
+  kCaptureAbsentThird,
 };
 
 struct FiniteReuseProbe {
@@ -727,6 +853,126 @@ class FreshnessHandoffRetryBindControl final : public detail::RuntimeChannelSess
 
  private:
   std::atomic<bool> armed_{};
+};
+
+class FreshnessDiagnosticSink final : public detail::RuntimeStructuralDiagnosticSink {
+ public:
+  void publish(std::span<const Diagnostic> diagnostics) override {
+    const std::lock_guard lock{mutex_};
+    diagnostics_.assign(diagnostics.begin(), diagnostics.end());
+  }
+
+  void publish_runtime_details(std::span<const detail::RuntimeDiagnosticDetail> details) override {
+    const std::lock_guard lock{mutex_};
+    details_.assign(details.begin(), details.end());
+  }
+
+  [[nodiscard]] std::vector<Diagnostic> diagnostics() const {
+    const std::lock_guard lock{mutex_};
+    return diagnostics_;
+  }
+
+  [[nodiscard]] std::vector<detail::RuntimeDiagnosticDetail> details() const {
+    const std::lock_guard lock{mutex_};
+    return details_;
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  std::vector<Diagnostic> diagnostics_;
+  std::vector<detail::RuntimeDiagnosticDetail> details_;
+};
+
+class DecreasingArrivalBindControl final : public detail::RuntimeChannelSessionBindTestControl {
+ public:
+  DecreasingArrivalBindControl(const PortId input, const ClockId clock)
+      : input_(input), clock_(clock) {}
+
+  [[nodiscard]] expected<void, Error> bind(
+      detail::RuntimeChannelSession& session) noexcept override {
+    constexpr std::uint64_t kFirstValue = 1U;
+    constexpr std::uint64_t kSecondValue = 2U;
+    auto first_counter =
+        detail::RuntimeChannelSessionTestAccess::set_arrival_counters(session, input_, 24U, 1U);
+    if (!first_counter) {
+      return first_counter;
+    }
+    auto first = detail::RuntimeChannelSessionTestAccess::inject_direct_inline_payload(
+        session,
+        input_,
+        std::as_bytes(std::span{&kFirstValue, 1U}),
+        SampleMetadata{.sequence = 1U,
+                       .capture_timestamp_ns = 100,
+                       .source_clock_id = clock_,
+                       .publish_timestamp_ns = 100,
+                       .publish_clock_id = clock_,
+                       .byte_size = sizeof(kFirstValue),
+                       .payload_kind = PayloadKind::kInlineTyped});
+    if (!first) {
+      return first;
+    }
+    auto second_counter =
+        detail::RuntimeChannelSessionTestAccess::set_arrival_counters(session, input_, 23U, 2U);
+    if (!second_counter) {
+      return second_counter;
+    }
+    auto second = detail::RuntimeChannelSessionTestAccess::inject_direct_inline_payload(
+        session,
+        input_,
+        std::as_bytes(std::span{&kSecondValue, 1U}),
+        SampleMetadata{.sequence = 2U,
+                       .capture_timestamp_ns = 200,
+                       .source_clock_id = clock_,
+                       .publish_timestamp_ns = 200,
+                       .publish_clock_id = clock_,
+                       .byte_size = sizeof(kSecondValue),
+                       .payload_kind = PayloadKind::kInlineTyped});
+    if (second) {
+      configured_.store(true, std::memory_order_release);
+    }
+    return second;
+  }
+
+  [[nodiscard]] bool configured() const noexcept {
+    return configured_.load(std::memory_order_acquire);
+  }
+
+ private:
+  PortId input_{};
+  ClockId clock_{};
+  std::atomic<bool> configured_{};
+};
+
+class DecreasingArrivalSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 60s});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<std::uint64_t> output;
+};
+
+class DecreasingArrivalConsumer final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.input(data, "data").queue_depth(4U); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 60s})
+        .input(data, LatestWithin{.max_age = 1s})
+        .on_missing(data, ReuseLast{.max_age = 30s});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<std::uint64_t> data;
 };
 
 class CaptureAbsentReuseSource final : public Operator<> {
@@ -849,6 +1095,13 @@ class FiniteReuseSource final : public Operator<> {
     constexpr std::uint64_t kFinalDataCall = Selector == FiniteReuseSelector::kExact ? 2U : 3U;
     constexpr std::uint64_t kFinalDriverCall = kFinalDataCall + 1U;
     if (calls_ <= kFinalDataCall) {
+      if constexpr (Witness == FiniteReuseWitness::kCaptureAbsentThird) {
+        if (calls_ == 2U) {
+          final_data_metadata_ = metadata;
+        } else if (calls_ == 3U) {
+          return data.emit(Sample<std::uint64_t>{calls_, SampleMetadata{}});
+        }
+      }
       auto emitted = data.emit(Sample<std::uint64_t>{calls_, metadata});
       if (!emitted) {
         return emitted;
@@ -883,13 +1136,18 @@ class FiniteReuseSource final : public Operator<> {
   SampleMetadata first_data_metadata_{};
 };
 
+// Observe retained freshness while optionally checking an unwired side for
+// TemporalFreshnessTest.OptionalAbsenceCoexistsWithDepthOneReuseLastFreshness.
 template <FiniteReuseSelector Selector, std::uint32_t Depth,
-          FiniteReuseWitness Witness = FiniteReuseWitness::kMatching>
+          FiniteReuseWitness Witness = FiniteReuseWitness::kMatching, bool WithOptional = false>
 class FiniteReuseConsumer final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
     spec.input(data, "data").queue_depth(Depth);
     spec.input(driver, "driver").queue_depth(1U);
+    if constexpr (WithOptional) {
+      spec.input(optional, "optional").optional();
+    }
   }
 
   [[nodiscard]] Contract contract() const override {
@@ -901,10 +1159,20 @@ class FiniteReuseConsumer final : public Operator<> {
       result.input(data, LatestWithin{.max_age = 1s});
     }
     result.on_missing(data, ReuseLast{.max_age = 30s});
+    if constexpr (WithOptional) {
+      result.input(optional, Exact{}).on_missing(optional, SafeDefault{});
+    }
     return result;
   }
 
   [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    if constexpr (WithOptional) {
+      if (optional.selection().state != InputState::kSafeDefault ||
+          optional.selection().reason != SelectionReason::kNotConnected || optional.receive() ||
+          optional.selected_batch()) {
+        return make_unexpected(Error{ErrorCode::kProtocolError});
+      }
+    }
     auto witness = driver.receive();
     if (!witness) {
       return make_unexpected(std::move(witness).error());
@@ -919,16 +1187,21 @@ class FiniteReuseConsumer final : public Operator<> {
 
   Input<std::uint64_t> data;
   Input<std::uint64_t> driver;
+  Input<std::uint64_t> optional;
 };
 
+// Run finite retained delivery and collect terminal evidence for
+// TemporalFreshnessTest.OptionalAbsenceCoexistsWithDepthOneReuseLastFreshness.
+// Graph: source.{driver,data} --> consumer.{driver,data}; consumer.optional is unwired if enabled.
 template <FiniteReuseSelector Selector, std::uint32_t Depth,
-          FiniteReuseWitness Witness = FiniteReuseWitness::kMatching>
+          FiniteReuseWitness Witness = FiniteReuseWitness::kMatching,
+          Realization Delivery = Realization::kForcedHoloMq, bool WithOptional = false>
 void run_finite_reuse_graph(
     detail::RuntimePhaseCounters::Snapshot* const final_snapshot = nullptr) {
   FiniteReuseProbe::reset();
   Graph graph{test::make_host_unique_test_name("temporal-finite-reuse-terminal-drain")};
   auto source = graph.op<FiniteReuseSource<Selector, Witness>>("source");
-  auto consumer = graph.op<FiniteReuseConsumer<Selector, Depth, Witness>>("consumer");
+  auto consumer = graph.op<FiniteReuseConsumer<Selector, Depth, Witness, WithOptional>>("consumer");
   // Register the trigger edge first so equal-coordinate trigger and side-input revisions sort with
   // the trigger first. The zero-coordinate case therefore depends on prerequisite ingestion, not
   // incidental source registration order.
@@ -939,7 +1212,10 @@ void run_finite_reuse_graph(
   graph.partition("source").add(source);
   graph.partition("consumer").add(consumer);
   graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime_clock"));
-  const ExecutionPlan compiled = detail::compile_with_process_local_holomq(graph, CompileOptions{});
+  const ExecutionPlan compiled =
+      Delivery == Realization::kForcedHoloMq
+          ? detail::compile_with_process_local_holomq(graph, CompileOptions{})
+          : compile(graph);
   ASSERT_TRUE(compiled.ok()) << compiled.json();
   auto counters = std::make_shared<detail::RuntimePhaseCounters>();
   const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_phase_counters(compiled, counters);
@@ -978,16 +1254,990 @@ void run_finite_reuse_graph(
   expect_retention_counter_identity(snapshot);
 }
 
+struct ExactDepthManyProbe {
+  static void reset() {
+    const std::lock_guard lock{mutex};
+    values.clear();
+    sequences.clear();
+    states.clear();
+    timed_out = false;
+  }
+
+  [[nodiscard]] static bool wait_for_activations(const std::size_t count) {
+    std::unique_lock lock{mutex};
+    const bool observed = cv.wait_for(
+        lock, kActivationBudget, [count] { return values.size() >= count || timed_out; });
+    timed_out = timed_out || !observed;
+    return observed && values.size() >= count;
+  }
+
+  static void record(const Sample<std::uint64_t>& sample, const InputState state) {
+    const std::lock_guard lock{mutex};
+    values.push_back(sample.data);
+    sequences.push_back(sample.metadata.sequence);
+    states.push_back(state);
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static std::string describe() {
+    const std::lock_guard lock{mutex};
+    return fmt::format("values={} sequences={} states={} timeout={}",
+                       fmt::join(values, ","),
+                       fmt::join(sequences, ","),
+                       states.size(),
+                       timed_out);
+  }
+
+  [[nodiscard]] static bool did_time_out() {
+    const std::lock_guard lock{mutex};
+    return timed_out;
+  }
+
+  [[nodiscard]] static std::size_t activation_count() {
+    const std::lock_guard lock{mutex};
+    return values.size();
+  }
+
+  static inline std::mutex mutex;
+  static inline std::condition_variable cv;
+  static inline std::vector<std::uint64_t> values;
+  static inline std::vector<std::uint64_t> sequences;
+  static inline std::vector<InputState> states;
+  static inline bool timed_out{};
+};
+
+class ExactDepthManySource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(data, "data").max_emits_per_compute(2U);
+    spec.output(driver, "driver").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    ++calls_;
+    const ClockId clock = context.activation_time().clock_id;
+    if (calls_ == 1U) {
+      auto emitted = emit(data, 1U, 10, clock);
+      return emitted ? emit(driver, 1U, 10, clock) : emitted;
+    }
+    // Let the first activation retire and establish ReuseLast before the depth-many burst.
+    if (calls_ < 21U) {
+      return {};
+    }
+    if (calls_ == 21U) {
+      return emit(data, 2U, 20, clock);
+    }
+    // Let sample 2 occupy the second typed slot, then publish both staged survivors without a
+    // controller interleave between them.
+    if (calls_ < 41U) {
+      return {};
+    }
+    if (calls_ == 41U) {
+      for (std::uint64_t value = 3U; value <= 4U; ++value) {
+        auto emitted = emit(data, value, static_cast<std::int64_t>(value * 10U), clock);
+        if (!emitted) {
+          return emitted;
+        }
+      }
+      return {};
+    }
+    if (calls_ == 42U) {
+      emitted_first_staged_driver_ = true;
+      return emit(driver, 4U, 40, clock);
+    }
+    if (emitted_first_staged_driver_ && !emitted_predecessor_driver_ &&
+        ExactDepthManyProbe::activation_count() >= 2U) {
+      emitted_predecessor_driver_ = true;
+      return emit(driver, 3U, 30, clock);
+    }
+    if (emitted_predecessor_driver_ && !emitted_target_driver_ &&
+        ExactDepthManyProbe::activation_count() >= 3U) {
+      emitted_target_driver_ = true;
+      return emit(driver, 4U, 40, clock);
+    }
+    return {};
+  }
+
+  Output<std::uint64_t> data;
+  Output<std::uint64_t> driver;
+
+ private:
+  [[nodiscard]] static expected<void, Error> emit(Output<std::uint64_t>& output,
+                                                  const std::uint64_t value,
+                                                  const std::int64_t capture_ns,
+                                                  const ClockId clock) {
+    return output.emit(Sample<std::uint64_t>{
+        value,
+        SampleMetadata{.capture_timestamp_ns = capture_ns, .source_clock_id = clock},
+    });
+  }
+
+  std::uint64_t calls_{};
+  bool emitted_first_staged_driver_{};
+  bool emitted_predecessor_driver_{};
+  bool emitted_target_driver_{};
+};
+
+class ExactDepthManyConsumer final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(data, "data").queue_depth(2U);
+    spec.input(driver, "driver").queue_depth(1U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{driver}).input(data, Exact{}).on_missing(data, ReuseLast{.max_age = 30s});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto witness = driver.receive();
+    auto sample = data.receive();
+    if (!witness) {
+      return make_unexpected(std::move(witness).error());
+    }
+    if (!sample) {
+      return make_unexpected(std::move(sample).error());
+    }
+    ExactDepthManyProbe::record(*sample, data.selection().state);
+    return ExactDepthManyProbe::did_time_out()
+               ? expected<void, Error>{make_unexpected(Error{ErrorCode::kTimeout})}
+               : expected<void, Error>{};
+  }
+
+  Input<std::uint64_t> data;
+  Input<std::uint64_t> driver;
+};
+
+template <Realization Delivery>
+void run_exact_depth_many_reuse_graph() {
+  ExactDepthManyProbe::reset();
+  Graph graph{test::make_host_unique_test_name("temporal-exact-depth-many-reuse-order")};
+  auto source = graph.op<ExactDepthManySource>("source");
+  auto consumer = graph.op<ExactDepthManyConsumer>("consumer");
+  graph.add_flow(source->driver,
+                 consumer->driver,
+                 ConnectionOptions{.queue_policy = QueuePolicy::kDropOldest, .queue_depth = 1U});
+  graph.add_flow(source->data,
+                 consumer->data,
+                 ConnectionOptions{.queue_policy = QueuePolicy::kDropOldest, .queue_depth = 2U});
+  graph.partition("source").add(source);
+  graph.partition("consumer").add(consumer);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime_clock"));
+
+  const ExecutionPlan compiled =
+      Delivery == Realization::kForcedHoloMq
+          ? detail::compile_with_process_local_holomq(graph, CompileOptions{})
+          : compile(graph);
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  auto counters = std::make_shared<detail::RuntimePhaseCounters>();
+  const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_phase_counters(compiled, counters);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool observed = ExactDepthManyProbe::wait_for_activations(4U);
+  // Leave room for ordinary promotion to expose any predecessor that was incorrectly admitted
+  // after the matching target.
+  const auto settle_deadline = std::chrono::steady_clock::now() + 100ms;
+  while (session.is_running() && std::chrono::steady_clock::now() < settle_deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
+  if (session.is_running()) {
+    session.request_stop();
+  }
+  session.wait();
+  const auto snapshot = counters->snapshot();
+
+  EXPECT_TRUE(observed) << ExactDepthManyProbe::describe();
+  EXPECT_EQ(session.termination(), RunTermination::kStopped) << ExactDepthManyProbe::describe();
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token) << "; "
+      << ExactDepthManyProbe::describe();
+  EXPECT_EQ(ExactDepthManyProbe::values, (std::vector<std::uint64_t>{1U, 1U, 3U, 4U}));
+  EXPECT_EQ(ExactDepthManyProbe::sequences, (std::vector<std::uint64_t>{1U, 1U, 3U, 4U}));
+  EXPECT_EQ(ExactDepthManyProbe::states,
+            (std::vector<InputState>{InputState::kSelected,
+                                     InputState::kReused,
+                                     InputState::kSelected,
+                                     InputState::kSelected}));
+  EXPECT_GT(phase_value(snapshot, detail::RuntimePhaseCounter::kTemporalRetentionEvictions), 0U);
+}
+
+struct MultiInputReuseOrderProbe {
+  static void reset() {
+    const std::lock_guard lock{mutex};
+    fast_committed = 0U;
+    driver_committed = 0U;
+    consumer_entered = 0U;
+    slow_initial_committed = false;
+    release_final_consumer = false;
+    barrier_timeout = false;
+    driver_values.clear();
+    fast_values.clear();
+    slow_values.clear();
+    fast_states.clear();
+    slow_states.clear();
+    tensor_payload_values.clear();
+    tensor_payloads_valid = true;
+  }
+
+  static void publish_fast_commit(const std::uint32_t value) {
+    const std::lock_guard lock{mutex};
+    fast_committed = std::max(fast_committed, value);
+    cv.notify_all();
+  }
+
+  static void publish_slow_initial_commit() { publish(slow_initial_committed); }
+
+  static void publish_driver_commit(const std::uint32_t value) {
+    const std::lock_guard lock{mutex};
+    driver_committed = std::max(driver_committed, value);
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static bool wait_for_initial_commits() {
+    return wait_for([] { return fast_committed >= 1U && slow_initial_committed; });
+  }
+
+  [[nodiscard]] static bool wait_for_consumer(const std::uint32_t value) {
+    return wait_for([value] { return consumer_entered >= value; });
+  }
+
+  [[nodiscard]] static bool wait_for_fast_commit(const std::uint32_t value) {
+    return wait_for([value] { return fast_committed >= value; });
+  }
+
+  [[nodiscard]] static bool wait_for_driver_commit(const std::uint32_t value) {
+    return wait_for([value] { return driver_committed >= value; });
+  }
+
+  static void record(const Sample<std::uint64_t>& driver, const Sample<std::uint64_t>& fast,
+                     const InputState fast_state, const Sample<std::uint64_t>& slow,
+                     const InputState slow_state) {
+    record_values(driver.data, fast.data, fast_state, slow.data, slow_state);
+  }
+
+  static void record_values(const std::uint64_t driver_value, const std::uint64_t fast_value,
+                            const InputState fast_state, const std::uint64_t slow_value,
+                            const InputState slow_state) {
+    std::unique_lock lock{mutex};
+    driver_values.push_back(driver_value);
+    fast_values.push_back(fast_value);
+    slow_values.push_back(slow_value);
+    fast_states.push_back(fast_state);
+    slow_states.push_back(slow_state);
+    consumer_entered = std::max(consumer_entered, static_cast<std::uint32_t>(driver_value));
+    cv.notify_all();
+    if (driver_value < 5U) {
+      if (!cv.wait_for(lock, kActivationBudget, [driver_value] {
+            return driver_committed >= static_cast<std::uint32_t>(driver_value + 1U);
+          })) {
+        barrier_timeout = true;
+      }
+    } else if (!cv.wait_for(lock, kActivationBudget, [] { return release_final_consumer; })) {
+      barrier_timeout = true;
+    }
+  }
+
+  static void record_tensor_payload(const std::uint8_t value, const bool valid) {
+    const std::lock_guard lock{mutex};
+    tensor_payload_values.push_back(value);
+    tensor_payloads_valid = tensor_payloads_valid && valid;
+  }
+
+  [[nodiscard]] static bool wait_for_activations(const std::size_t count) {
+    std::unique_lock lock{mutex};
+    return cv.wait_for(lock, kActivationBudget, [count] {
+      return driver_values.size() >= count || barrier_timeout;
+    }) && driver_values.size() >= count;
+  }
+
+  static void release_all() {
+    const std::lock_guard lock{mutex};
+    fast_committed = 5U;
+    driver_committed = 5U;
+    consumer_entered = 5U;
+    slow_initial_committed = true;
+    release_final_consumer = true;
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static std::string describe() {
+    const std::lock_guard lock{mutex};
+    return fmt::format("driver={} fast={} slow={} fast_states={} slow_states={} timeout={}",
+                       fmt::join(driver_values, ","),
+                       fmt::join(fast_values, ","),
+                       fmt::join(slow_values, ","),
+                       fast_states.size(),
+                       slow_states.size(),
+                       barrier_timeout);
+  }
+
+  [[nodiscard]] static bool timed_out() {
+    const std::lock_guard lock{mutex};
+    return barrier_timeout;
+  }
+
+  static inline std::mutex mutex;
+  static inline std::condition_variable cv;
+  static inline std::uint32_t fast_committed{};
+  static inline std::uint32_t driver_committed{};
+  static inline std::uint32_t consumer_entered{};
+  static inline bool slow_initial_committed{};
+  static inline bool release_final_consumer{};
+  static inline bool barrier_timeout{};
+  static inline std::vector<std::uint64_t> driver_values;
+  static inline std::vector<std::uint64_t> fast_values;
+  static inline std::vector<std::uint64_t> slow_values;
+  static inline std::vector<std::uint64_t> tensor_payload_values;
+  static inline std::vector<InputState> fast_states;
+  static inline std::vector<InputState> slow_states;
+  static inline bool tensor_payloads_valid{true};
+
+ private:
+  static void publish(bool& event) {
+    const std::lock_guard lock{mutex};
+    event = true;
+    cv.notify_all();
+  }
+
+  template <typename Predicate>
+  [[nodiscard]] static bool wait_for(Predicate&& predicate) {
+    std::unique_lock lock{mutex};
+    const bool ready = cv.wait_for(lock, kActivationBudget, std::forward<Predicate>(predicate));
+    barrier_timeout = barrier_timeout || !ready;
+    return ready;
+  }
+};
+
+enum class MultiInputFastPayload : std::uint8_t {
+  kScalar,
+  kCudaTensor,
+};
+
+class MultiInputFastSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    ++calls_;
+    if (calls_ > 5U) {
+      return {};
+    }
+    if (calls_ > 1U && !MultiInputReuseOrderProbe::wait_for_consumer(calls_ - 1U)) {
+      return make_unexpected(Error{ErrorCode::kTimeout});
+    }
+    const std::int64_t capture_ns = calls_ == 1U ? 10 : 80 + calls_ * 10;
+    auto emitted = output.emit(Sample<std::uint64_t>{
+        calls_,
+        SampleMetadata{.capture_timestamp_ns = capture_ns,
+                       .source_clock_id = context.activation_time().clock_id}});
+    if (emitted) {
+      MultiInputReuseOrderProbe::publish_fast_commit(calls_);
+    }
+    return emitted;
+  }
+
+  Output<std::uint64_t> output;
+
+ private:
+  std::uint32_t calls_{};
+};
+
+[[nodiscard]] expected<void, Error> publish_multi_input_cuda_byte(Output<Tensor>& output,
+                                                                  ExecutionContext& context,
+                                                                  const std::uint8_t value,
+                                                                  const TimePoint capture_time) {
+  constexpr std::array<std::int64_t, 1U> kShape{1};
+  auto loan = output.allocate_tensor(TensorLoanRequest{
+      .shape = kShape,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+  });
+  if (!loan) {
+    return make_unexpected(std::move(loan).error());
+  }
+  const cudaStream_t stream = context.cuda_stream().get();
+  if (stream == nullptr) {
+    return make_unexpected(Error{ErrorCode::kNotSupported});
+  }
+  auto committed = loan->write_and_commit(
+      context.cuda_stream(),
+      [stream, value](const TensorOutputWriteGuard& writer) -> expected<void, Error> {
+        if (cudaMemsetAsync(writer.data(), value, 1U, stream) != cudaSuccess) {
+          return make_unexpected(Error{ErrorCode::kFailure});
+        }
+        return {};
+      });
+  if (!committed) {
+    return make_unexpected(std::move(committed).error());
+  }
+  return output.emit(std::move(*loan), EmitOptions{.capture_time = capture_time});
+}
+
+class MultiInputCudaFastSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U},
+            .bounds = tensor_bounds(1U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    ++calls_;
+    if (calls_ > 5U) {
+      return {};
+    }
+    if (calls_ > 1U && !MultiInputReuseOrderProbe::wait_for_consumer(calls_ - 1U)) {
+      return make_unexpected(Error{ErrorCode::kTimeout});
+    }
+    const std::int64_t capture_ns = calls_ == 1U ? 10 : 80 + calls_ * 10;
+    auto emitted = publish_multi_input_cuda_byte(
+        output,
+        context,
+        static_cast<std::uint8_t>(calls_),
+        TimePoint{.timestamp_ns = capture_ns, .clock_id = context.activation_time().clock_id});
+    if (emitted) {
+      MultiInputReuseOrderProbe::publish_fast_commit(calls_);
+    }
+    return emitted;
+  }
+
+  Output<Tensor> output;
+
+ private:
+  std::uint32_t calls_{};
+};
+
+class MultiInputSlowSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    ++calls_;
+    if (calls_ != 1U) {
+      return {};
+    }
+    auto emitted = output.emit(Sample<std::uint64_t>{
+        1U,
+        SampleMetadata{.capture_timestamp_ns = 10,
+                       .source_clock_id = context.activation_time().clock_id}});
+    if (emitted) {
+      MultiInputReuseOrderProbe::publish_slow_initial_commit();
+    }
+    return emitted;
+  }
+
+  Output<std::uint64_t> output;
+
+ private:
+  std::uint64_t calls_{};
+};
+
+class MultiInputDriverSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    ++calls_;
+    if (calls_ > 5U) {
+      return {};
+    }
+    if (calls_ == 1U ? !MultiInputReuseOrderProbe::wait_for_initial_commits()
+                     : !MultiInputReuseOrderProbe::wait_for_fast_commit(calls_)) {
+      return make_unexpected(Error{ErrorCode::kTimeout});
+    }
+    const std::int64_t capture_ns = calls_ == 1U ? 15 : calls_ == 5U ? 200 : calls_ * 10;
+    auto emitted = emit(calls_, capture_ns, context.activation_time().clock_id);
+    if (emitted) {
+      MultiInputReuseOrderProbe::publish_driver_commit(calls_);
+    }
+    return emitted;
+  }
+
+  Output<std::uint64_t> output;
+
+ private:
+  [[nodiscard]] expected<void, Error> emit(const std::uint64_t value, const std::int64_t capture_ns,
+                                           const ClockId clock) {
+    return output.emit(Sample<std::uint64_t>{
+        value, SampleMetadata{.capture_timestamp_ns = capture_ns, .source_clock_id = clock}});
+  }
+
+  std::uint32_t calls_{};
+};
+
+template <std::uint32_t Depth>
+class MultiInputReuseOrderConsumer final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(fast, "fast").queue_depth(Depth);
+    spec.input(slow, "slow").queue_depth(Depth);
+    spec.input(driver, "driver").queue_depth(1U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{driver})
+        .input(fast, LatestWithin{.max_age = 1s})
+        .on_missing(fast, ReuseLast{.max_age = 30s})
+        .input(slow, LatestWithin{.max_age = 1s})
+        .on_missing(slow, ReuseLast{.max_age = 30s});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto driver_sample = driver.receive();
+    auto fast_sample = fast.receive();
+    auto slow_sample = slow.receive();
+    if (!driver_sample) {
+      return make_unexpected(std::move(driver_sample).error());
+    }
+    if (!fast_sample) {
+      return make_unexpected(std::move(fast_sample).error());
+    }
+    if (!slow_sample) {
+      return make_unexpected(std::move(slow_sample).error());
+    }
+    MultiInputReuseOrderProbe::record(
+        *driver_sample, *fast_sample, fast.selection().state, *slow_sample, slow.selection().state);
+    return MultiInputReuseOrderProbe::timed_out()
+               ? expected<void, Error>{make_unexpected(Error{ErrorCode::kTimeout})}
+               : expected<void, Error>{};
+  }
+
+  Input<std::uint64_t> fast;
+  Input<std::uint64_t> slow;
+  Input<std::uint64_t> driver;
+};
+
+template <std::uint32_t Depth>
+class MultiInputCudaReuseOrderConsumer final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(fast, "fast")
+        .queue_depth(Depth)
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U},
+        });
+    spec.input(slow, "slow").queue_depth(Depth);
+    spec.input(driver, "driver").queue_depth(1U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{driver})
+        .input(fast, LatestWithin{.max_age = 1s})
+        .on_missing(fast, ReuseLast{.max_age = 30s})
+        .input(slow, LatestWithin{.max_age = 1s})
+        .on_missing(slow, ReuseLast{.max_age = 30s});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto driver_sample = driver.receive();
+    auto fast_sample = fast.receive();
+    auto slow_sample = slow.receive();
+    if (!driver_sample) {
+      return make_unexpected(std::move(driver_sample).error());
+    }
+    if (!fast_sample) {
+      return make_unexpected(std::move(fast_sample).error());
+    }
+    if (!slow_sample) {
+      return make_unexpected(std::move(slow_sample).error());
+    }
+
+    std::uint8_t copied_value{};
+    const bool backing_valid =
+        fast_sample->data.data() != nullptr && fast_sample->data.nbytes() == 1U;
+    bool copied = false;
+    if (backing_valid) {
+      auto copied_result = fast_sample->data.copy_to_host(
+          &copied_value, sizeof(copied_value), context.cuda_stream());
+      copied = copied_result.has_value();
+    }
+    MultiInputReuseOrderProbe::record_tensor_payload(
+        copied_value, backing_valid && copied && fast_sample->metadata.sequence == copied_value);
+    MultiInputReuseOrderProbe::record_values(driver_sample->data,
+                                             fast_sample->metadata.sequence,
+                                             fast.selection().state,
+                                             slow_sample->data,
+                                             slow.selection().state);
+    return MultiInputReuseOrderProbe::timed_out()
+               ? expected<void, Error>{make_unexpected(Error{ErrorCode::kTimeout})}
+               : expected<void, Error>{};
+  }
+
+  Input<Tensor> fast;
+  Input<std::uint64_t> slow;
+  Input<std::uint64_t> driver;
+};
+
+template <std::uint32_t Depth, Realization Delivery = Realization::kDirect,
+          MultiInputFastPayload FastPayload = MultiInputFastPayload::kScalar>
+void run_multi_input_reuse_order_graph() {
+  MultiInputReuseOrderProbe::reset();
+  Graph graph{test::make_host_unique_test_name("temporal-multi-input-reuse-order")};
+  const ClockKey runtime_clock = graph.add_clock<RealtimeClock>("runtime_clock");
+  using FastSource = std::conditional_t<FastPayload == MultiInputFastPayload::kCudaTensor,
+                                        MultiInputCudaFastSource,
+                                        MultiInputFastSource>;
+  using Consumer = std::conditional_t<FastPayload == MultiInputFastPayload::kCudaTensor,
+                                      MultiInputCudaReuseOrderConsumer<Depth>,
+                                      MultiInputReuseOrderConsumer<Depth>>;
+  auto fast = graph.op<FastSource>("fast");
+  auto slow = graph.op<MultiInputSlowSource>("slow");
+  auto driver = graph.op<MultiInputDriverSource>("driver");
+  auto consumer = graph.op<Consumer>("consumer");
+
+  const ConnectionOptions side_options{.queue_policy = QueuePolicy::kDropOldest,
+                                       .queue_depth = Depth};
+  graph.add_flow(fast->output, consumer->fast, side_options);
+  graph.add_flow(slow->output, consumer->slow, side_options);
+  graph.add_flow(driver->output,
+                 consumer->driver,
+                 ConnectionOptions{.queue_policy = QueuePolicy::kDropOldest, .queue_depth = 1U});
+  graph.partition("fast").add(fast);
+  graph.partition("slow").add(slow);
+  graph.partition("driver").add(driver);
+  graph.partition("consumer").add(consumer);
+  graph.set_default_clock(runtime_clock);
+
+  const ExecutionPlan compiled = [&] {
+    if constexpr (FastPayload == MultiInputFastPayload::kCudaTensor) {
+      static_assert(Delivery == Realization::kDirect);
+      CompileOptions options;
+      options.deployment.bind_tensor_output_device(TensorOutputDevicePlacement{
+          .operator_path = "fast",
+          .output_port = "output",
+          .device = DeviceId{0},
+      });
+      return compile(graph, std::move(options));
+    } else if constexpr (Delivery == Realization::kForcedHoloMq) {
+      return detail::compile_with_process_local_holomq(graph, CompileOptions{});
+    } else {
+      return compile(graph);
+    }
+  }();
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  if constexpr (FastPayload == MultiInputFastPayload::kCudaTensor) {
+    const auto plan_state = detail::ExecutionPlanAccess::retain(compiled);
+    ASSERT_TRUE(plan_state);
+    const auto tensor_service =
+        std::find_if(plan_state->process_local_channel_services.begin(),
+                     plan_state->process_local_channel_services.end(),
+                     [](const auto& service) { return service.tensor_payload; });
+    ASSERT_NE(tensor_service, plan_state->process_local_channel_services.end());
+    EXPECT_EQ(std::count_if(plan_state->process_local_channel_services.begin(),
+                            plan_state->process_local_channel_services.end(),
+                            [](const auto& service) { return service.tensor_payload; }),
+              1U);
+    EXPECT_EQ(tensor_service->delivery_kind,
+              detail::ProcessLocalChannelDeliveryKind::kDirectRetained);
+    EXPECT_EQ(tensor_service->tensor_memory_kind, MemoryKind::kCudaDevice);
+    EXPECT_EQ(tensor_service->tensor_device, DeviceId{0});
+  } else if constexpr (Delivery == Realization::kForcedHoloMq) {
+    const auto plan_state = detail::ExecutionPlanAccess::retain(compiled);
+    ASSERT_TRUE(plan_state);
+    ASSERT_EQ(plan_state->process_local_channel_services.size(), 3U);
+    EXPECT_TRUE(std::all_of(plan_state->process_local_channel_services.begin(),
+                            plan_state->process_local_channel_services.end(),
+                            [](const auto& service) {
+                              return service.delivery_kind ==
+                                     detail::ProcessLocalChannelDeliveryKind::kHoloMQ;
+                            }));
+  }
+  auto counters = std::make_shared<detail::RuntimePhaseCounters>();
+  const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_phase_counters(compiled, counters);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool observed = MultiInputReuseOrderProbe::wait_for_activations(5U);
+  if (session.is_running()) {
+    session.request_stop();
+  }
+  MultiInputReuseOrderProbe::release_all();
+  session.wait();
+  const detail::RuntimePhaseCounters::Snapshot snapshot = counters->snapshot();
+
+  EXPECT_TRUE(observed) << MultiInputReuseOrderProbe::describe();
+  EXPECT_EQ(session.termination(), RunTermination::kStopped)
+      << MultiInputReuseOrderProbe::describe();
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token) << "; "
+      << MultiInputReuseOrderProbe::describe();
+  EXPECT_FALSE(MultiInputReuseOrderProbe::timed_out()) << MultiInputReuseOrderProbe::describe();
+  EXPECT_EQ(MultiInputReuseOrderProbe::driver_values,
+            (std::vector<std::uint64_t>{1U, 2U, 3U, 4U, 5U}));
+  EXPECT_EQ(MultiInputReuseOrderProbe::fast_values,
+            (std::vector<std::uint64_t>{1U, 1U, 1U, 1U, 5U}));
+  EXPECT_EQ(MultiInputReuseOrderProbe::slow_values,
+            (std::vector<std::uint64_t>{1U, 1U, 1U, 1U, 1U}));
+  EXPECT_EQ(MultiInputReuseOrderProbe::fast_states,
+            (std::vector<InputState>{InputState::kSelected,
+                                     InputState::kReused,
+                                     InputState::kReused,
+                                     InputState::kReused,
+                                     InputState::kSelected}));
+  EXPECT_EQ(MultiInputReuseOrderProbe::slow_states,
+            (std::vector<InputState>{InputState::kSelected,
+                                     InputState::kReused,
+                                     InputState::kReused,
+                                     InputState::kReused,
+                                     InputState::kReused}));
+  if constexpr (FastPayload == MultiInputFastPayload::kCudaTensor) {
+    EXPECT_TRUE(MultiInputReuseOrderProbe::tensor_payloads_valid)
+        << MultiInputReuseOrderProbe::describe();
+    EXPECT_EQ(MultiInputReuseOrderProbe::tensor_payload_values,
+              (std::vector<std::uint64_t>{1U, 1U, 1U, 1U, 5U}));
+  }
+  if constexpr (Depth > 1U) {
+    EXPECT_GE(phase_value(snapshot, detail::RuntimePhaseCounter::kTemporalRetentionEvictions), 1U);
+    if constexpr (Delivery == Realization::kDirect) {
+      EXPECT_GE(
+          phase_value(snapshot, detail::RuntimePhaseCounter::kTemporalRetentionEvictionPromoted),
+          1U);
+      EXPECT_GE(phase_value(snapshot, detail::RuntimePhaseCounter::kChannelDirectIngressPromotions),
+                1U);
+    } else {
+      EXPECT_GE(
+          phase_value(snapshot, detail::RuntimePhaseCounter::kChannelReleasedClaimRefillPublished),
+          1U);
+    }
+  }
+}
+
+struct AllLatestClockObservation {
+  std::array<std::uint64_t, 3U> values{};
+  std::array<InputState, 3U> states{};
+};
+
+struct AllLatestClockProbe {
+  static void reset() {
+    const std::lock_guard lock{mutex};
+    observations.clear();
+  }
+
+  static void record(AllLatestClockObservation observation) {
+    const std::lock_guard lock{mutex};
+    observations.push_back(std::move(observation));
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static bool wait_for(const std::size_t count) {
+    std::unique_lock lock{mutex};
+    return cv.wait_for(lock, kActivationBudget, [count] { return observations.size() >= count; });
+  }
+
+  [[nodiscard]] static std::vector<AllLatestClockObservation> snapshot() {
+    const std::lock_guard lock{mutex};
+    return observations;
+  }
+
+  static inline std::mutex mutex;
+  static inline std::condition_variable cv;
+  static inline std::vector<AllLatestClockObservation> observations;
+};
+
+class AllLatestClockSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(layer0, "layer0").max_emits_per_compute(1U);
+    spec.output(fast, "fast").max_emits_per_compute(1U);
+    spec.output(slow, "slow").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 10ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    ++calls_;
+    const TimePoint activation = context.activation_time();
+    auto emitted = emit(fast, calls_, activation);
+    if (!emitted) {
+      return emitted;
+    }
+    if ((calls_ - 1U) % 3U == 0U) {
+      emitted = emit(layer0, calls_, activation);
+      if (!emitted) {
+        return emitted;
+      }
+    }
+    if ((calls_ - 1U) % 5U == 0U) {
+      emitted = emit(slow, calls_, activation);
+    }
+    return emitted;
+  }
+
+  Output<std::uint64_t> layer0;
+  Output<std::uint64_t> fast;
+  Output<std::uint64_t> slow;
+
+ private:
+  [[nodiscard]] static expected<void, Error> emit(Output<std::uint64_t>& output,
+                                                  const std::uint64_t value,
+                                                  const TimePoint capture) {
+    return output.emit(
+        Sample<std::uint64_t>{value,
+                              SampleMetadata{.capture_timestamp_ns = capture.timestamp_ns,
+                                             .source_clock_id = capture.clock_id}});
+  }
+
+  std::uint64_t calls_{};
+};
+
+class AllLatestClockConsumer final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(layer0, "layer0").queue_depth(4U);
+    spec.input(fast, "fast").queue_depth(4U);
+    spec.input(slow, "slow").queue_depth(4U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 33ms})
+        .input(layer0, LatestWithin{.max_age = 25ms})
+        .on_missing(layer0, ReuseLast{.max_age = 500ms})
+        .input(fast, LatestWithin{.max_age = 25ms})
+        .on_missing(fast, ReuseLast{.max_age = 500ms})
+        .input(slow, LatestWithin{.max_age = 25ms})
+        .on_missing(slow, ReuseLast{.max_age = 500ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto layer0_sample = layer0.receive();
+    auto fast_sample = fast.receive();
+    auto slow_sample = slow.receive();
+    if (!layer0_sample) {
+      return make_unexpected(std::move(layer0_sample).error());
+    }
+    if (!fast_sample) {
+      return make_unexpected(std::move(fast_sample).error());
+    }
+    if (!slow_sample) {
+      return make_unexpected(std::move(slow_sample).error());
+    }
+    AllLatestClockProbe::record(AllLatestClockObservation{
+        .values = {layer0_sample->data, fast_sample->data, slow_sample->data},
+        .states = {layer0.selection().state, fast.selection().state, slow.selection().state},
+    });
+    return {};
+  }
+
+  Input<std::uint64_t> layer0;
+  Input<std::uint64_t> fast;
+  Input<std::uint64_t> slow;
+};
+
+void run_all_latest_clock_graph() {
+  constexpr std::size_t kWantedActivations = 6U;
+  AllLatestClockProbe::reset();
+  Graph graph{test::make_host_unique_test_name("all-latest-clock-refill-order")};
+  auto source = graph.op<AllLatestClockSource>("source");
+  auto consumer = graph.op<AllLatestClockConsumer>("consumer");
+  const ConnectionOptions options{.queue_policy = QueuePolicy::kDropOldest, .queue_depth = 4U};
+  graph.add_flow(source->layer0, consumer->layer0, options);
+  graph.add_flow(source->fast, consumer->fast, options);
+  graph.add_flow(source->slow, consumer->slow, options);
+  graph.partition("source").add(source);
+  graph.partition("consumer").add(consumer);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime_clock"));
+
+  const ExecutionPlan compiled = compile(graph);
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  auto counters = std::make_shared<detail::RuntimePhaseCounters>();
+  const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_phase_counters(compiled, counters);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool observed = AllLatestClockProbe::wait_for(kWantedActivations);
+  if (session.is_running()) {
+    session.request_stop();
+  }
+  session.wait();
+  const auto observations = AllLatestClockProbe::snapshot();
+  const auto snapshot = counters->snapshot();
+
+  ASSERT_TRUE(observed) << "observed " << observations.size() << " clock activations";
+  ASSERT_GE(observations.size(), kWantedActivations);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  bool slow_reused = false;
+  for (std::size_t index = 0U; index < kWantedActivations; ++index) {
+    for (std::size_t input = 0U; input < observations[index].states.size(); ++input) {
+      EXPECT_TRUE(observations[index].states[input] == InputState::kSelected ||
+                  observations[index].states[input] == InputState::kReused);
+      if (index != 0U) {
+        EXPECT_GE(observations[index].values[input], observations[index - 1U].values[input]);
+        if (observations[index].states[input] == InputState::kReused) {
+          EXPECT_EQ(observations[index].values[input], observations[index - 1U].values[input]);
+        }
+      }
+      slow_reused =
+          slow_reused || (input == 2U && observations[index].states[input] == InputState::kReused);
+    }
+  }
+  EXPECT_GT(observations[kWantedActivations - 1U].values[1], observations[0].values[1]);
+  EXPECT_TRUE(slow_reused);
+  EXPECT_GT(phase_value(snapshot, detail::RuntimePhaseCounter::kTemporalRetentionEvictions), 0U);
+}
+
 // Whether the compiler is allowed to pick direct process-local retention, or is forced onto the
 // source-private HoloMQ realization. CHAN-128 requires both to preserve the same temporal
 // selection, so every freshness property below has to hold for either.
 template <std::uint32_t Depth, MissingPolicy Missing = MissingPolicy::kSkip,
           Realization Delivery = Realization::kDirect, std::int64_t SourceUs = 20000,
-          std::int64_t ConsumerUs = 250000>
+          std::int64_t ConsumerUs = 250000, bool CaptureNow = false,
+          typename Payload = std::uint64_t>
 void run_freshness_graph(std::size_t wanted_activations, bool& observed) {
   Graph graph{"temporal-freshness-drop-oldest"};
-  auto source = graph.op<FreshnessSource<SourceUs>>("source");
-  auto consumer = graph.op<FreshnessConsumer<Depth, Missing, ConsumerUs>>("consumer");
+  auto source = graph.op<FreshnessSource<SourceUs, CaptureNow, Payload>>("source");
+  auto consumer = graph.op<FreshnessConsumer<Depth, Missing, ConsumerUs, Payload>>("consumer");
   graph.add_flow(source->output,
                  consumer->data,
                  ConnectionOptions{.queue_policy = QueuePolicy::kDropOldest, .queue_depth = Depth});
@@ -1025,7 +2275,8 @@ void run_freshness_graph(std::size_t wanted_activations, bool& observed) {
 // is excluded because before any steady state exists the source may legitimately have published
 // only its very first value.
 void expect_steady_state_freshness(bool observed, std::size_t wanted,
-                                   std::int64_t consumer_period_ns = kConsumerPeriod.count()) {
+                                   std::int64_t consumer_period_ns = kConsumerPeriod.count(),
+                                   std::uint64_t maximum_sample_lag = kMaximumFreshSampleLag) {
   ASSERT_TRUE(observed) << "only " << FreshnessProbe::activations.size() << " of " << wanted
                         << " consumer activations ran; " << FreshnessProbe::describe();
   ASSERT_GE(FreshnessProbe::activations.size(), wanted) << FreshnessProbe::describe();
@@ -1036,7 +2287,7 @@ void expect_steady_state_freshness(bool observed, std::size_t wanted,
     if (activation.selected) {
       const std::uint64_t lag =
           activation.published > activation.value ? activation.published - activation.value : 0U;
-      EXPECT_LE(lag, kMaximumFreshSampleLag)
+      EXPECT_LE(lag, maximum_sample_lag)
           << "activation " << index << " selected sample " << activation.value << " while the "
           << "source had published " << activation.published << ", " << lag << " samples behind ("
           << (activation.age_ns / 1000000) << " ms); " << FreshnessProbe::describe();
@@ -1077,6 +2328,64 @@ TEST(TemporalFreshnessTest, DepthOneDropOldestLatestWithinSelectsTheNewestCausal
   bool observed = false;
   ASSERT_NO_FATAL_FAILURE((run_freshness_graph<kQueueDepth>(kObservedActivations, observed)));
   expect_steady_state_freshness(observed, kObservedActivations);
+}
+
+// REQ: CHAN-146
+// Actual capture can put the newest publication just after the current tick. The authored next
+// tick may advance a separate causal candidate, while preserving the exact ReuseLast fallback.
+TEST(TemporalFreshnessTest, DepthOneClockReuseLastSelectsRecentActualCapture) {
+  bool observed = false;
+  ASSERT_NO_FATAL_FAILURE((
+      run_freshness_graph<1U, MissingPolicy::kReuseLast, Realization::kDirect, 33333, 200000, true>(
+          12U, observed)));
+  expect_steady_state_freshness(observed, 12U, 200000000, 3U);
+}
+
+// REQ: CHAN-146
+TEST(TemporalFreshnessTest, TransportedTensorClockReuseLastSelectsRecentActualCapture) {
+  bool observed = false;
+  ASSERT_NO_FATAL_FAILURE((run_freshness_graph<1U,
+                                               MissingPolicy::kReuseLast,
+                                               Realization::kForcedHoloMq,
+                                               33333,
+                                               200000,
+                                               true,
+                                               Tensor>(12U, observed)));
+  expect_steady_state_freshness(observed, 12U, 200000000, 6U);
+}
+
+// REQ: CHAN-146
+// Once the source stops publishing, a coalesced tick can make the waiting candidate too old.
+// The last selected payload must remain independently reusable.
+TEST(TemporalFreshnessTest, CoalescedClockTickPreservesTheLastSelectedFallback) {
+  FreshnessProbe::reset();
+  Graph graph{test::make_host_unique_test_name("clock-overrun-reuse-fallback")};
+  auto source = graph.op<StallingClockSource>("source");
+  auto consumer =
+      graph.op<FreshnessConsumer<1U, MissingPolicy::kReuseLast, 300000, std::uint64_t, 150000000>>(
+          "consumer");
+  graph.add_flow(source->output,
+                 consumer->data,
+                 ConnectionOptions{.queue_policy = QueuePolicy::kDropOldest, .queue_depth = 1U});
+  // Both callbacks share the controller, so the source's stall coalesces the consumer clock.
+  graph.partition("inline").include_all();
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime_clock"));
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  RunSession session = run_async(plan);
+  const bool observed = FreshnessProbe::wait_for_activations(3U);
+  session.request_stop();
+  session.wait();
+  ASSERT_TRUE(observed) << FreshnessProbe::describe();
+  ASSERT_TRUE(session.diagnostics().empty());
+  ASSERT_GE(FreshnessProbe::activations.size(), 3U);
+  const auto& before = FreshnessProbe::activations[0];
+  const auto& after = FreshnessProbe::activations[1];
+  EXPECT_EQ(before.selection_state, InputState::kSelected);
+  EXPECT_EQ(before.value, 1U);
+  EXPECT_GE(after.activation_time_ns - before.activation_time_ns, 600000000);
+  EXPECT_EQ(after.selection_state, InputState::kReused) << FreshnessProbe::describe();
+  EXPECT_EQ(after.value, 1U) << FreshnessProbe::describe();
 }
 
 // REQ: CONTRACT-004
@@ -1205,6 +2514,22 @@ TEST(TemporalFreshnessTest, DepthOneExactReuseLastPublishesFinalDataBeforeSingle
             (std::vector<InputState>{InputState::kSelected, InputState::kSelected}));
 }
 
+// REQ: CHAN-128
+// REQ: RUNTIME-017
+// REQ: RUNTIME-043
+// Exact cannot skip an older staged producer record to admit a later matching record. The first
+// witness reuses prior data; later matching witnesses select the staged records in producer order.
+TEST(TemporalFreshnessTest, DirectDepthTwoExactReuseLastDoesNotOvertakeStagedPredecessor) {
+  ASSERT_NO_FATAL_FAILURE((run_exact_depth_many_reuse_graph<Realization::kDirect>()));
+}
+
+// REQ: CHAN-128
+// REQ: RUNTIME-017
+// REQ: RUNTIME-043
+TEST(TemporalFreshnessTest, ForcedHoloMqDepthTwoExactReuseLastMatchesDirectHeadOrdering) {
+  ASSERT_NO_FATAL_FAILURE((run_exact_depth_many_reuse_graph<Realization::kForcedHoloMq>()));
+}
+
 // REQ: CHAN-136
 // REQ: RUNTIME-050
 // REQ: RUNTIME-051
@@ -1285,6 +2610,268 @@ TEST(TemporalFreshnessTest, LatestWithinReuseLastKeepsRetainedSampleWhenStagedDa
 }
 
 // REQ: CHAN-131
+// REQ: CHAN-128
+// REQ: CHAN-146
+// Select 1; publish 2 then 3; trigger at 2's capture time. The private reuse claim keeps 1 while
+// the authored typed position admits 2, so future sample 3 cannot replace the causal predecessor.
+TEST(TemporalFreshnessTest, DepthOneReuseLastPreservesCausalPredecessorBehindFutureSample) {
+  ASSERT_NO_FATAL_FAILURE((run_finite_reuse_graph<FiniteReuseSelector::kLatestWithin,
+                                                  1U,
+                                                  FiniteReuseWitness::kIneligibleOnly,
+                                                  Realization::kDirect>()));
+  EXPECT_EQ(FiniteReuseProbe::values, (std::vector<std::uint64_t>{1U, 2U}));
+  ASSERT_NO_FATAL_FAILURE((run_finite_reuse_graph<FiniteReuseSelector::kLatestWithin,
+                                                  1U,
+                                                  FiniteReuseWitness::kIneligibleOnly>()));
+  EXPECT_EQ(FiniteReuseProbe::values, (std::vector<std::uint64_t>{1U, 2U}));
+}
+
+// REQ: CHAN-131
+// REQ: CHAN-146
+TEST(TemporalFreshnessTest, DepthOneReuseLastAdvancesWhenNewestSampleIsCausal) {
+  ASSERT_NO_FATAL_FAILURE((run_finite_reuse_graph<FiniteReuseSelector::kLatestWithin,
+                                                  1U,
+                                                  FiniteReuseWitness::kMatching,
+                                                  Realization::kDirect>()));
+  EXPECT_EQ(FiniteReuseProbe::values, (std::vector<std::uint64_t>{1U, 3U}));
+}
+
+// REQ: CHAN-146
+// REQ: RUNTIME-055
+TEST(TemporalFreshnessTest, OptionalAbsenceCoexistsWithDepthOneReuseLastFreshness) {
+  // Key setup: add an unwired optional side to a depth-one ReuseLast flow on both delivery paths.
+  // Key assertion: absence preserves fresh values {1, 3} for direct and forced HoloMQ delivery.
+  // Graph:
+  //   source.driver --> consumer.driver
+  //   source.data   --> consumer.data [depth 1, DropOldest, ReuseLast]
+  //   [unwired]         consumer.optional
+  ASSERT_NO_FATAL_FAILURE((run_finite_reuse_graph<FiniteReuseSelector::kLatestWithin,
+                                                  1U,
+                                                  FiniteReuseWitness::kMatching,
+                                                  Realization::kDirect,
+                                                  true>()));
+  EXPECT_EQ(FiniteReuseProbe::values, (std::vector<std::uint64_t>{1U, 3U}));
+  ASSERT_NO_FATAL_FAILURE((run_finite_reuse_graph<FiniteReuseSelector::kLatestWithin,
+                                                  1U,
+                                                  FiniteReuseWitness::kMatching,
+                                                  Realization::kForcedHoloMq,
+                                                  true>()));
+  EXPECT_EQ(FiniteReuseProbe::values, (std::vector<std::uint64_t>{1U, 3U}));
+}
+
+// REQ: CHAN-146
+TEST(TemporalFreshnessTest, CaptureAbsentArrivalPreservesTheCausalCacheCandidate) {
+  ASSERT_NO_FATAL_FAILURE((run_finite_reuse_graph<FiniteReuseSelector::kLatestWithin,
+                                                  1U,
+                                                  FiniteReuseWitness::kCaptureAbsentThird,
+                                                  Realization::kDirect>()));
+  EXPECT_EQ(FiniteReuseProbe::values, (std::vector<std::uint64_t>{1U, 2U}));
+  ASSERT_NO_FATAL_FAILURE((run_finite_reuse_graph<FiniteReuseSelector::kLatestWithin,
+                                                  1U,
+                                                  FiniteReuseWitness::kCaptureAbsentThird>()));
+  EXPECT_EQ(FiniteReuseProbe::values, (std::vector<std::uint64_t>{1U, 2U}));
+}
+
+// REQ: RUNTIME-017
+// The temporal cache remains fail-closed for a genuinely decreasing same-epoch arrival. Preserve
+// the registered public token, but retain the exact typed error and witness identity internally so
+// the diagnostic cannot misidentify this injected protocol violation as a missing port binding.
+TEST(TemporalFreshnessTest, DecreasingArrivalRetainsTypedDiagnosticAtRunSessionBoundary) {
+  Graph graph{"decreasing-arrival-diagnostic"};
+  auto source = graph.op<DecreasingArrivalSource>("source");
+  auto consumer = graph.op<DecreasingArrivalConsumer>("consumer");
+  graph.add_flow(source->output,
+                 consumer->data,
+                 ConnectionOptions{.queue_policy = QueuePolicy::kDropOldest, .queue_depth = 4U});
+  graph.partition("source").add(source);
+  graph.partition("consumer").add(consumer);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime_clock"));
+
+  const ExecutionPlan compiled = compile(graph);
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  const auto input = std::ranges::find_if(compiled.ports(), [](const auto& port) {
+    return port.local_name == "data" && port.direction == PortDirection::kInput;
+  });
+  ASSERT_NE(input, compiled.ports().end());
+  const auto selection =
+      std::ranges::find(compiled.input_selections(), input->id, &InputSelectionPlanRecord::input);
+  ASSERT_NE(selection, compiled.input_selections().end());
+  const auto plan_state = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_TRUE(plan_state);
+  ASSERT_EQ(plan_state->process_local_channel_services.size(), 1U);
+  ASSERT_EQ(plan_state->process_local_channel_services.front().delivery_kind,
+            detail::ProcessLocalChannelDeliveryKind::kDirectRetained);
+
+  auto sink = std::make_shared<FreshnessDiagnosticSink>();
+  auto control =
+      std::make_shared<DecreasingArrivalBindControl>(input->id, selection->reference_clock);
+  const ExecutionPlan observed =
+      detail::RuntimeTestPlanAccess::with_diagnostic_sink(compiled, sink);
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_channel_session_bind_test_control(observed, control);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  const bool terminal = wait_for_terminal(session);
+  if (!terminal) {
+    session.request_stop();
+  }
+  session.wait();
+  ASSERT_TRUE(terminal);
+  ASSERT_TRUE(control->configured());
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+
+  const auto diagnostics = sink->diagnostics();
+  const auto details = sink->details();
+  ASSERT_EQ(diagnostics.size(), details.size());
+  const auto primary = std::ranges::find(
+      diagnostics, std::string_view{"RUNTIME_PORT_BINDING_UNAVAILABLE"}, &Diagnostic::token);
+  ASSERT_NE(primary, diagnostics.end());
+  EXPECT_EQ(
+      std::ranges::count(
+          diagnostics, std::string_view{"RUNTIME_PORT_BINDING_UNAVAILABLE"}, &Diagnostic::token),
+      1U);
+  EXPECT_EQ(std::ranges::count(diagnostics,
+                               std::string_view{"RUNTIME_READINESS_BINDING_UNAVAILABLE"},
+                               &Diagnostic::token),
+            0U);
+  EXPECT_EQ(primary->source.vertex, input->owner);
+  const std::size_t primary_index =
+      static_cast<std::size_t>(std::distance(diagnostics.begin(), primary));
+  ASSERT_LT(primary_index, details.size());
+  EXPECT_TRUE(details[primary_index].present);
+  EXPECT_EQ(details[primary_index].error.code, ErrorCode::kInvalidArgument);
+  EXPECT_TRUE(details[primary_index].source);
+  EXPECT_EQ(details[primary_index].source_sequence, 2U);
+  EXPECT_EQ(details[primary_index].reference_time, (TimePoint{200, selection->reference_clock}));
+}
+
+// REQ: CHAN-128
+// REQ: RUNTIME-043
+// REQ: RUNTIME-051
+// A depth-many drop-oldest side input can have an older readiness candidate already pending while
+// freshness refill promotes a newer staged successor for the same ReuseLast claim. The exact
+// prerequisite path must not admit that successor ahead of the older same-epoch prefix. The
+// barriers hold real operator activations and prove the replacement, below-floor decline, and
+// later handoff without injecting Channel or selector state.
+TEST(TemporalFreshnessTest, DepthFourMultiInputReuseLastRefillDoesNotOvertakeOlderPendingArrival) {
+  ASSERT_NO_FATAL_FAILURE((run_multi_input_reuse_order_graph<4U>()));
+}
+
+// REQ: CHAN-128
+// Depth-two and depth-three queues have the same survivor-order contract as depth four; exercise
+// both explicitly rather than inferring immunity from a finite timing run.
+TEST(TemporalFreshnessTest, DepthTwoMultiInputReuseLastRefillPreservesArrivalOrder) {
+  ASSERT_NO_FATAL_FAILURE((run_multi_input_reuse_order_graph<2U>()));
+}
+
+// REQ: CHAN-128
+TEST(TemporalFreshnessTest, DepthThreeMultiInputReuseLastRefillPreservesArrivalOrder) {
+  ASSERT_NO_FATAL_FAILURE((run_multi_input_reuse_order_graph<3U>()));
+}
+
+TEST(TemporalFreshnessTest, FreshnessPrerequisitePolicyDistinguishesWindowSideInputs) {
+  constexpr PortId kAnchor{1U};
+  constexpr PortId kSideInput{2U};
+  constexpr SourceId kSharedSource = detail::make_source_id(1U);
+  constexpr SourceId kIndependentSource = detail::make_source_id(2U);
+  constexpr InputSelectionPlanRecord kAnchorSelection{
+      .input = kAnchor,
+      .selector = InputSelectorKind::kExact,
+  };
+  constexpr InputSelectionPlanRecord kBracketSelection{
+      .input = kSideInput,
+      .selector = InputSelectorKind::kBracketedWindow,
+      .missing = TemporalRecordMissingKind::kSafeDefault,
+  };
+  constexpr InputSelectionPlanRecord kFreshnessSelection{
+      .input = kSideInput,
+      .selector = InputSelectorKind::kLatestWithin,
+      .missing = TemporalRecordMissingKind::kReuseLast,
+  };
+
+  EXPECT_FALSE(detail::freshness_input_is_nontrigger_prerequisite(
+      kAnchorSelection, kAnchor, kSharedSource, kSharedSource));
+  EXPECT_FALSE(detail::freshness_input_is_nontrigger_prerequisite(
+      kBracketSelection, kAnchor, kSharedSource, kSharedSource));
+  EXPECT_TRUE(detail::freshness_input_is_nontrigger_prerequisite(
+      kFreshnessSelection, kAnchor, kSharedSource, kSharedSource));
+  EXPECT_TRUE(detail::freshness_input_is_nontrigger_prerequisite(
+      kFreshnessSelection, PortId{}, kIndependentSource, kSharedSource));
+  EXPECT_FALSE(detail::freshness_input_is_nontrigger_prerequisite(
+      kFreshnessSelection, PortId{}, kSharedSource, kSharedSource));
+}
+
+TEST(TemporalFreshnessTest, UpcomingClockFreshnessPolicyIsNarrow) {
+  constexpr InputSelectionPlanRecord kDepthOneLatestReuse{
+      .selector = InputSelectorKind::kLatestWithin,
+      .cache_capacity = 1U,
+      .missing = TemporalRecordMissingKind::kReuseLast,
+  };
+  constexpr InputSelectionPlanRecord kDepthOneExactReuse{
+      .selector = InputSelectorKind::kExact,
+      .cache_capacity = 1U,
+      .missing = TemporalRecordMissingKind::kReuseLast,
+  };
+  constexpr InputSelectionPlanRecord kDepthTwoLatestReuse{
+      .selector = InputSelectorKind::kLatestWithin,
+      .cache_capacity = 2U,
+      .missing = TemporalRecordMissingKind::kReuseLast,
+  };
+
+  EXPECT_TRUE(detail::qualifies_upcoming_clock_freshness(kDepthOneLatestReuse, true, true));
+  EXPECT_FALSE(detail::qualifies_upcoming_clock_freshness(kDepthOneLatestReuse, false, true));
+  EXPECT_FALSE(detail::qualifies_upcoming_clock_freshness(kDepthOneExactReuse, true, true));
+  EXPECT_FALSE(detail::qualifies_upcoming_clock_freshness(kDepthTwoLatestReuse, true, true));
+  EXPECT_FALSE(detail::qualifies_upcoming_clock_freshness(kDepthOneLatestReuse, true, false));
+}
+
+// REQ: CHAN-128
+// Source-private HoloMQ must preserve the same multi-input refill and selector ordering as direct
+// retained delivery, including the identity returned by transported replacement.
+TEST(TemporalFreshnessTest, ForcedHoloMqMultiInputReuseLastRefillPreservesArrivalOrder) {
+  ASSERT_NO_FATAL_FAILURE((run_multi_input_reuse_order_graph<4U, Realization::kForcedHoloMq>()));
+}
+
+// REQ: CHAN-128
+// REQ: RUNTIME-043
+// Match the reported Holoviz-style contract: an independent clock drives the consumer and every
+// layer is LatestWithin + ReuseLast. The scenario covers the faster, near-rate, and
+// slower inputs together while preserving nondecreasing selected payload identities.
+TEST(TemporalFreshnessTest, ClockDrivenAllLatestWithinReuseLastInputsPreserveArrivalOrder) {
+  ASSERT_NO_FATAL_FAILURE(run_all_latest_clock_graph());
+}
+
+// REQ: CHAN-128
+// REQ: RUNTIME-043
+// Preserve the same ordering and ReuseLast guarantees when the fast side input owns a
+// deployment-bound CUDA Tensor. The payload copy also proves that the selected and reused
+// sequence identities retain their live device backing through the handoff.
+TEST(TemporalFreshnessTest,
+     DepthFourMultiInputCudaTensorReuseLastRefillDoesNotOvertakeOlderPendingArrival) {
+  int device_count = 0;
+  if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+    GTEST_SKIP() << "CUDA device unavailable";
+  }
+  int original_device = -1;
+  ASSERT_EQ(cudaGetDevice(&original_device), cudaSuccess);
+  const ScopedCudaDeviceRestore restore_device{original_device};
+  ASSERT_EQ(cudaSetDevice(0), cudaSuccess);
+  ASSERT_NO_FATAL_FAILURE(
+      (run_multi_input_reuse_order_graph<4U,
+                                         Realization::kDirect,
+                                         MultiInputFastPayload::kCudaTensor>()));
+}
+
+// REQ: CHAN-128
+// The identical synchronized graph at depth one has no older survivor for a refill prerequisite
+// to overtake. It is the negative control for the production-path interleaving above, not a
+// workaround encoded into the expected result.
+TEST(TemporalFreshnessTest, DepthOneMultiInputReuseLastRefillHasNoOlderPendingArrival) {
+  ASSERT_NO_FATAL_FAILURE((run_multi_input_reuse_order_graph<1U>()));
+}
+
+// REQ: CHAN-131
 // ReuseLast is named in the same retained-ownership sentence as LatestWithin, and the same
 // depth-one side input must still "expose the newest eligible retained sample to the later
 // witness". This regression starts from the real selector-owned reuse claim and proves the
@@ -1296,6 +2883,7 @@ TEST(TemporalFreshnessTest, LatestWithinReuseLastKeepsRetainedSampleWhenStagedDa
 // records must remain fresh; reused records must preserve the exact retained value, stay inside
 // the ReuseLast bound, and yield to a later fresh selection instead of pinning the sole slot.
 // REQ: CHAN-136
+// REQ: CHAN-146
 TEST(TemporalFreshnessTest, DepthOneReuseLastAdmitsNewerSamplesWhileTheReuseClaimIsHeld) {
   bool observed = false;
   ASSERT_NO_FATAL_FAILURE((

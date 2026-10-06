@@ -165,8 +165,8 @@ class HOLOSCAN_EXPERIMENTAL_PARAMS_WEB_TUNER_EXPORT WebTuner {
   /// @note On Linux the socket binds only the selected loopback family. A
   /// present target on an unsupported platform returns a typed not-supported error.
   /// @note This experimental tuner is built only when the project is configured with
-  /// `-DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=ON` (the default); that option requires
-  /// `-DHOLOSCAN_BUILD_PARAMS=ON` (the default). This header and its target are absent otherwise.
+  /// `-DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=ON` (the default). This header and its
+  /// target are absent otherwise.
   [[nodiscard]] static holoscan::params::ParamResult<WebTuner> start(const ExecutionPlan& plan,
                                                                      WebTunerOptions options = {});
   /// @brief Move the complete live ownership state from another tuner.

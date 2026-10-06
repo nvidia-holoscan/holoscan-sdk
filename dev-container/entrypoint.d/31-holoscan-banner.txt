@@ -1,0 +1,14 @@
+Refer to /opt/nvidia/legal for inherited CUDA and TensorRT container licenses and copyrights.
+
+This container includes the Holoscan libraries, GXF extensions, headers, example source
+code, and sample datasets, as well as all Holoscan SDK dependencies.
+
+Visit the User Guide to get started with the Holoscan SDK:
+ https://docs.nvidia.com/holoscan/sdk-user-guide/getting_started.html
+
+Python and C++ examples are installed in /usr/lib/holoscan/examples.
+The SDK source reference is available in /workspace/holoscan-sdk; run instructions:
+ https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples#readme.
+
+See the HoloHub repository for a collection of Holoscan operators and applications:
+ https://github.com/nvidia-holoscan/holohub

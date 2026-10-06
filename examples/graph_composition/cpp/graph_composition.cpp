@@ -261,6 +261,8 @@ class SlowSink final : public holoscan::Operator<> {
       return "device_compatible_ops";
     case holoscan::RegionConstraintKind::kLatencyBudget:
       return "latency_budget";
+    case holoscan::RegionConstraintKind::kCudaGraph:
+      return "cuda_graph";
   }
   return "unknown";
 }
@@ -339,7 +341,12 @@ void print_view(const holoscan::GraphView& view) {
 }  // namespace
 
 // REQ: SYSTEM-014
-int main() {
+int main(int argc, char** argv) {
+  const bool plan_json = argc == 2 && std::string_view(argv[1]) == "--plan-json";
+  if (argc != 1 && !plan_json) {
+    std::cerr << "usage: " << argv[0] << " [--plan-json]\n";
+    return 2;
+  }
   CompositionObservation::reset();
 
   holoscan::Graph graph{"holoscan-graph-composition"};
@@ -413,12 +420,18 @@ int main() {
   // Freeze and walk the authoring snapshot BEFORE compiling: everything the
   // program authored above is visible as pointer-free records.
   const holoscan::GraphView view = graph.view();
-  print_view(view);
+  if (!plan_json) {
+    print_view(view);
+  }
 
   const holoscan::ExecutionPlan plan = holoscan::compile(graph);
   if (!plan.ok()) {
     std::cerr << plan.json() << '\n';
     return 1;
+  }
+  if (plan_json) {
+    std::cout << plan.json() << '\n';
+    return 0;
   }
 
   holoscan::RunSession session = holoscan::run_async(plan);

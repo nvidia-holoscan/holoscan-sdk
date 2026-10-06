@@ -17,6 +17,7 @@
 
 #include "compiler/detail/checked_arithmetic.hpp"
 #include "compiler/physical_plan_lowering.hpp"
+#include "compiler/snapshot_lookup.hpp"
 #include "core/tensor_contract_resolution_internal.hpp"
 
 namespace holoscan::detail {
@@ -44,14 +45,58 @@ inline constexpr std::string_view kResourceCoverInvalid{"PARTITION_RESOURCE_REAL
 
 inline void reject_physical_plan(PhysicalPlanLoweringResult& output, std::string_view token,
                                  DiagnosticSource source = {}, std::string json_pointer = {},
-                                 std::string required = {}, std::string provided = {}) {
+                                 std::string required = {}, std::string provided = {},
+                                 std::optional<DiagnosticDetail> detail = std::nullopt) {
   output.errors.push_back(PhysicalPlanDiagnostic{
       .token = std::string(token),
       .source = source,
       .json_pointer = std::move(json_pointer),
       .required = std::move(required),
       .provided = std::move(provided),
+      .detail = std::move(detail),
   });
+}
+
+inline DiagnosticDetail physical_edge_detail(const GraphSnapshotData& snapshot,
+                                             const PortRecord* source, const PortRecord* target,
+                                             std::vector<DiagnosticMismatch> mismatches = {}) {
+  DiagnosticDetail detail{
+      .operation = DiagnosticOperation::kCompile,
+      .error = Error{ErrorCode::kIncompatible, "incompatible connection contract"}};
+  const auto path = [&](const PortRecord* port) {
+    const auto* owner = port != nullptr ? find_vertex(snapshot, port->owner) : nullptr;
+    std::string result;
+    if (owner == nullptr) {
+      return result;
+    }
+    const auto* graph = find_graph(snapshot, owner->graph);
+    if (graph != nullptr && graph->path) {
+      for (const auto& segment : graph->path->segments()) {
+        append_percent_encoded_uri_path_segment(result, segment);
+      }
+    }
+    append_percent_encoded_uri_path_segment(result, owner->name);
+    return result;
+  };
+  detail.operator_path = path(target);
+  detail.related_operator_path = path(source);
+  if (target != nullptr) {
+    detail.port_name = target->name;
+  }
+  if (source != nullptr) {
+    const auto* owner = find_vertex(snapshot, source->owner);
+    detail.related_source = DiagnosticSource{.graph_generation = snapshot.generation,
+                                             .graph = owner != nullptr ? owner->graph : GraphId{},
+                                             .vertex = source->owner,
+                                             .port = PortId{source->id.value}};
+    detail.related_port_name = source->name;
+  }
+  detail.truncated = mismatches.size() > 16U;
+  if (detail.truncated) {
+    mismatches.resize(16U);
+  }
+  detail.mismatches = std::move(mismatches);
+  return detail;
 }
 
 template <typename Enum>
@@ -127,22 +172,6 @@ find_port_tensor_byte_span_derivation(
     return found != derivations.end() ? &*found : nullptr;
   }
   return find_tensor_byte_span_derivation(derivations, PortId{port.id.value});
-}
-
-[[nodiscard]] constexpr std::string_view memory_kind_name(MemoryKind memory) noexcept {
-  switch (memory) {
-    case MemoryKind::kUnknown:
-      return "kUnknown";
-    case MemoryKind::kHost:
-      return "kHost";
-    case MemoryKind::kPinnedHost:
-      return "kPinnedHost";
-    case MemoryKind::kCudaDevice:
-      return "kCudaDevice";
-    case MemoryKind::kCudaManaged:
-      return "kCudaManaged";
-  }
-  return "invalid";
 }
 
 [[nodiscard]] inline std::string port_pointer(PortId port, std::string_view suffix) {

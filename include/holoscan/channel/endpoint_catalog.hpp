@@ -165,15 +165,15 @@ class HOLOSCAN_CORE_EXPORT SchemaIdentityView {
   /// @brief Return the complete schema identity's canonical name.
   /// @return Catalog-owned canonical name.
   [[nodiscard]] std::string_view canonical_name() const noexcept;
-  /// @brief Return the exact schema semantic version.
-  /// @return Nonzero semantic version.
-  [[nodiscard]] std::uint32_t version() const noexcept;
-  /// @brief Return the complete canonical schema digest.
-  /// @return Catalog-owned 32-byte SHA-256 digest view.
-  [[nodiscard]] std::span<const std::byte, 32> schema_sha256() const noexcept;
-  /// @brief Return the compact schema reference derived from complete identity.
-  /// @return Derived schema identifier; never sufficient as identity alone.
-  [[nodiscard]] SchemaId id() const noexcept;
+  /// @brief Return the schema-family compatibility epoch.
+  /// @return Positive epoch selected by the schema author.
+  [[nodiscard]] std::uint32_t compatibility_epoch() const noexcept;
+  /// @brief Return the schema-family identifier derived from name and epoch.
+  /// @return Stable family identifier for wire-compatible schema revisions.
+  [[nodiscard]] SchemaId family_id() const noexcept;
+  /// @brief Return the exact FlatBuffers file identifier.
+  /// @return Four-byte defense-in-depth identifier.
+  [[nodiscard]] FlatBufferFileIdentifier file_identifier() const noexcept;
 
  private:
   explicit SchemaIdentityView(const SchemaIdentityRecord* record) noexcept : record_(record) {}
@@ -414,6 +414,10 @@ class HOLOSCAN_CORE_EXPORT ChannelEndpointCatalog::EndpointView {
   /// @return Catalog-owned record for a generated name, otherwise no value.
   [[nodiscard]] std::optional<GeneratedEndpointNameInfo> generated_name() const noexcept;
 
+  /// @brief Return the exact scalar identity when this endpoint is scalar-backed.
+  /// @return Closed scalar representation, or no value for another payload family.
+  [[nodiscard]] std::optional<ScalarIdentityKind> scalar_identity() const noexcept;
+
   /// @brief Return the complete raw-POD identity when this endpoint is POD-backed.
   /// @return Catalog-owned complete POD view, or no value for another payload family.
   [[nodiscard]] std::optional<PodTypeIdentityView> pod_type_identity() const noexcept;
@@ -422,9 +426,25 @@ class HOLOSCAN_CORE_EXPORT ChannelEndpointCatalog::EndpointView {
   /// @return Catalog-owned complete schema view, or no value for another payload family.
   [[nodiscard]] std::optional<SchemaIdentityView> schema_identity() const noexcept;
 
-  /// @brief Return the finite serialized payload bound for a generated-schema endpoint.
-  /// @return Positive maximum serialized payload bytes, or no value for another payload family.
-  [[nodiscard]] std::optional<std::uint64_t> schema_max_serialized_size() const noexcept;
+  /// @brief Return the service writer's finite serialized payload maximum.
+  /// @return Positive writer maximum, or no value for another payload family.
+  [[nodiscard]] std::optional<std::uint64_t> schema_writer_max_serialized_bytes() const noexcept;
+
+  /// @brief Return the complete frame required by the service writer maximum.
+  /// @return Positive required frame bytes, or no value for another payload family.
+  [[nodiscard]] std::optional<std::uint64_t> schema_required_frame_bytes() const noexcept;
+
+  /// @brief Return the exact rounded inline bucket selected by the service authority.
+  /// @return Positive supported HoloMQ bucket bytes, or no value for another payload family.
+  [[nodiscard]] std::optional<std::uint64_t> schema_selected_inline_bucket_bytes() const noexcept;
+
+  /// @brief Return serialized bytes usable after framing within the selected bucket.
+  /// @return Positive bucket-derived capacity, or no value for another payload family.
+  [[nodiscard]] std::optional<std::uint64_t> schema_bucket_usable_serialized_bytes() const noexcept;
+
+  /// @brief Return the exact generated Holoscan carriage profile tag.
+  /// @return Zero for ordinary schemas, nonzero for descriptor-Tensor schemas, or no schema value.
+  [[nodiscard]] std::optional<std::uint32_t> schema_transport_profile_tag() const noexcept;
 
   /// @brief Return the required capture-time clock when present.
   /// @return Catalog-owned capture-time requirement, or no value when timestamps are optional.

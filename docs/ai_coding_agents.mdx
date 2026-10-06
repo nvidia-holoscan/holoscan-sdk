@@ -10,7 +10,7 @@ Holoscan codebase.
   - Which properties of the 5.x API make it work well with AI coding assistants
   - Why compile-time validation gives an agent a truthful iteration signal
   - How to ground an agent with this guide, the C++ API reference, and the examples tree
-  - What to expect from the planned Holoscan coding-assistant skill package
+  - How to install Holoscan coding-assistant skills from the public SDK repository
 </Note>
 
 ## Why the 5.x API suits coding assistants
@@ -126,14 +126,22 @@ for the guided tour.
 - Have the agent state which layer a new primitive targets and verify the
   header it imports actually exists under `include/holoscan/` before using it.
 
-## Coming soon: a Holoscan coding-assistant skill package
+## Holoscan coding-assistant skills
 
-A dedicated skill package for AI coding assistants is planned: a distributable
-bundle of Holoscan-specific instructions, API-surface summaries, and
-compile-loop recipes that popular agent frameworks can load directly, so the
-grounding steps above become a single install. Details will be announced in a
-future release; until then, the manual grounding described on this page is
-the recommended approach.
+Holoscan publishes agent-readable skills in the public
+[skills directory](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/skills).
+Install them from the NVIDIA catalog with the `skills` CLI:
+
+```bash
+npx skills add nvidia/skills
+```
+
+The skills currently focus on installing the SDK. Use this page plus the C++
+API reference and the examples tree to ground assistants in the 5.x API and
+compile-time diagnostics. Check each skill's supported SDK versions before
+using it with this development branch. See the
+[skills README](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/skills/README.md)
+for install options and contribution limits.
 
 ## Recap
 
@@ -145,6 +153,6 @@ the recommended approach.
   knowledge is stale.
 - Keep the examples tree readable by the agent and have it imitate the
   nearest working example.
-- A dedicated Holoscan coding-assistant skill package is planned.
+- Install Holoscan coding-assistant skills with `npx skills add nvidia/skills`.
 
 Next: [HoloHub](/holoscan/sdk-user-guide/resources/holohub).

@@ -61,6 +61,12 @@ A `:compute` range starts immediately before the runtime invokes the operator ca
 
 The range does not include the runtime work that happens after the callback returns, such as callback-return tracing, CUDA-device restoration, dispatcher completion, or direct-continuation polling.
 
+## Message emit and receive markers
+
+A `<port>:emit` marker means the runtime accepted the message, or delivery may already have started. A cleanly rejected send attempt produces no marker.
+
+Because delivery can start before the emit marker is recorded, a matching `<port>:receive` marker may appear first. Match the markers using their source identity and sequence, not their timestamp order.
+
 ## Finding the annotation in Nsight Systems
 
 In Nsight Systems, look for the NVTX domain named `holoscan`, then expand the runtime thread lanes that executed operators. The compute ranges are displayed with labels such as:

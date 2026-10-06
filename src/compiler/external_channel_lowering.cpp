@@ -323,6 +323,13 @@ void lower_external_channel_services(
   const auto& reuse_by_output = topology.reuse_by_output;
   const auto& drain_by_output = topology.drain_by_output;
   for (const auto& authored_topic : snapshot.external_topics) {
+    if (is_py_object_payload_identity(authored_topic.payload_identity)) {
+      reject_physical_plan(
+          result,
+          kProcessLocalChannelInvalid,
+          source_for(snapshot, authored_topic.vertex, PortId{authored_topic.graph_port.value}));
+      continue;
+    }
     const auto& topics_by_port =
         authored_topic.imported ? topology.imported_by_port : topology.exported_by_port;
     const auto admitted_topic = topics_by_port.find(authored_topic.graph_port.value);
@@ -405,15 +412,20 @@ void lower_external_channel_services(
         valid_logical_tensor(*topic.tensor, true) && logical_span_fits(*topic.tensor) &&
         matching != result.payload_edges.end()) {
       const auto* target = find_port(snapshot, GraphPortId{matching->target.value()});
+      std::vector<DiagnosticMismatch> mismatches;
       if (target != nullptr && target->owner_kind == PortOwnerKind::kOperator &&
-          !tensor_boundary_provider_satisfies_input(
-              *topic.tensor, resolved_layout(*target), resolved_tensor_contract(*target))) {
+          !tensor_boundary_provider_satisfies_input(*topic.tensor,
+                                                    resolved_layout(*target),
+                                                    resolved_tensor_contract(*target),
+                                                    &mismatches)) {
         reject_physical_plan(result,
                              kTensorLayoutMismatch,
                              source_for(snapshot, target->owner, matching->target),
                              port_pointer(matching->target, "/tensor_layout"),
                              layout_summary(resolved_layout(*target)),
                              boundary_layout_summary(*topic.tensor));
+        result.errors.back().detail = physical_edge_detail(
+            snapshot, find_port(snapshot, topic.graph_port), target, std::move(mismatches));
         continue;
       }
     }

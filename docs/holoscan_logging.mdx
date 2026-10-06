@@ -49,6 +49,118 @@ a context where you do not want source-location capture): `holoscan::log_trace`,
 `log_debug`, `log_info`, `log_warn`, `log_error`, and `log_critical` take the
 same fmt format string and arguments but do not record file/line/function.
 
+## Explicit diagnostics and automatic reports
+
+**Automatic Core warning/error reporting is enabled by default (`true`).**
+`set_automatic_diagnostic_logging_enabled()` controls eligible existing SDK reports.
+`log_diagnostics()` is an explicit caller request and works with either setting.
+Normally, there is no reason to call the setter with `true` at startup.
+
+Assuming no environment override and logger filtering permits output:
+
+| Action | Automatic enabled (default) | Automatic disabled |
+|---|---|---|
+| Call `compile()` without a helper | No automatic compile-result dump | Same |
+| Call `log_diagnostics(plan)` | Prints retained errors and warnings | Same |
+| Trigger an existing startup/runtime failure report without helpers | SDK prints the report | SDK suppresses the report |
+| Explicitly report session diagnostics | Prints them; may duplicate an automatic report | Prints them |
+| `MemoryBuffer::resize()` cannot release or allocate storage | SDK reports the failure and returns the Error | Same Error and ownership; SDK report suppressed |
+| Fatal invariant immediately before `std::terminate()` | Attempts original ERROR, then terminates | Same; fatal messages bypass this setting |
+
+```cpp
+#include <holoscan/core/diagnostic.hpp>
+
+// Optional: present ordinary returned/retained failures yourself.
+holoscan::set_automatic_diagnostic_logging_enabled(false);
+const bool automatic = holoscan::automatic_diagnostic_logging_enabled();
+```
+
+The getter returns the effective automatic policy, before normal logger
+filtering. Setting `true` allows future automatic reports; it does not print
+saved diagnostics, replay a failure, or enable automatic compile-result dumps.
+Already-running sessions sample the setting when they attempt later reports.
+The process-wide API is thread-safe and nonthrowing; configure it at startup when practical.
+
+The opt-out covers Core-owned warning/error reports from Graph composition,
+lifecycle, startup and runtime, memory/CUDA resources, and clocks. It preserves
+structured diagnostics, caller-supplied sinks, exceptions, failure outcomes,
+and cleanup. Ordinary DEBUG/TRACE progress and explicit application/operator
+logging keep their normal logger controls. Other libraries' logs are independent.
+
+Fatal invariant messages immediately before `std::terminate()` are outside this
+opt-out. They attempt their original ERROR message even with API `false` or
+launch-time `OFF`; normal logger filtering still applies. Formatting or sink
+failure is contained and cannot prevent termination. These paths return no Error
+and offer no retained record that `log_diagnostics()` could replay after abort.
+
+For example, with an existing allocator that can reject the request:
+
+```cpp
+#include <holoscan/core/diagnostic.hpp>
+#include <holoscan/memory/memory_buffer.hpp>
+
+holoscan::set_automatic_diagnostic_logging_enabled(false);
+holoscan::MemoryBuffer buffer;
+// allocator is the application's std::shared_ptr<holoscan::Allocator>.
+auto resized = buffer.resize(allocator, 4096, holoscan::MemoryStorageType::kSystem);
+if (!resized) {
+  // Inspect resized.error() and choose whether to display it.
+}
+```
+
+Both allocation rejection and failure to release previous storage follow this
+policy. Failed release preserves the existing backing and does not try a new
+allocation. A valid launch-time `ON` override still enables automatic reports.
+
+### Environment override
+
+```bash
+# Suppress eligible automatic Core reports; explicit helpers and fatal reports remain.
+export HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING=OFF
+```
+
+| Environment value | Effective policy |
+|---|---|
+| `ON`, in any ASCII letter case | Enabled, even after API `false` |
+| `OFF`, in any ASCII letter case | Disabled, even after API `true` |
+| Unset or empty | API preference, initially `true` |
+| Any other nonempty value | API preference; at most one normal WARN attempt |
+
+Whitespace and numeric Boolean spellings are not accepted. Invalid-setting
+feedback is bounded and respects normal WARN filtering. The environment is
+read once, at the first setter, getter, or automatic-report policy access.
+Later environment changes have no effect. Explicit helpers do not initialize
+this policy or generate its invalid-setting warning.
+
+### Report retained diagnostics explicitly
+
+```cpp
+// graph is the application graph, already constructed.
+const auto plan = holoscan::compile(graph);
+holoscan::log_diagnostics(plan);  // Outside !plan.ok(): include accepted-plan warnings.
+if (!plan.ok()) return 1;
+```
+
+The span overload accepts `log_diagnostics(records, plan.graph())`. Errors
+render at ERROR before warnings at WARN, retaining original record indices and
+causal links within one 16384-byte text budget (logger prefixes excluded).
+Empty records and filtered severities print nothing. Formatting and sink
+exceptions are contained. The helpers neither consume diagnostics nor install
+future reporting; repeated explicit calls can print the same records again.
+Use `format_diagnostics()` when you want text for your own UI or telemetry.
+
+Existing failed-run summaries retain their ERROR severity, content, and timing
+after cleanup and terminal-state publication. Warnings included in that legacy
+summary remain part of its ERROR report. To avoid duplicate terminal output,
+keep automatic reporting or disable it and explicitly report the retained
+session after `wait()`. Some lower-level logs have no corresponding retained
+record: the helper prints the records supplied to it, not a replay of all logs.
+
+These helpers and controls are C++ APIs in SDK 5.0. Python bindings are not
+provided by this change. See
+[Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures)
+and [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
 ## Setting the log level
 
 `holoscan::LogLevel` defines seven levels, in increasing severity: `TRACE`,

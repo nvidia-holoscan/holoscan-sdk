@@ -26,6 +26,7 @@
 #include <holoscan/time/manual_clock.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
+#include "channel/channel_common.hpp"
 #include "channel/endpoint_catalog_state.hpp"
 #include "compile_test_graph.hpp"
 #include "compiler/compile_internal.hpp"
@@ -310,6 +311,7 @@ TEST(EndpointCatalog, ExplicitNameProducesLookupableImmutableRecord) {
   EXPECT_EQ(endpoint->direction(), TopicDirection::kImport);
   EXPECT_EQ(endpoint->name_origin(), EndpointNameOrigin::kExplicit);
   EXPECT_FALSE(endpoint->generated_name().has_value());
+  EXPECT_EQ(endpoint->scalar_identity(), ScalarIdentityKind::kUInt32);
   EXPECT_EQ(endpoint->memory_conversion(), MemoryConversionPolicy::kDefault);
   EXPECT_EQ(endpoint->attach_policy().peer, PeerRequirement::kOptional);
   EXPECT_EQ(endpoint->attach_policy().max_wait, std::chrono::seconds{2});
@@ -708,23 +710,25 @@ TEST(EndpointCatalog, StandaloneBuilderRoundTripsTheCompleteCanonicalCatalog) {
 // REQ: COMPILE-007
 // REQ: COMPILE-022
 // REQ: EXTERNAL-010
+// REQ: SCHEMA-003
+// REQ: SCHEMA-004
 TEST(EndpointCatalog, DescriptorTensorSchemaFieldsRoundTripAsServiceIdentity) {
+  constexpr std::array<std::uint16_t, 2U> kTensorFieldIds{0U, 4U};
+  const auto kTransportProfile =
+      make_descriptor_tensor_transport_profile(std::span{kTensorFieldIds}, 256U);
   SchemaIdentityRecord schema{
       .canonical_name = "nvidia.holoscan.test.ExternalDescriptorSchema",
-      .version = 1U,
-      .schema_sha256 = {std::byte{0x5A}},
+      .compatibility_epoch = 1U,
+      .family_id = derive_schema_family_id("nvidia.holoscan.test.ExternalDescriptorSchema", 1U),
+      .file_identifier = make_flatbuffer_file_identifier("EDSC"),
   };
-  schema.id = derive_schema_id(SchemaIdentity{
-      .canonical_name = schema.canonical_name,
-      .version = schema.version,
-      .schema_sha256 = schema.schema_sha256,
-  });
   auto endpoint = identity_endpoint(PayloadIdentityRecord{
       .kind = PayloadIdentityKind::kSchema,
       .payload_kind = PayloadKind::kDescriptorBacked,
+      .transport_profile_tag = schema_transport_profile_tag(kTransportProfile),
       .schema = schema,
   });
-  endpoint.serialized_payload_capacity_bytes = 256U;
+  endpoint.schema_writer_max_serialized_bytes = 256U;
   endpoint.schema_identity = schema;
   // Key setup: encode two descriptor Tensor fields with distinct IDs, indices, memory kinds,
   // byte bounds, and memory-conversion policies into one service identity.
@@ -776,6 +780,15 @@ TEST(EndpointCatalog, DescriptorTensorSchemaFieldsRoundTripAsServiceIdentity) {
   const auto* state = detail::ChannelEndpointCatalogAccess::state(*parsed);
   ASSERT_NE(state, nullptr);
   ASSERT_EQ(state->endpoints.size(), 1U);
+  const auto expected_metadata_bucket = channel_internal::inline_payload_bucket_size(256U);
+  ASSERT_TRUE(expected_metadata_bucket);
+  EXPECT_EQ(state->endpoints.front().service_static.required_data_frame_bytes, 256U);
+  EXPECT_EQ(state->endpoints.front().service_static.selected_inline_bucket_bytes,
+            *expected_metadata_bucket);
+  EXPECT_EQ(state->endpoints.front().service_static.bucket_usable_serialized_bytes,
+            *expected_metadata_bucket);
+  EXPECT_EQ(state->endpoints.front().service_static.payload_identity.transport_profile_tag,
+            schema_transport_profile_tag(kTransportProfile));
   const auto& fields = state->endpoints.front().service_static.tensor_fields;
   ASSERT_EQ(fields.size(), 2U);
   EXPECT_EQ(fields[0].field_id, 0U);
@@ -786,12 +799,32 @@ TEST(EndpointCatalog, DescriptorTensorSchemaFieldsRoundTripAsServiceIdentity) {
   EXPECT_EQ(fields[1].tensor.max_byte_span, 8192U);
   EXPECT_EQ(fields[1].tensor.memory_conversion, MemoryConversionPolicy::kAllowIfSafe);
 
+  auto incompatible_profile = state->endpoints.front();
+  ++incompatible_profile.payload_identity.transport_profile_tag;
+  auto profile_catalog = detail::ChannelEndpointCatalogAccess::normalize(
+      "descriptor-tensor-fields", {std::move(incompatible_profile)});
+  ASSERT_TRUE(profile_catalog) << profile_catalog.error().message;
+  EXPECT_FALSE(normalized->compatibility_with(*profile_catalog).compatible());
+
   auto duplicate = state->endpoints.front();
   duplicate.tensor_fields[1].field_id = duplicate.tensor_fields[0].field_id;
   auto rejected = detail::ChannelEndpointCatalogAccess::normalize("descriptor-tensor-fields",
                                                                   {std::move(duplicate)});
   ASSERT_FALSE(rejected);
   EXPECT_EQ(rejected.error().message, "ENDPOINT_TENSOR_POLICY_INVALID");
+
+  std::string mismatched_bucket = normalized->json();
+  const std::string bucket_field =
+      "\"selected_inline_bucket_bytes\":" + std::to_string(*expected_metadata_bucket);
+  const auto bucket_offset = mismatched_bucket.find(bucket_field);
+  ASSERT_NE(bucket_offset, std::string::npos);
+  mismatched_bucket.replace(
+      bucket_offset,
+      bucket_field.size(),
+      "\"selected_inline_bucket_bytes\":" + std::to_string(*expected_metadata_bucket / 2U));
+  auto rejected_bucket = ChannelEndpointCatalog::parse_json(mismatched_bucket);
+  ASSERT_FALSE(rejected_bucket);
+  EXPECT_EQ(rejected_bucket.error().message, "ENDPOINT_SERVICE_INVALID");
 }
 
 // REQ: COMPILE-007
@@ -2089,14 +2122,13 @@ TEST(EndpointCatalog, NormalizationPreservesPodAuthorityCollisionChecks) {
   EXPECT_EQ(rejected.error().message, "ENDPOINT_POD_IDENTITY_COLLISION");
 }
 
-// REQ: COMPILE-022
-// REQ: COMPILE-066
-TEST(EndpointCatalog, SchemaAdmissionRejectsAnIdThatDoesNotMatchCompleteIdentity) {
+// REQ: COMPILE-074
+TEST(EndpointCatalog, SchemaAdmissionRejectsAFamilyIdThatDoesNotMatchNameAndEpoch) {
   SchemaIdentityRecord schema{
       .canonical_name = "nvidia.holoscan.test.EndpointSchema",
-      .version = 1U,
-      .schema_sha256 = {std::byte{0x5A}},
-      .id = SchemaId{.value = {std::byte{0xA5}}},
+      .compatibility_epoch = 1U,
+      .family_id = SchemaId{.value = {std::byte{0xA5}}},
+      .file_identifier = make_flatbuffer_file_identifier("EPSC"),
   };
   PayloadIdentityRecord payload{
       .kind = PayloadIdentityKind::kSchema,
@@ -2104,12 +2136,51 @@ TEST(EndpointCatalog, SchemaAdmissionRejectsAnIdThatDoesNotMatchCompleteIdentity
       .schema = schema,
   };
   auto endpoint = identity_endpoint(std::move(payload));
-  endpoint.serialized_payload_capacity_bytes = 1U;
+  endpoint.schema_writer_max_serialized_bytes = 1U;
   endpoint.schema_identity = std::move(schema);
   const auto result =
       detail::ChannelEndpointCatalogAccess::normalize("schema-validation", {std::move(endpoint)});
   ASSERT_FALSE(result);
   EXPECT_EQ(result.error().message, "ENDPOINT_PAYLOAD_IDENTITY_INVALID");
+}
+
+// REQ: COMPILE-022
+// REQ: COMPILE-074
+// REQ: SCHEMA-005
+TEST(EndpointCatalog, ParserRejectsRetiredExactArtifactSchemaIdentityFields) {
+  SchemaIdentityRecord schema{
+      .canonical_name = "nvidia.holoscan.test.EndpointSchema",
+      .compatibility_epoch = 1U,
+      .family_id = derive_schema_family_id("nvidia.holoscan.test.EndpointSchema", 1U),
+      .file_identifier = make_flatbuffer_file_identifier("EPSC"),
+  };
+  auto endpoint = identity_endpoint(PayloadIdentityRecord{
+      .kind = PayloadIdentityKind::kSchema,
+      .payload_kind = PayloadKind::kSerializedBytes,
+      .schema = schema,
+  });
+  endpoint.schema_writer_max_serialized_bytes = 1U;
+  endpoint.schema_identity = std::move(schema);
+  auto normalized =
+      detail::ChannelEndpointCatalogAccess::normalize("schema-validation", {std::move(endpoint)});
+  ASSERT_TRUE(normalized) << normalized.error().message;
+
+  constexpr std::string_view kSchemaPrefix{"\"schema_identity\":{"};
+  constexpr std::array<std::string_view, 3> kRetiredFields{
+      "\"version\":1,",
+      "\"schema_sha256\":\"sha256:"
+      "0000000000000000000000000000000000000000000000000000000000000000\",",
+      "\"id\":\"00000000000000000000000000000000\",",
+  };
+  for (const std::string_view retired_field : kRetiredFields) {
+    std::string retired = normalized->json();
+    const auto schema_record = retired.find(kSchemaPrefix);
+    ASSERT_NE(schema_record, std::string::npos);
+    retired.insert(schema_record + kSchemaPrefix.size(), retired_field);
+    const auto parsed = ChannelEndpointCatalog::parse_json(retired);
+    ASSERT_FALSE(parsed) << retired_field;
+    EXPECT_EQ(parsed.error().message, "ENDPOINT_PAYLOAD_IDENTITY_INVALID") << retired_field;
+  }
 }
 
 // REQ: COMPILE-007

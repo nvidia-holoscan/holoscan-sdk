@@ -360,7 +360,8 @@ template <typename Record>
 [[nodiscard]] bool valid_cross_process_tensor_service(
     const CrossProcessChannelServicePlanRecord& service,
     const TensorServicePoolLookup& pool) noexcept {
-  if (!service.tensor_payload || service.payload_size_bytes != 0U || pool.ambiguous) {
+  if (!service.tensor_payload || service.payload_size_bytes != 0U ||
+      service.selected_inline_bucket_bytes != 0U || pool.ambiguous) {
     return false;
   }
   if (!pool.facts) {
@@ -377,6 +378,8 @@ template <typename Record>
     const CrossProcessChannelServicePlanRecord& service,
     const std::optional<std::uint64_t>& payload_size) noexcept {
   return payload_size && service.payload_size_bytes == *payload_size &&
+         service.selected_inline_bucket_bytes ==
+             channel_internal::inline_payload_bucket_size(*payload_size).value_or(0U) &&
          service.tensor_max_byte_span == 0U && service.tensor_pool_id.empty() &&
          service.tensor_memory_kind == MemoryKind::kUnknown && !service.tensor_device.valid();
 }
@@ -465,6 +468,8 @@ template <typename Record>
     const std::optional<std::uint64_t>& payload_size) noexcept {
   if (!service.tensor_fields.empty()) {
     return payload_size && service.tensor_payload && service.payload_size_bytes == *payload_size &&
+           service.selected_inline_bucket_bytes ==
+               channel_internal::inline_payload_bucket_size(*payload_size).value_or(0U) &&
            service.tensor_max_byte_span == 0U && service.tensor_pool_id.empty() &&
            service.tensor_memory_kind == MemoryKind::kUnknown && !service.tensor_device.valid() &&
            service.tensor_emit_policy == InterfaceTensorEmitPolicy::kCopyIfNeeded &&
@@ -472,6 +477,8 @@ template <typename Record>
                state, service.source, service.tensor_fields, true);
   }
   return payload_size && service.tensor_payload && service.payload_size_bytes == *payload_size &&
+         service.selected_inline_bucket_bytes ==
+             channel_internal::inline_payload_bucket_size(*payload_size).value_or(0U) &&
          service.tensor_max_byte_span != 0U && !service.tensor_pool_id.empty() &&
          ((service.tensor_memory_kind == MemoryKind::kHost && !service.tensor_device.valid()) ||
           ((service.tensor_memory_kind == MemoryKind::kPinnedHost ||
@@ -544,7 +551,10 @@ template <typename Record>
 [[nodiscard]] bool valid_cross_process_edge_contract(const PayloadEdgePlanRecord& edge,
                                                      const PortPlanRecord* source,
                                                      const PortPlanRecord* target) noexcept {
-  return edge.edge && source != nullptr && target != nullptr &&
+  const bool local_enum = edge.payload_identity.kind == PayloadIdentityKind::kScalar &&
+                          edge.payload_identity.scalar &&
+                          edge.payload_identity.scalar->kind == ScalarIdentityKind::kLocalEnum;
+  return !local_enum && edge.edge && source != nullptr && target != nullptr &&
          source->owner_kind == PortOwnerKind::kOperator &&
          target->owner_kind == PortOwnerKind::kOperator &&
          source->direction == PortDirection::kOutput &&
@@ -569,8 +579,10 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
   }
   for (std::size_t index = 0U; index < state.ports.size(); ++index) {
     const auto& port = state.ports[index];
-    const bool schema = port.payload_identity.kind == PayloadIdentityKind::kSchema;
-    if (port.id.value() != index + 1U || schema != (port.serialized_payload_capacity_bytes != 0U)) {
+    const bool serialized_schema =
+        schema_requires_serialized_payload_capacity(port.payload_identity);
+    if (port.id.value() != index + 1U ||
+        serialized_schema != (port.serialized_payload_capacity_bytes != 0U)) {
       return false;
     }
   }
@@ -648,11 +660,27 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
     if (source == nullptr || target == nullptr) {
       return false;
     }
-    const bool source_schema = source->payload_identity.kind == PayloadIdentityKind::kSchema;
-    const bool target_schema = target->payload_identity.kind == PayloadIdentityKind::kSchema;
+    // The logical edge remains in the immutable plan, but CUDAGraphRegionOperator accesses its
+    // fixed capture buffer directly. No ordinary Runtime channel record may exist for this edge.
+    if (is_cuda_graph_internal_execution_edge(state, edge.edge)) {
+      continue;
+    }
+    const bool source_schema =
+        schema_requires_serialized_payload_capacity(source->payload_identity);
+    const bool target_schema =
+        schema_requires_serialized_payload_capacity(target->payload_identity);
+    // A projected edge delivers one Tensor member of the producer's schema, so the consumer holds
+    // no serialized capacity to compare against and its identity is a Tensor rather than the root.
+    const bool projected = edge.tensor_projection.has_value();
+    if (projected && (!source_schema ||
+                      source->payload_identity.payload_kind != PayloadKind::kDescriptorBacked ||
+                      target->payload_identity.kind != PayloadIdentityKind::kTensor)) {
+      return false;
+    }
     if (source_schema != (source->serialized_payload_capacity_bytes != 0U) ||
         target_schema != (target->serialized_payload_capacity_bytes != 0U) ||
-        source->serialized_payload_capacity_bytes != target->serialized_payload_capacity_bytes) {
+        (!projected &&
+         source->serialized_payload_capacity_bytes > target->serialized_payload_capacity_bytes)) {
       return false;
     }
     const auto payload_size = channel_payload_size_bytes(
@@ -673,7 +701,11 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
         edge.producer_max_emits_per_compute == 0U ||
         source->max_emits_per_compute != edge.producer_max_emits_per_compute ||
         !payload_identity_exactly_equal(source->payload_identity, edge.payload_identity) ||
-        !payload_identity_exactly_equal(target->payload_identity, edge.payload_identity)) {
+        // A projected edge keeps the producer's schema identity, so its consumer is a Tensor rather
+        // than the schema root the edge names.
+        (projected
+             ? target->payload_identity.kind != PayloadIdentityKind::kTensor
+             : !payload_identity_exactly_equal(target->payload_identity, edge.payload_identity))) {
       return false;
     }
     if (!graph_edge_by_id.empty()) {
@@ -693,7 +725,8 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
                     state, PortId{graph_edge->target.value}, PortDirection::kInput)
               : std::nullopt;
       if (!expected_source || !expected_target || edge.source != *expected_source ||
-          edge.target != *expected_target) {
+          edge.target != *expected_target ||
+          graph_edge->tensor_projection != edge.tensor_projection) {
         return false;
       }
     }
@@ -707,6 +740,19 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
     }
     const auto& service = *derived.service;
     const auto& publisher = *derived.publisher;
+    if (projected) {
+      const auto& projection = *edge.tensor_projection;
+      if (service.delivery_kind != ProcessLocalChannelDeliveryKind::kDirectRetained ||
+          service.max_subscribers != 1U || edge.fanout != 1U ||
+          (service.tensor_fields.empty()
+               ? projection.tensor_index != 0U
+               : std::ranges::none_of(service.tensor_fields, [&](const auto& field) {
+                   return field.field_id == projection.field_id &&
+                          field.tensor_index == projection.tensor_index;
+                 }))) {
+        return false;
+      }
+    }
     const auto eligible_delivery_kind = process_local_channel_delivery_kind(edge);
     if (service.delivery_kind == ProcessLocalChannelDeliveryKind::kDirectRetained &&
         eligible_delivery_kind != ProcessLocalChannelDeliveryKind::kDirectRetained) {
@@ -741,6 +787,13 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
         publisher.max_loaned_samples != edge.producer_max_emits_per_compute ||
         publisher.replacement_attribution_required !=
             (edge.queue_policy != QueuePolicy::kBlocking)) {
+      return false;
+    }
+    const std::uint64_t expected_bucket =
+        service.delivery_kind == ProcessLocalChannelDeliveryKind::kHoloMQ && payload_size
+            ? channel_internal::inline_payload_bucket_size(*payload_size).value_or(0U)
+            : 0U;
+    if (service.selected_inline_bucket_bytes != expected_bucket) {
       return false;
     }
     if (tensor) {
@@ -790,6 +843,7 @@ bool valid_process_local_channel_plan(const ExecutionPlanState& state) {
     const auto& subscriber = state.process_local_channel_subscribers[subscriber_index++];
     if (subscriber.edge != edge.edge || subscriber.source != edge.source ||
         subscriber.target != edge.target || subscriber.service_id != expected_service_id ||
+        subscriber.tensor_projection != edge.tensor_projection ||
         subscriber.requested_queue_depth != edge.queue_depth ||
         subscriber.max_borrowed_samples != edge.queue_depth ||
         subscriber.cache_capacity != edge.cache_capacity ||
@@ -1002,7 +1056,7 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
         topic.imported ? PortOwnerKind::kImportedTopic : PortOwnerKind::kExportedTopic;
     if (port == nullptr || port->owner != topic.vertex || port->direction != expected_direction ||
         port->owner_kind != expected_owner ||
-        (port->payload_identity.kind == PayloadIdentityKind::kSchema) !=
+        schema_requires_serialized_payload_capacity(port->payload_identity) !=
             (port->serialized_payload_capacity_bytes != 0U) ||
         port->serialized_payload_capacity_bytes != topic.serialized_payload_capacity_bytes ||
         !payload_identity_exactly_equal(port->payload_identity, topic.payload_identity)) {
@@ -1218,8 +1272,8 @@ bool valid_external_channel_plan(const ExecutionPlanState& state) {
         endpoint.service_static.max_subscriber_borrowed != subscriber_borrows ||
         endpoint.service_static.publisher_history_depth != 0U ||
         !endpoint.service_static.event_wake ||
-        endpoint.serialized_payload_capacity_bytes != topic.serialized_payload_capacity_bytes ||
-        endpoint.service_static.serialized_payload_capacity_bytes !=
+        endpoint.schema_writer_max_serialized_bytes != topic.serialized_payload_capacity_bytes ||
+        endpoint.service_static.schema_writer_max_serialized_bytes !=
             topic.serialized_payload_capacity_bytes ||
         !payload_identity_exactly_equal(endpoint.payload_identity, topic.payload_identity) ||
         !payload_identity_exactly_equal(endpoint.service_static.payload_identity,

@@ -12,16 +12,28 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
+#include <forward_list>
 #include <initializer_list>
 #include <limits>
+#include <list>
+#include <map>
+#include <memory>
+#include <optional>
+#include <queue>
 #include <ratio>
+#include <set>
 #include <span>
+#include <stack>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <holoscan/core/lifecycle.hpp>
@@ -31,6 +43,12 @@ namespace holoscan {
 
 template <typename ParamsT, auto MemberPtr>
 class ParamFieldBuilder;
+
+struct ParamSchemaDescriptor;
+
+template <typename ParamsT>
+  requires ParameterAggregate<ParamsT>
+[[nodiscard]] const ParamSchemaDescriptor* param_schema_descriptor() noexcept;
 
 /// @brief Carry a nonzero author-declared parameter schema version.
 using ParamSchemaVersion = std::uint32_t;
@@ -170,6 +188,7 @@ struct ParamFieldTypeShape {
   std::uint16_t element_or_rep_bit_width{};     ///< Sequence-element or duration-rep width.
   std::int64_t duration_period_numerator{};     ///< Duration period numerator, or zero.
   std::int64_t duration_period_denominator{1};  ///< Duration period denominator, or one.
+  bool optional{};          ///< Whether absence differs from a present underlying value.
   bool has_stable_shape{};  ///< Whether these fields fully identify the supported logical shape.
 };
 
@@ -228,11 +247,6 @@ template <typename T>
 inline constexpr bool kIsChronoDuration = IsChronoDuration<std::remove_cv_t<T>>::value;
 
 template <typename T>
-inline constexpr bool kIsParamScalar =
-    kIsChronoDuration<T> || std::is_enum_v<std::remove_cv_t<T>> ||
-    std::is_arithmetic_v<std::remove_cv_t<T>>;
-
-template <typename T>
 struct IsStdVector : std::false_type {};
 
 template <typename T, typename Allocator>
@@ -253,9 +267,50 @@ struct StdVectorElement<std::vector<T, Allocator>> {
 };
 
 template <typename T>
+struct IsStdOptional : std::false_type {};
+
+template <typename T>
+struct IsStdOptional<std::optional<T>> : std::true_type {};
+
+template <typename T>
+struct UnwrapOptional {
+  using Type = std::remove_cv_t<T>;
+};
+
+template <typename T>
+struct UnwrapOptional<std::optional<T>> {
+  using Type = T;
+};
+
+template <typename T>
+using UnwrappedOptionalT = typename UnwrapOptional<std::remove_cv_t<T>>::Type;
+
+template <typename T, bool = IsStdVector<UnwrappedOptionalT<T>>::value>
+struct EnumDomain {
+  using Type = UnwrappedOptionalT<T>;
+};
+
+template <typename T>
+struct EnumDomain<T, true> {
+  using Type = typename StdVectorElement<UnwrappedOptionalT<T>>::Type;
+};
+
+template <typename T>
+using EnumDomainT = typename EnumDomain<T>::Type;
+
+template <typename T>
+inline constexpr bool kIsParamScalar =
+    kIsChronoDuration<UnwrappedOptionalT<T>> || std::is_enum_v<UnwrappedOptionalT<T>> ||
+    std::is_arithmetic_v<UnwrappedOptionalT<T>>;
+
+template <typename T>
 consteval ParamLogicalType logical_type() {
   using Value = std::remove_cv_t<T>;
-  if constexpr (std::same_as<Value, bool>) {
+  if constexpr (IsStdOptional<Value>::value) {
+    static_assert(!IsStdOptional<UnwrappedOptionalT<Value>>::value,
+                  "nested std::optional parameter fields are unsupported");
+    return logical_type<UnwrappedOptionalT<Value>>();
+  } else if constexpr (std::same_as<Value, bool>) {
     return ParamLogicalType::kBool;
   } else if constexpr (std::is_enum_v<Value>) {
     using Underlying = std::underlying_type_t<Value>;
@@ -314,10 +369,17 @@ template <typename Floating>
 #endif
 }
 
-template <typename T>
+template <typename T, bool AllowOptional = true>
 [[nodiscard]] consteval ParamFieldTypeShape field_type_shape() {
   using Value = std::remove_cv_t<T>;
-  if constexpr (std::same_as<Value, bool>) {
+  if constexpr (IsStdOptional<Value>::value) {
+    static_assert(AllowOptional, "only top-level std::optional parameter fields are supported");
+    static_assert(!IsStdOptional<UnwrappedOptionalT<Value>>::value,
+                  "nested std::optional parameter fields are unsupported");
+    ParamFieldTypeShape result = field_type_shape<UnwrappedOptionalT<Value>, false>();
+    result.optional = true;
+    return result;
+  } else if constexpr (std::same_as<Value, bool>) {
     return ParamFieldTypeShape{
         .type = ParamLogicalType::kBool, .bit_width = 1, .has_stable_shape = true};
   } else if constexpr (std::is_enum_v<Value>) {
@@ -346,7 +408,7 @@ template <typename T>
     return ParamFieldTypeShape{.type = ParamLogicalType::kString, .has_stable_shape = true};
   } else if constexpr (IsStdVector<Value>::value) {
     using Element = typename StdVectorElement<Value>::Type;
-    constexpr ParamFieldTypeShape element = field_type_shape<Element>();
+    constexpr ParamFieldTypeShape element = field_type_shape<Element, false>();
     return ParamFieldTypeShape{
         .type = ParamLogicalType::kSequence,
         .element_or_rep_type = element.type,
@@ -366,7 +428,7 @@ template <typename T>
   } else if constexpr (kIsChronoDuration<Value>) {
     using Rep = typename Value::rep;
     using Period = typename Value::period;
-    constexpr ParamFieldTypeShape rep = field_type_shape<Rep>();
+    constexpr ParamFieldTypeShape rep = field_type_shape<Rep, false>();
     constexpr bool period_fits = intmax_fits_int64(Period::num) && intmax_fits_int64(Period::den);
     return ParamFieldTypeShape{
         .type = ParamLogicalType::kDuration,
@@ -874,6 +936,44 @@ struct ParamConstraints {
 static_assert(std::is_standard_layout_v<ParamConstraints>);
 static_assert(std::is_trivially_copyable_v<ParamConstraints>);
 
+/// @brief Bind one stable authored enum label to its canonical scalar value.
+struct ParamEnumChoice {
+  std::string_view name{};   ///< Stable user-facing label with static lifetime.
+  ParamScalarValue value{};  ///< Exact underlying enum value.
+};
+
+static_assert(std::is_standard_layout_v<ParamEnumChoice>);
+static_assert(std::is_trivially_copyable_v<ParamEnumChoice>);
+
+/// @brief Store a bounded authored enum domain in a static schema descriptor.
+struct ParamEnumChoices {
+  std::array<ParamEnumChoice, kParamAllowedValueCapacity> values{};  ///< Active-prefix storage.
+  std::uint8_t count{};  ///< Number of active name/value pairs.
+};
+
+static_assert(std::is_standard_layout_v<ParamEnumChoices>);
+static_assert(std::is_trivially_copyable_v<ParamEnumChoices>);
+
+/// @brief Carry one authored enum label and typed value into schema lowering.
+/// @tparam EnumT Exact enum type.
+template <typename EnumT>
+struct NamedParamEnumValue {
+  std::string_view name;  ///< Stable user-facing label.
+  EnumT value;            ///< Exact enum value.
+};
+
+/// @brief Create one typed enum label/value declaration for `enum_values()`.
+/// @tparam EnumT Exact enum type inferred from p value.
+/// @param name Stable user-facing label with static lifetime.
+/// @param value Exact enum value.
+/// @return Typed declaration consumed during constant evaluation.
+template <typename EnumT>
+  requires std::is_enum_v<EnumT>
+[[nodiscard]] constexpr NamedParamEnumValue<EnumT> param_enum_value(std::string_view name,
+                                                                    EnumT value) noexcept {
+  return NamedParamEnumValue<EnumT>{.name = name, .value = value};
+}
+
 /// @brief Carry process-local erased staging operations for one exact declared field type.
 ///
 /// These operations support a later compiler/runtime patch engine without placing a C++ type,
@@ -890,6 +990,10 @@ struct ParamFieldLocalOperations {
   /// This operation may propagate the exact field copy constructor's exception. Such failure
   /// leaves both the aggregate and destination lifetime unchanged.
   void (*copy_construct_from_member)(void* destination, const void* aggregate);
+
+  /// Cold placement-copy from one live exact staged field into uninitialized storage.
+  /// This operation may propagate the exact field copy constructor's exception.
+  void (*copy_construct_from_staged)(void* destination, const void* staged);
 
   /// Destroy one successfully constructed exact field value in staging storage.
   ///
@@ -910,6 +1014,13 @@ struct ParamFieldLocalOperations {
   /// grant.
   bool (*semantic_equal_to_staged)(const void* aggregate, const void* staged) noexcept {};
 
+  /// Compare the exact field members of two aggregates.
+  ///
+  /// This pointer is null unless exact `operator==` is available. Unlike
+  /// `semantic_equal_to_staged`, the operation may propagate from the field comparison. Runtime
+  /// callers must contain exceptions and preserve canonical scalar comparison where applicable.
+  bool (*semantic_equal_members)(const void* left, const void* right) = nullptr;
+
   /// Replace one supported fixed scalar member from its DSO-safe canonical carrier.
   ///
   /// This pointer is null for const, dynamic, floating-representation duration, sequence, string,
@@ -917,11 +1028,77 @@ struct ParamFieldLocalOperations {
   /// carrier. A kind/width/conversion mismatch returns false without changing the aggregate.
   bool (*replace_member_from_scalar)(void* aggregate, ParamScalarValue value) noexcept {};
 
+  /// Replace one mutable string member from borrowed bytes.
+  ///
+  /// Optional string fields are engaged by the same operation. This pointer is null for every
+  /// other field type. Assignment may propagate an allocation exception.
+  void (*replace_member_from_string)(void* aggregate, std::string_view value) = nullptr;
+
+  /// Replace one mutable scalar sequence from canonical element carriers.
+  ///
+  /// This pointer is available for direct `std::vector<T>` fields when `T` is a supported fixed
+  /// scalar. It is also available for optional vectors when their allocator is default
+  /// constructible, so an absent value can be engaged without inventing allocator state. Staging
+  /// preserves a present vector's allocator. Conversion failure leaves the member unchanged.
+  /// Allocation may propagate an exception.
+  bool (*replace_member_from_scalar_sequence)(void* aggregate,
+                                              std::span<const ParamScalarValue> values) = nullptr;
+
+  /// Replace one mutable string sequence from borrowed element views.
+  ///
+  /// This pointer is available for direct `std::vector<std::string>` fields and for optional
+  /// vectors whose allocator is default constructible. Staging preserves a present vector's
+  /// allocator. The operation copies every element before replacing the member and may propagate
+  /// an exception.
+  void (*replace_member_from_string_sequence)(void* aggregate,
+                                              std::span<const std::string_view> values) = nullptr;
+
+  /// Clear one mutable optional member without changing a non-optional field.
+  ///
+  /// This pointer is null unless the exact field type is `std::optional<T>`.
+  void (*clear_optional_member)(void* aggregate) noexcept = nullptr;
+
   /// Read one supported fixed scalar member into its DSO-safe canonical carrier.
   ///
   /// This pointer is null outside the fixed scalar and integral-duration subset. An
   /// unrepresentable duration returns false; no process-local token or address escapes.
   bool (*read_member_as_scalar)(const void* aggregate, ParamScalarValue& value) noexcept {};
+
+  /// Read one hosted fixed scalar through a runtime-assigned field index.
+  ///
+  /// This additive seam is null for ordinary member-pointer schemas. It lets a language adapter
+  /// expose frozen values without synthesizing C++ member pointers or invoking foreign code.
+  bool (*read_hosted_member_as_scalar)(const void* aggregate, std::size_t field_index,
+                                       ParamScalarValue& value) noexcept {};
+
+  /// Read one hosted bounded scalar sequence through a runtime-assigned field index.
+  ///
+  /// The returned view borrows immutable snapshot storage. It is null for ordinary schemas and
+  /// remains process-local like every other operation in this table.
+  std::span<const ParamScalarValue> (*read_hosted_member_as_scalar_sequence)(
+      const void* aggregate, std::size_t field_index) noexcept {};
+
+  /// Runtime-owned field index consumed only by the hosted read operations above.
+  std::size_t hosted_field_index{};
+
+  /// Return the nested member, engaging an optional nested value when necessary.
+  ///
+  /// This pointer is null unless the field is mutable and explicitly declares a nested schema.
+  /// Default construction of an absent optional nested value may propagate an exception. The
+  /// returned address is valid while the aggregate and its field value remain unchanged.
+  void* (*mutable_nested_member)(void* aggregate) = nullptr;
+
+  /// Return the present nested member without changing the aggregate.
+  ///
+  /// This pointer is null unless the field explicitly declares a nested schema. It returns null
+  /// for an absent optional nested value.
+  const void* (*nested_member)(const void* aggregate) noexcept {};
+
+  /// Return the process-local descriptor for the exact nested member type.
+  ///
+  /// This pointer is null for fields that do not explicitly declare nesting. The descriptor and
+  /// all field thunks have process lifetime and never enter a portable artifact.
+  const ParamSchemaDescriptor* (*nested_schema)() noexcept {};
 };
 
 static_assert(std::is_standard_layout_v<ParamFieldLocalOperations>);
@@ -955,6 +1132,7 @@ struct ParamFieldDescriptor {
   std::string_view unit{};              ///< Static descriptive unit metadata.
   std::string_view validator_id{};      ///< Stable local-validator identity, or empty.
   ParamConstraints constraints{};       ///< Portable bounds and choices.
+  ParamEnumChoices enum_choices{};      ///< Stable authored enum label/value domain.
   ParamStorageTraitsSummary storage{};  ///< Intrinsic field storage evidence.
   const void* local_member_token{};     ///< Process-local exact member token; never portable.
   ParamFieldLocalOperations local_operations{};  ///< Process-local staging operations.
@@ -966,6 +1144,30 @@ struct ParamFieldDescriptor {
 static_assert(std::is_standard_layout_v<ParamFieldDescriptor>);
 static_assert(std::is_trivially_copyable_v<ParamFieldDescriptor>);
 
+/// @brief Read one fixed scalar through either a static-member or hosted-field schema operation.
+/// @return `true` only when the field has an exact present scalar value.
+[[nodiscard]] inline bool read_param_field_scalar(const ParamFieldDescriptor& field,
+                                                  const void* aggregate,
+                                                  ParamScalarValue& value) noexcept {
+  if (field.local_operations.read_member_as_scalar != nullptr) {
+    return field.local_operations.read_member_as_scalar(aggregate, value);
+  }
+  return field.local_operations.read_hosted_member_as_scalar != nullptr &&
+         field.local_operations.read_hosted_member_as_scalar(
+             aggregate, field.local_operations.hosted_field_index, value);
+}
+
+/// @brief Read one bounded hosted scalar sequence without invoking foreign code.
+/// @return Borrowed immutable values, or an empty view when the route is unavailable.
+[[nodiscard]] inline std::span<const ParamScalarValue> read_param_field_scalar_sequence(
+    const ParamFieldDescriptor& field, const void* aggregate) noexcept {
+  if (field.local_operations.read_hosted_member_as_scalar_sequence == nullptr) {
+    return {};
+  }
+  return field.local_operations.read_hosted_member_as_scalar_sequence(
+      aggregate, field.local_operations.hosted_field_index);
+}
+
 namespace detail {
 
 template <typename T>
@@ -974,10 +1176,110 @@ concept NothrowSemanticEquality = requires(const T& left, const T& right) {
   requires std::is_nothrow_convertible_v<decltype(left == right), bool>;
 };
 
+template <typename T>
+inline constexpr bool kSupportsDirectSemanticEquality = requires(const T& left, const T& right) {
+  { left == right } -> std::convertible_to<bool>;
+};
+
+template <typename T>
+struct SupportsSemanticEquality : std::bool_constant<kSupportsDirectSemanticEquality<T>> {};
+
+template <typename T>
+inline constexpr bool kSupportsSemanticEquality =
+    SupportsSemanticEquality<std::remove_cvref_t<T>>::value;
+
+// Standard container equality operators are not consistently constrained by their element
+// equality requirements. Inspect the supported container elements explicitly so a declaration-only
+// operator== does not install a thunk whose body cannot be instantiated.
+template <typename T, typename Allocator>
+struct SupportsSemanticEquality<std::vector<T, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<T>> {};
+
+template <typename T, typename Allocator>
+struct SupportsSemanticEquality<std::deque<T, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<T>> {};
+
+template <typename T, typename Allocator>
+struct SupportsSemanticEquality<std::list<T, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<T>> {};
+
+template <typename T, typename Allocator>
+struct SupportsSemanticEquality<std::forward_list<T, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<T>> {};
+
+template <typename T, std::size_t Size>
+struct SupportsSemanticEquality<std::array<T, Size>>
+    : std::bool_constant<kSupportsSemanticEquality<T>> {};
+
+template <typename T>
+struct SupportsSemanticEquality<std::optional<T>>
+    : std::bool_constant<kSupportsSemanticEquality<T>> {};
+
+template <typename Key, typename Value, typename Compare, typename Allocator>
+struct SupportsSemanticEquality<std::map<Key, Value, Compare, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<Key> && kSupportsSemanticEquality<Value>> {};
+
+template <typename Key, typename Value, typename Compare, typename Allocator>
+struct SupportsSemanticEquality<std::multimap<Key, Value, Compare, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<Key> && kSupportsSemanticEquality<Value>> {};
+
+template <typename Key, typename Value, typename Hash, typename KeyEqual, typename Allocator>
+struct SupportsSemanticEquality<std::unordered_map<Key, Value, Hash, KeyEqual, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<Key> && kSupportsSemanticEquality<Value>> {};
+
+template <typename Key, typename Value, typename Hash, typename KeyEqual, typename Allocator>
+struct SupportsSemanticEquality<std::unordered_multimap<Key, Value, Hash, KeyEqual, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<Key> && kSupportsSemanticEquality<Value>> {};
+
+template <typename Key, typename Compare, typename Allocator>
+struct SupportsSemanticEquality<std::set<Key, Compare, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<Key>> {};
+
+template <typename Key, typename Compare, typename Allocator>
+struct SupportsSemanticEquality<std::multiset<Key, Compare, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<Key>> {};
+
+template <typename Key, typename Hash, typename KeyEqual, typename Allocator>
+struct SupportsSemanticEquality<std::unordered_set<Key, Hash, KeyEqual, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<Key>> {};
+
+template <typename Key, typename Hash, typename KeyEqual, typename Allocator>
+struct SupportsSemanticEquality<std::unordered_multiset<Key, Hash, KeyEqual, Allocator>>
+    : std::bool_constant<kSupportsSemanticEquality<Key>> {};
+
+template <typename T, typename Container>
+struct SupportsSemanticEquality<std::queue<T, Container>>
+    : std::bool_constant<kSupportsSemanticEquality<Container>> {};
+
+template <typename T, typename Container>
+struct SupportsSemanticEquality<std::stack<T, Container>>
+    : std::bool_constant<kSupportsSemanticEquality<Container>> {};
+
+template <typename First, typename Second>
+struct SupportsSemanticEquality<std::pair<First, Second>>
+    : std::bool_constant<kSupportsSemanticEquality<First> && kSupportsSemanticEquality<Second>> {};
+
+template <typename... Elements>
+struct SupportsSemanticEquality<std::tuple<Elements...>>
+    : std::bool_constant<(kSupportsSemanticEquality<Elements> && ...)> {};
+
+template <typename... Alternatives>
+struct SupportsSemanticEquality<std::variant<Alternatives...>>
+    : std::bool_constant<(kSupportsSemanticEquality<Alternatives> && ...)> {};
+
+template <typename T>
+concept SemanticEquality = kSupportsSemanticEquality<T>;
+
 template <typename ParamsT, auto MemberPtr>
 void copy_construct_field_from_member(void* destination, const void* aggregate) {
   using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
   ::new (destination) FieldT(static_cast<const ParamsT*>(aggregate)->*MemberPtr);
+}
+
+template <typename ParamsT, auto MemberPtr>
+void copy_construct_staged_field(void* destination, const void* staged) {
+  using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
+  ::new (destination) FieldT(*static_cast<const FieldT*>(staged));
 }
 
 template <typename ParamsT, auto MemberPtr>
@@ -1003,11 +1305,20 @@ bool field_semantically_equals_staged(const void* aggregate, const void* staged)
 }
 
 template <typename ParamsT, auto MemberPtr>
+bool field_members_semantically_equal(const void* left, const void* right) {
+  using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
+  static_assert(SemanticEquality<FieldT>);
+  return static_cast<const ParamsT*>(left)->*MemberPtr ==
+         static_cast<const ParamsT*>(right)->*MemberPtr;
+}
+
+template <typename ParamsT, auto MemberPtr>
 bool replace_field_from_scalar(void* aggregate, ParamScalarValue value) noexcept {
   using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
   using ValueT = std::remove_cv_t<FieldT>;
-  static_assert(!std::is_const_v<FieldT> && kFixedParameterScalar<ValueT>);
-  ValueT decoded{};
+  using TargetT = UnwrappedOptionalT<ValueT>;
+  static_assert(!std::is_const_v<FieldT> && kFixedParameterScalar<TargetT>);
+  TargetT decoded{};
   if (!value.try_as(decoded)) {
     return false;
   }
@@ -1019,13 +1330,134 @@ template <typename ParamsT, auto MemberPtr>
 bool read_field_as_scalar(const void* aggregate, ParamScalarValue& value) noexcept {
   using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
   using ValueT = std::remove_cv_t<FieldT>;
-  static_assert(kFixedParameterScalar<ValueT>);
-  value = ParamScalarValue::from(static_cast<const ParamsT*>(aggregate)->*MemberPtr);
+  using TargetT = UnwrappedOptionalT<ValueT>;
+  static_assert(kFixedParameterScalar<TargetT>);
+  const auto& field = static_cast<const ParamsT*>(aggregate)->*MemberPtr;
+  if constexpr (IsStdOptional<ValueT>::value) {
+    if (!field.has_value()) {
+      return false;
+    }
+    value = ParamScalarValue::from(*field);
+  } else {
+    value = ParamScalarValue::from(field);
+  }
   return value.kind != ParamScalarKind::kNone;
 }
 
 template <typename ParamsT, auto MemberPtr>
-constexpr ParamFieldLocalOperations make_field_local_operations() noexcept {
+void replace_field_from_string(void* aggregate, std::string_view value) {
+  using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
+  using ValueT = std::remove_cv_t<FieldT>;
+  using AssignmentT = UnwrappedOptionalT<ValueT>;
+  static_assert((std::same_as<AssignmentT, std::string> ||
+                 std::same_as<AssignmentT, std::filesystem::path>) &&
+                !std::is_const_v<FieldT>);
+  if constexpr (std::same_as<AssignmentT, std::string>) {
+    static_cast<ParamsT*>(aggregate)->*MemberPtr = value;
+  } else {
+    static_cast<ParamsT*>(aggregate)->*MemberPtr = std::filesystem::path{value};
+  }
+}
+
+template <typename SequenceT, typename MemberT>
+SequenceT make_allocator_preserving_sequence(MemberT& member) {
+  static_assert(IsStdVector<SequenceT>::value);
+  using UnqualifiedMemberT = std::remove_cvref_t<MemberT>;
+  if constexpr (IsStdOptional<UnqualifiedMemberT>::value) {
+    using AllocatorT = typename SequenceT::allocator_type;
+    static_assert(std::default_initializable<AllocatorT>);
+    if (member.has_value()) {
+      return SequenceT(member->get_allocator());
+    }
+    return SequenceT(AllocatorT{});
+  } else {
+    return SequenceT(member.get_allocator());
+  }
+}
+
+template <typename ParamsT, auto MemberPtr>
+bool replace_field_from_scalar_sequence(void* aggregate, std::span<const ParamScalarValue> values) {
+  using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
+  using ValueT = std::remove_cv_t<FieldT>;
+  using SequenceT = UnwrappedOptionalT<ValueT>;
+  using ElementT = typename StdVectorElement<SequenceT>::Type;
+  static_assert(IsStdVector<SequenceT>::value && kFixedParameterScalar<ElementT> &&
+                !std::is_const_v<FieldT>);
+  auto& member = static_cast<ParamsT*>(aggregate)->*MemberPtr;
+  SequenceT decoded = make_allocator_preserving_sequence<SequenceT>(member);
+  decoded.reserve(values.size());
+  for (const ParamScalarValue value : values) {
+    ElementT element{};
+    if (!value.try_as(element)) {
+      return false;
+    }
+    decoded.push_back(element);
+  }
+  member = std::move(decoded);
+  return true;
+}
+
+template <typename ParamsT, auto MemberPtr>
+void replace_field_from_string_sequence(void* aggregate, std::span<const std::string_view> values) {
+  using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
+  using ValueT = std::remove_cv_t<FieldT>;
+  using SequenceT = UnwrappedOptionalT<ValueT>;
+  static_assert(IsStringVector<SequenceT>::value && !std::is_const_v<FieldT>);
+  auto& member = static_cast<ParamsT*>(aggregate)->*MemberPtr;
+  SequenceT decoded = make_allocator_preserving_sequence<SequenceT>(member);
+  decoded.reserve(values.size());
+  for (const std::string_view value : values) {
+    decoded.emplace_back(value);
+  }
+  member = std::move(decoded);
+}
+
+template <typename ParamsT, auto MemberPtr>
+void clear_optional_field(void* aggregate) noexcept {
+  using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
+  using ValueT = std::remove_cv_t<FieldT>;
+  static_assert(IsStdOptional<ValueT>::value && !std::is_const_v<FieldT>);
+  (static_cast<ParamsT*>(aggregate)->*MemberPtr).reset();
+}
+
+template <typename ParamsT, auto MemberPtr>
+void* mutable_nested_field(void* aggregate) {
+  using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
+  using ValueT = std::remove_cv_t<FieldT>;
+  auto& field = static_cast<ParamsT*>(aggregate)->*MemberPtr;
+  if constexpr (IsStdOptional<ValueT>::value) {
+    if (!field.has_value()) {
+      field.emplace();
+    }
+    return &*field;
+  } else {
+    return &field;
+  }
+}
+
+template <typename ParamsT, auto MemberPtr>
+const void* nested_field(const void* aggregate) noexcept {
+  using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
+  using ValueT = std::remove_cv_t<FieldT>;
+  const auto& field = static_cast<const ParamsT*>(aggregate)->*MemberPtr;
+  if constexpr (IsStdOptional<ValueT>::value) {
+    return field.has_value() ? &*field : nullptr;
+  } else {
+    return &field;
+  }
+}
+
+template <typename ParamsT, auto MemberPtr>
+const ParamSchemaDescriptor* nested_field_schema() noexcept {
+  using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
+  return param_schema_descriptor<UnwrappedOptionalT<FieldT>>();
+}
+
+template <typename ParamsT, auto MemberPtr>
+// This constexpr table builder keeps independent capabilities visible together; splitting its
+// compile-time branches would obscure which operations are installed without reducing runtime work.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+constexpr ParamFieldLocalOperations make_field_local_operations(bool nested) noexcept {
   using FieldT = typename MemberPointerTraits<decltype(MemberPtr)>::Field;
   using UnqualifiedFieldT = std::remove_cv_t<FieldT>;
   static_assert(std::is_copy_constructible_v<FieldT>,
@@ -1038,6 +1470,7 @@ constexpr ParamFieldLocalOperations make_field_local_operations() noexcept {
       .object_size = sizeof(FieldT),
       .object_alignment = alignof(FieldT),
       .copy_construct_from_member = &copy_construct_field_from_member<ParamsT, MemberPtr>,
+      .copy_construct_from_staged = &copy_construct_staged_field<ParamsT, MemberPtr>,
       .destroy_staged = &destroy_staged_field<ParamsT, MemberPtr>,
   };
   if constexpr (!std::is_const_v<FieldT> && std::is_nothrow_swappable_v<FieldT>) {
@@ -1046,10 +1479,47 @@ constexpr ParamFieldLocalOperations make_field_local_operations() noexcept {
   if constexpr (NothrowSemanticEquality<FieldT>) {
     operations.semantic_equal_to_staged = &field_semantically_equals_staged<ParamsT, MemberPtr>;
   }
-  if constexpr (kFixedParameterScalar<UnqualifiedFieldT>) {
+  if constexpr (SemanticEquality<FieldT>) {
+    operations.semantic_equal_members = &field_members_semantically_equal<ParamsT, MemberPtr>;
+  }
+  using AssignmentT = UnwrappedOptionalT<UnqualifiedFieldT>;
+  if constexpr (kFixedParameterScalar<AssignmentT>) {
     operations.read_member_as_scalar = &read_field_as_scalar<ParamsT, MemberPtr>;
     if constexpr (!std::is_const_v<FieldT>) {
       operations.replace_member_from_scalar = &replace_field_from_scalar<ParamsT, MemberPtr>;
+    }
+  }
+  if constexpr ((std::same_as<AssignmentT, std::string> ||
+                 std::same_as<AssignmentT, std::filesystem::path>) &&
+                !std::is_const_v<FieldT>) {
+    operations.replace_member_from_string = &replace_field_from_string<ParamsT, MemberPtr>;
+  }
+  if constexpr (IsStdVector<AssignmentT>::value && !std::is_const_v<FieldT>) {
+    using ElementT = typename StdVectorElement<AssignmentT>::Type;
+    using AllocatorT = typename AssignmentT::allocator_type;
+    constexpr bool kCanEngageOptional =
+        !IsStdOptional<UnqualifiedFieldT>::value || std::default_initializable<AllocatorT>;
+    if constexpr (kCanEngageOptional) {
+      if constexpr (kFixedParameterScalar<ElementT>) {
+        operations.replace_member_from_scalar_sequence =
+            &replace_field_from_scalar_sequence<ParamsT, MemberPtr>;
+      } else if constexpr (std::same_as<ElementT, std::string>) {
+        operations.replace_member_from_string_sequence =
+            &replace_field_from_string_sequence<ParamsT, MemberPtr>;
+      }
+    }
+  }
+  if constexpr (IsStdOptional<UnqualifiedFieldT>::value && !std::is_const_v<FieldT>) {
+    operations.clear_optional_member = &clear_optional_field<ParamsT, MemberPtr>;
+  }
+  using NestedT = UnwrappedOptionalT<UnqualifiedFieldT>;
+  if constexpr (HasParamSchema<NestedT>) {
+    if (nested) {
+      operations.nested_member = &nested_field<ParamsT, MemberPtr>;
+      operations.nested_schema = &nested_field_schema<ParamsT, MemberPtr>;
+      if constexpr (!std::is_const_v<FieldT>) {
+        operations.mutable_nested_member = &mutable_nested_field<ParamsT, MemberPtr>;
+      }
     }
   }
   return operations;
@@ -1089,6 +1559,7 @@ struct ParamFieldDocument {
   std::string_view unit{};                     ///< Descriptive unit metadata.
   std::string_view validator_id{};             ///< Stable validator identity without a callable.
   ParamConstraints constraints{};              ///< Portable bounds and choices.
+  ParamEnumChoices enum_choices{};             ///< Stable authored enum label/value domain.
   ParamStorageTraitsSummary storage{};         ///< Intrinsic field storage evidence.
 };
 
@@ -1309,7 +1780,7 @@ class ParamFieldBuilder {
     static_assert(detail::kIsParamScalar<Field>,
                   "parameter range requires an arithmetic, enum, or duration field");
     constraints_.has_range = true;
-    using FieldValue = std::remove_cv_t<Field>;
+    using FieldValue = detail::UnwrappedOptionalT<Field>;
     using MinimumValue = std::remove_cvref_t<Minimum>;
     using MaximumValue = std::remove_cvref_t<Maximum>;
     if constexpr (detail::kIsChronoDuration<FieldValue>) {
@@ -1348,7 +1819,7 @@ class ParamFieldBuilder {
   /// @param values Up to 16 finite values copied during constant evaluation.
   /// @return This builder; overflow, non-finite, or mismatched values fail lowering.
   constexpr ParamFieldBuilder& allowed_values(std::initializer_list<T> values) {
-    static_assert(std::same_as<std::remove_cvref_t<T>, std::remove_cv_t<Field>>,
+    static_assert(std::same_as<std::remove_cvref_t<T>, detail::UnwrappedOptionalT<Field>>,
                   "parameter allowed-value type must exactly match the declared field type");
     static_assert(detail::kIsParamScalar<Field>,
                   "parameter allowed values require an arithmetic, enum, or duration field");
@@ -1361,6 +1832,42 @@ class ParamFieldBuilder {
       const ParamConstraintScalar scalar = detail::to_scalar(value);
       invalid_allowed_value_ = invalid_allowed_value_ || !detail::scalar_finite(scalar);
       constraints_.allowed_values[constraints_.allowed_value_count++] = scalar;
+    }
+    return *this;
+  }
+
+  template <typename EnumT>
+  /// @brief Declare the bounded stable label/value domain of an enum field.
+  /// @tparam EnumT Exact direct, optional, or sequence-element enum type.
+  /// @param values Up to 16 unique labels and values copied during constant evaluation.
+  /// @return This builder; the declared domain is also the allowed-value constraint.
+  constexpr ParamFieldBuilder& enum_values(
+      std::initializer_list<NamedParamEnumValue<EnumT>> values) {
+    static_assert(std::is_enum_v<EnumT>, "enum values require an enum type");
+    static_assert(std::same_as<EnumT, detail::EnumDomainT<Field>>,
+                  "enum value type must exactly match the field enum domain");
+    if (values.size() == 0U) {
+      invalid_enum_choice_ = true;
+      return *this;
+    }
+    if (values.size() > enum_choices_.values.size() - enum_choices_.count ||
+        values.size() > constraints_.allowed_values.size() - constraints_.allowed_value_count) {
+      too_many_allowed_values_ = true;
+      return *this;
+    }
+    for (const NamedParamEnumValue<EnumT>& named : values) {
+      const ParamScalarValue scalar = ParamScalarValue::from(named.value);
+      bool duplicate = false;
+      for (std::size_t index = 0; index < enum_choices_.count; ++index) {
+        duplicate = duplicate || enum_choices_.values[index].name == named.name ||
+                    enum_choices_.values[index].value.raw_bits == scalar.raw_bits;
+      }
+      invalid_enum_choice_ = invalid_enum_choice_ || !detail::valid_schema_text(named.name) ||
+                             scalar.kind == ParamScalarKind::kNone || duplicate;
+      enum_choices_.values[enum_choices_.count++] =
+          ParamEnumChoice{.name = named.name, .value = scalar};
+      constraints_.allowed_values[constraints_.allowed_value_count++] =
+          detail::to_scalar(named.value);
     }
     return *this;
   }
@@ -1464,7 +1971,7 @@ class ParamFieldBuilder {
   /// @param encoding `kArbitraryBytes` or `kUtf8`.
   /// @return This builder; UTF-8 bounds require `kUtf8` explicitly.
   constexpr ParamFieldBuilder& encoding(ParamStringEncoding encoding) noexcept {
-    static_assert(std::same_as<std::remove_cv_t<Field>, std::string>,
+    static_assert(std::same_as<detail::UnwrappedOptionalT<Field>, std::string>,
                   "string encoding policy requires a std::string field");
     string_encoding_ = encoding;
     return *this;
@@ -1473,7 +1980,7 @@ class ParamFieldBuilder {
   /// @param encoding `kArbitraryBytes` or `kUtf8`.
   /// @return This builder; per-element UTF-8 bounds require `kUtf8` explicitly.
   constexpr ParamFieldBuilder& element_encoding(ParamStringEncoding encoding) noexcept {
-    static_assert(detail::IsStringVector<std::remove_cv_t<Field>>::value,
+    static_assert(detail::IsStringVector<detail::UnwrappedOptionalT<Field>>::value,
                   "element encoding policy requires a std::vector<std::string> field");
     element_string_encoding_ = encoding;
     return *this;
@@ -1482,7 +1989,7 @@ class ParamFieldBuilder {
   /// @param maximum Positive byte count.
   /// @return This builder; zero or a non-string field fails lowering.
   constexpr ParamFieldBuilder& max_utf8_bytes(std::size_t maximum) noexcept {
-    static_assert(std::same_as<std::remove_cv_t<Field>, std::string>,
+    static_assert(std::same_as<detail::UnwrappedOptionalT<Field>, std::string>,
                   "max_utf8_bytes requires a std::string field");
     invalid_constraint_ =
         invalid_constraint_ || maximum == 0U || !detail::fits_canonical_size(maximum);
@@ -1493,7 +2000,7 @@ class ParamFieldBuilder {
   /// @param maximum Positive byte count per element.
   /// @return This builder; zero, another field type, or omitted UTF-8 element policy rejects.
   constexpr ParamFieldBuilder& max_element_utf8_bytes(std::size_t maximum) noexcept {
-    static_assert(detail::IsStringVector<std::remove_cv_t<Field>>::value,
+    static_assert(detail::IsStringVector<detail::UnwrappedOptionalT<Field>>::value,
                   "max_element_utf8_bytes requires a std::vector<std::string> field");
     invalid_constraint_ =
         invalid_constraint_ || maximum == 0U || !detail::fits_canonical_size(maximum);
@@ -1504,7 +2011,7 @@ class ParamFieldBuilder {
   /// @param maximum Positive element count.
   /// @return This builder; zero or a non-vector field fails lowering.
   constexpr ParamFieldBuilder& max_elements(std::size_t maximum) noexcept {
-    static_assert(detail::IsStdVector<std::remove_cv_t<Field>>::value,
+    static_assert(detail::IsStdVector<detail::UnwrappedOptionalT<Field>>::value,
                   "max_elements requires a std::vector field");
     invalid_constraint_ =
         invalid_constraint_ || maximum == 0U || !detail::fits_canonical_size(maximum);
@@ -1515,11 +2022,12 @@ class ParamFieldBuilder {
   /// @param maximum Positive encoded byte count.
   /// @return This builder; zero or an inapplicable field fails lowering.
   constexpr ParamFieldBuilder& max_encoded_bytes(std::size_t maximum) noexcept {
-    static_assert(std::same_as<std::remove_cv_t<Field>, std::string> ||
-                      detail::IsStdVector<std::remove_cv_t<Field>>::value ||
-                      std::same_as<std::remove_cv_t<Field>, std::filesystem::path> ||
-                      ParamStorageTraits<std::remove_cv_t<Field>>::summary().has_portable_codec,
-                  "max_encoded_bytes requires a string, vector, path, or codec-qualified field");
+    static_assert(
+        std::same_as<detail::UnwrappedOptionalT<Field>, std::string> ||
+            detail::IsStdVector<detail::UnwrappedOptionalT<Field>>::value ||
+            std::same_as<detail::UnwrappedOptionalT<Field>, std::filesystem::path> ||
+            ParamStorageTraits<detail::UnwrappedOptionalT<Field>>::summary().has_portable_codec,
+        "max_encoded_bytes requires a string, vector, path, or codec-qualified field");
     invalid_constraint_ =
         invalid_constraint_ || maximum == 0U || !detail::fits_canonical_size(maximum);
     constraints_.max_encoded_bytes = maximum;
@@ -1531,7 +2039,7 @@ class ParamFieldBuilder {
   /// @tparam NestedParamsT Exact field type with a declared schema.
   /// @return This builder; nested identity participates in parent hashes.
   constexpr ParamFieldBuilder& nested() noexcept {
-    static_assert(std::same_as<std::remove_cv_t<Field>, NestedParamsT>,
+    static_assert(std::same_as<detail::UnwrappedOptionalT<Field>, NestedParamsT>,
                   "nested parameter schema type must match the field type");
     static_assert(detail::HasParamSchema<NestedParamsT>,
                   "nested parameter field requires a declared nested schema");
@@ -1551,9 +2059,10 @@ class ParamFieldBuilder {
     return Validator(value);
   }
 
-  static ParamValidationResult validate_scalar_constraints(
-      const Field& value, const ParamFieldDescriptor& descriptor) noexcept {
-    if constexpr (detail::kIsParamScalar<Field>) {
+  template <typename ValueT>
+  static ParamValidationResult validate_scalar_value(
+      const ValueT& value, const ParamFieldDescriptor& descriptor) noexcept {
+    if constexpr (detail::kIsParamScalar<ValueT>) {
       if (descriptor.constraints.has_range) {
         const ParamConstraintScalar observed = detail::to_scalar(value);
         if (!detail::scalar_finite(observed) ||
@@ -1579,14 +2088,42 @@ class ParamFieldBuilder {
     return {};
   }
 
-  static ParamValidationResult validate_encoding(const Field& value,
-                                                 const ParamFieldDescriptor& descriptor) noexcept {
-    if constexpr (std::same_as<std::remove_cv_t<Field>, std::string>) {
+  template <typename ValueT>
+  static ParamValidationResult validate_scalar_or_enum_sequence_value(
+      const ValueT& value, const ParamFieldDescriptor& descriptor) noexcept {
+    if constexpr (detail::IsStdVector<std::remove_cv_t<ValueT>>::value &&
+                  std::is_enum_v<detail::EnumDomainT<ValueT>>) {
+      for (const auto element : value) {
+        const ParamValidationResult result = validate_scalar_value(element, descriptor);
+        if (!result.ok()) {
+          return result;
+        }
+      }
+      return {};
+    } else {
+      return validate_scalar_value(value, descriptor);
+    }
+  }
+
+  static ParamValidationResult validate_scalar_constraints(
+      const Field& value, const ParamFieldDescriptor& descriptor) noexcept {
+    if constexpr (detail::IsStdOptional<std::remove_cv_t<Field>>::value) {
+      return value.has_value() ? validate_scalar_or_enum_sequence_value(*value, descriptor)
+                               : ParamValidationResult{};
+    } else {
+      return validate_scalar_or_enum_sequence_value(value, descriptor);
+    }
+  }
+
+  template <typename ValueT>
+  static ParamValidationResult validate_encoding_value(
+      const ValueT& value, const ParamFieldDescriptor& descriptor) noexcept {
+    if constexpr (std::same_as<std::remove_cv_t<ValueT>, std::string>) {
       if (descriptor.string_encoding == ParamStringEncoding::kUtf8 && !detail::valid_utf8(value)) {
         return ParamValidationResult{
             ParamValidationCode::kInvalidEncoding, descriptor.id, descriptor.canonical_name};
       }
-    } else if constexpr (detail::IsStringVector<std::remove_cv_t<Field>>::value) {
+    } else if constexpr (detail::IsStringVector<std::remove_cv_t<ValueT>>::value) {
       if (descriptor.element_string_encoding == ParamStringEncoding::kUtf8) {
         for (const std::string& element : value) {
           if (!detail::valid_utf8(element)) {
@@ -1599,21 +2136,32 @@ class ParamFieldBuilder {
     return {};
   }
 
-  static ParamValidationResult validate_cardinality(
-      const Field& value, const ParamFieldDescriptor& descriptor) noexcept {
-    if constexpr (std::same_as<std::remove_cv_t<Field>, std::string>) {
+  static ParamValidationResult validate_encoding(const Field& value,
+                                                 const ParamFieldDescriptor& descriptor) noexcept {
+    if constexpr (detail::IsStdOptional<std::remove_cv_t<Field>>::value) {
+      return value.has_value() ? validate_encoding_value(*value, descriptor)
+                               : ParamValidationResult{};
+    } else {
+      return validate_encoding_value(value, descriptor);
+    }
+  }
+
+  template <typename ValueT>
+  static ParamValidationResult validate_cardinality_value(
+      const ValueT& value, const ParamFieldDescriptor& descriptor) noexcept {
+    if constexpr (std::same_as<std::remove_cv_t<ValueT>, std::string>) {
       if (descriptor.constraints.max_utf8_bytes != 0U &&
           value.size() > descriptor.constraints.max_utf8_bytes) {
         return ParamValidationResult{
             ParamValidationCode::kCardinalityExceeded, descriptor.id, descriptor.canonical_name};
       }
-    } else if constexpr (detail::IsStdVector<std::remove_cv_t<Field>>::value) {
+    } else if constexpr (detail::IsStdVector<std::remove_cv_t<ValueT>>::value) {
       if (descriptor.constraints.max_elements != 0U &&
           value.size() > descriptor.constraints.max_elements) {
         return ParamValidationResult{
             ParamValidationCode::kCardinalityExceeded, descriptor.id, descriptor.canonical_name};
       }
-      if constexpr (detail::IsStringVector<std::remove_cv_t<Field>>::value) {
+      if constexpr (detail::IsStringVector<std::remove_cv_t<ValueT>>::value) {
         if (descriptor.constraints.max_element_utf8_bytes != 0U) {
           for (const std::string& element : value) {
             if (element.size() > descriptor.constraints.max_element_utf8_bytes) {
@@ -1628,11 +2176,27 @@ class ParamFieldBuilder {
     return {};
   }
 
+  static ParamValidationResult validate_cardinality(
+      const Field& value, const ParamFieldDescriptor& descriptor) noexcept {
+    if constexpr (detail::IsStdOptional<std::remove_cv_t<Field>>::value) {
+      return value.has_value() ? validate_cardinality_value(*value, descriptor)
+                               : ParamValidationResult{};
+    } else {
+      return validate_cardinality_value(value, descriptor);
+    }
+  }
+
   static ParamValidationResult validate_nested(const Field& value,
                                                const ParamFieldDescriptor& descriptor) noexcept {
-    if constexpr (detail::HasParamSchema<std::remove_cv_t<Field>>) {
+    using ValueT = std::remove_cv_t<Field>;
+    using NestedT = detail::UnwrappedOptionalT<ValueT>;
+    if constexpr (detail::HasParamSchema<NestedT>) {
       if (descriptor.nested) {
-        return validate_params(value);
+        if constexpr (detail::IsStdOptional<ValueT>::value) {
+          return value.has_value() ? validate_params(*value) : ParamValidationResult{};
+        } else {
+          return validate_params(value);
+        }
       }
     }
     return {};
@@ -1674,7 +2238,10 @@ class ParamFieldBuilder {
            (custom_validator_ != nullptr && !detail::valid_schema_text(validator_id_)) ||
            (!alias_.empty() && !detail::valid_schema_text(alias_)) || invalid_lifecycle_stage_ ||
            invalid_range_ || invalid_allowed_value_ || invalid_constraint_ ||
-           too_many_allowed_values_ || persistence_conflict_ ||
+           invalid_enum_choice_ || too_many_allowed_values_ ||
+           (kEnumField && enum_choices_.count != 0U &&
+            enum_choices_.count != constraints_.allowed_value_count) ||
+           persistence_conflict_ ||
            static_cast<std::uint8_t>(string_encoding_) >
                static_cast<std::uint8_t>(ParamStringEncoding::kUtf8) ||
            static_cast<std::uint8_t>(element_string_encoding_) >
@@ -1710,6 +2277,7 @@ class ParamFieldBuilder {
   ParamExternalAccess external_access_{ParamExternalAccess::kNone};
   ParamSensitivity sensitivity_{ParamSensitivity::kNormal};
   ParamConstraints constraints_{};
+  ParamEnumChoices enum_choices_{};
   bool persistence_explicit_{};
   bool external_access_explicit_{};
   bool sensitivity_explicit_{};
@@ -1722,8 +2290,11 @@ class ParamFieldBuilder {
   bool invalid_range_{};
   bool invalid_allowed_value_{};
   bool invalid_constraint_{};
+  bool invalid_enum_choice_{};
   bool too_many_allowed_values_{};
   bool (*custom_validator_)(const void*) noexcept {};
+
+  static constexpr bool kEnumField = std::is_enum_v<detail::EnumDomainT<Field>>;
 
   friend constexpr ParamFieldDescriptor detail::make_field_descriptor<ParamsT, MemberPtr>(
       std::string_view schema_id, const ParamFieldBuilder& builder);
@@ -1747,7 +2318,7 @@ struct ParamPathValidator;
 template <typename ExpectedOwner, auto Next, auto... Rest>
 [[nodiscard]] consteval bool valid_nested_param_path() {
   using NextTraits = MemberPointerTraits<decltype(Next)>;
-  if constexpr (!std::same_as<std::remove_cv_t<ExpectedOwner>,
+  if constexpr (!std::same_as<UnwrappedOptionalT<std::remove_cv_t<ExpectedOwner>>,
                               std::remove_cv_t<typename NextTraits::Owner>>) {
     return false;
   } else {
@@ -1853,16 +2424,24 @@ template <auto First, auto Second, auto... Rest>
 struct ParamPathValue<First, Second, Rest...> {
   using Current = typename MemberPointerTraits<decltype(First)>::Field;
   using NextOwner = typename MemberPointerTraits<decltype(Second)>::Owner;
-  static_assert(std::same_as<std::remove_cv_t<Current>, std::remove_cv_t<NextOwner>>);
+  static_assert(
+      std::same_as<UnwrappedOptionalT<std::remove_cv_t<Current>>, std::remove_cv_t<NextOwner>>);
   using Type = typename ParamPathValue<Second, Rest...>::Type;
 };
 
 template <auto First, auto... Rest, typename Object>
-[[nodiscard]] constexpr decltype(auto) param_path_value(const Object& object) noexcept {
+[[nodiscard]] constexpr auto param_path_value(const Object& object) noexcept {
+  const auto& field = object.*First;
   if constexpr (sizeof...(Rest) == 0U) {
-    return object.*First;
+    return std::addressof(field);
+  } else if constexpr (IsStdOptional<std::remove_cvref_t<decltype(field)>>::value) {
+    using Result = decltype(param_path_value<Rest...>(*field));
+    if (!field.has_value()) {
+      return Result{};
+    }
+    return param_path_value<Rest...>(*field);
   } else {
-    return param_path_value<Rest...>(object.*First);
+    return param_path_value<Rest...>(field);
   }
 }
 
@@ -1887,6 +2466,17 @@ template <auto First, auto... Rest>
   } else {
     return final_param_field<Rest...>();
   }
+}
+
+template <auto Member>
+[[nodiscard]] bool declared_member_is_sensitive() noexcept {
+  const ParamFieldDescriptor* field = declared_member_descriptor<Member>();
+  return field == nullptr || field->sensitivity == ParamSensitivity::kSensitive;
+}
+
+template <auto... MemberPath>
+[[nodiscard]] bool param_path_has_sensitive_member() noexcept {
+  return (declared_member_is_sensitive<MemberPath>() || ...);
 }
 
 template <auto First, auto... Rest>
@@ -1973,9 +2563,11 @@ struct ParamDurationDependencyModel {
   }
 
   [[nodiscard]] static bool read_initial_ns(const void* aggregate, std::int64_t& result) noexcept {
-    return aggregate != nullptr &&
-           duration_to_canonical_ns(
-               param_path_value<First, Rest...>(*static_cast<const Root*>(aggregate)), result);
+    if (aggregate == nullptr) {
+      return false;
+    }
+    const Duration* value = param_path_value<First, Rest...>(*static_cast<const Root*>(aggregate));
+    return value != nullptr && duration_to_canonical_ns(*value, result);
   }
 
   [[nodiscard]] static ParamDurationDependency make() noexcept {
@@ -2064,15 +2656,17 @@ constexpr ParamFieldDescriptor make_field_descriptor(
       .unit = builder.unit_,
       .validator_id = builder.validator_id_,
       .constraints = builder.constraints_,
+      .enum_choices = builder.enum_choices_,
       .storage = ParamStorageTraits<std::remove_cv_t<FieldT>>::summary(),
       .local_member_token = &kMemberToken<MemberPtr>,
-      .local_operations = make_field_local_operations<ParamsT, MemberPtr>(),
+      .local_operations = make_field_local_operations<ParamsT, MemberPtr>(builder.nested_),
       .validate = &ParamFieldBuilder<ParamsT, MemberPtr>::validate_field,
       .custom_validator = builder.custom_validator_,
   };
-  if constexpr (HasParamSchema<std::remove_cv_t<FieldT>>) {
+  using NestedT = UnwrappedOptionalT<FieldT>;
+  if constexpr (HasParamSchema<NestedT>) {
     if (builder.nested_) {
-      constexpr auto nested_schema = holoscan_param_schema(type_tag<std::remove_cv_t<FieldT>>{});
+      constexpr auto nested_schema = holoscan_param_schema(type_tag<NestedT>{});
       result.nested_schema_id = nested_schema.header.stable_id();
       result.nested_schema_version = nested_schema.header.version();
       result.nested_structural_hash = nested_schema.structural_hash;
@@ -2114,6 +2708,7 @@ constexpr ParamFieldDocument make_document_field(const ParamFieldDescriptor& fie
       .unit = field.unit,
       .validator_id = field.validator_id,
       .constraints = field.constraints,
+      .enum_choices = field.enum_choices,
       .storage = field.storage,
   };
 }
@@ -2127,7 +2722,21 @@ constexpr void add_structural_field(StableHashBuilder& hash,
   hash.add(field.type_shape.element_or_rep_bit_width);
   hash.add(field.type_shape.duration_period_numerator);
   hash.add(field.type_shape.duration_period_denominator);
+  if (field.type_shape.optional) {
+    hash.add("holoscan.param.optional.v1");
+  }
   hash.add(field.type_shape.has_stable_shape);
+  if (field.enum_choices.count != 0U) {
+    hash.add("holoscan.param.enum_choices.v1");
+    hash.add(field.enum_choices.count);
+    for (std::size_t index = 0; index < field.enum_choices.count; ++index) {
+      const ParamEnumChoice& choice = field.enum_choices.values[index];
+      hash.add(choice.name);
+      hash.add(choice.value.kind);
+      hash.add(choice.value.bit_width);
+      hash.add(choice.value.raw_bits);
+    }
+  }
   hash.add(field.string_encoding);
   hash.add(field.element_string_encoding);
   hash.add(field.nested);

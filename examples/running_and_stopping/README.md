@@ -46,6 +46,11 @@ where a successfully compiled plan ends.
 
 ## Build
 
+The C++ and Python variants demonstrate the same session-control concepts. The
+Python variant uses native Python operators; its declarative `complete_after()`
+contract ends with `COMPLETED` because Python does not yet expose the C++
+callback-level `ExecutionContext::request_completion()` operation.
+
 From this folder's `cpp/` directory:
 
 ```bash
@@ -59,7 +64,13 @@ cmake --build build
 ./build/running_and_stopping
 ```
 
-## Expected output
+The installed Python source can be run directly:
+
+```bash
+python python/running_and_stopping.py
+```
+
+## Expected C++ output
 
 ```text
 M: managed async domain -> termination=kStopped, close=ok
@@ -76,6 +87,17 @@ On non-Linux platforms the first line is instead:
 
 ```text
 M: managed async domain -> kNotSupported on this platform
+```
+
+## Expected Python output
+
+```text
+A: cooperative stop -> termination=STOPPED, diagnostics=0
+B: Python compute error -> diagnostic=RUNTIME_OPERATOR_CALLBACK_FAILED
+C: complete_after contract -> termination=COMPLETED, diagnostics=0
+D: context manager retained stop/join authority
+E: caller-managed blocking run -> terminal session returned
+running_and_stopping: all native Python sub-runs behaved as documented
 ```
 
 ## Code walkthrough

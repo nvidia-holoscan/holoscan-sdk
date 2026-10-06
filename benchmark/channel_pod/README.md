@@ -13,6 +13,9 @@ The benchmark covers:
 - one publisher to one subscriber with `ChannelQueuePolicy::kBlocking`;
 - one publisher to one subscriber with `ChannelQueuePolicy::kDropOldest` at
   depths 1 and 64;
+- already-queued `receive_sample` and `wait_and_receive_sample` calls, with
+  publication and queue observation excluded from timing, so the wait-owner
+  claim's fast-path cost remains visible;
 - one publisher fanout to 2, 4, and 8 subscribers for blocking and depth-one
   drop-oldest.
 

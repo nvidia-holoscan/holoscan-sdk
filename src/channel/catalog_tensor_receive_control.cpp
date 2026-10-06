@@ -29,6 +29,7 @@
 
 #include "channel_common.hpp"
 #include "core/domain/tensor_access.hpp"
+#include "core/domain/tensor_layout_validation.hpp"
 #include "holomq_tensor.hpp"
 
 namespace holoscan::channel_internal {
@@ -193,6 +194,10 @@ class CatalogTensorReceiveMemoryReference final : public HoloMQExportableTensorM
       return false;
     }
     return stream == nullptr || imported_->enqueue_ready_wait(stream);
+  }
+
+  [[nodiscard]] bool tracks_deallocation_stream() const noexcept override {
+    return static_cast<bool>(*imported_);
   }
 
   bool set_readiness_stream(cudaStream_t stream) override {
@@ -399,6 +404,27 @@ void CatalogTensorReceiveControl::release() noexcept {
 
 expected<Tensor, Error> CatalogTensorReceiveControl::materialize(
     const HoloMQTensorDescriptor& descriptor) {
+  if (descriptor.rank > kHoloMQTensorDescriptorMaxRank) {
+    return make_unexpected(
+        Error{ErrorCode::kProtocolError, "catalog Tensor descriptor rank exceeds capacity"});
+  }
+  const std::span<const std::int64_t> shape{descriptor.shape.data(), descriptor.rank};
+  const bool has_byte_strides =
+      (descriptor.flags &
+       static_cast<std::uint32_t>(HoloMQTensorDescriptorFlags::kHasByteStrides)) != 0U;
+  const std::optional<std::span<const std::int64_t>> byte_strides =
+      has_byte_strides ? std::optional<std::span<const std::int64_t>>{std::span<const std::int64_t>{
+                             descriptor.byte_strides.data(), descriptor.rank}}
+                       : std::nullopt;
+  const auto layout = detail::validate_tensor_layout(
+      shape, descriptor.dtype, byte_strides, detail::TensorStrideUnit::kBytes);
+  // Callers validate descriptor byte_size as logical bytes (schema) or span bytes (catalog).
+  // This shared importer validates the layout and its addressable span against physical backing.
+  if (!layout) {
+    return make_unexpected(
+        Error{ErrorCode::kProtocolError, "catalog Tensor descriptor layout is invalid"});
+  }
+
   auto acquired = acquire_slot();
   if (!acquired) {
     return make_unexpected(std::move(acquired).error());
@@ -419,7 +445,7 @@ expected<Tensor, Error> CatalogTensorReceiveControl::materialize(
         from_holomq_error(std::move(rebound).error(), "catalog Tensor BufferHandle import failed"));
   }
   if (imported.memory_type() != descriptor_memory_type(descriptor.memory_kind) ||
-      imported.ptr() == nullptr || descriptor.byte_size > imported.size_bytes() ||
+      imported.ptr() == nullptr || layout->byte_span > imported.size_bytes() ||
       (descriptor.memory_kind == HoloMQTensorDescriptorMemoryKind::kDevice &&
        imported.cuda_device_ordinal() != cuda_device_ordinal)) {
     return_unmaterialized_slot(slot_index);

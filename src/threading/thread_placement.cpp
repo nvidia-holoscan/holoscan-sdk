@@ -27,13 +27,13 @@ unexpected<Error> invalid_argument(std::string message) {
 
 [[nodiscard]] expected<void, Error> append_range(std::vector<uint32_t>* cores, CPUCoreRange range) {
   if (range.last < range.first) {
-    return invalid_argument("CPU affinity range end must be >= range start");
+    return invalid_argument("CPU_AFFINITY_RANGE_INVALID reason=end_before_start");
   }
 
   const uint64_t expanded_size = static_cast<uint64_t>(range.last) - range.first + 1;
   if (expanded_size > kMaxAffinityRangeExpansion ||
       cores->size() > kMaxAffinityRangeExpansion - expanded_size) {
-    return invalid_argument("CPU affinity range expansion exceeds the supported limit");
+    return invalid_argument("CPU_AFFINITY_RANGE_INVALID reason=expansion_exceeds_limit");
   }
 
   for (uint32_t core = range.first;; ++core) {

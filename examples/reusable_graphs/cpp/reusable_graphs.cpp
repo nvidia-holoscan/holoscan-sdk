@@ -29,6 +29,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -355,9 +356,11 @@ struct InstanceCatalog {
   holoscan::GraphId wrapped_id{};
 };
 
-[[nodiscard]] InstanceCatalog collect_instance_catalog(const holoscan::GraphView& view) {
+/// Collect instance identities from one authoring or canonical-plan Graph record set.
+[[nodiscard]] InstanceCatalog collect_instance_catalog(
+    std::span<const holoscan::GraphRecord> graphs) {
   InstanceCatalog catalog;
-  for (const auto& record : view.graphs()) {
+  for (const auto& record : graphs) {
     if (!record.path) {
       continue;  // Root scope has no path.
     }
@@ -453,7 +456,7 @@ int main() {
   // identity — including the nested "wrapped-stage/inner" — lives in the
   // GraphView records, the durable source of truth for instance identity.
   const holoscan::GraphView view = authoring.view();  // Durable snapshot; outlives handles.
-  const InstanceCatalog catalog = collect_instance_catalog(view);
+  const InstanceCatalog catalog = collect_instance_catalog(view.graphs());
   if (!catalog.complete()) {
     std::cerr << "expected direct, wrapper, and inner instance records\n";
     return 1;
@@ -490,10 +493,30 @@ int main() {
   stage_region.add(wrapped);
   stage_region.constrain(holoscan::RegionConstraint::bounded_memory());
 
+  // Select whole reusable instances without reaching into their private Operators. Each sink
+  // shares its stage's owner; the compiler assigns only the remaining source automatically.
+  authoring.partition("direct-owner").add(direct).add(direct_sink);
+  authoring.partition("wrapped-owner").add(wrapped).add(wrapped_sink);
+  authoring.auto_partition_remaining();
+
   const holoscan::ExecutionPlan plan = holoscan::compile(authoring);
   if (!plan.ok()) {
     std::cerr << "cross-scope reusable graph was not admitted:\n" << plan.json() << '\n';
     return 1;
+  }
+
+  const InstanceCatalog compiled_catalog = collect_instance_catalog(plan.graph().graphs());
+  for (const std::string_view name : {"direct-owner", "wrapped-owner"}) {
+    const auto partition = plan.partitions().lookup_named(name);
+    const holoscan::GraphId expected_graph =
+        name == "direct-owner" ? compiled_catalog.direct_id : compiled_catalog.wrapped_id;
+    if (!partition || partition->graph_members().size() != 1U ||
+        partition->graph_members().front() != expected_graph ||
+        partition->operator_paths().size() != 2U) {
+      std::cerr << "atomic instance selection was not preserved for " << name << '\n';
+      return 1;
+    }
+    std::cout << "[reusable_graphs] partition=" << name << " selected_instances=1 operators=2\n";
   }
 
   const holoscan::GraphView final_view = authoring.view();

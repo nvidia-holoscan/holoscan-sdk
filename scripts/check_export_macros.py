@@ -18,6 +18,7 @@ GENERATED_EXPORT_HEADERS = {
     "holoscan_config_export.h",
     "holoscan_config_io_export.h",
     "holoscan_core_export.h",
+    "holoscan_testing_export.h",
     "holoscan_experimental_params_web_tuner_export.h",
     "holoscan_logger_export.h",
     "holoscan_params_export.h",
@@ -28,6 +29,8 @@ EXPORT_MACROS = {
     "HOLOMQ_NO_EXPORT",
     "HOLOVIZ_EXPORT",
     "HOLOVIZ_NO_EXPORT",
+    "HOLOSCAN_TESTING_EXPORT",
+    "HOLOSCAN_TESTING_NO_EXPORT",
     "HOLOSCAN_CORE_EXPORT",
     "HOLOSCAN_CORE_NO_EXPORT",
     "HOLOSCAN_CONFIG_EXPORT",
@@ -49,6 +52,7 @@ GENERATED_EXPORT_INCLUDES = {
     "holoscan": "#include <holoscan/holoscan_core_export.h>",
 }
 HOLOSCAN_COMPONENT_EXPORT_INCLUDES = {
+    "HOLOSCAN_TESTING_EXPORT": "#include <holoscan/holoscan_testing_export.h>",
     "HOLOSCAN_CONFIG_EXPORT": "#include <holoscan/holoscan_config_export.h>",
     "HOLOSCAN_CONFIG_IO_EXPORT": "#include <holoscan/holoscan_config_io_export.h>",
     "HOLOSCAN_PARAMS_EXPORT": "#include <holoscan/holoscan_params_export.h>",
@@ -63,6 +67,7 @@ HAND_ROLLED_EXPORT_RE = re.compile(
     r"^\s*#\s*define\s+"
     r"(HOLOMQ_EXPORT|HOLOMQ_NO_EXPORT|HOLOVIZ_EXPORT|HOLOVIZ_NO_EXPORT"
     r"|HOLOSCAN_CORE_EXPORT|HOLOSCAN_CORE_NO_EXPORT"
+    r"|HOLOSCAN_TESTING_EXPORT|HOLOSCAN_TESTING_NO_EXPORT"
     r"|HOLOSCAN_CONFIG_EXPORT|HOLOSCAN_CONFIG_NO_EXPORT"
     r"|HOLOSCAN_CONFIG_IO_EXPORT|HOLOSCAN_CONFIG_IO_NO_EXPORT"
     r"|HOLOSCAN_PARAMS_EXPORT|HOLOSCAN_PARAMS_NO_EXPORT"
@@ -200,7 +205,11 @@ def check_file(path: Path) -> list[str]:
         )
         errors.extend(
             f"{path}: generated export headers must not be included in detail/"
-            for include in GENERATED_EXPORT_INCLUDES.values()
+            for include in sorted(
+                set(GENERATED_EXPORT_INCLUDES.values())
+                | set(HOLOSCAN_COMPONENT_EXPORT_INCLUDES.values())
+                | {HOLOSCAN_LOGGER_EXPORT_INCLUDE}
+            )
             if include in content
         )
 

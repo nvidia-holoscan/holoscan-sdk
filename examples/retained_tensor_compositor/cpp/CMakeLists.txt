@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    cmake_minimum_required(VERSION 4.0)
-    project(holoscan_retained_tensor_compositor LANGUAGES CXX)
+cmake_minimum_required(VERSION 4.0)
+project(holoscan_retained_tensor_compositor LANGUAGES CXX)
+
+if(PROJECT_IS_TOP_LEVEL)
     include("${CMAKE_CURRENT_LIST_DIR}/CMakeLists.min.txt")
     return()
 endif()
@@ -70,5 +71,5 @@ endif()
 
 install(TARGETS retained_tensor_compositor
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/retained_tensor_compositor/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

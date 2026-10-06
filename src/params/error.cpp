@@ -44,6 +44,11 @@ ParamToolError::ParamToolError(ParamToolErrorCode code, std::string_view token,
   token_size_ = static_cast<std::uint8_t>(retained.size());
 }
 
+ParamException::ParamException(ParamToolError error)
+    : RuntimeError(format_error(error)), error_(std::move(error)) {}
+
+ParamException::~ParamException() = default;
+
 std::string format_error(const ParamToolError& error) {
   std::string result{error.token()};
   if (error.core_cause().has_value()) {

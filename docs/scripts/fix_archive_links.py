@@ -116,13 +116,18 @@ def version_site_links(archive_dir: Path, version: str, *, write: bool = True) -
     base = f"{DEFAULT_SITE_PREFIX}/"
     versioned = f"{base}{archive_slug(version)}/"
     pattern = re.compile(
-        rf"(?P<lead>\]\(\s*<?|(?:href|to)=[\"']){re.escape(base)}"
-        rf"(?!{_VERSIONED_PREFIX_PATTERN})"
+        rf"(?P<lead>\]\(\s*<?|(?:href|to)=[\"']|^[ \t]*href:[ \t]*[\"']?)"
+        rf"{re.escape(base)}(?!{_VERSIONED_PREFIX_PATTERN})",
+        re.MULTILINE,
     )
 
     updated_files = 0
     updated_links = 0
-    for path in archive_dir.rglob("*.mdx"):
+    paths = list(archive_dir.rglob("*.mdx"))
+    navigation = archive_dir / "index.yml"
+    if navigation.is_file():
+        paths.append(navigation)
+    for path in paths:
         text = path.read_text(encoding="utf-8")
         replacements = [
             (*match.span(), f"{match.group('lead')}{versioned}")

@@ -32,7 +32,7 @@
 #include <holoscan/core/temporal_contract.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
-#include "descriptor_frame_traits.hpp"
+#include "descriptor_frame_schema_traits.hpp"
 
 namespace {
 
@@ -409,7 +409,8 @@ class Sink final : public holoscan::Operator<> {
   const auto prepared_details = prepared_sample->data.details;
   const auto prepared_point = prepared_sample->data.point;
   auto nested_prepared =
-      app3p::package::detail::GeneratedDescriptorCodec{}.prepare(prepared_sample->data);
+      app3p::holoscan_generated_DescriptorFrame_package::detail::GeneratedDescriptorCodec{}.prepare(
+          prepared_sample->data);
   if (!nested_prepared || prepared_sample->data.details != prepared_details ||
       prepared_sample->data.point != prepared_point || !prepared_details->note.empty()) {
     ops->destroy_sample(sample_storage.data());

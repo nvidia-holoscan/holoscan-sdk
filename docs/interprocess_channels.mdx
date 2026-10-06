@@ -218,6 +218,40 @@ then poll `receive_sample()` in the same deadline loop, retrying only on
 `kNotReady`. The `external_clients` example ships both halves — a
 `sensor_daemon` publisher and a `recorder` subscriber — each taking the
 catalog path and endpoint name on the command line.
+
+Endpoint shutdown is asymmetric by design. Publisher `close()` publishes
+ordered producer EOS. Subscriber `close()` only retires that process's local
+consumer endpoint: it sends no EOS, marks no graph port terminal, and supplies
+no natural-completion evidence. It may discard unread local samples, while
+already returned owning values keep their normal lifetime. Stop and join any
+thread using the subscriber before closing it; do not race close against a
+receive or wait. Later checked operations on the consumed facade return
+`kClosed`.
+
+For a finite input-driven graph, producer EOS propagates through each eligible
+Operator only after earlier accepted data and retained work drain. Graph
+exports then publish ordered terminal control, so a live standalone subscriber
+receives final data before remote `kClosed`. The `RunSession` becomes naturally
+`kCompleted` only when every contributing finite input path is terminal and no
+callback, selector claim, publication, Tensor loan, or qualified device use
+remains. Fan-in waits for every input required by its selector; fan-out closes
+each required arm independently. An independently triggered Operator treats
+its input as a side input, and an unrelated unbounded producer keeps the run
+live.
+
+A required external export subscriber must remain attached through remote
+`kClosed`. If it disappears after accepting data and terminal drain observes no
+peer, Runtime fails the run instead of treating local retirement as delivered
+EOS or retrying indefinitely. There is no reconnection grace inside terminal
+drain; any replacement must attach before that abandoned obligation is
+observed.
+
+An import admitted with `allow_external_restart` behaves differently: EOS
+fences one producer incarnation but does not close downstream outputs while a
+replacement incarnation remains available. Final EOS propagates after that
+finite replacement capacity is exhausted. Peer disappearance, silence,
+subscriber close, and timeout never substitute for this explicit protocol.
+
 <Tip>
   Retry **only** `kNotReady` and `kBackpressured`. Leave the loop on any other
   code and handle it according to that code's contract. In particular, never

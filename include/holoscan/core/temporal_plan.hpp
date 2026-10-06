@@ -91,6 +91,8 @@ struct InputSelectionPlanRecord {
   std::int64_t reuse_max_age_ns{};  ///< Positive only for \c kReuseLast.
   std::uint32_t lookbehind{};       ///< Positive only for \c kBracketedWindow.
   std::uint32_t lookahead{};        ///< Positive only for \c kBracketedWindow.
+  /// Compiler-validated intentional absence; no endpoint, payload capacity, or claim is required.
+  bool unwired_safe_default{};
 };
 
 /// @brief Record one normalized trigger and its static presence guarantee.

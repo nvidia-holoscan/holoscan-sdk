@@ -24,6 +24,43 @@ namespace holoscan::detail {
 [[nodiscard]] const ExecutionPartitionRecord* find_execution_partition_by_member(
     const ExecutionPlanState& plan, VertexId member) noexcept;
 
+/// Find the only execution partition containing an exact canonical vertex.
+///
+/// @return The containing partition, or \c nullptr when membership is absent or duplicated.
+[[nodiscard]] const ExecutionPartitionRecord* find_unique_execution_partition_by_member(
+    const ExecutionPlanState& plan, VertexId member) noexcept;
+
+/// Find the only CUDA Graph capture plan with the complete graph and region key.
+///
+/// @return The matching plan, or \c nullptr when the key is absent or duplicated.
+[[nodiscard]] const CUDAGraphCapturePlanRecord* find_unique_cuda_graph_capture_plan_by_region(
+    const ExecutionPlanState& plan, GraphId graph, RegionId region) noexcept;
+
+/// Return whether an admitted CUDA Graph region in one process group captures an output's address.
+[[nodiscard]] bool cuda_graph_uses_fixed_output_address(const ExecutionPlanState& plan,
+                                                        ProcessGroupId process_group,
+                                                        PortId output) noexcept;
+
+/// Return the CUDA device that consumes or produces a fixed CUDA Graph output address in one
+/// process group. Conflicting region devices return an invalid device.
+[[nodiscard]] DeviceId cuda_graph_fixed_output_device(const ExecutionPlanState& plan,
+                                                      ProcessGroupId process_group,
+                                                      PortId output) noexcept;
+
+/// Find the only admitted CUDA Graph execution region containing an Operator vertex.
+///
+/// Membership is resolved through the region's capture plan. Missing or duplicate plan records
+/// return \c nullptr so callers do not select an arbitrary fused region from malformed state.
+[[nodiscard]] const CUDAGraphExecutionRegionPlanRecord*
+find_unique_cuda_graph_execution_region_by_member(const ExecutionPlanState& plan,
+                                                  VertexId member) noexcept;
+
+/// Return whether an edge executes inside an admitted fused CUDA Graph region.
+///
+/// A missing or ambiguous capture plan is not treated as an admitted internal edge.
+[[nodiscard]] bool is_cuda_graph_internal_execution_edge(const ExecutionPlanState& plan,
+                                                         EdgeId edge) noexcept;
+
 /// Find a final execution partition by its exact dense partition ID.
 ///
 /// Accepted final plans store partition ID \c N at vector position \c N-1. Duplicate and ordering
@@ -43,6 +80,13 @@ namespace holoscan::detail {
 /// @return A non-owning pointer to the matching placement, or \c nullptr when absent.
 [[nodiscard]] const VertexProcessPlacementPlanRecord* find_vertex_process_placement_by_vertex(
     const ExecutionPlanState& plan, VertexId vertex) noexcept;
+
+/// Find the only process-placement record for an exact canonical vertex.
+///
+/// @return The matching placement, or \c nullptr when placement is absent or duplicated.
+[[nodiscard]] const VertexProcessPlacementPlanRecord*
+find_unique_vertex_process_placement_by_vertex(const ExecutionPlanState& plan,
+                                               VertexId vertex) noexcept;
 
 /// Find a final canonical Graph vertex by its globally unique plan-local ID.
 ///

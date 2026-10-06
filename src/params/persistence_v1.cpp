@@ -56,6 +56,7 @@ constexpr std::size_t kMaxArchiveRecords = 1U << 20U;
   switch (code) {
     case config::ConfigErrorCode::kIoError:
     case config::ConfigErrorCode::kPermissionDenied:
+    case config::ConfigErrorCode::kPathNotFound:
     case config::ConfigErrorCode::kAtomicReplaceUnsupported:
     case config::ConfigErrorCode::kSourceChanged:
     case config::ConfigErrorCode::kGuardBusy:
@@ -179,7 +180,8 @@ Node Node::object_value(std::vector<std::pair<std::string, Node>> value) {
     }
     values.push_back(std::move(*value));
   }
-  return checked_config_value(config::ConfigValue::array(values), "PARAM_ARCHIVE_ARRAY_INVALID");
+  return checked_config_value(config::ConfigValue::try_array(values),
+                              "PARAM_ARCHIVE_ARRAY_INVALID");
 }
 
 [[nodiscard]] ParamArchiveResult<config::ConfigValue> to_config_object(const Node& node) {
@@ -197,7 +199,8 @@ Node Node::object_value(std::vector<std::pair<std::string, Node>> value) {
   for (std::size_t index = 0; index < node.object_values.size(); ++index) {
     entries.push_back({node.object_keys[index], values[index]});
   }
-  return checked_config_value(config::ConfigValue::object(entries), "PARAM_ARCHIVE_OBJECT_INVALID");
+  return checked_config_value(config::ConfigValue::try_object(entries),
+                              "PARAM_ARCHIVE_OBJECT_INVALID");
 }
 
 [[nodiscard]] ParamArchiveResult<config::ConfigValue> to_config_value(const Node& node) {
@@ -205,19 +208,19 @@ Node Node::object_value(std::vector<std::pair<std::string, Node>> value) {
     case Node::Kind::kNull:
       return config::ConfigValue::null();
     case Node::Kind::kBool:
-      return checked_config_value(config::ConfigValue::boolean(node.boolean),
+      return checked_config_value(config::ConfigValue::try_boolean(node.boolean),
                                   "PARAM_ARCHIVE_VALUE_INVALID");
     case Node::Kind::kUnsigned:
-      return checked_config_value(config::ConfigValue::unsigned_integer(node.unsigned_integer),
+      return checked_config_value(config::ConfigValue::try_unsigned_integer(node.unsigned_integer),
                                   "PARAM_ARCHIVE_VALUE_INVALID");
     case Node::Kind::kSigned:
-      return checked_config_value(config::ConfigValue::signed_integer(node.signed_integer),
+      return checked_config_value(config::ConfigValue::try_signed_integer(node.signed_integer),
                                   "PARAM_ARCHIVE_VALUE_INVALID");
     case Node::Kind::kFloating:
-      return checked_config_value(config::ConfigValue::floating(node.floating),
+      return checked_config_value(config::ConfigValue::try_floating(node.floating),
                                   "PARAM_ARCHIVE_VALUE_INVALID");
     case Node::Kind::kString:
-      return checked_config_value(config::ConfigValue::string(node.text),
+      return checked_config_value(config::ConfigValue::try_string(node.text),
                                   "PARAM_ARCHIVE_STRING_INVALID");
     case Node::Kind::kArray:
       return to_config_array(node);
@@ -967,7 +970,7 @@ struct OrderedOperators {
   if (!value) {
     return make_unexpected(std::move(value.error()));
   }
-  auto encoded = config::encode_semantic_value_v1(value->view());
+  auto encoded = config::try_encode_semantic_value_v1(value->view());
   if (!encoded) {
     return make_unexpected(archive_config_error(ParamArchiveErrorCode::kInvalidArchive,
                                                 "PARAM_ARCHIVE_SEMANTIC_ENCODE_FAILED",
@@ -1022,7 +1025,7 @@ struct OrderedOperators {
   }
   std::vector<bool> observed(expected.size(), false);
   for (std::size_t index = 0; index < value.size(); ++index) {
-    auto key = value.key(index);
+    auto key = value.try_key(index);
     if (!key) {
       return make_unexpected(archive_config_error(
           ParamArchiveErrorCode::kInvalidArchive, token, std::move(key.error())));
@@ -1044,7 +1047,7 @@ struct OrderedOperators {
 [[nodiscard]] ParamArchiveResult<config::ConfigView> member(const config::ConfigView& value,
                                                             std::string_view key,
                                                             std::string_view token) {
-  auto found = value.member(key);
+  auto found = value.try_member(key);
   if (!found) {
     return make_unexpected(archive_config_error(
         ParamArchiveErrorCode::kInvalidArchive, token, std::move(found.error())));
@@ -1054,7 +1057,7 @@ struct OrderedOperators {
 
 [[nodiscard]] ParamArchiveResult<std::string> string_value(const config::ConfigView& value,
                                                            std::string_view token) {
-  auto text = value.as_string();
+  auto text = value.try_as_string();
   if (!text) {
     return make_unexpected(archive_config_error(
         ParamArchiveErrorCode::kInvalidArchive, token, std::move(text.error())));
@@ -1065,7 +1068,7 @@ struct OrderedOperators {
 [[nodiscard]] ParamArchiveResult<std::uint64_t> structural_unsigned(const config::ConfigView& value,
                                                                     std::string_view token) {
   if (value.kind() == config::ConfigValueKind::kUnsignedInteger) {
-    auto decoded = value.as_unsigned_integer();
+    auto decoded = value.try_as_unsigned_integer();
     if (decoded) {
       return *decoded;
     }
@@ -1073,7 +1076,7 @@ struct OrderedOperators {
         ParamArchiveErrorCode::kInvalidArchive, token, std::move(decoded.error())));
   }
   if (value.kind() == config::ConfigValueKind::kSignedInteger) {
-    auto decoded = value.as_signed_integer();
+    auto decoded = value.try_as_signed_integer();
     if (decoded && *decoded >= 0) {
       return static_cast<std::uint64_t>(*decoded);
     }
@@ -1136,7 +1139,7 @@ template <typename Digest>
   std::vector<std::string> result;
   result.reserve(value.size());
   for (std::size_t index = 0; index < value.size(); ++index) {
-    auto item = value.element(index);
+    auto item = value.try_element(index);
     if (!item) {
       return make_unexpected(archive_config_error(
           ParamArchiveErrorCode::kInvalidArchive, token, std::move(item.error())));
@@ -1255,7 +1258,7 @@ struct ScalarTypeIdentity {
   if (value.kind() != config::ConfigValueKind::kBool) {
     return make_unexpected(invalid_archive("PARAM_ARCHIVE_VALUE_INVALID"));
   }
-  auto decoded = value.as_bool();
+  auto decoded = value.try_as_bool();
   if (!decoded) {
     return make_unexpected(archive_config_error(ParamArchiveErrorCode::kInvalidArchive,
                                                 "PARAM_ARCHIVE_VALUE_INVALID",
@@ -1270,7 +1273,7 @@ struct ScalarTypeIdentity {
   if (value.kind() != config::ConfigValueKind::kSignedInteger) {
     return make_unexpected(invalid_archive("PARAM_ARCHIVE_VALUE_INVALID"));
   }
-  auto decoded = value.as_signed_integer();
+  auto decoded = value.try_as_signed_integer();
   if (!decoded) {
     return make_unexpected(archive_config_error(ParamArchiveErrorCode::kInvalidArchive,
                                                 "PARAM_ARCHIVE_VALUE_INVALID",
@@ -1295,7 +1298,7 @@ struct ScalarTypeIdentity {
   if (value.kind() != config::ConfigValueKind::kUnsignedInteger) {
     return make_unexpected(invalid_archive("PARAM_ARCHIVE_VALUE_INVALID"));
   }
-  auto decoded = value.as_unsigned_integer();
+  auto decoded = value.try_as_unsigned_integer();
   if (!decoded) {
     return make_unexpected(archive_config_error(ParamArchiveErrorCode::kInvalidArchive,
                                                 "PARAM_ARCHIVE_VALUE_INVALID",
@@ -1313,7 +1316,7 @@ struct ScalarTypeIdentity {
   if (value.kind() != config::ConfigValueKind::kFloating) {
     return make_unexpected(invalid_archive("PARAM_ARCHIVE_VALUE_INVALID"));
   }
-  auto decoded = value.as_floating();
+  auto decoded = value.try_as_floating();
   if (!decoded) {
     return make_unexpected(archive_config_error(ParamArchiveErrorCode::kInvalidArchive,
                                                 "PARAM_ARCHIVE_VALUE_INVALID",
@@ -2005,7 +2008,7 @@ struct DecodedSchema {
   fields.reserve(fields_view->size());
   ParamFieldId previous{};
   for (std::size_t index = 0; index < fields_view->size(); ++index) {
-    auto field_view = fields_view->element(index);
+    auto field_view = fields_view->try_element(index);
     if (!field_view) {
       return make_unexpected(archive_config_error(ParamArchiveErrorCode::kInvalidArchive,
                                                   "PARAM_ARCHIVE_FIELDS_INVALID",
@@ -2322,7 +2325,7 @@ struct DecodedEnvelope {
   std::vector<ParamSnapshotOperatorRecord> operators;
   operators.reserve(operators_view->size());
   for (std::size_t index = 0; index < operators_view->size(); ++index) {
-    auto item_view = operators_view->element(index);
+    auto item_view = operators_view->try_element(index);
     if (!item_view) {
       return make_unexpected(archive_config_error(ParamArchiveErrorCode::kInvalidArchive,
                                                   "PARAM_ARCHIVE_OPERATORS_INVALID",
@@ -2416,7 +2419,7 @@ ParamArchiveResult<ParamSaveResult> save(const ParamSnapshot& snapshot,
                                                   "PARAM_ARCHIVE_CANONICAL_PARSE_FAILED",
                                                   std::move(document.error())));
     }
-    auto saved = config_io::save(*document, path, config_io::Format::kJson, options.io);
+    auto saved = config_io::try_save(*document, path, config_io::Format::kJson, options.io);
     if (!saved) {
       return make_unexpected(archive_config_error(ParamArchiveErrorCode::kPersistenceFailure,
                                                   "PARAM_ARCHIVE_SAVE_FAILED",
@@ -2437,7 +2440,7 @@ ParamArchiveResult<ParamSnapshot> load(const std::filesystem::path& path,
         archive_error(ParamArchiveErrorCode::kInvalidArchive, "PARAM_ARCHIVE_PATH_INVALID"));
   }
   try {
-    auto document = config_io::load(path, config_io::Format::kJson, options.parser);
+    auto document = config_io::try_load(path, config_io::Format::kJson, options.parser);
     if (!document) {
       const ParamArchiveErrorCode code = archive_load_error_code(document.error().code());
       return make_unexpected(
@@ -2466,23 +2469,14 @@ ParamArchiveResult<ParamSnapshot> load(const std::filesystem::path& path,
   }
 }
 
-ParamRebindResult<ParamOverrideSet> load_overrides(const std::filesystem::path& path, Graph& graph,
-                                                   ParamRebindOptions options) {
+ParamRebindResult<ParamRebindProvenance> load_and_set_params(
+    Graph& graph, const std::filesystem::path& path, const ParamRebindTargetScope& target_scope,
+    ParamRebindOptions options) {
   auto snapshot = load(path);
   if (!snapshot) {
     return make_unexpected(persistence_rebind_error(snapshot.error()));
   }
-  return to_overrides(*snapshot, graph, options);
-}
-
-ParamRebindResult<ParamOverrideSet> load_overrides(const std::filesystem::path& path,
-                                                   const ParamRebindTarget& target,
-                                                   ParamRebindOptions options) {
-  auto snapshot = load(path);
-  if (!snapshot) {
-    return make_unexpected(persistence_rebind_error(snapshot.error()));
-  }
-  return to_overrides(*snapshot, target, options);
+  return set_params(graph, *snapshot, target_scope, options);
 }
 
 }  // namespace holoscan::params

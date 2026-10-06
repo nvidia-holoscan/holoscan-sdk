@@ -162,6 +162,9 @@ struct TopicOptions {
 template <PublishedPayload T>
 class ImportedTopic {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Return the Graph-side output used by typed `add_flow`.
   /// @return Dynamically resolved boundary declaration owned by the source Graph.
   /// @throws RuntimeError if the Graph was destroyed or failed composition, or
@@ -178,11 +181,15 @@ class ImportedTopic {
   [[nodiscard]] explicit operator bool() const noexcept { return graph_valid(); }
 
  private:
-  ImportedTopic(std::weak_ptr<detail::GraphState> state, std::uint64_t graph_port) noexcept
-      : state_(std::move(state)), graph_port_(graph_port) {}
+  ImportedTopic(std::weak_ptr<detail::GraphState> state, std::uint64_t graph_port,
+                std::shared_ptr<const void> handle_identity) noexcept
+      : state_(std::move(state)),
+        graph_port_(graph_port),
+        handle_identity_(std::move(handle_identity)) {}
 
   std::weak_ptr<detail::GraphState> state_;
   std::uint64_t graph_port_{};
+  std::shared_ptr<const void> handle_identity_;
 
   friend class Graph;
 };
@@ -192,6 +199,9 @@ class ImportedTopic {
 template <PublishedPayload T>
 class ExportedTopic {
  public:
+  /// @brief Opt this authoring handle out of replayable Graph captures.
+  using graph_authoring_handle_tag = void;
+
   /// @brief Return the Graph-side input used by typed `add_flow`.
   /// @return Dynamically resolved boundary declaration owned by the source Graph.
   /// @throws RuntimeError if the Graph was destroyed or failed composition, or
@@ -208,11 +218,15 @@ class ExportedTopic {
   [[nodiscard]] explicit operator bool() const noexcept { return graph_valid(); }
 
  private:
-  ExportedTopic(std::weak_ptr<detail::GraphState> state, std::uint64_t graph_port) noexcept
-      : state_(std::move(state)), graph_port_(graph_port) {}
+  ExportedTopic(std::weak_ptr<detail::GraphState> state, std::uint64_t graph_port,
+                std::shared_ptr<const void> handle_identity) noexcept
+      : state_(std::move(state)),
+        graph_port_(graph_port),
+        handle_identity_(std::move(handle_identity)) {}
 
   std::weak_ptr<detail::GraphState> state_;
   std::uint64_t graph_port_{};
+  std::shared_ptr<const void> handle_identity_;
 
   friend class Graph;
 };

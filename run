@@ -17,6 +17,11 @@ init_globals() {
     export RUN_SCRIPT_FILE="$(readlink -f "${BASH_SOURCE[0]}")"
     export TOP=$(dirname "${RUN_SCRIPT_FILE}")
 
+    # Versions
+    # Holoscan SDK 5.x currently has one supported CUDA line.
+    export CUDA_MAJOR="${CUDA_MAJOR:-13}"
+    # The public development artifact is currently dGPU-only.
+    export GPU="${GPU:-dgpu}"
     # Executables
     export HOLOSCAN_PY_EXE=${HOLOSCAN_PY_EXE:-"python3"}
     export HOLOSCAN_DOCKER_EXE=${HOLOSCAN_DOCKER_EXE:-"docker"}
@@ -28,6 +33,8 @@ init_globals() {
 
     # Define default img and dir names
     export SDK_BUILD_IMG="holoscan-sdk-build"
+    export SDK_DEV_IMG="holoscan-sdk-dev"
+    export SDK_RUN_IMG="holoscan-sdk-run"
     export SDK_BUILD_DIR="build"
     export SDK_INSTALL_DIR="install"
 
@@ -178,12 +185,23 @@ get_build_img_name() {
     echo -n "${SDK_BUILD_IMG}-$(get_build_flavor_str)"
 }
 
+get_dev_img_name() {
+    echo -n "${SDK_DEV_IMG}-$(get_build_flavor_str)"
+}
+
+get_build_dir_flavor_str() {
+    local suffix="${ARCH}"
+    if [ "$ARCH" = "aarch64" ]; then
+        suffix+="-${GPU}"
+    fi
+    echo -n "${suffix}"
+}
 get_build_dir() {
-    echo -n "${SDK_BUILD_DIR}-$(get_build_flavor_str)"
+    echo -n "${SDK_BUILD_DIR}-$(get_build_dir_flavor_str)"
 }
 
 get_install_dir() {
-    echo -n "${SDK_INSTALL_DIR}-$(get_build_flavor_str)"
+    echo -n "${SDK_INSTALL_DIR}-$(get_build_dir_flavor_str)"
 }
 
 get_driver_version() {
@@ -302,7 +320,7 @@ install_python_dev_deps() {
         c_echo_err W "Please activate the virtual environment at " G "$TOP/.venv/dev" W " and execute this command again."
         c_echo_err
         c_echo_err G "  source $TOP/.venv/dev/bin/activate"
-        c_echo_err G "  $0 $@"
+        c_echo_err G "  $0 $*"
         exit 1
     fi
 }
@@ -445,15 +463,143 @@ build_image() {
     local docker_tags=$(get_image_tag_flags $(get_build_img_name))
 
     # Docker build
-    local extra_args="$@"
+    local extra_args=("$@")
     run_command $HOLOSCAN_DOCKER_EXE build \
         --build-arg BUILDKIT_INLINE_CACHE=1 \
         --platform $(get_platform_str) \
         --network=host \
         ${NO_CACHE} \
         ${docker_tags} \
-        ${extra_args} \
+        "${extra_args[@]}" \
         ${TOP}
+}
+
+validate_dev_container_target() {
+    if [ "${GPU}" != "dgpu" ] || [ "${CUDA_MAJOR}" != "13" ]; then
+        fatal R "The public development container currently supports only CUDA 13 dGPU targets (received GPU=${GPU}, CUDA=${CUDA_MAJOR})."
+    fi
+}
+
+build_dev_image_desc() { c_echo 'Build the public Holoscan development-container artifact
+
+Builds a CUDA 13 dGPU TensorRT/DLFW image containing a pre-installed Holoscan SDK.
+Builds and installs the SDK first unless --standalone is supplied. In standalone mode,
+the matching SDK installation must already exist at install-<arch> in this checkout.
+
+All other arguments are passed to docker build. The image receives the standard local
+tags (latest, SDK version, git branch, git tag, and git SHA).
+'
+}
+build_dev_image() {
+    validate_dev_container_target
+
+    if [ "$DO_STANDALONE" != "true" ]; then
+        build
+    fi
+
+    local extra_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --feature)
+                fatal R "Development-container features are not supported."
+                ;;
+            *)
+                extra_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    local install_dir="$(get_install_dir)"
+    if [ "$DO_DRY_RUN" != "true" ] && [ ! -d "${TOP}/${install_dir}" ]; then
+        fatal R "SDK installation '${TOP}/${install_dir}' is missing. Run './public/run build' first."
+    fi
+
+    local build_img_tag
+    build_img_tag="$(get_build_img_tag)"
+    local pytorch_whl_img="$(get_build_img_name):${build_img_tag}-torch-wheels"
+    local docker_tags
+    docker_tags=$(get_image_tag_flags "$(get_dev_img_name)")
+    local repo_root
+    repo_root=$(dirname "${TOP}")
+
+    run_command $HOLOSCAN_DOCKER_EXE build \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --build-arg GPU_TYPE=${GPU} \
+        --build-arg CUDA_MAJOR=${CUDA_MAJOR} \
+        --platform $(get_platform_str) \
+        --network=host \
+        ${NO_CACHE} \
+        "${extra_args[@]}" \
+        --target pytorch-downloader \
+        -t "${pytorch_whl_img}" \
+        -f "${TOP}/Dockerfile" \
+        "${TOP}"
+
+    run_command $HOLOSCAN_DOCKER_EXE build \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --build-arg GPU_TYPE=${GPU} \
+        --build-arg CUDA_MAJOR=${CUDA_MAJOR} \
+        --build-arg HOST_INSTALL_DIR=${install_dir} \
+        --build-arg PYTORCH_WHL_IMAGE=${pytorch_whl_img} \
+        --build-arg HOLOSCAN_SDK_VERSION=$(get_version) \
+        --platform $(get_platform_str) \
+        --network=host \
+        ${NO_CACHE} \
+        ${docker_tags} \
+        "${extra_args[@]}" \
+        -f "${TOP}/Dockerfile.dev" \
+        "${repo_root}"
+}
+
+launch_dev_desc() { c_echo 'Launch the public Holoscan development container
+
+Builds the requested artifact first unless --standalone is supplied, then starts it with
+GPU access in /workspace. Use --run-cmd to run a command instead of an interactive shell.
+'
+}
+launch_dev() {
+    local extra_args=()
+    local run_cmd="bash"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --feature)
+                fatal R "Development-container features are not supported."
+                ;;
+            --run-cmd)
+                if [ -z "${2-}" ]; then
+                    fatal R "--run-cmd requires a command."
+                fi
+                run_cmd="$2"
+                shift 2
+                ;;
+            *)
+                extra_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    validate_dev_container_target
+    if [ "$DO_STANDALONE" != "true" ]; then
+        build_dev_image
+    fi
+
+    run_command $HOLOSCAN_DOCKER_EXE run \
+        --rm \
+        --interactive \
+        ${USE_TTY} \
+        --network=host \
+        --gpus all \
+        --ipc=${HOLOSCAN_DOCKER_IPC:-host} \
+        --cap-add=CAP_SYS_PTRACE \
+        --cap-add=CAP_SYS_NICE \
+        --ulimit rtprio=10 \
+        --ulimit memlock=-1 \
+        --ulimit stack=67108864 \
+        "${extra_args[@]}" \
+        "$(get_dev_img_name):$(get_build_img_tag)" \
+        bash -c "${run_cmd}"
 }
 
 build_desc() { c_echo 'Build the SDK with CMake
@@ -551,7 +697,7 @@ build() {
     fi
 
     # Parse args
-    local extra_args=""
+    local extra_args=()
     while [[ $# -gt 0 ]]; do
     case $1 in
         --build-python)
@@ -762,7 +908,7 @@ build() {
         -e CARGO_HOME=/workspace/holoscan-sdk/.cache/cargo \
         ${sccache_dir_opt} \
         ${sccache_memcached_opt} \
-        ${extra_args[@]} \
+        "${extra_args[@]}" \
         $img \
         -c "set -e
             if ${clean_build} && [ -d '${build_path}' ]; then
@@ -815,18 +961,20 @@ build() {
 
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-core
-            # Sensor I/O headers, generated schema headers, and the .fbs sources. Installed with the
-            # other runtime libraries: the component is exported and packable either way, so leaving
-            # it out here produced an install tree advertising holoscan::sensor_io targets whose
-            # include directories were never shipped.
-            install_component_if_present holoscan-sensor-io
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-holomq
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-sensor-io
+            install_component_if_present holoscan-testing
             install_component_if_present holoscan-config
             install_component_if_present holoscan-config-io
-            install_component_if_present holoscan-params
-            install_component_if_present holoscan-params-io
             install_component_if_present holoscan-experimental-params-web-tuner
+            install_component_if_present holoscan-inference
             install_component_if_present holoscan-vision
-            install_component_if_present holoscan-examples
+            install_component_if_present holoscan-visualization
+            install_component_if_present holoscan-core-examples
+            install_component_if_present holoscan-testing-examples
+            install_component_if_present holoscan-inference-examples
+            install_component_if_present holoscan-vision-examples
+            install_component_if_present holoscan-visualization-examples
             install_component_if_present holoscan-benchmarks
             install_component_if_present holoscan-dependencies
             # Install the iceoryx2 C++ and Rust FFI libraries required by Core and HoloMQ.
@@ -837,6 +985,8 @@ build() {
             install_component_if_present dev
             if [ \"${build_python}\" != 'OFF' ]; then
                 install_component_if_present holoscan-python_libs
+                install_component_if_present holoscan-visualization-python_libs
+                install_component_if_present holoscan-inference-python_libs
             fi
         "
 }
@@ -968,7 +1118,7 @@ test() {
     local options=""
 
     # Parse CLI arguments next
-    local extra_args=""
+    local extra_args=()
     while [[ $# -gt 0 ]]; do
     case $1 in
         --name|-n)
@@ -1054,7 +1204,7 @@ test() {
     launch "${build_dir}" \
         --init \
         --cap-drop=NET_BIND_SERVICE \
-        ${extra_args[@]} \
+        "${extra_args[@]}" \
         --run-cmd "$preload $run_headless ctest . $test_regex_flag --timeout $timeout --output-on-failure $verbose $options" 2>&1 | tee "$temp_output"
 
     ctest_exit_code=${PIPESTATUS[0]}
@@ -1490,13 +1640,13 @@ bench() {
     if [ "${use_ctest}" = true ]; then
         launch "${build_dir}" \
             --init \
-            ${extra_args[@]} \
+            "${extra_args[@]}" \
             ${no_xvfb} \
             --run-cmd "${benchmark_build_cmd:+${benchmark_build_cmd} && }ctest . ${ctest_mode} -L benchmark ${test_regex_flag} --timeout ${timeout} --output-on-failure ${verbose} ${options}" 2>&1 | tee "$temp_output"
     else
         launch "${build_dir}" \
             --init \
-            ${extra_args[@]} \
+            "${extra_args[@]}" \
             ${no_xvfb} \
             --run-cmd "${benchmark_build_cmd:+${benchmark_build_cmd} && }python3 /workspace/holoscan-sdk/benchmark/run_benchmark.py --run-ctest-benchmarks ${direct_list_arg}" 2>&1 | tee "$temp_output"
     fi
@@ -1543,6 +1693,7 @@ Arguments:
     --mount-point - Specifies the mount point (default is the directory of this script)
     --run-cmd - Specifies a command to run in the container instead of running interactively.
                 This is the equivalent of what you would put after `bash -c` with `docker run`.
+    --runtime - Selects the Docker runtime (default: nvidia).
     --ssh-x11 : [DEPRECATED] X11/Wayland forwarding is now auto-detected from DISPLAY/WAYLAND_DISPLAY
 '
 }
@@ -1554,17 +1705,28 @@ launch() {
 
     local container_mount="/workspace/holoscan-sdk"
     local mount_point="${TOP}"
-    local mount_device_opt=""
-    local display_server_opt=""
+    local mount_device_opts=()
+    local display_server_opts=()
     local display_xauth_file=""
-    local extra_args=""
+    local extra_args=()
+    local group_opts=()
     local run_cmd="bash"
+    local docker_runtime="nvidia"
     local ssh_x11=0
+    local tty_opts=()
+    if [ -n "${USE_TTY}" ]; then
+        tty_opts+=("${USE_TTY}")
+    fi
 
-    # Skip the first argument to pass the remaining arguments to the docker command.
-    local working_dir=${1:-$(get_build_dir)}
-    if [ -n "${1-}" ]; then
+    # An optional leading positional argument is the working directory; the remaining arguments are
+    # passed to the docker command. Only consume the first argument when it is not a flag, otherwise
+    # `launch --cpus=8` uses "--cpus=8" as the working directory name.
+    local working_dir
+    if [[ -n "${1-}" && "$1" != -* ]]; then
+        working_dir="$1"
         shift
+    else
+        working_dir="$(get_build_dir)"
     fi
 
     # Parse CLI arguments next
@@ -1578,6 +1740,21 @@ launch() {
         --run-cmd)
             run_cmd="$2"
             shift
+            shift
+        ;;
+        --runtime)
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                fatal R "--runtime requires a value"
+            fi
+            docker_runtime="$2"
+            shift
+            shift
+        ;;
+        --runtime=*)
+            docker_runtime="${1#--runtime=}"
+            if [[ -z "$docker_runtime" ]]; then
+                fatal R "--runtime requires a value"
+            fi
             shift
         ;;
         --ssh-x11)
@@ -1597,20 +1774,20 @@ launch() {
 
     # Mount V4L2 device nodes
     for video_dev in $(find /dev -regex '/dev/video[0-9]+'); do
-        mount_device_opt+=" --device $video_dev"
+        mount_device_opts+=(--device "$video_dev")
     done
 
     # Mount Tegra's Video Input unit (capture data from CSI) device nodes
     for capture_dev in $(find /dev -regex '/dev/capture-vi-channel[0-9]+'); do
-        mount_device_opt+=" --device $capture_dev"
+        mount_device_opts+=(--device "$capture_dev")
     done
 
     # Mount ConnectX device nodes
     if [ -e /dev/infiniband/rdma_cm ]; then
-        mount_device_opt+=" --device /dev/infiniband/rdma_cm"
+        mount_device_opts+=(--device /dev/infiniband/rdma_cm)
     fi
     for uverbs_dev in $(find /dev -regex '/dev/infiniband/uverbs[0-9]+'); do
-        mount_device_opt+=" --device $uverbs_dev"
+        mount_device_opts+=(--device "$uverbs_dev")
     done
 
     # The device nodes under /dev/dri are owned by the root user and video and render groups,
@@ -1619,48 +1796,53 @@ launch() {
     # host device might not match. Mounting `/etc/group` doesn't address it since the mount occurs
     # after the user and its groups are setup. Instead, we pass the group ids which we compute on
     # the host before starting the container.
-    groups=""
+    local video_id
     video_id=$(get_group_id video)
     if [ -n "$video_id" ]; then
-        groups+=" --group-add $video_id"
+        group_opts+=(--group-add "$video_id")
     fi
+    local render_id
     render_id=$(get_group_id render)
     if [ -n "$render_id" ]; then
-        groups+=" --group-add $render_id"
+        group_opts+=(--group-add "$render_id")
     fi
 
     # Add docker group to enable DooD
-    groups+=" --group-add $(get_group_id docker)"
+    local docker_id
+    docker_id=$(get_group_id docker)
+    if [ -n "$docker_id" ]; then
+        group_opts+=(--group-add "$docker_id")
+    fi
 
     # Forward graphical applications when the host exposes a display.
     if [ -z "${DISPLAY-}" ] && [ -z "${WAYLAND_DISPLAY-}" ]; then
         info "No DISPLAY or WAYLAND_DISPLAY set; skipping display forwarding."
     else
         if [ -n "${XDG_SESSION_TYPE-}" ]; then
-            display_server_opt+=" -e XDG_SESSION_TYPE"
+            display_server_opts+=(-e XDG_SESSION_TYPE)
         fi
 
         # Required by Vulkan, dconf, pipewire, etc. on both X11 and Wayland.
         if [ -n "${XDG_RUNTIME_DIR-}" ] && [ -d "${XDG_RUNTIME_DIR}" ]; then
-            display_server_opt+=" -e XDG_RUNTIME_DIR"
-            display_server_opt+=" -v ${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}"
+            display_server_opts+=(-e XDG_RUNTIME_DIR)
+            display_server_opts+=(-v "${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}")
         fi
 
         if [ -n "${WAYLAND_DISPLAY-}" ]; then
-            display_server_opt+=" -e WAYLAND_DISPLAY"
+            display_server_opts+=(-e WAYLAND_DISPLAY)
         fi
 
         if [ -n "${DISPLAY-}" ]; then
             case "${DISPLAY}" in
                 :*|unix:*|unix/:*)
                     if [ -d /tmp/.X11-unix ]; then
-                        display_server_opt+=" -v /tmp/.X11-unix:/tmp/.X11-unix:ro"
+                        display_server_opts+=(-v /tmp/.X11-unix:/tmp/.X11-unix:ro)
                     fi
                     ;;
                 *)
                     ;;
             esac
-            display_server_opt+=" -e DISPLAY"
+            display_server_opts+=(-e DISPLAY)
 
             # If the X server already accepts no-cookie connections (typically
             # SI:localuser peer-credential auth), skip the cookie setup. The
@@ -1691,8 +1873,8 @@ launch() {
                         # Register cleanup so the cookie is removed even on SIGINT/SIGTERM/SIGHUP.
                         # shellcheck disable=SC2064
                         trap "rm -f '${display_xauth_file}'" EXIT INT TERM HUP
-                        display_server_opt+=" -v ${display_xauth_file}:${display_xauth_file}:ro"
-                        display_server_opt+=" -e XAUTHORITY=${display_xauth_file}"
+                        display_server_opts+=(-v "${display_xauth_file}:${display_xauth_file}:ro")
+                        display_server_opts+=(-e "XAUTHORITY=${display_xauth_file}")
                     else
                         rm -f "${xauth_file}"
                         c_echo_err Y "Warning: xauth nmerge failed for DISPLAY=${DISPLAY}; X11 may not authenticate inside the container."
@@ -1722,8 +1904,8 @@ launch() {
     # -u $(id -u):$(id -g)
     # -v /etc/group:/etc/group:ro
     # -v /etc/passwd:/etc/passwd:ro
-    # ${groups} (--group-add render; --group-add video)
-    #   Run the container as a non-root user. See details above for `groups` variable.
+    # ${group_opts[@]} (--group-add render; --group-add video)
+    #   Run the container as a non-root user. See details above for `group_opts`.
     #
     # -v /var/run/docker.sock:/var/run/docker.sock
     #    Enable the use of Holoscan CLI with Docker outside of Docker (DooD) for packaging and
@@ -1735,13 +1917,13 @@ launch() {
     # -w /workspace/holoscan-sdk/${working_dir}
     #   Start in the build or install directory
     #
-    # --runtime=nvidia \
-    #   Enable GPU acceleration with access to all GPUs by default
+    # --runtime=${docker_runtime} \
+    #   Use the selected Docker runtime for this launch
     #
-    # ${display_server_opt}
+    # ${display_server_opts[@]}
     #   Enable graphical applications (X11 or Wayland)
     #
-    # ${mount_device_opt}
+    # ${mount_device_opts[@]}
     #   --device /dev/video${i}
     #     Mount video capture devices for V4L2
     #
@@ -1778,8 +1960,8 @@ launch() {
     # - Preserve the image-provided PYTHONPATH before running
 
     img="$(get_build_img_name):$(get_build_img_tag)"
-    pythonpath=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'PYTHONPATH=\K[^ ]+' || true)
-    ld_library_path=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'LD_LIBRARY_PATH=\K[^ ]+' || true)
+    pythonpath=$("${HOLOSCAN_DOCKER_EXE}" inspect "${img}" --format '{{.Config.Env}}' | grep -oP 'PYTHONPATH=\K[^ ]+' || true)
+    ld_library_path=$("${HOLOSCAN_DOCKER_EXE}" inspect "${img}" --format '{{.Config.Env}}' | grep -oP 'LD_LIBRARY_PATH=\K[^ ]+' || true)
 
     # JetPack 7.x uses the SBSA/dGPU CUDA stack, but nvidia-container-toolkit mounts some
     # host driver libraries under this platform-specific path.
@@ -1793,38 +1975,38 @@ launch() {
     fi
 
     local launch_status=0
-    run_command $HOLOSCAN_DOCKER_EXE run \
+    run_command "${HOLOSCAN_DOCKER_EXE}" run \
         --rm \
         --net=host \
         --interactive \
-        ${USE_TTY} \
+        "${tty_opts[@]}" \
         --entrypoint=bash \
-        -u $(id -u):$(id -g) \
+        -u "$(id -u):$(id -g)" \
         -v /etc/group:/etc/group:ro \
         -v /etc/passwd:/etc/passwd:ro \
-        ${groups} \
+        "${group_opts[@]}" \
         -v /var/run/docker.sock:/var/run/docker.sock \
-        -v ${mount_point}:${container_mount} \
-        -w ${container_top}/${working_dir} \
-        --runtime=nvidia \
-        ${display_server_opt} \
-        ${mount_device_opt} \
-        -e LD_LIBRARY_PATH=${ld_library_path} \
-        -e PYTHONPATH=${pythonpath}:${container_top}/${working_dir}/python/lib \
-        -e HOLOSCAN_LIB_PATH=${container_top}/${working_dir}/lib \
-        -e HOLOSCAN_INPUT_PATH=${container_top}/data \
-        -e HOLOSCAN_TESTS_DATA_PATH=${container_top}/tests/data \
-        -e CARGO_HOME=${container_top}/.cache/cargo \
-        -e CUPY_CACHE_DIR=${container_top}/.cupy/kernel_cache \
+        -v "${mount_point}:${container_mount}" \
+        -w "${container_top}/${working_dir}" \
+        --runtime="${docker_runtime}" \
+        "${display_server_opts[@]}" \
+        "${mount_device_opts[@]}" \
+        -e "LD_LIBRARY_PATH=${ld_library_path}" \
+        -e "PYTHONPATH=${pythonpath}:${container_top}/${working_dir}/python/lib" \
+        -e "HOLOSCAN_LIB_PATH=${container_top}/${working_dir}/lib" \
+        -e "HOLOSCAN_INPUT_PATH=${container_top}/data" \
+        -e "HOLOSCAN_TESTS_DATA_PATH=${container_top}/tests/data" \
+        -e "CARGO_HOME=${container_top}/.cache/cargo" \
+        -e "CUPY_CACHE_DIR=${container_top}/.cupy/kernel_cache" \
         --ipc=host \
         --cap-add=CAP_SYS_PTRACE \
         --cap-add=CAP_SYS_NICE \
         --ulimit rtprio=10 \
         --ulimit memlock=-1 \
         --ulimit stack=67108864 \
-        ${extra_args[@]} \
-        $img -c "
-            export PATH=\$PATH:${container_top}/${working_dir}/bin;
+        "${extra_args[@]}" \
+        "${img}" -c "
+            export PATH=\"\$PATH:${container_top}/${working_dir}/bin\";
             $run_cmd" || launch_status=$?
 
     if [ -n "${display_xauth_file}" ]; then

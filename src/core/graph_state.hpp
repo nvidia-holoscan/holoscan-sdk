@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <typeinfo>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -22,6 +23,7 @@
 #include <holoscan/core/graph.hpp>
 
 #include "graph_snapshot.hpp"
+#include "parameter_input_internal.hpp"
 
 namespace holoscan::detail {
 
@@ -47,18 +49,21 @@ struct GraphCompositionDiagnostic {
 
 struct PortStorage {
   PortRecord record;
+  std::shared_ptr<const void> handle_identity;
   const void* declaration{};
   const void* local_type_token{};
   std::optional<std::size_t> operator_index;
   std::optional<TensorPoolBounds> setup_tensor_allocation;
-  std::optional<SchemaPackagePlanRecord> schema_package;
+  const std::type_info* local_type_info{};
 };
 
 struct OperatorStorage {
   std::string name;
+  std::shared_ptr<const void> handle_identity;
   const void* operator_type_token{};
   std::shared_ptr<OperatorFactoryBase> factory;
-  std::unique_ptr<OperatorBase> prototype;
+  std::shared_ptr<OperatorBase> prototype;
+  std::shared_ptr<const ParameterInputEvidenceState> parameter_input_evidence;
   VertexId vertex{};
   std::vector<GraphPortId> ports;
   OperatorRef plan_ref{};
@@ -82,6 +87,7 @@ struct EmbeddedOperatorMapping {
   std::size_t source_index{};
   VertexId vertex{};
   std::shared_ptr<OperatorFactoryBase> factory;
+  std::shared_ptr<const ParameterInputEvidenceState> parameter_input_evidence;
 };
 
 struct EmbeddedGraphStorage {
@@ -89,6 +95,7 @@ struct EmbeddedGraphStorage {
   std::shared_ptr<GraphState> state;
   GraphId graph_id{};
   GraphInstancePath path;
+  std::shared_ptr<const void> handle_identity;  ///< Shared only with handles for this registration.
 };
 
 class GraphState {
@@ -124,16 +131,22 @@ class GraphState {
       if (ports_[index].record.id.value != index + 1U)
         return false;
     }
+    if (edges_.size() != edge_handle_identities_.size())
+      return false;
     for (std::size_t index = 0; index < edges_.size(); ++index) {
-      if (edges_[index].id.value != index + 1U)
+      if (edges_[index].id.value != index + 1U || !edge_handle_identities_[index])
         return false;
     }
+    if (regions_.size() != region_handle_identities_.size())
+      return false;
     for (std::size_t index = 0; index < regions_.size(); ++index) {
-      if (regions_[index].id.value != index + 1U)
+      if (regions_[index].id.value != index + 1U || !region_handle_identities_[index])
         return false;
     }
+    if (partitions_.size() != partition_handle_identities_.size())
+      return false;
     for (std::size_t index = 0; index < partitions_.size(); ++index) {
-      if (partitions_[index].id.value != index + 1U)
+      if (partitions_[index].id.value != index + 1U || !partition_handle_identities_[index])
         return false;
     }
     return true;
@@ -155,8 +168,8 @@ class GraphState {
   }
 
   Graph* owner_{};
-  mutable std::mutex mutex_;
-  std::condition_variable composition_cv_;
+  mutable std::recursive_mutex mutex_;
+  std::condition_variable_any composition_cv_;
   CompositionState composition_state_{CompositionState::kUncomposed};
   std::thread::id composing_thread_;
   std::optional<GraphCompositionDiagnostic> composition_diagnostic_;
@@ -166,6 +179,7 @@ class GraphState {
   std::vector<GraphRecord> embedded_graph_records_;
   std::vector<EmbeddedGraphStorage> embedded_graphs_;
   std::vector<EmbeddedOperatorMapping> embedded_operator_mappings_;
+  std::shared_ptr<const ParameterTransactionState> parameter_transaction_;
   std::vector<const void*> embedding_ancestry_;
   std::deque<OperatorStorage> operators_;
   std::vector<std::vector<std::size_t>> vertex_adjacency_;
@@ -175,11 +189,14 @@ class GraphState {
   std::deque<PortStorage> ports_;
   std::unordered_map<const void*, GraphPortId> port_by_declaration_;
   std::vector<EdgeRecord> edges_;
+  std::vector<std::shared_ptr<const void>> edge_handle_identities_;
   std::vector<InterfaceBindingRecord> interface_bindings_;
   std::deque<ExternalTopicStorage> external_topics_;
   std::vector<ReadinessSourceDeclarationRecord> readiness_sources_;
   std::vector<RegionRecord> regions_;
+  std::vector<std::shared_ptr<const void>> region_handle_identities_;
   std::vector<PartitionRecord> partitions_;
+  std::vector<std::shared_ptr<const void>> partition_handle_identities_;
   bool automatic_partition_remaining_{};
   std::deque<ClockStorage> clocks_;
   std::vector<ClockImportAuthoringRecord> clock_imports_;

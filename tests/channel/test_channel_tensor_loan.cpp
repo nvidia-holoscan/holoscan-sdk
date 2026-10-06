@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -518,7 +519,8 @@ TEST(ExternalTensorLoanRuntime, CatalogSubscriberRejectsMissingOrZeroLoanBound) 
     const std::string& endpoint_name, const std::uint32_t queue_depth = 1U,
     const MemoryKind memory_kind = MemoryKind::kHost, const TopicAttachPolicy attach = {},
     const std::optional<std::uint32_t> max_borrowed_samples = std::nullopt,
-    const QueuePolicy queue_policy = QueuePolicy::kBlocking) {
+    const QueuePolicy queue_policy = QueuePolicy::kBlocking,
+    const TensorStridePolicy stride_policy = TensorStridePolicy::kContiguousOnly) {
   detail::ChannelEndpointRecord endpoint{
       .name = endpoint_name,
       .uri = "holomq://" + endpoint_name,
@@ -537,7 +539,10 @@ TEST(ExternalTensorLoanRuntime, CatalogSubscriberRejectsMissingOrZeroLoanBound) 
               .dtype = DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
               .max_rank = 2U,
               .max_byte_span = 16U,
-              .strides = TensorStridePolicy::kContiguousOnly,
+              .axes = stride_policy == TensorStridePolicy::kBoundedStrided
+                          ? std::vector<TensorAxisBounds>{{16U, 16U}, {16U, 16U}}
+                          : std::vector<TensorAxisBounds>{},
+              .strides = stride_policy,
               .foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded,
               .max_staging_byte_span = 16U,
           },
@@ -767,10 +772,13 @@ TEST(ExternalTensorLoanRuntime, CatalogProtectedTerminalRechecksFinalDataAfterIn
   auto data = receive_future.get();
   ASSERT_TRUE(first_data_probe_completed);
   ASSERT_TRUE(emitted.has_value());
-  ASSERT_TRUE(*emitted) << runtime_error_message(emitted->error());
-  EXPECT_EQ(**emitted, 1U);
+  // The fatal assertion above establishes the optional precondition for the remaining checks.
+  const auto& emitted_result = emitted.value();  // NOLINT(bugprone-unchecked-optional-access)
+  ASSERT_TRUE(emitted_result) << runtime_error_message(emitted_result.error());
+  EXPECT_EQ(emitted_result.value(), 1U);
   ASSERT_TRUE(closed.has_value());
-  ASSERT_TRUE(*closed) << runtime_error_message(closed->error());
+  const auto& closed_result = closed.value();  // NOLINT(bugprone-unchecked-optional-access)
+  ASSERT_TRUE(closed_result) << runtime_error_message(closed_result.error());
   ASSERT_TRUE(data) << runtime_error_message(data.error());
   ASSERT_EQ(data->kind, channel_internal::CatalogReceivedOperationKind::kData);
   EXPECT_EQ(data->metadata.sequence, 1U);
@@ -1878,6 +1886,129 @@ TEST(ExternalTensorLoanRuntime, CatalogSubscriberRejectsPayloadOutsideFrozenTens
   EXPECT_EQ(zero_generation_rejected.error().code, ErrorCode::kProtocolError);
 }
 
+// Catalog descriptors declare the full strided span, unlike schema descriptors' logical bytes.
+// Send raw descriptors so the public exporter's byte-count convention cannot mask receiver checks.
+// REQ: EXTERNAL-006
+TEST(ExternalTensorLoanRuntime, CatalogSubscriberPreservesPaddedSpanDescriptorsAndReceiveCapacity) {
+  if (!test::has_cuda_device()) {
+    GTEST_SKIP() << "HoloMQ host pools require CUDA-backed generation storage";
+  }
+  const auto cuda_context = test::ScopedCudaPrimaryContext::create();
+  ASSERT_TRUE(cuda_context);
+  const std::string endpoint_name = "tensor-padded-span-" + std::to_string(::getpid());
+  auto catalog = make_tensor_export_catalog(endpoint_name,
+                                            1U,
+                                            MemoryKind::kHost,
+                                            {},
+                                            1U,
+                                            QueuePolicy::kBlocking,
+                                            TensorStridePolicy::kBoundedStrided);
+  ASSERT_TRUE(catalog) << runtime_error_message(catalog.error());
+  auto endpoint = catalog->endpoint(endpoint_name);
+  ASSERT_TRUE(endpoint) << runtime_error_message(endpoint.error());
+  const auto* const record = detail::ChannelEndpointCatalogAccess::record(*endpoint);
+  ASSERT_NE(record, nullptr);
+
+  auto runtime = ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << runtime_error_message(runtime.error());
+  auto subscriber = runtime->create_subscriber<Tensor>(*endpoint);
+  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+  auto publisher_context = holomq::ContextBuilder().with_vmm_fd_export(true).create();
+  ASSERT_TRUE(publisher_context) << publisher_context.error().message;
+  auto pool = publisher_context->create_host_buffer_pool(16U, 1U);
+  ASSERT_TRUE(pool) << pool.error().message;
+  // Keep the backing lease alive throughout both raw publications and imported views.
+  auto buffer = pool->acquire();
+  ASSERT_TRUE(buffer) << buffer.error().message;
+  const std::array<std::uint8_t, 5U> values{11U, 22U, 0xEEU, 33U, 44U};
+  std::memcpy(buffer->ptr(), values.data(), values.size());
+  auto handle = buffer->export_handle_unsynchronized();
+  ASSERT_TRUE(handle) << handle.error().message;
+
+  const holomq::PubSubServiceOptions service_options{
+      .queue_policy = holomq::QueuePolicy::kBlocking,
+      .max_subscribers = 1U,
+      .max_subscriber_queue_depth = record->service_static.max_subscriber_depth,
+      .max_subscriber_borrowed_samples = record->service_static.max_subscriber_borrowed,
+      .publisher_history_depth = record->service_static.publisher_history_depth,
+      .enable_event_wake = record->service_static.event_wake,
+  };
+  auto publisher = publisher_context
+                       ->publisher_builder(
+                           detail::ChannelEndpointCatalogAccess::backend_service_binding(*endpoint))
+                       .service_options(service_options)
+                       .publisher_options(holomq::PublisherPubSubOptions{.max_loaned_samples = 1U})
+                       .payload_type<channel_internal::TensorTransportPayload>()
+                       .create();
+  ASSERT_TRUE(publisher) << publisher.error().message;
+  const auto connection_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  std::uint32_t consecutive_ready_refreshes{};
+  while (consecutive_ready_refreshes < 2U &&
+         std::chrono::steady_clock::now() < connection_deadline) {
+    ASSERT_TRUE(subscriber->refresh_connections());
+    ASSERT_TRUE(publisher->update_connections());
+    consecutive_ready_refreshes =
+        publisher->has_subscribers() ? consecutive_ready_refreshes + 1U : 0U;
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  ASSERT_EQ(consecutive_ready_refreshes, 2U);
+
+  const std::array<std::int64_t, 2U> shape{2, 2};
+  const std::array<std::int64_t, 2U> strides{3, 1};
+  // Receive twice through a single import slot to verify release and subsequent receive capacity.
+  for (std::uint64_t sequence = 1U; sequence <= 2U; ++sequence) {
+    SCOPED_TRACE(sequence);
+    auto descriptor = channel_internal::make_holomq_tensor_descriptor(
+        shape,
+        DLDataType{.code = kDLUInt, .bits = 8U, .lanes = 1U},
+        TensorByteStridesSpan{strides},
+        /*byte_size=*/5U,
+        *handle,
+        /*read_only=*/true);
+    ASSERT_TRUE(descriptor) << runtime_error_message(descriptor.error());
+    auto message = publisher->loan();
+    ASSERT_TRUE(message) << message.error().message;
+    message->payload() = channel_internal::TensorTransportPayload{
+        .metadata = SampleMetadata{.sequence = sequence,
+                                   .byte_size = 5U,
+                                   .payload_kind = PayloadKind::kDescriptorBacked},
+        .producer_generation = 1U,
+        .payload_kind = ChannelPayloadKind::kBufferHandle,
+        .reference = channel_internal::TensorTransportReference{.holomq = *descriptor},
+    };
+    auto sent = publisher->send(std::move(*message), []() noexcept {});
+    ASSERT_TRUE(sent) << sent.error().message;
+    ASSERT_EQ(*sent, 1);
+    expected<Sample<Tensor>, Error> received = make_unexpected(Error{ErrorCode::kNotReady});
+    const auto receive_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    do {
+      received = subscriber->receive_sample();
+      if (received || received.error().code != ErrorCode::kNotReady) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    } while (std::chrono::steady_clock::now() < receive_deadline);
+    ASSERT_TRUE(received) << runtime_error_message(received.error());
+    EXPECT_EQ(received->metadata.byte_size, 5U);
+    EXPECT_EQ(received->data.nbytes(), 4U);
+    EXPECT_TRUE(received->data.is_read_only());
+    EXPECT_EQ(received->data.device().device_type, kDLCPU);
+    ASSERT_EQ(received->data.shape_span().size(), 2U);
+    EXPECT_EQ(received->data.shape_span()[0], 2);
+    EXPECT_EQ(received->data.shape_span()[1], 2);
+    ASSERT_EQ(received->data.dlpack_strides_span().size(), 2U);
+    EXPECT_EQ(received->data.dlpack_strides_span()[0], 3);
+    EXPECT_EQ(received->data.dlpack_strides_span()[1], 1);
+    ASSERT_NE(received->data.data(), nullptr);
+    const auto* const data = static_cast<const std::uint8_t*>(received->data.data());
+    EXPECT_EQ(data[0], 11U);
+    EXPECT_EQ(data[1], 22U);
+    EXPECT_EQ(data[2], 0xEEU);
+    EXPECT_EQ(data[3], 33U);
+    EXPECT_EQ(data[4], 44U);
+  }
+}
+
 // Data and terminal records share one publisher operation sequence. Equal sequence heads are
 // therefore ambiguous and must fail before either lane can expose a value.
 // REQ: EXTERNAL-004
@@ -2007,6 +2138,7 @@ TEST(ExternalTensorLoanRuntime, CatalogSubscriberRejectsDataTerminalSequenceTie)
 // producer's data look like a continuation of the retired endpoint.
 // REQ: EXTERNAL-004
 // REQ: CHAN-142
+// REQ: CHAN-150
 TEST(ExternalTensorLoanRuntime, CatalogSubscriberFencesARecreatedProducerIncarnation) {
   //   first_publisher  --> subscriber  [epoch A, sequence 1]
   //   first_publisher destroyed, second_publisher created
@@ -2059,6 +2191,8 @@ TEST(ExternalTensorLoanRuntime, CatalogSubscriberFencesARecreatedProducerIncarna
     ASSERT_NE(first_received->data.data(), nullptr);
     EXPECT_EQ(*static_cast<const std::byte*>(first_received->data.data()), std::byte{0x31});
   }
+  auto readiness = subscriber->readiness();
+  ASSERT_TRUE(readiness) << runtime_error_message(readiness.error());
 
   // Reclaim the first publisher's sole transport and physical slot before destroying its service.
   bool reclaimed = false;
@@ -2087,6 +2221,11 @@ TEST(ExternalTensorLoanRuntime, CatalogSubscriberFencesARecreatedProducerIncarna
   ASSERT_TRUE(wait_for_tensor_subscriber(second_publisher, *subscriber));
   auto second_emitted = publish_byte(second_publisher, std::byte{0x52});
   ASSERT_TRUE(second_emitted) << runtime_error_message(second_emitted.error());
+
+  pollfd descriptor{.fd = readiness->descriptor(), .events = POLLIN, .revents = 0};
+  ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(readiness->acknowledge());
 
   expected<Sample<Tensor>, Error> fenced = make_unexpected(Error{ErrorCode::kNotReady});
   const auto receive_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};

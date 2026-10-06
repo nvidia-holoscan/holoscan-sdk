@@ -155,6 +155,7 @@ TEST(RealtimeClock, TimestampReportsEpochNanoseconds) {
 }
 
 // REQ: CLOCK-RT-003
+// REQ: CLOCK-RT-008
 // A non-positive initial scale is clamped to 1.0 so the clock still moves forward.
 TEST(RealtimeClock, RejectsNonPositiveScale) {
   const RealtimeClock clock(RealtimeClock::Config{.initial_time_scale = -2.0});

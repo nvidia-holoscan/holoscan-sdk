@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -24,6 +25,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#elif defined(__linux__)
+#include <sched.h>
 #endif
 
 #include <gtest/gtest.h>
@@ -35,6 +38,7 @@
 #include "runtime_test_graph.hpp"
 #include "support/direct_port_binding.hpp"
 #include "support/host_unique_test_name.hpp"
+#include "threading/linux_thread_controller.hpp"
 
 namespace holoscan {
 namespace {
@@ -104,31 +108,59 @@ class RecordingSupportThreadControl final : public detail::RuntimeSupportThreadC
   explicit RecordingSupportThreadControl(const std::atomic_bool* work_started) noexcept
       : work_started_(work_started) {}
 
-  [[nodiscard]] expected<void, Error> enter(const detail::RuntimeSupportThreadRole role) override {
+  [[nodiscard]] expected<void, Error> enter(const SupportThreadRole role) override {
     const std::uint32_t role_bit = std::uint32_t{1U} << static_cast<std::uint32_t>(role);
     if (work_started_ != nullptr && !work_started_->load(std::memory_order_acquire)) {
       entered_before_work_.fetch_or(role_bit, std::memory_order_release);
     }
     entered_.fetch_or(role_bit, std::memory_order_release);
+#if defined(__linux__)
+    auto snapshot = detail::LinuxThreadController::snapshot();
+    if (!snapshot) {
+      return make_unexpected(std::move(snapshot).error());
+    }
+    {
+      const std::lock_guard lock(affinity_mutex_);
+      observed_affinities_[static_cast<std::size_t>(role)] = std::move(snapshot->affinity.cores);
+    }
+#endif
     return {};
   }
 
-  [[nodiscard]] bool entered(const detail::RuntimeSupportThreadRole role) const noexcept {
+  [[nodiscard]] bool entered(const SupportThreadRole role) const noexcept {
     return (entered_.load(std::memory_order_acquire) &
             (std::uint32_t{1U} << static_cast<std::uint32_t>(role))) != 0U;
   }
 
-  [[nodiscard]] bool entered_before_work(
-      const detail::RuntimeSupportThreadRole role) const noexcept {
+  [[nodiscard]] bool entered_before_work(const SupportThreadRole role) const noexcept {
     return (entered_before_work_.load(std::memory_order_acquire) &
             (std::uint32_t{1U} << static_cast<std::uint32_t>(role))) != 0U;
+  }
+
+  [[nodiscard]] std::vector<std::uint32_t> observed_affinity(const SupportThreadRole role) const {
+    const std::lock_guard lock(affinity_mutex_);
+    return observed_affinities_[static_cast<std::size_t>(role)];
   }
 
  private:
   const std::atomic_bool* work_started_{};
   std::atomic<std::uint32_t> entered_{};
   std::atomic<std::uint32_t> entered_before_work_{};
+  mutable std::mutex affinity_mutex_;
+  std::array<std::vector<std::uint32_t>, 2U> observed_affinities_;
 };
+
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+class PumpAllocationFailureSupportThreadControl final : public detail::RuntimeSupportThreadControl {
+ public:
+  [[nodiscard]] expected<void, Error> enter(const SupportThreadRole role) override {
+    if (role == SupportThreadRole::kChannelPump) {
+      throw std::bad_alloc{};
+    }
+    return {};
+  }
+};
+#endif
 
 enum class ProcessLocalTestDeliveryMode : std::uint8_t {
   kDirectRetained,
@@ -506,8 +538,16 @@ class AutomaticFanInDrainOperator final : public Operator<> {
 // Counts callbacks from operators whose embedded paths require lossless percent encoding.
 // Used by RuntimeAdmitsLosslesslyEncodedPartitionOperatorPaths.
 struct EncodedPartitionPathProbeState {
-  static void reset() noexcept { callbacks.store(0U, std::memory_order_relaxed); }
+  static void reset() noexcept {
+    callbacks.store(0U, std::memory_order_relaxed);
+    first_path.store(0U, std::memory_order_relaxed);
+    second_path.store(0U, std::memory_order_relaxed);
+    unexpected_path.store(false, std::memory_order_relaxed);
+  }
   static inline std::atomic<std::size_t> callbacks{};
+  static inline std::atomic<std::size_t> first_path{};
+  static inline std::atomic<std::size_t> second_path{};
+  static inline std::atomic_bool unexpected_path{};
 };
 
 // Supplies a single callback at an authored path containing slash-like segments.
@@ -525,8 +565,15 @@ class EncodedPartitionPathOperator final : public Operator<> {
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     EncodedPartitionPathProbeState::callbacks.fetch_add(1U, std::memory_order_relaxed);
+    if (context.operator_path() == "a/b%2Fc") {
+      EncodedPartitionPathProbeState::first_path.fetch_add(1U, std::memory_order_relaxed);
+    } else if (context.operator_path() == "a%2Fb/c") {
+      EncodedPartitionPathProbeState::second_path.fetch_add(1U, std::memory_order_relaxed);
+    } else {
+      EncodedPartitionPathProbeState::unexpected_path.store(true, std::memory_order_relaxed);
+    }
     return {};
   }
 
@@ -792,6 +839,8 @@ class HybridChannelSinkOperator final : public Operator<> {
 // per activation. Representative test: InputAnyExecutesThroughChannelBinding.
 struct ChannelInputTriggerProbe {
   static void reset() {
+    lifecycle_start_count.store(0U, std::memory_order_relaxed);
+    source_compute_entry_count.store(0U, std::memory_order_relaxed);
     source_compute_count.store(0U, std::memory_order_relaxed);
     sink_compute_count.store(0U, std::memory_order_relaxed);
     first_observed_value.store(0U, std::memory_order_relaxed);
@@ -801,10 +850,39 @@ struct ChannelInputTriggerProbe {
     other_receive_error.store(ErrorCode::kSuccess, std::memory_order_relaxed);
     allow_each_successor.store(false, std::memory_order_relaxed);
     work_started.store(false, std::memory_order_relaxed);
+    first_work_cpu.store(-1, std::memory_order_relaxed);
+    const std::lock_guard lock{mutex};
+    first_work_affinity.clear();
   }
 
-  static void record_work_started() noexcept {
+  static void record_work_started() {
+#if defined(__linux__)
+    int absent = -1;
+    static_cast<void>(first_work_cpu.compare_exchange_strong(
+        absent, sched_getcpu(), std::memory_order_release, std::memory_order_relaxed));
+    auto snapshot = detail::LinuxThreadController::snapshot();
+    if (snapshot) {
+      const std::lock_guard lock{mutex};
+      if (first_work_affinity.empty()) {
+        first_work_affinity = std::move(snapshot->affinity.cores);
+      }
+    }
+#endif
     work_started.store(true, std::memory_order_release);
+  }
+
+  static void record_lifecycle_start() {
+    lifecycle_start_count.fetch_add(1U, std::memory_order_release);
+  }
+
+  static void record_source_compute_entry() {
+    source_compute_entry_count.fetch_add(1U, std::memory_order_release);
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static std::vector<std::uint32_t> observed_first_work_affinity() {
+    const std::lock_guard lock{mutex};
+    return first_work_affinity;
   }
 
   static void record_source_compute() {
@@ -839,6 +917,8 @@ struct ChannelInputTriggerProbe {
 
   static inline std::mutex mutex;
   static inline std::condition_variable cv;
+  static inline std::atomic<std::size_t> lifecycle_start_count{};
+  static inline std::atomic<std::size_t> source_compute_entry_count{};
   static inline std::atomic<std::size_t> source_compute_count{};
   static inline std::atomic<std::size_t> sink_compute_count{};
   static inline std::atomic<std::uint32_t> first_observed_value{};
@@ -848,6 +928,8 @@ struct ChannelInputTriggerProbe {
   static inline std::atomic<ErrorCode> other_receive_error{ErrorCode::kSuccess};
   static inline std::atomic<bool> allow_each_successor{};
   static inline std::atomic_bool work_started{};
+  static inline std::atomic<int> first_work_cpu{-1};
+  static inline std::vector<std::uint32_t> first_work_affinity;
 };
 
 // Clock-triggered source (1 ms period) that emits to 'first' or 'second' depending on kind.
@@ -855,7 +937,9 @@ struct ChannelInputTriggerProbe {
 // after allow_each_successor is set. Used by InputAnyExecutesThroughChannelBinding.
 class ChannelInputTriggerSource final : public Operator<> {
  public:
-  explicit ChannelInputTriggerSource(ChannelInputTriggerKind kind) : kind_(kind) {}
+  explicit ChannelInputTriggerSource(ChannelInputTriggerKind kind,
+                                     bool restart_after_first_compute = false)
+      : kind_(kind), restart_after_first_compute_(restart_after_first_compute) {}
 
   void setup(OperatorSpec& spec) override {
     spec.output(first, "first").max_emits_per_compute(1U);
@@ -868,8 +952,20 @@ class ChannelInputTriggerSource final : public Operator<> {
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  void start() override { ChannelInputTriggerProbe::record_lifecycle_start(); }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     ChannelInputTriggerProbe::record_work_started();
+    ChannelInputTriggerProbe::record_source_compute_entry();
+    if (restart_after_first_compute_ && !restart_requested_) {
+      restart_requested_ = true;
+      auto requested =
+          context.request_restart(LifecycleRestartOptions{.from_stage = LifecycleStage::kStart});
+      if (!requested) {
+        return make_unexpected(std::move(requested.error()));
+      }
+      return {};
+    }
     if (kind_ == ChannelInputTriggerKind::kAny) {
       if (step_ != 0U) {
         return {};
@@ -906,6 +1002,8 @@ class ChannelInputTriggerSource final : public Operator<> {
 
  private:
   ChannelInputTriggerKind kind_;
+  bool restart_after_first_compute_{};
+  bool restart_requested_{};
   std::size_t step_{};
 };
 
@@ -929,6 +1027,8 @@ class ChannelInputTriggerSink final : public Operator<> {
     }
     return result;
   }
+
+  void start() override { ChannelInputTriggerProbe::record_lifecycle_start(); }
 
   [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
     ChannelInputTriggerProbe::record_work_started();
@@ -958,17 +1058,39 @@ class ChannelInputTriggerSink final : public Operator<> {
 //   source(second) --[depth=2]--> sink(second)
 //   Trigger: OnAnyInput (kind=kAny) or OnEach(first) (kind=kEach).
 [[nodiscard]] ExecutionPlan make_channel_input_trigger_plan(
-    ChannelInputTriggerKind kind, const bool force_holomq_process_local_inline = false) {
+    ChannelInputTriggerKind kind, const bool force_holomq_process_local_inline = false,
+    CompileOptions options = {}, const bool split_execution_partitions = false,
+    const bool restart_after_first_compute = false) {
   Graph graph{test::make_host_unique_test_name("channel-input-trigger")};
-  const auto source = graph.op<ChannelInputTriggerSource>("source", kind);
+  const auto source =
+      graph.op<ChannelInputTriggerSource>("source", kind, restart_after_first_compute);
   const auto sink = graph.op<ChannelInputTriggerSink>("sink", kind);
   graph.add_flow(source->first, sink->first, ConnectionOptions{.queue_depth = 2U});
   graph.add_flow(source->second, sink->second, ConnectionOptions{.queue_depth = 2U});
+  if (split_execution_partitions) {
+    graph.partition("channel-input-source").add(source);
+    graph.partition("channel-input-sink").add(sink);
+    graph.auto_partition_remaining();
+  }
+  if (restart_after_first_compute) {
+    graph.lifecycle().allow_self_restart(source);
+    options.lifecycle_transactions = LifecycleTransactionOptions{
+        .max_pending_requests = 4U,
+        .max_pending_transactions = 4U,
+        .max_receipts = 8U,
+        .max_fenced_operators = 8U,
+        .max_candidate_generations = 8U,
+        .max_events = 64U,
+        .max_audit_records = 16U,
+        .max_quiesce_records = 16U,
+        .max_rollback_records = 32U,
+    };
+  }
   const ClockKey default_clock = graph.add_clock<RealtimeClock>("channel-input-trigger-clock");
   graph.set_default_clock(default_clock);
   return force_holomq_process_local_inline
-             ? detail::compile_with_process_local_holomq(graph, CompileOptions{})
-             : compile(graph);
+             ? detail::compile_with_process_local_holomq(graph, std::move(options))
+             : compile(graph, std::move(options));
 }
 
 void expect_channel_input_trigger_execution(ChannelInputTriggerKind kind) {
@@ -1243,7 +1365,7 @@ TEST(DispatcherTest, EnvironmentGuardRestoresAbsentPresentAndEmptyStates) {
 // REQ: RUNTIME-002
 // REQ: RUNTIME-004
 // REQ: RUNTIME-041
-TEST(DispatcherTest, AutomaticSourceChainInterfaceV2RunsThroughPartitionLocalSerialOwner) {
+TEST(DispatcherTest, AutomaticSourceChainInterfaceV3RunsThroughPartitionLocalSerialOwner) {
   const ScopedPartitionEnvironment absent{std::nullopt};
   // Key setup: compile the aligned Channel graph through the automatic source-chain planner.
   const ExecutionPlan compiled = test::make_runtime_aligned_channel_plan();
@@ -1251,7 +1373,7 @@ TEST(DispatcherTest, AutomaticSourceChainInterfaceV2RunsThroughPartitionLocalSer
                                      ? "no diagnostic"
                                      : compiled.diagnostics().front().token);
   ASSERT_TRUE(compiled.partitioning_plan().accepted_algorithm.has_value());
-  EXPECT_EQ(compiled.partitioning_plan().interface_version, 2U);
+  EXPECT_EQ(compiled.partitioning_plan().interface_version, 3U);
   EXPECT_EQ(compiled.partitioning_plan().maturity, AlgorithmMaturity::kProduction);
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded by ASSERT_TRUE above.
   EXPECT_EQ(compiled.partitioning_plan().accepted_algorithm->id, "holoscan.partition.source_chain");
@@ -1263,7 +1385,7 @@ TEST(DispatcherTest, AutomaticSourceChainInterfaceV2RunsThroughPartitionLocalSer
   session.request_stop();
   session.wait();
 
-  // Key assertion: the accepted interface-v2 partition executes through one serial owner.
+  // Key assertion: the accepted interface-v3 partition executes through one serial owner.
   ASSERT_TRUE(observed) << (session.diagnostics().empty() ? "sink callback not observed"
                                                           : session.diagnostics().front().token);
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
@@ -1272,6 +1394,7 @@ TEST(DispatcherTest, AutomaticSourceChainInterfaceV2RunsThroughPartitionLocalSer
 
 // REQ: COMPILE-068
 // REQ: RUNTIME-041
+// REQ: OPERATOR-050
 TEST(DispatcherTest, RuntimeAdmitsLosslesslyEncodedPartitionOperatorPaths) {
   const ScopedPartitionEnvironment absent{std::nullopt};
   EncodedPartitionPathProbeState::reset();
@@ -1295,6 +1418,9 @@ TEST(DispatcherTest, RuntimeAdmitsLosslesslyEncodedPartitionOperatorPaths) {
   EXPECT_EQ(session.termination(), RunTermination::kCompleted);
   EXPECT_TRUE(session.diagnostics().empty());
   EXPECT_EQ(EncodedPartitionPathProbeState::callbacks.load(std::memory_order_relaxed), 2U);
+  EXPECT_EQ(EncodedPartitionPathProbeState::first_path.load(std::memory_order_relaxed), 1U);
+  EXPECT_EQ(EncodedPartitionPathProbeState::second_path.load(std::memory_order_relaxed), 1U);
+  EXPECT_FALSE(EncodedPartitionPathProbeState::unexpected_path.load(std::memory_order_relaxed));
 }
 
 // REQ: COMPILE-068
@@ -1681,7 +1807,8 @@ TEST(ChannelPartitionPlanParityTest, InputEachExecutesThroughChannelBinding) {
   expect_channel_input_trigger_execution(ChannelInputTriggerKind::kEach);
 }
 
-TEST_P(ChannelSupportThreadModeTest, PrivateControlObservesRuntimeSupportThreadsBeforeWork) {
+// REQ: RUNTIME-061
+TEST_P(ChannelSupportThreadModeTest, AcceptedAffinityAppliesBeforePrivateObservationAndWork) {
   const ScopedPartitionEnvironment absent{std::nullopt};
   const bool force_holomq = GetParam() != ProcessLocalTestDeliveryMode::kDirectRetained;
   const bool force_channel_pump = GetParam() == ProcessLocalTestDeliveryMode::kHoloMQForcedPump;
@@ -1690,7 +1817,18 @@ TEST_P(ChannelSupportThreadModeTest, PrivateControlObservesRuntimeSupportThreads
   ChannelInputTriggerProbe::reset();
   auto control =
       std::make_shared<RecordingSupportThreadControl>(&ChannelInputTriggerProbe::work_started);
-  ExecutionPlan plan = make_channel_input_trigger_plan(ChannelInputTriggerKind::kAny, force_holomq);
+  CompileOptions options;
+#if defined(__linux__)
+  const auto compiling_thread = detail::LinuxThreadController::snapshot();
+  ASSERT_TRUE(compiling_thread.has_value());
+  ASSERT_FALSE(compiling_thread->affinity.cores.empty());
+  const std::uint32_t selected_cpu = compiling_thread->affinity.cores.front();
+  options.deployment
+      .bind_support_thread_affinity(SupportThreadRole::kController, CPUAffinity{selected_cpu})
+      .bind_support_thread_affinity(SupportThreadRole::kChannelPump, CPUAffinity{selected_cpu});
+#endif
+  ExecutionPlan plan = make_channel_input_trigger_plan(
+      ChannelInputTriggerKind::kAny, force_holomq, std::move(options));
   if (force_channel_pump) {
     plan = detail::RuntimeTestPlanAccess::force_process_local_channel_pump_for_test(plan);
   }
@@ -1704,13 +1842,319 @@ TEST_P(ChannelSupportThreadModeTest, PrivateControlObservesRuntimeSupportThreads
   EXPECT_TRUE(observed);
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty());
-  EXPECT_TRUE(control->entered(detail::RuntimeSupportThreadRole::kController));
-  EXPECT_TRUE(control->entered_before_work(detail::RuntimeSupportThreadRole::kController));
+  EXPECT_TRUE(control->entered(SupportThreadRole::kController));
+  EXPECT_TRUE(control->entered_before_work(SupportThreadRole::kController));
   // Key assertion: only the exact cold control enters a pump; direct retention and the ordinary
   // all-eventless HoloMQ process begin work with the controller as their sole support thread.
-  EXPECT_EQ(control->entered(detail::RuntimeSupportThreadRole::kChannelPump), force_channel_pump);
-  EXPECT_EQ(control->entered_before_work(detail::RuntimeSupportThreadRole::kChannelPump),
-            force_channel_pump);
+  EXPECT_EQ(control->entered(SupportThreadRole::kChannelPump), force_channel_pump);
+  EXPECT_EQ(control->entered_before_work(SupportThreadRole::kChannelPump), force_channel_pump);
+#if defined(__linux__)
+  EXPECT_EQ(control->observed_affinity(SupportThreadRole::kController),
+            (std::vector<std::uint32_t>{selected_cpu}));
+  EXPECT_EQ(ChannelInputTriggerProbe::first_work_cpu.load(std::memory_order_acquire),
+            static_cast<int>(selected_cpu));
+  if (force_channel_pump) {
+    EXPECT_EQ(control->observed_affinity(SupportThreadRole::kChannelPump),
+              (std::vector<std::uint32_t>{selected_cpu}));
+  }
+#endif
+}
+
+// REQ: RUNTIME-061
+TEST(ChannelSupportThreadPlacement, MultiCpuAllowedSetAppliesWholeToControllerAndPump) {
+#if defined(__linux__)
+  const ScopedPartitionEnvironment absent{std::nullopt};
+  const auto compiling_thread = detail::LinuxThreadController::snapshot();
+  ASSERT_TRUE(compiling_thread.has_value());
+  if (compiling_thread->affinity.cores.size() < 2U) {
+    GTEST_SKIP() << "The effective compiling-thread affinity contains fewer than two CPUs";
+  }
+  const std::vector<std::uint32_t> allowed_cpus{compiling_thread->affinity.cores[0],
+                                                compiling_thread->affinity.cores[1]};
+  CompileOptions options;
+  options.deployment
+      .bind_support_thread_affinity(SupportThreadRole::kController, CPUAffinity{allowed_cpus})
+      .bind_support_thread_affinity(SupportThreadRole::kChannelPump, CPUAffinity{allowed_cpus});
+  ChannelInputTriggerProbe::reset();
+  auto control =
+      std::make_shared<RecordingSupportThreadControl>(&ChannelInputTriggerProbe::work_started);
+  ExecutionPlan plan =
+      make_channel_input_trigger_plan(ChannelInputTriggerKind::kAny, true, std::move(options));
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  plan = detail::RuntimeTestPlanAccess::force_process_local_channel_pump_for_test(plan);
+  plan = detail::RuntimeTestPlanAccess::with_support_thread_control(plan, control);
+
+  RunSession session = run_async(plan);
+  const bool observed = ChannelInputTriggerProbe::wait_for_sink(1U);
+  session.request_stop();
+  session.wait();
+
+  ASSERT_TRUE(observed);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(control->observed_affinity(SupportThreadRole::kController), allowed_cpus);
+  EXPECT_EQ(control->observed_affinity(SupportThreadRole::kChannelPump), allowed_cpus);
+  const int first_work_cpu =
+      ChannelInputTriggerProbe::first_work_cpu.load(std::memory_order_acquire);
+  ASSERT_GE(first_work_cpu, 0);
+  EXPECT_NE(std::ranges::find(allowed_cpus, static_cast<std::uint32_t>(first_work_cpu)),
+            allowed_cpus.end());
+#else
+  GTEST_SKIP() << "CPU-affinity application is supported only on Linux";
+#endif
+}
+
+// REQ: RUNTIME-061
+TEST(ChannelSupportThreadPlacement, ControllerOnlyAffinityPreservesUnboundWorkerMask) {
+#if defined(__linux__)
+  const ScopedPartitionEnvironment absent{std::nullopt};
+  const auto compiling_thread = detail::LinuxThreadController::snapshot();
+  ASSERT_TRUE(compiling_thread.has_value());
+  if (compiling_thread->affinity.cores.size() < 2U) {
+    GTEST_SKIP() << "The effective compiling-thread affinity contains fewer than two CPUs";
+  }
+  const std::vector<std::uint32_t> original_affinity = compiling_thread->affinity.cores;
+  const std::uint32_t controller_cpu = original_affinity.front();
+  CompileOptions options;
+  options.deployment.bind_support_thread_affinity(SupportThreadRole::kController,
+                                                  CPUAffinity{controller_cpu});
+  ChannelInputTriggerProbe::reset();
+  auto control =
+      std::make_shared<RecordingSupportThreadControl>(&ChannelInputTriggerProbe::work_started);
+  ExecutionPlan plan = make_channel_input_trigger_plan(
+      ChannelInputTriggerKind::kAny, false, std::move(options), true);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  plan = detail::RuntimeTestPlanAccess::with_support_thread_control(plan, control);
+
+  RunSession session = run_async(plan);
+  const bool observed = ChannelInputTriggerProbe::wait_for_sink(1U);
+  session.request_stop();
+  session.wait();
+
+  ASSERT_TRUE(observed);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_EQ(control->observed_affinity(SupportThreadRole::kController),
+            (std::vector<std::uint32_t>{controller_cpu}));
+  EXPECT_EQ(ChannelInputTriggerProbe::observed_first_work_affinity(), original_affinity);
+#else
+  GTEST_SKIP() << "CPU-affinity application is supported only on Linux";
+#endif
+}
+
+// REQ: RUNTIME-061
+TEST(ChannelSupportThreadPlacement,
+     ProductionPlacementFailureStopsBeforeObserverAndOrdinaryCompute) {
+#if defined(__linux__)
+  const auto compiling_thread = detail::LinuxThreadController::snapshot();
+  ASSERT_TRUE(compiling_thread.has_value());
+  ASSERT_FALSE(compiling_thread->affinity.cores.empty());
+  for (const SupportThreadRole failing_role :
+       {SupportThreadRole::kController, SupportThreadRole::kChannelPump}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(failing_role));
+    CompileOptions options;
+    options.deployment
+        .bind_support_thread_affinity(SupportThreadRole::kController,
+                                      CPUAffinity{compiling_thread->affinity.cores.front()})
+        .bind_support_thread_affinity(SupportThreadRole::kChannelPump,
+                                      CPUAffinity{compiling_thread->affinity.cores.front()});
+    ChannelInputTriggerProbe::reset();
+    ExecutionPlan plan =
+        make_channel_input_trigger_plan(ChannelInputTriggerKind::kAny, true, std::move(options));
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    plan = detail::RuntimeTestPlanAccess::force_process_local_channel_pump_for_test(plan);
+    plan = detail::RuntimeTestPlanAccess::with_support_thread_affinity_core_for_test(
+        plan, failing_role, CPU_SETSIZE);
+    ASSERT_TRUE(plan.ok());
+    auto control =
+        std::make_shared<RecordingSupportThreadControl>(&ChannelInputTriggerProbe::work_started);
+    plan = detail::RuntimeTestPlanAccess::with_support_thread_control(plan, control);
+
+    RunSession session = run_async(plan);
+    const bool terminal = session.wait_for(std::chrono::seconds{5});
+    if (!terminal) {
+      session.request_stop();
+    }
+    session.wait();
+
+    ASSERT_TRUE(terminal) << "support-thread placement failure did not terminate the session";
+    EXPECT_EQ(session.termination(), RunTermination::kFailed);
+    EXPECT_FALSE(ChannelInputTriggerProbe::work_started.load(std::memory_order_acquire));
+    EXPECT_EQ(ChannelInputTriggerProbe::lifecycle_start_count.load(std::memory_order_acquire),
+              failing_role == SupportThreadRole::kController ? 0U : 2U);
+    EXPECT_FALSE(control->entered(failing_role));
+    const auto diagnostic = std::ranges::find(
+        session.diagnostics(), std::string{"RUNTIME_STARTUP_FAILED"}, &Diagnostic::token);
+    ASSERT_NE(diagnostic, session.diagnostics().end());
+    ASSERT_TRUE(diagnostic->detail.has_value());
+    EXPECT_EQ(diagnostic->detail->operation, DiagnosticOperation::kRuntime);
+    const std::string role_name =
+        failing_role == SupportThreadRole::kController ? "controller" : "channel-pump";
+    EXPECT_EQ(diagnostic->detail->operator_path, "support-thread/" + role_name);
+    EXPECT_NE(diagnostic->required.find("requested=[" + std::to_string(CPU_SETSIZE) + "]"),
+              std::string::npos);
+    EXPECT_NE(diagnostic->provided.find("phase=runtime_apply"), std::string::npos);
+    EXPECT_NE(diagnostic->detail->error.message.find("affinity"), std::string::npos);
+    const std::string formatted = format_diagnostic(*diagnostic, plan.graph());
+    EXPECT_NE(formatted.find(role_name), std::string::npos);
+    EXPECT_NE(formatted.find("runtime_apply"), std::string::npos);
+  }
+#else
+  GTEST_SKIP() << "CPU-affinity application is supported only on Linux";
+#endif
+}
+
+// REQ: RUNTIME-061
+TEST(ChannelSupportThreadPlacement, ReplacementPumpFailureRetainsPlacementContext) {
+#if defined(__linux__)
+  const auto compiling_thread = detail::LinuxThreadController::snapshot();
+  ASSERT_TRUE(compiling_thread.has_value());
+  ASSERT_FALSE(compiling_thread->affinity.cores.empty());
+  CompileOptions options;
+  options.deployment.bind_support_thread_affinity(
+      SupportThreadRole::kChannelPump, CPUAffinity{compiling_thread->affinity.cores.front()});
+  ChannelInputTriggerProbe::reset();
+  ExecutionPlan plan = make_channel_input_trigger_plan(
+      ChannelInputTriggerKind::kAny, true, std::move(options), false, true);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  plan = detail::RuntimeTestPlanAccess::force_process_local_channel_pump_for_test(plan);
+  plan =
+      detail::RuntimeTestPlanAccess::with_support_thread_affinity_core_after_first_entry_for_test(
+          plan, SupportThreadRole::kChannelPump, CPU_SETSIZE);
+  ASSERT_TRUE(plan.ok());
+
+  RunSession session = run_async(plan);
+  const bool terminal = session.wait_for(std::chrono::seconds{5});
+  if (!terminal) {
+    session.request_stop();
+  }
+  session.wait();
+
+  ASSERT_TRUE(terminal) << "replacement pump placement failure did not terminate the session";
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_TRUE(ChannelInputTriggerProbe::work_started.load(std::memory_order_acquire));
+  EXPECT_EQ(ChannelInputTriggerProbe::source_compute_entry_count.load(std::memory_order_acquire),
+            1U);
+  EXPECT_EQ(ChannelInputTriggerProbe::source_compute_count.load(std::memory_order_acquire), 0U);
+  const auto diagnostic = std::ranges::find(
+      session.diagnostics(), std::string{"RUNTIME_STARTUP_FAILED"}, &Diagnostic::token);
+  ASSERT_NE(diagnostic, session.diagnostics().end());
+  ASSERT_TRUE(diagnostic->detail.has_value());
+  EXPECT_EQ(diagnostic->detail->operation, DiagnosticOperation::kRuntime);
+  EXPECT_EQ(diagnostic->detail->operator_path, "support-thread/channel-pump");
+  EXPECT_NE(diagnostic->required.find("requested=[" + std::to_string(CPU_SETSIZE) + "]"),
+            std::string::npos);
+  EXPECT_NE(diagnostic->provided.find("phase=runtime_apply"), std::string::npos);
+  EXPECT_NE(diagnostic->detail->error.message.find("affinity"), std::string::npos);
+#else
+  GTEST_SKIP() << "CPU-affinity application is supported only on Linux";
+#endif
+}
+
+// REQ: RUNTIME-061
+TEST(ChannelSupportThreadPlacement, PumpSetupAllocationFailureIsContainedBeforeCompute) {
+#if (defined(__cpp_exceptions) || defined(_CPPUNWIND)) && defined(__linux__)
+  const auto compiling_thread = detail::LinuxThreadController::snapshot();
+  ASSERT_TRUE(compiling_thread.has_value());
+  ASSERT_FALSE(compiling_thread->affinity.cores.empty());
+  CompileOptions options;
+  options.deployment.bind_support_thread_affinity(
+      SupportThreadRole::kChannelPump, CPUAffinity{compiling_thread->affinity.cores.front()});
+  ChannelInputTriggerProbe::reset();
+  ExecutionPlan plan =
+      make_channel_input_trigger_plan(ChannelInputTriggerKind::kAny, true, std::move(options));
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  plan = detail::RuntimeTestPlanAccess::force_process_local_channel_pump_for_test(plan);
+  plan = detail::RuntimeTestPlanAccess::with_support_thread_control(
+      plan, std::make_shared<PumpAllocationFailureSupportThreadControl>());
+
+  RunSession session = run_async(plan);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_FALSE(ChannelInputTriggerProbe::work_started.load(std::memory_order_acquire));
+  EXPECT_EQ(ChannelInputTriggerProbe::lifecycle_start_count.load(std::memory_order_acquire), 2U);
+  const auto diagnostic = std::ranges::find(
+      session.diagnostics(), std::string{"RUNTIME_STARTUP_FAILED"}, &Diagnostic::token);
+  ASSERT_NE(diagnostic, session.diagnostics().end());
+  ASSERT_TRUE(diagnostic->detail.has_value());
+  EXPECT_EQ(diagnostic->detail->error.code, ErrorCode::kResourceExhausted);
+#else
+  GTEST_SKIP() << "Pump allocation-failure containment requires Linux and language exceptions";
+#endif
+}
+
+// REQ: RUNTIME-061
+TEST(ChannelSupportThreadPlacement, RejectsMalformedFrozenRecordsBeforeCallbacks) {
+#if defined(__linux__)
+  const auto compiling_thread = detail::LinuxThreadController::snapshot();
+  ASSERT_TRUE(compiling_thread.has_value());
+  ASSERT_FALSE(compiling_thread->affinity.cores.empty());
+  CompileOptions options;
+  options.deployment.bind_support_thread_affinity(
+      SupportThreadRole::kController, CPUAffinity{compiling_thread->affinity.cores.front()});
+  const ExecutionPlan baseline =
+      make_channel_input_trigger_plan(ChannelInputTriggerKind::kAny, false, std::move(options));
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  using PartitionMutation = detail::RuntimePartitionTestPlanAccess::PartitionMutation;
+  for (const PartitionMutation mutation : {PartitionMutation::kSupportAffinityDuplicate,
+                                           PartitionMutation::kSupportAffinityUnknownRole,
+                                           PartitionMutation::kSupportAffinityMalformedRequest}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(mutation));
+    ChannelInputTriggerProbe::reset();
+    const ExecutionPlan malformed =
+        detail::RuntimePartitionTestPlanAccess::mutate_partition(baseline, mutation);
+    ASSERT_TRUE(malformed.ok());
+
+    RunSession session = run_async(malformed);
+    session.wait();
+
+    EXPECT_EQ(session.termination(), RunTermination::kFailed);
+    EXPECT_FALSE(ChannelInputTriggerProbe::work_started.load(std::memory_order_acquire));
+    EXPECT_TRUE(test::has_runtime_diagnostic(session, "RUNTIME_PLACEMENT_BINDING_UNAVAILABLE"));
+  }
+#else
+  GTEST_SKIP() << "CPU-affinity application is supported only on Linux";
+#endif
+}
+
+// REQ: RUNTIME-061
+TEST(ChannelSupportThreadPlacement, RejectsFrozenInlineControllerAffinityConflictBeforeCallbacks) {
+#if defined(__linux__)
+  const auto compiling_thread = detail::LinuxThreadController::snapshot();
+  ASSERT_TRUE(compiling_thread.has_value());
+  ASSERT_FALSE(compiling_thread->affinity.cores.empty());
+  const std::uint32_t selected_cpu = compiling_thread->affinity.cores.front();
+
+  Graph graph{test::make_host_unique_test_name("inline-controller-affinity-conflict")};
+  const auto source = graph.op<ChannelInputTriggerSource>("source", ChannelInputTriggerKind::kAny);
+  const auto sink = graph.op<ChannelInputTriggerSink>("sink", ChannelInputTriggerKind::kAny);
+  graph.add_flow(source->first, sink->first, ConnectionOptions{.queue_depth = 2U});
+  graph.add_flow(source->second, sink->second, ConnectionOptions{.queue_depth = 2U});
+  graph.partition("worker").add(source).add(sink);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("inline-controller-affinity-clock"));
+  CompileOptions options;
+  options.deployment
+      .bind_support_thread_affinity(SupportThreadRole::kController, CPUAffinity{selected_cpu})
+      .bind_thread_placement("worker", ThreadPlacement{.affinity = CPUAffinity{selected_cpu}});
+  const ExecutionPlan baseline = compile(graph, std::move(options));
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+
+  ChannelInputTriggerProbe::reset();
+  const ExecutionPlan malformed = detail::RuntimePartitionTestPlanAccess::mutate_partition(
+      baseline,
+      detail::RuntimePartitionTestPlanAccess::PartitionMutation::kInlineControllerAffinityConflict);
+  ASSERT_TRUE(malformed.ok());
+
+  RunSession session = run_async(malformed);
+  session.wait();
+
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_FALSE(ChannelInputTriggerProbe::work_started.load(std::memory_order_acquire));
+  EXPECT_TRUE(test::has_runtime_diagnostic(session, "RUNTIME_PLACEMENT_BINDING_UNAVAILABLE"));
+#else
+  GTEST_SKIP() << "CPU-affinity application is supported only on Linux";
+#endif
 }
 
 INSTANTIATE_TEST_SUITE_P(ChannelDelivery, ChannelSupportThreadModeTest,

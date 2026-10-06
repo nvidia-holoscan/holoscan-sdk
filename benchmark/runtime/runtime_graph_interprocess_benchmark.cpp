@@ -44,7 +44,7 @@
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/run_session.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
@@ -71,6 +71,7 @@ using benchmarking::BenchmarkMonotonicClock;
 using benchmarking::BenchmarkSupportThreadControl;
 using benchmarking::emit_cpu_list;
 using benchmarking::emit_optional_cpu;
+using benchmarking::emit_runtime_diagnostics;
 using benchmarking::emit_runtime_thread_usage;
 using benchmarking::emit_support_thread_evidence;
 using benchmarking::json_escape;
@@ -3483,8 +3484,10 @@ void emit_result(std::ostream& output, const RunState& state, const ExecutionPla
   output << ",\n"
          << "  \"termination\":\""
          << (session.termination() == RunTermination::kStopped ? "stopped" : "other") << "\",\n"
-         << "  \"diagnostic_count\":" << session.diagnostics().size() << "\n"
-         << "}\n";
+         << "  \"diagnostic_count\":" << session.diagnostics().size() << ",\n"
+         << "  \"diagnostics\":";
+  emit_runtime_diagnostics(output, session.diagnostics());
+  output << "\n}\n";
 }
 
 [[nodiscard]] bool parse_unsigned(const std::string_view text, std::uint64_t& result) noexcept {
@@ -3974,8 +3977,8 @@ void print_help(std::ostream& output) {
           : (benchmark_options.role == Role::kRelay
                  ? benchmark_options.relay_pump_cpu
                  : benchmark_options.consumer_pump_cpus[benchmark_options.consumer_index]);
-  const auto thread_control =
-      std::make_shared<BenchmarkSupportThreadControl>(std::vector<SupportThreadBinding>{
+  const auto thread_control = std::make_shared<BenchmarkSupportThreadControl>(
+      std::vector<SupportThreadBinding>{
           {.role = SupportThreadRole::kController,
            .requested_cpu = controller_cpu,
            .required = true},
@@ -3983,7 +3986,8 @@ void print_help(std::ostream& output) {
            .requested_cpu = pump_cpu,
            .required = benchmark_options.role != Role::kProducer,
            .forbidden = benchmark_options.role == Role::kProducer},
-      });
+      },
+      true);
   ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_support_thread_control(
       make_plan(state.options()), thread_control);
   if (phase_counters) {
@@ -4165,6 +4169,9 @@ void print_help(std::ostream& output) {
       std::cerr << diagnostic.token << ' ';
     }
     std::cerr << '\n';
+    if (!session.diagnostics().empty()) {
+      std::cerr << format_diagnostics(session.diagnostics(), plan.graph()) << '\n';
+    }
   }
   g_run_state = nullptr;
   return valid ? 0 : 1;

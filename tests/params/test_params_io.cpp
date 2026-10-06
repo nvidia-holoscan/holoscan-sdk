@@ -14,9 +14,11 @@
 
 #include <gtest/gtest.h>
 
+#include <holoscan/core/compile.hpp>
 #include <holoscan/params/persistence.hpp>
 
 #include "../support/host_unique_test_name.hpp"
+#include "compiler/execution_plan_state.hpp"
 #include "core/parameter_snapshot_archive_access.hpp"
 
 namespace holoscan::params {
@@ -40,6 +42,82 @@ class TemporaryArchive {
  private:
   std::filesystem::path path_;
 };
+
+struct ArchiveParams {
+  std::int32_t value{};
+};
+
+HOLOSCAN_PARAM_SCHEMA(ArchiveParams, param_schema("holoscan.test.ArchiveParams", 1),
+                      field<&ArchiveParams::value>("value"));
+
+class ArchiveOperator final : public Operator<ArchiveParams> {
+ public:
+  void setup(OperatorSpec&) override {}
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+[[nodiscard]] ParamSnapshot archive_rebind_snapshot(std::int32_t value = 42) {
+  const ParamSchemaDescriptor* const schema = param_schema_descriptor<ArchiveParams>();
+  const ParamFieldDescriptor& field = schema->fields.front();
+  auto field_path = ParamPath::parse("value");
+  auto operator_path = OperatorPath::parse("archive-op");
+  if (!field_path || !operator_path)
+    return {};
+
+  std::vector<ParamSnapshotFieldRecord> fields;
+  fields.push_back(ParamSnapshotFieldRecord{
+      .address = ParamAddress{.field = field.id},
+      .full_id = field.full_id,
+      .path = std::move(*field_path),
+      .logical_type = field.logical_type,
+      .type =
+          ParamSnapshotTypeIdentity{.id = "holoscan.i32", .version = 1U, .shape = field.type_shape},
+      .codec = ParamSnapshotCodecIdentity{.id = "holoscan.config.i32", .version = 1U},
+      .projection = ParamProjectionStatus::kIncluded,
+      .value = ParamValue::from(value),
+  });
+  std::vector<ParamSnapshotOperatorRecord> operators;
+  operators.push_back(ParamSnapshotOperatorRecord{
+      .path = std::move(*operator_path),
+      .effective_profile = Profile::kStandard,
+      .schema_availability = ParamSchemaAvailability::kDeclared,
+      .schema_id = std::string{schema->stable_id},
+      .schema_version = schema->version,
+      .structural_hash = schema->structural_hash,
+      .contract_hash = schema->contract_hash,
+      .metadata_hash = schema->metadata_hash,
+      .schema_coverage = schema->coverage,
+      .schema_proof = schema->proof,
+      .generation = 1U,
+      .accepted_update_sequence = 1U,
+      .published_update_sequence = 1U,
+      .state = ParamUpdateState::kPublished,
+      .filter = ParamSnapshotFilter::kPolicyDefault,
+      .value_coverage = ParamSnapshotValueCoverage::kPolicyFiltered,
+      .fields = std::move(fields),
+  });
+  return holoscan::detail::ParamSnapshotArchiveAccess::snapshot(
+      {},
+      {},
+      {},
+      {},
+      ParamReadView::kPublished,
+      ParamCaptureConsistency::kRequireStopped,
+      ParamSnapshotScope::root(),
+      ParamUpdateSequence{1U},
+      ParamUpdateSequence{1U},
+      std::move(operators));
+}
+
+[[nodiscard]] const ArchiveParams* compiled_archive_params(const ExecutionPlan& plan) {
+  const auto* state = holoscan::detail::ExecutionPlanAccess::state(plan);
+  if (state == nullptr || state->executable_factories.operators.empty() ||
+      !state->executable_factories.operators.front().factory) {
+    return nullptr;
+  }
+  return static_cast<const ArchiveParams*>(
+      state->executable_factories.operators.front().factory->initial_parameter_value());
+}
 
 // Builds a snapshot with one operator record ("scalar-source") covering all 11 supported scalar
 // types: bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64. Used by
@@ -228,6 +306,121 @@ TEST(ParameterArchive, EmptySnapshotRoundTripsThroughCanonicalEnvelope) {
   auto sliced = loaded->slice(ParamSnapshotScope::root());
   ASSERT_TRUE(sliced.has_value());
   EXPECT_FALSE(archive_identity(*sliced).has_value());
+}
+
+// REQ: PARAM-047
+TEST(ParameterArchive, LoadAndSetAttachesVerifiedArchiveToGraph) {
+  const TemporaryArchive archive;
+  ASSERT_TRUE(save(archive_rebind_snapshot(), archive.path()).has_value());
+  Graph graph{"archive-rebind"};
+  (void)graph.op<ArchiveOperator>("archive-op");
+
+  auto attached = load_and_set_params(graph, archive.path());
+  ASSERT_TRUE(attached.has_value()) << attached.error().detail().token();
+  EXPECT_EQ(attached->source_archive_semantic_version, 1U);
+  EXPECT_FALSE(std::ranges::all_of(attached->source_archive_digest,
+                                   [](std::byte byte) { return byte == std::byte{}; }));
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const ArchiveParams* const resolved = compiled_archive_params(plan);
+  ASSERT_NE(resolved, nullptr);
+  EXPECT_EQ(resolved->value, 42);
+}
+
+// REQ: PARAM-047
+TEST(ParameterArchive, LoadFailureLeavesGraphUnchangedAndAttachable) {
+  const TemporaryArchive archive;
+  Graph graph{"archive-load-failure"};
+  (void)graph.op<ArchiveOperator>("archive-op");
+  const GraphView before = graph.view();
+
+  auto rejected = load_and_set_params(graph, archive.path());
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), ParamRebindErrorCode::kInvalidSnapshot);
+  EXPECT_EQ(rejected.error().stage(), ParamRebindStage::kSourceValidation);
+  EXPECT_EQ(rejected.error().detail().token(), "PARAM_ARCHIVE_LOAD_FAILED");
+  const GraphView after = graph.view();
+  EXPECT_EQ(after.generation(), before.generation());
+  EXPECT_EQ(after.identity(), before.identity());
+  EXPECT_EQ(after.vertices().size(), before.vertices().size());
+
+  ASSERT_TRUE(save(archive_rebind_snapshot(), archive.path()).has_value());
+  auto attached = load_and_set_params(graph, archive.path());
+  ASSERT_TRUE(attached.has_value()) << attached.error().detail().token();
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const ArchiveParams* const resolved = compiled_archive_params(plan);
+  ASSERT_NE(resolved, nullptr);
+  EXPECT_EQ(resolved->value, 42);
+}
+
+// REQ: PARAM-047
+TEST(ParameterArchive, ConversionFailureLeavesGraphUnchangedAndAttachable) {
+  const TemporaryArchive archive;
+  ASSERT_TRUE(save(archive_rebind_snapshot(), archive.path()).has_value());
+  Graph graph{"archive-conversion-failure"};
+  (void)graph.op<ArchiveOperator>("archive-op");
+  auto valid_path = OperatorPath::parse("archive-op");
+  auto missing_path = OperatorPath::parse("missing-op");
+  ASSERT_TRUE(valid_path.has_value());
+  ASSERT_TRUE(missing_path.has_value());
+  const ParamRebindTargetScope mismatched_scope = ParamRebindTargetScope::operator_set(
+      std::vector<OperatorPath>{std::move(*valid_path), std::move(*missing_path)});
+  const GraphView before = graph.view();
+
+  auto rejected = load_and_set_params(graph, archive.path(), mismatched_scope);
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), ParamRebindErrorCode::kScopeNotFound);
+  EXPECT_EQ(rejected.error().stage(), ParamRebindStage::kTargetCapture);
+  EXPECT_EQ(rejected.error().detail().token(), "PARAM_REBIND_TARGET_OPERATOR_UNKNOWN");
+  const GraphView after = graph.view();
+  EXPECT_EQ(after.generation(), before.generation());
+  EXPECT_EQ(after.identity(), before.identity());
+  EXPECT_EQ(after.vertices().size(), before.vertices().size());
+
+  auto attached = load_and_set_params(graph, archive.path());
+  ASSERT_TRUE(attached.has_value()) << attached.error().detail().token();
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const ArchiveParams* const resolved = compiled_archive_params(plan);
+  ASSERT_NE(resolved, nullptr);
+  EXPECT_EQ(resolved->value, 42);
+}
+
+// REQ: PARAM-047
+TEST(ParameterArchive, OccupiedTransactionRemainsInstalledWhenLoadAndSetFails) {
+  const TemporaryArchive archive;
+  ASSERT_TRUE(save(archive_rebind_snapshot(42), archive.path()).has_value());
+  Graph graph{"archive-occupied-transaction"};
+  (void)graph.op<ArchiveOperator>("archive-op");
+  auto first = set_params(graph, archive_rebind_snapshot(17));
+  ASSERT_TRUE(first.has_value()) << first.error().detail().token();
+  const GraphView before = graph.view();
+
+  auto rejected = load_and_set_params(graph, archive.path());
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), ParamRebindErrorCode::kInvalidTarget);
+  EXPECT_EQ(rejected.error().stage(), ParamRebindStage::kResultValidation);
+  EXPECT_EQ(rejected.error().detail().token(), "PARAM_REBIND_ATTACH_FAILED");
+  const auto& core_cause = rejected.error().detail().core_cause();
+  ASSERT_TRUE(core_cause.has_value());
+  if (core_cause.has_value()) {
+    EXPECT_EQ(core_cause->message, "GRAPH_PARAMETER_TRANSACTION_EXISTS");
+  }
+  const GraphView after = graph.view();
+  EXPECT_EQ(after.generation(), before.generation());
+  EXPECT_EQ(after.identity(), before.identity());
+  EXPECT_EQ(after.vertices().size(), before.vertices().size());
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const ArchiveParams* const resolved = compiled_archive_params(plan);
+  ASSERT_NE(resolved, nullptr);
+  EXPECT_EQ(resolved->value, 17);
 }
 
 // REQ: PARAM-025

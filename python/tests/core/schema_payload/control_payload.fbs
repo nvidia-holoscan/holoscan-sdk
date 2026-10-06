@@ -1,0 +1,13 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace python.fixture;
+
+table ControlPayload {
+  sequence: ulong (id: 0);
+  gain: float = 1.0 (id: 1);
+  labels: [string] (id: 2);
+}
+
+root_type ControlPayload;
+file_identifier "PYCP";

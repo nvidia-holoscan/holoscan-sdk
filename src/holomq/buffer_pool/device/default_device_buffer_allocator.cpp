@@ -147,7 +147,7 @@ bool device_vmm_allocation_is_exportable(const CUmemGenericAllocationHandle hand
   if (prop.location.type != CU_MEM_LOCATION_TYPE_DEVICE) {
     return false;
   }
-  if ((prop.requestedHandleTypes & CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) == 0U) {
+  if ((prop.requestedHandleTypes & CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) == 0) {
     return false;
   }
   return true;

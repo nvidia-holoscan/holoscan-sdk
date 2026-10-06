@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <span>
 #include <system_error>
@@ -120,6 +121,26 @@ class HOLOSCAN_CORE_EXPORT RunSession {
   /// @warning Completion includes quiescing every runtime-owned CUDA stream. A
   /// CUDA kernel that does not terminate can therefore block this call indefinitely.
   void wait();
+
+  /// @brief Wait up to one relative duration for terminal state publication.
+  /// @param timeout Maximum relative duration. A nonpositive value performs a nonblocking query.
+  /// @return \c true when the session is terminal, including an inert moved-from wrapper;
+  /// otherwise \c false after the duration expires.
+  /// @note This call does not request stop. A \c true result means diagnostics and termination are
+  /// frozen, but does not transfer or weaken this wrapper's strict ownership of the worker thread.
+  /// @warning The same callback and run-owned-thread restrictions as \ref wait apply. Call
+  /// \ref wait_admission first when the calling context may be Runtime-owned.
+  [[nodiscard]] bool wait_for(std::chrono::nanoseconds timeout);
+
+  /// @brief Check whether the current thread may call a blocking session wait.
+  /// @return Success for an external thread or inert wrapper; otherwise a typed nonfatal error.
+  /// @retval ErrorCode::kInvalidArgument The caller is the run-owned worker or is executing a
+  /// Runtime compute, lifecycle, or Dispatcher callback. The error message begins with
+  /// `RUNTIME_SELF_JOIN_FORBIDDEN`.
+  /// @note This query does not wait, request stop, mutate diagnostics, or reserve future admission.
+  /// The result is intended for language bindings and other callers that must reject instead of
+  /// invoking the fatal \ref wait contract from a forbidden context.
+  [[nodiscard]] expected<void, Error> wait_admission() const noexcept;
 
   /// @brief Return bounded structural diagnostics retained by this session.
   /// @return Borrowed prefix of currently published records.

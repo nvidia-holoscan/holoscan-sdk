@@ -451,6 +451,8 @@ TEST(CudaGreenContextDriver, PublicCapabilityQueryRejectsInvalidUnavailableAndUn
   auto capability = query_cuda_green_context_capability(DeviceId{});
   ASSERT_FALSE(capability);
   EXPECT_EQ(capability.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(capability.error().message,
+            "CUDA_GREEN_CONTEXT_INVALID_PLACEMENT reason=device_invalid");
 
   driver->device_get_resource = nullptr;
   capability = query_cuda_green_context_capability(DeviceId{0});

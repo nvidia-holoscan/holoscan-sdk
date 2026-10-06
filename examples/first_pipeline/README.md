@@ -43,7 +43,20 @@ flowchart LR
   already build and run a Holoscan binary.
 - No GPU is required: the payload is a bare `std::uint32_t` on host memory.
 
-## Build
+## Python run
+
+The Python variant defines all three Operators as Python classes and uses the
+same public Graph, compile, and session APIs. It deliberately needs no example
+operator provider or private registry import:
+
+```bash
+PYTHONPATH=<build>/python/lib python3.12 python/first_pipeline.py
+```
+
+From an SDK install that includes Python bindings and example sources, the
+`python/` directory is also an independent CMake project.
+
+## C++ build
 
 From this `cpp/` folder (standalone consumer build, using
 `CMakeLists.min.txt` as the project file):
@@ -57,7 +70,7 @@ If your SDK lives elsewhere, point `-Dholoscan_DIR=` at the directory
 containing `holoscan-config.cmake`. Inside the SDK source tree the example
 builds as part of the normal examples build via `CMakeLists.txt`.
 
-## Run
+## C++ run
 
 ```bash
 ./build/first_pipeline

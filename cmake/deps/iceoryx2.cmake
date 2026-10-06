@@ -3,6 +3,35 @@
 
 include_guard(GLOBAL)
 
+# iceoryx2 exposes its Rust shared artifact through an INTERFACE wrapper rather
+# than a SHARED target. Read the selected link input, not an SDK install prefix.
+# This adapter intentionally handles the pinned Linux source/export contracts;
+# it is not a recursive runtime dependency collector.
+function(_holoscan_get_iceoryx2_ffi_library output)
+    if(NOT TARGET iceoryx2-c::shared-lib)
+        message(FATAL_ERROR "iceoryx2 must provide iceoryx2-c::shared-lib for wheel packaging")
+    endif()
+    get_target_property(link_inputs iceoryx2-c::shared-lib INTERFACE_LINK_LIBRARIES)
+    set(artifacts "")
+    foreach(input IN LISTS link_inputs)
+        if(input MATCHES "^\\$<BUILD_INTERFACE:(.*)>$")
+            set(input "${CMAKE_MATCH_1}")
+        endif()
+        if(IS_ABSOLUTE "${input}" AND input MATCHES "/libiceoryx2_ffi_c\\.so$")
+            list(APPEND artifacts "${input}")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES artifacts)
+    list(LENGTH artifacts artifact_count)
+    if(NOT artifact_count EQUAL 1)
+        message(FATAL_ERROR
+            "iceoryx2 must expose exactly one absolute Linux FFI shared-library link input; "
+            "cannot select the wheel runtime from its package metadata")
+    endif()
+    # Source-build byproducts need not exist until the native build completes.
+    set(${output} "${artifacts}" PARENT_SCOPE)
+endfunction()
+
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
 if(BUILD_SHARED_LIBS)
@@ -30,6 +59,7 @@ set(HOLOMQ_ICEORYX2_PATCHES
     "${HOLOMQ_ICEORYX2_PATCH_DIR}/0004-name-library-install-component.patch"
     "${HOLOMQ_ICEORYX2_PATCH_DIR}/0005-clean-cargo-target-directory.patch"
     "${HOLOMQ_ICEORYX2_PATCH_DIR}/0006-accept-cargo-source-build.patch"
+    "${HOLOMQ_ICEORYX2_PATCH_DIR}/0007-add-soname-to-iceoryx2-ffi.patch"
 )
 
 find_package(iceoryx2-cxx ${HOLOMQ_ICEORYX2_CXX_VERSION} CONFIG QUIET

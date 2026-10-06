@@ -33,6 +33,9 @@
 #include <utility>
 
 #include <dirent.h>
+#if HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
+#include <poll.h>
+#endif
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -95,7 +98,7 @@ class ScopedDescriptorBudget {
       return false;
     }
     struct rlimit tight = original_;
-    tight.rlim_cur = static_cast<rlim_t>(highest_ + 1 + spare);
+    tight.rlim_cur = static_cast<rlim_t>(highest_) + 1U + static_cast<rlim_t>(spare);
     return ::setrlimit(RLIMIT_NOFILE, &tight) == 0;
   }
 
@@ -181,7 +184,7 @@ TEST(ChannelWaitTest, WaitAndReceiveDistinguishesTimeoutCancellationAndClose) {
   EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
 
   // A stop requested before the call is answered without entering a kernel wait.
-  std::stop_source source;
+  const std::stop_source source;
   source.request_stop();
   const auto cancel_started = std::chrono::steady_clock::now();
   auto cancelled =
@@ -219,7 +222,7 @@ TEST(ChannelWaitTest, CancellationDoesNotDisableLaterWaits) {
   ASSERT_TRUE(wait_for_subscribers(publisher.value(), std::chrono::seconds(2)));
 
   // Cancel a real, blocked wait. This latches the subscriber's trigger.
-  std::stop_source source;
+  const std::stop_source source;
   std::jthread canceller([&source] {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     source.request_stop();
@@ -322,6 +325,262 @@ TEST(ChannelWaitTest, WaitForSampleReportsReadinessWithoutConsuming) {
   EXPECT_EQ(timed_out.error().code, holoscan::ErrorCode::kTimeout);
 }
 
+#if HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
+
+// The public descriptor stays level-readable while work is queued, and acknowledging it never
+// consumes the sample. While the handle is live it owns the same slot as blocking waits;
+// explicit detach and destruction each make the subscriber waitable again.
+// Topology (event wake): publisher --[WaitPayload]--> readiness handle --> poll(2)
+// Key assertion: queued and later samples wake poll, waits are exclusive, and both release paths
+// detach.
+// REQ: CHAN-148
+// REQ: CHAN-149
+TEST(ChannelReadinessTest, DescriptorReportsReceiveRelevantWorkAndClaimsTheWaitOwner) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+  const holoscan::ChannelOptions options = event_wake_options();
+
+  auto publisher = runtime->create_publisher<WaitPayload>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<WaitPayload>(channel_name, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+  // Queue before creating the handle to cover readiness already present at attachment time.
+  ASSERT_TRUE(publisher->emit(WaitPayload{41}));
+  ASSERT_TRUE(wait_until([&subscriber] { return subscriber->has_samples().value_or(false); },
+                         std::chrono::seconds(2)));
+  {
+    auto readiness = subscriber->readiness();
+    ASSERT_TRUE(readiness) << holoscan::runtime_error_message(readiness.error());
+    ASSERT_GE(readiness->descriptor(), 0);
+    pollfd descriptor{.fd = readiness->descriptor(), .events = POLLIN, .revents = 0};
+
+    ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+    EXPECT_NE(descriptor.revents & POLLIN, 0);
+    descriptor.revents = 0;
+    EXPECT_EQ(::poll(&descriptor, 1, 0), 1) << "readiness must remain until acknowledgement";
+
+    ASSERT_TRUE(readiness->acknowledge());
+    descriptor.revents = 0;
+    EXPECT_EQ(::poll(&descriptor, 1, 0), 1) << "a queued sample keeps readiness level-readable";
+    auto first = subscriber->receive_sample();
+    ASSERT_TRUE(first) << holoscan::runtime_error_message(first.error());
+    EXPECT_EQ(first->data, 41U);
+    ASSERT_TRUE(readiness->acknowledge());
+    descriptor.revents = 0;
+    EXPECT_EQ(::poll(&descriptor, 1, 0), 0);
+
+    auto repeated = subscriber->readiness();
+    ASSERT_FALSE(repeated);
+    EXPECT_EQ(repeated.error().code, holoscan::ErrorCode::kInvalidArgument);
+    EXPECT_NE(repeated.error().message.find("readiness handle"), std::string::npos);
+
+    // Wait ownership is checked before the wait API's ordinary queued-sample fast path.
+    ASSERT_TRUE(publisher->emit(WaitPayload{42}));
+    ASSERT_TRUE(wait_until([&subscriber] { return subscriber->has_samples().value_or(false); },
+                           std::chrono::seconds(2)));
+    auto wait = subscriber->wait_for_sample(in(std::chrono::milliseconds(20)));
+    ASSERT_FALSE(wait);
+    EXPECT_EQ(wait.error().code, holoscan::ErrorCode::kInvalidArgument);
+    EXPECT_NE(wait.error().message.find("readiness handle"), std::string::npos);
+    auto wait_and_receive = subscriber->wait_and_receive_sample(in(std::chrono::milliseconds(20)));
+    ASSERT_FALSE(wait_and_receive);
+    EXPECT_EQ(wait_and_receive.error().code, holoscan::ErrorCode::kInvalidArgument);
+    EXPECT_NE(wait_and_receive.error().message.find("readiness handle"), std::string::npos);
+
+    // The queued publication also produces a fresh readable edge.
+    descriptor.revents = 0;
+    ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+    ASSERT_TRUE(readiness->acknowledge());
+    auto second = subscriber->receive_sample();
+    ASSERT_TRUE(second) << holoscan::runtime_error_message(second.error());
+    EXPECT_EQ(second->data, 42U);
+
+    readiness->detach();
+    EXPECT_EQ(readiness->descriptor(), -1);
+    auto acknowledged_after_detach = readiness->acknowledge();
+    ASSERT_FALSE(acknowledged_after_detach);
+    EXPECT_EQ(acknowledged_after_detach.error().code, holoscan::ErrorCode::kClosed);
+
+    auto replacement = subscriber->readiness();
+    ASSERT_TRUE(replacement) << holoscan::runtime_error_message(replacement.error());
+  }
+
+  ASSERT_TRUE(publisher->emit(WaitPayload{43}));
+  auto after_destruction = subscriber->wait_and_receive_sample(in(std::chrono::seconds(2)));
+  ASSERT_TRUE(after_destruction) << holoscan::runtime_error_message(after_destruction.error());
+  EXPECT_EQ(after_destruction->data, 43U);
+}
+
+// A lossy inline receive may stage EOS privately while returning the preceding data sample. Once
+// the old descriptor has drained its transport lanes, a replacement handle must still prime from
+// that wrapper-owned terminal state or an event loop can sleep forever with kClosed already ready.
+// Topology (drop-oldest): data lane + protected EOS lane --> staged EOS --> replacement poll(2)
+// Key assertion: detach/reacquire preserves immediate readiness for the already staged terminal.
+// REQ: CHAN-148
+// REQ: CHAN-150
+TEST(ChannelReadinessTest, ReacquiredInlineDescriptorReportsStagedEndOfStream) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+  holoscan::ChannelOptions options = event_wake_options();
+  options.queue_policy = holoscan::ChannelQueuePolicy::kDropOldest;
+  options.max_subscriber_queue_depth = 1U;
+  options.subscriber_queue_depth = 1U;
+
+  auto publisher = runtime->create_publisher<WaitPayload>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<WaitPayload>(channel_name, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+  auto first_readiness = subscriber->readiness();
+  ASSERT_TRUE(first_readiness) << holoscan::runtime_error_message(first_readiness.error());
+  pollfd descriptor{.fd = first_readiness->descriptor(), .events = POLLIN, .revents = 0};
+
+  ASSERT_TRUE(publisher->emit(WaitPayload{71}));
+  ASSERT_TRUE(publisher->close());
+  ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+  ASSERT_TRUE(first_readiness->acknowledge());
+
+  auto received = subscriber->receive_sample();
+  ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  EXPECT_EQ(received->data, 71U);
+
+  // The receive above stages EOS in the inline wrapper while returning data. Clear the transport
+  // notifications and prove the first descriptor has no residual wake before replacing it.
+  ASSERT_TRUE(first_readiness->acknowledge());
+  descriptor.revents = 0;
+  ASSERT_EQ(::poll(&descriptor, 1, 0), 0);
+  first_readiness->detach();
+
+  auto replacement = subscriber->readiness();
+  ASSERT_TRUE(replacement) << holoscan::runtime_error_message(replacement.error());
+  descriptor = pollfd{.fd = replacement->descriptor(), .events = POLLIN, .revents = 0};
+  ASSERT_EQ(::poll(&descriptor, 1, 0), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(replacement->acknowledge());
+
+  auto closed = subscriber->receive_sample();
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code, holoscan::ErrorCode::kClosed);
+}
+
+// A poll-only name-based subscriber has no kernel listener to lend to an external event loop.
+// Key assertion: fail closed with the same capability token as a blocking wait.
+// REQ: CHAN-149
+TEST(ChannelReadinessTest, NameBasedSubscriberWithoutEventWakeIsNotSupported) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  auto subscriber = runtime->create_subscriber<WaitPayload>(make_unique_channel_name());
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+
+  auto readiness = subscriber->readiness();
+  ASSERT_FALSE(readiness);
+  EXPECT_EQ(readiness.error().code, holoscan::ErrorCode::kNotSupported);
+
+  auto active = std::move(*subscriber);
+  readiness = subscriber->readiness();
+  ASSERT_FALSE(readiness);
+  EXPECT_EQ(readiness.error().code, holoscan::ErrorCode::kClosed);
+
+  readiness = active.readiness();
+  ASSERT_FALSE(readiness);
+  EXPECT_EQ(readiness.error().code, holoscan::ErrorCode::kNotSupported);
+
+  ASSERT_TRUE(active.close());
+  readiness = active.readiness();
+  ASSERT_FALSE(readiness);
+  EXPECT_EQ(readiness.error().code, holoscan::ErrorCode::kClosed);
+}
+
+// The wait-owner claim begins before an endpoint checks or receives readiness and lasts until the
+// complete public wait returns. A readiness handle therefore cannot steal lanes from a blocked
+// wait; cancellation releases the claim and permits a later handle.
+// Key assertion: readiness() reports kInvalidArgument during the in-flight wait only.
+// REQ: CHAN-149
+TEST(ChannelReadinessTest, InFlightWaitRejectsReadinessHandleCreation) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+  const holoscan::ChannelOptions options = event_wake_options();
+  auto publisher = runtime->create_publisher<WaitPayload>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<WaitPayload>(channel_name, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+
+  std::stop_source source;
+  std::atomic<holoscan::ErrorCode> wait_result{holoscan::ErrorCode::kSuccess};
+  std::jthread waiter([&] {
+    auto waited = subscriber->wait_for_sample(in(std::chrono::seconds(30)), source.get_token());
+    wait_result.store(waited ? holoscan::ErrorCode::kSuccess : waited.error().code,
+                      std::memory_order_release);
+  });
+  const bool wait_owner_claimed = wait_until(
+      [&subscriber] {
+        return holoscan::channel_internal::InlinePayloadTestAccess::wait_owner_claimed(*subscriber);
+      },
+      std::chrono::seconds(2));
+  if (!wait_owner_claimed) {
+    source.request_stop();
+    waiter.join();
+  }
+  ASSERT_TRUE(wait_owner_claimed);
+
+  auto refused = subscriber->readiness();
+  ASSERT_FALSE(refused);
+  EXPECT_EQ(refused.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_NE(refused.error().message.find("in flight"), std::string::npos);
+
+  source.request_stop();
+  waiter.join();
+  EXPECT_EQ(wait_result.load(std::memory_order_acquire), holoscan::ErrorCode::kInterrupted);
+  auto after_wait = subscriber->readiness();
+  ASSERT_TRUE(after_wait) << holoscan::runtime_error_message(after_wait.error());
+}
+
+// Transport peer presence is advisory and never a receive event. Attaching and then silently
+// destroying a producer must leave the descriptor quiet and the empty subscriber nonterminal.
+// Topology: subscriber/readiness --> producer connect --> producer destruction without close
+// Key assertion: connect, disconnect, and silent loss create neither readiness nor kClosed.
+// REQ: CHAN-150
+TEST(ChannelReadinessTest, PeerChangesAndSilentProducerLossDoNotImplyReadiness) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+  const holoscan::ChannelOptions options = event_wake_options();
+  auto subscriber = runtime->create_subscriber<WaitPayload>(channel_name, options);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+
+  auto readiness = subscriber->readiness();
+  ASSERT_TRUE(readiness) << holoscan::runtime_error_message(readiness.error());
+  pollfd descriptor{.fd = readiness->descriptor(), .events = POLLIN, .revents = 0};
+  ASSERT_EQ(::poll(&descriptor, 1, 0), 0);
+
+  auto created_publisher = runtime->create_publisher<WaitPayload>(channel_name, options);
+  ASSERT_TRUE(created_publisher) << holoscan::runtime_error_message(created_publisher.error());
+  std::optional<holoscan::ChannelPublisher<WaitPayload>> publisher{std::move(*created_publisher)};
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds(2)));
+  ASSERT_TRUE(
+      wait_until([&subscriber] { return subscriber->has_publishers(); }, std::chrono::seconds(2)));
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1, 0), 0);
+
+  publisher.reset();
+  ASSERT_TRUE(
+      wait_until([&subscriber] { return !subscriber->has_publishers(); }, std::chrono::seconds(2)));
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1, 0), 0);
+  auto received = subscriber->receive_sample();
+  ASSERT_FALSE(received);
+  EXPECT_EQ(received.error().code, holoscan::ErrorCode::kNotReady);
+}
+
+#endif  // HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
+
 // wait_for_sample must answer CHAN-066 the same way wait_and_receive_sample does, with one
 // documented exception: an endpoint that already holds a sample is answered from has_samples()
 // before the event lane is consulted, so it reports readiness rather than the capability error.
@@ -386,7 +645,7 @@ TEST(ChannelWaitTest, WaitForSampleReportsInterruptedAndStaysUsable) {
 
   // A stop already requested before the call must be seen before the first block, not after the
   // per-pass clamp, so this is bounded well below both the clamp and the deadline.
-  std::stop_source presignalled;
+  const std::stop_source presignalled;
   presignalled.request_stop();
   const auto presignalled_started = std::chrono::steady_clock::now();
   auto pre = subscriber->wait_for_sample(in(std::chrono::seconds(30)), presignalled.get_token());
@@ -507,7 +766,7 @@ TEST(ChannelWaitTest, WaitOnMovedFromSubscriberReportsClosed) {
   auto subscriber = runtime->create_subscriber<WaitPayload>(make_unique_channel_name(), options);
   ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
 
-  holoscan::ChannelSubscriber<WaitPayload> moved{std::move(subscriber.value())};
+  const holoscan::ChannelSubscriber<WaitPayload> moved{std::move(subscriber.value())};
 
   auto received = subscriber->wait_and_receive_sample(in(std::chrono::milliseconds(200)));
   ASSERT_FALSE(received);
@@ -533,7 +792,7 @@ TEST(ChannelWaitTest, CancellationDuringBlockedWaitReturnsInterrupted) {
   ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
   ASSERT_TRUE(wait_for_subscribers(publisher.value(), std::chrono::seconds(2)));
 
-  std::stop_source source;
+  const std::stop_source source;
   std::jthread canceller([&source] {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     source.request_stop();
@@ -658,7 +917,7 @@ TEST(ChannelWaitTest, WarmWaitAndReceivePerformsNoAllocations) {
   // the live-token blocking region at the end of this test is what covers that. What it does prove
   // is that copying a live token into the facade costs nothing. The stop_source is built outside
   // the counted region because its shared state genuinely does allocate.
-  std::stop_source source;
+  const std::stop_source source;
   const std::stop_token token = source.get_token();
   ASSERT_TRUE(publisher->emit(WaitPayload{3}));
 
@@ -770,12 +1029,14 @@ TEST(ChannelWaitTest, WaitAndReceiveOnAttachedSubscriberReportsInvalidArgument) 
   auto refused = subscriber.wait_and_receive_sample(in(std::chrono::milliseconds(200)));
   ASSERT_FALSE(refused);
   EXPECT_EQ(refused.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_NE(refused.error().message.find("Runtime readiness pump"), std::string::npos);
 
   // The failure leaves no half-built context behind, so a later call reports the same thing rather
   // than degrading into a different error.
   auto ready = subscriber.wait_for_sample(in(std::chrono::milliseconds(200)));
   ASSERT_FALSE(ready);
   EXPECT_EQ(ready.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_NE(ready.error().message.find("Runtime readiness pump"), std::string::npos);
 }
 
 // An endpoint that still owes a payload loan cannot receive, and the caller must learn that
@@ -984,7 +1245,7 @@ TEST(ChannelWaitTest, WaitAndReceiveTensorWakesOnDataAndEndOfStream) {
   std::atomic<bool> emitted{false};
   std::chrono::steady_clock::duration data_elapsed{};
   {
-    std::jthread producer([&] {
+    const std::jthread producer([&] {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
       emitted.store(emit_one_tensor(publisher.value(), std::byte{0x6A}));
     });
@@ -1000,7 +1261,7 @@ TEST(ChannelWaitTest, WaitAndReceiveTensorWakesOnDataAndEndOfStream) {
   // Same again for end of stream, which under kBlocking travels in band on the data lane.
   std::chrono::steady_clock::duration close_elapsed{};
   {
-    std::jthread closer([&] {
+    const std::jthread closer([&] {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
       static_cast<void>(publisher->close());
     });
@@ -1058,7 +1319,7 @@ TEST(ChannelWaitTest, DropOldestWaitWakesOnEndOfStreamTerminalLane) {
 
   std::chrono::steady_clock::duration elapsed{};
   {
-    std::jthread closer([&] {
+    const std::jthread closer([&] {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
       static_cast<void>(publisher->close());
     });
@@ -1076,6 +1337,57 @@ TEST(ChannelWaitTest, DropOldestWaitWakesOnEndOfStreamTerminalLane) {
   // second bound leaves a wide margin while still failing if the wake has to wait for the clamp.
   EXPECT_LT(elapsed, std::chrono::seconds(1));
 }
+
+#if HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
+
+// A Tensor readiness handle aggregates the data and protected terminal descriptors. With the data
+// lane empty, close() can only make the aggregate readable through the terminal lane.
+// Topology (drop-oldest catalog): Tensor data lane + protected EOS lane --> poll(2)
+// Key assertion: a blocked external poller observes producer end of stream promptly.
+// REQ: CHAN-150
+TEST(ChannelReadinessTest, TensorDescriptorWakesOnProtectedEndOfStreamLane) {
+  const std::string endpoint_name = make_unique_channel_name();
+  auto import_catalog =
+      make_tensor_import_catalog(endpoint_name, holoscan::QueuePolicy::kDropOldest);
+  ASSERT_TRUE(import_catalog) << holoscan::runtime_error_message(import_catalog.error());
+  auto export_catalog =
+      make_tensor_export_catalog(endpoint_name, holoscan::QueuePolicy::kDropOldest);
+  ASSERT_TRUE(export_catalog) << holoscan::runtime_error_message(export_catalog.error());
+
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  auto publisher = runtime->create_publisher<holoscan::Tensor>(*import_catalog, endpoint_name);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  auto subscriber = runtime->create_subscriber<holoscan::Tensor>(*export_catalog, endpoint_name);
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_tensor_subscriber(*publisher, *subscriber));
+
+  // Prove the data lane works, then empty it before observing the terminal lane in isolation.
+  auto readiness = subscriber->readiness();
+  ASSERT_TRUE(readiness) << holoscan::runtime_error_message(readiness.error());
+  pollfd descriptor{.fd = readiness->descriptor(), .events = POLLIN, .revents = 0};
+  ASSERT_TRUE(emit_one_tensor(*publisher, std::byte{0x5D}));
+  ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+  ASSERT_TRUE(readiness->acknowledge());
+  {
+    auto received = subscriber->receive_sample();
+    ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  }
+  ASSERT_TRUE(readiness->acknowledge());
+  descriptor.revents = 0;
+  ASSERT_EQ(::poll(&descriptor, 1, 0), 0);
+
+  ASSERT_TRUE(publisher->close());
+  descriptor.revents = 0;
+  ASSERT_EQ(::poll(&descriptor, 1, 2000), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(readiness->acknowledge());
+  auto closed = subscriber->receive_sample();
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code, holoscan::ErrorCode::kClosed);
+}
+
+#endif  // HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS
 
 #ifndef HOLOSCAN_CHANNEL_EVENT_WAIT_CHILD_EXE
 #define HOLOSCAN_CHANNEL_EVENT_WAIT_CHILD_EXE ""

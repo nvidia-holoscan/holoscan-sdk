@@ -13,3 +13,11 @@ if(NOT graph_artifact_install_position EQUAL -1)
     message(FATAL_ERROR
         "The default build install must not execute the optional graph-artifact component")
 endif()
+
+string(FIND "${run_script}"
+    "install_component_if_present holoscan-visualization-python_libs"
+    visualization_python_install_position)
+if(visualization_python_install_position EQUAL -1)
+    message(FATAL_ERROR
+        "The Python-enabled default build must install the Visualization Python component")
+endif()

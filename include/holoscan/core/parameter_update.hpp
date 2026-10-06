@@ -8,9 +8,16 @@
 #include <concepts>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <span>
+#include <string>
+#include <string_view>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
+#include <holoscan/holoscan_core_export.h>
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/expected.hpp>
 #include <holoscan/core/operator_ref.hpp>
@@ -21,6 +28,8 @@ namespace holoscan {
 
 namespace detail {
 class ParamSnapshotArchiveAccess;
+class ParamPatchValueAccess;
+struct ParamPatchValueStorage;
 }  // namespace detail
 
 /// @brief Identify one accepted parameter-update request within an active run.
@@ -164,10 +173,117 @@ class ParamValue {
 static_assert(std::is_standard_layout_v<ParamValue>);
 static_assert(std::is_trivially_copyable_v<ParamValue>);
 
+/// @brief Classify one cold-path owning parameter patch value.
+enum class ParamPatchValueKind : std::uint8_t {
+  kUnset = 0,     ///< No value was supplied; submission rejects this value.
+  kNone = 1,      ///< Clear an optional field.
+  kScalar = 2,    ///< One fixed scalar value.
+  kString = 3,    ///< One owning string or enum label.
+  kSequence = 4,  ///< One owning homogeneous sequence.
+  kObject = 5,    ///< One owning nested-field assignment set.
+};
+
+class ParamPatchValue;
+struct ParamPatchAssignment;
+
+/// @brief Own one scalar or bounded aggregate value for a cold-path parameter submission.
+///
+/// Dynamic storage is confined to application/lifecycle control calls. Compute-originated updates
+/// continue to use the fixed-size, trivially copyable \ref ParamValue carrier. Owning aggregate
+/// submission materializes schema-bounded strings, sequences, and nested objects while holding the
+/// coordinator's control-plane mutex, so large admitted bounds can briefly delay a runtime lane
+/// draining inline patches.
+class HOLOSCAN_CORE_EXPORT ParamPatchValue {
+ public:
+  /// @brief Construct an unset value that submission rejects.
+  ParamPatchValue() noexcept = default;
+
+  /// @brief Convert an existing fixed scalar carrier without allocation.
+  /// @param value Scalar value to own.
+  ParamPatchValue(ParamValue value) noexcept;  // NOLINT(runtime/explicit)
+
+  /// @brief Return an optional-clear value.
+  [[nodiscard]] static ParamPatchValue none() noexcept;
+
+  /// @brief Copy one string into an owning cold-path value.
+  /// @param value String or enum label to copy.
+  /// @return Owning value, or resource exhaustion when allocation fails.
+  [[nodiscard]] static expected<ParamPatchValue, Error> from_string(
+      std::string_view value) noexcept;
+
+  /// @brief Move one sequence into an owning cold-path value.
+  /// @param values Complete child values.
+  /// @return Owning value, or resource exhaustion when allocation fails.
+  [[nodiscard]] static expected<ParamPatchValue, Error> from_sequence(
+      std::vector<ParamPatchValue> values) noexcept;
+
+  /// @brief Move one nested-object assignment set into an owning cold-path value.
+  /// @param values Named child assignments.
+  /// @return Owning value, or resource exhaustion when allocation fails.
+  [[nodiscard]] static expected<ParamPatchValue, Error> from_object(
+      std::vector<ParamPatchAssignment> values) noexcept;
+
+  /// @brief Return this value's active representation.
+  [[nodiscard]] ParamPatchValueKind kind() const noexcept { return kind_; }
+
+  /// @brief Return the fixed scalar representation, or an empty scalar for another kind.
+  [[nodiscard]] ParamScalarValue scalar() const noexcept { return scalar_; }
+
+  /// @brief Return borrowed string bytes, or an empty view for another kind.
+  [[nodiscard]] std::string_view string() const noexcept;
+
+  /// @brief Return borrowed sequence values, or an empty span for another kind.
+  [[nodiscard]] std::span<const ParamPatchValue> sequence() const noexcept;
+
+  /// @brief Return borrowed nested assignments, or an empty span for another kind.
+  [[nodiscard]] std::span<const ParamPatchAssignment> object() const noexcept;
+
+ private:
+  ParamPatchValue(ParamPatchValueKind kind, ParamScalarValue scalar,
+                  std::shared_ptr<const detail::ParamPatchValueStorage> storage,
+                  bool permits_numeric_conversion = false) noexcept
+      : kind_(kind),
+        scalar_(scalar),
+        storage_(std::move(storage)),
+        permits_numeric_conversion_(permits_numeric_conversion) {}
+
+  ParamPatchValueKind kind_{ParamPatchValueKind::kUnset};
+  ParamScalarValue scalar_{};
+  std::shared_ptr<const detail::ParamPatchValueStorage> storage_;
+  bool permits_numeric_conversion_{};
+  friend class detail::ParamPatchValueAccess;
+};
+
+namespace detail {
+
+/// Internal adapter for language bindings whose numeric values do not retain a C++ field width.
+class ParamPatchValueAccess {
+ public:
+  [[nodiscard]] static ParamPatchValue from_language_numeric(ParamValue value) noexcept {
+    return ParamPatchValue{value.kind() == ParamScalarKind::kNone ? ParamPatchValueKind::kUnset
+                                                                  : ParamPatchValueKind::kScalar,
+                           value.scalar(),
+                           {},
+                           true};
+  }
+
+  [[nodiscard]] static bool permits_numeric_conversion(const ParamPatchValue& value) noexcept {
+    return value.permits_numeric_conversion_;
+  }
+};
+
+}  // namespace detail
+
+/// @brief Own one named child value for a nested-object patch.
+struct ParamPatchAssignment {
+  std::string name;       ///< Canonical child field name relative to the nested object.
+  ParamPatchValue value;  ///< Owning child patch value.
+};
+
 /// @brief Own one cold-path field update request.
 struct ParamPatch {
-  ParamAddress target{};  ///< Declared target field.
-  ParamValue value{};     ///< Complete fixed scalar value.
+  ParamAddress target{};    ///< Declared target field.
+  ParamPatchValue value{};  ///< Complete owning scalar or aggregate value.
   std::optional<ParamGeneration>
       expected_generation;  ///< Optional precondition against latest accepted generation.
 };

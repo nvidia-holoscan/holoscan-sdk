@@ -8,6 +8,11 @@
 default_language_version:
   python: python3
 
+# Published skill packages must remain byte-identical to their signed source.
+# Formatting, whitespace, spelling, or copyright fixes invalidate skill.oms.sig.
+# Exclude skill package subdirectories while linting top-level documentation.
+exclude: ^skills/[^/]+/
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
@@ -81,6 +86,13 @@ repos:
         pass_filenames: false
         files: ^(run|scripts/test_run_script\.py)$
 
+      - id: test-git-environment
+        name: Test Git environment isolation
+        entry: python3 scripts/test_git_environment.py
+        language: system
+        pass_filenames: false
+        files: ^scripts/(_git_environment|test_git_environment)\.py$
+
       - id: check-doc-source-links
         name: Check documentation source links
         entry: python3 docs/scripts/render_source_links.py --docs-root docs --write
@@ -101,6 +113,14 @@ repos:
         language: system
         pass_filenames: false
         files: ^
+
+      # Ruff recognizes `context` as the intentional unused Operator.compute argument. Forbid
+      # deleting an abbreviated alias merely to silence the unused-argument check.
+      - id: check-python-callback-dummy-style
+        name: Check Python callback dummy style
+        entry: '^\s*del\s+ctx\s*$'
+        language: pygrep
+        files: ^.*\.py$
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.6
@@ -127,7 +147,7 @@ repos:
 
   # Codespell
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
       - id: codespell
         additional_dependencies:
@@ -191,9 +211,25 @@ repos:
         files: ^.*(CMakeLists\.txt|\.cmake)$
         exclude: ^(build|install|build-|install-|\.cache)/
 
-  # Header guards and ABI/export policy
+  # Include style, header guards, and ABI/export policy
   - repo: local
     hooks:
+      - id: check-include-style
+        name: Check SDK and dependency include style
+        entry: python3 scripts/check_include_style.py
+        language: system
+        pass_filenames: true
+        files: ^.*\.(c|cc|cpp|cxx|cu|h|hh|hpp|hxx|cuh)$
+
+      - id: test-include-style
+        name: Test include style checker
+        entry: pytest scripts/test_include_style.py
+        language: python
+        additional_dependencies:
+          - pytest
+        pass_filenames: false
+        files: ^scripts/(check|test)_include_style\.py$
+
       - id: check-header-guards
         name: Check header guards
         entry: python3 scripts/check_header_guards.py
@@ -221,6 +257,30 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      # Behavioral tests cannot prove this repository-wide negative source invariant. Keep the
+      # structural guard in lint, but run it only when its checked boundary or checker changes.
+      - id: check-subscriber-close-boundaries
+        name: Check external subscriber close boundaries
+        entry: python3 scripts/check_subscriber_close_boundaries.py --root .
+        language: system
+        pass_filenames: false
+        files: |
+          (?x)^(
+            src/runtime/.*\.(cpp|cu|cuh|hpp)|
+            include/holoscan/channel/(endpoint_interfaces|inline_endpoints|tensor_schema_endpoints)\.hpp|
+            src/channel/channel_tensor\.cpp|
+            scripts/check_subscriber_close_boundaries\.py
+          )$
+
+      - id: test-subscriber-close-boundaries
+        name: Test external subscriber close checker
+        entry: pytest scripts/test_subscriber_close_boundaries.py
+        language: python
+        additional_dependencies:
+          - pytest
+        pass_filenames: false
+        files: ^scripts/(check|test)_subscriber_close_boundaries\.py$
 
   # markdownlint
   - repo: https://github.com/igorshubovych/markdownlint-cli

@@ -11,13 +11,15 @@ find_package(Threads REQUIRED)
 find_package(holoscan REQUIRED CONFIG
     PATHS
         "/workspace/holoscan-sdk/install"
-        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
 )
 
 add_executable(compile_and_check compile_and_check.cpp)
 target_link_libraries(compile_and_check PRIVATE holoscan::core Threads::Threads)
 
 if(BUILD_TESTING)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../common/ctest_workspace.cmake")
+    holoscan_configure_example_test_workspace(compile_and_check)
     # REQ: SYSTEM-014
     add_test(NAME EXAMPLE_CPP_COMPILE_AND_CHECK_TEST COMMAND compile_and_check)
     set_tests_properties(EXAMPLE_CPP_COMPILE_AND_CHECK_TEST
@@ -26,4 +28,13 @@ if(BUILD_TESTING)
                 "compile_and_check example complete: admission, diagnostics, and digest verified"
             LABELS "examples;compile"
             TIMEOUT 30)
+endif()
+
+add_executable(diagnostic_reporting diagnostic_reporting.cpp)
+target_link_libraries(diagnostic_reporting PRIVATE holoscan::core)
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_DIAGNOSTIC_REPORTING_TEST COMMAND diagnostic_reporting)
+    set_tests_properties(EXAMPLE_CPP_DIAGNOSTIC_REPORTING_TEST PROPERTIES
+        PASS_REGULAR_EXPRESSION "diagnostic_reporting example complete: caller-owned startup failure report"
+        LABELS "examples;compile" TIMEOUT 30)
 endif()

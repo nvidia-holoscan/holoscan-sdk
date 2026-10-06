@@ -73,6 +73,13 @@ holomq::HostBufferImport::ptr() const
 holomq::HostBufferImport::release()
 holomq::HostBufferImport::size_bytes() const
 holomq::HostBufferImport::~HostBufferImport()
+holomq::ReadinessHandle::ReadinessHandle(holomq::ReadinessHandle&&)
+holomq::ReadinessHandle::acknowledge()
+holomq::ReadinessHandle::create(std::shared_ptr<void>, int, bool, tl::expected<bool, holomq::Error> (*)(void*) noexcept, void (*)(void*) noexcept)
+holomq::ReadinessHandle::descriptor() const
+holomq::ReadinessHandle::detach()
+holomq::ReadinessHandle::operator=(holomq::ReadinessHandle&&)
+holomq::ReadinessHandle::~ReadinessHandle()
 holomq::WaitSet::WaitSet(std::shared_ptr<holomq::detail::transport::Iox2WaitSetBackend>)
 holomq::WaitSet::attach_trigger()
 holomq::WaitSet::attachment_count() const
@@ -113,6 +120,7 @@ holomq::reset_log_handler()
 holomq::set_log_handler(void (*)(holomq::LogLevel, char const*, int, char const*, char const*, void*) noexcept, void*)
 holomq::set_log_level(holomq::LogLevel)
 magic_enum::detail::names_v<holomq::ErrorCode, (magic_enum::detail::enum_subtype)0>
+magic_enum::detail::values_v<holomq::ErrorCode, (magic_enum::detail::enum_subtype)0>
 std::_Sp_make_shared_tag::_S_ti()::__tag
 std::__detail::__from_chars_alnum_to_val_table<false>::value
 std::__format::_Sink_iter<char> std::__format::__write_padded<std::__format::_Sink_iter<char>, char>(std::__format::_Sink_iter<char>, std::basic_string_view<char, std::char_traits<char> >, std::__format::_Align, unsigned long, char)

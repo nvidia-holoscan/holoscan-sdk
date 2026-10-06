@@ -386,6 +386,23 @@ class ParameterUpdateCoordinatorTestAccess {
   static void set_published_pin_count(ParameterUpdateCoordinator& coordinator, OperatorRef owner,
                                       std::uint64_t pin_count) noexcept;
 
+  /// @brief Exercise reservation replacement against the real private ledger.
+  static void replace_event_reservation(ParameterUpdateCoordinator& coordinator,
+                                        std::uint32_t released_count) noexcept;
+
+  /// @brief Exercise reservation release against the real private ledger.
+  static void release_event_reservations(ParameterUpdateCoordinator& coordinator,
+                                         std::uint32_t count) noexcept;
+
+  /// @brief Set one result's event reservation count for fatal-invariant tests.
+  static void set_result_event_reservations(ParameterUpdateCoordinator& coordinator,
+                                            ParamUpdateSequence sequence,
+                                            std::uint32_t count) noexcept;
+
+  /// @brief Remove one result's validity for fatal retained-evidence tests.
+  static void invalidate_result(ParameterUpdateCoordinator& coordinator,
+                                ParamUpdateSequence sequence) noexcept;
+
   /// @brief Return the published slot's complete claim word for no-wrap boundary tests.
   [[nodiscard]] static std::uint64_t published_claim_word(ParameterUpdateCoordinator& coordinator,
                                                           OperatorRef owner) noexcept;

@@ -1,0 +1,111 @@
+Python `run()` and `run_async()` always use caller-managed signal policy. The binding installs no
+signal handler, creates no managed-signal domain, and does not change process signal masks or
+dispositions.
+
+Treat `RunSession.request_stop()` as the public cooperative stop operation and make the surrounding
+Python application responsible for translating UI, service, notebook, or process-control events
+into that request.
+
+<Note title="You will learn">
+  - What caller-managed means for Python runs
+  - How context-manager ownership prevents abandoned sessions
+  - How `wait(timeout=...)` interacts with CPython signal delivery
+  - How to turn a caller-owned event into cooperative stop
+</Note>
+
+<Warning>
+  **Python does not receive C++ managed SIGINT/SIGTERM behavior.** Do not assume that `hs.run(plan)`
+  installs an SDK Ctrl-C handler. It always leaves process signals under the caller's existing policy.
+</Warning>
+
+## Prefer scoped asynchronous sessions
+
+```python
+with hs.run_async(plan) as session:
+    if not session.wait(timeout=0.25):
+        session.request_stop()
+        if not session.wait(timeout=5.0):
+            raise TimeoutError("pipeline did not stop within five seconds")
+
+if session.termination is not hs.RunTermination.STOPPED:
+    raise RuntimeError(session.summary())
+```
+
+`request_stop()` is thread-safe, nonblocking, and idempotent. It requests ordinary cooperative
+cleanup; it does not wait. `wait()` returns `True` after the session reaches terminal state, or
+`False` when its timeout expires. A successful wait does not request stop.
+
+Exiting the context manager requests stop and waits even when the body raises. If a session loses
+its last Python reference elsewhere, cleanup is delegated to ordinary thread context rather than
+performed from a runtime callback.
+
+## Understand Ctrl-C and the GIL
+
+CPython's low-level SIGINT handler records a pending interrupt. `KeyboardInterrupt` is raised on the
+main thread when it next reacquires the GIL and executes Python code. Holoscan releases the GIL while
+waiting and periodically returns to Python's signal check.
+
+For a command-line application that relies on the default CPython Ctrl-C behavior, use bounded waits
+so the main thread regularly returns to Python:
+
+```python
+with hs.run_async(plan) as session:
+    try:
+        while not session.wait(timeout=0.5):
+            pass
+    except KeyboardInterrupt:
+        session.request_stop()
+        if not session.wait(timeout=5.0):
+            raise TimeoutError("pipeline did not stop after Ctrl-C")
+```
+
+This loop waits on the session; it does not poll runtime state with a sleep. The half-second interval
+is a responsiveness choice, not a scheduler setting.
+
+## Bridge an application-owned event
+
+Larger applications often already own shutdown policy. Keep a Python signal handler minimal by
+setting a `threading.Event`, then request stop from ordinary control flow:
+
+```python
+import signal
+import threading
+
+stop_requested = threading.Event()
+
+def request_shutdown(signum: int, frame: object) -> None:
+    del signum, frame
+    stop_requested.set()
+
+signal.signal(signal.SIGINT, request_shutdown)
+signal.signal(signal.SIGTERM, request_shutdown)
+
+with hs.run_async(plan) as session:
+    while not session.wait(timeout=0.5):
+        if stop_requested.is_set():
+            session.request_stop()
+```
+
+Python signal callbacks execute later on the main interpreter thread. Never call `request_stop()`
+directly from a native POSIX signal handler: the C++ operation is thread-safe but not
+async-signal-safe.
+
+## Blocking run remains inspectable
+
+For a finite plan, `hs.run(plan)` releases the GIL while waiting and returns the terminal session:
+
+```python
+session = hs.run(plan)
+if session.termination is hs.RunTermination.FAILED:
+    raise RuntimeError(session.summary())
+```
+
+Prefer `run_async()` for recurring graphs or applications that need responsive Python-side stop
+control.
+
+## Recap
+
+- Python runs are caller-managed; the SDK installs no signal handler or managed-signal domain.
+- Use `RunSession` as a context manager and stop with `request_stop()`.
+- Bounded waits let the main thread observe `KeyboardInterrupt` or caller-owned shutdown events.
+- Never invoke `request_stop()` from a native POSIX signal handler.

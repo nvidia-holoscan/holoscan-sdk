@@ -6,6 +6,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 
 #include <cuda_runtime_api.h>
@@ -26,7 +28,9 @@
 #include <holoscan/core/tensor_output_loan.hpp>
 
 #include "../compiler/execution_plan_state.hpp"
+#include "../core/diagnostic_context.hpp"
 #include "../core/domain/tensor_access.hpp"
+#include "../core/tensor_contract_comparison.hpp"
 
 namespace holoscan::detail {
 
@@ -186,40 +190,126 @@ class ReadClaimPool {
   std::atomic<std::uint32_t> live_claims_{};
 };
 
-/// Return whether a trusted Tensor snapshot fits one compiler-frozen storage envelope.
-[[nodiscard]] inline bool tensor_snapshot_matches_plan(const TensorAccessSnapshot& snapshot,
-                                                       const std::uint64_t max_byte_span,
-                                                       const MemoryKind memory_kind,
-                                                       const DeviceId device) noexcept {
-  if (!snapshot.initialized || !snapshot.valid) {
+// Retain only the first mismatch. Formatting runs on a rejected output, into owned fixed storage;
+// callers that only validate retain the existing allocation-free predicate path.
+template <typename Provided, typename Required>
+inline bool capture_tensor_mismatch(TensorContractMismatchCapture* capture, std::string_view field,
+                                    const Provided& provided, const Required& required,
+                                    std::optional<std::size_t> axis = std::nullopt) noexcept {
+  if (capture == nullptr || capture->field[0] != '\0') {
     return false;
+  }
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    const auto write = [&](auto& destination, const auto& value) {
+      const auto capacity = destination.size();
+      const auto result = fmt::format_to_n(destination.data(), capacity - 1U, "{}", value);
+      destination[std::min(result.size, capacity - 1U)] = '\0';
+      capture->truncated = capture->truncated || result.size >= capacity;
+    };
+    if (axis) {
+      const auto result = fmt::format_to_n(
+          capture->field.data(), capture->field.size() - 1U, "axes[{}].{}", *axis, field);
+      capture->field[std::min(result.size, capture->field.size() - 1U)] = '\0';
+      capture->truncated = result.size >= capture->field.size();
+    } else {
+      write(capture->field, field);
+    }
+    write(capture->provided, provided);
+    write(capture->required, required);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (...) {
+    capture->truncated = true;
+  }
+#endif
+  return false;
+}
+
+inline MemoryKind tensor_snapshot_memory_kind(const TensorAccessSnapshot& snapshot) noexcept {
+  switch (snapshot.device.device_type) {
+    case kDLCPU:
+      return MemoryKind::kHost;
+    case kDLCUDAHost:
+      return MemoryKind::kPinnedHost;
+    case kDLCUDA:
+      return MemoryKind::kCudaDevice;
+    case kDLCUDAManaged:
+      return MemoryKind::kCudaManaged;
+    default:
+      return MemoryKind::kUnknown;
+  }
+}
+
+inline bool capture_tensor_dtype_mismatch(TensorContractMismatchCapture* capture,
+                                          DLDataType provided, DLDataType required) noexcept {
+  if (provided.code != required.code) {
+    return capture_tensor_mismatch(capture, "dtype.code", provided.code, required.code);
+  }
+  if (provided.bits != required.bits) {
+    return capture_tensor_mismatch(capture, "dtype.bits", provided.bits, required.bits);
+  }
+  return capture_tensor_mismatch(capture, "dtype.lanes", provided.lanes, required.lanes);
+}
+
+/// Return whether a trusted Tensor snapshot fits one compiler-frozen storage envelope.
+[[nodiscard]] inline bool tensor_snapshot_matches_plan(
+    const TensorAccessSnapshot& snapshot, const std::uint64_t max_byte_span,
+    const MemoryKind memory_kind, const DeviceId device,
+    TensorContractMismatchCapture* capture = nullptr) noexcept {
+  if (!snapshot.initialized || !snapshot.valid) {
+    return capture_tensor_mismatch(capture, "snapshot", "invalid", "initialized and valid");
   }
   if (memory_kind == MemoryKind::kUnknown) {
-    return max_byte_span == 0U && !device.valid();
+    if (max_byte_span == 0U && !device.valid()) {
+      return true;
+    }
+    return capture_tensor_mismatch(capture, "storage_plan", "unresolved", "resolved memory kind");
   }
   if (max_byte_span == 0U || snapshot.byte_span > max_byte_span) {
-    return false;
+    return capture_tensor_mismatch(capture, "max_byte_span", snapshot.byte_span, max_byte_span);
   }
-  switch (memory_kind) {
-    case MemoryKind::kHost:
-      return !device.valid() && snapshot.device.device_type == kDLCPU &&
-             snapshot.device.device_id == 0;
-    case MemoryKind::kPinnedHost:
-      // DLPack fixes pinned-host device_id at zero. A valid private plan device may still select
-      // the HoloMQ generation-sync context; it is not encoded in public Tensor metadata.
-      return snapshot.device.device_type == kDLCUDAHost && snapshot.device.device_id == 0;
-    case MemoryKind::kCudaDevice:
-      return device.valid() && snapshot.device.device_type == kDLCUDA &&
-             snapshot.device.device_id == device.value;
-    case MemoryKind::kCudaManaged:
-      // DLPack uses device id zero for managed allocations. Compile still requires an explicit
-      // source-private DeviceId so Runtime never infers device zero from that convention.
-      return device.valid() && snapshot.device.device_type == kDLCUDAManaged &&
-             snapshot.device.device_id == 0;
-    case MemoryKind::kUnknown:
-    default:
-      return false;
+  const bool matches = [&]() noexcept {
+    switch (memory_kind) {
+      case MemoryKind::kHost:
+        return !device.valid() && snapshot.device.device_type == kDLCPU &&
+               snapshot.device.device_id == 0;
+      case MemoryKind::kPinnedHost:
+        // DLPack fixes pinned-host device_id at zero; the private device selects HoloMQ sync.
+        return snapshot.device.device_type == kDLCUDAHost && snapshot.device.device_id == 0;
+      case MemoryKind::kCudaDevice:
+        return device.valid() && snapshot.device.device_type == kDLCUDA &&
+               snapshot.device.device_id == device.value;
+      case MemoryKind::kCudaManaged:
+        // Managed DLPack device_id is zero, independently of the private execution DeviceId.
+        return device.valid() && snapshot.device.device_type == kDLCUDAManaged &&
+               snapshot.device.device_id == 0;
+      case MemoryKind::kUnknown:
+      default:
+        return false;
+    }
+  }();
+  if (matches || capture == nullptr) {
+    return matches;
   }
+  if (tensor_snapshot_memory_kind(snapshot) != memory_kind) {
+    return capture_tensor_mismatch(capture,
+                                   "memory_kind",
+                                   tensor_memory_name(tensor_snapshot_memory_kind(snapshot)),
+                                   tensor_memory_name(memory_kind));
+  }
+  if ((memory_kind == MemoryKind::kHost && device.valid()) ||
+      ((memory_kind == MemoryKind::kCudaDevice || memory_kind == MemoryKind::kCudaManaged) &&
+       !device.valid())) {
+    return capture_tensor_mismatch(capture,
+                                   "storage_plan.device",
+                                   device.value,
+                                   memory_kind == MemoryKind::kHost ? "absent" : "valid device");
+  }
+  return capture_tensor_mismatch(capture,
+                                 "device_id",
+                                 snapshot.device.device_id,
+                                 memory_kind == MemoryKind::kCudaDevice ? device.value : 0);
 }
 
 [[nodiscard]] inline bool tensor_matches_field_contract(
@@ -245,44 +335,62 @@ class ReadClaimPool {
 [[nodiscard]] expected<DeviceId, Error> uniform_tensor_field_device(
     DeviceId fallback, std::span<const TensorFieldServiceStorageContract> fields) noexcept;
 
-[[nodiscard]] inline bool tensor_matches_port_layout(const Tensor& tensor,
-                                                     const TensorAccessSnapshot& snapshot,
-                                                     const TensorRepresentation& layout) noexcept {
-  if (!snapshot.initialized || !snapshot.valid) {
-    return false;
-  }
-  if (layout.memory_kind) {
-    const bool memory_matches = [&]() noexcept {
-      switch (*layout.memory_kind) {
-        case MemoryKind::kHost:
-          return snapshot.device.device_type == kDLCPU && snapshot.device.device_id == 0;
-        case MemoryKind::kPinnedHost:
-          return snapshot.device.device_type == kDLCUDAHost && snapshot.device.device_id == 0;
-        case MemoryKind::kCudaDevice:
-          return snapshot.device.device_type == kDLCUDA && snapshot.device.device_id >= 0;
-        case MemoryKind::kCudaManaged:
-          return snapshot.device.device_type == kDLCUDAManaged && snapshot.device.device_id == 0;
-        case MemoryKind::kUnknown:
-        default:
-          return false;
-      }
-    }();
-    if (!memory_matches) {
-      return false;
+[[nodiscard]] inline bool tensor_matches_port_memory(
+    const TensorAccessSnapshot& snapshot, MemoryKind memory_kind,
+    TensorContractMismatchCapture* capture) noexcept {
+  const bool memory_matches = [&]() noexcept {
+    switch (memory_kind) {
+      case MemoryKind::kHost:
+        return snapshot.device.device_type == kDLCPU && snapshot.device.device_id == 0;
+      case MemoryKind::kPinnedHost:
+        return snapshot.device.device_type == kDLCUDAHost && snapshot.device.device_id == 0;
+      case MemoryKind::kCudaDevice:
+        return snapshot.device.device_type == kDLCUDA && snapshot.device.device_id >= 0;
+      case MemoryKind::kCudaManaged:
+        return snapshot.device.device_type == kDLCUDAManaged && snapshot.device.device_id == 0;
+      case MemoryKind::kUnknown:
+      default:
+        return false;
     }
+  }();
+  if (!memory_matches) {
+    if (tensor_snapshot_memory_kind(snapshot) != memory_kind ||
+        memory_kind == MemoryKind::kUnknown) {
+      return capture_tensor_mismatch(capture,
+                                     "memory_kind",
+                                     tensor_memory_name(tensor_snapshot_memory_kind(snapshot)),
+                                     tensor_memory_name(memory_kind));
+    }
+    return capture_tensor_mismatch(capture,
+                                   "device_id",
+                                   snapshot.device.device_id,
+                                   memory_kind == MemoryKind::kCudaDevice ? ">= 0" : "0");
+  }
+  return true;
+}
+
+[[nodiscard]] inline bool tensor_matches_port_layout(
+    const Tensor& tensor, const TensorAccessSnapshot& snapshot, const TensorRepresentation& layout,
+    TensorContractMismatchCapture* capture = nullptr) noexcept {
+  if (!snapshot.initialized || !snapshot.valid) {
+    return capture_tensor_mismatch(capture, "snapshot", "invalid", "initialized and valid");
+  }
+  if (layout.memory_kind && !tensor_matches_port_memory(snapshot, *layout.memory_kind, capture)) {
+    return false;
   }
   if (layout.dtype) {
     const DLDataType actual = tensor.dtype();
     if (actual.code != layout.dtype->code || actual.bits != layout.dtype->bits ||
         actual.lanes != layout.dtype->lanes) {
-      return false;
+      return capture_tensor_dtype_mismatch(capture, actual, *layout.dtype);
     }
   }
   if (layout.rank && static_cast<std::uint32_t>(tensor.ndim()) != *layout.rank) {
-    return false;
+    return capture_tensor_mismatch(capture, "rank", tensor.ndim(), *layout.rank);
   }
   return !layout.strides || *layout.strides == TensorStridePolicy::kBoundedStrided ||
-         tensor.is_contiguous();
+         tensor.is_contiguous() ||
+         capture_tensor_mismatch(capture, "strides", "strided", "contiguous");
 }
 
 [[nodiscard]] inline std::optional<std::uint64_t> tensor_axis_byte_stride(
@@ -317,89 +425,121 @@ class ReadClaimPool {
 
 [[nodiscard]] inline bool tensor_matches_port_contract(
     const Tensor& tensor, const TensorAccessSnapshot& snapshot,
-    const TensorContractRecord& contract) noexcept {
+    const TensorContractRecord& contract,
+    TensorContractMismatchCapture* capture = nullptr) noexcept {
   if (!snapshot.initialized || !snapshot.valid) {
-    return false;
+    return capture_tensor_mismatch(capture, "snapshot", "invalid", "initialized and valid");
   }
-  if (!tensor_matches_port_layout(tensor, snapshot, contract.representation)) {
+  if (!tensor_matches_port_layout(tensor, snapshot, contract.representation, capture)) {
     return false;
   }
   const auto rank = tensor.ndim();
-  if (rank < 0 || (contract.max_rank && static_cast<std::uint32_t>(rank) > *contract.max_rank) ||
-      (contract.max_byte_span && snapshot.byte_span > *contract.max_byte_span)) {
-    return false;
+  if (rank < 0) {
+    return capture_tensor_mismatch(capture, "rank", rank, ">= 0");
+  }
+  if (contract.max_rank && static_cast<std::uint32_t>(rank) > *contract.max_rank) {
+    return capture_tensor_mismatch(capture, "max_rank", rank, *contract.max_rank);
+  }
+  if (contract.max_byte_span && snapshot.byte_span > *contract.max_byte_span) {
+    return capture_tensor_mismatch(
+        capture, "max_byte_span", snapshot.byte_span, *contract.max_byte_span);
   }
   const auto shape = tensor.shape_span();
   if (contract.axes.size() > shape.size()) {
-    return false;
+    return capture_tensor_mismatch(capture, "axes", shape.size(), contract.axes.size());
   }
   const std::uint64_t item_bytes = dlpack_dtype_item_size_bytes(tensor.dtype());
   if (item_bytes == 0U) {
-    return false;
+    return capture_tensor_mismatch(capture, "dtype.item_bytes", item_bytes, "> 0");
   }
   for (std::size_t axis = 0U; axis < contract.axes.size(); ++axis) {
     if (shape[axis] < 0 ||
         static_cast<std::uint64_t>(shape[axis]) > contract.axes[axis].max_extent) {
-      return false;
+      return capture_tensor_mismatch(
+          capture, "max_extent", shape[axis], contract.axes[axis].max_extent, axis);
     }
     const auto stride = tensor_axis_byte_stride(tensor, axis, item_bytes);
     if (!stride || (contract.axes[axis].max_abs_stride_bytes != 0U &&
                     *stride > contract.axes[axis].max_abs_stride_bytes)) {
-      return false;
+      if (!stride) {
+        return capture_tensor_mismatch(capture,
+                                       "stride_bytes",
+                                       "invalid or overflowing",
+                                       "representable nonnegative stride",
+                                       axis);
+      }
+      return capture_tensor_mismatch(
+          capture, "max_abs_stride_bytes", *stride, contract.axes[axis].max_abs_stride_bytes, axis);
     }
   }
   return true;
 }
 
 [[nodiscard]] inline bool tensor_matches_logical_requirements(
-    const Tensor& tensor, const TensorBoundaryContractRecord& requirements) noexcept {
+    const Tensor& tensor, const TensorBoundaryContractRecord& requirements,
+    TensorContractMismatchCapture* capture = nullptr) noexcept {
   const auto rank = tensor.ndim();
   if (rank < 0) {
-    return false;
+    return capture_tensor_mismatch(capture, "rank", rank, ">= 0");
   }
   const auto logical_rank = static_cast<std::uint32_t>(rank);
-  if ((requirements.rank && logical_rank != *requirements.rank) ||
-      (requirements.max_rank && logical_rank > *requirements.max_rank)) {
-    return false;
+  if (requirements.rank && logical_rank != *requirements.rank) {
+    return capture_tensor_mismatch(capture, "rank", logical_rank, *requirements.rank);
+  }
+  if (requirements.max_rank && logical_rank > *requirements.max_rank) {
+    return capture_tensor_mismatch(capture, "max_rank", logical_rank, *requirements.max_rank);
   }
   if (requirements.dtype) {
     const DLDataType actual = tensor.dtype();
     if (actual.code != requirements.dtype->code || actual.bits != requirements.dtype->bits ||
         actual.lanes != requirements.dtype->lanes) {
-      return false;
+      return capture_tensor_dtype_mismatch(capture, actual, *requirements.dtype);
     }
   }
   const auto shape = tensor.shape_span();
-  if (shape.size() != static_cast<std::size_t>(rank) || requirements.axes.size() > shape.size()) {
-    return false;
+  if (shape.size() != static_cast<std::size_t>(rank)) {
+    return capture_tensor_mismatch(capture, "shape.size", shape.size(), rank);
+  }
+  if (requirements.axes.size() > shape.size()) {
+    return capture_tensor_mismatch(capture, "axes", shape.size(), requirements.axes.size());
   }
   for (std::size_t axis = 0U; axis < requirements.axes.size(); ++axis) {
     if (shape[axis] < 0 ||
         static_cast<std::uint64_t>(shape[axis]) > requirements.axes[axis].max_extent) {
-      return false;
+      return capture_tensor_mismatch(
+          capture, "max_extent", shape[axis], requirements.axes[axis].max_extent, axis);
     }
   }
   const std::uint64_t item_size = dlpack_dtype_item_size_bytes(tensor.dtype());
   if (item_size == 0U) {
-    return false;
+    return capture_tensor_mismatch(capture, "dtype.item_bytes", item_size, "> 0");
   }
   std::uint64_t contiguous_stride = item_size;
   for (std::size_t reverse = shape.size(); reverse > 0U; --reverse) {
     const std::size_t axis = reverse - 1U;
     if (axis < requirements.axes.size() && requirements.axes[axis].max_abs_stride_bytes != 0U &&
         contiguous_stride > requirements.axes[axis].max_abs_stride_bytes) {
-      return false;
+      return capture_tensor_mismatch(capture,
+                                     "max_abs_stride_bytes",
+                                     contiguous_stride,
+                                     requirements.axes[axis].max_abs_stride_bytes,
+                                     axis);
     }
     const std::uint64_t extent =
         std::max<std::uint64_t>(static_cast<std::uint64_t>(shape[axis]), 1U);
     if (contiguous_stride > std::numeric_limits<std::uint64_t>::max() / extent) {
-      return false;
+      return capture_tensor_mismatch(
+          capture, "stride_bytes", "overflow", "representable stride", axis);
     }
     contiguous_stride *= extent;
   }
   // Baseline external Tensor execution admits only contiguous storage. Keep this check at the live
   // import boundary so an explicitly strided DLPack view cannot bypass catalog-time validation.
-  return requirements.strides == TensorStridePolicy::kContiguousOnly && tensor.is_contiguous();
+  return (requirements.strides == TensorStridePolicy::kContiguousOnly && tensor.is_contiguous()) ||
+         capture_tensor_mismatch(capture,
+                                 "strides",
+                                 tensor.is_contiguous() ? "contiguous" : "strided",
+                                 tensor_stride_name(requirements.strides));
 }
 
 }  // namespace holoscan::detail

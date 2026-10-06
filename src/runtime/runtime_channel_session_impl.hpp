@@ -44,12 +44,14 @@
 #include "../core/domain/tensor_access.hpp"
 #include "../core/plan_record_contracts.hpp"
 #include "channel_runtime_binding_access.hpp"
+#include "core/diagnostic_reporting.hpp"
 #include "endpoint_clock_health_runtime.hpp"
 #include "runtime_channel_binding.hpp"
 #include "runtime_channel_plan_binding.hpp"
 #include "runtime_channel_storage.hpp"
 #include "runtime_phase_counters.hpp"
 #include "runtime_support_thread_control.hpp"
+#include "runtime_support_thread_placement.hpp"
 #include "runtime_tensor_resources.hpp"
 #include "temporal_preselection.hpp"
 #include "tensor_boundary_contract_comparison.hpp"
@@ -89,7 +91,7 @@ inline void corrupt_process_local_schema_frame(
     std::span<std::byte> frame,
     const channel_internal::CatalogSchemaFrameCorruption corruption) noexcept {
   constexpr std::size_t kSchemaIdOffset = 8U;
-  constexpr std::size_t kSchemaVersionOffset = 24U;
+  constexpr std::size_t kPayloadSizeOffset = 24U;
   constexpr std::size_t kEndpointGenerationOffset = 32U;
   constexpr std::size_t kPayloadOffset = kSchemaEnvelopeHeaderSize;
 
@@ -100,9 +102,9 @@ inline void corrupt_process_local_schema_frame(
     case channel_internal::CatalogSchemaFrameCorruption::kSchemaId:
       frame[kSchemaIdOffset] ^= std::byte{0xffU};
       break;
-    case channel_internal::CatalogSchemaFrameCorruption::kSchemaVersion:
+    case channel_internal::CatalogSchemaFrameCorruption::kPayloadSize:
       channel_internal::schema_envelope_detail::store_little<std::uint32_t>(
-          frame, kSchemaVersionOffset, 0U);
+          frame, kPayloadSizeOffset, 0U);
       break;
     case channel_internal::CatalogSchemaFrameCorruption::kEndpointGeneration:
       channel_internal::schema_envelope_detail::store_little<std::uint64_t>(
@@ -112,6 +114,9 @@ inline void corrupt_process_local_schema_frame(
       break;
     case channel_internal::CatalogSchemaFrameCorruption::kPayloadVerifier:
       std::fill(frame.begin() + kPayloadOffset, frame.end(), std::byte{0xffU});
+      break;
+    case channel_internal::CatalogSchemaFrameCorruption::kEnvelopeAbi:
+      channel_internal::schema_envelope_detail::store_little<std::uint32_t>(frame, 0U, 0U);
       break;
   }
 }
@@ -205,6 +210,29 @@ class RuntimeChannelSession::Impl {
   struct SubscriberState;
   class ReadinessBinding;
 
+  /// Keep language-owned payload references alive until the enclosing channel lock has unwound.
+  class DeferredSampleReleases {
+   public:
+    DeferredSampleReleases(const RuntimePortTypeOps& type_ops, std::size_t maximum_releases)
+        : retain_(type_ops.retain_sample_payload_for_deferred_release) {
+      if (retain_ != nullptr) {
+        releases_.reserve(maximum_releases);
+      }
+    }
+
+    void retain(const void* sample) noexcept {
+      if (retain_ == nullptr) {
+        return;
+      }
+      releases_.emplace_back();
+      retain_(sample, &releases_.back());
+    }
+
+   private:
+    void (*retain_)(const void*, std::shared_ptr<void>*) noexcept {};
+    std::vector<std::shared_ptr<void>> releases_;
+  };
+
   struct SampleSlot {
     SubscriberState* subscriber{};
     AlignedBlock sample;
@@ -234,6 +262,10 @@ class RuntimeChannelSession::Impl {
     // drop-oldest skips it: the gate's argument is about this record's coordinate, so admitting a
     // different one makes the eviction unsound however sound the gate was.
     bool refill_reserved{};
+    // Set on the oldest staged predecessor selected for the current step toward a separately
+    // fenced newest refill target. Unlike refill_reserved this record still counts against the
+    // authored staging depth; it is protected only across the selector/channel commit boundary.
+    bool refill_prefix_reserved{};
     // Set while this record is what a released freshness claim was traded for, and cleared once
     // its readiness event is published or the slot is reset.
     //
@@ -246,7 +278,7 @@ class RuntimeChannelSession::Impl {
     bool owed_to_released_claim{};
   };
 
-  static void reset_sample_slot(SampleSlot& slot) noexcept;
+  static void reset_sample_slot(SampleSlot& slot, DeferredSampleReleases& releases) noexcept;
 
   struct InputPortState {
     PortId port{};
@@ -271,7 +303,10 @@ class RuntimeChannelSession::Impl {
     // Aliasing an observed value would require one complete uint64_t cycle between polls.
     std::atomic<std::uint64_t> readiness_revision{};
     bool capture_time_required{};
-    SampleSlot* reuse_slot{};
+    // The pointer spans subscriber caches; slot contents remain protected by
+    // their own cache mutex. Addresses and subscriber identities are stable
+    // until the joined session is destroyed.
+    std::atomic<SampleSlot*> reuse_slot{};
     InputSelection active_selection{InputState::kAbsent, SelectionReason::kNeverSeen};
     std::uint64_t active_generation{1U};
     std::uint64_t view_generation{1U};
@@ -279,15 +314,24 @@ class RuntimeChannelSession::Impl {
     bool batch{};
     bool destructive{};
     bool reuse_last{};
+    bool private_depth_one_reuse_slot{};
     bool selection_prepared{};
     bool staged_now{};
     bool predicate_view_constructed{};
     SubscriberState* freshness_reservation_subscriber{};
     SampleSlot* freshness_reservation_retained{};
     SampleSlot* freshness_reservation_successor{};
+    // The newest witness-qualified staged record remains fenced while predecessor records are
+    // admitted one at a time in arrival order. The target reservation consumes the existing one
+    // record of freshness headroom; predecessor reservations do not.
+    SampleSlot* freshness_refill_target{};
+    TimePoint freshness_refill_target_reference{};
+    bool freshness_refill_prefix_committed{};
     std::uint64_t next_freshness_reservation_generation{1U};
     std::uint64_t freshness_reservation_generation{};
     bool batch_receive_nvtx_enabled{};
+    const void* required_tensor_address{};
+    std::vector<std::uint64_t> required_tensor_shape;
 
     ~InputPortState();
 
@@ -371,6 +415,9 @@ class RuntimeChannelSession::Impl {
     bool replacement_sample_constructed{};
     AlignedBlock descriptor_replacement_sample;
     bool descriptor_replacement_sample_prepared{};
+    // Producer Tensor field this subscriber takes when its edge narrows the schema payload to a
+    // Tensor. Sibling subscribers on the same service still receive the schema root.
+    std::optional<TensorProjectionRecord> tensor_projection;
     std::optional<TensorRepresentation> pass_through_tensor_layout;
     std::optional<TensorContractRecord> pass_through_tensor_contract;
     std::optional<TensorBoundaryContractRecord> tensor_logical_requirements;
@@ -387,6 +434,9 @@ class RuntimeChannelSession::Impl {
     void (*typed_ingress_observer)(void*) noexcept {};
     void* input_poll_contention_observer_state{};
     RuntimeChannelInputPollContentionObserver input_poll_contention_observer{};
+    // Test seam: observe each failed try_lock inside one bounded contention retry on this input.
+    void* input_contention_retry_attempt_observer_state{};
+    RuntimeChannelInputPollContentionObserver input_contention_retry_attempt_observer{};
     bool fail_next_reuse_replacement_receive_for_test{};
     ErrorCode retryable_reuse_replacement_receive_error_for_test{ErrorCode::kSuccess};
     // Serialize the single transport consumer and its scratch independently from retained typed
@@ -416,6 +466,9 @@ class RuntimeChannelSession::Impl {
     std::uint32_t import_generation_capacity{};
     std::uint32_t import_generations_used{1U};
     bool import_restart_capable{};
+    // Snapshot consumed source authority at cutover, independently of data received in this epoch.
+    // EOS may follow an empty replacement epoch; data admission still uses only observed records.
+    std::uint64_t cutover_sequence_floor{};
 
     ~SubscriberState();
 
@@ -608,7 +661,31 @@ class RuntimeChannelSession::Impl {
     [[nodiscard]] expected<void, Error> discard_one_process_local_transport(
         CudaDeviceCursor* scan_device) noexcept;
 
-    void clear_samples() noexcept;
+    void clear_samples(std::uint64_t sequence_floor) noexcept;
+  };
+
+  // Serialize an input-wide retention transition against every incident
+  // producer. The cold subscriber order is stable and disjoint between inputs.
+  // Never acquire a transport mutex or re-enter a cache lock while holding this
+  // allocation-free guard.
+  class InputCacheLock {
+   public:
+    explicit InputCacheLock(const InputPortState& input) noexcept
+        : subscribers_(input.subscribers) {
+      for (auto* subscriber : subscribers_) {
+        subscriber->mutex.lock();
+      }
+    }
+    InputCacheLock(const InputCacheLock&) = delete;
+    InputCacheLock& operator=(const InputCacheLock&) = delete;
+    ~InputCacheLock() {
+      for (auto it = subscribers_.rbegin(); it != subscribers_.rend(); ++it) {
+        (*it)->mutex.unlock();
+      }
+    }
+
+   private:
+    std::span<SubscriberState* const> subscribers_;
   };
 
   // Own one exact typed destination across transport receive and first-use import work performed
@@ -620,12 +697,14 @@ class RuntimeChannelSession::Impl {
 
     TypedIngressReservation(SubscriberState& subscriber, SampleSlot& destination, const bool staged,
                             const bool reuse_replacement = false,
-                            const bool prior_temporal_retained = false) noexcept
+                            const bool prior_temporal_retained = false,
+                            const bool released_claim_replacement = false) noexcept
         : subscriber_(&subscriber),
           destination_(&destination),
           staged_(staged),
           reuse_replacement_(reuse_replacement),
           prior_temporal_retained_(prior_temporal_retained),
+          released_claim_replacement_(released_claim_replacement),
           prior_arrival_order_(destination.arrival_order),
           prior_source_sequence_(destination.temporal.source_sequence) {}
 
@@ -644,6 +723,7 @@ class RuntimeChannelSession::Impl {
           staged_(other.staged_),
           reuse_replacement_(other.reuse_replacement_),
           prior_temporal_retained_(other.prior_temporal_retained_),
+          released_claim_replacement_(other.released_claim_replacement_),
           prior_arrival_order_(other.prior_arrival_order_),
           prior_source_sequence_(other.prior_source_sequence_) {
       other.subscriber_ = nullptr;
@@ -669,6 +749,13 @@ class RuntimeChannelSession::Impl {
       assert(subscriber_ != nullptr);
       assert(destination_ != nullptr);
       assert(destination_->typed_ingress_reserved);
+      if (released_claim_replacement_) {
+        // The released ReuseLast claim commits this exact transported successor to readiness.
+        // Publish the guard before dropping the typed-ingress reservation so no producer can
+        // observe an unclaimed, pre-witness replacement window.
+        destination_->owed_to_released_claim = true;
+        subscriber_->input->last_refill_outcome.store(0U, std::memory_order_relaxed);
+      }
       destination_->typed_ingress_reserved = false;
       subscriber_ = nullptr;
       destination_ = nullptr;
@@ -678,6 +765,7 @@ class RuntimeChannelSession::Impl {
       if (subscriber_ == nullptr) {
         return;
       }
+      DeferredSampleReleases releases{*subscriber_->input->type_ops, 1U};
       const std::scoped_lock cache_lock{subscriber_->mutex};
       assert(destination_ != nullptr);
       assert(destination_->typed_ingress_reserved);
@@ -687,18 +775,19 @@ class RuntimeChannelSession::Impl {
             destination_->occupied && destination_->subscriber == subscriber_ &&
             destination_->arrival_order == prior_arrival_order_ &&
             destination_->temporal.source_sequence == prior_source_sequence_;
-        if (same_slot_identity && subscriber_->input->reuse_slot == nullptr &&
-            !destination_->reuse_retained &&
-            destination_->temporal_retained == prior_temporal_retained_) {
+        SampleSlot* empty = nullptr;
+        if (same_slot_identity && !destination_->reuse_retained &&
+            destination_->temporal_retained == prior_temporal_retained_ &&
+            subscriber_->input->reuse_slot.compare_exchange_strong(
+                empty, destination_, std::memory_order_acq_rel, std::memory_order_acquire)) {
           destination_->reuse_retained = true;
           destination_->temporal_retained = prior_temporal_retained_;
-          subscriber_->input->reuse_slot = destination_;
         } else {
           // The reservation fence makes identity drift unreachable through production cache
           // mutation. If another owner nevertheless installed a claim/pointer while transport was
           // outside the mutex, preserve that incumbent and reclaim only this now-unclaimed slot.
           assert(same_slot_identity);
-          reclaim_sample_slot_if_unclaimed(*destination_);
+          reclaim_sample_slot_if_unclaimed(*destination_, releases);
         }
       }
       subscriber_ = nullptr;
@@ -711,6 +800,7 @@ class RuntimeChannelSession::Impl {
     bool staged_{};
     bool reuse_replacement_{};
     bool prior_temporal_retained_{};
+    bool released_claim_replacement_{};
     std::uint64_t prior_arrival_order_{};
     std::uint64_t prior_source_sequence_{};
   };
@@ -745,11 +835,13 @@ class RuntimeChannelSession::Impl {
   /// claim to the selector before the witness can retire, so witness retirement alone is never
   /// sufficient to recycle a slot retained by a cache, pending window, closed window, or reuse
   /// policy.
-  static void reclaim_sample_slot_if_unclaimed(SampleSlot& slot) noexcept {
+  static void reclaim_sample_slot_if_unclaimed(SampleSlot& slot,
+                                               DeferredSampleReleases& releases) noexcept {
     if (slot.occupied && !slot.temporal_retained && !slot.retirement_selected &&
         !slot.typed_ingress_reserved && !slot.active_selected && !slot.reuse_retained &&
+        !slot.refill_reserved && !slot.refill_prefix_reserved && !slot.owed_to_released_claim &&
         (!slot.event_emitted || slot.witness_retired)) {
-      reset_sample_slot(slot);
+      reset_sample_slot(slot, releases);
     }
   }
 
@@ -816,8 +908,8 @@ class RuntimeChannelSession::Impl {
     }
     auto published_at = publish_clock_.now();
     if (!published_at) {
-      HOLOSCAN_LOG_ERROR("Channel publication could not read publish clock {}",
-                         publish_clock_.id().value);
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel publication could not read publish clock {}",
+                                   publish_clock_.id().value);
       return make_unexpected(std::move(published_at).error());
     }
     metadata.publish_timestamp_ns = published_at->timestamp_ns;
@@ -917,6 +1009,7 @@ class RuntimeChannelSession::Impl {
     PortId port{};
     VertexId owner{};
     Impl* session{};
+    TensorContractMismatchCapture* tensor_failure{};
     SubscriberState* direct_subscriber{};
     void* declaration{};
     const RuntimePortTypeOps* type_ops{};
@@ -984,10 +1077,13 @@ class RuntimeChannelSession::Impl {
     std::atomic<std::uint32_t> live_loan_count{};
     bool direct_continuation_capture{};
     bool active{};
-    bool end_of_stream_published{};
+    // Remember authority consumed by an earlier partial close until every arm has resolved.
+    // Local no-peer resolution and recipient abandonment consume no terminal coordinate.
+    enum class TerminalCloseState : std::uint8_t { kPending, kAuthorityConsumed, kComplete };
+    TerminalCloseState terminal_close_state{TerminalCloseState::kPending};
 
     [[nodiscard]] bool terminal_close_started() const noexcept {
-      return end_of_stream_published ||
+      return terminal_close_state != TerminalCloseState::kPending ||
              std::ranges::any_of(endpoints, &EndpointState::terminal_resolved) ||
              std::ranges::any_of(tensor_endpoints, &TensorEndpointState::terminal_resolved) ||
              std::ranges::any_of(catalog_tensor_endpoints,
@@ -1013,7 +1109,7 @@ class RuntimeChannelSession::Impl {
         endpoint.terminal_obligated = endpoint.peer_required;
         endpoint.terminal_resolved = false;
       }
-      end_of_stream_published = false;
+      terminal_close_state = TerminalCloseState::kPending;
     }
 
     [[nodiscard]] bool tensor_payload() const noexcept;
@@ -1022,10 +1118,17 @@ class RuntimeChannelSession::Impl {
 
     void mark_emit_nvtx(std::uint64_t sequence) const noexcept;
 
+    void record_emit() noexcept;
+
     ~OutputState();
 
     [[nodiscard]] expected<void, Error> classify_connection_refresh(expected<void, Error> refreshed,
                                                                     bool submitted) noexcept;
+
+    template <typename RetainOperation>
+    [[nodiscard]] static expected<void, Error> commit_direct_publication(
+        OutputState& state, SubscriberState& subscriber, std::uint64_t publication_sequence,
+        RetainOperation&& retain) noexcept;
 
     [[nodiscard]] expected<void, Error> refresh_connections() noexcept {
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
@@ -1120,6 +1223,10 @@ class RuntimeChannelSession::Impl {
     [[nodiscard]] static expected<void, Error> emit_tensor_fanout(
         OutputState& state, const Sample<Tensor>& supplied, Sample<Tensor> normalized) noexcept;
 
+    void capture_tensor_rejection(const Tensor& tensor, const TensorAccessSnapshot& snapshot,
+                                  bool native_contract_matches,
+                                  bool port_contract_matches) noexcept;
+
     [[nodiscard]] static expected<void, Error> emit_tensor_sample(
         OutputState& state, const Sample<Tensor>& supplied) noexcept;
 
@@ -1166,11 +1273,20 @@ class RuntimeChannelSession::Impl {
         OutputState& state, const void* payload, const SampleMetadata& metadata,
         std::uint64_t emitted_sequence) noexcept;
 
+    [[nodiscard]] static expected<void, Error> emit_process_local_object(
+        OutputState& state, const void* payload, SampleMetadata metadata) noexcept;
+
     [[nodiscard]] static expected<void, Error> emit_non_tensor_sample(
         OutputState& state, const void* payload, const SampleMetadata& metadata) noexcept;
 
     [[nodiscard]] static expected<void, Error> emit_sample(void* opaque,
                                                            const void* sample) noexcept;
+
+    [[nodiscard]] static expected<void, Error> observed_emit_sample(void* opaque,
+                                                                    const void* sample) noexcept;
+    [[nodiscard]] static expected<void, Error> observed_emit_loan(void* opaque,
+                                                                  RuntimeLoanBinding* binding,
+                                                                  EmitOptions options) noexcept;
 
     [[nodiscard]] static expected<void, Error> emit_descriptor_tensor(void* opaque,
                                                                       const void* descriptor,
@@ -1187,6 +1303,7 @@ class RuntimeChannelSession::Impl {
                                                          EmitOptions options) noexcept;
 
     static const RuntimeOutputBindingOps kBindingOps;
+    static const RuntimeOutputBindingOps kObservedBindingOps;
   };
 
   struct ActivationOwnerState {
@@ -1217,7 +1334,7 @@ class RuntimeChannelSession::Impl {
     bool initial_prepare{};
   };
 
-  [[nodiscard]] expected<void, Error> bind_activation_owners(std::size_t port_count);
+  [[nodiscard]] expected<void, Error> bind_activation_owners(const ExecutionPlanState& plan);
 
   [[nodiscard]] ActivationOwnerState* find_activation_owner(VertexId owner) noexcept;
 
@@ -1331,9 +1448,10 @@ class RuntimeChannelSession::Impl {
     if (activation_cut_index_ready()) {
       auto indexed = drain_indexed_activation_cut(failed_port, failed_owner, terminal_diagnostic);
       if (!indexed) {
-        HOLOSCAN_LOG_ERROR("Indexed post-compute Channel activation cut failed with {} on port {}",
-                           error_code_name(indexed.error().code),
-                           failed_port.value());
+        HOLOSCAN_LOG_AUTOMATIC_ERROR(
+            "Indexed post-compute Channel activation cut failed with {} on port {}",
+            error_code_name(indexed.error().code),
+            failed_port.value());
         fail(indexed.error(), failed_owner, terminal_diagnostic);
         return make_unexpected(std::move(indexed).error());
       }
@@ -1344,9 +1462,9 @@ class RuntimeChannelSession::Impl {
     auto drained =
         drain_unmonitored_inputs(failed_port, failed_owner, terminal_diagnostic, nullptr, true);
     if (!drained) {
-      HOLOSCAN_LOG_ERROR("Post-compute Channel activation cut failed with {} on port {}",
-                         error_code_name(drained.error().code),
-                         failed_port.value());
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Post-compute Channel activation cut failed with {} on port {}",
+                                   error_code_name(drained.error().code),
+                                   failed_port.value());
       fail(drained.error(), failed_owner, terminal_diagnostic);
       return make_unexpected(std::move(drained).error());
     }
@@ -1443,7 +1561,8 @@ class RuntimeChannelSession::Impl {
       return true;
     }
 
-    terminal_node.key() = *terminal_replacement;
+    // A nonzero original terminal key establishes the replacement above.
+    terminal_node.key() = *terminal_replacement;  // NOLINT(bugprone-unchecked-optional-access)
     auto terminal_inserted = wait_subscriber_by_handle_.insert(std::move(terminal_node));
     if (terminal_inserted.inserted) {
       return true;
@@ -1469,13 +1588,20 @@ class RuntimeChannelSession::Impl {
 
     [[nodiscard]] expected<void, Error> poll_blocking(TimePoint observed_at) noexcept override;
 
-    [[nodiscard]] expected<void, Error> poll_with_acquisition(TimePoint observed_at,
-                                                              bool block) noexcept;
+    [[nodiscard]] expected<void, Error> poll_after_contention(
+        TimePoint observed_at) noexcept override;
+
+    [[nodiscard]] expected<void, Error> poll_with_acquisition(
+        TimePoint observed_at, RuntimeChannelIncompletePollKind flavour) noexcept;
 
     [[nodiscard]] SourceId source() const noexcept override;
 
     [[nodiscard]] bool last_poll_incomplete() const noexcept override {
       return last_poll_incomplete_;
+    }
+
+    [[nodiscard]] bool last_poll_lock_contended() const noexcept override {
+      return last_poll_lock_contended_;
     }
 
     [[nodiscard]] std::optional<PortBindingPollTarget> poll_target() const noexcept override;
@@ -1549,6 +1675,7 @@ class RuntimeChannelSession::Impl {
     bool terminal_retry_pending_{};
     bool closed_{};
     bool last_poll_incomplete_{};
+    bool last_poll_lock_contended_{};
 
     friend class Impl;
     friend class RuntimeChannelSessionTestAccess;
@@ -1556,6 +1683,7 @@ class RuntimeChannelSession::Impl {
 
   Impl(ChannelRuntime runtime, PlanGenerationId plan_generation, RunGenerationId run_generation,
        std::span<const ClockConversionRecord> clock_conversions,
+       std::span<const SupportThreadAffinityPlanRecord> support_thread_affinities,
        std::shared_ptr<RuntimeSupportThreadControl> support_thread_control,
        std::shared_ptr<RuntimeChannelIncompletePollTestControl> incomplete_poll_test_control,
        const bool force_process_local_channel_pump,
@@ -1565,6 +1693,7 @@ class RuntimeChannelSession::Impl {
         plan_generation_(plan_generation),
         run_generation_(run_generation),
         clock_conversions_(clock_conversions.begin(), clock_conversions.end()),
+        support_thread_affinities_(support_thread_affinities),
         support_thread_control_(std::move(support_thread_control)),
         incomplete_poll_test_control_(std::move(incomplete_poll_test_control)),
         force_process_local_channel_pump_(force_process_local_channel_pump),
@@ -1588,6 +1717,8 @@ class RuntimeChannelSession::Impl {
     pump_subscribers_.clear();
     subscribers_.clear();
     activation_owners_.clear();
+    // The cold observation owner remains alive throughout this destructor body; destroy every
+    // OutputState borrower before member destruction can release that trailing shared owner.
     outputs_.clear();
     inputs_.clear();
     observe_teardown(RuntimeChannelTeardownPhase::kEndpointChildrenDestroyed);
@@ -1632,6 +1763,14 @@ class RuntimeChannelSession::Impl {
     return {};
   }
 
+#if defined(HOLOSCAN_RUNTIME_CHANNEL_TEST_ACCESS)
+  [[nodiscard]] expected<void, Error> fail_fixed_tensor_shape_allocation_after_successes_for_test(
+      const std::size_t successful_allocations) noexcept {
+    fixed_tensor_shape_allocations_before_failure_for_test_ = successful_allocations;
+    return {};
+  }
+#endif
+
   [[nodiscard]] expected<void, Error> set_activation_retirement_observer_for_test(
       void* const state, const RuntimeChannelActivationRetirementObserver observer) noexcept {
     if (armed_.load(std::memory_order_acquire) || state == nullptr || observer == nullptr ||
@@ -1650,8 +1789,9 @@ class RuntimeChannelSession::Impl {
 
   // The visible branch sequence preserves the bounded snapshot, heap ordering, and revalidation
   // protocol across independently locked input caches.
-  [[nodiscard]] expected<bool, Error> poll_inputs(ReadinessBinding& binding, TimePoint observed_at,
-                                                  bool block = false) noexcept;
+  [[nodiscard]] expected<bool, Error> poll_inputs(
+      ReadinessBinding& binding, TimePoint observed_at,
+      RuntimeChannelIncompletePollKind flavour) noexcept;
 
   template <typename Initialize>
   [[nodiscard]] expected<std::pair<OutputState*, bool>, Error> ensure_output_state(
@@ -1664,7 +1804,7 @@ class RuntimeChannelSession::Impl {
     if (existing != outputs_.end()) {
       OutputState* const output = existing->get();
       if (output->owner != replay.owner || output->declaration != replay.declaration ||
-          output->type_ops != replay.type_ops) {
+          output->type_ops != replay.type_ops || output->tensor_failure != replay.tensor_failure) {
         return make_unexpected(Error{ErrorCode::kProtocolError});
       }
       return std::pair{output, false};
@@ -1676,6 +1816,7 @@ class RuntimeChannelSession::Impl {
     created->session = this;
     created->declaration = replay.declaration;
     created->type_ops = replay.type_ops;
+    created->tensor_failure = replay.tensor_failure;
     created->phase_counters = phase_counters_;
     created->tensor_test_control = tensor_test_control;
     created->max_emits_per_activation = port_plan.max_emits_per_compute;
@@ -1727,6 +1868,11 @@ class RuntimeChannelSession::Impl {
       created->conversion_id = selection->conversion_id;
       created->capture_time_required = selection->selector != InputSelectorKind::kDrainAll;
       created->reuse_last = selection->missing == TemporalRecordMissingKind::kReuseLast;
+      // ReuseLast is independent retention, so keep its exact fallback outside the authored typed
+      // depth while a causal successor waits for its trigger.
+      created->private_depth_one_reuse_slot =
+          selection->selector == InputSelectorKind::kLatestWithin && created->reuse_last &&
+          selection->cache_capacity == 1U;
       if (selection->conversion_id == 0U) {
         created->capture_clock = selection->reference_clock;
       } else {
@@ -1823,11 +1969,18 @@ class RuntimeChannelSession::Impl {
       return make_unexpected(Error{ErrorCode::kResourceExhausted});
     }
     input.active_slots.reserve(input.active_slots.capacity() + typed_slot_capacity);
-    if (input.retirement_slots.max_size() - input.retirement_slots.capacity() <
-        typed_slot_capacity) {
+    const std::uint32_t reuse_retirement_headroom =
+        subscriber.queue_policy == QueuePolicy::kDropOldest && input.private_depth_one_reuse_slot
+            ? 1U
+            : 0U;
+    if (typed_slot_capacity >
+            std::numeric_limits<std::uint32_t>::max() - reuse_retirement_headroom ||
+        input.retirement_slots.max_size() - input.retirement_slots.capacity() <
+            typed_slot_capacity + reuse_retirement_headroom) {
       return make_unexpected(Error{ErrorCode::kResourceExhausted});
     }
-    input.retirement_slots.reserve(input.retirement_slots.capacity() + typed_slot_capacity);
+    input.retirement_slots.reserve(input.retirement_slots.capacity() + typed_slot_capacity +
+                                   reuse_retirement_headroom);
     if (tensor_fields_per_slot == 0U ||
         tensor_fields_per_slot > std::numeric_limits<std::size_t>::max() / typed_slot_capacity) {
       return make_unexpected(Error{ErrorCode::kResourceExhausted});
@@ -1867,11 +2020,17 @@ class RuntimeChannelSession::Impl {
     return found == inputs_.end() ? nullptr : found->get();
   }
 
+  [[nodiscard]] OutputState* find_output(PortId port) noexcept {
+    const auto found = std::find_if(
+        outputs_.begin(), outputs_.end(), [&](const auto& output) { return output->port == port; });
+    return found == outputs_.end() ? nullptr : found->get();
+  }
+
   [[nodiscard]] expected<void, Error> replace_output_publishers_for_test(
       PortId port,
       std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers,
       const std::span<const std::uint32_t> expected_recipient_counts,
-      const bool refresh_before_emit) noexcept {
+      const bool refresh_before_emit, const bool peer_required) noexcept {
     if (armed_.load(std::memory_order_acquire) || !port || publishers.empty() ||
         (!expected_recipient_counts.empty() &&
          expected_recipient_counts.size() != publishers.size()) ||
@@ -1898,6 +2057,7 @@ class RuntimeChannelSession::Impl {
           .expected_recipient_count =
               expected_recipient_counts.empty() ? 1U : expected_recipient_counts[index],
           .refresh_before_emit = refresh_before_emit,
+          .peer_required = peer_required,
           .process_local_transport = !refresh_before_emit,
       });
     }
@@ -1946,9 +2106,12 @@ class RuntimeChannelSession::Impl {
         return nullptr;
       }
     }
+    const bool private_reuse_slot = subscriber.queue_policy == QueuePolicy::kDropOldest &&
+                                    subscriber.input->private_depth_one_reuse_slot;
     const std::size_t typed_occupied = static_cast<std::size_t>(
         std::count_if(subscriber.slots.begin(), subscriber.slots.end(), [&](const auto& slot) {
-          return (slot.occupied && !slot.direct_ingress_unread) ||
+          const bool private_reuse = private_reuse_slot && slot.reuse_retained;
+          return (slot.occupied && !slot.direct_ingress_unread && !private_reuse) ||
                  (slot.typed_ingress_reserved &&
                   (!HasReplacementCandidate || &slot != replacement_candidate));
         }));
@@ -2014,6 +2177,15 @@ class RuntimeChannelSession::Impl {
 
   [[nodiscard]] SampleSlot* writable_direct_ingress_slot(SubscriberState& subscriber) noexcept;
 
+  /// Restore the authored direct-ingress depth before abandoning an uncommitted refill target.
+  ///
+  /// A fenced target occupies the one preallocated headroom slot and is excluded from the
+  /// authored staging depth. If a producer used that headroom, releasing the fence must discard
+  /// the oldest staged record so the newest-N survivor invariant remains true. A concurrent typed
+  /// ingress reservation defers the release instead of reclaiming storage still being written.
+  [[nodiscard]] static bool normalize_direct_ingress_after_freshness_release(
+      SubscriberState& subscriber, DeferredSampleReleases& releases) noexcept;
+
   [[nodiscard]] std::optional<TypedIngressReservation> reserve_typed_ingress_destination_locked(
       SubscriberState& subscriber) noexcept;
 
@@ -2027,12 +2199,13 @@ class RuntimeChannelSession::Impl {
       const SubscriberState& subscriber, const SampleSlot& slot,
       const TemporalSampleRecord& temporal, const bool exact_store_reservation) const noexcept {
     const InputPortState& input = *subscriber.input;
-    const SampleSlot* const retained = input.reuse_slot;
+    const SampleSlot* const retained = input.reuse_slot.load(std::memory_order_acquire);
     return !subscriber.externally_driven_import && input.reuse_last && retained != nullptr &&
            &slot != retained && !slot.staged_arrival_evidence && !slot.event_emitted &&
            (!slot.typed_ingress_reserved || exact_store_reservation) && !slot.refill_reserved &&
-           !temporal.capture_time.valid() && retained->subscriber == &subscriber &&
-           retained->occupied && !retained->direct_ingress_unread && retained->reuse_retained &&
+           !slot.refill_prefix_reserved && !temporal.capture_time.valid() &&
+           retained->subscriber == &subscriber && retained->occupied &&
+           !retained->direct_ingress_unread && retained->reuse_retained &&
            !retained->active_selected && is_strictly_newer_sample(temporal, retained->temporal);
   }
 
@@ -2075,7 +2248,7 @@ class RuntimeChannelSession::Impl {
     return true;
   }
 
-  [[nodiscard]] std::optional<TypedIngressReservation> reserve_staged_newer_data_reuse_replacement(
+  [[nodiscard]] std::optional<TypedIngressReservation> reserve_staged_newer_data_replacement(
       SubscriberState& subscriber,
       const std::optional<TemporalSampleRecord> retained_handoff = std::nullopt,
       const std::optional<channel_internal::StagedDataState> staged_data_snapshot =
@@ -2087,26 +2260,45 @@ class RuntimeChannelSession::Impl {
     }
     const std::scoped_lock cache_lock{subscriber.mutex};
     InputPortState& input = *subscriber.input;
-    SampleSlot* const destination = input.reuse_slot;
-    if (destination == nullptr || destination->subscriber != &subscriber ||
-        !destination->occupied || destination->direct_ingress_unread ||
-        !destination->reuse_retained || destination->active_selected ||
-        destination->retirement_selected || destination->typed_ingress_reserved ||
-        (retained_handoff
-             ? (!destination->temporal_retained || destination->temporal != *retained_handoff)
-             : destination->temporal_retained) ||
+    SampleSlot* destination = input.reuse_slot.load(std::memory_order_acquire);
+    if (retained_handoff) {
+      const auto found =
+          std::find_if(subscriber.slots.begin(), subscriber.slots.end(), [&](const auto& slot) {
+            return slot.occupied && !slot.direct_ingress_unread && slot.temporal_retained &&
+                   slot.temporal == *retained_handoff;
+          });
+      destination = found == subscriber.slots.end() ? nullptr : &*found;
+    }
+    // A different subscriber's pointer may be published concurrently. Its
+    // immutable identity can be inspected here, but none of its mutable slot
+    // fields are protected by this lock.
+    if (destination == nullptr || destination->subscriber != &subscriber) {
+      return std::nullopt;
+    }
+    const bool replacing_reuse = destination->reuse_retained;
+    if (!destination->occupied || destination->direct_ingress_unread ||
+        (replacing_reuse && input.reuse_slot.load(std::memory_order_acquire) != destination) ||
+        destination->active_selected || destination->retirement_selected ||
+        destination->typed_ingress_reserved ||
+        (!retained_handoff && (!replacing_reuse || destination->temporal_retained)) ||
         (destination->event_emitted && !destination->witness_retired) ||
         destination->temporal.source_sequence >= staged_data->sequence) {
       return std::nullopt;
     }
-    // A strictly newer staged record makes this exact inactive, fully witnessed ReuseLast copy
-    // obsolete. Trade only that claim for a one-use destination. This is not terminal proof:
-    // ordered EOS remains subject to the ordinary next-receive sequence validation.
-    destination->reuse_retained = false;
-    input.reuse_slot = nullptr;
+    // A controller transaction has released this exact retained claim. ReuseLast additionally
+    // owns the private fallback pointer; an ordinary cache replacement leaves it unchanged.
+    if (replacing_reuse) {
+      destination->reuse_retained = false;
+      input.reuse_slot.store(nullptr, std::memory_order_release);
+    }
     destination->typed_ingress_reserved = true;
     const bool prior_temporal_retained = destination->temporal_retained;
-    return TypedIngressReservation{subscriber, *destination, false, true, prior_temporal_retained};
+    return TypedIngressReservation{subscriber,
+                                   *destination,
+                                   false,
+                                   replacing_reuse,
+                                   prior_temporal_retained,
+                                   retained_handoff.has_value()};
   }
 
   static void observe_typed_ingress_for_test(SubscriberState& subscriber) noexcept {
@@ -2123,18 +2315,20 @@ class RuntimeChannelSession::Impl {
   /// already given up on the promise that this one reaches the cache. Marking it is what lets a
   /// replacement of that record be told from the ordinary drop-oldest churn around it.
   [[nodiscard]] expected<std::uint32_t, Error> promote_direct_ingress(
-      SubscriberState& subscriber, std::optional<std::uint64_t> first_arrival_order = std::nullopt,
+      SubscriberState& subscriber, DeferredSampleReleases& releases,
+      std::optional<std::uint64_t> first_arrival_order = std::nullopt,
       SampleSlot* freshness_refill = nullptr, std::int64_t* promoted_capture_ns = nullptr,
       SampleSlot* released_typed_capacity = nullptr) noexcept;
 
   [[nodiscard]] expected<void, Error> commit_typed_ingress_reservation(
-      SubscriberState& subscriber, TypedIngressReservation& reservation) noexcept {
+      SubscriberState& subscriber, TypedIngressReservation& reservation,
+      DeferredSampleReleases& releases) noexcept {
     const bool staged = reservation.staged();
     reservation.commit_locked();
     if (!staged) {
       return {};
     }
-    auto promoted = promote_direct_ingress(subscriber);
+    auto promoted = promote_direct_ingress(subscriber, releases);
     if (!promoted) {
       return make_unexpected(std::move(promoted).error());
     }
@@ -2142,7 +2336,8 @@ class RuntimeChannelSession::Impl {
   }
 
   [[nodiscard]] expected<std::optional<std::uint64_t>, Error>
-  reserve_immediate_direct_ingress_promotion(SubscriberState& subscriber) noexcept;
+  reserve_immediate_direct_ingress_promotion(SubscriberState& subscriber,
+                                             DeferredSampleReleases& releases) noexcept;
 
   [[nodiscard]] expected<void, Error> validate_and_translate_catalog_capture(
       const SubscriberState& subscriber, SampleMetadata& metadata,
@@ -2152,42 +2347,49 @@ class RuntimeChannelSession::Impl {
   // before committing one sample slot; the fail-closed branches intentionally remain explicit.
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<void, Error> store_received(
-      SubscriberState& subscriber, SampleMetadata received,
+      SubscriberState& subscriber, DeferredSampleReleases& releases, SampleMetadata received,
       EndpointClockHealthDisposition clock_health_disposition,
       std::uint64_t clock_health_generation, std::span<const std::byte> borrowed_payload = {},
       std::optional<StructuralDiagnosticId>* terminal_diagnostic = nullptr,
-      SampleSlot* reserved_destination = nullptr,
-      bool reserved_destination_staged = false) noexcept;
+      SampleSlot* reserved_destination = nullptr, bool reserved_destination_staged = false,
+      const void* borrowed_value = nullptr) noexcept;
 
-  [[nodiscard]] expected<void, Error> store_direct_inline_payload(
+  // Payload-family retention primitives do not publish owner progress or output accounting.
+  // Successful Output publication must wrap them in commit_direct_publication().
+  [[nodiscard]] expected<void, Error> retain_direct_inline_payload(
       SubscriberState& subscriber, std::span<const std::byte> payload,
       SampleMetadata metadata) noexcept;
+
+  [[nodiscard]] expected<void, Error> store_direct_object_payload(SubscriberState& subscriber,
+                                                                  DeferredSampleReleases& releases,
+                                                                  const void* payload,
+                                                                  SampleMetadata metadata) noexcept;
 
   // Keep receive admission, metadata fencing, and cache mutation ordered as one transaction.
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<void, Error> store_received_tensor(
-      SubscriberState& subscriber, Sample<Tensor> received,
+      SubscriberState& subscriber, DeferredSampleReleases& releases, Sample<Tensor> received,
       std::optional<StructuralDiagnosticId>* terminal_diagnostic = nullptr,
       SampleSlot* reserved_destination = nullptr, bool reserved_destination_staged = false,
       EndpointClockHealthDisposition clock_health_disposition =
           EndpointClockHealthDisposition::kNotApplicable,
       std::uint64_t clock_health_generation = 0U) noexcept;
 
-  [[nodiscard]] expected<void, Error> store_direct_tensor_sample(SubscriberState& subscriber,
-                                                                 Sample<Tensor> received) noexcept;
+  [[nodiscard]] expected<void, Error> retain_direct_tensor_sample(SubscriberState& subscriber,
+                                                                  Sample<Tensor> received) noexcept;
 
   // Keep schema decoding, field validation, and cache publication in one receive transaction.
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<void, Error> store_received_tensor_schema(
-      SubscriberState& subscriber, std::span<const std::byte> encoded, std::span<Tensor> received,
-      SampleMetadata metadata, SampleSlot* reserved_destination = nullptr,
-      bool reserved_destination_staged = false,
+      SubscriberState& subscriber, DeferredSampleReleases& releases,
+      std::span<const std::byte> encoded, std::span<Tensor> received, SampleMetadata metadata,
+      SampleSlot* reserved_destination = nullptr, bool reserved_destination_staged = false,
       EndpointClockHealthDisposition clock_health_disposition =
           EndpointClockHealthDisposition::kNotApplicable,
       std::uint64_t clock_health_generation = 0U,
       std::optional<StructuralDiagnosticId>* terminal_diagnostic = nullptr) noexcept;
 
-  [[nodiscard]] expected<void, Error> store_direct_tensor_schema_sample(
+  [[nodiscard]] expected<void, Error> retain_direct_tensor_schema_sample(
       SubscriberState& subscriber, std::span<const std::byte> encoded,
       std::span<const Tensor> received) noexcept;
 
@@ -2218,7 +2420,8 @@ class RuntimeChannelSession::Impl {
       SubscriberState& subscriber,
       std::optional<StructuralDiagnosticId>* terminal_diagnostic = nullptr,
       CudaDeviceCursor* scan_device = nullptr,
-      std::optional<TemporalSampleRecord> reuse_handoff = std::nullopt) noexcept;
+      std::optional<TemporalSampleRecord> reuse_handoff = std::nullopt,
+      const channel_internal::StagedDataState* expected_staged_data = nullptr) noexcept;
 
   // Catalog draining preserves ordered health/data heads and the finite per-dispatch budget.
   // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -2414,10 +2617,16 @@ class RuntimeChannelSession::Impl {
 
   [[nodiscard]] expected<void, Error> join() noexcept;
 
+  /// Snapshot only at a committed lifecycle boundary with producers and the pump quiescent.
+  [[nodiscard]] std::uint64_t cutover_sequence_floor(
+      const SubscriberState& subscriber) const noexcept;
+
   std::optional<ChannelRuntime> runtime_;
   PlanGenerationId plan_generation_{};
   RunGenerationId run_generation_{};
   std::vector<ClockConversionRecord> clock_conversions_;
+  // Borrowed from the retained ExecutionPlanState, which outlives every RunSession channel.
+  std::span<const SupportThreadAffinityPlanRecord> support_thread_affinities_;
   // Borrowed from the RunSession clock registry generation. Invalid until RunSession binds it,
   // which keeps hand-authored test plans publishing canonical absent publication time.
   ClockRef publish_clock_;
@@ -2425,12 +2634,17 @@ class RuntimeChannelSession::Impl {
   ClockId catalog_publish_clock_{};
   // Plan-namespace identity the catalog record above was projected for.
   ClockId plan_publish_clock_{};
+  RuntimeSupportThreadPlacementFailure support_thread_placement_failure_;
   std::shared_ptr<RuntimeSupportThreadControl> support_thread_control_;
   std::shared_ptr<RuntimeChannelIncompletePollTestControl> incomplete_poll_test_control_;
+  // Per-acquisition budget of the bounded contention retry: kContentionRetryBudget unless a
+  // source-tree test widens it before the session is armed.
+  std::chrono::nanoseconds contention_retry_budget_{kContentionRetryBudget};
   bool force_process_local_channel_pump_{};
   bool track_concurrent_process_local_publications_{};
   RuntimePhaseCounters* phase_counters_{};
   RuntimeChannelReadinessWake readiness_wake_{};
+  std::optional<std::size_t> fixed_tensor_shape_allocations_before_failure_for_test_;
   std::unique_ptr<channel_internal::InlinePayloadWaitSet> wait_set_;
   std::vector<std::unique_ptr<InputPortState>> inputs_;
   std::vector<InputPortState*> input_by_port_;
@@ -2487,6 +2701,9 @@ class RuntimeChannelSession::Impl {
   RuntimeChannelPollSelectionObserver poll_selection_observer_{};
   void* clock_health_lock_observer_state_{};
   RuntimeChannelClockHealthLockObserver clock_health_lock_observer_{};
+  // Cold ownership stays after ordinary fields to preserve their offsets. ~Impl explicitly
+  // clears outputs_ while this owner is still alive; quarantine retains the complete Impl.
+  std::shared_ptr<RuntimeFixtureObservation> fixture_observation_;
 };
 
 }  // namespace holoscan::detail

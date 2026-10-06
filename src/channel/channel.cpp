@@ -52,36 +52,6 @@ namespace {
 /// becoming an unbounded kernel wait.
 constexpr std::chrono::nanoseconds kMaxIterationWait{std::chrono::seconds{1}};
 
-/// Turn the documented one-waiting-thread-per-subscriber rule into a checked precondition.
-///
-/// The check is enforced in every configuration, not only where \c assert is live: a release build
-/// that let a second waiter through would share one wait context between two threads. \ref
-/// acquired reports whether this guard took the flag, and only the guard that took it clears it --
-/// releasing unconditionally would let a rejected second waiter free the first waiter's claim.
-class WaitingThreadGuard {
- public:
-  explicit WaitingThreadGuard(std::atomic_flag& waiting) noexcept
-      : waiting_(&waiting), acquired_(!waiting.test_and_set(std::memory_order_acquire)) {}
-
-  WaitingThreadGuard(const WaitingThreadGuard&) = delete;
-  WaitingThreadGuard& operator=(const WaitingThreadGuard&) = delete;
-  WaitingThreadGuard(WaitingThreadGuard&&) = delete;
-  WaitingThreadGuard& operator=(WaitingThreadGuard&&) = delete;
-
-  /// @brief Report whether this guard claimed the subscriber's single waiting slot.
-  [[nodiscard]] bool acquired() const noexcept { return acquired_; }
-
-  ~WaitingThreadGuard() {
-    if (acquired_) {
-      waiting_->clear(std::memory_order_release);
-    }
-  }
-
- private:
-  std::atomic_flag* waiting_;
-  bool acquired_;
-};
-
 /// Allocation-free stop callback. A capturing lambda would force std::function into the
 /// std::stop_callback type and put the warmed wait path at the mercy of small-buffer optimization.
 struct TriggerFirer {
@@ -94,6 +64,43 @@ struct TriggerFirer {
 
 WaitSetSubscriber::WaitSetSubscriber() = default;
 WaitSetSubscriber::~WaitSetSubscriber() = default;
+
+expected<WaitSetSubscriber::WaitOwnerGuard, Error> WaitSetSubscriber::claim_wait_owner() noexcept {
+  if (waiting_.test_and_set(std::memory_order_acquire)) {
+    return make_unexpected_nothrow<WaitOwnerGuard>(
+        ErrorCode::kInvalidArgument,
+        "channel subscriber already has a wait or readiness acquisition in flight");
+  }
+  WaitOwnerGuard claim{waiting_};
+  if (!wait_context_ && wait_set_attached()) {
+    return readiness_handle_attached()
+               ? make_unexpected_nothrow<WaitOwnerGuard>(
+                     ErrorCode::kInvalidArgument,
+                     "channel subscriber is already owned by a readiness handle; detach it before "
+                     "using another wait owner")
+               : make_unexpected_nothrow<WaitOwnerGuard>(
+                     ErrorCode::kInvalidArgument,
+                     "channel subscriber is owned by the Runtime readiness pump or another wait "
+                     "set and cannot be claimed directly");
+  }
+  return claim;
+}
+
+expected<WaitSetSubscriber::WaitOwnerGuard, Error>
+WaitSetSubscriber::claim_readiness_owner() noexcept {
+  auto claim = claim_wait_owner();
+  if (!claim) {
+    return claim;
+  }
+  if (wait_context_) {
+    auto detached = detach_wait_set();
+    if (!detached) {
+      return make_unexpected(std::move(detached).error());
+    }
+    wait_context_.reset();
+  }
+  return claim;
+}
 
 expected<void, Error> WaitSetSubscriber::wait_for_readiness(
     const std::chrono::steady_clock::time_point deadline,
@@ -109,6 +116,20 @@ expected<void, Error> WaitSetSubscriber::wait_for_readiness(
   // cannot fail. Only std::bad_alloc is caught: anything else is a defect, and terminating on it
   // is the right outcome rather than reporting it as resource exhaustion.
   try {
+    auto claim = claim_wait_owner();
+    if (!claim) {
+      return make_unexpected(std::move(claim).error());
+    }
+    return wait_for_readiness_checked(deadline, stop_token);
+  } catch (const std::bad_alloc&) {
+    return make_unexpected(Error{ErrorCode::kResourceExhausted});
+  }
+}
+
+expected<void, Error> WaitSetSubscriber::wait_for_readiness_claimed(
+    const std::chrono::steady_clock::time_point deadline,
+    const std::stop_token* const stop_token) noexcept {
+  try {
     return wait_for_readiness_checked(deadline, stop_token);
   } catch (const std::bad_alloc&) {
     return make_unexpected(Error{ErrorCode::kResourceExhausted});
@@ -117,16 +138,6 @@ expected<void, Error> WaitSetSubscriber::wait_for_readiness(
 
 expected<void, Error> WaitSetSubscriber::wait_for_readiness_checked(
     const std::chrono::steady_clock::time_point deadline, const std::stop_token* const stop_token) {
-  const WaitingThreadGuard waiting_guard{waiting_};
-  if (!waiting_guard.acquired()) {
-    // kInvalidArgument rather than a new enumerator: it already carries "this subscriber's
-    // readiness is owned elsewhere" for the foreign-wait-set case, and ErrorCode is append-only,
-    // so adding kBusy would be an ABI-visible change for a caller error the existing code covers.
-    return make_unexpected(make_channel_error(
-        ErrorCode::kInvalidArgument,
-        "channel subscriber supports one waiting thread and another wait is already in flight"));
-  }
-
   // Answer a stop that was already requested before doing any work, so a shutdown race cannot
   // build a wait context that is immediately thrown away.
   if (stop_token != nullptr && stop_token->stop_requested()) {
@@ -321,6 +332,9 @@ expected<void, Error> TensorSchemaPayloadPublisher::report_clock_health(ClockHea
   return make_unexpected(Error{ErrorCode::kNotSupported});
 }
 
+// The installed virtual declaration owns the default argument; this out-of-line fallback must
+// retain the same signature.
+// NOLINTNEXTLINE(google-default-arguments)
 expected<std::uint32_t, Error> TensorSchemaPayloadPublisher::publish_encoded_payload(
     const TensorSchemaPayloadEncoder&, TensorSchemaPayloadReservation reservation, SampleMetadata) {
   release_tensor(std::move(reservation));

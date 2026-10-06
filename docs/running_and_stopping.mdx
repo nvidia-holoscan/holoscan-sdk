@@ -3,13 +3,14 @@ description of *what* to run. This page covers the third phase of the
 compose → compile → run model: turning that plan into a running session,
 watching it, stopping it cooperatively, and finding out why it ended.
 
-There are two execution families. `holoscan::run(...)` blocks until the run
-reaches a terminal state, while `holoscan::run_async(...)` returns immediately
-with a `RunSession` — a move-only RAII owner of everything the run started.
-Each family has an overload for explicit signal ownership. There is no
-scheduler or executor object to construct or configure.
+There are two execution families. `run(...)` blocks until the run reaches a
+terminal state, while `run_async(...)` returns immediately with a `RunSession`
+that owns everything the run started. C++ exposes explicit managed-signal
+policies; Python deliberately leaves process signals with the caller. There is
+no scheduler or executor object to construct or configure.
 
-**Complete C++ example:** [`examples/running_and_stopping/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/running_and_stopping/cpp)
+**Complete C++ example:** [`examples/running_and_stopping/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/running_and_stopping/cpp).
+The Python tabs below show the corresponding session API.
 
 <Note title="You will learn">
   - How to start a plan with the blocking `run()` or the asynchronous `run_async()`
@@ -20,24 +21,45 @@ scheduler or executor object to construct or configure.
   - How to stop a run cooperatively with `request_stop()` and `wait()`
   - How to branch on `termination()` and read `diagnostics()` after a failure
   - How boundary exceptions, terminal `kFailed`, and explicit-domain `Error` values differ
+  - Why Python runs are caller-managed and should use a context manager
 </Note>
 
 ## The blocking entry point: `run()`
 
-When your `main()` has nothing else to do while the pipeline executes, call
-`run()`. It blocks until the run reaches a terminal state and returns an `int`:
+When your main thread has nothing else to do while the pipeline executes, call
+`run()`. It blocks until the run reaches a terminal state:
 
-```cpp
-#include <holoscan/core/run.hpp>
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    #include <holoscan/core/run.hpp>
 
-const holoscan::ExecutionPlan plan = holoscan::compile(graph);
-if (!plan.ok()) {
-  // Rejected plan — inspect plan diagnostics; never try to run it.
-  return 1;
-}
+    const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+    if (!plan.ok()) {
+      return 1;
+    }
 
-const int rc = holoscan::run(plan);  // blocks until terminal
-```
+    const int rc = holoscan::run(plan);
+    ```
+
+    C++ returns zero for successful completion and nonzero for stopped, failed,
+    or rejected execution.
+  </Tab>
+  <Tab title="Python">
+    ```python
+    plan = hs.compile(graph)
+    if not plan:
+        raise SystemExit(plan.summary())
+
+    session = hs.run(plan)
+    if session.termination is hs.RunTermination.FAILED:
+        raise RuntimeError(session.diagnostics)
+    ```
+
+    Python returns the terminal `RunSession` itself so code can inspect its
+    termination and diagnostics. The GIL is released while `run()` waits.
+  </Tab>
+</Tabs>
 
 <Warning>
   On Linux, default managed admission requires either an available compatible
@@ -47,7 +69,7 @@ const int rc = holoscan::run(plan);  // blocks until terminal
   falls back silently to caller-managed signal handling.
 </Warning>
 
-`rc == 0` means the run ended successfully: either natural finite completion
+In C++, `rc == 0` means the run ended successfully: either natural finite completion
 (`RunTermination::kCompleted`) or explicit operator-requested completion
 (`RunTermination::kRequestedCompleted`). A compiler-accepted empty `Graph` is
 a valid zero-work plan and completes naturally. A nonempty graph built from
@@ -61,7 +83,8 @@ by default. The first synchronously accepted occurrence requests ordinary
 cooperative stop and returns nonzero after cleanup. This is equivalent to
 `run(plan, RunSignalPolicy::kManaged)`.
 
-Choose signal ownership deliberately:
+Choose signal ownership deliberately. The following table describes the C++
+overloads; Python `run()` and `run_async()` are always caller-managed:
 
 | Call | Signal ownership |
 |---|---|
@@ -85,11 +108,32 @@ or managed-signal diagnostic publication. It is the direct replacement for an
 embedding host that previously used `run(plan)` with its own handlers or
 signal-waiting thread. Plain async is also caller-managed:
 
-```cpp
-holoscan::RunSession session = holoscan::run_async(plan);
-// Application-owned control code may call session.request_stop().
-session.wait();
-```
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    holoscan::RunSession session = holoscan::run_async(plan);
+    // Application-owned control code may call session.request_stop().
+    session.wait();
+    ```
+  </Tab>
+  <Tab title="Python">
+    Prefer a context manager so scope exit always requests stop and waits:
+
+    ```python
+    with hs.run_async(plan) as session:
+        if not session.wait(timeout=0.25):
+            session.request_stop()
+            if not session.wait(timeout=5.0):
+                raise TimeoutError("pipeline did not stop")
+    ```
+
+    Python installs no SDK signal handler. Handle `KeyboardInterrupt` or other
+    process controls in ordinary Python code and request cooperative stop from
+    there. See
+    [Running and signals in Python](/holoscan/sdk-user-guide/python/running-and-signals)
+    for the complete caller-managed contract.
+  </Tab>
+</Tabs>
 
 Do not try to make default managed `run(plan)` work by changing only one thread
 in an already-multithreaded process. Signal masks are per-thread, and that does
@@ -215,6 +259,49 @@ distinguish stop, execution failure, and managed-domain admission failure. When
 you need a typed setup error, establish `ManagedShutdownSignals` explicitly;
 when you need to control the session or inspect terminal diagnostics, use a
 `run_async()` overload as shown below.
+
+## Choose who presents failure diagnostics
+
+Automatic Core reports are **enabled by default**. For an admitted plan whose
+startup or compute fails, this is sufficient to receive its existing failure
+summary after cleanup; no setter or helper is required:
+
+```cpp
+// plan is an admitted application plan.
+const int result = holoscan::run(plan, holoscan::RunSignalPolicy::kCallerManaged);
+```
+
+`set_automatic_diagnostic_logging_enabled(true)` is normally redundant. It
+re-enables future reports after API opt-out, without immediately printing or
+replaying anything. It never causes `compile()` to dump its returned records.
+For caller-owned terminal reporting, retain the session and report after waiting:
+
+```cpp
+#include <holoscan/core/diagnostic.hpp>
+#include <holoscan/core/run.hpp>
+
+holoscan::set_automatic_diagnostic_logging_enabled(false);
+auto session = holoscan::run_async(plan);
+session.wait();
+holoscan::log_diagnostics(session.diagnostics(), plan.graph());
+```
+
+The explicit helper works with automatic reporting on or off. A valid
+`HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING=ON` environment override wins over API
+`false`; use the getter to check the effective policy. Keeping automatic
+reports enabled and explicitly reporting the same terminal records can duplicate
+output. The helper neither waits nor consumes diagnostics. An immediate async
+prefix may be incomplete because async return is not a startup barrier.
+Blocking `run()` returns an exit code, so use `run_async()` when you need to
+retain and present terminal records yourself. Normal logger filtering applies
+to both presentation paths; failed outcomes and structured sinks remain intact.
+
+Fatal self-join and internal invariant violations are different from an ordinary
+failed session. They attempt their original ERROR message independently of the
+automatic-report setting, then call `std::terminate()`. Normal logger filtering
+still applies, and logging exceptions cannot prevent termination. There is no
+successful return from `wait()` and no later opportunity to replay diagnostics
+from an aborted process.
 
 ## The asynchronous entry point: `run_async()` and `RunSession`
 
@@ -352,15 +439,22 @@ A `kFailed` session is not a dead end: the session retains a bounded set of
 structural `Diagnostic` records explaining why the run stopped or failed. Each
 record carries a stable registry token — a fixed spelling such as
 `RUNTIME_CLOCK_BINDING_UNAVAILABLE`, not free-form log prose — plus an optional
-plan-local source location:
+plan-local source location and optional owning failure detail:
 
 ```cpp
 if (session.termination() == holoscan::RunTermination::kFailed) {
   for (const holoscan::Diagnostic& d : session.diagnostics()) {
-    std::cerr << d.token << '\n';  // stable registry token
+    std::cerr << holoscan::format_diagnostic(d, plan.graph()) << '\n';
   }
 }
 ```
+
+The normal failed-session report already prints the retained explanation at
+ERROR level. Explicit application formatting is useful for a custom sink or UI,
+but may duplicate that output. Callback detail includes the qualified operator
+path, original message, and lifecycle phase; inspect `d.detail` directly when
+program logic needs those fields. Supplemental detail is not canonical plan
+JSON. Clean completion and clean cooperative stop produce no failure report.
 
 The returned span is append-only and stable: the storage and the prefix you
 observed remain valid until the wrapper is moved or destroyed, so you may hold
@@ -421,10 +515,9 @@ That machinery has its own page — see
 
 ## Recap
 
-- `run(plan)` blocks and returns an `int`; on Linux it uses managed SIGINT and
-  SIGTERM by default. `rc == 0` for natural `kCompleted` or explicit
-  `kRequestedCompleted`; any nonzero result means stopped, failed, or managed
-  admission failed. Recurring nonempty graphs do not infer natural completion.
+- C++ `run(plan)` blocks and returns an `int`; on Linux it uses managed SIGINT
+  and SIGTERM by default. Python `run(plan)` is caller-managed and returns the
+  terminal session. Recurring nonempty graphs do not infer natural completion.
 - Use `run(plan, RunSignalPolicy::kCallerManaged)` when the host owns process
   signals. It performs no HSDK-managed signal-domain work. Plain `run_async(plan)`
   is likewise caller-managed on every platform.
@@ -437,8 +530,9 @@ That machinery has its own page — see
   unspecified. HSDK installs no signal handler and mutates no disposition.
 - An operator may call `request_completion()` for immediate whole-run success,
   without EOS, source-closure, queued-delivery, or downstream-drain guarantees.
-- `run_async(plan)` returns a move-only `RunSession`; its destructor requests
-  stop and joins everything the run started — RAII is the shutdown story.
+- C++ `run_async(plan)` returns a move-only `RunSession`; Python returns a
+  context manager. Destruction or context exit requests stop and joins
+  everything the run started.
 - Stop cooperatively: `request_stop()` asks and returns immediately;
   `wait()` blocks until the run has fully joined.
 - Never call `wait()` or destroy the session from run-owned code — that is a

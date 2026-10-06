@@ -192,10 +192,11 @@ The engines behind these markers ship with distinct availability:
   by `RunSession::capture_params()` and `ParamControlHandle::capture()`; they
   do not depend on optional parameter-persistence tooling.
 - **Archive persistence** through `params::save`/`params::load` belongs to the
-  optional `params_io` component, which is enabled by default.
+  `params_io` library, which ships with `holoscan-core`.
 - **The web tuner** is a separate *experimental* build component: Linux-only,
-  loopback-only, and built by default only when parameter tooling is enabled.
-  It writes only admitted, adapter-eligible tuning fields.
+  loopback-only, and built by default (`HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER`)
+  on top of the always-built `params` library. It writes only admitted,
+  adapter-eligible tuning fields.
 
 A practical consequence: declare intent honestly. A `.runtime_mutable()` field
 becomes live-tunable when its plan opts in, while a `.sensitive()` field is
@@ -252,8 +253,8 @@ Every activation reads its parameters from one immutable **generation**.
 entire callback, and `context.params_generation()` returns its identity.
 Generation 0 is the plan's compile-resolved initial aggregate: defaults,
 optionally replaced by an explicit typed `OperatorHandle::set_params()`
-baseline, then sparsely patched by admitted target-bound compile/config
-overrides. It stays the only generation until an admitted update publishes; a
+baseline, then sparsely patched by an admitted graph-owned parameter
+transaction. It stays the only generation until an admitted update publishes; a
 new value always arrives as a *new* generation observed by a *later*
 activation — never as a mid-callback mutation. The full model — update seams,
 lifecycle-mutable publication, observing generation changes, and ordering
@@ -271,8 +272,8 @@ to a contiguous slot byte capacity using the output's exact dtype and rank.
 directly.
 
 These expressions are evaluated only while compiling a plan. A deployment can
-bind a different generation-zero value with `set_params()` or a compile-time
-configuration override and compile a new plan with different finite pool
+bind a different generation-zero value with `set_params()` or a graph-owned
+configuration transaction and compile a new plan with different finite pool
 geometry. This compiles a new execution plan and rematerializes its resources
 without rebuilding or relinking the application binary. The Operator's setup
 declaration remains unchanged. The value is not a live update: an already
@@ -295,7 +296,7 @@ for allocation-plan evidence and the scalar input-bound form.
   markers are **enforced by their shipped engines** — live updates behind the
   explicit runtime-updates or lifecycle-transactions plan opt-in; snapshot
   capture and projection/redaction in Core; archive save/load through the
-  default-on optional `params_io` component.
+  core-bundled `params_io` library.
 - `param_schema(stable_id, version)` decouples a schema's identity from its
   C++ spelling; bump the version on meaning changes and use `.alias()` for
   field renames.

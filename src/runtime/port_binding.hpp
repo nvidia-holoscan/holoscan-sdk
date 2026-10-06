@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include <holoscan/core/execution_plan.hpp>
@@ -102,6 +103,18 @@ class PortBinding {
     return poll(observed_at);
   }
 
+  /// Retry one declined \ref poll while waiting out the bounded contended cache lock.
+  ///
+  /// An ordinary poll that loses a cache lock leaves its published revision unobserved, but the
+  /// wake token that announced it has already been consumed and the lock holder does not signal
+  /// again on release. The owner that consumed that token may retry once here instead of parking
+  /// for the bounded fallback wait. Every holder of an input cache lock is a short, non-blocking
+  /// critical section, so this wait is bounded by that section rather than by a producer.
+  [[nodiscard]] virtual expected<void, Error> poll_after_contention(
+      TimePoint observed_at) noexcept {
+    return poll(observed_at);
+  }
+
   /// Return the admitted poll placement, or no target for event-driven bindings.
   [[nodiscard]] virtual std::optional<PortBindingPollTarget> poll_target() const noexcept {
     return std::nullopt;
@@ -116,6 +129,12 @@ class PortBinding {
   /// that published a readiness change and needs it converted in this same pass cannot otherwise
   /// tell that outcome from "nothing was ready".
   [[nodiscard]] virtual bool last_poll_incomplete() const noexcept { return false; }
+
+  /// Return whether the most recent \ref poll was declined by a contended input cache lock.
+  ///
+  /// This is the exact condition \ref poll_after_contention exists for: a lost try_lock, not any
+  /// other reason a poll can report incomplete.
+  [[nodiscard]] virtual bool last_poll_lock_contended() const noexcept { return false; }
 
   /// Enqueue one internally scheduled window-timeout witness.
   ///
@@ -140,6 +159,29 @@ class PortBinding {
   [[nodiscard]] virtual expected<void, Error> retire(std::uint64_t source_sequence) noexcept {
     static_cast<void>(source_sequence);
     return {};
+  }
+
+  /// Remove and retire every queued readiness event before advancing the source generation.
+  /// Scheduling decorators override this operation when their normal drain policy can temporarily
+  /// hide an event that still belongs to the current generation.
+  [[nodiscard]] virtual expected<void, Error> retire_pending_events() noexcept {
+    RuntimeEvent event;
+    for (;;) {
+      auto count = drain({&event, 1U});
+      if (!count) {
+        return make_unexpected(std::move(count.error()));
+      }
+      if (*count == 0U) {
+        return {};
+      }
+      if (*count != 1U) {
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
+      auto retired = retire(event.source_sequence);
+      if (!retired) {
+        return retired;
+      }
+    }
   }
 
   /// Release all remaining binding credits during terminal Runtime cancellation.

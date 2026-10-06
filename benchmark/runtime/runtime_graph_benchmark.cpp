@@ -57,7 +57,7 @@
 #include <holoscan/core/run.hpp>
 #include <holoscan/logger/logger.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
@@ -70,6 +70,7 @@
 #include "runtime/runtime_phase_counters.hpp"
 #include "runtime/runtime_test_access.hpp"
 #include "runtime_graph_benchmark_common.hpp"
+#include "runtime_graph_cuda_work.hpp"
 
 namespace holoscan {
 
@@ -79,6 +80,7 @@ using BenchmarkClock = std::chrono::steady_clock;
 using benchmarking::benchmark_thread_identity;
 using benchmarking::BenchmarkSupportThreadControl;
 using benchmarking::emit_optional_cpu;
+using benchmarking::emit_runtime_diagnostics;
 using benchmarking::emit_runtime_thread_usage;
 using benchmarking::emit_support_thread_evidence;
 using benchmarking::json_escape;
@@ -146,6 +148,7 @@ enum class Scenario {
 };
 enum class OperatorLaneMode { kSeparate, kShared, kPerSink };
 enum class PartitionCover { kLegacy, kAutomatic, kIncludeAll, kHybrid };
+enum class CudaWorkProfile { kNone, kLowOccupancy, kSaturating };
 enum class GreenContextLayout {
   kNone,
   kSamePartition,
@@ -162,7 +165,12 @@ enum class GreenContextLayout {
          scenario == Scenario::kMultiTensor || multi_tensor_scenario(scenario);
 }
 
+[[nodiscard]] constexpr bool single_tensor_scenario(const Scenario scenario) noexcept {
+  return scenario == Scenario::kTensor || scenario == Scenario::kImage;
+}
+
 struct Options {
+  bool borrow_image_input{};
   PayloadValidation validation{PayloadValidation::kFinal};
   Workload workload{Workload::kLatency};
   Scenario scenario{Scenario::kPod};
@@ -171,6 +179,9 @@ struct Options {
   BulkWorkProfile bulk_work_profile{BulkWorkProfile::kFullWrite};
   OperatorLaneMode operator_lanes{OperatorLaneMode::kSeparate};
   PartitionCover partition_cover{PartitionCover::kLegacy};
+  CudaComputeStreamPolicy cuda_compute_stream_policy{
+      CudaComputeStreamPolicy::kPerExecutionPartition};
+  CudaWorkProfile cuda_work_profile{CudaWorkProfile::kNone};
   GreenContextLayout green_context_layout{GreenContextLayout::kNone};
   std::size_t tensor_bytes{1U << 20U};
   int tensor_device{0};
@@ -181,6 +192,8 @@ struct Options {
   std::vector<std::uint32_t> sink_queue_depths;
   std::uint32_t relay_count{1U};
   std::uint32_t fanout{1U};
+  std::array<std::uint32_t, 2U> cuda_branch_work_us{};
+  std::uint32_t cuda_overlap_samples{100U};
   // Authors the POD two-output/two-sink applicability rows.
   bool multi_output{};
   // Authors the POD two-output/one-two-input-sink applicability rows.
@@ -218,6 +231,18 @@ struct Options {
   std::string output_path;
   std::string plan_output_path;
 };
+
+[[nodiscard]] constexpr bool controller_owns_only_operator_lane(const Options& options) noexcept {
+  return options.operator_lanes == OperatorLaneMode::kShared ||
+         options.scenario == Scenario::kSourceOnly;
+}
+
+[[nodiscard]] constexpr int controller_owner_cpu(const Options& options) noexcept {
+  if (controller_owns_only_operator_lane(options) && options.source_cpu >= 0) {
+    return options.source_cpu;
+  }
+  return options.controller_cpu;
+}
 
 struct BenchmarkLifecycleTiming {
   std::uint64_t compile_ns{};
@@ -471,6 +496,29 @@ struct RuntimePhaseTraceSummary {
       return "dedicated_to_dedicated";
     case GreenContextLayout::kDedicatedToResidual:
       return "dedicated_to_residual";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] const char* cuda_compute_stream_policy_name(
+    const CudaComputeStreamPolicy policy) noexcept {
+  switch (policy) {
+    case CudaComputeStreamPolicy::kPerExecutionPartition:
+      return "per_partition";
+    case CudaComputeStreamPolicy::kSharedProcessDevice:
+      return "shared";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] const char* cuda_work_profile_name(const CudaWorkProfile profile) noexcept {
+  switch (profile) {
+    case CudaWorkProfile::kNone:
+      return "none";
+    case CudaWorkProfile::kLowOccupancy:
+      return "low_occupancy";
+    case CudaWorkProfile::kSaturating:
+      return "saturating";
   }
   return "unknown";
 }
@@ -833,6 +881,12 @@ template <typename Payload>
 // object padding would obscure those synchronization boundaries.
 class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
  public:
+  struct CudaWorkCompletionContext {
+    BenchmarkRunState* state{};
+    std::uint32_t branch{};
+    std::size_t sample_index{};
+  };
+
   explicit BenchmarkRunState(Options options)
       : options_(std::move(options)),
         source_timestamps_(is_latency_workload(options_.workload) ? options_.samples : 0U),
@@ -849,10 +903,14 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
                                                    is_latency_workload(options_.workload)
                                                ? options_.samples
                                                : 0U),
-        tensor_receive_start_timestamps_(options_.scenario == Scenario::kTensor &&
-                                                 is_latency_workload(options_.workload)
-                                             ? options_.samples
-                                             : 0U),
+        tensor_receive_start_timestamps_by_sink_(
+            options_.scenario == Scenario::kTensor && is_latency_workload(options_.workload)
+                ? options_.fanout
+                : 0U,
+            std::vector<std::int64_t>(options_.scenario == Scenario::kTensor &&
+                                              is_latency_workload(options_.workload)
+                                          ? options_.samples
+                                          : 0U)),
         sink_timestamps_(is_latency_workload(options_.workload) ? options_.samples : 0U),
         sink_timestamps_by_index_(
             is_latency_workload(options_.workload) ? options_.fanout : 0U,
@@ -907,7 +965,15 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
                       final_sequence() + 1U)
                 : nullptr},
         tensor_validation_buffer_(tensor_backed_scenario(options_.scenario) ? options_.tensor_bytes
-                                                                            : 0U) {
+                                                                            : 0U),
+        tensor_validation_buffers_by_sink_(
+            single_tensor_scenario(options_.scenario) ? options_.fanout : 0U,
+            std::vector<std::uint8_t>(
+                single_tensor_scenario(options_.scenario) ? options_.tensor_bytes : 0U)),
+        tensor_consumer_streams_by_sink_(
+            std::make_unique<std::atomic<std::uintptr_t>[]>(options_.fanout)) {
+    final_tensors_by_sink_.resize(options_.fanout);
+    final_tensor_expected_bytes_by_sink_.resize(options_.fanout);
     for (std::size_t index = 0U; index < sequence_sink_delivery_count_; ++index) {
       sequence_sink_deliveries_[index].store(0U, std::memory_order_relaxed);
     }
@@ -922,6 +988,196 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
 
   BenchmarkRunState(const BenchmarkRunState&) = delete;
   BenchmarkRunState& operator=(const BenchmarkRunState&) = delete;
+
+  ~BenchmarkRunState() {
+    for (auto& events : cuda_work_start_events_) {
+      for (cudaEvent_t event : events) {
+        if (event != nullptr) {
+          static_cast<void>(cudaEventDestroy(event));
+        }
+      }
+    }
+    for (auto& events : cuda_work_end_events_) {
+      for (cudaEvent_t event : events) {
+        if (event != nullptr) {
+          static_cast<void>(cudaEventDestroy(event));
+        }
+      }
+    }
+    if (cuda_work_reference_event_ != nullptr) {
+      static_cast<void>(cudaEventDestroy(cuda_work_reference_event_));
+    }
+    for (void* scratch : cuda_work_scratch_) {
+      if (scratch != nullptr) {
+        static_cast<void>(cudaFree(scratch));
+      }
+    }
+  }
+
+  [[nodiscard]] expected<void, Error> initialize_cuda_work() {
+    if (options_.cuda_work_profile == CudaWorkProfile::kNone) {
+      return {};
+    }
+    int clock_rate_khz{};
+    int multiprocessor_count{};
+    if (cudaDeviceGetAttribute(&clock_rate_khz, cudaDevAttrClockRate, options_.tensor_device) !=
+            cudaSuccess ||
+        cudaDeviceGetAttribute(&multiprocessor_count,
+                               cudaDevAttrMultiProcessorCount,
+                               options_.tensor_device) != cudaSuccess ||
+        clock_rate_khz <= 0 || multiprocessor_count <= 0) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    cuda_work_block_count_ = options_.cuda_work_profile == CudaWorkProfile::kLowOccupancy
+                                 ? 1U
+                                 : static_cast<std::uint32_t>(multiprocessor_count) * 4U;
+    for (std::size_t index = 0U; index < cuda_work_duration_cycles_.size(); ++index) {
+      cuda_work_duration_cycles_[index] =
+          static_cast<std::uint64_t>(clock_rate_khz) * options_.cuda_branch_work_us[index] / 1000U;
+      if (cuda_work_duration_cycles_[index] == 0U ||
+          cudaMalloc(&cuda_work_scratch_[index],
+                     static_cast<std::size_t>(cuda_work_block_count_) * sizeof(std::uint64_t)) !=
+              cudaSuccess) {
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
+    }
+    if (cudaEventCreate(&cuda_work_reference_event_) != cudaSuccess ||
+        cudaEventRecord(cuda_work_reference_event_) != cudaSuccess ||
+        cudaEventSynchronize(cuda_work_reference_event_) != cudaSuccess) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    const std::size_t event_count =
+        std::min<std::size_t>(options_.samples, options_.cuda_overlap_samples);
+    for (std::size_t branch = 0U; branch < cuda_work_start_events_.size(); ++branch) {
+      cuda_work_start_events_[branch].resize(event_count, nullptr);
+      cuda_work_end_events_[branch].resize(event_count, nullptr);
+      cuda_work_completion_timestamps_[branch].resize(event_count, 0);
+      cuda_work_completion_contexts_[branch].resize(event_count);
+      for (std::size_t index = 0U; index < event_count; ++index) {
+        if (cudaEventCreate(&cuda_work_start_events_[branch][index]) != cudaSuccess ||
+            cudaEventCreate(&cuda_work_end_events_[branch][index]) != cudaSuccess) {
+          return make_unexpected(Error{ErrorCode::kFailure});
+        }
+        cuda_work_completion_contexts_[branch][index] = CudaWorkCompletionContext{
+            .state = this, .branch = static_cast<std::uint32_t>(branch), .sample_index = index};
+      }
+    }
+    return {};
+  }
+
+  [[nodiscard]] expected<void, Error> enqueue_cuda_work(const std::uint32_t sink_index,
+                                                        const std::uint64_t sequence,
+                                                        Tensor& tensor,
+                                                        cudaStream_t stream) noexcept {
+    if (options_.cuda_work_profile == CudaWorkProfile::kNone) {
+      return {};
+    }
+    if (sink_index >= cuda_work_duration_cycles_.size() || stream == nullptr) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    const bool record_timing =
+        measured(sequence) && measured_index(sequence) < cuda_work_start_events_[sink_index].size();
+    const std::size_t timing_index = record_timing ? measured_index(sequence) : 0U;
+    auto synchronized = tensor.synchronize_for_consumer_stream(stream);
+    if (!synchronized) {
+      return synchronized;
+    }
+    // Keep each start/kernel/end triplet contiguous in CUDA's submission order. The lock ends
+    // immediately after enqueue, so kernels on distinct streams can still overlap on the device.
+    {
+      const std::lock_guard launch_lock{cuda_work_launch_mutex_};
+      if (record_timing && cudaEventRecord(cuda_work_start_events_[sink_index][timing_index],
+                                           stream) != cudaSuccess) {
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
+      if (benchmarking::launch_runtime_graph_cuda_work(stream,
+                                                       cuda_work_scratch_[sink_index],
+                                                       cuda_work_duration_cycles_[sink_index],
+                                                       cuda_work_block_count_) != cudaSuccess ||
+          (record_timing && cudaEventRecord(cuda_work_end_events_[sink_index][timing_index],
+                                            stream) != cudaSuccess) ||
+          (record_timing &&
+           cudaLaunchHostFunc(stream,
+                              &BenchmarkRunState::record_cuda_work_completion,
+                              &cuda_work_completion_contexts_[sink_index][timing_index]) !=
+               cudaSuccess)) {
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
+    }
+    if (!tensor.set_deallocation_stream(stream)) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    return {};
+  }
+
+  [[nodiscard]] std::vector<std::uint64_t> cuda_work_durations_ns(
+      const std::size_t branch) const noexcept {
+    std::vector<std::uint64_t> result;
+    if (branch >= cuda_work_start_events_.size()) {
+      return result;
+    }
+    result.reserve(cuda_work_start_events_[branch].size());
+    for (std::size_t index = 0U; index < cuda_work_start_events_[branch].size(); ++index) {
+      float elapsed_ms{};
+      if (cudaEventElapsedTime(&elapsed_ms,
+                               cuda_work_start_events_[branch][index],
+                               cuda_work_end_events_[branch][index]) == cudaSuccess) {
+        result.push_back(static_cast<std::uint64_t>(elapsed_ms * 1.0e6F));
+      }
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<std::uint64_t> cuda_work_overlap_ns() const noexcept {
+    std::vector<std::uint64_t> result;
+    if (cuda_work_reference_event_ == nullptr ||
+        cuda_work_start_events_[0].size() != cuda_work_start_events_[1].size()) {
+      return result;
+    }
+    result.reserve(cuda_work_start_events_[0].size());
+    for (std::size_t index = 0U; index < cuda_work_start_events_[0].size(); ++index) {
+      std::array<float, 2U> starts_ms{};
+      std::array<float, 2U> ends_ms{};
+      bool valid = true;
+      for (std::size_t branch = 0U; branch < starts_ms.size(); ++branch) {
+        valid = valid &&
+                cudaEventElapsedTime(&starts_ms[branch],
+                                     cuda_work_reference_event_,
+                                     cuda_work_start_events_[branch][index]) == cudaSuccess &&
+                cudaEventElapsedTime(&ends_ms[branch],
+                                     cuda_work_reference_event_,
+                                     cuda_work_end_events_[branch][index]) == cudaSuccess;
+      }
+      if (valid) {
+        const float overlap_ms =
+            std::min(ends_ms[0], ends_ms[1]) - std::max(starts_ms[0], starts_ms[1]);
+        result.push_back(overlap_ms > 0.0F ? static_cast<std::uint64_t>(overlap_ms * 1.0e6F) : 0U);
+      }
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<std::uint64_t> cuda_work_completion_latencies_ns(
+      const std::optional<std::size_t> branch = std::nullopt) const noexcept {
+    std::vector<std::uint64_t> result;
+    const std::size_t sample_count = cuda_work_completion_timestamps_[0].size();
+    if (source_timestamps_.size() < sample_count ||
+        (branch.has_value() && *branch >= cuda_work_completion_timestamps_.size())) {
+      return result;
+    }
+    result.reserve(sample_count);
+    for (std::size_t index = 0U; index < sample_count; ++index) {
+      const std::int64_t start = source_timestamps_[index];
+      const std::int64_t end = branch.has_value()
+                                   ? cuda_work_completion_timestamps_[*branch][index]
+                                   : std::max(cuda_work_completion_timestamps_[0][index],
+                                              cuda_work_completion_timestamps_[1][index]);
+      if (start > 0 && end >= start) {
+        result.push_back(static_cast<std::uint64_t>(end - start));
+      }
+    }
+    return result;
+  }
 
   [[nodiscard]] expected<void, Error> initialize_image_tensor() {
     if (options_.scenario != Scenario::kImage) {
@@ -1161,11 +1417,16 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
     }
   }
 
-  void prepare_tensor_receive_start_timestamp(const std::uint64_t sequence,
+  void prepare_tensor_receive_start_timestamp(const std::uint32_t sink_index,
+                                              const std::uint64_t sequence,
                                               const std::int64_t timestamp) noexcept {
     if (options_.scenario == Scenario::kTensor && is_latency_workload(options_.workload) &&
         measured(sequence)) {
-      tensor_receive_start_timestamps_[measured_index(sequence)] = timestamp;
+      if (sink_index >= tensor_receive_start_timestamps_by_sink_.size()) {
+        fail(ErrorCode::kInvalidArgument);
+        return;
+      }
+      tensor_receive_start_timestamps_by_sink_[sink_index][measured_index(sequence)] = timestamp;
     }
   }
 
@@ -1362,10 +1623,34 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
                        [expected](const std::uint8_t value) { return value == expected; });
   }
 
-  void retain_final_tensor(Tensor tensor, const std::uint8_t expected) {
+  [[nodiscard]] bool validate_tensor_bytes_for_sink(const Tensor& tensor,
+                                                    const std::uint8_t expected,
+                                                    const std::uint32_t sink_index,
+                                                    cudaStream_t stream = nullptr) noexcept {
+    if (sink_index >= tensor_validation_buffers_by_sink_.size()) {
+      fail(ErrorCode::kInvalidArgument);
+      return false;
+    }
+    auto& buffer = tensor_validation_buffers_by_sink_[sink_index];
+    const auto copied = tensor.copy_to_host(buffer.data(), buffer.size(), stream);
+    if (!copied) {
+      fail(copied.error().code);
+      return false;
+    }
+    return std::all_of(buffer.begin(), buffer.end(), [expected](const std::uint8_t value) {
+      return value == expected;
+    });
+  }
+
+  void retain_final_tensor(const std::uint32_t sink_index, Tensor tensor,
+                           const std::uint8_t expected) {
+    if (sink_index >= final_tensors_by_sink_.size()) {
+      fail(ErrorCode::kInvalidArgument);
+      return;
+    }
     const std::lock_guard lock(completion_mutex_);
-    final_tensor_.emplace(std::move(tensor));
-    final_tensor_expected_byte_ = expected;
+    final_tensors_by_sink_[sink_index].emplace(std::move(tensor));
+    final_tensor_expected_bytes_by_sink_[sink_index] = expected;
   }
 
   void retain_final_multi_tensor(Tensor first, Tensor second, const std::uint8_t expected) {
@@ -1387,21 +1672,35 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
                                   std::memory_order_release);
   }
 
+  void record_tensor_consumer_stream(const std::uint32_t sink_index, cudaStream_t stream) noexcept {
+    if (sink_index >= options_.fanout) {
+      fail(ErrorCode::kInvalidArgument);
+      return;
+    }
+    tensor_consumer_streams_by_sink_[sink_index].store(reinterpret_cast<std::uintptr_t>(stream),
+                                                       std::memory_order_release);
+  }
+
   [[nodiscard]] bool validate_retained_tensor() noexcept {
-    std::optional<Tensor> retained;
-    std::uint8_t expected{};
-    {
-      const std::lock_guard lock(completion_mutex_);
-      if (!final_tensor_.has_value()) {
+    for (std::uint32_t sink_index = 0U; sink_index < options_.fanout; ++sink_index) {
+      std::optional<Tensor> retained;
+      std::uint8_t expected{};
+      {
+        const std::lock_guard lock(completion_mutex_);
+        if (!final_tensors_by_sink_[sink_index].has_value()) {
+          return false;
+        }
+        retained.emplace(std::move(*final_tensors_by_sink_[sink_index]));
+        final_tensors_by_sink_[sink_index].reset();
+        expected = final_tensor_expected_bytes_by_sink_[sink_index];
+      }
+      const auto stream = reinterpret_cast<cudaStream_t>(
+          tensor_consumer_streams_by_sink_[sink_index].load(std::memory_order_acquire));
+      if (!validate_tensor_bytes_for_sink(*retained, expected, sink_index, stream)) {
         return false;
       }
-      retained.emplace(std::move(*final_tensor_));
-      final_tensor_.reset();
-      expected = final_tensor_expected_byte_;
     }
-    const auto stream =
-        reinterpret_cast<cudaStream_t>(tensor_consumer_stream_.load(std::memory_order_acquire));
-    return validate_tensor_bytes(*retained, expected, stream);
+    return true;
   }
 
   [[nodiscard]] bool validate_retained_multi_tensor() noexcept {
@@ -2008,7 +2307,8 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
 
   [[nodiscard]] std::size_t sink_allocation_limit() const noexcept {
     if (options_.scenario == Scenario::kImage) {
-      return kMaximumImageSinkComputeAllocations * options_.fanout;
+      return options_.borrow_image_input ? 0U
+                                         : kMaximumImageSinkComputeAllocations * options_.fanout;
     }
     return options_.scenario == Scenario::kMultiTensor ? kMaximumMultiTensorSinkComputeAllocations
                                                        : 0U;
@@ -2153,7 +2453,16 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   }
 
   [[nodiscard]] std::vector<std::uint64_t> tensor_receive_call_latencies() const {
-    return timestamp_deltas(tensor_receive_start_timestamps_, sink_timestamps_);
+    std::vector<std::uint64_t> result;
+    for (std::size_t sink_index = 0U;
+         sink_index < tensor_receive_start_timestamps_by_sink_.size() &&
+         sink_index < sink_timestamps_by_index_.size();
+         ++sink_index) {
+      auto per_sink = timestamp_deltas(tensor_receive_start_timestamps_by_sink_[sink_index],
+                                       sink_timestamps_by_index_[sink_index]);
+      result.insert(result.end(), per_sink.begin(), per_sink.end());
+    }
+    return result;
   }
 
   [[nodiscard]] std::int64_t source_pre_return_timestamp(
@@ -2177,6 +2486,18 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   }
 
  private:
+  static void CUDART_CB record_cuda_work_completion(void* opaque) noexcept {
+    auto* const context = static_cast<CudaWorkCompletionContext*>(opaque);
+    if (context == nullptr || context->state == nullptr ||
+        context->branch >= context->state->cuda_work_completion_timestamps_.size() ||
+        context->sample_index >=
+            context->state->cuda_work_completion_timestamps_[context->branch].size()) {
+      return;
+    }
+    context->state->cuda_work_completion_timestamps_[context->branch][context->sample_index] =
+        now_ns();
+  }
+
   void record_callback_thread(std::atomic<std::uint64_t>& first_tid,
                               std::atomic_bool& identity_is_native,
                               std::atomic_bool& native_tid_syscall_unavailable,
@@ -2251,7 +2572,7 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   std::vector<std::int64_t> source_pre_return_timestamps_;
   std::vector<std::int64_t> tensor_loan_acquired_timestamps_;
   std::vector<std::int64_t> tensor_write_committed_timestamps_;
-  std::vector<std::int64_t> tensor_receive_start_timestamps_;
+  std::vector<std::vector<std::int64_t>> tensor_receive_start_timestamps_by_sink_;
   std::vector<std::int64_t> sink_timestamps_;
   std::vector<std::vector<std::int64_t>> sink_timestamps_by_index_;
   std::vector<std::vector<std::int64_t>> sink_callback_timestamps_by_index_;
@@ -2272,10 +2593,22 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   std::unique_ptr<std::atomic<std::uintptr_t>[]> tensor_source_pointers_;
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays)
   std::array<std::unique_ptr<std::atomic<std::uintptr_t>[]>, 2U> multi_tensor_source_pointers_;
+  std::array<std::vector<cudaEvent_t>, 2U> cuda_work_start_events_;
+  std::array<std::vector<cudaEvent_t>, 2U> cuda_work_end_events_;
+  std::array<std::vector<std::int64_t>, 2U> cuda_work_completion_timestamps_;
+  std::array<std::vector<CudaWorkCompletionContext>, 2U> cuda_work_completion_contexts_;
+  std::array<void*, 2U> cuda_work_scratch_{};
+  std::array<std::uint64_t, 2U> cuda_work_duration_cycles_{};
+  cudaEvent_t cuda_work_reference_event_{};
+  std::uint32_t cuda_work_block_count_{};
+  std::mutex cuda_work_launch_mutex_;
   std::vector<std::uint8_t> tensor_validation_buffer_;
+  std::vector<std::vector<std::uint8_t>> tensor_validation_buffers_by_sink_;
   std::shared_ptr<PreinitializedTensorStorage> image_storage_;
   std::shared_ptr<Tensor> image_tensor_;
   std::atomic<std::uintptr_t> tensor_consumer_stream_{};
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays)
+  std::unique_ptr<std::atomic<std::uintptr_t>[]> tensor_consumer_streams_by_sink_;
   std::uint64_t source_callbacks_{};
   std::atomic<std::uint64_t> source_compute_entries_{};
   std::atomic<std::uint64_t> source_terminal_compute_entries_{};
@@ -2329,6 +2662,8 @@ class BenchmarkRunState {  // NOLINT(clang-analyzer-optin.performance.Padding)
   bool completed_{};
   bool failed_{};
   std::size_t descriptor_warmup_slots_{};
+  std::vector<std::optional<Tensor>> final_tensors_by_sink_;
+  std::vector<std::uint8_t> final_tensor_expected_bytes_by_sink_;
   std::optional<Tensor> final_tensor_;
   std::optional<Tensor> final_second_tensor_;
   std::array<std::optional<Tensor>, 2U> final_multi_tensors_;
@@ -3763,7 +4098,7 @@ class RuntimeTensorBenchmarkSink final : public Operator<> {
 
     const std::uint64_t sequence = sample->metadata.frame_id;
     state.record_sink_callback_entry(sink_index_, sequence, callback_timestamp);
-    state.prepare_tensor_receive_start_timestamp(sequence, receive_start_timestamp);
+    state.prepare_tensor_receive_start_timestamp(sink_index_, sequence, receive_start_timestamp);
     const std::int64_t receive_timestamp = state.sink_timestamp_required(sequence) ? now_ns() : 0;
     const bool metadata_valid =
         sequence != 0U && sequence <= state.final_sequence() && sequence >= next_sequence_ &&
@@ -3782,11 +4117,12 @@ class RuntimeTensorBenchmarkSink final : public Operator<> {
             ? kMultiTensorPayloadByte
             : static_cast<std::uint8_t>(sequence);
     if (state.options().tensor_storage == TensorStorage::kDevice) {
-      state.record_tensor_consumer_stream(context.cuda_stream().get());
+      state.record_tensor_consumer_stream(sink_index_, context.cuda_stream().get());
     }
     if (!metadata_valid || !descriptor_valid || !pointer_valid ||
         (validate_payload &&
-         !state.validate_tensor_bytes(sample->data, expected, context.cuda_stream().get()))) {
+         !state.validate_tensor_bytes_for_sink(
+             sample->data, expected, sink_index_, context.cuda_stream().get()))) {
       state.record_validation_error();
       state.fail(ErrorCode::kProtocolError);
       const DLDevice actual_device = sample->data.device();
@@ -3817,9 +4153,16 @@ class RuntimeTensorBenchmarkSink final : public Operator<> {
       return make_unexpected(Error{ErrorCode::kProtocolError, diagnostic});
     }
 
+    auto cuda_work =
+        state.enqueue_cuda_work(sink_index_, sequence, sample->data, context.cuda_stream().get());
+    if (!cuda_work) {
+      state.fail(cuda_work.error().code);
+      return make_unexpected(std::move(cuda_work.error()));
+    }
+
     if (state.options().validation == PayloadValidation::kFinal &&
         sequence == state.final_sequence()) {
-      state.retain_final_tensor(std::move(sample->data), expected);
+      state.retain_final_tensor(sink_index_, std::move(sample->data), expected);
     }
     const std::size_t warmup_slots = state.descriptor_warmup_slots();
     if (!pool_warmup_complete_ && sequence <= state.options().warmup && warmup_slots != 0U) {
@@ -4326,6 +4669,7 @@ class RuntimeImageBenchmarkSource final : public Operator<> {
   friend ExecutionPlan make_plan(const Options& options);
 };
 
+// REQ: OPERATOR-056
 class RuntimeImageBenchmarkSink final : public Operator<> {
  public:
   explicit RuntimeImageBenchmarkSink(const std::uint32_t sink_index = 0U)
@@ -4357,35 +4701,55 @@ class RuntimeImageBenchmarkSink final : public Operator<> {
         is_latency_workload(state.options().workload) ? now_ns() : 0;
     state.record_sink_callback(sink_index_);
     run_controlled_callback_work(state.options().callback_work_us);
-    expected<Sample<schema::ImageT>, Error> sample = make_unexpected(Error{});
+    std::optional<Sample<schema::ImageT>> owned_sample;
+    std::optional<SelectedSampleView<schema::ImageT>> borrowed_sample;
+    const auto read_sample = [&]() -> expected<void, Error> {
+      if (state.options().borrow_image_input) {
+        auto selected = input_.selected_sample();
+        if (!selected) {
+          return make_unexpected(std::move(selected).error());
+        }
+        borrowed_sample.emplace(*selected);
+      } else {
+        auto received = input_.receive();
+        if (!received) {
+          return make_unexpected(std::move(received).error());
+        }
+        owned_sample.emplace(std::move(*received));
+      }
+      return {};
+    };
+    expected<void, Error> read;
     if (next_sequence_ == state.allocation_probe_sequence()) {
       const test::ScopedAllocationCounter allocations;
-      sample = input_.receive();
+      read = read_sample();
       state.record_sink_allocation_probe(allocations.count());
     } else {
-      sample = input_.receive();
+      read = read_sample();
     }
-    if (!sample) {
-      state.fail(sample.error().code);
-      return make_unexpected(std::move(sample.error()));
+    if (!read) {
+      state.fail(read.error().code);
+      return make_unexpected(std::move(read).error());
     }
 
-    const std::uint64_t sequence = sample->metadata.frame_id;
+    // Bind a callback-local const reference, never an owning copy of the borrowed descriptor.
+    const auto& sample = borrowed_sample ? borrowed_sample->sample() : *owned_sample;
+    const std::uint64_t sequence = sample.metadata.frame_id;
     if (state.options().tensor_storage == TensorStorage::kDevice) {
-      state.record_tensor_consumer_stream(context.cuda_stream().get());
+      state.record_tensor_consumer_stream(sink_index_, context.cuda_stream().get());
     }
     state.record_sink_callback_entry(sink_index_, sequence, callback_timestamp);
     const std::int64_t receive_timestamp = state.sink_timestamp_required(sequence) ? now_ns() : 0;
-    const Tensor* tensor = sample->data.data.get();
+    const Tensor* tensor = sample.data.data.get();
     const bool metadata_valid =
         sequence != 0U && sequence <= state.final_sequence() && sequence >= next_sequence_ &&
-        sample->metadata.trace_id == sequence &&
+        sample.metadata.trace_id == sequence &&
         (lossy_queue_policy(state.options().queue_policy) || sequence == next_sequence_) &&
-        sample->metadata.degraded();
+        sample.metadata.degraded();
     const bool image_valid =
-        sample->data.height == 1 &&
-        sample->data.width == static_cast<std::int32_t>(state.options().tensor_bytes) &&
-        sample->data.encoding == schema::ImageEncoding_CUSTOM && tensor != nullptr;
+        sample.data.height == 1 &&
+        sample.data.width == static_cast<std::int32_t>(state.options().tensor_bytes) &&
+        sample.data.encoding == schema::ImageEncoding_CUSTOM && tensor != nullptr;
     bool tensor_valid = image_valid;
     if (tensor_valid) {
       tensor_valid = tensor_descriptor_matches(*tensor,
@@ -4406,7 +4770,7 @@ class RuntimeImageBenchmarkSink final : public Operator<> {
 
     if (state.options().validation == PayloadValidation::kFinal &&
         sequence == state.final_sequence()) {
-      state.retain_final_tensor(*tensor, kImagePayloadByte);
+      state.retain_final_tensor(sink_index_, *tensor, kImagePayloadByte);
     }
     state.record_delivery(sink_index_, sequence, receive_timestamp);
     next_sequence_ = sequence + 1U;
@@ -5118,6 +5482,18 @@ class RuntimeBenchmarkRelay final : public Operator<> {
   graph.set_default_clock(clock);
 
   CompileOptions compile_options;
+  compile_options.cuda_execution.compute_stream_policy = options.cuda_compute_stream_policy;
+  const int effective_controller_cpu = controller_owner_cpu(options);
+  if (effective_controller_cpu >= 0) {
+    compile_options.deployment.bind_support_thread_affinity(
+        holoscan::SupportThreadRole::kController,
+        CPUAffinity{static_cast<std::uint32_t>(effective_controller_cpu)});
+  }
+  if (options.channel_pump_cpu >= 0) {
+    compile_options.deployment.bind_support_thread_affinity(
+        holoscan::SupportThreadRole::kChannelPump,
+        CPUAffinity{static_cast<std::uint32_t>(options.channel_pump_cpu)});
+  }
   if (options.partition_cover == PartitionCover::kIncludeAll) {
     compile_options.deployment.bind_thread_placement(
         "runtime-graph-all", make_placement(options.source_cpu, options.busy_poll));
@@ -5445,6 +5821,8 @@ void emit_phase_counters(std::ostream& output, const detail::RuntimePhaseCounter
       << ",\"candidates_selected\":" << value(detail::RuntimePhaseCounter::kCandidatesSelected)
       << ",\"readiness_poll_dispatches\":"
       << value(detail::RuntimePhaseCounter::kReadinessPollDispatches)
+      << ",\"readiness_poll_contention_retries\":"
+      << value(detail::RuntimePhaseCounter::kReadinessPollContentionRetries)
       << ",\"direct_continuation_receipts_accepted\":"
       << value(detail::RuntimePhaseCounter::kDirectContinuationReceiptsAccepted)
       << ",\"direct_continuation_poll_elisions\":"
@@ -5492,6 +5870,8 @@ void emit_phase_counters(std::ostream& output, const detail::RuntimePhaseCounter
       << value(detail::RuntimePhaseCounter::kChannelActivationCutMaterializations)
       << ",\"channel_receive_backpressured\":"
       << value(detail::RuntimePhaseCounter::kChannelReceiveBackpressured)
+      << ",\"channel_poll_incomplete\":"
+      << value(detail::RuntimePhaseCounter::kChannelPollIncomplete)
       << ",\"channel_direct_ingress_promotion_passes\":"
       << value(detail::RuntimePhaseCounter::kChannelDirectIngressPromotionPasses)
       << ",\"channel_direct_ingress_promotions\":"
@@ -5935,6 +6315,8 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
       value(detail::RuntimePhaseCounter::kChannelSamplesReceived);
   const std::uint64_t readiness_published =
       value(detail::RuntimePhaseCounter::kChannelReadinessPublished);
+  const std::uint64_t witnesses_retired =
+      value(detail::RuntimePhaseCounter::kChannelWitnessRetired);
   const std::uint64_t accepted_delivery_opportunities =
       expected_accepted_emits * subscribers_per_output(state.options());
   const bool retained_counts_valid = has_lossy_subscriber(state.options())
@@ -5943,6 +6325,16 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
                                                samples_received <= accepted_delivery_opportunities
                                          : samples_received == expected_input_operations &&
                                                readiness_published == expected_input_operations;
+  const bool witness_retirement_valid = has_lossy_subscriber(state.options())
+                                            ? expected_input_operations <= witnesses_retired &&
+                                                  witnesses_retired <= readiness_published
+                                            : witnesses_retired == expected_input_operations;
+  // Each readiness revision in the gated diagnostic either publishes a retired witness or is
+  // replaced before witness publication. Consumer reads count only selected payloads.
+  const bool diagnostic_retirement_valid =
+      !state.options().test_gate_pod_sink_for_pressure ||
+      witnesses_retired + value(detail::RuntimePhaseCounter::kChannelPreWitnessReplacements) ==
+          readiness_published;
   return value(detail::RuntimePhaseCounter::kChannelPrepareCalls) == expected_compute_dispatches &&
          value(detail::RuntimePhaseCounter::kChannelEmitAttempts) ==
              expected_source_emit_attempts + state.relay_callbacks() &&
@@ -5951,7 +6343,7 @@ void emit_callback_thread_evidence(std::ostream& output, const BenchmarkRunState
              state.backpressure_count() &&
          retained_counts_valid &&
          value(detail::RuntimePhaseCounter::kChannelInputReads) == expected_input_operations &&
-         value(detail::RuntimePhaseCounter::kChannelWitnessRetired) == expected_input_operations &&
+         witness_retirement_valid && diagnostic_retirement_valid &&
          value(detail::RuntimePhaseCounter::kChannelRetireCalls) == expected_compute_dispatches &&
          activation_cut_valid;
 }
@@ -6037,6 +6429,16 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
   const std::vector<std::uint64_t> source_to_sink_latencies = state.source_to_sink_latencies();
   const std::vector<std::uint64_t> publication_to_receive_latencies =
       state.publication_to_receive_latencies();
+  const std::array cuda_work_durations{state.cuda_work_durations_ns(0U),
+                                       state.cuda_work_durations_ns(1U)};
+  const std::array cuda_work_completion_latencies{state.cuda_work_completion_latencies_ns(0U),
+                                                  state.cuda_work_completion_latencies_ns(1U)};
+  const std::vector<std::uint64_t> cuda_work_end_to_end_completion_latencies =
+      state.cuda_work_completion_latencies_ns();
+  const std::vector<std::uint64_t> cuda_work_overlap = state.cuda_work_overlap_ns();
+  const std::uint64_t cuda_work_overlapping_samples =
+      static_cast<std::uint64_t>(std::ranges::count_if(
+          cuda_work_overlap, [](const std::uint64_t duration) { return duration != 0U; }));
   const bool include_p999 = options.samples >= 10'000U;
   const std::vector<std::uint64_t> timestamp_read_pair_overhead = calibrate_timestamp_read_pairs();
   const std::uint64_t device_pool_capacity_bytes =
@@ -6078,10 +6480,46 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
            << ",\"notification_backpressure\":" << state.pressure_gate_notification_backpressure()
            << ",\"notification_not_ready\":" << state.pressure_gate_notification_not_ready() << '}';
   }
+  output << "},\n"
+         << "  \"cuda_execution\":{\"stream_policy\":\""
+         << cuda_compute_stream_policy_name(options.cuda_compute_stream_policy)
+         << "\",\"plan_stream_policy\":\""
+         << cuda_compute_stream_policy_name(plan.cuda_compute_stream_policy())
+         << "\",\"stream_records\":" << plan.cuda_compute_streams().size()
+         << ",\"operator_binding_records\":" << plan.operator_cuda_stream_bindings().size()
+         << "},\n"
+         << "  \"cuda_work\":{\"profile\":\"" << cuda_work_profile_name(options.cuda_work_profile)
+         << "\",\"branch_work_us\":[" << options.cuda_branch_work_us[0] << ','
+         << options.cuda_branch_work_us[1]
+         << "],\"requested_overlap_samples\":" << options.cuda_overlap_samples
+         << ",\"branch_duration_ns\":[";
+  for (std::size_t index = 0U; index < cuda_work_durations.size(); ++index) {
+    if (index != 0U) {
+      output << ',';
+    }
+    emit_percentiles(output, cuda_work_durations[index], include_p999);
+  }
+  output << "],\"overlap_ns\":";
+  emit_percentiles(output, cuda_work_overlap, include_p999);
+  output << ",\"overlapping_samples\":" << cuda_work_overlapping_samples
+         << ",\"branch_completion_latency_ns\":[";
+  for (std::size_t index = 0U; index < cuda_work_completion_latencies.size(); ++index) {
+    if (index != 0U) {
+      output << ',';
+    }
+    emit_percentiles(output, cuda_work_completion_latencies[index], include_p999);
+  }
+  output << "],\"end_to_end_completion_latency_ns\":";
+  emit_percentiles(output, cuda_work_end_to_end_completion_latencies, include_p999);
   output
       << "},\n"
       << "  \"queue_policy\":\"" << queue_policy_name(options.queue_policy) << "\",\n"
       << "  \"payload\":\"" << payload_name(options.scenario) << "\",\n"
+      << "  \"image_input_accessor\":"
+      << (options.scenario != Scenario::kImage
+              ? "null"
+              : (options.borrow_image_input ? "\"selected_sample\"" : "\"receive\""))
+      << ",\n"
       << "  \"workload\":\"" << workload_name(options.workload) << "\",\n"
       << "  \"source_trigger\":\"" << (notification_driver_used(options) ? "notification" : "clock")
       << "\",\n"
@@ -6289,6 +6727,7 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
            << ",\"readiness_record_elisions\":" << counters.cuda_readiness_record_elisions
            << ",\"stream_waits\":" << counters.cuda_stream_waits
            << ",\"stream_wait_elisions\":" << counters.cuda_stream_wait_elisions
+           << ",\"release_stream_assignments\":" << counters.cuda_release_stream_assignments
            << ",\"release_records\":" << counters.cuda_release_records
            << ",\"retirement_queries\":" << counters.cuda_retirement_queries
            << ",\"stream_quiesce_ns\":" << counters.cuda_stream_quiesce_ns;
@@ -6500,20 +6939,9 @@ void emit_result(std::ostream& output, const BenchmarkRunState& state, const Exe
   }
   output << "},\n"
          << "  \"session\":{\"termination\":\"" << termination_name(session.termination())
-         << "\",\"diagnostics\":[";
-  bool first = true;
-  for (const Diagnostic& diagnostic : session.diagnostics()) {
-    if (!first) {
-      output << ',';
-    }
-    first = false;
-    output << "{\"token\":\"" << json_escape(diagnostic.token) << "\",\"service\":\""
-           << json_escape(diagnostic.service) << "\",\"endpoint\":\""
-           << json_escape(diagnostic.endpoint) << "\",\"required\":\""
-           << json_escape(diagnostic.required) << "\",\"provided\":\""
-           << json_escape(diagnostic.provided) << "\"}";
-  }
-  output << "]}\n}\n";
+         << "\",\"diagnostics\":";
+  emit_runtime_diagnostics(output, session.diagnostics());
+  output << "}\n}\n";
 }
 
 template <typename Integer>
@@ -6557,11 +6985,16 @@ template <typename Integer>
 
 void print_usage(std::ostream& output) {
   output << "runtime_graph_benchmark [options]\n\n"
+         << "  --borrow-image-input (use selected_sample in the image sink)\n"
          << "  --workload <latency|notification_latency|saturated>\n"
          << "  --scenario <source_only|pod|signal|sample_forward|schema|third_party_schema|tensor|"
             "image|multi_tensor|multi_tensor_loan|multi_tensor_staging>\n"
          << "  --operator-lanes <separate|shared|per_sink>\n"
          << "  --partition-cover <legacy|automatic|include_all|hybrid>\n"
+         << "  --stream-policy <shared|per_partition>\n"
+         << "  --cuda-work-profile <none|low_occupancy|saturating>\n"
+         << "  --cuda-branch-work-us <b,c>\n"
+         << "  --cuda-overlap-samples <n>\n"
          << "  --green-context-layout <none|same_partition|dedicated_to_dedicated|"
             "dedicated_to_residual>\n"
          << "  --green-context-sm-count <n>\n"
@@ -6651,6 +7084,10 @@ void print_usage(std::ostream& output) {
     }
     if (argument == "--multi-output") {
       options.multi_output = true;
+      continue;
+    }
+    if (argument == "--borrow-image-input") {
+      options.borrow_image_input = true;
       continue;
     }
     if (argument == "--multi-input") {
@@ -6746,6 +7183,38 @@ void print_usage(std::ostream& output) {
         options.partition_cover = PartitionCover::kHybrid;
       } else {
         std::cerr << "--partition-cover must be legacy, automatic, include_all, or hybrid\n";
+        return std::nullopt;
+      }
+    } else if (argument == "--stream-policy") {
+      if (value == "shared") {
+        options.cuda_compute_stream_policy = CudaComputeStreamPolicy::kSharedProcessDevice;
+      } else if (value == "per_partition") {
+        options.cuda_compute_stream_policy = CudaComputeStreamPolicy::kPerExecutionPartition;
+      } else {
+        std::cerr << "--stream-policy must be shared or per_partition\n";
+        return std::nullopt;
+      }
+    } else if (argument == "--cuda-work-profile") {
+      if (value == "none") {
+        options.cuda_work_profile = CudaWorkProfile::kNone;
+      } else if (value == "low_occupancy") {
+        options.cuda_work_profile = CudaWorkProfile::kLowOccupancy;
+      } else if (value == "saturating") {
+        options.cuda_work_profile = CudaWorkProfile::kSaturating;
+      } else {
+        std::cerr << "--cuda-work-profile must be none, low_occupancy, or saturating\n";
+        return std::nullopt;
+      }
+    } else if (argument == "--cuda-branch-work-us") {
+      std::vector<std::uint32_t> durations;
+      if (!parse_integer_list(value, durations) || durations.size() != 2U) {
+        std::cerr << "--cuda-branch-work-us must contain exactly two comma-separated integers\n";
+        return std::nullopt;
+      }
+      std::ranges::copy(durations, options.cuda_branch_work_us.begin());
+    } else if (argument == "--cuda-overlap-samples") {
+      if (!parse_integer(value, options.cuda_overlap_samples)) {
+        std::cerr << "--cuda-overlap-samples must be an integer\n";
         return std::nullopt;
       }
     } else if (argument == "--green-context-layout") {
@@ -6930,6 +7399,27 @@ void print_usage(std::ostream& output) {
     std::cerr << "--queue-depth must be positive\n";
     return std::nullopt;
   }
+  constexpr std::uint32_t kMaximumCudaBranchWorkUs = 1'000'000U;
+  if (options.cuda_work_profile == CudaWorkProfile::kNone) {
+    if (std::ranges::any_of(options.cuda_branch_work_us,
+                            [](const std::uint32_t duration) { return duration != 0U; })) {
+      std::cerr << "--cuda-branch-work-us requires a non-none --cuda-work-profile\n";
+      return std::nullopt;
+    }
+  } else if (options.scenario != Scenario::kTensor ||
+             options.tensor_storage != TensorStorage::kDevice || options.fanout != 2U ||
+             options.partition_cover != PartitionCover::kLegacy ||
+             options.operator_lanes == OperatorLaneMode::kShared ||
+             options.green_context_layout != GreenContextLayout::kNone ||
+             options.cuda_overlap_samples == 0U ||
+             std::ranges::any_of(options.cuda_branch_work_us, [](const std::uint32_t duration) {
+               return duration == 0U || duration > kMaximumCudaBranchWorkUs;
+             })) {
+    std::cerr << "CUDA work requires a legacy, non-shared two-way device-Tensor fork without "
+                 "Green Context placement, positive branch durations no greater than 1000000 us, "
+                 "and positive overlap samples\n";
+    return std::nullopt;
+  }
   if (std::find(kSupportedCallbackWorkUs.begin(),
                 kSupportedCallbackWorkUs.end(),
                 options.callback_work_us) == kSupportedCallbackWorkUs.end()) {
@@ -7095,6 +7585,12 @@ void print_usage(std::ostream& output) {
     std::cerr << "--relay-cpu requires --scenario sample_forward\n";
     return std::nullopt;
   }
+  if (controller_owns_only_operator_lane(options) && options.source_cpu >= 0 &&
+      options.controller_cpu >= 0 && options.source_cpu != options.controller_cpu) {
+    std::cerr << "--source-cpu and --controller-cpu must match when the sole Operator lane "
+                 "shares the controller thread\n";
+    return std::nullopt;
+  }
   if (options.partition_cover == PartitionCover::kAutomatic &&
       (options.operator_lanes != OperatorLaneMode::kSeparate || options.source_cpu >= 0 ||
        options.relay_cpu >= 0 || options.sink_cpu >= 0 || !options.sink_cpus.empty() ||
@@ -7179,9 +7675,14 @@ void print_usage(std::ostream& output) {
     std::cerr << "--relay-cpu is not used with --operator-lanes shared\n";
     return std::nullopt;
   }
+  // Raw device Tensor fanout retains the final Tensor and consumer stream independently per sink.
+  const bool independently_validated_device_tensor_fanout =
+      options.scenario == Scenario::kTensor && options.tensor_storage == TensorStorage::kDevice &&
+      options.fanout == 2U;
   if ((options.scenario == Scenario::kTensor || options.scenario == Scenario::kImage ||
        multi_tensor_scenario(options.scenario)) &&
-      options.fanout > 1U && options.operator_lanes != OperatorLaneMode::kShared) {
+      options.fanout > 1U && options.operator_lanes != OperatorLaneMode::kShared &&
+      !independently_validated_device_tensor_fanout) {
     std::cerr << "Tensor, Image, and multi-Tensor fanout currently require --operator-lanes "
                  "shared\n";
     return std::nullopt;
@@ -7230,13 +7731,14 @@ void print_usage(std::ostream& output) {
     std::cerr << "notification latency requires --notification-capacity 1\n";
     return std::nullopt;
   }
+  const bool controller_owned_lane = controller_owns_only_operator_lane(options);
   std::vector<int> assigned_cpus{
-      options.source_cpu,
+      controller_owned_lane ? -1 : options.source_cpu,
       options.scenario == Scenario::kSourceOnly ||
               options.operator_lanes != OperatorLaneMode::kSeparate
           ? -1
           : options.sink_cpu,
-      options.controller_cpu,
+      controller_owner_cpu(options),
       uses_channel_pump(options) ? options.channel_pump_cpu : -1,
       options.scenario == Scenario::kSampleForward &&
               options.operator_lanes == OperatorLaneMode::kSeparate
@@ -7294,6 +7796,10 @@ void print_usage(std::ostream& output) {
     std::cerr << "--cuda-resource-counters requires --scenario tensor\n";
     return std::nullopt;
   }
+  if (options.borrow_image_input && options.scenario != Scenario::kImage) {
+    std::cerr << "--borrow-image-input requires --scenario image\n";
+    return std::nullopt;
+  }
   return options;
 }
 
@@ -7343,11 +7849,16 @@ void print_usage(std::ostream& output) {
     std::cerr << "failed to initialize Image Tensor backing\n";
     return 2;
   }
+  auto cuda_work = state.initialize_cuda_work();
+  if (!cuda_work) {
+    std::cerr << "failed to initialize CUDA work instrumentation\n";
+    return 2;
+  }
   g_run_state = &state;
-  auto thread_control =
-      std::make_shared<BenchmarkSupportThreadControl>(std::vector<SupportThreadBinding>{
+  auto thread_control = std::make_shared<BenchmarkSupportThreadControl>(
+      std::vector<SupportThreadBinding>{
           {.role = SupportThreadRole::kController,
-           .requested_cpu = state.options().controller_cpu,
+           .requested_cpu = controller_owner_cpu(state.options()),
            .required = true},
           {.role = SupportThreadRole::kChannelPump,
            .requested_cpu = state.options().channel_pump_cpu,
@@ -7355,7 +7866,8 @@ void print_usage(std::ostream& output) {
           {.role = SupportThreadRole::kNotificationDriver,
            .requested_cpu = state.options().notification_driver_cpu,
            .required = state.notification_driven()},
-      });
+      },
+      false);
   const std::int64_t compile_started_ns = now_ns();
   ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_support_thread_control(
       make_plan(state.options()), thread_control);
@@ -7689,6 +8201,9 @@ void print_usage(std::ostream& output) {
               << " configured_offer_rate=" << state.options().offered_rate_hz
               << " start_ns=" << state.measured_start_ns() << " end_ns=" << state.measured_end_ns()
               << " termination=" << termination_name(session.termination()) << '\n';
+    if (!session.diagnostics().empty()) {
+      std::cerr << format_diagnostics(session.diagnostics(), plan.graph()) << '\n';
+    }
   }
   g_run_state = nullptr;
   return valid ? 0 : 1;

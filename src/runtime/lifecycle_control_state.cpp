@@ -655,12 +655,12 @@ expected<ParameterLifecycleSubmitOutcome, Error> LifecycleControlState::submit_p
   }
   const std::size_t stage_index = static_cast<std::uint8_t>(request.earliest_stage);
   const std::uint8_t requested_bit = stage_bit(request.earliest_stage);
-  if (stage_index >= 6U || (target_plan->allowed_from_stage_mask & requested_bit) == 0U ||
-      (closure_plan->valid_requested_stage_mask & requested_bit) == 0U) {
+  if (stage_index >= 6U || (target_plan->allowed_from_stage_mask & requested_bit) == 0 ||
+      (closure_plan->valid_requested_stage_mask & requested_bit) == 0) {
     return make_unexpected(Error{ErrorCode::kLifecycleRestartUnauthorized});
   }
   const auto& resolution = closure_plan->stage_resolutions[stage_index];
-  if ((target_plan->allowed_from_stage_mask & stage_bit(resolution.effective_stage)) == 0U) {
+  if ((target_plan->allowed_from_stage_mask & stage_bit(resolution.effective_stage)) == 0) {
     return make_unexpected(Error{ErrorCode::kLifecycleRestartUnauthorized});
   }
   const std::size_t closure_index =
@@ -810,15 +810,15 @@ expected<LifecycleRestartReceipt, Error> LifecycleControlState::submit_locked(
   }
   const std::uint8_t bit = stage_bit(options.from_stage);
   const std::size_t stage_index = static_cast<std::uint8_t>(options.from_stage);
-  if ((target_plan->allowed_from_stage_mask & bit) == 0U ||
-      (closure_plan->valid_requested_stage_mask & bit) == 0U || stage_index >= 6U ||
+  if ((target_plan->allowed_from_stage_mask & bit) == 0 ||
+      (closure_plan->valid_requested_stage_mask & bit) == 0 || stage_index >= 6U ||
       (policy != nullptr &&
        std::find(policy->stages.begin(), policy->stages.end(), options.from_stage) ==
            policy->stages.end())) {
     return make_unexpected(Error{ErrorCode::kLifecycleRestartUnauthorized});
   }
   const auto& resolution = closure_plan->stage_resolutions[stage_index];
-  if ((target_plan->allowed_from_stage_mask & stage_bit(resolution.effective_stage)) == 0U ||
+  if ((target_plan->allowed_from_stage_mask & stage_bit(resolution.effective_stage)) == 0 ||
       (policy != nullptr &&
        std::find(policy->stages.begin(), policy->stages.end(), resolution.effective_stage) ==
            policy->stages.end())) {

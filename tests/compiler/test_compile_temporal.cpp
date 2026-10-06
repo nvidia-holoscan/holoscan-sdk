@@ -4,6 +4,8 @@
  */
 
 #include <gtest/gtest.h>
+#include <holoscan/core/diagnostic.hpp>
+#include <holoscan/logger/logger.hpp>
 
 #include <algorithm>
 #include <array>
@@ -13,6 +15,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -25,8 +28,12 @@
 #include <holoscan/time/manual_clock.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
+#include "../common/allocation_counter.hpp"
+#include "../common/diagnostic_test_environment.hpp"
 #include "compile_test_graph.hpp"
 #include "compiler/clock_readiness_lowering.hpp"
+#include "compiler/optional_input_plan_validation.hpp"
+#include "compiler/plan_artifact_serialization.hpp"
 #include "compiler/profile_admission.hpp"
 #include "compiler/runtime_package_capabilities.hpp"
 #include "compiler/temporal_plan_lowering.hpp"
@@ -158,6 +165,183 @@ class RateAwareTemporalSource final : public Operator<> {
 
   Output<std::uint32_t> first;
   Output<std::uint32_t> second;
+};
+
+// Enumerate contract shapes for OptionalUnconnectedInputOperator, including the invalid cases
+// in CompileTemporalOptionalInput.RejectsInvalidPermissionEvenWhenWiredOrInert.
+enum class OptionalInputShape : std::uint8_t {
+  kExactSafeDefault,
+  kExactUnspecified,
+  kExactSkip,
+  kExactReuseLast,
+  kLatestWithinSafeDefault,
+  kDrainAll,
+  kOnEachDriver,
+  kAlignedMember,
+  kWindowInput,
+  kPredicateInput,
+  kExactWithoutTrigger,
+  kNoContract,
+};
+
+// Clock authority is independent of the declared input so the fixture isolates the narrow
+// unconnected selector/missing-policy admission matrix.
+// Representative test: CompileTemporalOptionalInput.AdmitsOnlyUnwiredExactSafeDefaultWithAWarning.
+class OptionalUnconnectedInputOperator final : public Operator<> {
+ public:
+  explicit OptionalUnconnectedInputOperator(OptionalInputShape shape,
+                                            bool optional_declaration = true)
+      : shape_(shape), optional_declaration_(optional_declaration) {}
+
+  void setup(OperatorSpec& spec) override {
+    auto& builder = spec.input(optional, "optional").queue_depth(4U);
+    if (optional_declaration_) {
+      builder.optional().optional();
+    }
+    spec.input(other, "other").queue_depth(4U);
+  }
+
+  Contract contract() const override {
+    Contract result;
+    if (shape_ == OptionalInputShape::kNoContract) {
+      return result;
+    }
+    if (shape_ != OptionalInputShape::kOnEachDriver &&
+        shape_ != OptionalInputShape::kAlignedMember &&
+        shape_ != OptionalInputShape::kWindowInput &&
+        shape_ != OptionalInputShape::kPredicateInput &&
+        shape_ != OptionalInputShape::kExactWithoutTrigger) {
+      result.trigger(OnClock{.period = 1ms});
+    }
+    switch (shape_) {
+      case OptionalInputShape::kNoContract:
+        break;
+      case OptionalInputShape::kExactWithoutTrigger:
+      case OptionalInputShape::kExactSafeDefault:
+        result.input(optional, Exact{}).on_missing(optional, SafeDefault{});
+        break;
+      case OptionalInputShape::kExactUnspecified:
+        result.input(optional, Exact{});
+        break;
+      case OptionalInputShape::kExactSkip:
+        result.input(optional, Exact{}).on_missing(optional, Skip{});
+        break;
+      case OptionalInputShape::kExactReuseLast:
+        result.input(optional, Exact{}).on_missing(optional, ReuseLast{.max_age = 2ms});
+        break;
+      case OptionalInputShape::kLatestWithinSafeDefault:
+        result.input(optional, LatestWithin{.max_age = 2ms}).on_missing(optional, SafeDefault{});
+        break;
+      case OptionalInputShape::kDrainAll:
+        result.input(optional, DrainAll{});
+        break;
+      case OptionalInputShape::kOnEachDriver:
+        result.trigger(OnEach{optional})
+            .input(optional, Exact{})
+            .on_missing(optional, SafeDefault{});
+        break;
+      case OptionalInputShape::kAlignedMember:
+        result.trigger(OnAligned{.ports = ports(optional, other), .window = 1ms})
+            .input(optional, Exact{})
+            .on_missing(optional, SafeDefault{})
+            .input(other, Exact{})
+            .on_missing(other, SafeDefault{});
+        break;
+      case OptionalInputShape::kWindowInput:
+        result.trigger(OnWindow{.anchor = optional, .max_wait = 2ms, .max_pending_windows = 1U})
+            .input(optional, Exact{})
+            .on_missing(optional, SafeDefault{})
+            .input(other, BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 3U})
+            .on_missing(other, SafeDefault{});
+        break;
+      case OptionalInputShape::kPredicateInput: {
+        auto evaluator =
+            predicate("optional-ready",
+                      [](const PredicateEvaluationContext&,
+                         const PredicateInputView<std::uint32_t>&) noexcept { return true; });
+        result
+            .trigger(OnPredicate{.evaluate_on = OnInputUpdate{optional},
+                                 .predicate = std::move(evaluator)})
+            .input(optional, Exact{})
+            .on_missing(optional, SafeDefault{});
+        break;
+      }
+    }
+    return result;
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<std::uint32_t> optional;
+  Input<std::uint32_t> other;
+
+ private:
+  OptionalInputShape shape_;
+  bool optional_declaration_;
+};
+
+// Export an optional operator input through the leaf boundary of a nested graph.
+// Representative test:
+// CompileTemporalOptionalInput.FreezesCanonicalConnectivityAcrossNestedAliasesAndPlanCopy.
+// Graph topology (exported alias, not a payload edge): input ==> target.optional.
+class OptionalInputLeaf final : public Graph {
+ public:
+  Input<std::uint32_t> input{"input"};
+
+ protected:
+  void compose() override {
+    auto target =
+        op<OptionalUnconnectedInputOperator>("target", OptionalInputShape::kExactSafeDefault);
+    export_input(input, target->optional);
+    set_default_clock(add_clock<ManualClock>("clock", std::int64_t{0}));
+  }
+};
+
+// Add the second exported boundary so VertexId and OperatorInstanceId differ in the final plan.
+// Representative test:
+// CompileTemporalOptionalInput.FreezesCanonicalConnectivityAcrossNestedAliasesAndPlanCopy.
+// Graph topology (exported aliases): input ==> leaf.input ==> leaf.target.optional.
+class OptionalInputBranch final : public Graph {
+ public:
+  Input<std::uint32_t> input{"input"};
+
+ protected:
+  void compose() override {
+    auto leaf = embed<OptionalInputLeaf>("leaf");
+    export_input(input, leaf->input);
+  }
+};
+
+// Keep two optional side inputs outside the required two-input OnAligned presence set.
+// Representative test:
+// CompileTemporalOptionalInput.AdmitsUnwiredSideInputOutsideOnAlignedPresenceSet.
+class OptionalAlignedSideInputOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(first, "first").queue_depth(4U);
+    spec.input(second, "second").queue_depth(4U);
+    spec.input(optional, "optional").queue_depth(4U).optional();
+    spec.input(optional_second, "optional_second").queue_depth(4U).optional();
+  }
+
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnAligned{.ports = ports(first, second), .window = 1ms})
+        .input(first, Exact{})
+        .input(second, Exact{})
+        .input(optional, Exact{})
+        .on_missing(optional, SafeDefault{})
+        .input(optional_second, Exact{})
+        .on_missing(optional_second, SafeDefault{});
+    return result;
+  }
+
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Input<std::uint32_t> first;
+  Input<std::uint32_t> second;
+  Input<std::uint32_t> optional;
+  Input<std::uint32_t> optional_second;
 };
 
 class ImportedClockRelay final : public Operator<> {
@@ -624,24 +808,158 @@ class ExplicitClockOperator final : public Operator<> {
   TimePoint phase_{};
 };
 
-// Clock-triggered operator that references a named clock by key rather than the graph default.
+// Operator that references a named trigger clock rather than the graph default.
 // Two instances referencing distinct clocks trigger TEMPORAL_SCHEDULING_DOMAIN_UNSUPPORTED.
 // Tests RejectsMultipleSchedulingDomainsBeforeRuntimeConstruction.
 class NamedClockOperator final : public Operator<> {
  public:
-  explicit NamedClockOperator(ClockKey clock) : clock_(std::move(clock)) {}
+  explicit NamedClockOperator(ClockKey clock, TriggerMode mode = TriggerMode::kClock)
+      : clock_(std::move(clock)), mode_(mode) {}
+
+  void setup(OperatorSpec& spec) override {
+    if (mode_ == TriggerMode::kWindow) {
+      spec.input(anchor, "anchor").queue_depth(4U);
+      spec.input(samples, "samples").queue_depth(4U);
+    }
+  }
 
   Contract contract() const override {
     Contract result;
-    result.trigger(OnClock{.period = 1ms, .clock = clock_});
+    if (mode_ == TriggerMode::kWindow) {
+      result
+          .trigger(OnWindow{
+              .anchor = anchor, .max_wait = 2ms, .wait_clock = clock_, .max_pending_windows = 2U})
+          .input(anchor, Exact{})
+          .input(samples, BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 3U})
+          .on_missing(samples, Skip{});
+    } else if (mode_ == TriggerMode::kPredicate) {
+      auto evaluator =
+          predicate("clock-ready", [](const PredicateEvaluationContext&) noexcept { return true; });
+      result.trigger(OnPredicate{.evaluate_on = OnClock{.period = 1ms, .clock = clock_},
+                                 .predicate = std::move(evaluator)});
+    } else {
+      result.trigger(OnClock{.period = 1ms, .clock = clock_});
+    }
     return result;
   }
 
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
 
+  Input<std::uint32_t> anchor;
+  Input<std::uint32_t> samples;
+
  private:
   ClockKey clock_;
+  TriggerMode mode_;
 };
+
+void add_missing_named_clock_trigger(Graph& graph, TriggerMode mode) {
+  auto target = graph.op<NamedClockOperator>("target", ClockKey::named("missing"), mode);
+  if (mode == TriggerMode::kWindow) {
+    auto source = graph.op<TemporalSource>("source");
+    graph.add_flow(source->first, target->anchor, ConnectionOptions{.queue_depth = 4U});
+    graph.add_flow(source->second, target->samples, ConnectionOptions{.queue_depth = 4U});
+  }
+}
+
+class MissingNamedTriggerClockGraph final : public Graph {
+ public:
+  explicit MissingNamedTriggerClockGraph(TriggerMode mode) : mode_(mode) {}
+  [[nodiscard]] ClockKey schedule() const { return schedule_; }
+
+ protected:
+  void compose() override {
+    schedule_ = import_clock("schedule");
+    set_default_clock(schedule_);
+    add_missing_named_clock_trigger(*this, mode_);
+  }
+
+ private:
+  TriggerMode mode_;
+  ClockKey schedule_;
+};
+
+enum class ClockDependencyState {
+  kMissingImport,
+  kMissingDefault,
+  kLocalClockMissingDefault,
+  kComplete
+};
+
+class ClockDependencyGraph final : public Graph {
+ public:
+  explicit ClockDependencyGraph(ClockDependencyState state) : dependency_state_(state) {}
+  [[nodiscard]] ClockKey clock_import() const { return clock_import_; }
+
+ protected:
+  void compose() override {
+    if (dependency_state_ == ClockDependencyState::kLocalClockMissingDefault) {
+      (void)add_clock<ManualClock>("timeline", std::int64_t{0});
+    } else if (dependency_state_ != ClockDependencyState::kMissingImport) {
+      clock_import_ = import_clock("timeline");
+      if (dependency_state_ == ClockDependencyState::kComplete) {
+        set_default_clock(clock_import_);
+      }
+    }
+    (void)op<NamedClockOperator>("tick", ClockKey{});
+  }
+
+ private:
+  ClockDependencyState dependency_state_;
+  ClockKey clock_import_;
+};
+
+class ConcreteClockGraph final : public Graph {
+ public:
+  explicit ConcreteClockGraph(bool select_default) : select_default_(select_default) {}
+
+ protected:
+  void compose() override {
+    const auto clock = add_clock<ManualClock>("timeline", std::int64_t{0});
+    if (select_default_) {
+      set_default_clock(clock);
+    }
+    (void)op<NamedClockOperator>("tick", ClockKey{});
+  }
+
+ private:
+  bool select_default_;
+};
+
+class NestedClockDependencyGraph final : public Graph {
+ public:
+  NestedClockDependencyGraph(ClockDependencyState child_state, bool bind_child)
+      : child_state_(child_state), bind_child_(bind_child) {}
+  [[nodiscard]] ClockKey clock_import() const { return clock_import_; }
+
+ protected:
+  void compose() override {
+    clock_import_ = import_clock("timeline");
+    set_default_clock(clock_import_);
+    auto child = embed<ClockDependencyGraph>("fusion", child_state_);
+    if (bind_child_) {
+      bind_clock(child, child->clock_import(), clock_import_);
+    }
+  }
+
+ private:
+  ClockDependencyState child_state_;
+  bool bind_child_;
+  ClockKey clock_import_;
+};
+
+void expect_clock_diagnostic_path(const ExecutionPlan& plan, const Diagnostic& diagnostic,
+                                  const std::vector<std::string>& expected_path) {
+  const auto graphs = plan.graph().graphs();
+  const auto affected = std::find_if(graphs.begin(), graphs.end(), [&](const auto& graph) {
+    return graph.id == diagnostic.source.graph;
+  });
+  ASSERT_NE(affected, graphs.end()) << plan.json();
+  ASSERT_TRUE(affected->path.has_value()) << plan.json();
+  const auto segments = affected->path->segments();
+  EXPECT_EQ(std::vector<std::string>(segments.begin(), segments.end()), expected_path);
+  EXPECT_EQ(diagnostic.source.graph_generation, plan.graph().generation());
+}
 
 // Predicate with three inputs across two missing-aggregate phases: "driver" and "additional"
 // are visible during predicate evaluation (LatestWithin+SafeDefault); "compute_only" is
@@ -1903,8 +2221,231 @@ TEST(CompileTemporalTriggers, RejectsUnboundReusableGraphClockImport) {
   graph.set_default_clock(root_clock);
 
   const ExecutionPlan plan = compile(graph);
-  EXPECT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "CLOCK_IMPORT_UNBOUND")) << plan.json();
+  ASSERT_FALSE(plan.ok());
+  const auto diagnostic =
+      std::find_if(plan.diagnostics().begin(), plan.diagnostics().end(), [](const auto& item) {
+        return item.token == "CLOCK_IMPORT_UNBOUND";
+      });
+  ASSERT_NE(diagnostic, plan.diagnostics().end()) << plan.json();
+  expect_clock_diagnostic_path(plan, *diagnostic, {"child"});
+  EXPECT_EQ(diagnostic->json_pointer, "/clock_imports/0");
+  EXPECT_NE(diagnostic->required.find("bind_clock()"), std::string::npos);
+  EXPECT_NE(diagnostic->required.find("immediate parent graph \"_root\""), std::string::npos);
+  EXPECT_NE(diagnostic->provided.find("timeline"), std::string::npos);
+  EXPECT_NE(diagnostic->provided.find("import_clock()"), std::string::npos);
+  EXPECT_EQ(diagnostic->required.find("add_clock"), std::string::npos);
+  EXPECT_FALSE(test::has_diagnostic(plan, "TEMPORAL_CLOCK_UNDECLARED")) << plan.json();
+}
+
+// REQ: COMPILE-053
+TEST(CompileTemporalTriggers, DiagnosesMissingClockImportsAtTheEmbeddedBoundary) {
+  for (const bool nested : {false, true}) {
+    SCOPED_TRACE(nested);
+    Graph graph{"missing-clock-import"};
+    const auto clock = graph.add_clock<ManualClock>("timeline", std::int64_t{0});
+    graph.set_default_clock(clock);
+    if (nested) {
+      auto wrapper = graph.embed<NestedClockDependencyGraph>(
+          "pipeline", ClockDependencyState::kMissingImport, false);
+      graph.bind_clock(wrapper, wrapper->clock_import(), clock);
+    } else {
+      (void)graph.embed<ClockDependencyGraph>("fusion", ClockDependencyState::kMissingImport);
+    }
+    const ExecutionPlan plan = compile(graph);
+    ASSERT_FALSE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.diagnostics().size(), 1U) << plan.json();
+    const auto& diagnostic = plan.diagnostics().front();
+    EXPECT_EQ(diagnostic.token, "TEMPORAL_CLOCK_UNDECLARED");
+    expect_clock_diagnostic_path(plan,
+                                 diagnostic,
+                                 nested ? std::vector<std::string>{"pipeline", "fusion"}
+                                        : std::vector<std::string>{"fusion"});
+    EXPECT_EQ(diagnostic.json_pointer,
+              "/graphs/" + std::to_string(diagnostic.source.graph.value - 1U) + "/default_clock");
+    EXPECT_NE(diagnostic.provided.find("has not declared a clock import"), std::string::npos);
+    EXPECT_NE(diagnostic.required.find(nested ? "\"/pipeline/fusion\"" : "\"/fusion\""),
+              std::string::npos);
+    EXPECT_NE(diagnostic.required.find(nested ? "immediate parent graph \"/pipeline\""
+                                              : "immediate parent graph \"_root\""),
+              std::string::npos);
+    for (const auto api : {"import_clock()", "set_default_clock()", "bind_clock()"}) {
+      EXPECT_NE(diagnostic.required.find(api), std::string::npos);
+    }
+    EXPECT_EQ(diagnostic.required.find("add_clock"), std::string::npos);
+  }
+}
+
+// REQ: COMPILE-053
+TEST(CompileTemporalTriggers, DiagnosesTheExactMissingNestedClockBinding) {
+  for (const bool bind_child : {false, true}) {
+    SCOPED_TRACE(bind_child);
+    Graph graph{"missing-nested-clock-binding"};
+    const auto clock = graph.add_clock<ManualClock>("timeline", std::int64_t{0});
+    graph.set_default_clock(clock);
+    auto wrapper = graph.embed<NestedClockDependencyGraph>(
+        "pipeline", ClockDependencyState::kComplete, bind_child);
+    if (!bind_child) {
+      graph.bind_clock(wrapper, wrapper->clock_import(), clock);
+    }
+    const ExecutionPlan plan = compile(graph);
+    ASSERT_FALSE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.diagnostics().size(), 1U) << plan.json();
+    const auto& diagnostic = plan.diagnostics().front();
+    EXPECT_EQ(diagnostic.token, "CLOCK_IMPORT_UNBOUND");
+    expect_clock_diagnostic_path(plan,
+                                 diagnostic,
+                                 bind_child ? std::vector<std::string>{"pipeline"}
+                                            : std::vector<std::string>{"pipeline", "fusion"});
+    EXPECT_EQ(diagnostic.json_pointer, bind_child ? "/clock_imports/0" : "/clock_imports/1");
+    EXPECT_NE(diagnostic.required.find("bind_clock()"), std::string::npos);
+    EXPECT_NE(diagnostic.required.find(bind_child ? "immediate parent graph \"_root\""
+                                                  : "immediate parent graph \"/pipeline\""),
+              std::string::npos);
+    EXPECT_NE(diagnostic.required.find(bind_child ? "\"/pipeline\"" : "\"/pipeline/fusion\""),
+              std::string::npos);
+    EXPECT_EQ(diagnostic.required.find("add_clock"), std::string::npos);
+    EXPECT_NE(diagnostic.provided.find("timeline"), std::string::npos);
+  }
+}
+
+// REQ: COMPILE-054
+TEST(CompileTemporalTriggers, DistinguishesMissingDefaultSelectionFromMissingDeclaration) {
+  for (const bool local_clock : {false, true}) {
+    SCOPED_TRACE(local_clock);
+    Graph graph{"missing-default-selection"};
+    const auto clock = graph.add_clock<ManualClock>("timeline", std::int64_t{0});
+    graph.set_default_clock(clock);
+    auto child = graph.embed<ClockDependencyGraph>(
+        "fusion",
+        local_clock ? ClockDependencyState::kLocalClockMissingDefault
+                    : ClockDependencyState::kMissingDefault);
+    if (!local_clock) {
+      graph.bind_clock(child, child->clock_import(), clock);
+    }
+    const ExecutionPlan plan = compile(graph);
+    ASSERT_FALSE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.diagnostics().size(), 1U) << plan.json();
+    const auto& diagnostic = plan.diagnostics().front();
+    EXPECT_EQ(diagnostic.token, "TEMPORAL_CLOCK_UNDECLARED");
+    expect_clock_diagnostic_path(plan, diagnostic, {"fusion"});
+    EXPECT_EQ(diagnostic.json_pointer,
+              "/graphs/" + std::to_string(diagnostic.source.graph.value - 1U) + "/default_clock");
+    EXPECT_NE(diagnostic.required.find(
+                  local_clock ? "Select a declared clock using set_default_clock()"
+                              : "Select a declared clock import using set_default_clock()"),
+              std::string::npos);
+    EXPECT_EQ(diagnostic.required.find("import_clock()"), std::string::npos);
+    EXPECT_EQ(diagnostic.required.find("bind_clock()"), std::string::npos);
+    EXPECT_EQ(diagnostic.required.find("add_clock"), std::string::npos);
+    EXPECT_NE(diagnostic.provided.find("has no selected default clock"), std::string::npos);
+    EXPECT_EQ(diagnostic.provided.find("has not declared a clock import"), std::string::npos);
+  }
+
+  Graph root{"root-with-unselected-clock"};
+  (void)root.add_clock<ManualClock>("timeline", std::int64_t{0});
+  (void)root.op<NamedClockOperator>("tick", ClockKey{});
+  const ExecutionPlan root_plan = compile(root);
+  ASSERT_FALSE(root_plan.ok()) << root_plan.json();
+  ASSERT_EQ(root_plan.diagnostics().size(), 1U) << root_plan.json();
+  const auto& root_diagnostic = root_plan.diagnostics().front();
+  EXPECT_EQ(root_diagnostic.token, "TEMPORAL_CLOCK_UNDECLARED");
+  EXPECT_NE(root_diagnostic.required.find("Select a declared clock using set_default_clock()"),
+            std::string::npos);
+  EXPECT_EQ(root_diagnostic.required.find("import_clock"), std::string::npos);
+  EXPECT_EQ(root_diagnostic.required.find("add_clock"), std::string::npos);
+}
+
+// REQ: COMPILE-054
+TEST(CompileTemporalTriggers, DiagnosesUnselectedConcreteChildClock) {
+  Graph graph{"unselected-child-clock"};
+  (void)graph.embed<ConcreteClockGraph>("fusion", false);
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_FALSE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.diagnostics().size(), 1U) << plan.json();
+  const auto& diagnostic = plan.diagnostics().front();
+  EXPECT_EQ(diagnostic.token, "TEMPORAL_CLOCK_UNDECLARED");
+  expect_clock_diagnostic_path(plan, diagnostic, {"fusion"});
+  EXPECT_EQ(diagnostic.json_pointer, "/graphs/1/default_clock");
+  EXPECT_NE(diagnostic.required.find("Select a declared clock using set_default_clock()"),
+            std::string::npos);
+  EXPECT_NE(diagnostic.required.find("embedded graph \"/fusion\""), std::string::npos);
+  for (const auto api : {"import_clock()", "bind_clock()", "add_clock()"}) {
+    EXPECT_EQ(diagnostic.required.find(api), std::string::npos);
+  }
+  EXPECT_EQ(diagnostic.provided.find("has not declared a clock import"), std::string::npos);
+
+  Graph selected{"selected-child-clock"};
+  (void)selected.embed<ConcreteClockGraph>("fusion", true);
+  const ExecutionPlan selected_plan = compile(selected);
+  ASSERT_TRUE(selected_plan.ok()) << selected_plan.json();
+  ASSERT_EQ(selected_plan.clock_catalog().clocks.size(), 1U);
+  ASSERT_EQ(selected_plan.temporal_triggers().size(), 1U);
+  EXPECT_EQ(selected_plan.temporal_triggers().front().reference_clock,
+            selected_plan.clock_catalog().clocks.front().id);
+}
+
+// REQ: COMPILE-007
+TEST(CompileTemporalTriggers, DistinguishesMissingNamedTriggerClockFromValidDefault) {
+  for (const auto mode : {TriggerMode::kClock, TriggerMode::kWindow, TriggerMode::kPredicate}) {
+    SCOPED_TRACE(static_cast<int>(mode));
+    for (const bool embedded : {false, true}) {
+      SCOPED_TRACE(embedded);
+      Graph graph{"missing-named-trigger-clock"};
+      const auto schedule = graph.add_clock<ManualClock>("schedule", std::int64_t{0});
+      graph.set_default_clock(schedule);
+      if (embedded) {
+        // An ancestor's matching name grants no authority without an explicit child import.
+        (void)graph.add_clock<ManualClock>("missing", std::int64_t{0});
+        auto child = graph.embed<MissingNamedTriggerClockGraph>("child", mode);
+        graph.bind_clock(child, child->schedule(), schedule);
+      } else {
+        add_missing_named_clock_trigger(graph, mode);
+      }
+
+      const ExecutionPlan plan = compile(graph);
+      ASSERT_FALSE(plan.ok()) << plan.json();
+      ASSERT_TRUE(plan.clock_catalog().root_default_clock.valid());
+      ASSERT_EQ(plan.diagnostics().size(), 1U) << plan.json();
+      const auto& diagnostic = plan.diagnostics().front();
+      EXPECT_EQ(diagnostic.token, "TEMPORAL_CLOCK_UNDECLARED");
+      if (embedded) {
+        expect_clock_diagnostic_path(plan, diagnostic, {"child"});
+      }
+      const auto vertices = plan.graph().vertices();
+      const auto target = std::find_if(vertices.begin(), vertices.end(), [](const auto& vertex) {
+        return vertex.name == "target";
+      });
+      ASSERT_NE(target, vertices.end());
+      EXPECT_EQ(diagnostic.source.graph_generation, plan.graph().generation());
+      EXPECT_EQ(diagnostic.source.graph, target->graph);
+      EXPECT_EQ(diagnostic.source.vertex, target->id);
+      EXPECT_EQ(diagnostic.json_pointer,
+                "/vertices/" + std::to_string(target->id.value - 1U) +
+                    "/temporal_contract/trigger/clock");
+      EXPECT_NE(diagnostic.provided.find("clock \"missing\""), std::string::npos);
+      EXPECT_NE(diagnostic.required.find("clock \"missing\""), std::string::npos);
+      EXPECT_NE(diagnostic.required.find(embedded ? "import_clock()" : "add_clock()"),
+                std::string::npos);
+      if (embedded) {
+        EXPECT_NE(diagnostic.required.find("bind_clock()"), std::string::npos);
+      }
+      EXPECT_EQ(diagnostic.provided.find("default"), std::string::npos);
+      EXPECT_EQ(diagnostic.required.find("set_default_clock"), std::string::npos);
+    }
+  }
+}
+
+// REQ: COMPILE-053
+TEST(CompileTemporalTriggers, AcceptsExplicitClockBindingsAtEveryNestedBoundary) {
+  Graph graph{"complete-clock-dependencies"};
+  const auto clock = graph.add_clock<ManualClock>("timeline", std::int64_t{0});
+  graph.set_default_clock(clock);
+  auto wrapper =
+      graph.embed<NestedClockDependencyGraph>("pipeline", ClockDependencyState::kComplete, true);
+  graph.bind_clock(wrapper, wrapper->clock_import(), clock);
+  const ExecutionPlan plan = compile(graph);
+  EXPECT_TRUE(plan.ok()) << plan.json();
+  EXPECT_EQ(plan.clock_catalog().clocks.size(), 1U);
 }
 
 // Arrival-backed triggers use the Graph default clock as their deterministic
@@ -1940,7 +2481,10 @@ TEST(CompileTemporalTriggers, RejectsEveryArrivalBackedTriggerWithoutAResolvedCl
     EXPECT_FALSE(diagnostic.source.vertex) << plan.json();
     EXPECT_EQ(diagnostic.json_pointer, "/graphs/0/default_clock") << plan.json();
     EXPECT_FALSE(diagnostic.required.empty()) << plan.json();
-    EXPECT_NE(diagnostic.provided.find("set_default_clock"), std::string::npos) << plan.json();
+    EXPECT_NE(diagnostic.required.find("add_clock()"), std::string::npos) << plan.json();
+    EXPECT_NE(diagnostic.required.find("set_default_clock()"), std::string::npos) << plan.json();
+    EXPECT_EQ(diagnostic.required.find("import_clock"), std::string::npos) << plan.json();
+    EXPECT_EQ(diagnostic.required.find("bind_clock"), std::string::npos) << plan.json();
   }
 }
 
@@ -2518,6 +3062,429 @@ TEST(CompileTemporalTriggers, AutomaticallySplitsReadableOperatorWithUpstreamPay
 //
 // REQ: COMPILE-017
 // REQ: COMPILE-062
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, RejectsUnwiredSafeDefaultWithoutOptionalDeclaration) {
+  // Key setup: leave an Exact/SafeDefault input unwired without declaring it optional.
+  // Graph topology: [unwired]   target.optional
+  // Key assertion: required connectivity is rejected, with no optional-absence warning.
+  Graph graph{"required-unconnected-exact"};
+  (void)graph.op<OptionalUnconnectedInputOperator>(
+      "target", OptionalInputShape::kExactSafeDefault, false);
+  add_default_clock(graph);
+
+  const ExecutionPlan plan = compile(graph);
+  EXPECT_FALSE(plan.ok()) << plan.json();
+  EXPECT_TRUE(test::has_diagnostic(plan, "TEMPORAL_INPUT_UNCONNECTED")) << plan.json();
+  EXPECT_FALSE(test::has_diagnostic(plan, "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT"));
+}
+
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, RejectsInvalidPermissionEvenWhenWiredOrInert) {
+  // Key setup: wire both inputs while varying invalid optional contracts, including no contract.
+  // Graph topology:
+  //   source.first  --> target.optional
+  //   source.second --> target.other
+  // Key assertion: wiring does not legalize an invalid declaration or emit an absence warning.
+  constexpr std::array shapes{OptionalInputShape::kExactUnspecified,
+                              OptionalInputShape::kExactSkip,
+                              OptionalInputShape::kExactReuseLast,
+                              OptionalInputShape::kLatestWithinSafeDefault,
+                              OptionalInputShape::kDrainAll,
+                              OptionalInputShape::kOnEachDriver,
+                              OptionalInputShape::kAlignedMember,
+                              OptionalInputShape::kWindowInput,
+                              OptionalInputShape::kPredicateInput,
+                              OptionalInputShape::kNoContract};
+  for (const auto shape : shapes) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(shape));
+    Graph graph{"invalid-wired-optional"};
+    auto source = graph.op<TemporalSource>("source");
+    auto target = graph.op<OptionalUnconnectedInputOperator>("target", shape);
+    graph.add_flow(source->first, target->optional, ConnectionOptions{.queue_depth = 4U});
+    graph.add_flow(source->second, target->other, ConnectionOptions{.queue_depth = 4U});
+    add_default_clock(graph);
+    const auto plan = compile(graph);
+    EXPECT_FALSE(plan.ok()) << plan.json();
+    EXPECT_TRUE(test::has_diagnostic(plan, "TEMPORAL_INPUT_OPTIONAL_INVALID") ||
+                test::has_diagnostic(plan, "TEMPORAL_CONTRACT_INVALID"))
+        << plan.json();
+    EXPECT_FALSE(test::has_diagnostic(plan, "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT"));
+  }
+}
+
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, InvalidPermissionHasOwnedActionableContextForEitherTopology) {
+  // Key setup: compile each invalid optional contract with and without its incoming edge,
+  // then destroy the authored graph before inspecting the retained diagnostic.
+  // Graph topology: source.first --[wired case only]--> sensor.optional
+  // Key assertion: both topologies retain the owner, violation, and repair without making
+  // supplemental diagnostic text part of the canonical artifact identity.
+  const std::array cases{
+      std::pair{OptionalInputShape::kLatestWithinSafeDefault, std::string_view{"LatestWithin"}},
+      std::pair{OptionalInputShape::kExactSkip, std::string_view{"Skip"}},
+      std::pair{OptionalInputShape::kExactReuseLast, std::string_view{"ReuseLast"}},
+      std::pair{OptionalInputShape::kAlignedMember, std::string_view{"OnAligned member"}},
+  };
+  for (const auto& [shape, violation] : cases) {
+    SCOPED_TRACE(violation);
+    for (const bool wired : {false, true}) {
+      SCOPED_TRACE(wired);
+      ExecutionPlan plan;
+      {
+        Graph graph{"optional-diagnostics"};
+        auto source = graph.op<TemporalSource>("source");
+        auto target = graph.op<OptionalUnconnectedInputOperator>("sensor", shape);
+        if (wired) {
+          graph.add_flow(source->first, target->optional, ConnectionOptions{.queue_depth = 4U});
+        }
+        add_default_clock(graph);
+        plan = compile(graph);
+      }
+      ASSERT_FALSE(plan.ok());
+      const auto rows = plan.diagnostics();
+      const auto found = std::find_if(rows.begin(), rows.end(), [](const auto& row) {
+        return row.token == "TEMPORAL_INPUT_OPTIONAL_INVALID";
+      });
+      ASSERT_NE(found, rows.end()) << plan.json();
+      ASSERT_TRUE(found->detail.has_value());
+      EXPECT_EQ(found->detail->error.code, ErrorCode::kSuccess);
+      EXPECT_TRUE(found->detail->causes.empty());
+      EXPECT_NE(found->detail->operator_path.find("sensor"), std::string::npos);
+      EXPECT_EQ(found->detail->port_name, "optional");
+      const auto rendered = format_diagnostic(*found, plan.graph());
+      EXPECT_NE(rendered.find(violation), std::string::npos);
+      EXPECT_NE(rendered.find("Exact"), std::string::npos);
+      EXPECT_NE(rendered.find("remove"), std::string::npos);
+      ASSERT_EQ(found->detail->mismatches.size(), 1U);
+      EXPECT_EQ(plan.json().find(found->detail->mismatches.front().provided), std::string::npos);
+      auto changed = *detail::ExecutionPlanAccess::retain(plan);
+      for (auto& diagnostic : changed.diagnostics) {
+        if (diagnostic.detail) {
+          diagnostic.detail->mismatches.clear();
+          diagnostic.detail->operator_path = "changed supplemental owner";
+        }
+      }
+      ASSERT_TRUE(detail::finalize_plan_artifact(changed));
+      EXPECT_EQ(changed.json, plan.json());
+      EXPECT_EQ(changed.digest, plan.digest());
+    }
+  }
+}
+
+// Optionality cannot supply activation authority to an otherwise triggerless contract.
+// REQ: CONTRACT-022
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, OptionalInputsDoNotSupplyAMissingTrigger) {
+  // Key setup: declare an unwired optional Exact/SafeDefault input without a trigger.
+  // Graph topology: [unwired]   target.optional
+  // Key assertion: contract normalization rejects the graph and creates no trigger.
+  Graph graph{"optional-without-trigger"};
+  (void)graph.op<OptionalUnconnectedInputOperator>("target",
+                                                   OptionalInputShape::kExactWithoutTrigger);
+  add_default_clock(graph);
+  const auto plan = compile(graph);
+  EXPECT_FALSE(plan.ok()) << plan.json();
+  EXPECT_TRUE(test::has_diagnostic(plan, "TEMPORAL_CONTRACT_INVALID")) << plan.json();
+  EXPECT_TRUE(plan.temporal_triggers().empty());
+}
+
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, FreezesCanonicalConnectivityAcrossNestedAliasesAndPlanCopy) {
+  // Key setup: compile both connectivity states through two exported aliases, then copy the plan.
+  // Graph topology (==> denotes an exported alias):
+  //   source.first --[wired case only]--> branch.input ==> leaf.input ==> target.optional
+  // Key assertion: canonical connectivity, warning presence, and artifact bytes survive copying.
+  for (const bool wired : {false, true}) {
+    SCOPED_TRACE(wired);
+    Graph graph{"nested-optional"};
+    auto source = graph.op<TemporalSource>("source");
+    auto target = graph.embed<OptionalInputBranch>("branch");
+    if (wired) {
+      graph.add_flow(source->first, target->input, ConnectionOptions{.queue_depth = 4U});
+    }
+    add_default_clock(graph);
+    const auto plan = compile(graph);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.input_selections().size(), 1U);
+    EXPECT_EQ(plan.input_selections().front().unwired_safe_default, !wired);
+    EXPECT_EQ(plan.payload_edges().size(), wired ? 1U : 0U);
+    EXPECT_EQ(test::has_diagnostic(plan, "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT"), !wired);
+    auto copied =
+        std::make_shared<detail::ExecutionPlanState>(*detail::ExecutionPlanAccess::retain(plan));
+    ASSERT_TRUE(detail::finalize_plan_artifact(*copied));
+    const auto repeated = detail::ExecutionPlanAccess::make(std::move(copied));
+    ASSERT_TRUE(repeated.ok()) << repeated.json();
+    EXPECT_EQ(repeated.digest(), plan.digest());
+    EXPECT_EQ(repeated.json(), plan.json());
+  }
+}
+
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, PermissionChangesIdentityWithoutChangingConnectedSelection) {
+  // Key setup: compile the same wired Exact/SafeDefault input with and without optional permission.
+  // Graph topology: source.first --> target.optional
+  // Key assertion: both selections remain connected while permission changes graph and plan
+  // identity.
+  std::array<ExecutionPlan, 2U> plans;
+  for (std::size_t index = 0; index < plans.size(); ++index) {
+    Graph graph{"optional-identity"};
+    auto source = graph.op<TemporalSource>("source");
+    auto target = graph.op<OptionalUnconnectedInputOperator>(
+        "target", OptionalInputShape::kExactSafeDefault, index != 0U);
+    graph.add_flow(source->first, target->optional, ConnectionOptions{.queue_depth = 4U});
+    add_default_clock(graph);
+    plans[index] = compile(graph);
+    ASSERT_TRUE(plans[index].ok()) << plans[index].json();
+    ASSERT_EQ(plans[index].input_selections().size(), 1U);
+    EXPECT_FALSE(plans[index].input_selections().front().unwired_safe_default);
+  }
+  EXPECT_NE(plans[0].digest(), plans[1].digest());
+  EXPECT_NE(plans[0].graph_hash(), plans[1].graph_hash());
+}
+
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, RejectsTamperedFrozenPermissionConnectivityAndRoles) {
+  // Key setup: corrupt each frozen authority in copies of wired and unwired optional plans.
+  // Graph topology: source.first --[wired case only]--> target.optional
+  // Key assertion: optional-plan validation and artifact finalization reject every corrupted copy.
+  for (const bool wired : {false, true}) {
+    Graph graph{"optional-frozen-validation"};
+    auto source = graph.op<TemporalSource>("source");
+    auto target =
+        graph.op<OptionalUnconnectedInputOperator>("target", OptionalInputShape::kExactSafeDefault);
+    if (wired) {
+      graph.add_flow(source->first, target->optional, ConnectionOptions{.queue_depth = 4U});
+    }
+    add_default_clock(graph);
+    const auto plan = compile(graph);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    const auto retained = detail::ExecutionPlanAccess::retain(plan);
+    ASSERT_TRUE(retained);
+    const auto input = retained->input_selections.front().input;
+    const std::vector<std::function<void(detail::ExecutionPlanState&)>> mutations{
+        [](auto& state) {
+          state.input_selections.front().unwired_safe_default =
+              !state.input_selections.front().unwired_safe_default;
+        },
+        [input](auto& state) {
+          for (auto& port : state.ports) {
+            if (port.id == input) {
+              port.optional = false;
+            }
+          }
+        },
+        [input](auto& state) {
+          for (auto& port : state.ports) {
+            if (port.id == input) {
+              port.owner_kind = PortOwnerKind::kGraphInterface;
+            }
+          }
+        },
+        [](auto& state) {
+          state.input_selections.front().selector = InputSelectorKind::kLatestWithin;
+        },
+        [](auto& state) {
+          state.input_selections.front().missing = TemporalRecordMissingKind::kSkip;
+        },
+        [input](auto& state) { state.temporal_triggers.back().trigger_input = input; },
+        [](auto& state) { state.temporal_triggers.back().owner.run_generation = 1U; },
+        [input](auto& state) {
+          AlignedTriggerPlanRecord aligned;
+          aligned.members.push_back(AlignedMemberPlanRecord{.input = input});
+          state.aligned_triggers.push_back(std::move(aligned));
+        },
+        [](auto& state) { state.input_selections.clear(); },
+    };
+    for (std::size_t index = 0; index < mutations.size(); ++index) {
+      SCOPED_TRACE(wired);
+      SCOPED_TRACE(index);
+      detail::ExecutionPlanState changed{*retained};
+      mutations[index](changed);
+      EXPECT_FALSE(detail::valid_optional_input_plan(changed));
+      const auto finalized = detail::finalize_plan_artifact(changed);
+      ASSERT_FALSE(finalized);
+      EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    }
+  }
+}
+
+// REQ: CONTRACT-022
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, AdmitsOnlyUnwiredExactSafeDefaultWithAWarning) {
+  // Key setup: compile eligible and invalid optional contracts with the input unwired.
+  // Graph topology (all cases): [unwired]   target.optional
+  // Key assertion: only Exact/SafeDefault gets a channel-free selection and owned warning.
+  // Recompilation and supplemental-only edits preserve artifact identity.
+  Graph graph{"optional-unconnected-exact"};
+  (void)graph.op<OptionalUnconnectedInputOperator>("target", OptionalInputShape::kExactSafeDefault);
+  add_default_clock(graph);
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.input_selections().size(), 1U);
+  const InputSelectionPlanRecord& selection = plan.input_selections().front();
+  EXPECT_TRUE(selection.unwired_safe_default);
+  EXPECT_EQ(selection.selector, InputSelectorKind::kExact);
+  EXPECT_EQ(selection.cardinality, InputSelectionCardinality::kSingleSample);
+  EXPECT_EQ(selection.max_selected_samples, 1U);
+  EXPECT_EQ(selection.max_selected_samples_origin, SelectedSampleBoundOrigin::kSingleSample);
+  EXPECT_EQ(selection.batch_selection_mode, BatchSelectionMode::kNotApplicable);
+  EXPECT_EQ(selection.cache_capacity, 1U);
+  EXPECT_EQ(selection.missing, TemporalRecordMissingKind::kSafeDefault);
+  EXPECT_EQ(selection.conversion_id, 0U);
+  EXPECT_TRUE(plan.graph().edges().empty());
+  EXPECT_TRUE(plan.payload_edges().empty());
+  EXPECT_TRUE(plan.channel_subscribers().empty());
+
+  const auto warning = std::find_if(
+      plan.diagnostics().begin(), plan.diagnostics().end(), [](const auto& diagnostic) {
+        return diagnostic.token == "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT";
+      });
+  ASSERT_NE(warning, plan.diagnostics().end()) << plan.json();
+  EXPECT_EQ(warning->severity, DiagnosticSeverity::kWarning);
+  EXPECT_TRUE(warning->source.vertex);
+  EXPECT_EQ(warning->source.port, selection.input);
+  ASSERT_TRUE(warning->detail.has_value());
+  EXPECT_EQ(warning->detail->port_name, "optional");
+  EXPECT_NE(warning->detail->operator_path.find("target"), std::string::npos);
+  EXPECT_EQ(warning->detail->error.code, ErrorCode::kSuccess);
+  EXPECT_TRUE(warning->detail->causes.empty());
+  EXPECT_NE(format_diagnostic(*warning, plan.graph()).find("fallback"), std::string::npos);
+  auto detail_only =
+      std::make_shared<detail::ExecutionPlanState>(*detail::ExecutionPlanAccess::retain(plan));
+  for (auto& row : detail_only->diagnostics) {
+    if (row.detail) {
+      row.detail->operator_path = "changed supplemental context";
+      row.detail->mismatches.clear();
+    }
+  }
+  ASSERT_TRUE(detail::finalize_plan_artifact(*detail_only));
+  const auto changed_detail_plan = detail::ExecutionPlanAccess::make(std::move(detail_only));
+  EXPECT_EQ(changed_detail_plan.json(), plan.json());
+  EXPECT_EQ(changed_detail_plan.digest(), plan.digest());
+
+  const ExecutionPlan repeated = compile(graph);
+  ASSERT_TRUE(repeated.ok()) << repeated.json();
+  EXPECT_EQ(repeated.json(), plan.json());
+  EXPECT_EQ(repeated.digest(), plan.digest());
+
+  constexpr std::array<OptionalInputShape, 4U> kUnconnectedRejected{
+      OptionalInputShape::kExactSkip,
+      OptionalInputShape::kExactReuseLast,
+      OptionalInputShape::kLatestWithinSafeDefault,
+      OptionalInputShape::kDrainAll,
+  };
+  for (const OptionalInputShape shape : kUnconnectedRejected) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(shape));
+    Graph rejected_graph{"optional-unconnected-rejected"};
+    (void)rejected_graph.op<OptionalUnconnectedInputOperator>("target", shape);
+    add_default_clock(rejected_graph);
+    const ExecutionPlan rejected = compile(rejected_graph);
+    EXPECT_FALSE(rejected.ok()) << rejected.json();
+    EXPECT_TRUE(test::has_diagnostic(rejected, "TEMPORAL_INPUT_OPTIONAL_INVALID"))
+        << rejected.json();
+    EXPECT_FALSE(test::has_diagnostic(rejected, "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT"))
+        << rejected.json();
+  }
+
+  constexpr std::array<OptionalInputShape, 5U> kStructurallyRejected{
+      OptionalInputShape::kExactUnspecified,
+      OptionalInputShape::kOnEachDriver,
+      OptionalInputShape::kAlignedMember,
+      OptionalInputShape::kWindowInput,
+      OptionalInputShape::kPredicateInput,
+  };
+  for (const OptionalInputShape shape : kStructurallyRejected) {
+    Graph rejected_graph{"optional-unconnected-rejected"};
+    (void)rejected_graph.op<OptionalUnconnectedInputOperator>("target", shape);
+    add_default_clock(rejected_graph);
+    const ExecutionPlan rejected = compile(rejected_graph);
+    EXPECT_FALSE(rejected.ok()) << rejected.json();
+    EXPECT_FALSE(test::has_diagnostic(rejected, "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT"))
+        << rejected.json();
+  }
+}
+
+// An OnAligned presence set contains only its named members. A separate Exact/SafeDefault side
+// input may therefore remain unwired without weakening either member's trigger authority.
+// REQ: CONTRACT-022
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, AdmitsUnwiredSideInputOutsideOnAlignedPresenceSet) {
+  // Key setup: wire the two OnAligned members and leave both optional side inputs unwired.
+  // Graph topology:
+  //   source.first  --> target.first
+  //   source.second --> target.second
+  //   [unwired]        target.optional, target.optional_second
+  // Key assertion: the aligned set and payload edges contain only the two required members,
+  // while each absent side input receives its own warning and recompilation stays deterministic.
+  Graph graph{"optional-unconnected-aligned-side-input"};
+  auto source = graph.op<TemporalSource>("source");
+  auto target = graph.op<OptionalAlignedSideInputOperator>("target");
+  graph.add_flow(source->first, target->first, ConnectionOptions{.queue_depth = 4U});
+  graph.add_flow(source->second, target->second, ConnectionOptions{.queue_depth = 4U});
+  add_default_clock(graph);
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.input_selections().size(), 4U);
+  ASSERT_EQ(plan.aligned_triggers().size(), 1U);
+  EXPECT_EQ(plan.aligned_triggers().front().members.size(), 2U);
+  EXPECT_EQ(plan.graph().edges().size(), 2U);
+  EXPECT_EQ(plan.payload_edges().size(), 2U);
+  EXPECT_EQ(std::count_if(plan.diagnostics().begin(),
+                          plan.diagnostics().end(),
+                          [](const auto& diagnostic) {
+                            return diagnostic.token == "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT";
+                          }),
+            2);
+
+  const auto warning = std::find_if(
+      plan.diagnostics().begin(), plan.diagnostics().end(), [](const auto& diagnostic) {
+        return diagnostic.token == "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT";
+      });
+  ASSERT_NE(warning, plan.diagnostics().end()) << plan.json();
+  EXPECT_EQ(warning->severity, DiagnosticSeverity::kWarning);
+  ASSERT_TRUE(warning->source.port);
+  const auto optional = std::find_if(
+      plan.input_selections().begin(), plan.input_selections().end(), [&](const auto& selection) {
+        return selection.input == warning->source.port;
+      });
+  ASSERT_NE(optional, plan.input_selections().end());
+  EXPECT_EQ(optional->selector, InputSelectorKind::kExact);
+  EXPECT_EQ(optional->missing, TemporalRecordMissingKind::kSafeDefault);
+  EXPECT_TRUE(std::none_of(
+      plan.aligned_triggers().front().members.begin(),
+      plan.aligned_triggers().front().members.end(),
+      [&](const AlignedMemberPlanRecord& member) { return member.input == optional->input; }));
+  EXPECT_TRUE(std::none_of(
+      plan.payload_edges().begin(),
+      plan.payload_edges().end(),
+      [&](const PayloadEdgePlanRecord& edge) { return edge.target == optional->input; }));
+
+  const ExecutionPlan repeated = compile(graph);
+  ASSERT_TRUE(repeated.ok()) << repeated.json();
+  EXPECT_EQ(repeated.json(), plan.json());
+  EXPECT_EQ(repeated.digest(), plan.digest());
+}
+
 TEST(CompileTemporalSelections, DerivesScalarAndDrainAllBoundsFromRetention) {
   Graph graph{"selectors"};
   auto source = graph.op<TemporalSource>("source");
@@ -2919,6 +3886,7 @@ TEST(CompilePredicatePlan, AdmitsConfiglessAndRejectsUnidentifiedConfiguredValue
 //   source --[first, depth=2]--> target->driver
 //
 // REQ: COMPILE-016
+// REQ: EXPECTED-033
 TEST(CompilePredicatePlan, RecordsExactResultAndOwnedTypeErasureAdmissionFacts) {
   auto compile_predicate = []<typename OperatorType>() {
     Graph graph{"predicate-callable"};
@@ -2947,6 +3915,26 @@ TEST(CompilePredicatePlan, RecordsExactResultAndOwnedTypeErasureAdmissionFacts) 
   EXPECT_EQ(callable.dispatch_model, "type_erased_owned");
   EXPECT_EQ(callable.diagnostic_ids, std::vector<std::string>{"PREDICATE_CALLABLE_TYPE_ERASED"});
   EXPECT_TRUE(test::has_diagnostic(type_erased, "PREDICATE_CALLABLE_TYPE_ERASED"));
+  // REQ: EXPECTED-033
+  const auto before = type_erased.json();
+  const auto old_level = log_level();
+  const auto old_pattern = Logger::pattern();
+  const bool old_level_explicit = Logger::log_level_set_by_user;
+  const bool old_pattern_explicit = Logger::log_pattern_set_by_user;
+  std::string output;
+  {
+    const test::ScopedDiagnosticLogger logger{LogLevel::WARN};
+    testing::internal::CaptureStderr();
+    log_diagnostics(type_erased);
+    output = testing::internal::GetCapturedStderr();
+  }
+  EXPECT_EQ(log_level(), old_level);
+  EXPECT_EQ(Logger::pattern(), old_pattern);
+  EXPECT_EQ(Logger::log_level_set_by_user, old_level_explicit);
+  EXPECT_EQ(Logger::log_pattern_set_by_user, old_pattern_explicit);
+  EXPECT_NE(output.find("warning PREDICATE_CALLABLE_TYPE_ERASED"), std::string::npos);
+  EXPECT_TRUE(type_erased.ok());
+  EXPECT_EQ(type_erased.json(), before);
 }
 
 // Checks that each factory type (static/inline/bound) produces the correct dispatch_model,
@@ -3174,8 +4162,11 @@ TEST(CompileTemporalSources, RejectsSynthesizedSourceAfterThePhysicalIdentitySpa
   // Key setup: physical source_id is set to UINT32_MAX, leaving no room for synthesized IDs.
   readiness.front().source_id = detail::make_source_id(std::numeric_limits<std::uint32_t>::max());
   const auto factories = detail::GraphCompilerAccess::executable_factories(graph, *snapshot);
+  const auto normalized_contracts = detail::GraphCompilerAccess::replay_temporal_contracts(
+      factories, *snapshot, generation, readiness);
+  ASSERT_TRUE(normalized_contracts);
 
-  const auto lowered = detail::lower_temporal_plan(factories,
+  const auto lowered = detail::lower_temporal_plan(*normalized_contracts,
                                                    *snapshot,
                                                    generation,
                                                    clocks->clocks,
@@ -3217,9 +4208,12 @@ TEST(CompilePredicatePlan, RequiresExactPackageFingerprintForCrossBuildRecomputa
       detail::lower_clocks_and_readiness(*snapshot, generation, profile.effective_profiles());
   ASSERT_TRUE(clocks);
   const auto factories = detail::GraphCompilerAccess::executable_factories(graph, *snapshot);
+  const auto normalized_contracts = detail::GraphCompilerAccess::replay_temporal_contracts(
+      factories, *snapshot, generation, clocks->readiness);
+  ASSERT_TRUE(normalized_contracts);
   const auto lower_with = [&](const detail::RuntimePackageCapabilityView& package) {
     auto readiness = clocks->readiness;
-    return detail::lower_temporal_plan(factories,
+    return detail::lower_temporal_plan(*normalized_contracts,
                                        *snapshot,
                                        generation,
                                        clocks->clocks,
@@ -3465,6 +4459,183 @@ TEST(CompileTemporalDeterminism, EquivalentGraphsProduceIdenticalTemporalProject
   ASSERT_TRUE(second.ok()) << second.json();
   EXPECT_EQ(first.json(), second.json());
   EXPECT_EQ(first.digest(), second.digest());
+}
+
+class ContractFailureOperator final : public Operator<> {
+ public:
+  Contract contract() const override {
+    try {
+      throw RuntimeError{ErrorCode::kNotFound, "missing clock configuration"};
+    } catch (...) {
+      std::throw_with_nested(
+          RuntimeError{ErrorCode::kInvalidArgument, "contract requires a positive interval"});
+    }
+  }
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+// REQ: COMPILE-078
+TEST(CompileTemporal, ContractFailureRetainsOriginalCauseAndOwner) {
+  Graph graph{"contract-failure"};
+  graph.op<ContractFailureOperator>("sensor");
+  const auto plan = compile(graph);
+  ASSERT_FALSE(plan.ok());
+  const auto found = std::ranges::find_if(plan.diagnostics(), [](const auto& diagnostic) {
+    return diagnostic.token == "TEMPORAL_CONTRACT_REPLAY_FAILED";
+  });
+  ASSERT_NE(found, plan.diagnostics().end());
+  ASSERT_TRUE(found->detail);
+  EXPECT_EQ(found->detail->operation, DiagnosticOperation::kContract);
+  EXPECT_EQ(found->detail->error.code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(found->detail->operator_path, "sensor");
+  EXPECT_NE(found->detail->error.message.find("positive interval"), std::string::npos);
+  ASSERT_EQ(found->detail->causes.size(), 1U);
+  EXPECT_EQ(found->detail->causes.front().code, ErrorCode::kNotFound);
+  EXPECT_EQ(found->detail->causes.front().message, "missing clock configuration");
+  try {
+    plan.require_no_errors();
+    FAIL() << "rejected plan did not throw";
+  } catch (const CompileError& error) {
+    EXPECT_NE(std::string_view{error.what()}.find("sensor"), std::string_view::npos);
+    EXPECT_NE(std::string_view{error.what()}.find("positive interval"), std::string_view::npos);
+  }
+  auto changed = *detail::ExecutionPlanAccess::retain(plan);
+  for (auto& diagnostic : changed.diagnostics) {
+    if (diagnostic.detail) {
+      diagnostic.detail->error.message = "different explanatory wording";
+    }
+  }
+  ASSERT_TRUE(detail::finalize_plan_artifact(changed));
+  EXPECT_EQ(changed.digest, plan.digest());
+  EXPECT_EQ(changed.json, plan.json());
+}
+
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, SupplementalAllocationFailurePreservesInvalidClassification) {
+  // Key setup: lower an invalid optional LatestWithin input with a long owner name and exhaust
+  // allocations at each checkpoint, including optional diagnostic-context construction.
+  // Graph topology: [unwired]   <long owner name>.optional
+  // Key assertion: when lowering returns a diagnostic, context exhaustion preserves the structural
+  // invalid-declaration row and marks supplemental text truncated without inventing an error cause.
+  Graph graph{"optional-allocation-failure"};
+  (void)graph.op<OptionalUnconnectedInputOperator>(std::string(180U, 's'),
+                                                   OptionalInputShape::kLatestWithinSafeDefault);
+  add_default_clock(graph);
+  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
+  const auto profile = detail::resolve_profile_admission(*snapshot, Profile::kStandard);
+  const PlanGenerationId generation{1U};
+  const auto clocks =
+      detail::lower_clocks_and_readiness(*snapshot, generation, profile.effective_profiles());
+  ASSERT_TRUE(clocks);
+  auto readiness = clocks->readiness;
+  const auto factories = detail::GraphCompilerAccess::executable_factories(graph, *snapshot);
+  const auto normalized = detail::GraphCompilerAccess::replay_temporal_contracts(
+      factories, *snapshot, generation, readiness);
+  ASSERT_TRUE(normalized);
+  const auto package = detail::runtime_package_capability_view();
+  const auto lower = [&] {
+    return detail::lower_temporal_plan(*normalized,
+                                       *snapshot,
+                                       generation,
+                                       clocks->clocks,
+                                       clocks->clock_conversions,
+                                       readiness,
+                                       profile.effective_profiles(),
+                                       ParameterCompileOptions{},
+                                       package);
+  };
+  detail::TemporalPlanLoweringResult baseline;
+  std::size_t allocation_count{};
+  {
+    const test::ScopedAllocationCounter counter;
+    baseline = lower();
+    allocation_count = counter.count();
+  }
+  ASSERT_EQ(baseline.errors.size(), 1U);
+  ASSERT_TRUE(baseline.errors.front().detail);
+  ASSERT_FALSE(baseline.errors.front().detail->truncated);
+  bool retained_after_exhaustion{};
+  for (std::size_t checkpoint = 0U; checkpoint < allocation_count; ++checkpoint) {
+    std::optional<detail::TemporalPlanLoweringResult> lowered;
+    {
+      const test::ScopedAllocationExhaustion exhausted{checkpoint};
+      try {
+        lowered.emplace(lower());
+      } catch (const std::bad_alloc&) {
+        // The token and first vector entry precede optional context and need storage themselves.
+        lowered.reset();
+      }
+    }
+    if (!lowered) {
+      continue;
+    }
+    ASSERT_FALSE(lowered->accepted());
+    ASSERT_EQ(lowered->errors.size(), 1U);
+    const auto& row = lowered->errors.front();
+    EXPECT_TRUE(detail::plan_lowering_diagnostic_exactly_equal(row, baseline.errors.front()));
+    ASSERT_TRUE(row.detail);
+    EXPECT_EQ(row.detail->error.code, ErrorCode::kSuccess);
+    EXPECT_TRUE(row.detail->causes.empty());
+    EXPECT_TRUE(row.detail->truncated);
+    retained_after_exhaustion |= row.detail->truncated;
+  }
+  EXPECT_TRUE(retained_after_exhaustion);
+}
+
+// Nested Graph names provide an admitted owner path larger than the producer's retained bound.
+// Representative test: CompileTemporalOptionalInput.BoundsOwnedContextAndEscapesControlText.
+// Graph topology (no payload edges): child { ... { sensor.optional [unwired] } }.
+template <unsigned Depth>
+class NestedOptionalDiagnosticGraph final : public Graph {
+ protected:
+  void compose() override {
+    if constexpr (Depth == 0U) {
+      (void)op<OptionalUnconnectedInputOperator>("sensor",
+                                                 OptionalInputShape::kLatestWithinSafeDefault);
+    } else {
+      (void)embed<NestedOptionalDiagnosticGraph<Depth - 1U>>(std::string(230U, 'p'));
+    }
+  }
+};
+
+// REQ: COMPILE-080
+// REQ: COMPILE-087
+// REQ: COMPILE-091
+TEST(CompileTemporalOptionalInput, BoundsOwnedContextAndEscapesControlText) {
+  // Key setup: compile an invalid optional input below ten long nested names, destroy the graph,
+  // then inject control characters into a copy of the retained supplemental context.
+  // Graph topology (nesting, no payload edges):
+  //   root { nested { <long name> { ... { sensor.optional [unwired] } } } }
+  // Key assertion: retained context is bounded and marked truncated; rendering escapes controls
+  // and respects the final diagnostic length bound.
+  ExecutionPlan plan;
+  {
+    Graph graph{"bounded-optional-owner"};
+    add_default_clock(graph);
+    (void)graph.embed<NestedOptionalDiagnosticGraph<10U>>("nested");
+    plan = compile(graph);
+  }
+  ASSERT_FALSE(plan.ok());
+  const auto rows = plan.diagnostics();
+  const auto found = std::ranges::find(rows, "TEMPORAL_INPUT_OPTIONAL_INVALID", &Diagnostic::token);
+  ASSERT_NE(found, rows.end()) << plan.json();
+  ASSERT_TRUE(found->detail);
+  EXPECT_EQ(found->detail->operator_path.size(), 2048U);
+  EXPECT_LE(found->detail->port_name.size(), 255U);
+  EXPECT_TRUE(found->detail->truncated);
+  EXPECT_EQ(found->detail->error.code, ErrorCode::kSuccess);
+  EXPECT_TRUE(found->detail->causes.empty());
+
+  // Owning supplemental text can come from other diagnostic producers as well as valid names.
+  Diagnostic escaped = *found;
+  escaped.detail->port_name = "input\x1b\n";
+  escaped.detail->mismatches.front().provided += "\x1b\n";
+  const auto rendered = format_diagnostic(escaped, plan.graph());
+  EXPECT_EQ(rendered.find('\x1b'), std::string::npos);
+  EXPECT_EQ(rendered.find('\n'), std::string::npos);
+  EXPECT_LE(rendered.size(), 16384U);
 }
 
 }  // namespace

@@ -13,12 +13,9 @@ struct CarrierPayload {
 
 template <>
 consteval holoscan::SchemaIdentity holoscan::schema_identity<CarrierPayload>() {
-  return holoscan::SchemaIdentity{
-      .canonical_name = "nvidia.holoscan.test.CarrierPayload",
-      .version = 1,
-      .schema_sha256 = {std::byte{0x42}},
-      .id = holoscan::SchemaId{.value = {std::byte{0x24}}},
-  };
+  return holoscan::make_schema_identity(
+      holoscan::make_schema_family_identity("nvidia.holoscan.test.CarrierPayload"),
+      holoscan::make_flatbuffer_file_identifier("CRPL"));
 }
 
 // REQ: GRAPH-008

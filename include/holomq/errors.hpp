@@ -35,6 +35,7 @@ enum class ErrorCode {
   kProtocolError = 16,
   kIncompatible = 17,
   kIncompleteFanout = 18,
+  kNotSupported = 19,
 };
 
 struct Error {

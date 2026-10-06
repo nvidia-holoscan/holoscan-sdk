@@ -67,9 +67,12 @@ class QualificationAttempt:
     revision: str
     directory_fd: int
     directory_identity: tuple[int, int]
+    attempt_schema: str = ATTEMPT_SCHEMA
 
     @classmethod
-    def begin(cls, output_dir: Path, revision: str) -> QualificationAttempt:
+    def begin(
+        cls, output_dir: Path, revision: str, attempt_schema: str = ATTEMPT_SCHEMA
+    ) -> QualificationAttempt:
         if output_dir == output_dir.parent:
             raise ValueError("--output-dir must not name a filesystem root")
         if output_dir.is_symlink() or any(parent.is_symlink() for parent in output_dir.parents):
@@ -110,6 +113,7 @@ class QualificationAttempt:
                 revision,
                 directory_fd,
                 (claimed.st_dev, claimed.st_ino),
+                attempt_schema,
             )
             attempt.write_status("running")
             return attempt
@@ -156,7 +160,7 @@ class QualificationAttempt:
     def write_status(self, status: str, detail: str | None = None) -> None:
         self.verify_directory_identity()
         record = {
-            "schema": ATTEMPT_SCHEMA,
+            "schema": self.attempt_schema,
             "revision": self.revision,
             "status": status,
             "summary": "summary.json" if status == "succeeded" else None,

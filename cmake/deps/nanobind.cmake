@@ -8,7 +8,7 @@ endif()
 
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-set(nanobind_VERSION 2.12.0)
+set(nanobind_VERSION 3.0.1)
 rapids_cpm_find(nanobind ${nanobind_VERSION}
     CPM_ARGS
         GITHUB_REPOSITORY wjakob/nanobind

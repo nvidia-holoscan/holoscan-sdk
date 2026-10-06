@@ -5,12 +5,37 @@ cmake_minimum_required(VERSION 4.0)
 
 project(holoscan_examples LANGUAGES CXX CUDA)
 
+if(NOT TARGET holoscan::core)
+    find_package(holoscan REQUIRED)
+endif()
+
+if(PROJECT_IS_TOP_LEVEL)
+    set(_holoscan_build_python_examples_default OFF)
+    if(holoscan_PYTHON_PACKAGE_DIR)
+        set(_holoscan_build_python_examples_default ON)
+    endif()
+    option(HOLOSCAN_BUILD_PYTHON_EXAMPLES
+        "Build the Python examples"
+        "${_holoscan_build_python_examples_default}"
+    )
+    unset(_holoscan_build_python_examples_default)
+    set(HOLOSCAN_EXAMPLES_IN_SDK_BUILD OFF)
+else()
+    set(HOLOSCAN_BUILD_PYTHON_EXAMPLES "${HOLOSCAN_BUILD_PYTHON}")
+    set(HOLOSCAN_EXAMPLES_IN_SDK_BUILD ON)
+endif()
+
 include(GNUInstallDirs)
 include(CTest)
+
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/HoloscanExampleInstall.cmake")
 
 set(HOLOSCAN_EXAMPLES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
-set(HOLOSCAN_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/examples")
+if(WIN32)
+    set(HOLOSCAN_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}/holoscan/examples")
+else()
+    set(HOLOSCAN_EXAMPLES_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/holoscan/examples")
+endif()
 
 if(NOT COMMAND holoscan_add_graph_artifacts)
     if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../cmake/HoloscanGraphArtifacts.cmake")
@@ -18,8 +43,16 @@ if(NOT COMMAND holoscan_add_graph_artifacts)
     endif()
 endif()
 
-if(NOT TARGET holoscan::core)
-    find_package(holoscan REQUIRED)
+if(HOLOSCAN_BUILD_PYTHON_EXAMPLES)
+    find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)
+    if(HOLOSCAN_EXAMPLES_IN_SDK_BUILD)
+        set(HOLOSCAN_PYTHON_EXAMPLE_PACKAGE_DIR "${holoscan_BINARY_DIR}/python/lib")
+    elseif(holoscan_PYTHON_PACKAGE_DIR)
+        set(HOLOSCAN_PYTHON_EXAMPLE_PACKAGE_DIR "${holoscan_PYTHON_PACKAGE_DIR}")
+    else()
+        message(FATAL_ERROR
+            "The selected Holoscan SDK package does not provide Python bindings")
+    endif()
 endif()
 
 # Installed source packages do not inherit the SDK's cache options. Enable optional examples only
@@ -77,7 +110,11 @@ add_subdirectory(temporal_contracts)
 add_subdirectory(errors_as_values)
 add_subdirectory(time_and_clocks)
 add_subdirectory(compile_and_check)
+if(TARGET holoscan::testing AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/operator_testing")
+    add_subdirectory(operator_testing)
+endif()
 add_subdirectory(derived_tensor_pool_capacity)
+add_subdirectory(borrowed_image_transform)
 add_subdirectory(rate_aware_ports)
 add_subdirectory(green_context)
 add_subdirectory(running_and_stopping)
@@ -89,6 +126,7 @@ add_subdirectory(parameter_schemas)
 add_subdirectory(lifecycle_callbacks)
 add_subdirectory(graph_composition)
 add_subdirectory(automatic_partitioning)
+add_subdirectory(cuda_graph_region)
 add_subdirectory(reusable_graphs)
 add_subdirectory(schema_payloads)
 add_subdirectory(tensors_in_depth)
@@ -96,14 +134,11 @@ add_subdirectory(flatbuffer_schemas)
 add_subdirectory(essential)
 add_subdirectory(experimental)
 add_subdirectory(holomq)
-if(HOLOSCAN_BUILD_INFERENCE)
-    add_subdirectory(inference)
-endif()
 
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
     install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/"
         DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}"
-        COMPONENT holoscan-examples
+        COMPONENT holoscan-core-examples
         FILES_MATCHING
             PATTERN "CMakeLists.txt"
             PATTERN "CMakeLists.min.txt"
@@ -116,10 +151,34 @@ if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
             PATTERN "*.yaml"
             PATTERN "*.sh"
             PATTERN "*.md"
+        PATTERN "operator_testing" EXCLUDE
         PATTERN "__pycache__" EXCLUDE
         PATTERN "build" EXCLUDE
         PATTERN "build-*" EXCLUDE
         PATTERN "CMakeFiles" EXCLUDE
         PATTERN "_deps" EXCLUDE
+    )
+
+    if(TARGET holoscan::testing AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/operator_testing")
+        install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/operator_testing/"
+            DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/operator_testing"
+            COMPONENT holoscan-testing-examples
+            FILES_MATCHING
+                PATTERN "CMakeLists.txt"
+                PATTERN "CMakeLists.min.txt"
+                PATTERN "*.cpp"
+                PATTERN "*.hpp"
+                PATTERN "*.fbs"
+                PATTERN "*.md"
+            PATTERN "build" EXCLUDE
+            PATTERN "build-*" EXCLUDE
+            PATTERN "CMakeFiles" EXCLUDE
+            PATTERN "_deps" EXCLUDE
+        )
+    endif()
+
+    install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/testing/run_example_tests"
+        DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/testing"
+        COMPONENT holoscan-core-examples
     )
 endif()

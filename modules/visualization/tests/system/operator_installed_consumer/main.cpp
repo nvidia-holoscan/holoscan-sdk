@@ -23,6 +23,14 @@ int runtime_header_smoke();
 int parameter_compute_header_smoke();
 int holoviz_operator_smoke();
 
+// REQ: OPERATOR-056
+using InstalledScalarView = holoscan::SelectedSampleView<std::uint32_t>;
+static_assert(std::is_trivially_copyable_v<InstalledScalarView>);
+static_assert(!std::convertible_to<InstalledScalarView, holoscan::Sample<std::uint32_t>>);
+static_assert(
+    std::same_as<decltype(std::declval<InstalledScalarView>().data()), const std::uint32_t&>);
+static_assert(noexcept(std::declval<const holoscan::Input<std::uint32_t>&>().selected_sample()));
+
 namespace {
 
 using namespace std::chrono_literals;
@@ -187,6 +195,8 @@ class InstalledOperator final : public holoscan::Operator<> {
 
   holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& context) override {
     static_cast<void>(context.params<holoscan::NoParams>());
+    // REQ: OPERATOR-050
+    static_cast<void>(context.operator_path());
     return {};
   }
 };

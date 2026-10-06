@@ -12,8 +12,10 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <optional>
 #include <string_view>
 #include <type_traits>
+#include <typeinfo>
 
 namespace holoscan {
 
@@ -154,6 +156,24 @@ struct ParamStorageTraits<std::chrono::duration<Rep, Period>> {
   }
 };
 
+/// @brief Describe optional storage using the underlying field's intrinsic bounds.
+/// @tparam T Exact value type carried when the optional is engaged.
+template <typename T>
+struct ParamStorageTraits<std::optional<T>> {
+  /// @brief Return conservative intrinsic facts including the engagement state.
+  /// @return Underlying storage facts plus one semantic presence byte when fixed-size.
+  [[nodiscard]] static consteval ParamStorageTraitsSummary summary() noexcept {
+    constexpr ParamStorageTraitsSummary underlying = ParamStorageTraits<T>::summary();
+    return ParamStorageTraitsSummary{
+        .owns_dynamic_storage = underlying.owns_dynamic_storage,
+        .fixed_object_extent = underlying.fixed_object_extent,
+        .has_portable_codec = underlying.has_portable_codec,
+        .supports_bounded_materialization = underlying.supports_bounded_materialization,
+        .inline_bytes = underlying.fixed_object_extent ? underlying.inline_bytes + 1U : 0U,
+    };
+  }
+};
+
 template <>
 struct ParamStorageTraits<NoParams> {
   /// @brief Return the no-storage `NoParams` disposition.
@@ -175,13 +195,14 @@ struct ParamStorageTraits<NoParams> {
 /// never enter a plan, schema document, diagnostic identity, snapshot, or transport record.
 /// Pointer-free plan identity and profile-selected storage strategy are compiled by later owners.
 struct ParamTypeDescriptor {
-  const void* local_type_token{};       ///< Exact process-local token; never portable identity.
-  std::size_t object_size{};            ///< Complete C++ object size in this process.
-  std::size_t object_alignment{};       ///< Required C++ object alignment in this process.
-  ParamStorageTraitsSummary storage{};  ///< Intrinsic, profile-independent storage evidence.
-  bool copy_construct_is_nothrow{};     ///< Whether exact aggregate copy construction cannot throw.
-  bool trivially_copyable{};            ///< Whether bytewise object copying is language-defined.
-  bool destroy_is_nothrow{};  ///< Whether ending the exact aggregate lifetime cannot throw.
+  const void* local_type_token{};           ///< Exact process-local token; never portable identity.
+  const std::type_info* local_type_info{};  ///< Exact C++ type proof, including across DSOs.
+  std::size_t object_size{};                ///< Complete C++ object size in this process.
+  std::size_t object_alignment{};           ///< Required C++ object alignment in this process.
+  ParamStorageTraitsSummary storage{};      ///< Intrinsic, profile-independent storage evidence.
+  bool copy_construct_is_nothrow{};  ///< Whether exact aggregate copy construction cannot throw.
+  bool trivially_copyable{};         ///< Whether bytewise object copying is language-defined.
+  bool destroy_is_nothrow{};         ///< Whether ending the exact aggregate lifetime cannot throw.
 
   /// Placement-default-construct one exact aggregate on a cold path.
   ///
@@ -589,6 +610,7 @@ template <typename T>
 [[nodiscard]] const ParamTypeDescriptor& param_type_descriptor() noexcept {
   static constexpr ParamTypeDescriptor descriptor{
       .local_type_token = &detail::kParameterTypeToken<T>,
+      .local_type_info = &typeid(T),
       .object_size = sizeof(T),
       .object_alignment = alignof(T),
       .storage = ParamStorageTraits<T>::summary(),

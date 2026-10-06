@@ -49,6 +49,12 @@ def print_redirected_output(stdout: TextIO, stderr: TextIO) -> None:
         print(output.read(), end="")
 
 
+def command(path: Path, *arguments: object) -> list[str]:
+    """Invoke Python source with this interpreter and native binaries directly."""
+    prefix = [sys.executable, str(path)] if path.suffix == ".py" else [str(path)]
+    return [*prefix, *(str(argument) for argument in arguments)]
+
+
 def main() -> int:
     args = parse_args()
     instance = uuid.uuid4().hex
@@ -62,13 +68,7 @@ def main() -> int:
         ):
             try:
                 graph = subprocess.Popen(
-                    [
-                        str(args.graph),
-                        "--catalog",
-                        str(catalog),
-                        "--instance",
-                        instance,
-                    ],
+                    command(args.graph, "--catalog", catalog, "--instance", instance),
                     stdout=graph_stdout_file,
                     stderr=graph_stderr_file,
                     text=True,
@@ -87,13 +87,7 @@ def main() -> int:
 
                 try:
                     client = subprocess.run(
-                        [
-                            str(args.client),
-                            "--catalog",
-                            str(catalog),
-                            "--instance",
-                            instance,
-                        ],
+                        command(args.client, "--catalog", catalog, "--instance", instance),
                         capture_output=True,
                         text=True,
                         timeout=20,

@@ -158,8 +158,10 @@ struct CudaGreenContextCapabilityEvidence {
 
 /// @brief Borrow all immutable generated evidence captured by one compilation.
 ///
-/// This source-private value is copied at compile ingress. It contains no
-/// mutable provider, lookup service, path, backend object, or Runtime handle.
+/// This source-private value contains no mutable provider, lookup service, path, backend object, or
+/// Runtime handle.
+/// Every span borrows caller-owned storage that must remain alive through the compile call. The
+/// compiler copies the evidence into plan records and retains no reference to that storage.
 struct RuntimeCompileEvidenceView {
   RuntimePackageCapabilityView package_capabilities;
   std::span<const RuntimeEndpointClockHealthQualification> endpoint_clock_health;

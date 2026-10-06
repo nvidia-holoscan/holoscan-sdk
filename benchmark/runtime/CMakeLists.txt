@@ -28,12 +28,14 @@ add_executable(runtime_channel_benchmark
     runtime_channel_benchmark.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/execution_plan_lookup.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/process_local_channel_plan_validation.cpp
+    ${holoscan_SOURCE_DIR}/src/compiler/optional_input_plan_validation.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health_runtime.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_activation.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_binding.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_binding_test_access.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_ingress.cpp
+    ${holoscan_SOURCE_DIR}/src/runtime/runtime_support_thread_placement.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_materialization.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_output.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_plan_binding.cpp
@@ -62,11 +64,14 @@ add_executable(runtime_payload_benchmark
     runtime_payload_benchmark.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/execution_plan_lookup.cpp
     ${holoscan_SOURCE_DIR}/src/compiler/process_local_channel_plan_validation.cpp
+    ${holoscan_SOURCE_DIR}/src/compiler/optional_input_plan_validation.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/endpoint_clock_health_runtime.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_activation.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_binding.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_ingress.cpp
+    ${holoscan_SOURCE_DIR}/src/runtime/runtime_support_thread_placement.cpp
+    ${holoscan_SOURCE_DIR}/src/threading/linux_thread_controller.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_materialization.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_output.cpp
     ${holoscan_SOURCE_DIR}/src/runtime/runtime_channel_plan_binding.cpp
@@ -92,6 +97,34 @@ target_link_libraries(runtime_payload_benchmark
         Threads::Threads
 )
 
+add_executable(runtime_descriptor_graph_benchmark
+    runtime_descriptor_graph_benchmark.cpp
+    ${holoscan_SOURCE_DIR}/tests/common/allocation_counter.cpp
+)
+add_dependencies(holoscan-benchmark-targets runtime_descriptor_graph_benchmark)
+target_include_directories(runtime_descriptor_graph_benchmark PRIVATE
+    ${holoscan_SOURCE_DIR}/tests
+    ${holoscan_SOURCE_DIR}/src
+)
+target_link_libraries(runtime_descriptor_graph_benchmark PRIVATE
+    benchmark::benchmark_main holoscan::core holoscan::sensor_io Threads::Threads
+)
+add_executable(runtime_descriptor_receive_benchmark
+    runtime_descriptor_receive_benchmark.cpp
+    ${holoscan_SOURCE_DIR}/tests/common/allocation_counter.cpp
+)
+add_dependencies(holoscan-benchmark-targets runtime_descriptor_receive_benchmark)
+target_include_directories(runtime_descriptor_receive_benchmark
+    PRIVATE
+        ${holoscan_SOURCE_DIR}/tests
+)
+target_link_libraries(runtime_descriptor_receive_benchmark
+    PRIVATE
+        benchmark::benchmark_main
+        holoscan::core
+        holoscan::sensor_io
+)
+
 set(RUNTIME_MULTI_TENSOR_BENCHMARK_GENERATED_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/runtime_multi_tensor_generated")
 holoscan_add_flatbuffer_schema(
@@ -99,18 +132,14 @@ holoscan_add_flatbuffer_schema(
     SCHEMAS runtime_multi_tensor_benchmark.fbs
     INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_DIR "${RUNTIME_MULTI_TENSOR_BENCHMARK_GENERATED_DIR}"
-    BFBS_EMBED
-    DESCRIPTOR_TENSOR
     TRAITS_HEADER runtime_multi_tensor_benchmark_traits.hpp
-    TRAITS_ROOT_TYPE runtime_benchmark::MultiTensorMessage
-    TRAITS_NATIVE_TYPE runtime_benchmark::MultiTensorMessageT
-    TRAITS_BINARY_SCHEMA_TYPE runtime_benchmark::MultiTensorMessageBinarySchema
-    TRAITS_PACKAGE_NAMESPACE runtime_benchmark::package
-    TRAITS_CANONICAL_NAME runtime_benchmark.MultiTensorMessage
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 1536
-    TRAITS_DESCRIPTOR_METADATA_CAPACITY 512
+    MAX_SERIALIZED_SIZE 512
 )
+
+target_sources(runtime_payload_benchmark PRIVATE runtime_tensor_projection_benchmark.cpp)
+add_dependencies(runtime_payload_benchmark runtime_multi_tensor_benchmark_generated)
+target_include_directories(runtime_payload_benchmark PRIVATE
+    "${RUNTIME_MULTI_TENSOR_BENCHMARK_GENERATED_DIR}")
 
 set(RUNTIME_THIRD_PARTY_BENCHMARK_GENERATED_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/runtime_third_party_generated")
@@ -119,19 +148,14 @@ holoscan_add_flatbuffer_schema(
     SCHEMAS runtime_third_party_benchmark.fbs
     INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_DIR "${RUNTIME_THIRD_PARTY_BENCHMARK_GENERATED_DIR}"
-    BFBS_EMBED
     TRAITS_HEADER runtime_third_party_benchmark_traits.hpp
-    TRAITS_ROOT_TYPE task30_benchmark::Telemetry
-    TRAITS_NATIVE_TYPE task30_benchmark::TelemetryT
-    TRAITS_BINARY_SCHEMA_TYPE task30_benchmark::TelemetryBinarySchema
-    TRAITS_PACKAGE_NAMESPACE task30_benchmark::package
-    TRAITS_CANONICAL_NAME task30_benchmark.Telemetry
-    TRAITS_SCHEMA_VERSION 1
-    TRAITS_MAX_SERIALIZED_SIZE 128
+    MAX_SERIALIZED_SIZE 128
 )
 
 add_executable(runtime_graph_benchmark
     runtime_graph_benchmark.cpp
+    runtime_graph_cuda_work.cu
+    runtime_graph_cuda_work.hpp
     runtime_graph_benchmark_common.hpp
     ../common/transport_benchmark_common.hpp
     ${holoscan_SOURCE_DIR}/tests/common/allocation_counter.cpp
@@ -303,6 +327,19 @@ if(BUILD_TESTING)
         )
 
         add_test(
+            NAME BENCHMARK_RUNTIME_GRAPH_SHARED_OWNER_CONFLICT_REJECTED
+            COMMAND ${CMAKE_COMMAND}
+                    "-DHOLOSCAN_RUNTIME_GRAPH_BENCHMARK=$<TARGET_FILE:runtime_graph_benchmark>"
+                    -DREJECTION_CASE=shared_owner_conflict
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/assert_runtime_graph_partition_rejected.cmake"
+        )
+        set_tests_properties(BENCHMARK_RUNTIME_GRAPH_SHARED_OWNER_CONFLICT_REJECTED
+            PROPERTIES
+                LABELS "benchmark;runtime;argument-validation;partitioning"
+                TIMEOUT 15
+        )
+
+        add_test(
             NAME BENCHMARK_RUNTIME_GRAPH_PARTITION_COVER_AUTOMATIC_FANOUT_PHASE_TRACE
             COMMAND ${Python3_EXECUTABLE}
                     "${CMAKE_CURRENT_SOURCE_DIR}/run_runtime_graph_benchmark.py"
@@ -339,6 +376,16 @@ if(BUILD_TESTING)
             set_tests_properties(BENCHMARK_GREEN_CONTEXT_QUALIFICATION_PYTHON_TESTS
                 PROPERTIES
                     LABELS "benchmark;ea2;runtime;cuda"
+            )
+
+            add_test(
+                NAME BENCHMARK_CUDA_STREAM_POLICY_QUALIFICATION_PYTHON_TESTS
+                COMMAND ${Python3_EXECUTABLE} -m pytest -q
+                        "${CMAKE_CURRENT_SOURCE_DIR}/test_run_cuda_stream_policy_qualification.py"
+            )
+            set_tests_properties(BENCHMARK_CUDA_STREAM_POLICY_QUALIFICATION_PYTHON_TESTS
+                PROPERTIES
+                    LABELS "benchmark;runtime;cuda;partitioning"
             )
         endif()
 
@@ -1005,6 +1052,26 @@ if(BUILD_TESTING)
     )
 
     add_test(
+        NAME BENCHMARK_RUNTIME_DESCRIPTOR_GRAPH
+        COMMAND ${Python3_EXECUTABLE}
+                "${HOLOSCAN_BENCHMARK_RUNNER}"
+                "$<TARGET_FILE:runtime_descriptor_graph_benchmark>"
+                --benchmark_repetitions=1
+    )
+    set_tests_properties(BENCHMARK_RUNTIME_DESCRIPTOR_GRAPH PROPERTIES LABELS benchmark)
+
+    add_test(
+        NAME BENCHMARK_RUNTIME_DESCRIPTOR_RECEIVE
+        COMMAND ${Python3_EXECUTABLE}
+                "${HOLOSCAN_BENCHMARK_RUNNER}"
+                "$<TARGET_FILE:runtime_descriptor_receive_benchmark>"
+                --benchmark_min_time=0.0001s
+    )
+    set_tests_properties(BENCHMARK_RUNTIME_DESCRIPTOR_RECEIVE
+        PROPERTIES LABELS benchmark
+    )
+
+    add_test(
         NAME BENCHMARK_RUNTIME_PAYLOAD
         COMMAND ${Python3_EXECUTABLE}
                 "${HOLOSCAN_BENCHMARK_RUNNER}"
@@ -1345,6 +1412,20 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "error=22"
             FAIL_REGULAR_EXPRESSION "runtime Graph benchmark timeout"
     )
+
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME BENCHMARK_RUNTIME_GRAPH_FAILURE_DIAGNOSTIC_ARTIFACT
+            COMMAND ${Python3_EXECUTABLE}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/test_runtime_graph_failure_diagnostics.py"
+                    "$<TARGET_FILE:runtime_graph_benchmark>"
+        )
+        set_tests_properties(BENCHMARK_RUNTIME_GRAPH_FAILURE_DIAGNOSTIC_ARTIFACT
+            PROPERTIES
+                LABELS "benchmark;runtime;diagnostics"
+                TIMEOUT 10
+        )
+    endif()
 
     # Complete each logical sample only after all four transport-backed sinks receive it.
     add_test(
@@ -1812,26 +1893,46 @@ if(BUILD_TESTING)
         if(IMAGE_DELIVERY STREQUAL "HOLOMQ_FALLBACK")
             list(APPEND IMAGE_DELIVERY_ARGUMENTS --force-holomq-process-local-inline)
         endif()
-        add_test(
-            NAME BENCHMARK_RUNTIME_GRAPH_IMAGE_${IMAGE_DELIVERY}
-            COMMAND runtime_graph_benchmark
-                    --workload latency
-                    --scenario image
-                    --tensor-storage pageable_host
-                    --tensor-bytes 64
-                    --samples 8
-                    --warmup 2
-                    --publisher-period-us 1000
-                    --payload-validation all
-                    ${IMAGE_DELIVERY_ARGUMENTS}
-                    --timeout-ms 10000
-        )
-        set_tests_properties(BENCHMARK_RUNTIME_GRAPH_IMAGE_${IMAGE_DELIVERY}
-            PROPERTIES
-                LABELS "benchmark;runtime;schema;tensor"
-                TIMEOUT 15
-        )
+        foreach(IMAGE_ACCESSOR IN ITEMS OWNING BORROWED)
+            set(IMAGE_ACCESSOR_ARGUMENTS)
+            set(IMAGE_TEST_NAME BENCHMARK_RUNTIME_GRAPH_IMAGE_${IMAGE_DELIVERY})
+            if(IMAGE_ACCESSOR STREQUAL "BORROWED")
+                list(APPEND IMAGE_ACCESSOR_ARGUMENTS --borrow-image-input)
+                string(APPEND IMAGE_TEST_NAME "_BORROWED")
+            endif()
+            # REQ: OPERATOR-056
+            add_test(
+                NAME ${IMAGE_TEST_NAME}
+                COMMAND runtime_graph_benchmark
+                        --workload latency
+                        --scenario image
+                        --tensor-storage pageable_host
+                        --tensor-bytes 64
+                        --samples 8
+                        --warmup 2
+                        --publisher-period-us 1000
+                        --payload-validation all
+                        ${IMAGE_DELIVERY_ARGUMENTS}
+                        ${IMAGE_ACCESSOR_ARGUMENTS}
+                        --timeout-ms 10000
+            )
+            set_tests_properties(${IMAGE_TEST_NAME}
+                PROPERTIES
+                    LABELS "benchmark;runtime;schema;tensor"
+                    TIMEOUT 15
+            )
+        endforeach()
     endforeach()
+
+    add_test(
+        NAME BENCHMARK_RUNTIME_GRAPH_IMAGE_BORROW_REJECTS_OTHER_SCENARIOS
+        COMMAND ${CMAKE_COMMAND}
+                "-DHOLOSCAN_RUNTIME_GRAPH_BENCHMARK=$<TARGET_FILE:runtime_graph_benchmark>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_image_borrow_scenario_failure.cmake"
+    )
+    set_tests_properties(BENCHMARK_RUNTIME_GRAPH_IMAGE_BORROW_REJECTS_OTHER_SCENARIOS
+        PROPERTIES LABELS "benchmark;runtime;argument-validation" TIMEOUT 5
+    )
 
     foreach(MULTI_TENSOR_SCENARIO IN ITEMS multi_tensor_loan multi_tensor_staging)
         string(TOUPPER "${MULTI_TENSOR_SCENARIO}" MULTI_TENSOR_SCENARIO_UPPER)
@@ -1886,52 +1987,55 @@ if(BUILD_TESTING)
             TIMEOUT 15
     )
 
-    # Key setup: exercise each one-deep shared-lane direct-retained Tensor payload shape.
-    foreach(TENSOR_ORDINARY_DISPATCH_SCENARIO IN ITEMS
+    # Key setup: exercise each one-deep shared-lane direct-retained Tensor payload shape with
+    # causal continuation enabled.
+    # REQ: RUNTIME-041
+    foreach(TENSOR_DIRECT_CONTINUATION_SCENARIO IN ITEMS
         tensor
         image
         multi_tensor_loan
         multi_tensor_staging
     )
         string(TOUPPER
-            "${TENSOR_ORDINARY_DISPATCH_SCENARIO}"
-            TENSOR_ORDINARY_DISPATCH_SCENARIO_UPPER
+            "${TENSOR_DIRECT_CONTINUATION_SCENARIO}"
+            TENSOR_DIRECT_CONTINUATION_SCENARIO_UPPER
         )
-        set(TENSOR_ORDINARY_DISPATCH_BULK_WORK_ARGUMENTS)
-        set(TENSOR_ORDINARY_DISPATCH_WARMUP 2)
-        if(TENSOR_ORDINARY_DISPATCH_SCENARIO STREQUAL "multi_tensor_loan")
-            set(TENSOR_ORDINARY_DISPATCH_WARMUP 8)
+        set(TENSOR_DIRECT_CONTINUATION_BULK_WORK_ARGUMENTS)
+        set(TENSOR_DIRECT_CONTINUATION_WARMUP 2)
+        if(TENSOR_DIRECT_CONTINUATION_SCENARIO STREQUAL "multi_tensor_loan")
+            set(TENSOR_DIRECT_CONTINUATION_WARMUP 8)
         endif()
-        if(NOT TENSOR_ORDINARY_DISPATCH_SCENARIO STREQUAL "tensor")
+        if(NOT TENSOR_DIRECT_CONTINUATION_SCENARIO STREQUAL "tensor")
             list(APPEND
-                TENSOR_ORDINARY_DISPATCH_BULK_WORK_ARGUMENTS
+                TENSOR_DIRECT_CONTINUATION_BULK_WORK_ARGUMENTS
                 --bulk-work-profile descriptor_only
             )
         endif()
         add_test(
-            NAME BENCHMARK_RUNTIME_GRAPH_${TENSOR_ORDINARY_DISPATCH_SCENARIO_UPPER}_NO_CONTINUATION_RECEIPT
+            NAME BENCHMARK_RUNTIME_GRAPH_${TENSOR_DIRECT_CONTINUATION_SCENARIO_UPPER}_CONTINUATION_ENABLED
             COMMAND ${Python3_EXECUTABLE}
                     "${CMAKE_CURRENT_SOURCE_DIR}/run_runtime_graph_benchmark.py"
                     "$<TARGET_FILE:runtime_graph_benchmark>"
                     --workload latency
-                    --scenario "${TENSOR_ORDINARY_DISPATCH_SCENARIO}"
+                    --scenario "${TENSOR_DIRECT_CONTINUATION_SCENARIO}"
                     --operator-lanes shared
                     --tensor-storage pageable_host
                     --tensor-bytes 64
                     --samples 8
-                    --warmup ${TENSOR_ORDINARY_DISPATCH_WARMUP}
+                    --warmup ${TENSOR_DIRECT_CONTINUATION_WARMUP}
                     --publisher-period-us 1000
                     --payload-validation all
-                    ${TENSOR_ORDINARY_DISPATCH_BULK_WORK_ARGUMENTS}
+                    ${TENSOR_DIRECT_CONTINUATION_BULK_WORK_ARGUMENTS}
                     --runtime-phase-counters
                     --repetitions 1
                     --session-timeout-ms 10000
         )
-        # Key assertion: the runner requires ordinary dispatch with no continuation receipts.
+        # Key assertion: the runner accepts continuation evidence while validating all Runtime
+        # phase-counter invariants for Tensor-backed delivery.
         set_tests_properties(
-            BENCHMARK_RUNTIME_GRAPH_${TENSOR_ORDINARY_DISPATCH_SCENARIO_UPPER}_NO_CONTINUATION_RECEIPT
+            BENCHMARK_RUNTIME_GRAPH_${TENSOR_DIRECT_CONTINUATION_SCENARIO_UPPER}_CONTINUATION_ENABLED
             PROPERTIES
-                LABELS "benchmark;runtime;tensor;ordinary-dispatch"
+                LABELS "benchmark;runtime;tensor;causal-continuation"
                 TIMEOUT 15
         )
     endforeach()

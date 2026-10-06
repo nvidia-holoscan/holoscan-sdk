@@ -11,6 +11,8 @@
 
 namespace holoscan::detail {
 
+struct DiagnosticCapture;
+
 using LifecycleClockResolver = expected<ClockRef, Error> (*)(void*, const ClockKey&) noexcept;
 using LifecycleNotificationResolver =
     expected<NotificationSender, Error> (*)(void*, NotificationSource&) noexcept;
@@ -18,6 +20,7 @@ using LifecycleTargetResolver = expected<OperatorRef, Error> (*)(void*, Operator
 using LifecyclePathResolver = expected<OperatorRef, Error> (*)(void*, const OperatorPath&) noexcept;
 using LifecycleRateBinder = expected<void, Error> (*)(void*, const void*, Rate) noexcept;
 using PortRateResolver = expected<PortRateView, Error> (*)(void*, const void*, bool) noexcept;
+using LifecycleFailureReporter = void (*)(void*, Error) noexcept;
 
 /// Callback-lifetime state populated by the lifecycle executor or private conformance fixture.
 /// Process-local type tokens and operation pointers never enter a Graph snapshot or plan record.
@@ -33,9 +36,11 @@ struct LifecycleContextState {
   LifecycleNotificationResolver notification_sender{};
   LifecycleTargetResolver restart_target{};
   LifecyclePathResolver restart_path{};
+  LifecycleFailureReporter report_failure{};
   void* rate_state{};
   LifecycleRateBinder bind_nominal_rate{};
   PortRateResolver resolve_rate{};
+  DiagnosticCapture* diagnostic_capture{};
 };
 
 }  // namespace holoscan::detail

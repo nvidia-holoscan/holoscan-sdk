@@ -10,9 +10,12 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <exception>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <stdexcept>
@@ -25,9 +28,12 @@
 
 #include <gtest/gtest.h>
 
+#include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/managed_shutdown_signals.hpp>
+#include <holoscan/logger/logger.hpp>
 
 #include "common/allocation_counter.hpp"
+#include "common/diagnostic_test_environment.hpp"
 #include "compiler/compile_internal.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "compiler/process_placement_internal.hpp"
@@ -67,6 +73,276 @@ struct ChannelPodLayout<RuntimeCompletionFencePayload> {
 namespace {
 
 using namespace std::chrono_literals;
+
+enum class DiagnosticReplayMode { kNone, kConstruct, kDeclaration, kContract };
+
+class DiagnosticReplayProbe final : public Operator<> {
+ public:
+  explicit DiagnosticReplayProbe(bool direct) : direct_(direct) {
+    if (mode.load() == DiagnosticReplayMode::kConstruct) {
+      try {
+        throw RuntimeError{ErrorCode::kInvalidArgument, "nested factory cause"};
+      } catch (...) {
+        std::throw_with_nested(RuntimeError{ErrorCode::kNotSupported, "factory cause"});
+      }
+    }
+  }
+  void setup(OperatorSpec& spec) override {
+    spec.output(output_, "output");
+    if (mode.load() == DiagnosticReplayMode::kDeclaration) {
+      spec.output(output_, "output");
+    }
+    if (direct_) {
+      spec.spin_source(spin_, "activation").capacity(1U);
+    }
+  }
+  Contract contract() const override {
+    Contract result;
+    if (direct_) {
+      result.trigger(OnSpin{.event = spin_});
+    } else {
+      result.trigger(OnClock{.period = 1ms});
+    }
+    if (mode.load() == DiagnosticReplayMode::kContract) {
+      result.deadline(0ns).on_violation(OnViolation::kFailRun);
+    }
+    return result;
+  }
+  void start() override { callbacks.fetch_add(1U); }
+  expected<void, Error> compute(ExecutionContext&) override {
+    callbacks.fetch_add(1U);
+    return {};
+  }
+  static inline std::atomic<DiagnosticReplayMode> mode{DiagnosticReplayMode::kNone};
+  static inline std::atomic<std::size_t> callbacks{};
+
+ private:
+  bool direct_{};
+  SpinSource spin_;
+  Output<std::uint32_t> output_;
+};
+
+TEST(RunSessionTest, FactoryAndReturnedReplayErrorsRetainStructuredEvidence) {
+  struct Reset {
+    ~Reset() { DiagnosticReplayProbe::mode.store(DiagnosticReplayMode::kNone); }
+  };
+  const Reset reset;
+  for (const bool direct : {false, true}) {
+    DiagnosticReplayProbe::mode.store(DiagnosticReplayMode::kNone);
+    Graph graph{"diagnostic-replay"};
+    const auto probe = graph.op<DiagnosticReplayProbe>("probe", direct);
+    graph.set_default_clock(graph.add_clock<RealtimeClock>("clock"));
+    CompileOptions options;
+    if (direct) {
+      graph.partition("worker").add(probe);
+      options.deployment.bind_thread_placement("worker",
+                                               ThreadPlacement{.wake_mode = WakeMode::kBusyPoll});
+    }
+    const auto compiled = compile(graph, options);
+    ASSERT_TRUE(compiled.ok()) << compiled.json();
+    const auto plan = direct ? test::enable_direct_runtime(compiled) : compiled;
+    for (const auto mode : {DiagnosticReplayMode::kDeclaration,
+                            DiagnosticReplayMode::kContract,
+                            DiagnosticReplayMode::kConstruct}) {
+      SCOPED_TRACE(static_cast<int>(mode));
+      SCOPED_TRACE(direct);
+      DiagnosticReplayProbe::mode.store(mode);
+      DiagnosticReplayProbe::callbacks.store(0U);
+      auto session = run_async(plan);
+      session.wait();
+      ASSERT_EQ(session.termination(), RunTermination::kFailed);
+      EXPECT_EQ(DiagnosticReplayProbe::callbacks.load(), 0U);
+      ASSERT_EQ(session.diagnostics().size(), 1U);
+      const auto& diagnostic = session.diagnostics().front();
+      const auto& retained_detail = diagnostic.detail;
+      if (!retained_detail.has_value()) {
+        FAIL() << "Expected diagnostic detail";
+      }
+      const auto& evidence = *retained_detail;
+      EXPECT_EQ(evidence.operator_path, "probe");
+      if (mode == DiagnosticReplayMode::kConstruct) {
+        EXPECT_EQ(diagnostic.token, "RUNTIME_OPERATOR_RECONSTRUCTION_FAILED");
+        EXPECT_EQ(evidence.operation, DiagnosticOperation::kConstruct);
+        EXPECT_EQ(evidence.error.code, ErrorCode::kNotSupported);
+        EXPECT_EQ(evidence.error.message, "factory cause");
+        ASSERT_EQ(evidence.causes.size(), 1U);
+        EXPECT_EQ(evidence.causes.front().code, ErrorCode::kInvalidArgument);
+        EXPECT_EQ(evidence.causes.front().message, "nested factory cause");
+      } else {
+        EXPECT_EQ(diagnostic.token, "RUNTIME_OPERATOR_REPLAY_FINGERPRINT_MISMATCH");
+        EXPECT_TRUE(diagnostic.required.starts_with("sha256:"));
+        EXPECT_TRUE(diagnostic.provided.starts_with("sha256:"));
+        EXPECT_NE(diagnostic.required, diagnostic.provided);
+        EXPECT_EQ(evidence.operation,
+                  mode == DiagnosticReplayMode::kDeclaration ? DiagnosticOperation::kSetup
+                                                             : DiagnosticOperation::kContract);
+        EXPECT_EQ(evidence.error.code,
+                  mode == DiagnosticReplayMode::kDeclaration ? ErrorCode::kDuplicateName
+                                                             : ErrorCode::kInvalidArgument);
+        EXPECT_NE(evidence.error.message.find(mode == DiagnosticReplayMode::kDeclaration
+                                                  ? "duplicated"
+                                                  : "deadline budget must be positive"),
+                  std::string::npos);
+      }
+    }
+  }
+}
+
+class FactoryCaptureOperator final : public Operator<> {
+ public:
+  explicit FactoryCaptureOperator(std::exception_ptr failure) {
+    std::rethrow_exception(std::move(failure));
+  }
+  expected<void, Error> compute(ExecutionContext&) override { return {}; }
+};
+
+class FactoryCaptureClock final : public Clock {
+ public:
+  explicit FactoryCaptureClock(std::exception_ptr failure) {
+    std::rethrow_exception(std::move(failure));
+  }
+  double time() const override { return 0; }
+  std::int64_t timestamp() const override { return 0; }
+  expected<void, Error> sleep_for(std::int64_t) override { return {}; }
+  expected<void, Error> sleep_until(std::int64_t) override { return {}; }
+};
+
+TEST(RunSessionTest, OperatorAndClockFactoryCaptureSurvivesAllocationFailure) {
+  std::exception_ptr failure;
+  try {
+    throw RuntimeError{ErrorCode::kInvalidArgument,
+                       "original factory exception survives allocation failure"};
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  const detail::OperatorFactoryModel<FactoryCaptureOperator, std::exception_ptr> op_factory{
+      failure};
+  const detail::ClockFactoryModel<FactoryCaptureClock, std::exception_ptr> clock_factory{failure};
+  const auto verify = [](const auto& factory) {
+    detail::DiagnosticCapture capture;
+    const auto created = [&] {
+      const test::ScopedAllocationFailure fail_after_object_allocation{1U};
+      return factory.create(&capture);
+    }();
+    ASSERT_FALSE(created);
+    EXPECT_EQ(created.error().code, ErrorCode::kInvalidArgument);
+    ASSERT_EQ(capture.count, 1U);
+    const auto evidence = capture.detail(DiagnosticOperation::kConstruct);
+    EXPECT_EQ(evidence.error.message, "original factory exception survives allocation failure");
+    EXPECT_FALSE(evidence.truncated);
+  };
+  verify(op_factory);
+  verify(clock_factory);
+}
+
+TEST(RunSessionTest, ConcurrentFactoryCapturesRetainIndependentBoundedCauses) {
+  std::exception_ptr failure;
+  try {
+    throw RuntimeError{ErrorCode::kInvalidArgument, std::string(8192U, 'x')};
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  for (std::size_t depth = 0U; depth < 5U; ++depth) {
+    try {
+      try {
+        std::rethrow_exception(failure);
+      } catch (...) {
+        std::throw_with_nested(RuntimeError{ErrorCode::kFailure, "outer cause"});
+      }
+    } catch (...) {
+      failure = std::current_exception();
+    }
+  }
+  const detail::OperatorFactoryModel<FactoryCaptureOperator, std::exception_ptr> factory{failure};
+  std::array<detail::DiagnosticCapture, 2U> captures;
+  std::thread first([&] { static_cast<void>(factory.create(&captures[0])); });
+  std::thread second([&] { static_cast<void>(factory.create(&captures[1])); });
+  first.join();
+  second.join();
+  for (const auto& capture : captures) {
+    EXPECT_EQ(capture.count, detail::DiagnosticCapture::kCauseCapacity);
+    EXPECT_TRUE(capture.truncated);
+    const auto evidence = capture.detail(DiagnosticOperation::kConstruct);
+    EXPECT_EQ(evidence.error.message, "outer cause");
+    EXPECT_EQ(evidence.causes.size(), 3U);
+  }
+}
+
+TEST(RunSessionTest, ClockReconstructionRetainsNestedFactoryEvidence) {
+  DiagnosticReplayProbe::mode.store(DiagnosticReplayMode::kNone);
+  Graph graph{"clock-failure"};
+  graph.op<DiagnosticReplayProbe>("probe", false);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("clock"));
+  const auto plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  std::exception_ptr failure;
+  try {
+    try {
+      throw RuntimeError{ErrorCode::kNotFound, "clock device missing"};
+    } catch (...) {
+      std::throw_with_nested(RuntimeError{ErrorCode::kNotSupported, "clock construction failed"});
+    }
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  auto state =
+      std::make_shared<detail::ExecutionPlanState>(*detail::ExecutionPlanAccess::retain(plan));
+  ASSERT_EQ(state->executable_factories.clocks.size(), 1U);
+  state->executable_factories.clocks.front().factory =
+      std::make_shared<detail::ClockFactoryModel<FactoryCaptureClock, std::exception_ptr>>(failure);
+  detail::RuntimeDiagnosticDetail evidence;
+  const auto reconstructed = detail::GraphExec::reconstruct(state, 1U, {}, nullptr, &evidence);
+  ASSERT_FALSE(reconstructed);
+  ASSERT_TRUE(evidence.capture);
+  EXPECT_EQ(evidence.operation, DiagnosticOperation::kConstruct);
+  EXPECT_EQ(evidence.component_path, "clock/clock");
+  EXPECT_FALSE(evidence.vertex);
+  const auto captured = evidence.capture->detail(evidence.operation);
+  EXPECT_EQ(captured.error.message, "clock construction failed");
+  ASSERT_EQ(captured.causes.size(), 1U);
+  EXPECT_EQ(captured.causes.front().code, ErrorCode::kNotFound);
+  EXPECT_EQ(captured.causes.front().message, "clock device missing");
+}
+
+class CleanupOverflowProbe final : public Operator<> {
+ public:
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+  expected<void, Error> compute(ExecutionContext& context) override {
+    context.request_completion();
+    return {};
+  }
+  void stop() override { throw RuntimeError{ErrorCode::kFailure, "cleanup overflow cause"}; }
+};
+
+TEST(RunSessionTest, LifecycleFailureOverflowIsExplicitAndKeepsThePrimary) {
+  Graph graph{"lifecycle-failure-overflow"};
+  for (std::size_t index = 0U; index < 6U; ++index) {
+    graph.op<CleanupOverflowProbe>("probe" + std::to_string(index));
+  }
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("clock"));
+  const auto plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto session = run_async(plan);
+  session.wait();
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  ASSERT_EQ(session.diagnostics().size(), 4U);
+  for (std::size_t index = 0U; index < session.diagnostics().size(); ++index) {
+    const auto& diagnostic = session.diagnostics()[index];
+    const auto& retained_detail = diagnostic.detail;
+    if (!retained_detail.has_value()) {
+      FAIL() << "Expected diagnostic detail";
+    }
+    EXPECT_EQ(retained_detail->role, DiagnosticFailureRole::kTeardown);
+    EXPECT_EQ(retained_detail->error.message, "cleanup overflow cause");
+    EXPECT_EQ(retained_detail->truncated, index == 3U);
+    EXPECT_EQ(retained_detail->primary_diagnostic_index,
+              index == 0U ? std::nullopt : std::optional<std::uint32_t>{0U});
+  }
+}
 
 class ThrowingTerminalClosePublisher final : public channel_internal::InlinePayloadPublisher {
  public:
@@ -261,6 +537,23 @@ class OptionalLifecycleReplayProbe final : public Operator<> {
   LifecycleStatus stop_stage(LifecycleContext&) noexcept { return LifecycleStatus::kOk; }
 
   static inline std::atomic_bool omit_callbacks{};
+};
+
+class CudaGraphEligibilityReplayProbe final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.cuda_graph_capture_eligible(eligible.load(std::memory_order_relaxed));
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  static inline std::atomic_bool eligible{true};
 };
 
 struct RuntimeRateProbeState {
@@ -956,6 +1249,30 @@ void expect_diagnostic_sequences_equal(std::span<const Diagnostic> expected,
     EXPECT_EQ(actual[index].required, expected[index].required);
     EXPECT_EQ(actual[index].provided, expected[index].provided);
     EXPECT_EQ(actual[index].cause_id, expected[index].cause_id);
+    const auto& actual_detail = actual[index].detail;
+    const auto& expected_detail = expected[index].detail;
+    ASSERT_EQ(actual_detail.has_value(), expected_detail.has_value());
+    if (!actual_detail.has_value() || !expected_detail.has_value()) {
+      continue;
+    }
+    const auto& observed = *actual_detail;
+    const auto& wanted = *expected_detail;
+    EXPECT_EQ(observed.operation, wanted.operation);
+    EXPECT_EQ(observed.error.code, wanted.error.code);
+    EXPECT_EQ(observed.error.message, wanted.error.message);
+    EXPECT_EQ(observed.stage, wanted.stage);
+    EXPECT_EQ(observed.phase, wanted.phase);
+    EXPECT_EQ(observed.role, wanted.role);
+    EXPECT_EQ(observed.transaction_id, wanted.transaction_id);
+    EXPECT_EQ(observed.operator_path, wanted.operator_path);
+    EXPECT_EQ(observed.port_name, wanted.port_name);
+    EXPECT_EQ(observed.primary_diagnostic_index, wanted.primary_diagnostic_index);
+    EXPECT_EQ(observed.truncated, wanted.truncated);
+    ASSERT_EQ(observed.causes.size(), wanted.causes.size());
+    for (std::size_t cause = 0U; cause < wanted.causes.size(); ++cause) {
+      EXPECT_EQ(observed.causes[cause].code, wanted.causes[cause].code);
+      EXPECT_EQ(observed.causes[cause].message, wanted.causes[cause].message);
+    }
   }
 }
 
@@ -1274,11 +1591,16 @@ class RecordingTerminalSummarySink final : public detail::RuntimeTerminalSummary
 // Used by: RunOwnedThreadSelfJoinTerminatesUnderExternalSupervision
 class SelfJoinDiagnosticSink final : public detail::RuntimeStructuralDiagnosticSink {
  public:
+  explicit SelfJoinDiagnosticSink(bool fail_formatting = false)
+      : fail_formatting_(fail_formatting) {}
   void publish(std::span<const Diagnostic>) override {
     RunSession* session = nullptr;
     while ((session = session_.load(std::memory_order_acquire)) == nullptr) {
       std::this_thread::yield();
     }
+    std::optional<test::ScopedAllocationFailure> failure;
+    if (fail_formatting_)
+      failure.emplace(0U);
     session->wait();
   }
 
@@ -1286,6 +1608,7 @@ class SelfJoinDiagnosticSink final : public detail::RuntimeStructuralDiagnosticS
 
  private:
   std::atomic<RunSession*> session_{};
+  bool fail_formatting_{};
 };
 #endif
 
@@ -1490,6 +1813,8 @@ TEST(RunSessionTest, RejectsStrayDeadlineInventoryInOperatorFreePlan) {
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 // REQ: RUNTIME-001
 // REQ: RUNTIME-004
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
 TEST(RunSessionTest, AcceptedPlanAllocationFailureReturnsTerminalSessionInsteadOfThrowing) {
   test::RuntimeProbeState::reset();
   const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
@@ -1499,6 +1824,7 @@ TEST(RunSessionTest, AcceptedPlanAllocationFailureReturnsTerminalSessionInsteadO
       detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, diagnostic_sink);
   const ExecutionPlan plan =
       detail::RuntimeTestPlanAccess::with_terminal_summary_sink(with_diagnostics, summary_sink);
+  ASSERT_TRUE(plan.ok()) << plan.json();
 
   // Key setup: fail the first startup allocation after an otherwise accepted plan is supplied.
   RunSession session = [&] {
@@ -1517,30 +1843,54 @@ TEST(RunSessionTest, AcceptedPlanAllocationFailureReturnsTerminalSessionInsteadO
   EXPECT_EQ(summaries.front().first_token, "RUNTIME_STARTUP_FAILED");
   EXPECT_EQ(summaries.front().structured_publication_count, 1U);
 
+  const auto retained_span = session.diagnostics();
+  const std::vector<Diagnostic> retained_diagnostics{retained_span.begin(), retained_span.end()};
+  const std::string retained_report = format_diagnostics(retained_span, {});
+
   // Key assertion: the shared startup-failure state rejects parameter capture without a plan.
   auto captured = session.capture_params();
   ASSERT_FALSE(captured);
   EXPECT_EQ(captured.error().code, ErrorCode::kClosed);
 
+  const ExecutionPlan other_baseline =
+      test::enable_direct_runtime(test::make_runtime_test_plan(true));
+  const ExecutionPlan other_with_diagnostics =
+      detail::RuntimeTestPlanAccess::with_diagnostic_sink(other_baseline, diagnostic_sink);
+  const ExecutionPlan other_plan = detail::RuntimeTestPlanAccess::with_terminal_summary_sink(
+      other_with_diagnostics, summary_sink);
+  ASSERT_TRUE(other_plan.ok()) << other_plan.json();
+  ASSERT_NE(other_plan.graph().generation(), plan.graph().generation());
+
   int blocking_result{};
   {
     const test::ScopedAllocationFailure fail_next_allocation{0U};
-    blocking_result = run(plan, RunSignalPolicy::kCallerManaged);
+    blocking_result = run(other_plan, RunSignalPolicy::kCallerManaged);
   }
   EXPECT_NE(blocking_result, 0);
   ASSERT_EQ(diagnostic_sink->snapshot().size(), 2U);
   summaries = summary_sink->snapshot();
   ASSERT_EQ(summaries.size(), 2U);
   EXPECT_NE(summaries.back().run_generation, 0U);
-  EXPECT_EQ(summaries.back().first_source.graph_generation, plan.graph().generation());
+  EXPECT_NE(summaries.back().run_generation, summaries.front().run_generation);
+  EXPECT_EQ(summaries.front().first_source.graph_generation, plan.graph().generation());
+  EXPECT_EQ(summaries.back().first_source.graph_generation, other_plan.graph().generation());
   EXPECT_EQ(summaries.back().first_token, "RUNTIME_STARTUP_FAILED");
   EXPECT_EQ(summaries.back().structured_publication_count, 2U);
+
+  // A later request may report its own identity without rewriting an observed fallback session.
+  EXPECT_FALSE(session.is_running());
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  EXPECT_EQ(session.diagnostics().data(), retained_span.data());
+  expect_diagnostic_sequences_equal(retained_diagnostics, session.diagnostics());
+  EXPECT_EQ(format_diagnostics(session.diagnostics(), {}), retained_report);
 }
 #endif
 
 // REQ: RUNTIME-001
 // REQ: RUNTIME-004
 // REQ: RUNTIME-035
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
 TEST(RunSessionTest, BlockingAndAsyncRunsPublishTheExactSameTerminalDiagnostics) {
   test::RuntimeProbeState::reset();
   const ExecutionPlan baseline = test::make_runtime_test_plan();
@@ -1828,7 +2178,145 @@ TEST(RunSessionTest, StructuralDiagnosticSinkFailureInjectionCoversEveryCallback
 }
 #endif
 
+class AutomaticDiagnosticPreferenceGuard {
+ public:
+  AutomaticDiagnosticPreferenceGuard() : previous_(automatic_diagnostic_logging_enabled()) {}
+  ~AutomaticDiagnosticPreferenceGuard() { set_automatic_diagnostic_logging_enabled(previous_); }
+
+ private:
+  bool previous_;
+};
+
+// REQ: RUNTIME-060
+// REQ: EXPECTED-032
+TEST(RunSessionTest, AutomaticOptOutPreservesStructuredSummaryAndDiagnosticSinks) {
+  const AutomaticDiagnosticPreferenceGuard guard;
+  for (const bool enabled : {false, true}) {
+    set_automatic_diagnostic_logging_enabled(enabled);
+    test::RuntimeProbeState::reset();
+    const auto diagnostics = std::make_shared<RecordingDiagnosticSink>();
+    const auto summaries = std::make_shared<RecordingTerminalSummarySink>(diagnostics);
+    const auto baseline = test::make_runtime_test_plan();
+    const auto with_diagnostics =
+        detail::RuntimeTestPlanAccess::with_diagnostic_sink(baseline, diagnostics);
+    const auto plan =
+        detail::RuntimeTestPlanAccess::with_terminal_summary_sink(with_diagnostics, summaries);
+    auto session = run_async(plan);
+    session.wait();
+    ASSERT_EQ(session.termination(), RunTermination::kFailed);
+    ASSERT_EQ(session.diagnostics().size(), 1U);
+    EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_READINESS_BINDING_UNAVAILABLE");
+    ASSERT_EQ(diagnostics->snapshot().size(), 1U);
+    ASSERT_EQ(summaries->snapshot().size(), 1U);
+    EXPECT_EQ(summaries->snapshot().front().structured_publication_count, 1U);
+    EXPECT_EQ(summaries->snapshot().front().diagnostic_count, session.diagnostics().size());
+    EXPECT_TRUE(test::RuntimeProbeState::snapshot().empty());
+    EXPECT_FALSE(test::RuntimeProbeState::compute_entered.load(std::memory_order_acquire));
+    session.wait();
+    EXPECT_EQ(diagnostics->snapshot().size(), 1U);
+    EXPECT_EQ(summaries->snapshot().size(), 1U);
+  }
+}
+
+// REQ: RUNTIME-060
+// REQ: EXPECTED-032
+TEST(RunSessionTest, PendingTerminalReportSamplesCurrentAutomaticPolicy) {
+  const test::ScopedDiagnosticLogger logger{LogLevel::ERROR};
+  const AutomaticDiagnosticPreferenceGuard guard;
+  for (const bool initial : {true, false}) {
+    test::RuntimeProbeState::reset();
+    const auto plan = test::enable_direct_runtime(test::make_runtime_test_plan());
+    test::RuntimeProbeState::reset(test::RuntimeProbeMode::kWaitForStopThenFail);
+    set_automatic_diagnostic_logging_enabled(initial);
+    auto session = run_async(plan);
+    ASSERT_TRUE(test::RuntimeProbeState::wait_until_compute_enters());
+    set_automatic_diagnostic_logging_enabled(!initial);
+    testing::internal::CaptureStderr();
+    session.request_stop();
+    session.wait();
+    const auto output = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(output.find("RunSession failed:") != std::string::npos, !initial);
+    EXPECT_EQ(session.termination(), RunTermination::kFailed);
+    EXPECT_FALSE(session.diagnostics().empty());
+    EXPECT_EQ(test::RuntimeProbeState::active.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(test::RuntimeProbeState::snapshot(), (std::vector<std::int32_t>{11, 12, 13}));
+  }
+}
+
+// REQ: RUNTIME-060
+// REQ: EXPECTED-033
+TEST(RunSessionTest, ExplicitTerminalReportRemainsAvailableAfterAutomaticOptOut) {
+  const test::ScopedDiagnosticLogger logger{LogLevel::ERROR};
+  const AutomaticDiagnosticPreferenceGuard guard;
+  set_automatic_diagnostic_logging_enabled(false);
+  const auto plan = test::make_runtime_test_plan();
+  testing::internal::CaptureStderr();
+  auto session = run_async(plan);
+  session.wait();
+  const auto automatic_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(automatic_output.empty());
+  ASSERT_EQ(session.termination(), RunTermination::kFailed);
+  ASSERT_FALSE(session.diagnostics().empty());
+  const auto before = format_diagnostics(session.diagnostics(), plan.graph());
+  testing::internal::CaptureStderr();
+  log_diagnostics(session.diagnostics(), plan.graph());
+  const auto explicit_output = testing::internal::GetCapturedStderr();
+  EXPECT_NE(explicit_output.find("RUNTIME_READINESS_BINDING_UNAVAILABLE"), std::string::npos);
+  EXPECT_EQ(explicit_output.find("RunSession failed:"), std::string::npos);
+  EXPECT_EQ(format_diagnostics(session.diagnostics(), plan.graph()), before);
+  testing::internal::CaptureStderr();
+  log_diagnostics(session.diagnostics(), plan.graph());
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), explicit_output);
+  testing::internal::CaptureStderr();
+  session.wait();
+  static_cast<void>(session.diagnostics());
+  static_cast<void>(session.termination());
+  EXPECT_TRUE(testing::internal::GetCapturedStderr().empty());
+}
+
+// REQ: EXPECTED-033
+// REQ: RUNTIME-060
+TEST(RunSessionTest, ExplicitHelperReportsPublishedWarningPrefixWithoutWaiting) {
+  const test::ScopedDiagnosticLogger logger{LogLevel::WARN};
+  const AutomaticDiagnosticPreferenceGuard guard;
+  set_automatic_diagnostic_logging_enabled(false);
+  test::RuntimeComputeCallChannelProbeState::reset();
+  const auto plan = test::make_runtime_compute_call_channel_plan(
+      1000000U, test::RuntimeComputeCallAction::kRestartRollbackAfterFirst);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto session = run_async(plan);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  while (session.diagnostics().empty() && session.is_running() &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  const auto prefix = session.diagnostics();
+  ASSERT_FALSE(prefix.empty());
+  ASSERT_EQ(prefix.front().severity, DiagnosticSeverity::kWarning);
+  const auto token = std::string{prefix.front().token};
+  ASSERT_TRUE(session.is_running());
+  testing::internal::CaptureStderr();
+  log_diagnostics(prefix, plan.graph());
+  const auto early_output = testing::internal::GetCapturedStderr();
+  EXPECT_NE(early_output.find(token), std::string::npos);
+  EXPECT_TRUE(session.is_running());
+  EXPECT_EQ(prefix.front().severity, DiagnosticSeverity::kWarning);
+
+  testing::internal::CaptureStderr();
+  session.request_stop();
+  session.wait();
+  EXPECT_TRUE(testing::internal::GetCapturedStderr().empty());
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_EQ(prefix.front().token, token);
+  testing::internal::CaptureStderr();
+  log_diagnostics(session.diagnostics(), plan.graph());
+  const auto terminal_output = testing::internal::GetCapturedStderr();
+  EXPECT_NE(terminal_output.find(token), std::string::npos);
+}
+
 // REQ: RUNTIME-035
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
 TEST(RunSessionTest, TerminalFailureSummaryFollowsStructuredPublicationExactlyOnce) {
   test::RuntimeProbeState::reset();
   const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
@@ -1862,6 +2350,8 @@ TEST(RunSessionTest, TerminalFailureSummaryFollowsStructuredPublicationExactlyOn
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 // REQ: RUNTIME-035
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
 TEST(RunSessionTest, TerminalSummarySinkFailureCannotChangeCleanupOrDiagnostics) {
   test::RuntimeProbeState::reset();
   const auto diagnostic_sink = std::make_shared<RecordingDiagnosticSink>();
@@ -1887,6 +2377,8 @@ TEST(RunSessionTest, TerminalSummarySinkFailureCannotChangeCleanupOrDiagnostics)
 #endif
 
 // REQ: RUNTIME-035
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
 TEST(RunSessionTest, CompletedRecurringActivationsAttemptNoTerminalFailureSummary) {
   constexpr std::uint32_t kActivationCount = 3U;
   test::RuntimeProbeState::reset();
@@ -2332,7 +2824,14 @@ TEST(RunSessionTest, RolledBackRestartPreservesLogicalOperatorComputeCallProgres
   session.wait();
 
   EXPECT_EQ(session.termination(), RunTermination::kCompleted);
-  EXPECT_TRUE(session.diagnostics().empty());
+  ASSERT_EQ(session.diagnostics().size(), 1U);
+  EXPECT_EQ(session.diagnostics().front().severity, DiagnosticSeverity::kWarning);
+  const auto& failure_detail = session.diagnostics().front().detail;
+  if (!failure_detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(failure_detail->stage, LifecycleStage::kStart);
+  EXPECT_NE(failure_detail->transaction_id, 0U);
   EXPECT_TRUE(
       test::RuntimeComputeCallChannelProbeState::restart_accepted.load(std::memory_order_acquire));
   EXPECT_EQ(test::RuntimeComputeCallChannelProbeState::restart_forward_start_count.load(
@@ -2577,7 +3076,10 @@ TEST(RunSessionTest, FailedPublicationConsumesNoComputeCallCompletionUnit) {
 TEST(RunSessionTest, FailedPostCallbackChannelRetirementConsumesNoCompletionUnit) {
   constexpr std::uint64_t kLimit = 2U;
   test::RuntimeComputeCallChannelProbeState::reset();
-  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(kLimit);
+  // Keep the sinks on the source owner so neither can consume the one-shot retirement fault
+  // between successful source publication and source retirement.
+  const ExecutionPlan baseline = test::make_runtime_compute_call_channel_plan(
+      kLimit, test::RuntimeComputeCallAction::kNone, 1U, false);
   ASSERT_TRUE(baseline.ok()) << baseline.json();
   const ExecutionPlan plan =
       detail::RuntimeTestPlanAccess::fail_next_channel_activation_retirement_for_test(baseline);
@@ -2591,6 +3093,9 @@ TEST(RunSessionTest, FailedPostCallbackChannelRetirementConsumesNoCompletionUnit
             1U);
   ASSERT_FALSE(session.diagnostics().empty());
   EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_LIFECYCLE_CALLBACK_FAILED");
+  EXPECT_EQ(
+      test::RuntimeComputeCallChannelProbeState::sink_compute_count.load(std::memory_order_acquire),
+      0U);
   EXPECT_TRUE(std::ranges::none_of(session.diagnostics(), [](const Diagnostic& diagnostic) {
     return diagnostic.token == "RUNTIME_OPERATOR_CALLBACK_FAILED";
   }));
@@ -2861,6 +3366,8 @@ TEST(RunSessionTest, RequestedCompletionPublishesPartialProgressWithoutClaimingN
 }
 
 // REQ: RUNTIME-035
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
 TEST(RunSessionTest, CooperativelyStoppedSessionAttemptsNoTerminalFailureSummary) {
   test::RuntimeProbeState::reset(test::RuntimeProbeMode::kWaitForStop);
   const auto summary_sink = std::make_shared<RecordingTerminalSummarySink>();
@@ -2879,6 +3386,8 @@ TEST(RunSessionTest, CooperativelyStoppedSessionAttemptsNoTerminalFailureSummary
 }
 
 // REQ: RUNTIME-035
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
 TEST(RunSessionTest, RepeatedFailedRunsEachAttemptOneTerminalSummary) {
   constexpr std::size_t kRunCount = 4U;
   test::RuntimeProbeState::reset();
@@ -2960,6 +3469,22 @@ TEST(RunSessionDeathTest, WaitFromDispatcherContextTerminatesUnderExternalSuperv
         const detail::RuntimeCallbackContextScope dispatcher_context{
             detail::RuntimeCallbackContext::kDispatcher};
         session.wait();
+      },
+      "RUNTIME_SELF_JOIN_FORBIDDEN");
+}
+
+// REQ: RUNTIME-058
+TEST(RunSessionDeathTest, BoundedWaitFromDispatcherContextTerminatesUnderExternalSupervision) {
+  EXPECT_DEATH(
+      {
+        test::RuntimeProbeState::reset();
+        const ExecutionPlan plan = test::enable_direct_runtime(test::make_runtime_test_plan());
+        RunSession session = run_async(plan);
+        const detail::RuntimeCallbackContextScope dispatcher_context{
+            detail::RuntimeCallbackContext::kDispatcher};
+
+        // Key assertion: The bounded form preserves the fatal callback-context contract.
+        static_cast<void>(session.wait_for(std::chrono::milliseconds{1}));
       },
       "RUNTIME_SELF_JOIN_FORBIDDEN");
 }
@@ -3117,6 +3642,27 @@ TEST(GraphExecIndexTest, RejectsDuplicateReconstructedVertexIdentityBeforePublic
   ASSERT_FALSE(reconstructed);
   EXPECT_EQ(reconstructed.error().code, ErrorCode::kNotSupported);
   EXPECT_EQ(reconstructed.error().message, "RUNTIME_PLACEMENT_BINDING_UNAVAILABLE");
+}
+
+// REQ: OPERATOR-050
+TEST(RunSessionTest, RejectsEmptyOperatorPathBeforeReconstruction) {
+  const ExecutionPlan baseline = test::make_runtime_test_plan();
+  ASSERT_TRUE(baseline.ok()) << baseline.json();
+  const auto accepted = detail::ExecutionPlanAccess::retain(baseline);
+  ASSERT_NE(accepted, nullptr);
+  auto malformed = std::make_shared<detail::ExecutionPlanState>(*accepted);
+  ASSERT_FALSE(malformed->operator_parameters.empty());
+
+  malformed->operator_parameters.front().operator_path.clear();
+  test::RuntimeProbeState::reset();
+  const auto reconstructed =
+      detail::GraphExec::reconstruct(std::move(malformed), RunGenerationId{17U});
+
+  ASSERT_FALSE(reconstructed);
+  EXPECT_EQ(reconstructed.error().code, ErrorCode::kFailure);
+  EXPECT_EQ(reconstructed.error().message, "RUNTIME_PARAMETER_INVENTORY_MISMATCH");
+  EXPECT_EQ(test::RuntimeProbeState::constructed.load(std::memory_order_acquire), 0U);
+  EXPECT_FALSE(test::RuntimeProbeState::setup_entered.load(std::memory_order_acquire));
 }
 
 // REQ: PARAM-017
@@ -3508,6 +4054,16 @@ TEST(RunSessionTest, TrueTagSequenceExhaustionPublishesExactTerminalDiagnostic) 
   ASSERT_EQ(session.diagnostics().size(), 1U);
   EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_TAG_CAPACITY_EXHAUSTED");
   EXPECT_EQ(session.diagnostics().front().service, "candidate_freeze");
+  const Diagnostic& diagnostic = session.diagnostics().front();
+  EXPECT_FALSE(diagnostic.source.vertex);
+  if (!diagnostic.detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  const auto& detail = *diagnostic.detail;
+  EXPECT_EQ(detail.error.code, ErrorCode::kResourceExhausted);
+  EXPECT_TRUE(detail.error.message.empty());
+  EXPECT_TRUE(detail.causes.empty());
+  EXPECT_FALSE(detail.truncated);
   EXPECT_EQ(test::RuntimeProbeState::snapshot(), (std::vector<std::int32_t>{11, 12, 13}));
 
   const auto published = sink->snapshot_details();
@@ -3628,6 +4184,33 @@ TEST(RunSessionTest, RejectsMissingAdvancedOptionalLifecycleCallbacksDuringRepla
 
   ASSERT_FALSE(reconstructed);
   EXPECT_EQ(reconstructed.error().message, "RUNTIME_OPERATOR_REPLAY_MISMATCH");
+}
+
+// REQ: OPERATOR-051
+TEST(RunSessionTest, RejectsCudaGraphEligibilityReplayMismatchBeforeCallbacks) {
+  struct EligibilityReset {
+    ~EligibilityReset() {
+      CudaGraphEligibilityReplayProbe::eligible.store(true, std::memory_order_relaxed);
+    }
+  };
+  const EligibilityReset reset{};
+
+  CudaGraphEligibilityReplayProbe::eligible.store(true, std::memory_order_relaxed);
+  Graph graph{"cuda-graph-eligibility-runtime-replay"};
+  (void)graph.op<CudaGraphEligibilityReplayProbe>("probe");
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-test-clock"));
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  CudaGraphEligibilityReplayProbe::eligible.store(false, std::memory_order_relaxed);
+  detail::RuntimeReplayMismatchDetail mismatch;
+  auto reconstructed = detail::GraphExec::reconstruct(
+      detail::ExecutionPlanAccess::retain(plan), RunGenerationId{30U}, {}, &mismatch);
+
+  ASSERT_FALSE(reconstructed);
+  EXPECT_EQ(reconstructed.error().message, "RUNTIME_OPERATOR_REPLAY_MISMATCH");
+  ASSERT_TRUE(mismatch.present);
+  EXPECT_EQ(mismatch.category, detail::RuntimeReplayMismatchCategory::kDeclaration);
 }
 
 // A runtime-mutable deadline retains its independently frozen violation action. Replaying the
@@ -4621,6 +5204,64 @@ TEST(RunSessionTest, ConcurrentStopRequestsAndWaitersShareOneCompletion) {
   EXPECT_EQ(wait_control->join_owner_count(), 1U);
 }
 
+// REQ: RUNTIME-058
+TEST(RunSessionTest, BoundedWaitReportsTimeoutThenTerminalPublication) {
+  // Key setup: Register a long bounded waiter before requesting the session stop.
+  test::RuntimeProbeState::reset(test::RuntimeProbeMode::kWaitForStop);
+  auto wait_control = std::make_shared<detail::RuntimeWaitTestControl>();
+  const ExecutionPlan plan = detail::RuntimeTestPlanAccess::enable_wait_interleaving(
+      test::enable_direct_runtime(test::make_runtime_test_plan()), wait_control);
+  test::RuntimeProbeState::reset(test::RuntimeProbeMode::kWaitForStop);
+
+  RunSession session = run_async(plan);
+  ASSERT_TRUE(test::RuntimeProbeState::wait_until_compute_enters());
+  EXPECT_FALSE(session.wait_for(std::chrono::nanoseconds::zero()));
+  EXPECT_FALSE(session.wait_for(std::chrono::milliseconds{1}));
+
+  bool terminal{};
+  std::chrono::steady_clock::duration elapsed{};
+  std::thread waiter([&] {
+    const auto start = std::chrono::steady_clock::now();
+    terminal = session.wait_for(std::chrono::seconds{30});
+    elapsed = std::chrono::steady_clock::now() - start;
+  });
+  EXPECT_TRUE(wait_control->wait_for_bounded_waiters(1U));
+  session.request_stop();
+  waiter.join();
+
+  // Key assertion: Terminal publication wakes the registered waiter instead of awaiting expiry.
+  EXPECT_TRUE(terminal);
+  EXPECT_LT(elapsed, std::chrono::seconds{2});
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  wait_control->release_join_owner();
+  session.wait();
+}
+
+// REQ: RUNTIME-058
+TEST(RunSessionTest, WaitAdmissionRejectsCallbackContextWithoutTerminating) {
+  // Key setup: Query wait admission from ordinary and simulated dispatcher contexts.
+  test::RuntimeProbeState::reset(test::RuntimeProbeMode::kWaitForStop);
+  const ExecutionPlan plan = test::enable_direct_runtime(test::make_runtime_test_plan());
+  test::RuntimeProbeState::reset(test::RuntimeProbeMode::kWaitForStop);
+  RunSession session = run_async(plan);
+  ASSERT_TRUE(test::RuntimeProbeState::wait_until_compute_enters());
+
+  EXPECT_TRUE(session.wait_admission());
+  {
+    const detail::RuntimeCallbackContextScope dispatcher_context{
+        detail::RuntimeCallbackContext::kDispatcher};
+    const auto rejected = session.wait_admission();
+
+    // Key assertion: Callback-context waits fail as data without terminating the process.
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(rejected.error().message, "RUNTIME_SELF_JOIN_FORBIDDEN callback_context");
+  }
+
+  session.request_stop();
+  session.wait();
+}
+
 // REQ: RUNTIME-003
 // REQ: RUNTIME-004
 TEST(RunSessionTest, DestructorRequestsStopAndJoinsWorker) {
@@ -4663,6 +5304,14 @@ TEST(RunSessionTest, SetupExceptionFailsStartupBeforeLifecycleCallbacks) {
 
   EXPECT_EQ(session.termination(), RunTermination::kFailed);
   EXPECT_TRUE(test::has_runtime_diagnostic(session, "RUNTIME_OPERATOR_SETUP_FAILED"));
+  ASSERT_FALSE(session.diagnostics().empty());
+  const auto& failure_detail = session.diagnostics().front().detail;
+  if (!failure_detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(failure_detail->operation, DiagnosticOperation::kSetup);
+  EXPECT_EQ(failure_detail->error.message, "runtime test setup failure");
+  EXPECT_TRUE(session.diagnostics().front().source.vertex);
   EXPECT_TRUE(test::RuntimeProbeState::snapshot().empty());
   EXPECT_FALSE(test::RuntimeProbeState::compute_entered.load(std::memory_order_acquire));
 }
@@ -4681,6 +5330,11 @@ TEST(RunSessionTest, StartExceptionStopsOnlyPreviouslyStartedOperators) {
   EXPECT_TRUE(test::has_runtime_diagnostic(session, "RUNTIME_LIFECYCLE_CALLBACK_FAILED"));
   EXPECT_EQ(test::RuntimeProbeState::snapshot(), (std::vector<std::int32_t>{11, 21, 13}));
   EXPECT_FALSE(test::RuntimeProbeState::compute_entered.load(std::memory_order_acquire));
+  ASSERT_FALSE(session.diagnostics().empty());
+  EXPECT_TRUE(session.diagnostics().front().source.vertex);
+  const auto report = format_diagnostic(session.diagnostics().front(), plan.graph());
+  EXPECT_NE(report.find("runtime test start failure"), std::string::npos) << report;
+  EXPECT_NE(report.find("start"), std::string::npos) << report;
 }
 
 // REQ: RUNTIME-004
@@ -4696,6 +5350,9 @@ TEST(RunSessionTest, ComputeExceptionBecomesTerminalCallbackFailure) {
   EXPECT_TRUE(test::has_runtime_diagnostic(session, "RUNTIME_OPERATOR_CALLBACK_FAILED"));
   EXPECT_EQ(test::RuntimeProbeState::snapshot(), (std::vector<std::int32_t>{11, 12, 13}));
   EXPECT_EQ(test::RuntimeProbeState::active.load(std::memory_order_acquire), 0U);
+  ASSERT_FALSE(session.diagnostics().empty());
+  const auto report = format_diagnostic(session.diagnostics().front(), plan.graph());
+  EXPECT_NE(report.find("runtime test compute failure"), std::string::npos) << report;
 }
 
 // REQ: RUNTIME-003
@@ -4711,6 +5368,14 @@ TEST(RunSessionTest, StopExceptionCompletesCleanupAndMarksRunFailed) {
   EXPECT_EQ(session.termination(), RunTermination::kFailed);
   EXPECT_TRUE(test::has_runtime_diagnostic(session, "RUNTIME_LIFECYCLE_CALLBACK_FAILED"));
   EXPECT_EQ(test::RuntimeProbeState::snapshot(), (std::vector<std::int32_t>{11, 12, 13}));
+  ASSERT_FALSE(session.diagnostics().empty());
+  const auto& failure_detail = session.diagnostics().front().detail;
+  if (!failure_detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(failure_detail->stage, LifecycleStage::kStop);
+  EXPECT_EQ(failure_detail->phase, LifecycleTransitionPhase::kShutdownTeardown);
+  EXPECT_EQ(failure_detail->error.message, "runtime test stop failure");
 }
 #endif
 
@@ -4845,6 +5510,252 @@ TEST(RunSessionTest, ConcurrentSessionsReceiveUniqueRunGenerations) {
   first.wait();
   second.wait();
 }
+
+// A clock-driven source that publishes one sample per explicit request. Between requests it
+// keeps ticking without emitting, so a parked downstream owner receives no further wake.
+class OwnerPollContentionSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    if (!emit_requested.exchange(false, std::memory_order_acq_rel)) {
+      return {};
+    }
+    const std::uint32_t value = published.fetch_add(1U, std::memory_order_acq_rel) + 1U;
+    published_ns.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                       std::memory_order_release);
+    return output.emit(value);
+  }
+
+  static void reset() noexcept {
+    emit_requested.store(false, std::memory_order_relaxed);
+    published.store(0U, std::memory_order_relaxed);
+    published_ns.store(0, std::memory_order_relaxed);
+  }
+
+  static inline std::atomic_bool emit_requested{};
+  static inline std::atomic<std::uint32_t> published{};
+  static inline std::atomic<std::int64_t> published_ns{};
+  Output<std::uint32_t> output;
+};
+
+// One of two fanout sinks, each on its own partition so both are pump-fed HoloMQ owners.
+class OwnerPollContentionSink final : public Operator<> {
+ public:
+  explicit OwnerPollContentionSink(const std::size_t index) noexcept : index_(index) {}
+
+  void setup(OperatorSpec& spec) override { spec.input(input, "input").queue_depth(1U); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample.error()));
+    }
+    received_ns[index_].store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                              std::memory_order_release);
+    received[index_].fetch_add(1U, std::memory_order_acq_rel);
+    return {};
+  }
+
+  static void reset() noexcept {
+    for (auto& count : received) {
+      count.store(0U, std::memory_order_relaxed);
+    }
+    for (auto& stamp : received_ns) {
+      stamp.store(0, std::memory_order_relaxed);
+    }
+  }
+
+  static inline std::array<std::atomic<std::uint32_t>, 2> received{};
+  static inline std::array<std::atomic<std::int64_t>, 2> received_ns{};
+  Input<std::uint32_t> input;
+
+ private:
+  std::size_t index_{};
+};
+
+// Request one publication and wait until both sinks have consumed it.
+[[nodiscard]] bool publish_owner_poll_contention_sample(const std::uint32_t expected_deliveries) {
+  OwnerPollContentionSource::emit_requested.store(true, std::memory_order_release);
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (OwnerPollContentionSink::received[0].load(std::memory_order_acquire) ==
+            expected_deliveries &&
+        OwnerPollContentionSink::received[1].load(std::memory_order_acquire) ==
+            expected_deliveries) {
+      return true;
+    }
+    std::this_thread::sleep_for(20us);
+  }
+  return false;
+}
+
+// A sink owner whose ordinary readiness poll loses its input cache lock has already consumed the
+// wake token that announced the sample, and the lock holder never signals again. Without a retry
+// the owner parks for the whole one-millisecond fallback with the sample retained; the retry must
+// convert the published revision within the holder's bounded critical section instead.
+// REQ: RUNTIME-025
+// REQ: RUNTIME-026
+TEST(RunSessionTest, ContendedReadinessPollRetriesInsteadOfParkingForTheFallbackWait) {
+  OwnerPollContentionSource::reset();
+  OwnerPollContentionSink::reset();
+
+  Graph graph{"runtime-owner-poll-contention"};
+  const auto source = graph.op<OwnerPollContentionSource>("source");
+  const auto first_sink = graph.op<OwnerPollContentionSink>("sink-1", std::size_t{0});
+  const auto second_sink = graph.op<OwnerPollContentionSink>("sink-2", std::size_t{1});
+  graph.add_flow(source->output, first_sink->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(source->output, second_sink->input, ConnectionOptions{.queue_depth = 1U});
+  graph.partition("runtime-owner-poll-contention-source").add(source);
+  graph.partition("runtime-owner-poll-contention-sink-1").add(first_sink);
+  graph.partition("runtime-owner-poll-contention-sink-2").add(second_sink);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-owner-poll-contention-clock"));
+
+  // Key setup: the control is armed only after a warm-up delivery, so exactly one steady-state
+  // ordinary poll reports the contended decline while nothing else can wake that owner.
+  const auto control = std::make_shared<detail::RuntimeChannelIncompletePollTestControl>(
+      0U, detail::RuntimeChannelIncompletePollKind::kNonblocking);
+  const auto counters = std::make_shared<detail::RuntimePhaseCounters>();
+  const ExecutionPlan plan =
+      detail::RuntimeTestPlanAccess::with_channel_incomplete_poll_test_control(
+          detail::RuntimeTestPlanAccess::with_phase_counters(compile(graph), counters), control);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+
+  RunSession session = run_async(plan);
+  ASSERT_TRUE(publish_owner_poll_contention_sample(1U)) << "warm-up sample was not delivered";
+
+  // Three contended publications; the minimum latency is the oracle so one preempted lane on a
+  // loaded host cannot fail the run, while an unfixed owner parks >= 1.06 ms on every trial.
+  constexpr std::uint32_t kTrials = 3U;
+  std::array<std::int64_t, kTrials> latencies_ns{};
+  bool delivered = true;
+  for (std::uint32_t trial = 0U; trial < kTrials && delivered; ++trial) {
+    control->arm(1U);
+    delivered = publish_owner_poll_contention_sample(2U + trial);
+    const std::int64_t published_ns =
+        OwnerPollContentionSource::published_ns.load(std::memory_order_acquire);
+    const std::int64_t completed_ns =
+        std::max(OwnerPollContentionSink::received_ns[0].load(std::memory_order_acquire),
+                 OwnerPollContentionSink::received_ns[1].load(std::memory_order_acquire));
+    latencies_ns[trial] = completed_ns - published_ns;
+  }
+  session.request_stop();
+  session.wait();
+
+  ASSERT_TRUE(delivered) << "contended sample was not delivered";
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  const auto snapshot = counters->snapshot();
+  const auto count = [&](detail::RuntimePhaseCounter counter) {
+    return snapshot[detail::RuntimePhaseCounters::index(counter)];
+  };
+  // Key assertion: every forced decline happened exactly once per trial and each was answered by
+  // one retry.
+  EXPECT_EQ(control->forced(), kTrials);
+  EXPECT_GE(count(detail::RuntimePhaseCounter::kReadinessPollContentionRetries), kTrials);
+  EXPECT_GE(count(detail::RuntimePhaseCounter::kChannelPollIncomplete), kTrials);
+  // Key assertion: the retained sample completed within the holder's critical section, not after
+  // the one-millisecond fallback (which measures ~1.06 ms on a 50 us timer-slack host).
+  const std::int64_t min_latency_ns = *std::min_element(latencies_ns.begin(), latencies_ns.end());
+  EXPECT_GT(min_latency_ns, 0);
+  EXPECT_LT(min_latency_ns, 800'000)
+      << "contended-poll completion latencies " << latencies_ns[0] << " / " << latencies_ns[1]
+      << " / " << latencies_ns[2] << " ns";
+}
+#if GTEST_HAS_DEATH_TEST
+void exercise_diagnostic_self_join(int context, bool fail_formatting) {
+  test::RuntimeProbeState::reset();
+  const ExecutionPlan direct = test::enable_direct_runtime(test::make_runtime_test_plan());
+  std::set_terminate([] { std::_Exit(std::current_exception() ? 91 : 90); });
+  if (context != 0) {
+    RunSession session = run_async(direct);
+    const detail::RuntimeCallbackContextScope callback{detail::RuntimeCallbackContext::kDispatcher};
+    std::optional<test::ScopedAllocationFailure> failure;
+    if (fail_formatting) {
+      std::size_t admission_allocations = 0U;
+      if (context == 2) {
+        // Bounded wait constructs its admission Error before reaching the fatal logger. Inject
+        // after that work, so this scenario exercises reporting rather than Error allocation.
+        const test::ScopedAllocationCounter allocations;
+        const auto admission = session.wait_admission();
+        if (admission)
+          std::_Exit(93);
+        admission_allocations = allocations.count();
+      }
+      failure.emplace(admission_allocations);
+    }
+    if (context == 2) {
+      static_cast<void>(session.wait_for(std::chrono::nanoseconds{0}));
+    } else {
+      session.wait();
+    }
+  } else {
+    const auto sink = std::make_shared<SelfJoinDiagnosticSink>(fail_formatting);
+    const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_diagnostic_sink(direct, sink);
+    RunSession session = run_async(plan);
+    sink->bind(session);
+    session.wait();
+  }
+  std::_Exit(92);
+}
+
+// REQ: EXPECTED-032
+// REQ: RUNTIME-003
+TEST(RunSessionDeathTest, SelfJoinReportsBypassAutomaticPolicy) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  for (const int context : {0, 1, 2}) {
+    for (const int policy : {0, 1, 2}) {
+      EXPECT_EXIT(
+          {
+            test::set_test_environment("HOLOSCAN_LOG_LEVEL", nullptr);
+            test::set_test_environment("HOLOSCAN_LOG_FORMAT", nullptr);
+            test::set_test_environment("HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING", nullptr);
+            if (policy == 2)
+              test::set_test_environment("HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING", "OFF");
+            set_automatic_diagnostic_logging_enabled(policy != 1);
+            set_log_level(LogLevel::ERROR);
+            exercise_diagnostic_self_join(context, false);
+          },
+          testing::ExitedWithCode(90),
+          "RUNTIME_SELF_JOIN_FORBIDDEN");
+    }
+  }
+}
+
+// REQ: EXPECTED-032
+// REQ: RUNTIME-003
+TEST(RunSessionDeathTest, SelfJoinTerminationSurvivesFilteringAndFormattingFailure) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  for (const int context : {0, 1, 2}) {
+    for (const bool fail_formatting : {false, true}) {
+      EXPECT_EXIT(
+          {
+            test::set_test_environment("HOLOSCAN_LOG_LEVEL", nullptr);
+            test::set_test_environment("HOLOSCAN_LOG_FORMAT", nullptr);
+            test::set_test_environment("HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING", nullptr);
+            set_automatic_diagnostic_logging_enabled(true);
+            set_log_level(fail_formatting ? LogLevel::ERROR : LogLevel::OFF);
+            exercise_diagnostic_self_join(context, fail_formatting);
+          },
+          testing::ExitedWithCode(90),
+          "^$");
+    }
+  }
+}
+#endif
 
 }  // namespace
 }  // namespace holoscan

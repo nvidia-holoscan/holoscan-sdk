@@ -47,17 +47,23 @@ TEST(ThreadAffinity, NormalizesSortedUnique) {
 }
 
 TEST(ThreadAffinity, RejectsInvalidRange) {
+  // Key setup: Request an inclusive range whose end precedes its start.
   auto affinity = CPUAffinity::from_ranges({CPUCoreRange{4, 3}});
 
+  // Key assertion: Core owns a stable range-validation token for all language bindings.
   EXPECT_FALSE(affinity);
   EXPECT_EQ(affinity.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(affinity.error().message, "CPU_AFFINITY_RANGE_INVALID reason=end_before_start");
 }
 
 TEST(ThreadAffinity, RejectsExcessiveRangeExpansion) {
+  // Key setup: Request one more expanded core than the bounded affinity limit.
   auto affinity = CPUAffinity::from_ranges({CPUCoreRange{0, 1'048'576}});
 
+  // Key assertion: Excessive expansion shares the stable range token and records its reason.
   EXPECT_FALSE(affinity);
   EXPECT_EQ(affinity.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(affinity.error().message, "CPU_AFFINITY_RANGE_INVALID reason=expansion_exceeds_limit");
 }
 
 // THREAD-PLACE-003: present-but-empty affinity is a configuration error.

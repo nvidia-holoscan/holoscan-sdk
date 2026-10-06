@@ -135,6 +135,12 @@ void add_deployment_binding(StableHashBuilder& hash, const DeploymentBinding& de
         add_thread_placement(record_hash, binding.placement);
       });
   add_canonical_deployment_records(
+      hash, deployment.support_thread_affinities(), [](auto& record_hash, const auto& binding) {
+        record_hash.add("support_thread_affinity");
+        record_hash.add(binding.role);
+        add_thread_placement(record_hash, binding.placement);
+      });
+  add_canonical_deployment_records(
       hash, deployment.cuda_green_contexts(), [](auto& record_hash, const auto& binding) {
         record_hash.add("cuda_green_context");
         record_hash.add(binding.partition_name);
@@ -249,11 +255,12 @@ bool canonicalize_parameter_scalar(ParamScalarValue& value) noexcept {
 ParameterProtectedValueDigest parameter_field_value_digest(const ParamSchemaDescriptor& schema,
                                                            const ParamFieldDescriptor& field,
                                                            const void* aggregate) noexcept {
-  if (field.local_operations.read_member_as_scalar == nullptr) {
+  if (field.local_operations.read_member_as_scalar == nullptr &&
+      field.local_operations.read_hosted_member_as_scalar == nullptr) {
     return {.disposition = ParameterValueDigestDisposition::kLocalTypedField};
   }
   ParamScalarValue scalar;
-  if (!field.local_operations.read_member_as_scalar(aggregate, scalar) ||
+  if (!read_param_field_scalar(field, aggregate, scalar) ||
       !canonicalize_parameter_scalar(scalar)) {
     return {.disposition = ParameterValueDigestDisposition::kInvalidScalar};
   }
@@ -345,12 +352,12 @@ ParameterProtectedValueDigest parameter_value_digest(const ParamTypeDescriptor& 
   add_hash_bytes(hash, schema->contract_hash);
   hash.add_canonical_size(schema->fields.size());
   for (const ParamFieldDescriptor& field : schema->fields) {
-    if (field.local_operations.read_member_as_scalar == nullptr) {
+    if (field.local_operations.read_member_as_scalar == nullptr &&
+        field.local_operations.read_hosted_member_as_scalar == nullptr) {
       return {.disposition = ParameterValueDigestDisposition::kLocalTypedField};
     }
     ParamScalarValue scalar;
-    if (!field.local_operations.read_member_as_scalar(value, scalar) ||
-        !canonicalize_parameter_scalar(scalar)) {
+    if (!read_param_field_scalar(field, value, scalar) || !canonicalize_parameter_scalar(scalar)) {
       return {.disposition = ParameterValueDigestDisposition::kInvalidScalar};
     }
     add_hash_bytes(hash, field.full_id);

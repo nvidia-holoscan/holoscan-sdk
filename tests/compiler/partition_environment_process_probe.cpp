@@ -30,6 +30,7 @@
 
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/run.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "compile_test_graph.hpp"
@@ -76,8 +77,8 @@ class CUDADeviceSupportThreadControl final : public detail::RuntimeSupportThread
  public:
   explicit CUDADeviceSupportThreadControl(DeviceId device) : device_(device) {}
 
-  [[nodiscard]] expected<void, Error> enter(detail::RuntimeSupportThreadRole role) override {
-    if (role == detail::RuntimeSupportThreadRole::kController &&
+  [[nodiscard]] expected<void, Error> enter(SupportThreadRole role) override {
+    if (role == SupportThreadRole::kController &&
         (cudaSetDevice(device_.value) != cudaSuccess || cudaFree(nullptr) != cudaSuccess)) {
       return make_unexpected(Error{ErrorCode::kNotSupported});
     }
@@ -152,6 +153,82 @@ struct WorkerProbeState {
       .sample_received = &WorkerProbeState::record,
   };
 }
+
+constexpr std::uint32_t kPublicationPayload = 71U;
+constexpr std::int64_t kCaptureInstant = 17;
+
+class PublicationCoordinateSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 20ms});
+    return result;
+  }
+
+  void start() override { WorkerProbeState::record_source_start(); }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    const TimePoint capture{.timestamp_ns = kCaptureInstant,
+                            .clock_id = context.activation_time().clock_id};
+    auto emitted = output.emit(kPublicationPayload, EmitOptions{.capture_time = capture});
+    if (!emitted && emitted.error().code != ErrorCode::kNotReady &&
+        emitted.error().code != ErrorCode::kBackpressured &&
+        emitted.error().code != ErrorCode::kPublicationIndeterminate) {
+      return make_unexpected(std::move(emitted).error());
+    }
+    return {};
+  }
+
+  Output<std::uint32_t> output;
+};
+
+class PublicationCoordinateSink final : public Operator<> {
+ public:
+  explicit PublicationCoordinateSink(bool process_local) : process_local_(process_local) {}
+
+  void setup(OperatorSpec& spec) override { spec.input(input, "input").queue_depth(4U); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  void start() override { WorkerProbeState::record_sink_start(); }
+
+  // REQ: RUNTIME-057
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample).error());
+    }
+    const auto& metadata = sample->metadata;
+    const ClockId clock = context.activation_time().clock_id;
+    const bool capture_retained = clock.valid() && metadata.capture_time().valid() &&
+                                  metadata.capture_timestamp_ns == kCaptureInstant &&
+                                  metadata.source_clock_id == clock;
+    const bool publication_valid =
+        process_local_ ? metadata.publish_time().valid() && metadata.publish_timestamp_ns > 0 &&
+                             metadata.publish_clock_id == clock
+                       : !metadata.publish_time().valid() && metadata.publish_timestamp_ns == 0 &&
+                             !metadata.publish_clock_id.valid();
+    if (sample->data != kPublicationPayload || !capture_retained || !publication_valid) {
+      return make_unexpected(Error{ErrorCode::kProtocolError,
+                                   "publication-coordinate metadata did not match locality"});
+    }
+    WorkerProbeState::record(sample->data);
+    return {};
+  }
+
+  Input<std::uint32_t> input;
+
+ private:
+  bool process_local_;
+};
 
 struct WorkerFanoutProbeState {
   static constexpr std::size_t kSampleCount = 8U;
@@ -469,13 +546,23 @@ using WorkerDeviceTensorSink = WorkerHostTensorSink<MemoryKind::kCudaDevice>;
   return compile(graph, options);
 }
 
-[[nodiscard]] ExecutionPlan compile_worker_plan() {
+[[nodiscard]] ExecutionPlan compile_worker_plan(bool publication_coordinate = false,
+                                                bool process_local = false) {
   Graph graph{probe_graph_name("partition-worker-environment")};
   const ClockKey runtime_clock = graph.add_clock<RealtimeClock>("runtime-clock");
   graph.set_default_clock(runtime_clock);
-  auto source = graph.op<test::ScalarProcessBoundarySource>("source", worker_scalar_hooks());
-  auto target = graph.op<test::ScalarProcessBoundarySink>("target", worker_scalar_hooks());
-  graph.add_flow(source->output, target->input, ConnectionOptions{.queue_depth = 4U});
+  if (publication_coordinate) {
+    auto source = graph.op<PublicationCoordinateSource>("source");
+    auto target = graph.op<PublicationCoordinateSink>("target", process_local);
+    graph.add_flow(source->output, target->input, ConnectionOptions{.queue_depth = 4U});
+  } else {
+    auto source = graph.op<test::ScalarProcessBoundarySource>("source", worker_scalar_hooks());
+    auto target = graph.op<test::ScalarProcessBoundarySink>("target", worker_scalar_hooks());
+    graph.add_flow(source->output, target->input, ConnectionOptions{.queue_depth = 4U});
+  }
+  if (process_local) {
+    return compile(graph);
+  }
 
   constexpr std::array source_selector{detail::GraphObjectSelector{.graph_path = "source"}};
   constexpr std::array target_selector{detail::GraphObjectSelector{.graph_path = "target"}};
@@ -702,10 +789,11 @@ template <MemoryKind Storage>
 
 [[nodiscard]] bool run_consumer_worker(const int result_fd,
                                        const std::optional<std::string_view> compile_selector,
-                                       const std::optional<std::string_view> runtime_selector) {
+                                       const std::optional<std::string_view> runtime_selector,
+                                       bool publication_coordinate) {
   WorkerProbeState::reset();
   bool valid = set_selector(compile_selector);
-  const ExecutionPlan plan = compile_worker_plan();
+  const ExecutionPlan plan = compile_worker_plan(publication_coordinate);
   valid &= check(!compile_selector.has_value(),
                  "worker compile must not use the removed environment selector");
   valid &= check_valid_plan(plan,
@@ -719,6 +807,9 @@ template <MemoryKind Storage>
   const auto* state = detail::ExecutionPlanAccess::state(plan);
   valid &= check(state != nullptr && state->cross_process_channel_services.size() == 1U,
                  "consumer exec has no unique cross-process service");
+  valid &=
+      check(state != nullptr && state->clocks.size() == 1U && state->root_default_clock.valid(),
+            "consumer exec has no plan-owned default clock");
   if (!valid) {
     const char ready = 0;
     if (write(result_fd, &ready, sizeof(ready)) != sizeof(ready)) {
@@ -736,11 +827,13 @@ template <MemoryKind Storage>
   const bool received = started && ready_written && WorkerProbeState::wait_for_count(2U);
   consumer.request_stop();
   consumer.wait();
-  const bool child_valid =
-      received && WorkerProbeState::last.load(std::memory_order_acquire) == 0x15U &&
-      WorkerProbeState::sink_starts.load(std::memory_order_acquire) == 1U &&
-      WorkerProbeState::source_starts.load(std::memory_order_acquire) == 0U &&
-      consumer.termination() == RunTermination::kStopped && consumer.diagnostics().empty();
+  const bool child_valid = received &&
+                           WorkerProbeState::last.load(std::memory_order_acquire) ==
+                               (publication_coordinate ? kPublicationPayload : 0x15U) &&
+                           WorkerProbeState::sink_starts.load(std::memory_order_acquire) == 1U &&
+                           WorkerProbeState::source_starts.load(std::memory_order_acquire) == 0U &&
+                           consumer.termination() == RunTermination::kStopped &&
+                           consumer.diagnostics().empty();
   const char result = child_valid ? 1 : 0;
   const bool result_written = write(result_fd, &result, sizeof(result)) == sizeof(result);
   return child_valid && result_written;
@@ -1115,7 +1208,8 @@ template <MemoryKind Storage>
 [[nodiscard]] bool run_worker_plan(const ExecutionPlan& plan,
                                    std::optional<std::string_view> worker_selector,
                                    std::string_view expected_algorithm,
-                                   PlanSelectionSource expected_source) {
+                                   PlanSelectionSource expected_source,
+                                   bool publication_coordinate = false) {
   WorkerProbeState::reset();
   bool valid = set_selector(worker_selector);
   valid &= check_selector(worker_selector);
@@ -1142,6 +1236,9 @@ template <MemoryKind Storage>
   const auto* state = detail::ExecutionPlanAccess::state(plan);
   valid &= check(state != nullptr && state->cross_process_channel_services.size() == 1U,
                  "worker plan has no unique cross-process service");
+  valid &=
+      check(state != nullptr && state->clocks.size() == 1U && state->root_default_clock.valid(),
+            "producer has no plan-owned default clock");
   if (!valid) {
     return false;
   }
@@ -1175,6 +1272,7 @@ template <MemoryKind Storage>
           result_fd_argument.c_str(),
           compile_selector_argument.c_str(),
           runtime_selector_argument.c_str(),
+          publication_coordinate ? "publication" : "scalar",
           static_cast<char*>(nullptr));
     std::_Exit(127);
   }
@@ -1221,7 +1319,8 @@ template <MemoryKind Storage>
   producer.wait();
   consumer.wait();
   valid &= check(received, "worker did not receive data through the accepted cross-process edge");
-  valid &= check(WorkerProbeState::last.load(std::memory_order_acquire) == 0x15U,
+  valid &= check(WorkerProbeState::last.load(std::memory_order_acquire) ==
+                     (publication_coordinate ? kPublicationPayload : 0x15U),
                  "worker observed the wrong payload");
   valid &= check(producer.termination() == RunTermination::kStopped &&
                      consumer.termination() == RunTermination::kStopped,
@@ -1308,7 +1407,45 @@ template <MemoryKind Storage>
 #endif
 }
 
+// REQ: RUNTIME-057
+[[nodiscard]] bool run_publication_coordinate_plan(bool process_local) {
+  if (!set_selector(std::nullopt)) {
+    return false;
+  }
+  // Both cases compile the same clock declaration and Operators. Only placement changes.
+  const ExecutionPlan plan = compile_worker_plan(true, process_local);
+  if (!process_local) {
+    return run_worker_plan(
+        plan, std::nullopt, kSourceChainAlgorithm, PlanSelectionSource::kCoreDefault, true);
+  }
+
+  WorkerProbeState::reset();
+  const auto* state = detail::ExecutionPlanAccess::state(plan);
+  if (!check(plan.ok() && state != nullptr && state->clocks.size() == 1U &&
+                 state->root_default_clock.valid() && state->cross_process_channel_services.empty(),
+             "local graph has no plan-owned default clock or crosses processes")) {
+    return false;
+  }
+  RunSession session = run_async(plan);
+  const bool received = WorkerProbeState::wait_for_count(2U);
+  session.request_stop();
+  session.wait();
+  return check(received &&
+                   WorkerProbeState::last.load(std::memory_order_acquire) == kPublicationPayload &&
+                   WorkerProbeState::source_starts.load(std::memory_order_acquire) == 1U &&
+                   WorkerProbeState::sink_starts.load(std::memory_order_acquire) == 1U,
+               "local compiled graph did not retain publication and capture coordinates") &&
+         check(session.termination() == RunTermination::kStopped && session.diagnostics().empty(),
+               "local publication-coordinate graph did not stop cleanly");
+}
+
 [[nodiscard]] bool run_case(std::string_view scenario) {
+  if (scenario == "worker-publication-coordinate") {
+    return run_publication_coordinate_plan(false);
+  }
+  if (scenario == "local-publication-coordinate") {
+    return run_publication_coordinate_plan(true);
+  }
   if (scenario == "absent") {
     return check_selector(std::nullopt) && check_valid_plan(compile_linear(),
                                                             kSourceChainAlgorithm,
@@ -1409,7 +1546,7 @@ int main(int argc, char** argv) {
     close(result_fd);
     return valid ? 0 : 1;
   }
-  if (argc == 5 && std::string_view(argv[1]) == "worker-consumer") {
+  if (argc == 6 && std::string_view(argv[1]) == "worker-consumer") {
     char* end = nullptr;
     const long parsed_fd = std::strtol(argv[2], &end, 10);
     if (end == argv[2] || *end != '\0' || parsed_fd < 0 ||
@@ -1419,7 +1556,8 @@ int main(int argc, char** argv) {
     const int result_fd = static_cast<int>(parsed_fd);
     const bool valid = holoscan::run_consumer_worker(result_fd,
                                                      holoscan::selector_from_argument(argv[3]),
-                                                     holoscan::selector_from_argument(argv[4]));
+                                                     holoscan::selector_from_argument(argv[4]),
+                                                     std::string_view(argv[5]) == "publication");
     close(result_fd);
     return valid ? 0 : 1;
   }

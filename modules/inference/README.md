@@ -9,11 +9,70 @@ HoloInfer is the TensorRT inference toolkit backing `holoscan::ops::InferenceOp`
 per-model TensorRT contexts (`TrtInfer`), the multi-model dispatch manager (`ManagerInfer`) and
 the fast dispatch paths that `InferenceOp` selects automatically at `start()`.
 
+## Python authoring package
+
+The optional module package exposes the operator from its canonical provider namespace:
+
+```python
+import holoscan as hs
+from holoscan_inference.operators import InferenceOp
+
+graph = hs.Graph("inference")
+inference = InferenceOp(
+    graph,
+    "inference",
+    model_path_map={"detector": "/models/detector.onnx"},
+    input_map={"detector": ["frames"]},
+    output_map={"detector": ["detections"]},
+)
+```
+
+The separately distributed `holoscan-inference-cu13` wheel owns the canonical
+`holoscan_inference` provider package, HoloInfer, and the operator library. Its
+entry point also makes `holoscan.inference` available as an identity-preserving
+alias when distribution metadata is installed. The wheel exact-pins Core while
+TensorRT 10 and CUDA 13 remain deployment prerequisites.
+
+The module uses a dedicated stable-ABI extension and links the Inference DSO; importing ordinary
+`holoscan` does not load TensorRT or register `InferenceOp`. Loading the Inference DSO registers the
+fully qualified `holoscan.inference.InferenceOp` catalog row for C++ and language-binding consumers.
+`holoscan::ops::register_inference_operator_catalog()` returns the retained status for that row when
+an explicit diagnostic checkpoint is useful.
+
+The row has pass-through introspection because Core's generic parameter ABI does not represent the
+map-shaped fields. Consequently, the typed module facade above is the only short import spelling;
+the weaker `holoscan.operators.InferenceOp` generic alias is deliberately absent. The facade accepts
+either `config_path` by itself or the three direct maps. A simple `required_parameters` set cannot
+truthfully express that alternative, so discovery leaves it empty and the facade enforces the mode.
+
+Relative model paths loaded through `config_path` resolve from the YAML file's directory. Direct
+`model_path_map` strings remain deployment-target paths and resolve from the runtime process's
+working directory. Authoring validates map structure and nonempty paths, but deliberately does not
+require files to exist on the machine compiling the graph.
+
+Native archive installs keep the binding payload in the
+`holoscan-inference-python_libs` component; the native `holoscan-inference`
+component does not install Python files. Wheel assembly uses the independent
+`holoscan-wheel-inference` component.
+
 ## Dispatch kinds
 
 `InferenceOp::start()` picks one of seven dispatch kinds
 (`include/holoscan/operators/inference/fast_path_eligibility.hpp`) from the operator's existing
 configuration. There is no user-facing opt-in.
+
+## Installed CMake package
+
+New consumers should use the dedicated package, pointing CMake at the SDK's shared package
+directory:
+
+```cmake
+find_package(holoscan-inference CONFIG REQUIRED)
+target_link_libraries(my_pipeline PRIVATE holoscan::infer holoscan::op_inference)
+```
+
+Configure with `-Dholoscan-inference_DIR=<prefix>/lib/cmake/holoscan`. The required compatibility
+form is `find_package(holoscan COMPONENTS inference REQUIRED)`.
 
 | Kind          | Models | Shapes  | Concurrency | Notes                                            |
 | ------------- | ------ | ------- | ----------- | ------------------------------------------------ |
@@ -106,7 +165,7 @@ Two loader entry points, sharing the same schema:
 
 - **`InferenceOpParams::from_yaml(std::string_view path)`** — reads the file's **root** as the
   entire aggregate. Use this when a YAML file configures one InferenceOp only (the "single-op
-  YAML" convention used by every example config in `examples/inference/configs/`).
+  YAML" convention used by every example config in `examples/configs/`).
 
 - **`InferenceOpParams::from_yaml_node(const YAML::Node& node, const std::filesystem::path&
   config_dir)`** — reads any already-parsed YAML node as the aggregate. Use this when a single

@@ -14,6 +14,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -37,6 +38,7 @@
 #include <holoscan/time/clock.hpp>
 
 #include "core/source_id_internal.hpp"
+#include "managed_signal_benchmark.hpp"
 #include "runtime/dispatcher.hpp"
 #include "runtime/execution_lane.hpp"
 #include "runtime/physical_readiness_binding.hpp"
@@ -534,6 +536,190 @@ void BM_RuntimeCandidateBatchCycle(benchmark::State& state) {
 
   state.counters["batch_candidates"] = static_cast<double>(candidate_count);
   state.SetItemsProcessed(completed_candidates);
+}
+
+enum class CandidateFreezeMode : std::uint8_t {
+  kOrdinary,
+  kConstrained,
+};
+
+void apply_candidate_freeze_args(benchmark::Benchmark* benchmark) {
+  benchmark->Args({8, 1, 1, 0})
+      ->Args({64, 1, 1, 0})
+      ->Args({64, 4, 1, 0})
+      ->Args({64, 4, 4, 0})
+      ->Args({64, 4, 4, 4})
+      ->ArgNames({"pending", "fences", "prefix_depth", "unrelated_owners"});
+}
+
+// Measure one full candidate-freeze API call at an unchanged pending-set shape. Retirement and
+// refill run while timing is paused, and both modes freeze the same source, sequence, and pending
+// index.
+// REQ: RUNTIME-007
+// REQ: RUNTIME-043
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+void BM_RuntimeCandidateFreezeSelection(benchmark::State& state, CandidateFreezeMode mode) {
+  constexpr holoscan::ClockId kReferenceClock{23U};
+  constexpr std::int64_t kProbeReferenceNs = 1;
+  constexpr std::int64_t kStaticReferenceNs = 1'000'000'000;
+  const auto pending_count = static_cast<std::size_t>(state.range(0));
+  const auto fence_count = static_cast<std::size_t>(state.range(1));
+  const auto prefix_depth = static_cast<std::size_t>(state.range(2));
+  const auto unrelated_owner_count = static_cast<std::size_t>(state.range(3));
+  const std::size_t fenced_pending = fence_count * prefix_depth;
+  if (pending_count == 0U || fence_count == 0U || prefix_depth == 0U ||
+      fenced_pending + unrelated_owner_count > pending_count) {
+    state.SkipWithError("invalid candidate-freeze benchmark shape");
+    return;
+  }
+  const std::size_t filler_count = pending_count - fenced_pending - unrelated_owner_count;
+
+  std::vector<holoscan::detail::RuntimeSourceBindingRecord> sources;
+  sources.reserve(fence_count + unrelated_owner_count +
+                  static_cast<std::size_t>(filler_count > 0U));
+  const auto add_source = [&](const holoscan::detail::RuntimeEventKind kind,
+                              const holoscan::VertexId owner,
+                              const holoscan::PortId port,
+                              const std::size_t capacity,
+                              const std::size_t receiver_index) {
+    const auto one_based = static_cast<std::uint32_t>(sources.size() + 1U);
+    sources.push_back({
+        .candidate_kind = kind,
+        .source = holoscan::detail::make_source_id(one_based),
+        .port = port,
+        .source_clock = kReferenceClock,
+        .reference_clock = kReferenceClock,
+        .source_order = one_based,
+        .capacity = static_cast<std::uint32_t>(capacity),
+        .source_generation = 1U,
+        .tag_generation = 1U,
+        .receiver_index = receiver_index,
+        .partition = holoscan::ExecutionPartitionId{1U},
+        .execution_lane = 0U,
+        .vertex = owner,
+        .plan_vertex_order = static_cast<std::uint32_t>(owner.value),
+        .stable_candidate_tie = one_based,
+    });
+  };
+
+  constexpr holoscan::VertexId kFencedOwner{1U};
+  for (std::size_t index = 0U; index < fence_count; ++index) {
+    add_source(holoscan::detail::RuntimeEventKind::kInputArrival,
+               kFencedOwner,
+               holoscan::PortId{static_cast<std::uint32_t>(index + 1U)},
+               prefix_depth,
+               0U);
+  }
+  const std::size_t filler_source_index = sources.size();
+  if (filler_count > 0U) {
+    add_source(holoscan::detail::RuntimeEventKind::kClockTick, kFencedOwner, {}, filler_count, 0U);
+  }
+  const std::size_t unrelated_source_begin = sources.size();
+  for (std::size_t index = 0U; index < unrelated_owner_count; ++index) {
+    add_source(holoscan::detail::RuntimeEventKind::kClockTick,
+               holoscan::VertexId{static_cast<std::uint32_t>(index + 2U)},
+               {},
+               1U,
+               index + 1U);
+  }
+
+  auto coordinator = holoscan::detail::RuntimeCandidateCoordinator::create(
+      sources, unrelated_owner_count + 1U, pending_count);
+  if (!coordinator) {
+    state.SkipWithError("failed to create candidate-freeze coordinator");
+    return;
+  }
+  std::vector<holoscan::detail::RuntimeCandidateInputFence> fences;
+  fences.reserve(fence_count);
+  for (std::size_t index = 0U; index < fence_count; ++index) {
+    fences.push_back({kFencedOwner, sources[index].source, sources[index].port});
+  }
+
+  holoscan::detail::BoundedEventPortBinding binding{pending_count};
+  const auto push_event = [&](const std::size_t source_index,
+                              const std::uint64_t sequence,
+                              const std::int64_t reference_ns) {
+    const auto& source = sources[source_index];
+    return binding.push({
+        .kind = source.candidate_kind,
+        .source = source.source,
+        .port = source.port,
+        .source_decision_time = holoscan::TimePoint{reference_ns, kReferenceClock},
+        .reference_time = holoscan::TimePoint{reference_ns, kReferenceClock},
+        .source_generation = source.source_generation,
+        .source_sequence = sequence,
+    });
+  };
+  if (filler_count > 0U) {
+    for (std::uint64_t sequence = 1U; sequence <= filler_count; ++sequence) {
+      if (!push_event(filler_source_index, sequence, kStaticReferenceNs)) {
+        state.SkipWithError("failed to preload candidate-freeze filler");
+        return;
+      }
+    }
+  }
+  for (std::size_t index = 0U; index < unrelated_owner_count; ++index) {
+    if (!push_event(unrelated_source_begin + index, 1U, kStaticReferenceNs)) {
+      state.SkipWithError("failed to preload unrelated candidate");
+      return;
+    }
+  }
+  for (std::size_t source_index = 1U; source_index < fence_count; ++source_index) {
+    for (std::uint64_t sequence = 1U; sequence <= prefix_depth; ++sequence) {
+      if (!push_event(source_index, sequence, kStaticReferenceNs)) {
+        state.SkipWithError("failed to preload fenced candidate");
+        return;
+      }
+    }
+  }
+  for (std::uint64_t sequence = 1U; sequence <= prefix_depth; ++sequence) {
+    if (!push_event(0U, sequence, kProbeReferenceNs)) {
+      state.SkipWithError("failed to preload probe prefix");
+      return;
+    }
+  }
+  auto ingested = coordinator->ingest(binding);
+  if (!ingested || *ingested != pending_count) {
+    state.SkipWithError("failed to ingest candidate-freeze pending set");
+    return;
+  }
+
+  std::uint64_t expected_sequence = 1U;
+  std::uint64_t next_sequence = prefix_depth + 1U;
+  for (auto _ : state) {
+    auto frozen = mode == CandidateFreezeMode::kConstrained
+                      ? coordinator->freeze_next_constrained(fences)
+                      : coordinator->freeze_next();
+    state.PauseTiming();
+    if (!frozen || frozen->witness.source != sources.front().source ||
+        frozen->witness.source_sequence != expected_sequence) {
+      state.ResumeTiming();
+      state.SkipWithError("candidate-freeze selected an unexpected witness");
+      return;
+    }
+    benchmark::DoNotOptimize(frozen->candidate.tag);
+    auto retired = coordinator->retire(*frozen);
+    auto pushed = retired ? push_event(0U, next_sequence, kProbeReferenceNs)
+                          : holoscan::expected<void, holoscan::Error>{
+                                holoscan::make_unexpected(std::move(retired.error()))};
+    auto refilled = pushed ? coordinator->ingest(binding)
+                           : holoscan::expected<std::size_t, holoscan::Error>{
+                                 holoscan::make_unexpected(std::move(pushed.error()))};
+    if (!refilled || *refilled != 1U) {
+      state.ResumeTiming();
+      state.SkipWithError("failed to restore candidate-freeze pending set");
+      return;
+    }
+    ++expected_sequence;
+    ++next_sequence;
+    state.ResumeTiming();
+  }
+
+  state.counters["fences"] = static_cast<double>(fence_count);
+  state.counters["pending"] = static_cast<double>(pending_count);
+  state.counters["prefix_depth"] = static_cast<double>(prefix_depth);
+  state.counters["unrelated_owners"] = static_cast<double>(unrelated_owner_count);
+  state.SetItemsProcessed(state.iterations());
 }
 
 // Measure the bounded activation metadata copy independently of scheduling and Channel ownership.
@@ -1285,11 +1471,20 @@ void run_direct_session_benchmark(benchmark::State& state, const char* graph_nam
                                   const DirectSessionSignalMode signal_mode) {
   const bool uses_persistent_domain =
       signal_mode == DirectSessionSignalMode::kPersistentManagedLifecycle;
+  const auto await_managed_admission = [&]() {
+    const auto ready = holoscan::benchmark_support::wait_for_single_thread();
+    if (!ready) {
+      state.SkipWithError(holoscan::runtime_error_message(ready.error()));
+      return false;
+    }
+    return true;
+  };
   std::optional<holoscan::ManagedShutdownSignals> managed_signals;
   const auto establish_managed_domain = [&]() {
     auto created = holoscan::ManagedShutdownSignals::create();
     if (!created) {
-      state.SkipWithError("failed to establish managed signal benchmark domain");
+      state.SkipWithError("failed to establish managed signal benchmark domain: " +
+                          holoscan::runtime_error_message(created.error()));
       return false;
     }
     managed_signals.emplace(std::move(*created));
@@ -1302,14 +1497,15 @@ void run_direct_session_benchmark(benchmark::State& state, const char* graph_nam
     auto closed = managed_signals->close();
     managed_signals.reset();
     if (!closed) {
-      state.SkipWithError("failed to close managed signal benchmark domain");
+      state.SkipWithError("failed to close managed signal benchmark domain: " +
+                          holoscan::runtime_error_message(closed.error()));
       return false;
     }
     return true;
   };
 
   // Managed admission must precede graph compilation and any participant threads it may start.
-  if (uses_persistent_domain && !establish_managed_domain()) {
+  if (uses_persistent_domain && (!await_managed_admission() || !establish_managed_domain())) {
     return;
   }
   const holoscan::ExecutionPlan plan =
@@ -1327,6 +1523,15 @@ void run_direct_session_benchmark(benchmark::State& state, const char* graph_nam
   }
 
   for (auto _ : state) {
+    if (signal_mode != DirectSessionSignalMode::kCallerManaged) {
+      // Joined workers from a preceding case or iteration can still appear in /proc/self/task.
+      // Keep this harness-only retirement wait out of the complete create/run/close measurement.
+      state.PauseTiming();
+      if (!await_managed_admission()) {
+        return;
+      }
+      state.ResumeTiming();
+    }
     if (uses_persistent_domain && !establish_managed_domain()) {
       return;
     }
@@ -1679,6 +1884,11 @@ void BM_DirectTensorPoolCycleBySlotCapacity(benchmark::State& state) {
 
 BENCHMARK(BM_DispatcherReadySetCycle)->Arg(1)->Arg(8)->Arg(64);
 BENCHMARK(BM_RuntimeCandidateBatchCycle)->Arg(1)->Arg(2)->Arg(4);
+BENCHMARK_CAPTURE(BM_RuntimeCandidateFreezeSelection, ordinary, CandidateFreezeMode::kOrdinary)
+    ->Apply(apply_candidate_freeze_args);
+BENCHMARK_CAPTURE(BM_RuntimeCandidateFreezeSelection, constrained,
+                  CandidateFreezeMode::kConstrained)
+    ->Apply(apply_candidate_freeze_args);
 BENCHMARK(BM_ActivationSelectionCycle)->Arg(0)->Arg(1)->Arg(8);
 BENCHMARK(BM_PhysicalReadinessNotificationCycle);
 BENCHMARK(BM_ControllerActivationTransaction)->UseRealTime();

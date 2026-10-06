@@ -6,6 +6,8 @@
 #pragma once
 
 #include <holoscan/holoscan_core_export.h>
+#include <holoscan/authoring/parameter_materializer.hpp>
+#include <holoscan/authoring/registry.hpp>
 #include <holoscan/channel/clock_health.hpp>
 #include <holoscan/channel/pod_type.hpp>
 #include <holoscan/core/activation.hpp>
@@ -19,6 +21,7 @@
 #include <holoscan/core/expected.hpp>
 #include <holoscan/core/expected_macros.hpp>
 #include <holoscan/core/external_topic.hpp>
+#include <holoscan/core/foreign_operator.hpp>
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/lifecycle.hpp>
 #include <holoscan/core/lifecycle_control.hpp>
@@ -29,7 +32,7 @@
 #include <holoscan/core/parameter.hpp>
 #include <holoscan/core/parameter_compute_control.hpp>
 #include <holoscan/core/parameter_control.hpp>
-#include <holoscan/core/parameter_override_set.hpp>
+#include <holoscan/core/parameter_provenance.hpp>
 #include <holoscan/core/parameter_schema.hpp>
 #include <holoscan/core/parameter_snapshot.hpp>
 #include <holoscan/core/parameter_update.hpp>

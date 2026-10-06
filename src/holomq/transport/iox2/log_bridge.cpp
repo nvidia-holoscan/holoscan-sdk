@@ -7,8 +7,8 @@
 
 #include <holomq/logger.hpp>
 
-#include "iox2/log.hpp"
-#include "iox2/log_level.hpp"
+#include <iox2/log.hpp>
+#include <iox2/log_level.hpp>
 
 #include <format>
 #include <mutex>

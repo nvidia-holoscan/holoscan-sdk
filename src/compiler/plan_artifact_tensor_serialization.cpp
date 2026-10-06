@@ -144,6 +144,8 @@ void append_tensor_and_cuda_sections(std::string& output, const ExecutionPlanSta
       append_number(json, record.readiness_capacity);
       json += ",\"release_capacity\":";
       append_number(json, record.release_capacity);
+      json += ",\"release_stream_capacity\":";
+      append_number(json, record.release_stream_capacity);
       json += ",\"retirement_capacity\":";
       append_number(json, record.retirement_capacity);
       json += ",\"run_generation\":";
@@ -199,6 +201,8 @@ void append_tensor_and_cuda_sections(std::string& output, const ExecutionPlanSta
     append_number(json, record.readiness_capacity);
     json += ",\"release_capacity\":";
     append_number(json, record.release_capacity);
+    json += ",\"release_stream_capacity\":";
+    append_number(json, record.release_stream_capacity);
     json += ",\"retirement_capacity\":";
     append_number(json, record.retirement_capacity);
     json += ",\"run_generation\":";
@@ -222,6 +226,37 @@ void append_tensor_and_cuda_sections(std::string& output, const ExecutionPlanSta
           append_number(node_json, static_cast<std::uint32_t>(node.operation));
           node_json += ",\"parameter_field\":";
           append_number(node_json, node.parameter_field);
+          if (node.operation == TensorByteSpanOperation::kParameterProjection) {
+            node_json += ",\"parameter_schema_id\":";
+            append_json_string(node_json, node.parameter_schema_id);
+            node_json += ",\"parameter_schema_version\":";
+            append_number(node_json, node.parameter_schema_version);
+            node_json += ",\"projection_dependencies\":";
+            append_array(node_json,
+                         node.projection_dependencies,
+                         [](std::string& dependency_json, const auto& dependency) {
+                           dependency_json += "{\"parameter_field\":";
+                           append_number(dependency_json, dependency.parameter_field);
+                           dependency_json += ",\"parameter_full_id\":\"";
+                           append_lowercase_hex(dependency_json,
+                                                dependency.parameter_full_id.value,
+                                                HexPrefix::kNone);
+                           dependency_json += "\",\"parameter_member_full_ids\":";
+                           append_array(dependency_json,
+                                        dependency.parameter_member_full_ids,
+                                        [](std::string& id_json, const auto& member_full_id) {
+                                          id_json.push_back('"');
+                                          append_lowercase_hex(
+                                              id_json, member_full_id.value, HexPrefix::kNone);
+                                          id_json.push_back('"');
+                                        });
+                           dependency_json += ",\"parameter_path\":";
+                           append_json_string(dependency_json, dependency.parameter_path);
+                           dependency_json.push_back('}');
+                         });
+            node_json += ",\"projection_id\":";
+            append_json_string(node_json, node.projection_id);
+          }
           node_json += ",\"resolved_value\":";
           append_number(node_json, node.resolved_value);
           node_json += ",\"right\":";
@@ -258,6 +293,74 @@ void append_tensor_and_cuda_sections(std::string& output, const ExecutionPlanSta
         append_number(json, static_cast<std::uint32_t>(record.update_disposition));
         json.push_back('}');
       });
+  // Keep artifacts for graphs that do not use this additive feature byte-identical. The plan
+  // artifact is a private, forward-extensible schema; derived plans carry the complete new section,
+  // while pre-existing literal-only plans do not gain an empty member.
+  if (!state.tensor_memory_kind_derivations.empty()) {
+    output += ",\"tensor_memory_kind_derivations\":";
+    append_array(
+        output, state.tensor_memory_kind_derivations, [](std::string& json, const auto& record) {
+          json += "{\"field_id\":";
+          if (record.field_id) {
+            append_number(json, *record.field_id);
+          } else {
+            json += "null";
+          }
+          json += ",\"form\":";
+          append_number(json, static_cast<std::uint32_t>(record.form));
+          json += ",\"mapping\":";
+          append_array(json, record.mapping, [](std::string& row_json, const auto& row) {
+            row_json += "{\"memory_kind\":";
+            append_number(row_json, static_cast<std::uint32_t>(row.memory_kind));
+            row_json += ",\"source_bit_width\":";
+            append_number(row_json, row.source.bit_width);
+            row_json += ",\"source_kind\":";
+            append_number(row_json, static_cast<std::uint32_t>(row.source.kind));
+            row_json += ",\"source_raw_bits\":";
+            append_number(row_json, row.source.raw_bits);
+            row_json.push_back('}');
+          });
+          json += ",\"origin\":";
+          append_number(json, static_cast<std::uint32_t>(record.origin));
+          json += ",\"output\":";
+          append_number(json, record.output.value());
+          json += ",\"parameter_field\":";
+          append_number(json, record.parameter_field);
+          json += ",\"parameter_full_id\":\"";
+          append_lowercase_hex(json, record.parameter_full_id.value, HexPrefix::kNone);
+          json += "\",\"parameter_member_full_ids\":";
+          append_array(json,
+                       record.parameter_member_full_ids,
+                       [](std::string& id_json, const auto& member_full_id) {
+                         id_json.push_back('"');
+                         append_lowercase_hex(id_json, member_full_id.value, HexPrefix::kNone);
+                         id_json.push_back('"');
+                       });
+          json += ",\"parameter_path\":";
+          append_json_string(json, record.parameter_path);
+          json += ",\"parameter_schema_id\":";
+          append_json_string(json, record.parameter_schema_id);
+          json += ",\"parameter_schema_version\":";
+          append_number(json, record.parameter_schema_version);
+          json += ",\"plan_generation\":";
+          append_number(json, record.plan_generation);
+          json += ",\"resolved_memory_kind\":";
+          append_number(json, static_cast<std::uint32_t>(record.resolved_memory_kind));
+          json += ",\"run_generation\":";
+          append_number(json, record.run_generation);
+          json += ",\"tensor_index\":";
+          if (record.tensor_index) {
+            append_number(json, *record.tensor_index);
+          } else {
+            json += "null";
+          }
+          json += ",\"update_disposition\":";
+          append_number(json, static_cast<std::uint32_t>(record.update_disposition));
+          json.push_back('}');
+        });
+  }
+  output += ",\"cuda_compute_stream_policy\":";
+  append_number(output, static_cast<std::uint32_t>(state.cuda_compute_stream_policy));
   output += ",\"cuda_compute_streams\":";
   append_array(output, state.cuda_compute_streams, [](std::string& json, const auto& record) {
     json += "{\"device\":";
@@ -288,6 +391,25 @@ void append_tensor_and_cuda_sections(std::string& output, const ExecutionPlanSta
     append_json_string(json, record.stream_id);
     json.push_back('}');
   });
+  output += ",\"operator_cuda_stream_bindings\":";
+  append_array(
+      output, state.operator_cuda_stream_bindings, [](std::string& json, const auto& record) {
+        json += "{\"device\":";
+        append_number(json, record.device.value);
+        json += ",\"operator_vertex\":";
+        append_number(json, record.operator_vertex.value);
+        json += ",\"partition\":";
+        append_number(json, record.partition.value);
+        json += ",\"plan_generation\":";
+        append_number(json, record.plan_generation);
+        json += ",\"process_group\":";
+        append_number(json, record.process_group.value);
+        json += ",\"run_generation\":";
+        append_number(json, record.run_generation);
+        json += ",\"stream_id\":";
+        append_json_string(json, record.stream_id);
+        json.push_back('}');
+      });
   output += ",\"cuda_green_context_assignments\":";
   append_array(
       output, state.cuda_green_context_assignments, [](std::string& json, const auto& record) {

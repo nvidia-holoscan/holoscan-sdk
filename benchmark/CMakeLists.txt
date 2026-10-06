@@ -19,6 +19,14 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
         PROPERTIES LABELS "benchmark"
     )
     add_test(
+        NAME BENCHMARK_RUNNER_PYTHON_TESTS
+        COMMAND ${Python3_EXECUTABLE} -m pytest -q
+                "${CMAKE_CURRENT_SOURCE_DIR}/test_run_benchmark.py"
+    )
+    set_tests_properties(BENCHMARK_RUNNER_PYTHON_TESTS
+        PROPERTIES LABELS "benchmark"
+    )
+    add_test(
         NAME BENCHMARK_TRANSPORT_SUITE_RUNNER_PYTHON_TESTS
         COMMAND ${Python3_EXECUTABLE} -m pytest -q
                 "${CMAKE_CURRENT_SOURCE_DIR}/test_transport_benchmark_suite.py"

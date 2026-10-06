@@ -172,13 +172,17 @@ class ExecutionLaneSet {
   /// thread that calls \ref start. The lane creates no worker, and later dispatches from another
   /// thread are rejected. Inline-owner mode requires the materialized local set to contain exactly
   /// this one lane.
+  /// @param unbound_worker_affinity Optional allowed CPU set restored inside worker-backed lanes
+  /// that have no authored affinity. Explicit lane affinity takes precedence, and an inline lane
+  /// continues to use the calling thread's placement.
   /// @return A stopped lane set, or a typed validation, placement, or capacity error.
   /// @throws std::bad_alloc if cold lane or worker storage cannot be allocated.
   [[nodiscard]] static expected<std::unique_ptr<ExecutionLaneSet>, Error> create(
       const SchedulerPlanRecord& scheduler, std::span<const ExecutionLanePlanRecord> lanes,
       std::shared_ptr<ExecutionLanePlacementAdapter> placement_adapter = {},
       RuntimePhaseCounters* phase_counters = nullptr,
-      std::optional<std::uint32_t> inline_execution_lane = std::nullopt);
+      std::optional<std::uint32_t> inline_execution_lane = std::nullopt,
+      std::optional<CPUAffinity> unbound_worker_affinity = std::nullopt);
 
   /// @brief Start all lanes and open the all-lanes placement-ready barrier.
   /// @return Success only after every lane has applied and verified placement.

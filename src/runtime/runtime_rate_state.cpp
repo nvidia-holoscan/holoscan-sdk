@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "../compiler/execution_plan_contracts.hpp"
+#include "../compiler/execution_plan_lookup.hpp"
 #include "../compiler/execution_plan_state.hpp"
 #include "../core/diagnostic_registry.hpp"
 #include "../core/operator_spec_compiler_access.hpp"
@@ -1232,6 +1233,13 @@ expected<void, Error> RuntimeRateState::
     }
     generated.required_entries = capacity->required_entries;
     generated.admitted_entry_ceiling = capacity->admitted_entry_ceiling;
+    if (provider.output &&
+        cuda_graph_uses_fixed_output_address(*plan_, process_group_, *provider.output)) {
+      // The CUDA Graph execution plan records one active fixed slot for this output. Keep the
+      // runtime rate generation aligned with that published specialization.
+      generated.required_entries = 1U;
+      generated.admitted_entry_ceiling = 1U;
+    }
 
     if (provider.geometry_mode != AllocationGeometryMode::kLifecycleCandidate ||
         local_providers_[provider_index] == 0U) {

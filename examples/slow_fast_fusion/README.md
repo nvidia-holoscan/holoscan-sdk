@@ -20,8 +20,33 @@ compiled-plan trigger and selection counts.
 new callback admission for the whole run, while already admitted callbacks may
 retire. It does not guarantee downstream drain or delivery of queued samples.
 
+## Run
+
+Run the C++ variant with:
+
 ```sh
 ./slow_fast_fusion
+```
+
+Use `./slow_fast_fusion --plan-json` to print only the admitted canonical plan
+JSON to stdout without starting the runtime. This mode is mutually exclusive
+with `--emit-artifacts` and its artifact options.
+
+The Python variant implements every Operator in Python while preserving the
+same temporal contracts, two-partition structure, and requested-completion
+behavior:
+
+```sh
+PYTHONPATH=<build>/python/lib python3 python/slow_fast_fusion.py
+```
+
+From an examples-enabled SDK install, configure and test the Python directory
+as a standalone project:
+
+```sh
+cmake -B python/build -S python -Dholoscan_DIR=<prefix>/lib/cmake/holoscan
+cmake --build python/build --target python_slow_fast_fusion
+ctest --test-dir python/build -R EXAMPLE_PYTHON_SLOW_FAST_FUSION_TEST
 ```
 
 The same composition path also supports cold artifact publication without
@@ -33,3 +58,6 @@ cmake --build build --target slow_fast_fusion_graph_artifacts
 
 This is an approachable reference path, not the exhaustive trigger, profile,
 placement, or fault-injection qualification matrix.
+
+The cold four-file deployment bundle is currently a C++ tooling path. Python
+artifact packaging is left to later wheel and packaging work.

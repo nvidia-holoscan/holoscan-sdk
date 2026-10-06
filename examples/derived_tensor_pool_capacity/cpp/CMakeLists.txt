@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    cmake_minimum_required(VERSION 4.0)
-    project(holoscan_derived_tensor_pool_capacity LANGUAGES CXX)
+cmake_minimum_required(VERSION 4.0)
+project(holoscan_derived_tensor_pool_capacity LANGUAGES CXX)
+
+if(PROJECT_IS_TOP_LEVEL)
     include("${CMAKE_CURRENT_LIST_DIR}/CMakeLists.min.txt")
     return()
 endif()
@@ -30,6 +31,22 @@ if(BUILD_TESTING)
                 "derived tensor pool capacity: configured and checked transform bounds verified"
             LABELS "examples;compile;tensor;parameter"
             TIMEOUT 30)
+    add_test(NAME EXAMPLE_CPP_DERIVED_TENSOR_POOL_CAPACITY_PINNED_TEST
+        COMMAND derived_tensor_pool_capacity 720 1280 4 pinned)
+    set_tests_properties(EXAMPLE_CPP_DERIVED_TENSOR_POOL_CAPACITY_PINNED_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "resize_memory=pinned"
+            LABELS "examples;compile;tensor;parameter"
+            TIMEOUT 30)
+    # Validate the checked projected capacity in the compiled Tensor allocation.
+    add_test(NAME EXAMPLE_CPP_DERIVED_TENSOR_POOL_CAPACITY_PROJECTOR_TEST
+        COMMAND derived_tensor_pool_capacity 720 1280 4)
+    set_tests_properties(EXAMPLE_CPP_DERIVED_TENSOR_POOL_CAPACITY_PROJECTOR_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "projector=ProjectedBatchOutput.output-max-byte-span.v1 max_batch_size=2 projected_per_slot_bytes=29491200"
+            LABELS "examples;compile;tensor;parameter"
+            TIMEOUT 30)
     add_test(NAME EXAMPLE_CPP_DERIVED_TENSOR_POOL_CAPACITY_REJECTS_NON_RGBA_TEST
         COMMAND derived_tensor_pool_capacity 2 2 3)
     set_tests_properties(EXAMPLE_CPP_DERIVED_TENSOR_POOL_CAPACITY_REJECTS_NON_RGBA_TEST
@@ -41,5 +58,5 @@ endif()
 
 install(TARGETS derived_tensor_pool_capacity
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/derived_tensor_pool_capacity/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

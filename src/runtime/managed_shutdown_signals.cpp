@@ -880,7 +880,7 @@ class ManagedSignalDomainState final
     do {
       written = write(control_fd_, &one, sizeof(one));
     } while (written < 0 && errno == EINTR);
-    if (written == sizeof(one) || (written < 0 && errno == EAGAIN)) {
+    if (std::cmp_equal(written, sizeof(one)) || (written < 0 && errno == EAGAIN)) {
       return 0;
     }
     return written < 0 ? errno : EIO;

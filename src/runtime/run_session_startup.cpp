@@ -6,12 +6,16 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "run_session_internal.hpp"
 
 #include "../core/operator_spec_compiler_access.hpp"
+#include "core/diagnostic_reporting.hpp"
+#include "runtime_cuda_graph_region_resources.hpp"
+#include "runtime_support_thread_placement.hpp"
 #include "runtime_test_access.hpp"
 
 namespace holoscan::detail {
@@ -142,19 +146,66 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
   return receiver && owns_receiver(state, *receiver);
 }
 
+[[nodiscard]] bool RunSessionState::has_owned_unwired_inputs(const GraphExec& exec,
+                                                             const ReadyRunState& state) const {
+  return std::any_of(
+      plan_->input_selections.begin(),
+      plan_->input_selections.end(),
+      [&](const InputSelectionPlanRecord& selection) {
+        const auto port = std::find_if(plan_->graph.ports().begin(),
+                                       plan_->graph.ports().end(),
+                                       [&](const PortRecord& record) {
+                                         return record.id.value == selection.input.value() &&
+                                                record.direction == PortDirection::kInput;
+                                       });
+        if (port == plan_->graph.ports().end() || !owns_vertex(state, exec, port->owner) ||
+            !worker_owns_vertex(*plan_, exec.process_group(), port->owner)) {
+          return false;
+        }
+        return selection.unwired_safe_default;
+      });
+}
+
+[[nodiscard]] bool RunSessionState::bind_channel_publication_context(
+    const GraphExec& exec, RuntimeChannelSession& channels) {
+  // Publication coordinates are stamped from the Graph default clock, so the session must own a
+  // readable reference to it before any output can publish.
+  if (fixture_observation_ != nullptr) {
+    auto observed = channels.observe_fixture_publications(fixture_observation_);
+    if (!observed) {
+      fixture_observation_->invalidate();
+      append_diagnostic("RUNTIME_FIXTURE_OBSERVATION_UNSUPPORTED",
+                        observed.error().owner,
+                        {},
+                        nullptr,
+                        "cold canonical inline-POD outputs",
+                        "unsupported fixture publication binding",
+                        ::holoscan::DiagnosticSeverity::kError,
+                        {},
+                        observed.error().port);
+      return false;
+    }
+  }
+  if (auto bound = channels.bind_publish_clock(exec.default_clock()); !bound) {
+    append_diagnostic("RUNTIME_CLOCK_BINDING_UNAVAILABLE");
+    return false;
+  }
+  return true;
+}
+
 [[nodiscard]] bool RunSessionState::initialize_channel_session(
     GraphExec& exec, ReadyRunState& state, ReadySharedResources& shared,
     const RuntimeCudaExecutionResources& cuda_resources,
     RuntimeChannelSizingOverride sizing_override) {
-  const bool channel_plan_present = !plan_->process_local_channel_services.empty() ||
-                                    !plan_->channel_services.empty() ||
-                                    !plan_->cross_process_channel_services.empty();
+  const bool channel_plan_present =
+      !plan_->process_local_channel_services.empty() || !plan_->channel_services.empty() ||
+      !plan_->cross_process_channel_services.empty() || has_owned_unwired_inputs(exec, state);
   if (!channel_plan_present) {
     return true;
   }
 
   shared.channel_replay_ports.reserve(plan_->ports.size());
-  for (const RuntimeOperatorInstance& instance : exec.operators()) {
+  for (RuntimeOperatorInstance& instance : exec.operators()) {
     if (instance.replay_spec == nullptr) {
       append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH", instance.vertex);
       return false;
@@ -180,6 +231,7 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
           .direction = replay.direction,
           .declaration = const_cast<void*>(replay.declaration),
           .type_ops = replay.runtime_type_ops,
+          .tensor_failure = &instance.tensor_failure,
       });
     }
   }
@@ -209,10 +261,7 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
         registered_token_or(channels.error().message, "RUNTIME_PORT_BINDING_UNAVAILABLE"));
     return false;
   }
-  // Publication coordinates are stamped from the Graph default clock, so the session must own a
-  // readable reference to it before any output can publish.
-  if (auto bound = (*channels)->bind_publish_clock(exec.default_clock()); !bound) {
-    append_diagnostic("RUNTIME_CLOCK_BINDING_UNAVAILABLE");
+  if (!bind_channel_publication_context(exec, **channels)) {
     return false;
   }
   if (const auto& control = plan_->executable_factories.test_channel_teardown_control;
@@ -330,6 +379,7 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
       continue;
     }
     ++local_selection_count;
+    const bool connected = !selection.unwired_safe_default;
     const auto bracketed = std::find_if(
         plan_->bracketed_windows.begin(),
         plan_->bracketed_windows.end(),
@@ -382,6 +432,7 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
     ReadyRunState::InputSelectorSlot slot{
         .owner = port->owner,
         .input = selection.input,
+        .connected = connected,
         .selector = std::move(created).value(),
         .predicate_id = predicate_input == plan_->predicate_inputs.end()
                             ? std::string_view{}
@@ -392,9 +443,11 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
         .predicate_input = predicate_input != plan_->predicate_inputs.end(),
         .aligned_member = false,
     };
-    slot.channel_payload_claims.reserve(payload_claim_capacity);
-    slot.channel_payload_claim_scratch.resize(payload_claim_capacity);
-    slot.channel_payload_retire_scratch.resize(payload_claim_capacity);
+    if (slot.connected) {
+      slot.channel_payload_claims.reserve(payload_claim_capacity);
+      slot.channel_payload_claim_scratch.resize(payload_claim_capacity);
+      slot.channel_payload_retire_scratch.resize(payload_claim_capacity);
+    }
     state.input_selectors.push_back(std::move(slot));
   }
   std::sort(state.input_selectors.begin(),
@@ -432,6 +485,7 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
   state.selection.maximum_selected_samples = max_selected + trigger_pin_capacity;
   state.selection.channel_selections.reserve(selection_capacity);
   state.selection.predicate_inputs.reserve(local_selection_count);
+  state.freshness_input_fences.reserve(local_selection_count);
   return true;
 }
 
@@ -576,19 +630,57 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
       if (instance == nullptr || !receiver || instance->operator_id != member.operator_id ||
           instance->partition != runner->partition ||
           instance->execution_lane != runner->execution_lane) {
-        append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH", member.vertex);
+        append_diagnostic(
+            "RUNTIME_OPERATOR_REPLAY_MISMATCH", member.vertex, "partition_runner_member");
         return false;
       }
       if (covered[*receiver] != 0U) {
-        append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH", member.vertex);
+        append_diagnostic(
+            "RUNTIME_OPERATOR_REPLAY_MISMATCH", member.vertex, "partition_runner_duplicate");
         return false;
       }
       covered[*receiver] = 1U;
       state.owned_receivers[*receiver] = 1U;
       if (!partition_wake_by_vertex_.empty()) {
         if (!partition_wake_by_vertex_.bind(member.vertex, state.wake)) {
+          append_diagnostic(
+              "RUNTIME_OPERATOR_REPLAY_MISMATCH", member.vertex, "fused_region_identity");
+          return false;
+        }
+      }
+      // Only the fused source remains schedulable. The other reconstructed region members are
+      // startup-capture callbacks and are covered by the source's runner.
+      if (member.fused_cuda_graph_region) {
+        const auto* capture = find_unique_cuda_graph_capture_plan_by_region(
+            *plan_, member.fused_cuda_graph_region->graph, member.fused_cuda_graph_region->region);
+        if (capture == nullptr || capture->members.empty() ||
+            capture->members.front().vertex != member.vertex) {
           append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH", member.vertex);
           return false;
+        }
+        for (const auto& captured : capture->members) {
+          if (captured.vertex == member.vertex) {
+            continue;
+          }
+          const RuntimeOperatorInstance* const captured_instance =
+              exec.operator_by_vertex(captured.vertex);
+          const auto captured_receiver = exec.receiver_index(captured.vertex);
+          if (captured_instance == nullptr || !captured_receiver ||
+              captured_instance->operator_id != captured.operator_ref.id ||
+              captured_instance->partition != runner->partition ||
+              captured_instance->execution_lane != runner->execution_lane ||
+              covered[*captured_receiver] != 0U) {
+            append_diagnostic(
+                "RUNTIME_OPERATOR_REPLAY_MISMATCH", captured.vertex, "capture_member_identity");
+            return false;
+          }
+          covered[*captured_receiver] = 1U;
+          if (!partition_wake_by_vertex_.empty() &&
+              !partition_wake_by_vertex_.bind(captured.vertex, state.wake)) {
+            append_diagnostic(
+                "RUNTIME_OPERATOR_REPLAY_MISMATCH", captured.vertex, "capture_member_wake");
+            return false;
+          }
         }
       }
     }
@@ -677,7 +769,8 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
                                         worker_lanes,
                                         plan_->executable_factories.lane_placement_adapter,
                                         plan_->executable_factories.phase_counters.get(),
-                                        state.inline_execution_lane);
+                                        state.inline_execution_lane,
+                                        pre_controller_affinity_);
   if (!lanes) {
     append_diagnostic(
         registered_token_or(lanes.error().message, "RUNTIME_EXECUTION_LANE_PLAN_INVALID"));
@@ -702,7 +795,13 @@ void RunSessionState::bind_shared_resources(ReadyRunState& state,
   lanes->request_stop();
   const auto joined = lanes->join();
   if (!joined) {
-    append_diagnostic(registered_token_or(joined.error().message, "RUNTIME_LANE_JOIN_FAILED"));
+    RuntimeDiagnosticDetail detail{.present = true,
+                                   .operation = DiagnosticOperation::kRuntime,
+                                   .role = DiagnosticFailureRole::kTeardown};
+    detail.capture.emplace();
+    detail.capture->append(joined.error().code, joined.error().message);
+    append_diagnostic(
+        registered_token_or(joined.error().message, "RUNTIME_LANE_JOIN_FAILED"), {}, {}, &detail);
     return false;
   }
   return true;
@@ -870,6 +969,26 @@ RunSessionState::initialize_predicate(const RuntimeOperatorInstance& instance,
   for (std::size_t index = 0U; index < operator_count; ++index) {
     const RuntimeOperatorInstance& instance = exec.operators()[index];
     const bool receiver_owned = owns_receiver(state, index);
+    const auto* cuda_graph_region =
+        find_unique_cuda_graph_execution_region_by_member(*plan_, instance.vertex);
+    const bool capture_only =
+        cuda_graph_region != nullptr && cuda_graph_region->fused_operator != instance.vertex;
+    if (capture_only) {
+      // Capture-only members retain reconstruction and lifecycle state, but the fused source owns
+      // all steady-state readiness and Dispatcher state.
+      tag_allocators.push_back(instance.tags.get());
+      state.predicates.emplace_back();
+      state.predicate_receivers.emplace_back();
+      state.deadline_bindings.emplace_back();
+      state.parameter_policies.emplace_back();
+      auto activation = ActivationSelectionState::create(0U, 0U);
+      if (!activation) {
+        append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE", instance.vertex);
+        return false;
+      }
+      state.activation_selections.push_back(std::move(*activation));
+      continue;
+    }
     const TemporalTriggerPlanRecord* const trigger = instance.temporal_trigger;
     if (trigger == nullptr || !trigger->readiness_source ||
         trigger->owner.plan_generation != plan_->plan_generation) {
@@ -1080,11 +1199,12 @@ RunSessionState::initialize_predicate(const RuntimeOperatorInstance& instance,
       if (selector.owner != instance.vertex) {
         continue;
       }
-      if (!selector_readiness_source) {
+      if (selector.connected && !selector_readiness_source) {
         append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH", instance.vertex);
         return false;
       }
-      selector.readiness_source = selector_readiness_source;
+      selector.receiver_index = index;
+      selector.readiness_source = selector.connected ? selector_readiness_source : SourceId{};
       selector.witness_port = trigger->trigger_input;
       if (trigger->kind == TemporalRecordTriggerKind::kAnyInput) {
         const std::size_t trigger_input_count = static_cast<std::size_t>(
@@ -1096,6 +1216,11 @@ RunSessionState::initialize_predicate(const RuntimeOperatorInstance& instance,
         }
       }
       selector.witness_source = trigger->readiness_source;
+      selector.nontrigger_prerequisite =
+          freshness_input_is_nontrigger_prerequisite(selector.selector.plan(),
+                                                     selector.witness_port,
+                                                     selector.readiness_source,
+                                                     selector.witness_source);
       if (selector.selector.plan().selector == InputSelectorKind::kLatestWithin ||
           selector.selector.plan().missing == TemporalRecordMissingKind::kReuseLast) {
         auto supported = state.channels->supports_freshness_refill(selector.input);
@@ -1104,6 +1229,16 @@ RunSessionState::initialize_predicate(const RuntimeOperatorInstance& instance,
           return false;
         }
         selector.freshness_reconcile = *supported;
+        if (*supported && clock_source) {
+          auto drop_oldest_supported =
+              state.channels->supports_drop_oldest_freshness_refill(selector.input);
+          if (!drop_oldest_supported) {
+            append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", instance.vertex);
+            return false;
+          }
+          selector.upcoming_clock_freshness = qualifies_upcoming_clock_freshness(
+              selector.selector.plan(), *drop_oldest_supported, true);
+        }
       }
       if (selector_index > std::numeric_limits<std::uint32_t>::max()) {
         append_diagnostic("RUNTIME_PARAMETER_BINDING_UNAVAILABLE", instance.vertex);
@@ -1176,7 +1311,7 @@ RunSessionState::initialize_predicate(const RuntimeOperatorInstance& instance,
     }
     auto activation = ActivationSelectionState::create(max_inputs, max_selected);
     if (!activation) {
-      HOLOSCAN_LOG_ERROR(
+      HOLOSCAN_LOG_AUTOMATIC_ERROR(
           "Runtime activation-selection storage failed with {} for vertex {} ({} inputs, {} "
           "selected samples)",
           error_code_name(activation.error().code),
@@ -1226,8 +1361,8 @@ RunSessionState::initialize_predicate(const RuntimeOperatorInstance& instance,
   auto coordinator = RuntimeCandidateCoordinator::create_with_tags(
       sources, tag_allocators, max_outstanding, phase_counters_);
   if (!coordinator) {
-    HOLOSCAN_LOG_ERROR("Runtime candidate coordinator construction failed with {}",
-                       error_code_name(coordinator.error().code));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Runtime candidate coordinator construction failed with {}",
+                                 error_code_name(coordinator.error().code));
     const RuntimeDiagnosticDetail detail{.present = true, .error = coordinator.error()};
     append_diagnostic(
         registered_token_or(coordinator.error().message, "RUNTIME_READINESS_BINDING_UNAVAILABLE"),
@@ -1388,7 +1523,7 @@ RunSessionState::resolve_notification_descriptor(
       state.binding_requests.size() + state.channel_binding_requests.size() +
               state.clock_binding_requests.size() !=
           state.expected_binding_count) {
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "Runtime readiness binding inventory is inconsistent: {} direct, {} Channel, {} clock "
         "requests for {} frozen sources across {} operators",
         state.binding_requests.size(),
@@ -1426,14 +1561,18 @@ RunSessionState::resolve_notification_descriptor(
     }
     state.bindings.push_back(std::move(binding).value());
   }
-  for (const auto& [owner, request] : state.channel_binding_requests) {
+  const std::size_t first_channel_binding = state.bindings.size();
+  for (const auto& binding_request : state.channel_binding_requests) {
+    // Use ordinary references so clang-tidy can track initialization in the logging lambda.
+    const auto& owner = binding_request.first;
+    const auto& request = binding_request.second;
     auto binding = state.channels->create_readiness_binding(owner, request);
     if (!binding || binding.value() == nullptr || binding.value()->capacity() < request.capacity) {
       const Error error = !binding
                               ? binding.error()
                               : Error{binding.value() == nullptr ? ErrorCode::kNotFound
                                                                  : ErrorCode::kResourceExhausted};
-      HOLOSCAN_LOG_ERROR(
+      HOLOSCAN_LOG_AUTOMATIC_ERROR(
           "Channel readiness binding failed with {} for vertex {} (required capacity {})",
           error_code_name(error.code),
           owner.value,
@@ -1444,6 +1583,7 @@ RunSessionState::resolve_notification_descriptor(
     }
     state.bindings.push_back(std::move(*binding));
   }
+  const std::size_t channel_binding_end = state.bindings.size();
   for (const auto& request : state.clock_binding_requests) {
     auto clock = exec.resolve_clock(request.schedule.clock);
     if (!clock) {
@@ -1484,6 +1624,19 @@ RunSessionState::resolve_notification_descriptor(
     }
     state.clock_bindings[request.receiver_index] = binding->get();
     state.bindings.push_back(std::move(*binding));
+  }
+  state.contention_retry_eligible_by_binding.assign(state.bindings.size(), 0U);
+  for (std::size_t binding_index = first_channel_binding; binding_index < channel_binding_end;
+       ++binding_index) {
+    state.contention_retry_eligible_by_binding[binding_index] = 1U;
+  }
+  if (cuda_graph_region_resources_ != nullptr) {
+    auto gated = cuda_graph_region_resources_->bind_output_readiness(state.bindings);
+    if (!gated) {
+      append_diagnostic(
+          registered_token_or(gated.error().message, "RUNTIME_READINESS_BINDING_UNAVAILABLE"));
+      return false;
+    }
   }
   state.freshness_bindings.clear();
   state.freshness_bindings.reserve(state.input_selectors.size());
@@ -1529,20 +1682,48 @@ RunSessionState::resolve_notification_descriptor(
   }
   auto refreshed = channels->refresh_connections();
   if (!refreshed) {
-    HOLOSCAN_LOG_ERROR("Channel connection refresh failed with {}",
-                       error_code_name(refreshed.error().code));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel connection refresh failed with {}",
+                                 error_code_name(refreshed.error().code));
     const RuntimeDiagnosticDetail detail{.present = true, .error = refreshed.error()};
     append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE", {}, {}, &detail);
     return false;
   }
-  auto armed = channels->arm();
-  if (!armed) {
-    HOLOSCAN_LOG_ERROR("Channel readiness arm failed with {}", error_code_name(armed.error().code));
-    const RuntimeDiagnosticDetail detail{.present = true, .error = armed.error()};
-    append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE", {}, {}, &detail);
-    return false;
+  return arm_channels_with_diagnostics(channels);
+}
+
+[[nodiscard]] bool RunSessionState::arm_channels_with_diagnostics(
+    RuntimeChannelSession* channels) noexcept {
+  if (channels == nullptr) {
+    return true;
   }
-  return true;
+  auto armed = channels->arm();
+  if (armed) {
+    return true;
+  }
+  const std::string_view token = channel_terminal_token(channels->terminal_diagnostic());
+  HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel readiness arm failed with {}",
+                               error_code_name(armed.error().code));
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    RuntimeDiagnosticDetail detail{.present = true, .error = armed.error()};
+    std::string required;
+    std::string provided;
+    if (const auto* placement = channels->support_thread_placement_failure()) {
+      detail.error = placement->error;
+      detail.operation = DiagnosticOperation::kRuntime;
+      detail.component_path = "support-thread/channel-pump";
+      required = runtime_support_thread_placement_required(*placement);
+      provided = runtime_support_thread_placement_provided(*placement);
+    }
+    append_diagnostic(token, {}, {}, &detail, required, provided);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (...) {
+    // Diagnostic enrichment is best effort on this noexcept restart/startup boundary.
+    append_diagnostic(token);
+  }
+#endif
+  return false;
 }
 
 [[nodiscard]] PortBinding* RunSessionState::physical_binding_for(ReadyRunState& state,
@@ -1847,7 +2028,12 @@ RunSessionState::resolve_notification_descriptor(
   channels->cancel();
   const auto joined = channels->join();
   if (!joined) {
-    append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE");
+    RuntimeDiagnosticDetail detail{.present = true,
+                                   .operation = DiagnosticOperation::kRuntime,
+                                   .role = DiagnosticFailureRole::kTeardown};
+    detail.capture.emplace();
+    detail.capture->append(joined.error().code, joined.error().message);
+    append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE", {}, {}, &detail);
     return false;
   }
   return true;

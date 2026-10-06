@@ -274,7 +274,7 @@ class HOLOSCAN_CORE_EXPORT ParamControlHandle {
   /// invalid from Runtime callback contexts.
   [[nodiscard]] expected<ParamControlHandle, Error> restrict(const ParamAccessPolicy& policy) const;
 
-  /// @brief Submit one owning fixed-scalar patch.
+  /// @brief Submit one owning scalar or bounded-aggregate patch.
   /// @param patch Complete patch copied before this call returns.
   /// @param options Field-derived or explicit `NextCompute` timing and bounded audit evidence.
   /// @return Immediate admission result for one same-Operator candidate.
@@ -286,7 +286,7 @@ class HOLOSCAN_CORE_EXPORT ParamControlHandle {
   [[nodiscard]] ParamBatchUpdateResult submit(const ParamPatch& patch,
                                               ParamUpdateOptions options = {});
 
-  /// @brief Submit one same-operator all-or-nothing fixed-scalar patch batch.
+  /// @brief Submit one same-operator all-or-nothing scalar or bounded-aggregate patch batch.
   /// @param patches Complete patches copied before this call returns.
   /// @param options Field-derived or explicit `NextCompute` timing and bounded audit evidence.
   /// @return Aggregate admission result with no borrowed diagnostic or field-result storage.

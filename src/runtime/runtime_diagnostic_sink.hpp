@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 #include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/errors.hpp>
@@ -23,6 +24,7 @@
 #include <holoscan/core/temporal_plan.hpp>
 #include <holoscan/time/time_point.hpp>
 
+#include "../core/diagnostic_context.hpp"
 #include "../core/lifecycle_kernel.hpp"
 #include "execution_lane.hpp"
 #include "runtime_cuda_execution_diagnostic.hpp"
@@ -239,20 +241,35 @@ struct RuntimeDiagnosticDetail {
   RuntimeCudaExecutionDiagnostic cuda_execution;
   /// Pointer-free managed SIGINT/SIGTERM domain, acceptance, or cleanup evidence.
   RuntimeManagedSignalDiagnostic managed_signal;
+  std::optional<DiagnosticCapture> capture;
+  TensorContractMismatchCapture tensor_failure;
+  DiagnosticOperation operation{DiagnosticOperation::kUnknown};
+  std::optional<LifecycleStage> stage;
+  LifecycleTransitionPhase phase{LifecycleTransitionPhase::kNone};
+  VertexId vertex{};
+  std::string component_path;
+  GraphId component_graph{};
+  LifecycleTransactionId transaction_id{};
+  std::optional<DiagnosticFailureRole> role;
+  /// Compute cleanup follows this operator's failed callback, even when owners fail concurrently.
+  bool follows_compute_failure{};
 };
 
 /// Own one run's fixed-capacity structural diagnostics and parallel private details.
 ///
 /// The final public slot is initialized during cold construction and reserved for
-/// `RUNTIME_DIAGNOSTIC_CAPACITY_EXHAUSTED`. The first append that cannot retain an ordinary
-/// record publishes that marker without allocation or replacement of an earlier record. Later
-/// appends are ignored because the explicit marker already makes loss observable. Lifecycle
-/// receipt lineage uses its separately admitted plan capacity and never shares or competes for
-/// these slots.
+/// `RUNTIME_DIAGNOSTIC_CAPACITY_EXHAUSTED`. Warnings leave one ordinary slot available for a
+/// terminal failure; their overflow marker is deferred until finalization. Error overflow publishes
+/// the marker immediately. Published records are never replaced. Lifecycle receipt lineage uses
+/// its separately admitted plan capacity and never shares or competes for these slots.
 class RuntimeDiagnosticBuffer {
  public:
   RuntimeDiagnosticBuffer(DiagnosticId overflow_id, DiagnosticSource overflow_source)
       : diagnostics_{} {
+    for (std::size_t index = 0U; index + 1U < diagnostics_.size(); ++index) {
+      diagnostics_[index].token.reserve(256U);
+      spare_details_[index].error.message.reserve(DiagnosticCapture::kTextCapacity);
+    }
     diagnostics_.back() = Diagnostic{
         .id = overflow_id,
         .severity = ::holoscan::DiagnosticSeverity::kError,
@@ -265,13 +282,17 @@ class RuntimeDiagnosticBuffer {
   RuntimeDiagnosticBuffer& operator=(const RuntimeDiagnosticBuffer&) = delete;
 
   /// Retain one ordinary diagnostic or publish the preconstructed exhaustion marker.
-  void append(
-      DiagnosticId id, std::string_view token, DiagnosticSource source,
-      std::string_view service = {}, const RuntimeDiagnosticDetail* detail = nullptr,
-      std::string_view required = {}, std::string_view provided = {},
-      ::holoscan::DiagnosticSeverity severity = ::holoscan::DiagnosticSeverity::kError) noexcept {
+  void append(DiagnosticId id, std::string_view token, DiagnosticSource source,
+              std::string_view service = {}, const RuntimeDiagnosticDetail* detail = nullptr,
+              std::string_view required = {}, std::string_view provided = {},
+              ::holoscan::DiagnosticSeverity severity = ::holoscan::DiagnosticSeverity::kError,
+              const GraphView& graph = {}, std::string_view port_name = {}) noexcept {
     const std::size_t index = count_.load(std::memory_order_relaxed);
-    if (index >= diagnostics_.size()) {
+    if (finalized_ || index >= diagnostics_.size()) {
+      return;
+    }
+    if (severity == ::holoscan::DiagnosticSeverity::kWarning && index + 2U >= diagnostics_.size()) {
+      overflow_pending_ = true;
       return;
     }
     if (index + 1U == diagnostics_.size()) {
@@ -282,26 +303,55 @@ class RuntimeDiagnosticBuffer {
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     try {
 #endif
-      diagnostics_[index] = Diagnostic{
-          .id = id,
-          .severity = severity,
-          .token = std::string{token},
-          .source = source,
-          .service = std::string{service},
-          .required = std::string{required},
-          .provided = std::string{provided},
-      };
+      auto& diagnostic = diagnostics_[index];
+      diagnostic.id = id;
+      diagnostic.severity = severity;
+      diagnostic.source = source;
+      diagnostic.token.assign(token);
+      retain_primary_detail(index, source, detail);
+      if (severity == ::holoscan::DiagnosticSeverity::kError && !first_failure_) {
+        first_failure_ = index;
+      }
+      diagnostic.service.assign(service);
+      diagnostic.required.assign(required);
+      diagnostic.provided.assign(provided);
+      if (diagnostic.detail) {
+        append_optional_context(*diagnostic.detail, source, detail, graph, port_name);
+      }
       details_[index] = detail != nullptr ? *detail : RuntimeDiagnosticDetail{};
+      if (diagnostic.detail) {
+        details_[index].error = diagnostic.detail->error;
+      }
       count_.store(index + 1U, std::memory_order_release);
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
-      // Diagnostic retention is best-effort after terminal state has already become authoritative.
+      // Diagnostic retention must not change execution or cleanup.
       // NOLINTNEXTLINE(bugprone-empty-catch)
     } catch (...) {
       // The terminal session state remains authoritative if cold diagnostic
-      // string/detail storage itself cannot be copied. Count remains unchanged,
-      // so the same bounded slot is deterministically reusable by a later append.
+      // string/detail storage itself cannot be copied. Preserve captured primary
+      // evidence and publish the record before a later append can reuse its slot.
+      if (diagnostics_[index].detail) {
+        diagnostics_[index].detail->truncated = true;
+      }
+      count_.store(index + 1U, std::memory_order_release);
     }
 #endif
+  }
+
+  void finalize() noexcept {
+    if (finalized_) {
+      return;
+    }
+    const auto index = count_.load(std::memory_order_relaxed);
+    if (overflow_pending_ && index < diagnostics_.size()) {
+      diagnostics_.back().severity = ::holoscan::DiagnosticSeverity::kWarning;
+      if (index + 1U != diagnostics_.size()) {
+        diagnostics_[index] = std::move(diagnostics_.back());
+      }
+      count_.store(index + 1U, std::memory_order_release);
+    }
+    overflow_pending_ = false;
+    finalized_ = true;
   }
 
   /// Return the retained public sequence, including an exhaustion marker when present.
@@ -315,8 +365,117 @@ class RuntimeDiagnosticBuffer {
   }
 
  private:
+  void retain_primary_detail(std::size_t index, DiagnosticSource source,
+                             const RuntimeDiagnosticDetail* detail) {
+    const bool has_error =
+        detail != nullptr && (detail->error.code != ErrorCode::kSuccess || detail->capture);
+    const bool has_context =
+        detail != nullptr && (detail->role || detail->operation != DiagnosticOperation::kUnknown);
+    if (!has_error && !has_context && !source.vertex) {
+      return;
+    }
+    auto& evidence = spare_details_[index];
+    evidence.operation = detail != nullptr ? detail->operation : DiagnosticOperation::kRuntime;
+    evidence.stage = detail != nullptr ? detail->stage : std::nullopt;
+    evidence.phase = detail != nullptr ? detail->phase : LifecycleTransitionPhase::kNone;
+    evidence.transaction_id = detail != nullptr ? detail->transaction_id : 0U;
+    if (detail != nullptr && detail->capture && detail->capture->count != 0U) {
+      const auto& captured = *detail->capture;
+      const auto& cause = captured.causes[0];
+      evidence.error.code = cause.code;
+      evidence.error.message.assign(captured.text.data() + cause.offset, cause.length);
+      evidence.truncated = captured.truncated;
+    } else if (has_error) {
+      evidence.error.code = detail->error.code;
+      evidence.error.message.assign(detail->error.message, 0U, DiagnosticCapture::kTextCapacity);
+      evidence.truncated = detail->error.message.size() > DiagnosticCapture::kTextCapacity;
+    } else {
+      evidence.error.code = ErrorCode::kSuccess;
+    }
+    if (detail != nullptr && detail->role) {
+      evidence.role = *detail->role;
+    } else if (evidence.phase == LifecycleTransitionPhase::kForwardRollback) {
+      evidence.role = DiagnosticFailureRole::kRollback;
+    } else if (evidence.phase == LifecycleTransitionPhase::kRestoreOld) {
+      evidence.role = DiagnosticFailureRole::kRestoration;
+    } else if (evidence.phase == LifecycleTransitionPhase::kShutdownTeardown ||
+               evidence.phase == LifecycleTransitionPhase::kPreRestartTeardown) {
+      evidence.role = DiagnosticFailureRole::kTeardown;
+    }
+    evidence.primary_diagnostic_index = find_primary_diagnostic(index, source, evidence, detail);
+    diagnostics_[index].detail.emplace(std::move(evidence));
+  }
+
+  [[nodiscard]] std::optional<std::uint32_t> find_primary_diagnostic(
+      std::size_t index, DiagnosticSource source, const DiagnosticDetail& evidence,
+      const RuntimeDiagnosticDetail* detail) const noexcept {
+    if (evidence.role == DiagnosticFailureRole::kPrimary) {
+      return std::nullopt;
+    }
+    if (evidence.transaction_id != 0U) {
+      for (std::size_t prior = 0U; prior < index; ++prior) {
+        const auto& retained = diagnostics_[prior].detail;
+        if (!retained.has_value()) {
+          continue;
+        }
+        if (retained->transaction_id == evidence.transaction_id) {
+          return static_cast<std::uint32_t>(prior);
+        }
+      }
+      return std::nullopt;
+    }
+    if (detail != nullptr && detail->follows_compute_failure) {
+      for (std::size_t prior = index; prior > 0U; --prior) {
+        const auto& candidate = diagnostics_[prior - 1U];
+        const auto& retained = candidate.detail;
+        if (!retained.has_value()) {
+          continue;
+        }
+        if (candidate.source.vertex == source.vertex && candidate.source.graph == source.graph &&
+            retained->operation == DiagnosticOperation::kCompute &&
+            retained->role == DiagnosticFailureRole::kPrimary &&
+            candidate.severity == ::holoscan::DiagnosticSeverity::kError) {
+          return static_cast<std::uint32_t>(prior - 1U);
+        }
+      }
+      return std::nullopt;
+    }
+    return first_failure_ ? std::optional{static_cast<std::uint32_t>(*first_failure_)}
+                          : std::nullopt;
+  }
+
+  static void append_optional_context(DiagnosticDetail& evidence, DiagnosticSource source,
+                                      const RuntimeDiagnosticDetail* detail, const GraphView& graph,
+                                      std::string_view port_name) {
+    evidence.operator_path = detail == nullptr || detail->component_path.empty()
+                                 ? diagnostic_operator_path(graph, source.vertex)
+                                 : detail->component_path;
+    if (detail != nullptr && detail->tensor_failure.port) {
+      const auto& mismatch = detail->tensor_failure;
+      evidence.port_name.assign(port_name);
+      evidence.mismatches.push_back(
+          {mismatch.field.data(), mismatch.provided.data(), mismatch.required.data()});
+      evidence.truncated = evidence.truncated || mismatch.truncated;
+    }
+    if (detail != nullptr && !detail->cuda_execution.mismatch.field.empty()) {
+      evidence.mismatches.push_back(detail->cuda_execution.mismatch);
+    }
+    if (detail != nullptr && detail->capture) {
+      const auto& captured = *detail->capture;
+      for (std::size_t cause_index = 1U; cause_index < captured.count; ++cause_index) {
+        const auto& cause = captured.causes[cause_index];
+        evidence.causes.push_back(
+            Error{cause.code, std::string{captured.text.data() + cause.offset, cause.length}});
+      }
+    }
+  }
+
   std::array<Diagnostic, kRuntimeStructuralDiagnosticCapacity> diagnostics_{};
   std::array<RuntimeDiagnosticDetail, kRuntimeStructuralDiagnosticCapacity> details_{};
+  std::array<DiagnosticDetail, kRuntimeStructuralDiagnosticCapacity> spare_details_{};
+  std::optional<std::size_t> first_failure_;
+  bool overflow_pending_{};
+  bool finalized_{};
   std::atomic<std::size_t> count_{};
 };
 

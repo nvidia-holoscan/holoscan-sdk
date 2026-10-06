@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -15,9 +16,12 @@
 
 #include <holoscan/core/payload_options.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
+#include <holoscan/sensor_io/image_descriptor_scratch.hpp>
+#include <holoscan/sensor_io/provenance.hpp>
 #include <holoscan/vision/normalize_op.hpp>
 
 #include "detail/cvcuda_tensor.hpp"
+#include "detail/image_payload.hpp"
 
 namespace holoscan::vision {
 namespace {
@@ -66,15 +70,33 @@ struct ChannelValues {
                        .channels = static_cast<std::int32_t>(values.size())};
 }
 
+[[nodiscard]] bool identity_normalization(const NormalizeOpParams& params) {
+  if (params.global_scale != 1.F || params.shift != 0.F ||
+      (params.scale_is_stddev && params.epsilon != 0.F)) {
+    return false;
+  }
+  for (const float base : params.base) {
+    if (base != 0.F) {
+      return false;
+    }
+  }
+  for (const float scale : params.scale) {
+    if (scale != 1.F && !(params.scale_is_stddev && scale == -1.F)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 class NormalizeOp::Impl {
  public:
+  std::optional<sensor_io::ImageDescriptorScratch> image_metadata;
   std::unique_ptr<cvcuda::Normalize> operation;
 };
 
-NormalizeOp::NormalizeOp(VisionImageCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+NormalizeOp::NormalizeOp() : impl_(std::make_unique<Impl>()) {}
 
 NormalizeOp::~NormalizeOp() = default;
 
@@ -87,29 +109,23 @@ void NormalizeOp::setup(OperatorSpec& spec) {
   if (!valid_scale) {
     throw RuntimeError(valid_scale.error());
   }
-  auto byte_span = detail::maximum_output_byte_span(
-      capacity_.max_width, capacity_.max_height, capacity_.max_batch_size, sizeof(float));
-  if (!byte_span) {
-    throw RuntimeError(byte_span.error());
-  }
-
   spec.input(input, "input")
       .queue_depth(1U)
+      .tensor_field(schema::ImageTensorFields::data)
       .expects_tensor(TensorInputSpec{
           .representation = kCudaTensorRepresentation,
           .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
       });
   spec.output(output, "output")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = detail::ImageTensorView::kMaxRank,
-                  .max_byte_span = *byte_span,
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .tensor_field(schema::ImageTensorFields::data)
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          input_max_byte_span(input));
 }
 
 Contract NormalizeOp::contract() const {
@@ -119,8 +135,19 @@ Contract NormalizeOp::contract() const {
 }
 
 void NormalizeOp::start() {
+  if (!impl_->image_metadata) {
+    auto created = sensor_io::ImageDescriptorScratch::create();
+    if (!created) {
+      throw RuntimeError(created.error());
+    }
+    impl_->image_metadata.emplace(std::move(*created));
+  }
   if (impl_->operation) {
     return;
+  }
+  auto prepared = detail::prepare_nvcv_tensor_handles(2);
+  if (!prepared) {
+    throw RuntimeError(prepared.error().code, "NormalizeOp failed to prepare NVCV Tensor handles");
   }
   try {
     impl_->operation = std::make_unique<cvcuda::Normalize>();
@@ -137,27 +164,28 @@ void NormalizeOp::stop() {
 
 expected<void, Error> NormalizeOp::compute(ExecutionContext& context) {
   const NormalizeOpParams& configuration = context.params<NormalizeOpParams>();
-  if (!impl_->operation) {
-    return failure(ErrorCode::kNotReady, "NormalizeOp CV-CUDA resource is not initialized");
+  if (!impl_->operation || !impl_->image_metadata) {
+    return failure(ErrorCode::kNotReady, "NormalizeOp resources are not initialized");
   }
   const cudaStream_t stream = context.cuda_stream().get();
   if (stream == nullptr) {
     return failure(ErrorCode::kNotSupported, "NormalizeOp requires a runtime CUDA stream");
   }
 
-  auto sample = input.receive();
+  auto sample = input.selected_sample();
   if (!sample) {
     return make_unexpected(std::move(sample).error());
   }
-  auto input_view = detail::describe_image_tensor(
-      sample->data, detail::TensorOperation::kNormalize, capacity_.max_batch_size);
+  auto input_view = detail::describe_image_payload(
+      sample->data(), detail::TensorOperation::kNormalize, kMaximumBatchSize);
   if (!input_view) {
     return make_unexpected(std::move(input_view).error());
   }
-  if (input_view->width > capacity_.max_width || input_view->height > capacity_.max_height) {
-    return failure(ErrorCode::kInvalidArgument,
-                   "NormalizeOp output exceeds the authored output-pool capacity");
+  auto metadata_copied = impl_->image_metadata->copy_metadata_from(sample->data());
+  if (!metadata_copied) {
+    return make_unexpected(std::move(metadata_copied).error());
   }
+  auto& image = impl_->image_metadata->image();
   auto base = to_channel_values(configuration.base, input_view->channels, "base");
   if (!base) {
     return make_unexpected(std::move(base).error());
@@ -200,10 +228,20 @@ expected<void, Error> NormalizeOp::compute(ExecutionContext& context) {
                                                    input_view->dtype,
                                                    DLDevice{kDLCUDA, loan->device_id().value},
                                                    detail::TensorOperation::kNormalize,
-                                                   capacity_.max_batch_size);
+                                                   kMaximumBatchSize);
   if (!output_view) {
     return make_unexpected(std::move(output_view).error());
   }
+  auto metadata_updated = detail::update_image_metadata(
+      image,
+      *input_view,
+      *output_view,
+      detail::ImageMetadataTransform{.geometry = detail::ImageGeometryChange::kPreserve,
+                                     .values_changed = !identity_normalization(configuration)});
+  if (!metadata_updated) {
+    return make_unexpected(std::move(metadata_updated).error());
+  }
+
   auto nvcv_input = detail::wrap_nvcv_tensor(*input_view);
   if (!nvcv_input) {
     return make_unexpected(std::move(nvcv_input).error());
@@ -235,7 +273,7 @@ expected<void, Error> NormalizeOp::compute(ExecutionContext& context) {
   if (!committed) {
     return make_unexpected(std::move(committed).error());
   }
-  return output.emit(std::move(*loan), detail::forward_metadata(sample->metadata));
+  return output.emit_tensor(std::move(*loan), image, sensor_io::derive_from(sample->metadata()));
 }
 
 }  // namespace holoscan::vision

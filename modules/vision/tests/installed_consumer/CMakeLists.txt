@@ -6,7 +6,15 @@ project(holoscan_vision_installed_consumer LANGUAGES CXX)
 
 include(CTest)
 
-find_package(holoscan-vision CONFIG REQUIRED)
+if(HOLOSCAN_PACKAGE_FIND_MODE STREQUAL "component")
+    find_package(holoscan COMPONENTS vision REQUIRED)
+else()
+    if(NOT DEFINED HOLOSCAN_MODULE_PACKAGE_DIR OR HOLOSCAN_MODULE_PACKAGE_DIR STREQUAL "")
+        message(FATAL_ERROR "HOLOSCAN_MODULE_PACKAGE_DIR is required for module package discovery")
+    endif()
+    set(holoscan-vision_DIR "${HOLOSCAN_MODULE_PACKAGE_DIR}")
+    find_package(holoscan-vision CONFIG REQUIRED)
+endif()
 
 add_executable(holoscan_vision_installed_consumer main.cpp)
 target_compile_features(holoscan_vision_installed_consumer PRIVATE cxx_std_20)

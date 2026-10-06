@@ -1,0 +1,125 @@
+Holoscan SDK 5.x Python is an application-authoring API over the same graph,
+compiler, plan, and runtime used by C++. It is not a compatibility layer over
+the 4.x `Application`, `Fragment`, condition, scheduler, or Python operator
+classes.
+
+Use this page as an initial porting checklist. Migrate the application shape
+first, verify the compiled plan, and then port operator implementations to the
+5.x C++ operator and registration model where needed.
+
+<Note title="You will learn">
+  - How the major 4.x Python concepts map to 5.x
+  - Which changes are mechanical and which require design work
+  - A practical order for porting and verifying an application
+</Note>
+
+## Concept map
+
+| Holoscan SDK 4.x Python | Holoscan SDK 5.x Python | Migration action |
+| --- | --- | --- |
+| Subclass `Application` and implement `compose()` | Use `hs.Graph`; subclass only to define a reusable graph | Move top-level composition into a graph builder or root `Graph`; reserve subclasses for typed reusable components |
+| Use `Fragment` for distributed composition | Compile one graph with external topic and deployment declarations | Replace hand-authored fragment boundaries with graph structure and compiler-visible policy |
+| Construct and attach `Condition` objects | Temporal contracts belong to registered C++ operators | Select operators whose declared contracts express the required rate, selection, and missing-data behavior; there are no Python condition objects |
+| Choose `GreedyScheduler`, `MultiThreadScheduler`, or `EventBasedScheduler` | Compile to a `Plan`; use partitions, regions, and deployment options | Remove scheduler construction and express placement or grouping constraints on the graph or `CompileOptions` |
+| Connect operators and name ports with strings | Connect reflected port objects | Replace port-name maps with `source.out` or `sink.in_`; use `operator["non-identifier-name"]` only when no attribute spelling exists |
+| Define Python `Operator` subclasses with `setup()` and `compute()` | Compose registered C++ operators | Port custom operator callbacks and contracts to C++, register the type, then import its Python proxy |
+| Pass a `TensorMap` message | Use one schema payload with explicit Tensor fields, or a single `Tensor` payload | Define the payload boundary explicitly; do not depend on an untyped name-to-Tensor container |
+| Rely on implicit metadata propagation | Declare metadata in the payload schema or explicit contract | Identify required metadata and make it part of the typed data or boundary contract |
+| Load YAML with `app.config()` and `from_config()` | Use `config.load()`, `params.bind()`, and graph-owned `params.set_params()` | Bind JSON Pointer paths to operator handles and inspect returned provenance before compiling |
+| Let Ctrl-C stop `app.run()` | Use caller-managed Python signals and `RunSession.request_stop()` | Prefer `run_async()` in a context manager and translate application-owned shutdown events into cooperative stop |
+| Install a Python 3.12–3.13 wheel | Use Python 3.12 or newer | Rebuild the environment on a supported interpreter and select the package for the installed CUDA major version |
+
+## Port in this order
+
+1. **Inventory operators and payloads.** Identify every custom Python operator,
+   4.x domain operator, `TensorMap`, and metadata dependency. Confirm that a
+   registered 5.x provider exists or schedule the C++ operator port.
+2. **Rebuild the topology as an `hs.Graph`.** Import proxies from the module
+   package that ships them, create instances with schema-backed keyword
+   parameters, and wire reflected ports.
+3. **Move runtime choices into authoring policy.** Replace conditions,
+   scheduler selection, and resource objects with operator contracts, graph
+   clocks, queue policy, partitions, regions, and deployment options.
+4. **Move file configuration onto the graph.** Load the document, bind sparse
+   paths to handles, call `params.set_params()`, and retain provenance if the
+   application audits configuration.
+5. **Compile before running.** Treat a rejected `Plan` as structured evidence;
+   resolve every error diagnostic before creating a session.
+6. **Make shutdown explicit.** Choose blocking `run()` only for finite plans.
+   For services and recurring graphs, own `run_async()` with a context manager
+   and route control events to `request_stop()`.
+7. **Compare plan artifacts.** Save `plan.json()` for representative graphs and
+   review the topology, policies, endpoints, and diagnostics before testing
+   live devices.
+
+## Minimal before-and-after shape
+
+<Tabs>
+  <Tab title="4.x pattern">
+    ```python
+    class MyApplication(Application):
+        def compose(self):
+            source = SourceOp(self, CountCondition(self, 10), name="source")
+            sink = SinkOp(self, name="sink")
+            self.add_flow(source, sink, {("out", "in")})
+
+    app = MyApplication()
+    app.run()
+    ```
+  </Tab>
+  <Tab title="5.x pattern">
+    ```python
+    import holoscan as hs
+    from custom_holoscan.operators import CounterSource, PrintSink
+
+    graph = hs.Graph("pipeline")
+    source = CounterSource(graph, "source", limit=10)
+    sink = PrintSink(graph, "sink")
+    graph.add_flow(source.out, sink.in_, queue_depth=4)
+    graph.set_default_clock(graph.add_clock(hs.RealtimeClock, "clock"))
+
+    plan = hs.compile(graph)
+    if not plan:
+        raise SystemExit(plan.summary())
+
+    with hs.run_async(plan) as session:
+        if not session.wait(timeout=0.25):
+            session.request_stop()
+            session.wait(timeout=5.0)
+    ```
+  </Tab>
+</Tabs>
+
+The snippets show application shape, not equivalent operator semantics. In
+5.x, the source's C++ temporal contract determines activation and the caller
+owns run termination; `limit` is operator configuration, not a graph-stopping
+condition.
+
+## Current boundaries to plan for
+
+- Python-defined operator callbacks do not have a 5.x compatibility shim.
+  Port the operator to the registered C++ model instead of wrapping old
+  `setup()` or `compute()` methods.
+- Runtime parameter-control transactions are separate from cold graph
+  configuration. Use `params.set_params()` before compile; do not expect a
+  live replacement for every 4.x dynamic parameter pattern.
+- Python external topics cover scalar, inline-schema, raw Tensor, and
+  descriptor-backed Tensor authoring. Tensor topics require the matching
+  payload token and complete boundary contracts.
+- Provider modules are explicit imports. Import the package that ships an
+  operator before looking up its proxy; the core package does not scan the
+  environment automatically.
+
+See [Python](/holoscan/sdk-user-guide/python) for current application-authoring
+guidance and the broader
+[4.x migration map](/holoscan/sdk-user-guide/introduction/migrating-from-4x)
+for the C++ runtime and operator model.
+
+## Recap
+
+- Migrate to `Graph` → `Plan` → `RunSession`; do not search for 4.x application,
+  condition, or scheduler compatibility classes.
+- Port custom Python operators to registered C++ operators before composing
+  them from Python.
+- Make configuration, shutdown, payload metadata, and deployment constraints
+  explicit, then verify the canonical plan before running.

@@ -4,10 +4,12 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <concepts>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -28,6 +30,8 @@
 #include <holoscan/core/run.hpp>
 #include <holoscan/core/temporal_contract.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
+#include <holoscan/sensor_io/image_metadata.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 #include <holoscan/vision/convert_to_op.hpp>
 #include <holoscan/vision/copy_make_border_op.hpp>
@@ -258,6 +262,7 @@ class PipelineSource final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
     spec.output(image, "image")
+        .tensor_field(holoscan::schema::ImageTensorFields::data)
         .produces_tensor(holoscan::TensorOutputSpec{
             .representation = kImageTensorRepresentation,
             .bounds =
@@ -353,15 +358,15 @@ class PipelineSource final : public holoscan::Operator<> {
                        stream);
   }
 
-  holoscan::Output<holoscan::Tensor> image{"image"};
+  holoscan::Output<holoscan::schema::ImageT> image{"image"};
   holoscan::Output<holoscan::Tensor> map{"map"};
   holoscan::Output<holoscan::Tensor> boxes{"boxes"};
   holoscan::Output<holoscan::Tensor> scores{"scores"};
 
  private:
-  template <typename T, std::size_t Rank, std::size_t Size>
+  template <typename Published, typename T, std::size_t Rank, std::size_t Size>
   [[nodiscard]] static holoscan::expected<void, holoscan::Error> emit_tensor(
-      holoscan::Output<holoscan::Tensor>& output, const std::array<std::int64_t, Rank>& shape,
+      holoscan::Output<Published>& output, const std::array<std::int64_t, Rank>& shape,
       const std::array<T, Size>& values, DLDataType dtype, holoscan::TimePoint capture_time,
       std::uint64_t frame_id, ::cuda::stream_ref stream) {
     auto loan = output.allocate_tensor(holoscan::TensorLoanRequest{.shape = shape, .dtype = dtype});
@@ -382,9 +387,28 @@ class PipelineSource final : public holoscan::Operator<> {
     if (!committed) {
       return fail(committed.error().code);
     }
-    auto emitted =
-        output.emit(std::move(*loan),
-                    holoscan::EmitOptions{.capture_time = capture_time, .frame_id = frame_id});
+    const holoscan::EmitOptions metadata{.capture_time = capture_time, .frame_id = frame_id};
+    auto emitted = [&]() -> holoscan::expected<void, holoscan::Error> {
+      if constexpr (std::same_as<Published, holoscan::schema::ImageT>) {
+        holoscan::schema::ImageT descriptor;
+        descriptor.width = 4;
+        descriptor.height = 4;
+        descriptor.encoding = holoscan::schema::ImageEncoding_RGB8;
+        descriptor.color_space = holoscan::schema::ColorSpace_SRGB;
+        descriptor.significant_bits = 7;
+        descriptor.roi_offset_x = 10;
+        descriptor.roi_offset_y = 20;
+        descriptor.exposure_time_ns = 123;
+        descriptor.gain = 2.F;
+        descriptor.header = std::make_shared<holoscan::schema::HeaderT>();
+        descriptor.header->capture_timestamp_ns = 321;
+        descriptor.header->device_sequence = frame_id;
+        descriptor.header->frame_id = "camera";
+        return output.emit_tensor(std::move(*loan), descriptor, metadata);
+      } else {
+        return output.emit(std::move(*loan), metadata);
+      }
+    }();
     if (!emitted) {
       return fail(emitted.error().code);
     }
@@ -399,6 +423,7 @@ class ImageSink final : public holoscan::Operator<> {
   void setup(holoscan::OperatorSpec& spec) override {
     spec.input(input, "input")
         .queue_depth(1U)
+        .tensor_field(holoscan::schema::ImageTensorFields::data)
         .expects_tensor(holoscan::TensorInputSpec{.representation = kCudaTensorRepresentation});
   }
 
@@ -410,32 +435,51 @@ class ImageSink final : public holoscan::Operator<> {
 
   [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
       holoscan::ExecutionContext& context) override {
-    auto sample = input.receive();
+    auto sample = input.selected_sample();
     if (!sample) {
       return fail(sample.error().code);
     }
-    const auto shape = sample->data.shape_span();
+    const auto& image = sample->data();
+    if (!image.data || image.width != 2 || image.height != 2 ||
+        image.encoding != holoscan::schema::ImageEncoding_CUSTOM ||
+        image.color_space != holoscan::schema::ColorSpace_UNSPECIFIED ||
+        image.significant_bits != holoscan::schema::kUnknownImageSignificantBits ||
+        image.roi_offset_x != 0 || image.roi_offset_y != 0 || image.exposure_time_ns != 123 ||
+        image.gain != 2.F || !image.header || image.header->capture_timestamp_ns != 321 ||
+        image.header->frame_id != "camera" ||
+        image.header->device_sequence != sample->metadata().frame_id ||
+        image.plane_layouts.size() != 3U) {
+      return fail(holoscan::ErrorCode::kInvalidArgument);
+    }
+    for (std::size_t i = 0; i < image.plane_layouts.size(); ++i) {
+      const auto& plane = image.plane_layouts[i];
+      if (plane.offset_bytes() != i * 16U || plane.row_stride_bytes() != 8U ||
+          plane.size_bytes() != 16U) {
+        return fail(holoscan::ErrorCode::kInvalidArgument);
+      }
+    }
+    const auto shape = image.data->shape_span();
     if (shape.size() != 3U || shape[0] != 3 || shape[1] != 2 || shape[2] != 2 ||
-        sample->data.nbytes() != sizeof(kExpectedImage) ||
-        !same_dtype(sample->data.dtype(), kF32)) {
+        std::cmp_not_equal(image.data->nbytes(), sizeof(kExpectedImage)) ||
+        !same_dtype(image.data->dtype(), kF32)) {
       return fail(holoscan::ErrorCode::kInvalidArgument);
     }
     std::array<float, 12U> host{};
     auto copied =
-        sample->data.copy_to_host_async(host.data(), sizeof(host), context.cuda_stream().get());
+        image.data->copy_to_host_async(host.data(), sizeof(host), context.cuda_stream().get());
     if (!copied) {
       return fail(copied.error().code);
     }
     if (cudaStreamSynchronize(context.cuda_stream().get()) != cudaSuccess) {
       return fail(holoscan::ErrorCode::kFailure);
     }
-    if (!Result::record_image(host, sample->metadata)) {
+    if (!Result::record_image(host, sample->metadata())) {
       return fail(holoscan::ErrorCode::kInvalidArgument);
     }
     return {};
   }
 
-  holoscan::Input<holoscan::Tensor> input{"input"};
+  holoscan::Input<holoscan::schema::ImageT> input{"input"};
 };
 
 class MaskSink final : public holoscan::Operator<> {
@@ -460,7 +504,8 @@ class MaskSink final : public holoscan::Operator<> {
     }
     const auto shape = sample->data.shape_span();
     if (shape.size() != 2U || shape[0] != 1 || shape[1] != 3 ||
-        sample->data.nbytes() != kExpectedMask.size() || !same_dtype(sample->data.dtype(), kU8)) {
+        std::cmp_not_equal(sample->data.nbytes(), kExpectedMask.size()) ||
+        !same_dtype(sample->data.dtype(), kU8)) {
       return fail(holoscan::ErrorCode::kInvalidArgument);
     }
     std::array<std::uint8_t, 3U> host{};
@@ -484,22 +529,21 @@ class MaskSink final : public holoscan::Operator<> {
 [[nodiscard]] holoscan::ExecutionPlan compile_pipeline() {
   holoscan::Graph graph{"vision-pipeline"};
   const auto source = graph.op<PipelineSource>("source");
-  auto resize = graph.op<holoscan::vision::ResizeOp>(
-      "resize",
-      holoscan::vision::VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
+  auto resize = graph.op<holoscan::vision::ResizeOp>("resize");
   resize.set_params(holoscan::vision::ResizeOpParams{
       .width = 4,
       .height = 4,
+      .max_batch_size = 1U,
       .interpolation = holoscan::vision::InterpolationMode::kNearest,
   });
-  auto crop = graph.op<holoscan::vision::CustomCropOp>(
-      "crop",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
-  crop.set_params(holoscan::vision::CustomCropOpParams{.x = 1, .y = 1, .width = 2, .height = 2});
-  auto border = graph.op<holoscan::vision::CopyMakeBorderOp>(
-      "border",
-      holoscan::vision::VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
+  auto crop = graph.op<holoscan::vision::CustomCropOp>("crop");
+  crop.set_params(holoscan::vision::CustomCropOpParams{
+      .x = 1, .y = 1, .width = 2, .height = 2, .max_batch_size = 1U});
+  auto border = graph.op<holoscan::vision::CopyMakeBorderOp>("border");
   border.set_params(holoscan::vision::CopyMakeBorderOpParams{
+      .max_width = 4,
+      .max_height = 4,
+      .max_batch_size = 1U,
       .top = 1,
       .bottom = 1,
       .left = 1,
@@ -507,12 +551,11 @@ class MaskSink final : public holoscan::Operator<> {
       .border_mode = holoscan::vision::BorderMode::kConstant,
       .border_value = {0.F},
   });
-  auto remap = graph.op<holoscan::vision::RemapOp>(
-      "remap",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto remap = graph.op<holoscan::vision::RemapOp>("remap");
   remap.set_params(holoscan::vision::RemapOpParams{
       .width = 2,
       .height = 2,
+      .max_batch_size = 1U,
       .input_interpolation = holoscan::vision::InterpolationMode::kNearest,
       .map_interpolation = holoscan::vision::InterpolationMode::kNearest,
       .map_value_mode = holoscan::vision::RemapMapValueMode::kAbsolute,
@@ -521,18 +564,14 @@ class MaskSink final : public holoscan::Operator<> {
       .border_value = {0.F},
       .map_synchronization = holoscan::vision::RemapMapSynchronizationMode::kLatest,
   });
-  auto convert = graph.op<holoscan::vision::ConvertToOp>(
-      "convert",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto convert = graph.op<holoscan::vision::ConvertToOp>("convert");
   convert.set_params(holoscan::vision::ConvertToOpParams{
       .output_type = holoscan::vision::VisionElementType::kF32,
       .alpha = 1.0,
       .beta = 0.0,
       .rounding = holoscan::vision::RoundingMode::kNearest,
   });
-  auto normalize = graph.op<holoscan::vision::NormalizeOp>(
-      "normalize",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto normalize = graph.op<holoscan::vision::NormalizeOp>("normalize");
   normalize.set_params(holoscan::vision::NormalizeOpParams{
       .base = {0.F, 10.F, 20.F},
       .scale = {1.F},
@@ -541,16 +580,13 @@ class MaskSink final : public holoscan::Operator<> {
       .epsilon = 0.F,
       .scale_is_stddev = false,
   });
-  auto reformat = graph.op<holoscan::vision::ReformatOp>(
-      "reformat",
-      holoscan::vision::VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto reformat = graph.op<holoscan::vision::ReformatOp>("reformat");
   reformat.set_params(holoscan::vision::ReformatOpParams{
       .mode = holoscan::vision::ReformatMode::kInterleavedToPlanar,
   });
-  auto nms = graph.op<holoscan::vision::NonMaximumSuppressionOp>(
-      "nms", holoscan::vision::NMSCapacity{.max_boxes = 3, .max_batch_size = 1U});
-  nms.set_params(holoscan::vision::NonMaximumSuppressionOpParams{.score_threshold = 0.F,
-                                                                 .iou_threshold = 0.5F});
+  auto nms = graph.op<holoscan::vision::NonMaximumSuppressionOp>("nms");
+  nms.set_params(holoscan::vision::NonMaximumSuppressionOpParams{
+      .max_boxes = 3, .max_batch_size = 1U, .score_threshold = 0.F, .iou_threshold = 0.5F});
   const auto image_sink = graph.op<ImageSink>("image-sink");
   const auto mask_sink = graph.op<MaskSink>("mask-sink");
 

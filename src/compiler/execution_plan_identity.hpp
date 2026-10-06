@@ -47,6 +47,13 @@ namespace holoscan::detail {
   return fmt::format("tensor-output-pool.{}.{}", generation, output.value());
 }
 
+/// Return the canonical fixed allocation identity for one CUDA Graph edge.
+[[nodiscard]] inline std::string cuda_graph_fixed_allocation_id(PlanGenerationId generation,
+                                                                GraphId graph, EdgeId edge) {
+  return fmt::format(
+      "cuda-graph-fixed-allocation.{}.graph.{}.edge.{}", generation, graph.value, edge.value);
+}
+
 /// Return the canonical Tensor-field output pool identity.
 [[nodiscard]] inline std::string tensor_field_output_pool_id(PlanGenerationId generation,
                                                              PortId output,
@@ -113,6 +120,17 @@ namespace holoscan::detail {
                                                           DeviceId device) {
   return fmt::format(
       "tensor-stream.{}.process.{}.device.{}", generation, process_group.value, device.value);
+}
+
+/// Return the canonical partition-owned Tensor compute-stream identity.
+[[nodiscard]] inline std::string tensor_partition_compute_stream_id(
+    PlanGenerationId generation, ProcessGroupId process_group, DeviceId device,
+    ExecutionPartitionId partition) {
+  return fmt::format("tensor-stream.{}.process.{}.device.{}.partition.{}",
+                     generation,
+                     process_group.value,
+                     device.value,
+                     partition.value);
 }
 
 /// Return the canonical CUDA Green Context pool identity.

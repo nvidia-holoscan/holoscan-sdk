@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Build and test examples from an installed Holoscan SDK.
+#
+# This script is installed with the example sources and intentionally discovers the
+# SDK prefix relative to itself. It can therefore run from an arbitrary SDK
+# installation without a source checkout.
+
+set -euo pipefail
+
+print_usage() {
+    cat <<'EOF'
+Usage: run_example_tests [--smoke] [ctest options]
+
+Without --smoke, configure and build every installed example, then forward the
+remaining arguments to CTest.
+
+With --smoke, validate the installed SDK consumer interface and build and run
+the hello_world example. Smoke mode accepts no CTest options.
+
+Set HOLOSCAN_EXAMPLES_BUILD_DIR to use a different build directory for the
+full example suite.
+EOF
+}
+
+smoke=false
+if [[ "${1:-}" == "--smoke" ]]; then
+    smoke=true
+    shift
+fi
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    print_usage
+    exit 0
+fi
+
+if [[ "$smoke" == true && "$#" -ne 0 ]]; then
+    echo "--smoke does not accept CTest options." >&2
+    exit 2
+fi
+
+script_dir=$(dirname "$(readlink -f "$0")")
+examples_dir=$(realpath "${script_dir}/..")
+install_prefix=$(realpath "${examples_dir}/../../..")
+export CMAKE_PREFIX_PATH="${install_prefix}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
+
+build() {
+    local build_dir="$1"
+    shift
+    local -a build_args=()
+    if [[ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ]]; then
+        build_args+=(--parallel "${CMAKE_BUILD_PARALLEL_LEVEL}")
+    fi
+    cmake --build "${build_dir}" "${build_args[@]}" "$@"
+}
+
+if [[ "$smoke" != true ]]; then
+    build_dir="${HOLOSCAN_EXAMPLES_BUILD_DIR:-${examples_dir}/../examples-build}"
+    cmake -S "${examples_dir}" -B "${build_dir}"
+    build "${build_dir}"
+    ctest --test-dir "${build_dir}" "$@"
+    exit 0
+fi
+
+cmake --version | grep -q '^cmake version 4\.'
+python3 -c 'import holoscan; print(holoscan.__file__)'
+test -f "${install_prefix}/lib/cmake/holoscan/holoscan-config.cmake"
+test -f "${examples_dir}/CMakeLists.txt"
+
+smoke_dir=$(mktemp -d "${TMPDIR:-/tmp}/holoscan-sdk-smoke.XXXXXX")
+trap 'rm -rf "${smoke_dir}"' EXIT
+
+cat > "${smoke_dir}/CMakeLists.txt" <<'EOF'
+cmake_minimum_required(VERSION 4.0)
+project(holoscan_sdk_module_smoke LANGUAGES CXX)
+
+find_package(holoscan REQUIRED COMPONENTS inference visualization)
+
+add_executable(holoscan_sdk_module_smoke main.cpp)
+target_link_libraries(holoscan_sdk_module_smoke PRIVATE
+    holoscan::visualization::op_holoviz
+    holoscan::op_inference
+)
+EOF
+cat > "${smoke_dir}/main.cpp" <<'EOF'
+int main() { return 0; }
+EOF
+
+cmake -S "${smoke_dir}" -B "${smoke_dir}/module-build" -G Ninja
+build "${smoke_dir}/module-build"
+"${smoke_dir}/module-build/holoscan_sdk_module_smoke"
+
+cmake -S "${examples_dir}/hello_world/cpp" -B "${smoke_dir}/hello-world-build" -G Ninja
+build "${smoke_dir}/hello-world-build"
+"${smoke_dir}/hello-world-build/hello_world"

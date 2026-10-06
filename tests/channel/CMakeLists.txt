@@ -29,14 +29,13 @@ function(holoscan_add_channel_expected_compile_fail_test
     add_test(NAME "CHANNEL_EXPECTED_COMPILE_FAIL.${test_name}"
         COMMAND ${CMAKE_COMMAND}
             -DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}
-            -DHOLOSCAN_BUILD_CONFIG=$<CONFIG>
+            -DCMAKE_BUILD_TYPE=$<CONFIG>
             -DHOLOSCAN_TARGET=${target_name}
             -DHOLOSCAN_EXPECTED_DIAGNOSTIC=${diagnostic_fragment}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/../core/expected_compile_fail/verify_compile_failure.cmake
     )
-    set_tests_properties("CHANNEL_EXPECTED_COMPILE_FAIL.${test_name}" PROPERTIES
-        RESOURCE_LOCK expected_compile_fail_build
-    )
+    # Building a negative fixture may relink libraries used by running SDK tests.
+    set_tests_properties("CHANNEL_EXPECTED_COMPILE_FAIL.${test_name}" PROPERTIES RUN_SERIAL TRUE)
 endfunction()
 
 add_library(channel_process_test_support STATIC
@@ -65,6 +64,65 @@ holoscan_add_channel_expected_compile_fail_test(
     transport_capabilities_removed
     transport_capabilities_removed.cpp
     "transport_capabilities"
+)
+
+function(holoscan_configure_readiness_portability_target target_name)
+    holoscan_configure_cxx20_target(${target_name} PRIVATE)
+    target_include_directories(${target_name}
+        PRIVATE
+            ${holoscan_SOURCE_DIR}/include
+            ${holoscan_SOURCE_DIR}/src
+            ${holoscan_BINARY_DIR}/include
+    )
+    target_compile_definitions(${target_name}
+        PRIVATE
+            HOLOMQ_HAS_NATIVE_DESCRIPTOR_READINESS=0
+            HOLOMQ_STATIC_DEFINE
+            HOLOSCAN_CORE_STATIC_DEFINE
+    )
+    if(MSVC)
+        target_compile_options(${target_name} PRIVATE /O2)
+    else()
+        target_compile_options(${target_name} PRIVATE -O2)
+    endif()
+    target_link_libraries(${target_name} PRIVATE tl::expected)
+endfunction()
+
+# Compile and link only the readiness additions' unsupported-platform definitions. This target is
+# intentionally independent of holoscan::core and holomq::holomq: pre-existing transport sources
+# remain outside the compile-only Windows portability scope.
+add_executable(channel_readiness_unsupported_portability
+    readiness_unsupported_portability.cpp
+    ../../src/channel/channel_readiness_handle_unsupported.cpp
+    ../../src/holomq/readiness_handle_unsupported.cpp
+)
+holoscan_configure_readiness_portability_target(channel_readiness_unsupported_portability)
+# REQ: CHAN-148
+add_test(NAME CMAKE_PORTABILITY.readiness_unsupported_symbols
+    COMMAND channel_readiness_unsupported_portability
+)
+
+# The optimized positive fixture above must retain real references to both implementation files.
+# Omitting those files from an otherwise identical target must therefore fail at link time.
+add_executable(channel_readiness_unsupported_missing_definitions EXCLUDE_FROM_ALL
+    readiness_unsupported_portability.cpp
+)
+holoscan_configure_readiness_portability_target(
+    channel_readiness_unsupported_missing_definitions
+)
+# REQ: CHAN-148
+add_test(NAME CMAKE_PORTABILITY.readiness_unsupported_missing_definitions_fail
+    COMMAND ${CMAKE_COMMAND}
+        -DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}
+        -DCMAKE_BUILD_TYPE=$<CONFIG>
+        -DHOLOSCAN_TARGET=channel_readiness_unsupported_missing_definitions
+        -DHOLOSCAN_EXPECTED_DIAGNOSTIC=ReadinessHandle
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_link_failure.cmake
+)
+set_tests_properties(CMAKE_PORTABILITY.readiness_unsupported_missing_definitions_fail
+    PROPERTIES
+        DEPENDS CMAKE_PORTABILITY.readiness_unsupported_symbols
+        RUN_SERIAL TRUE
 )
 
 add_executable(channel_test
@@ -159,7 +217,8 @@ holoscan_add_flatbuffer_schema(
     SCHEMAS custom_control.fbs
     INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_DIR "${HOLOSCAN_CHANNEL_TEST_SCHEMA_GENERATED_DIR}"
-    BFBS_EMBED
+    TRAITS_HEADER custom_control_schema_traits.hpp
+    MAX_SERIALIZED_SIZE 512
 )
 add_dependencies(channel_schema_test
     holoscan_flatbuffer_schemas_generated

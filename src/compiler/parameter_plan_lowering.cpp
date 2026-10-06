@@ -25,7 +25,7 @@
 
 #include "../core/operator_spec_compiler_access.hpp"
 #include "../core/parameter_catalog_internal.hpp"
-#include "../core/parameter_override_set_internal.hpp"
+#include "../core/parameter_input_internal.hpp"
 #include "../core/plan_record_contracts.hpp"
 #include "../core/port_configuration_internal.hpp"
 #include "../core/tensor_field_configuration_internal.hpp"
@@ -39,6 +39,17 @@ namespace {
 
 constexpr std::uint32_t kRuntimeEventsPerAcceptedUpdate = 2U;
 constexpr std::uint32_t kLifecycleEventsPerAcceptedUpdate = 8U;
+
+[[nodiscard]] std::vector<ParamEnumChoiceRecord> own_enum_choices(const ParamEnumChoices& choices) {
+  std::vector<ParamEnumChoiceRecord> result;
+  result.reserve(choices.count);
+  for (std::size_t index = 0; index < choices.count; ++index) {
+    const ParamEnumChoice& choice = choices.values[index];
+    result.push_back(
+        ParamEnumChoiceRecord{.name = std::string(choice.name), .value = choice.value});
+  }
+  return result;
+}
 
 void append_diagnostic(ParameterPlanLowering& result, std::string_view token,
                        DiagnosticSource source = {}) {
@@ -70,7 +81,8 @@ void append_diagnostic(ParameterPlanLowering& result, std::string_view token,
 }
 
 [[nodiscard]] bool supported_scalar_field(const ParamFieldDescriptor& field) noexcept {
-  if (!supported_scalar_type(field.logical_type) || !field.type_shape.has_stable_shape) {
+  if (field.type_shape.optional || !supported_scalar_type(field.logical_type) ||
+      !field.type_shape.has_stable_shape) {
     return false;
   }
   if (field.logical_type != ParamLogicalType::kDuration) {
@@ -82,11 +94,67 @@ void append_diagnostic(ParameterPlanLowering& result, std::string_view token,
          field.type_shape.element_or_rep_bit_width <= 64U;
 }
 
+[[nodiscard]] bool supported_runtime_scalar_field(const ParamFieldDescriptor& field) noexcept {
+  if (!supported_scalar_type(field.logical_type) || !field.type_shape.has_stable_shape ||
+      field.local_operations.replace_member_from_scalar == nullptr) {
+    return false;
+  }
+  if (field.logical_type != ParamLogicalType::kDuration) {
+    return true;
+  }
+  return (field.type_shape.element_or_rep_type == ParamLogicalType::kSignedInteger ||
+          field.type_shape.element_or_rep_type == ParamLogicalType::kUnsignedInteger) &&
+         field.type_shape.element_or_rep_bit_width > 0U &&
+         field.type_shape.element_or_rep_bit_width <= 64U;
+}
+
+[[nodiscard]] bool supported_runtime_field(const ParamFieldDescriptor& field,
+                                           std::uint32_t depth = 0U) noexcept {
+  if (!field.type_shape.has_stable_shape ||
+      (field.type_shape.optional && field.local_operations.clear_optional_member == nullptr)) {
+    return false;
+  }
+  switch (field.logical_type) {
+    case ParamLogicalType::kBool:
+    case ParamLogicalType::kSignedInteger:
+    case ParamLogicalType::kUnsignedInteger:
+    case ParamLogicalType::kFloatingPoint:
+    case ParamLogicalType::kDuration:
+      return supported_runtime_scalar_field(field);
+    case ParamLogicalType::kString:
+      return field.constraints.max_utf8_bytes != 0U &&
+             field.local_operations.replace_member_from_string != nullptr;
+    case ParamLogicalType::kSequence:
+      if (field.constraints.max_elements == 0U) {
+        return false;
+      }
+      if (field.type_shape.element_or_rep_type == ParamLogicalType::kString) {
+        return field.constraints.max_element_utf8_bytes != 0U &&
+               field.local_operations.replace_member_from_string_sequence != nullptr;
+      }
+      return supported_scalar_type(field.type_shape.element_or_rep_type) &&
+             field.local_operations.replace_member_from_scalar_sequence != nullptr;
+    case ParamLogicalType::kObject: {
+      if (!field.nested || depth >= 32U ||
+          field.local_operations.mutable_nested_member == nullptr ||
+          field.local_operations.nested_schema == nullptr) {
+        return false;
+      }
+      const ParamSchemaDescriptor* const nested = field.local_operations.nested_schema();
+      return nested != nullptr && nested->coverage == ParamSchemaCoverage::kComplete &&
+             std::all_of(nested->fields.begin(), nested->fields.end(), [&](const auto& child) {
+               return supported_runtime_field(child, depth + 1U);
+             });
+    }
+    case ParamLogicalType::kFilesystemPath:
+      return false;
+  }
+  return false;
+}
+
 [[nodiscard]] bool read_scalar(const ParamFieldDescriptor& field, const void* aggregate,
                                ParamScalarValue& result) noexcept {
-  return field.local_operations.read_member_as_scalar != nullptr &&
-         field.local_operations.read_member_as_scalar(aggregate, result) &&
-         canonicalize_parameter_scalar(result);
+  return read_param_field_scalar(field, aggregate, result) && canonicalize_parameter_scalar(result);
 }
 
 [[nodiscard]] ParamValueRouteDisposition classify_value_route(
@@ -123,11 +191,8 @@ void append_diagnostic(ParameterPlanLowering& result, std::string_view token,
   if (!profile_supported) {
     return ParameterFieldUpdateDisposition::kProfileDisallowed;
   }
-  if (!supported_scalar_field(field)) {
+  if (!supported_runtime_field(field)) {
     return ParameterFieldUpdateDisposition::kUnsupportedLogicalType;
-  }
-  if (field.local_operations.replace_member_from_staged == nullptr) {
-    return ParameterFieldUpdateDisposition::kReplacementUnavailable;
   }
   return ParameterFieldUpdateDisposition::kAdmitted;
 }
@@ -272,16 +337,16 @@ struct OperatorPathInfo {
 }
 
 [[nodiscard]] ParameterGenerationZeroOrigin generation_zero_origin(
-    ParamOverrideContributionOrigin origin) noexcept {
+    ParameterContributionOrigin origin) noexcept {
   switch (origin) {
-    case ParamOverrideContributionOrigin::kCaptured:
-      return ParameterGenerationZeroOrigin::kOverrideCaptured;
-    case ParamOverrideContributionOrigin::kAlias:
-      return ParameterGenerationZeroOrigin::kOverrideAlias;
-    case ParamOverrideContributionOrigin::kMigration:
-      return ParameterGenerationZeroOrigin::kOverrideMigration;
+    case ParameterContributionOrigin::kCaptured:
+      return ParameterGenerationZeroOrigin::kInputCaptured;
+    case ParameterContributionOrigin::kAlias:
+      return ParameterGenerationZeroOrigin::kInputAlias;
+    case ParameterContributionOrigin::kMigration:
+      return ParameterGenerationZeroOrigin::kInputMigration;
   }
-  return ParameterGenerationZeroOrigin::kOverrideCaptured;
+  return ParameterGenerationZeroOrigin::kInputCaptured;
 }
 
 [[nodiscard]] bool payload_options_equal(const std::optional<PayloadOptionsRecord>& lhs,
@@ -301,6 +366,7 @@ struct OperatorPathInfo {
   const PortConfigurationRecord replayed = setup_port_configuration(candidate, follows_input);
   return existing.owner_kind == PortOwnerKind::kOperator &&
          existing.direction == candidate.direction && existing.name == candidate.name &&
+         existing.optional == candidate.optional &&
          payload_identity_exactly_equal(existing.payload_identity, candidate.payload_identity) &&
          existing.descriptor_tensor_field_count == candidate.descriptor_tensor_field_count &&
          existing.setup.queue_depth == replayed.queue_depth &&
@@ -325,6 +391,7 @@ struct OperatorPathInfo {
            existing.setup.tensor_allocation->max_byte_span ==
                replayed.tensor_allocation->max_byte_span)) &&
          existing.setup.tensor_byte_span_expression == replayed.tensor_byte_span_expression &&
+         existing.setup.tensor_memory_kind_expression == replayed.tensor_memory_kind_expression &&
          payload_options_equal(existing.setup.payload_options, replayed.payload_options) &&
          tensor_field_configuration_equal(existing.setup.tensor_fields, replayed.tensor_fields);
 }
@@ -486,7 +553,7 @@ struct OperatorPathInfo {
   if (vertex == nullptr || vertex->kind != VertexKind::kOperator) {
     return false;
   }
-  auto created = factory.create();
+  auto created = factory.create(nullptr);
   if (!created || !created.value()) {
     return false;
   }
@@ -499,477 +566,455 @@ struct OperatorPathInfo {
   if (OperatorSpecCompilerAccess::declaration_error(spec).code != ErrorCode::kSuccess) {
     return false;
   }
-  return replayed_ports_match(snapshot, owner, spec) &&
+  return vertex->cuda_graph_capture_eligible ==
+             OperatorSpecCompilerAccess::cuda_graph_capture_eligible(spec) &&
+         replayed_ports_match(snapshot, owner, spec) &&
          replayed_sources_match(snapshot, owner, spec) &&
          replayed_lifecycle_matches(snapshot, owner, spec, factory.lifecycle_hooks());
 }
 
-[[nodiscard]] ParameterProtectedValueDigest override_value_digest(
-    const ParamTypeDescriptor& type, const ParamSchemaDescriptor* schema, const void* value,
-    bool no_params, bool (*tooling_digest)(const void*, ParamSchemaHash&) noexcept) {
-  ParameterProtectedValueDigest result = parameter_value_digest(type, schema, value, no_params);
-  if (result.available() || tooling_digest == nullptr) {
-    return result;
-  }
-  ParamSchemaHash digest{};
-  if (!tooling_digest(value, digest)) {
-    return result;
-  }
-  return {.disposition = ParameterValueDigestDisposition::kToolingCodec, .digest = digest};
-}
-
-[[nodiscard]] bool field_values_equal(const ParamFieldDescriptor& field, const void* lhs,
-                                      const void* rhs) noexcept {
-  const auto& operations = field.local_operations;
-  if (operations.copy_construct_from_member == nullptr || operations.destroy_staged == nullptr ||
-      operations.semantic_equal_to_staged == nullptr || operations.object_size == 0U ||
-      operations.object_alignment == 0U) {
-    return false;
-  }
-  void* staging = nullptr;
-  bool constructed = false;
-  try {
-    staging = ::operator new(operations.object_size, std::align_val_t{operations.object_alignment});
-    operations.copy_construct_from_member(staging, lhs);
-    constructed = true;
-    const bool equal = operations.semantic_equal_to_staged(rhs, staging);
-    operations.destroy_staged(staging);
-    ::operator delete(staging, std::align_val_t{operations.object_alignment});
-    return equal;
-  } catch (...) {
-    if (constructed) {
-      operations.destroy_staged(staging);
-    }
-    if (staging != nullptr) {
-      ::operator delete(staging, std::align_val_t{operations.object_alignment});
-    }
-    return false;
-  }
+[[nodiscard]] bool valid_config_source(const ParamConfigFieldProvenance& source,
+                                       std::string_view target_path,
+                                       std::string_view target_schema_id,
+                                       ParamSchemaVersion target_schema_version,
+                                       ParamFieldId target_field_id, ParamSchemaHash target_full_id,
+                                       std::size_t expected_ordinal) noexcept {
+  return source.document.semantic_version != 0U &&
+         (!source.document.has_raw_source || source.document.raw_algorithm_version != 0U) &&
+         (!source.document.has_base_raw_source ||
+          source.document.base_raw_algorithm_version != 0U) &&
+         !source.source_path.empty() && source.source_path.size() <= 512U &&
+         source.source_ordinal == expected_ordinal && source.target_operator_path == target_path &&
+         source.target_schema_id == target_schema_id &&
+         source.target_schema_version == target_schema_version &&
+         source.target_field_id == target_field_id && source.target_full_id == target_full_id;
 }
 
 [[nodiscard]] bool valid_config_source(const ParamConfigFieldProvenance& source,
-                                       const ParamOverrideOperatorState& target,
-                                       const ParamOverrideFieldOriginRecord& contribution,
+                                       const ParameterTransactionOperatorState& target,
+                                       const ParameterTransactionFieldState& contribution,
                                        std::size_t expected_ordinal) noexcept {
-  const bool origin_matches = (contribution.origin == ParamOverrideContributionOrigin::kCaptured &&
+  const bool origin_matches = (contribution.origin == ParamFieldRebindOrigin::kCaptured &&
                                source.origin == ParamFieldRebindOrigin::kCaptured) ||
-                              (contribution.origin == ParamOverrideContributionOrigin::kAlias &&
+                              (contribution.origin == ParamFieldRebindOrigin::kAlias &&
                                source.origin == ParamFieldRebindOrigin::kAlias);
-  return source.document.semantic_version != 0U &&
-         (!source.document.has_raw_source || source.document.raw_algorithm_version != 0U) &&
-         !source.source_path.empty() && source.source_path.size() <= 512U &&
-         source.source_ordinal == expected_ordinal &&
-         source.target_operator_path == target.operator_path &&
-         source.target_schema_id == target.schema_id &&
-         source.target_schema_version == target.schema_version &&
-         source.target_field_id == contribution.field &&
-         source.target_full_id == contribution.full_id && origin_matches;
+  // Attachment clears the transaction copy; compilation later stamps the final path.
+  return origin_matches && valid_config_source(source,
+                                               std::string_view{},
+                                               target.schema_id,
+                                               target.schema_version,
+                                               contribution.field,
+                                               contribution.full_id,
+                                               expected_ordinal);
 }
 
-[[nodiscard]] bool selected_rebind_target_path(const ParamRebindProvenance& provenance,
-                                               std::string_view candidate) noexcept {
-  switch (provenance.target_scope_kind) {
-    case ParamRebindTargetScopeKind::kWholeGraph:
-      return true;
-    case ParamRebindTargetScopeKind::kGraph:
-      return candidate.size() > provenance.target_scope_paths.front().size() &&
-             candidate.starts_with(provenance.target_scope_paths.front()) &&
-             candidate[provenance.target_scope_paths.front().size()] == '/';
-    case ParamRebindTargetScopeKind::kOperator:
-      return candidate == provenance.target_scope_paths.front();
-    case ParamRebindTargetScopeKind::kOperatorSet:
-      return std::ranges::binary_search(provenance.target_scope_paths, candidate);
-  }
-  return false;
-}
-
-[[nodiscard]] bool valid_rebind_target_scope_shape(
-    const ParamRebindProvenance& provenance) noexcept {
-  const auto& paths = provenance.target_scope_paths;
-  switch (provenance.target_scope_kind) {
-    case ParamRebindTargetScopeKind::kWholeGraph:
-      return paths.empty();
-    case ParamRebindTargetScopeKind::kGraph:
-    case ParamRebindTargetScopeKind::kOperator:
-      return paths.size() == 1U && !paths.front().empty() && paths.front().size() <= 512U;
-    case ParamRebindTargetScopeKind::kOperatorSet:
-      return !paths.empty() && paths.size() <= 65'536U && std::ranges::is_sorted(paths) &&
-             std::ranges::adjacent_find(paths) == paths.end() &&
-             std::ranges::all_of(paths, [](const std::string& path) {
-               return !path.empty() && path.size() <= 512U;
-             });
-  }
-  return false;
-}
-
-[[nodiscard]] bool valid_rebind_target_selection(
-    const ParamRebindProvenance& provenance, std::span<const std::optional<OperatorPathInfo>> paths,
-    const ExecutableFactoryInventory& factories) {
-  if (!valid_rebind_target_scope_shape(provenance) || provenance.target_operators.empty() ||
-      provenance.target_operators.size() > 65'536U ||
-      !std::ranges::is_sorted(
-          provenance.target_operators, {}, &ParamRebindTargetOperatorProvenance::operator_path) ||
-      std::ranges::adjacent_find(
-          provenance.target_operators, {}, &ParamRebindTargetOperatorProvenance::operator_path) !=
-          provenance.target_operators.end() ||
-      provenance.target_selection_digest !=
-          ParamOverrideSetAccess::target_selection_digest(provenance.target_scope_kind,
-                                                          provenance.target_scope_paths,
-                                                          provenance.target_operators) ||
-      paths.size() != factories.operators.size()) {
+[[nodiscard]] bool collect_local_config_sources(
+    const ParameterInputEvidenceState& evidence, const ParamTypeDescriptor& type,
+    const ParamSchemaDescriptor& schema, std::string_view operator_path,
+    std::vector<std::optional<ParamConfigFieldProvenance>>& sources) {
+  if (evidence.local_type_token != type.local_type_token ||
+      evidence.schema_id != schema.stable_id || evidence.schema_version != schema.version ||
+      evidence.structural_hash != schema.structural_hash ||
+      evidence.contract_hash != schema.contract_hash || evidence.config_fields.empty() ||
+      evidence.config_fields.size() > 65'536U) {
     return false;
   }
-
-  std::vector<ParamRebindTargetOperatorProvenance> expected;
-  expected.reserve(provenance.target_operators.size());
-  for (std::size_t index = 0; index < paths.size(); ++index) {
-    const auto& path = paths[index];
-    if (!path.has_value()) {
-      continue;
-    }
-    const auto& path_info = path.value();
-    if (!selected_rebind_target_path(provenance, path_info.rendered)) {
-      continue;
-    }
-    const auto& executable = factories.operators[index];
-    const ParamSchemaDescriptor* const schema =
-        executable.factory == nullptr ? nullptr : executable.factory->parameter_schema();
-    if (schema == nullptr || schema->stable_id.empty() || schema->stable_id.size() > 256U ||
-        schema->version == 0U) {
+  sources.resize(schema.fields.size());
+  for (std::size_t source_index = 0; source_index < evidence.config_fields.size(); ++source_index) {
+    const auto& source = evidence.config_fields[source_index];
+    if (source.document.semantic_version == 0U ||
+        (source.document.has_raw_source && source.document.raw_algorithm_version == 0U) ||
+        (source.document.has_base_raw_source && source.document.base_raw_algorithm_version == 0U) ||
+        source.source_path.empty() || source.source_path.size() > 512U ||
+        source.source_ordinal != source_index || !source.target_operator_path.empty() ||
+        source.target_schema_id != schema.stable_id ||
+        source.target_schema_version != schema.version ||
+        (source.origin != ParamFieldRebindOrigin::kCaptured &&
+         source.origin != ParamFieldRebindOrigin::kAlias)) {
       return false;
     }
-    expected.push_back(ParamRebindTargetOperatorProvenance{
-        .operator_path = path_info.rendered,
-        .schema_id = std::string{schema->stable_id},
-        .schema_version = schema->version,
-        .structural_hash = schema->structural_hash,
-        .contract_hash = schema->contract_hash,
+    const auto field = std::ranges::find_if(schema.fields, [&](const auto& candidate) {
+      return candidate.id == source.target_field_id && candidate.full_id == source.target_full_id;
     });
+    if (field == schema.fields.end()) {
+      return false;
+    }
+    const std::size_t field_index = static_cast<std::size_t>(field - schema.fields.begin());
+    if (sources[field_index]) {
+      return false;
+    }
+    sources[field_index] = source;
+    // The assignment immediately above establishes the optional value.
+    // NOLINTBEGIN(bugprone-unchecked-optional-access)
+    sources[field_index]->target_operator_path = operator_path;
+    // NOLINTEND(bugprone-unchecked-optional-access)
   }
-  std::ranges::sort(expected, {}, &ParamRebindTargetOperatorProvenance::operator_path);
-  return expected == provenance.target_operators;
+  return true;
 }
 
-struct OverridePathIndex {
-  std::string_view path;
-  std::size_t index{};
+class MutableAggregateCopy {
+ public:
+  MutableAggregateCopy(const ParamTypeDescriptor& type, const void* source, bool use_defaults)
+      : type_(&type) {
+    value_ = ::operator new(type.object_size, std::align_val_t{type.object_alignment});
+    try {
+      if (use_defaults) {
+        type.default_construct(value_);
+      } else {
+        type.copy_construct(value_, source);
+      }
+    } catch (...) {
+      ::operator delete(value_, std::align_val_t{type.object_alignment});
+      value_ = nullptr;
+      throw;
+    }
+  }
+  MutableAggregateCopy(const MutableAggregateCopy&) = delete;
+  MutableAggregateCopy& operator=(const MutableAggregateCopy&) = delete;
+  ~MutableAggregateCopy() {
+    if (value_ != nullptr) {
+      type_->destroy(value_);
+      ::operator delete(value_, std::align_val_t{type_->object_alignment});
+    }
+  }
+  [[nodiscard]] void* get() noexcept { return value_; }
+
+ private:
+  const ParamTypeDescriptor* type_{};
+  void* value_{};
 };
 
-[[nodiscard]] std::vector<OverridePathIndex> make_factory_path_index(
-    std::span<const std::optional<OperatorPathInfo>> paths) {
-  std::vector<OverridePathIndex> result;
-  result.reserve(paths.size());
-  for (std::size_t index = 0; index < paths.size(); ++index) {
-    const auto& path = paths[index];
-    if (path.has_value()) {
-      // The same local optional is checked immediately before this cold index projection.
-      result.push_back(OverridePathIndex{
-          .path = path.value().rendered,  // NOLINT(bugprone-unchecked-optional-access)
-          .index = index});
+class StagedFieldCopy {
+ public:
+  StagedFieldCopy(const ParamFieldLocalOperations& operations, const void* staged)
+      : operations_(&operations) {
+    value_ = ::operator new(operations.object_size, std::align_val_t{operations.object_alignment});
+    try {
+      operations.copy_construct_from_staged(value_, staged);
+      constructed_ = true;
+    } catch (...) {
+      ::operator delete(value_, std::align_val_t{operations.object_alignment});
+      value_ = nullptr;
+      throw;
     }
   }
-  std::ranges::sort(result, [](const auto& lhs, const auto& rhs) { return lhs.path < rhs.path; });
-  return result;
-}
-
-[[nodiscard]] const OverridePathIndex* find_factory_path(std::span<const OverridePathIndex> index,
-                                                         std::string_view path) noexcept {
-  const auto found = std::lower_bound(
-      index.begin(), index.end(), path, [](const OverridePathIndex& item, std::string_view key) {
-        return item.path < key;
-      });
-  return found != index.end() && found->path == path ? &*found : nullptr;
-}
-
-[[nodiscard]] std::vector<bool> duplicate_override_targets(
-    std::span<const ParamOverrideOperatorState> operators) {
-  std::vector<OverridePathIndex> ordered;
-  ordered.reserve(operators.size());
-  for (std::size_t index = 0; index < operators.size(); ++index) {
-    ordered.push_back(OverridePathIndex{.path = operators[index].operator_path, .index = index});
-  }
-  std::ranges::sort(ordered, [](const auto& lhs, const auto& rhs) {
-    return lhs.path < rhs.path || (lhs.path == rhs.path && lhs.index < rhs.index);
-  });
-  std::vector<bool> duplicate(operators.size());
-  for (std::size_t index = 1; index < ordered.size(); ++index) {
-    if (ordered[index - 1U].path == ordered[index].path) {
-      duplicate[ordered[index].index] = true;
+  StagedFieldCopy(const StagedFieldCopy&) = delete;
+  StagedFieldCopy& operator=(const StagedFieldCopy&) = delete;
+  ~StagedFieldCopy() {
+    if (constructed_) {
+      operations_->destroy_staged(value_);
+    }
+    if (value_ != nullptr) {
+      ::operator delete(value_, std::align_val_t{operations_->object_alignment});
     }
   }
-  return duplicate;
+  [[nodiscard]] void* get() noexcept { return value_; }
+
+ private:
+  const ParamFieldLocalOperations* operations_{};
+  void* value_{};
+  bool constructed_{};
+};
+
+[[nodiscard]] bool transaction_scope_targets(const GraphSnapshotData& snapshot,
+                                             const ParameterTransactionState& transaction,
+                                             const ExecutableFactoryInventory& factories,
+                                             std::vector<VertexId>& selected) {
+  const auto& scope = transaction.scope;
+  const bool graph_scope = scope.kind == ParamRebindTargetScopeKind::kWholeGraph ||
+                           scope.kind == ParamRebindTargetScopeKind::kGraph;
+  if (graph_scope != scope.graph.has_value() || (graph_scope && !scope.operators.empty()) ||
+      (!graph_scope && scope.operators.empty())) {
+    return false;
+  }
+  selected.reserve(factories.operators.size());
+  for (const auto& executable : factories.operators) {
+    const auto vertex = std::ranges::find(snapshot.vertices, executable.vertex, &VertexRecord::id);
+    if (vertex == snapshot.vertices.end())
+      return false;
+    const bool included = graph_scope ? is_descendant_or_self(snapshot, vertex->graph, *scope.graph)
+                                      : std::ranges::find(scope.operators, executable.vertex) !=
+                                            scope.operators.end();
+    if (included)
+      selected.push_back(executable.vertex);
+  }
+  return !selected.empty();
 }
 
-// Override replay is transactional across every affected Operator factory.
+// Apply one graph-owned sparse transaction over the final authored factory baselines.
+// Sparse and complete transactions share ordering, provenance, conversion, and rollback checks.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] bool apply_parameter_overrides(
+[[nodiscard]] bool apply_parameter_transaction(
     const GraphSnapshotData& snapshot, ExecutableFactoryInventory& factories,
     std::span<const std::optional<OperatorPathInfo>> paths,
-    std::span<const ParameterProtectedValueDigest> baseline_digests,
-    ParamSchemaHash admission_context_digest,
-    const std::optional<ParamOverrideSet>& parameter_overrides,
-    std::vector<std::vector<ParamOverrideFieldOriginRecord>>& accepted_contributions,
+    std::span<const std::optional<Profile>> effective_vertex_profiles,
+    std::vector<std::vector<ParameterContributionRecord>>& accepted_contributions,
     ParameterPlanLowering& result) {
-  if (!parameter_overrides) {
+  const auto& transaction = factories.parameter_transaction;
+  if (!transaction) {
     return true;
   }
-  const ParamOverrideSetState& state = ParamOverrideSetAccess::state(*parameter_overrides);
-  if (state.representation_version != 3U) {
+  const bool sparse = transaction->provenance.mode == ParamRebindMode::kSparseContributions;
+  const bool complete = transaction->provenance.mode == ParamRebindMode::kCompleteObject;
+  const bool config_source = transaction->source == ParameterTransactionSource::kConfig;
+  const bool snapshot_source = transaction->source == ParameterTransactionSource::kSnapshot;
+  if ((!sparse && !complete) || transaction->operators.empty() ||
+      (config_source && (!sparse || !transaction->provenance.fields.empty())) ||
+      (snapshot_source && !transaction->provenance.config_fields.empty())) {
     append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
     return false;
   }
-  if (!state.target_graph || *state.target_graph != snapshot.identity ||
-      state.target_identity != snapshot.identity.hash.value) {
-    append_diagnostic(result, "PARAMETER_OVERRIDE_TARGET_MISMATCH");
+
+  std::vector<VertexId> selected_scope_targets;
+  if (snapshot_source &&
+      !transaction_scope_targets(snapshot, *transaction, factories, selected_scope_targets)) {
+    append_diagnostic(result, "PARAMETER_REBIND_SCOPE_INVALID");
     return false;
   }
-  const bool exact_context = state.context_binding == ParamOverrideContextBinding::kExact;
-  const bool compile_context = state.context_binding == ParamOverrideContextBinding::kCompile;
-  if ((!exact_context && !compile_context) ||
-      state.provenance.context_binding != state.context_binding) {
-    append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
-    return false;
-  }
-  const ParamSchemaHash empty_context_digest{};
-  if (compile_context) {
-    if (state.admission_context_digest != empty_context_digest ||
-        state.provenance.admission_context_digest != empty_context_digest) {
-      append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
+  if (snapshot_source) {
+    const bool staged_outside_scope =
+        std::ranges::any_of(transaction->operators, [&](const auto& op) {
+          return std::ranges::find(selected_scope_targets, op.target) ==
+                 selected_scope_targets.end();
+        });
+    const bool incomplete =
+        complete &&
+        (selected_scope_targets.size() != transaction->operators.size() ||
+         std::ranges::any_of(selected_scope_targets, [&](VertexId target) {
+           return std::ranges::find(
+                      transaction->operators, target, &ParameterTransactionOperatorState::target) ==
+                  transaction->operators.end();
+         }));
+    if (staged_outside_scope || incomplete) {
+      append_diagnostic(
+          result,
+          incomplete ? "PARAMETER_REBIND_SCOPE_INCOMPLETE" : "PARAMETER_REBIND_SCOPE_INVALID");
       return false;
     }
-  } else {
-    if (state.admission_context_digest == empty_context_digest ||
-        state.provenance.admission_context_digest == empty_context_digest) {
-      append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
-      return false;
-    }
-    if (state.admission_context_digest != admission_context_digest) {
-      append_diagnostic(result, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH");
-      return false;
-    }
-  }
-  if (state.semantic_digest !=
-      ParamOverrideSetAccess::recompute_semantic_digest(*parameter_overrides)) {
-    append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
-    return false;
-  }
-  if (state.provenance.target != snapshot.identity ||
-      (exact_context && state.provenance.admission_context_digest != admission_context_digest)) {
-    append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH");
-    return false;
-  }
-  const ParamSchemaHash empty_target_selection_digest = {};
-  const bool has_rebind_target_selection =
-      state.provenance.target_selection_digest != empty_target_selection_digest ||
-      !state.provenance.target_scope_paths.empty() || !state.provenance.target_operators.empty() ||
-      !state.provenance.fields.empty() ||
-      state.provenance.target_scope_kind != ParamRebindTargetScopeKind::kWholeGraph;
-  const PlanDigest empty_plan_digest;
-  const ParamCatalogDigest empty_catalog_digest;
-  const bool has_snapshot_source =
-      state.provenance.source_archive_semantic_version != 0U ||
-      state.provenance.source_archive_digest != std::array<std::byte, 32>{} ||
-      state.provenance.source_plan_digest != empty_plan_digest ||
-      state.provenance.source_plan_generation != 0U ||
-      state.provenance.source_run_generation != 0U ||
-      state.provenance.source_catalog_digest != empty_catalog_digest ||
-      state.provenance.source_scope_kind != ParamSnapshotScopeKind::kRoot ||
-      !state.provenance.source_scope_path.empty();
-  const bool has_config_source = !state.provenance.config_fields.empty();
-  if (exact_context && has_config_source) {
-    append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
-    return false;
-  }
-  if (compile_context &&
-      (state.provenance.mode != ParamRebindMode::kSparseContributions || !has_config_source ||
-       has_snapshot_source || !state.provenance.migrations.empty() ||
-       !state.provenance.operator_aliases.empty() || !state.provenance.field_aliases.empty() ||
-       !state.provenance.fields.empty() || has_rebind_target_selection)) {
-    append_diagnostic(result, "PARAMETER_OVERRIDE_RECONSTRUCTION_UNAVAILABLE");
-    return false;
-  }
-  if (has_rebind_target_selection &&
-      !valid_rebind_target_selection(state.provenance, paths, factories)) {
-    append_diagnostic(result, "PARAMETER_OVERRIDE_TARGET_SELECTION_MISMATCH");
-    return false;
   }
 
   bool valid = true;
-  std::vector<bool> accepted_config_ordinals(state.provenance.config_fields.size());
+  std::vector<bool> accepted_config_ordinals(transaction->provenance.config_fields.size());
   std::size_t accepted_config_ordinal_count{};
-  const std::vector<OverridePathIndex> factory_path_index = make_factory_path_index(paths);
-  const std::vector<bool> duplicate_targets = duplicate_override_targets(state.operators);
+  std::vector<bool> accepted_rebind_ordinals(transaction->provenance.fields.size());
+  std::size_t accepted_rebind_ordinal_count{};
   std::vector<std::shared_ptr<OperatorFactoryBase>> replacements(factories.operators.size());
-  std::vector<std::vector<ParamOverrideFieldOriginRecord>> contributions(
-      factories.operators.size());
-  for (std::size_t override_index = 0; override_index < state.operators.size(); ++override_index) {
-    const ParamOverrideOperatorState& override_record = state.operators[override_index];
-    if (duplicate_targets[override_index]) {
+  std::vector<std::vector<ParameterContributionRecord>> contributions(factories.operators.size());
+  std::vector<VertexId> seen_targets;
+  seen_targets.reserve(transaction->operators.size());
+  std::size_t next_config_provenance{};
+  std::size_t next_rebind_provenance{};
+  for (const ParameterTransactionOperatorState& staged : transaction->operators) {
+    const auto executable = std::ranges::find(
+        factories.operators, staged.target, &ExecutableOperatorFactoryRecord::vertex);
+    if (std::ranges::find(seen_targets, staged.target) != seen_targets.end()) {
       append_diagnostic(result, "PARAMETER_OVERRIDE_DUPLICATE_TARGET");
       valid = false;
       continue;
     }
-    const OverridePathIndex* const target =
-        find_factory_path(factory_path_index, override_record.operator_path);
-    if (target == nullptr) {
+    seen_targets.push_back(staged.target);
+    if (executable == factories.operators.end()) {
       append_diagnostic(result, "PARAMETER_OVERRIDE_TARGET_UNKNOWN");
       valid = false;
       continue;
     }
-    const std::size_t index = target->index;
-    const auto& executable = factories.operators[index];
-    const DiagnosticSource source{.vertex = executable.vertex};
-    if (!executable.factory || replacements[index]) {
+    const std::size_t index = static_cast<std::size_t>(executable - factories.operators.begin());
+    const DiagnosticSource source{.vertex = executable->vertex};
+    if (!executable->factory || !paths[index]) {
+      append_diagnostic(result, "PARAMETER_FACTORY_INVENTORY_INVALID", source);
+      valid = false;
+      continue;
+    }
+    if (snapshot_source &&
+        (!staged.required_source_profile ||
+         effective_profile_for_vertex(effective_vertex_profiles, executable->vertex) !=
+             staged.required_source_profile)) {
+      append_diagnostic(result, "PARAMETER_REBIND_PROFILE_MISMATCH", source);
+      valid = false;
+      continue;
+    }
+    if (replacements[index]) {
       append_diagnostic(result, "PARAMETER_OVERRIDE_DUPLICATE_TARGET", source);
       valid = false;
       continue;
     }
-    const ParamTypeDescriptor& type = executable.factory->parameter_type();
-    const ParamSchemaDescriptor* const schema = executable.factory->parameter_schema();
-    if (schema == nullptr || override_record.local_type != &type || schema->local_type != &type ||
-        override_record.schema_id != schema->stable_id ||
-        override_record.schema_version != schema->version ||
-        override_record.structural_hash != schema->structural_hash ||
-        override_record.contract_hash != schema->contract_hash) {
+    const ParamTypeDescriptor& type = executable->factory->parameter_type();
+    const ParamSchemaDescriptor* const schema = executable->factory->parameter_schema();
+    if (schema == nullptr || staged.local_type_token != type.local_type_token ||
+        schema->local_type != &type || staged.schema_id != schema->stable_id ||
+        staged.schema_version != schema->version ||
+        staged.structural_hash != schema->structural_hash ||
+        staged.contract_hash != schema->contract_hash) {
       append_diagnostic(result, "PARAMETER_OVERRIDE_SCHEMA_MISMATCH", source);
       valid = false;
       continue;
     }
-    ParameterProtectedValueDigest baseline_digest = baseline_digests[index];
-    if (!baseline_digest.available()) {
-      baseline_digest = override_value_digest(type,
-                                              schema,
-                                              executable.factory->initial_parameter_value(),
-                                              executable.factory->has_no_params(),
-                                              override_record.local_value_digest);
-    }
-    if (!baseline_digest.available() ||
-        override_record.baseline_value_digest != baseline_digest.digest) {
-      append_diagnostic(result, "PARAMETER_OVERRIDE_BASELINE_MISMATCH", source);
-      valid = false;
-      continue;
-    }
-    if (!override_record.resolved_value || type.validate_aggregate == nullptr ||
-        !type.validate_aggregate(override_record.resolved_value.get()).ok()) {
+    if (type.validate_aggregate == nullptr) {
       append_diagnostic(result, "PARAMETER_OVERRIDE_VALUE_INVALID", source);
       valid = false;
       continue;
     }
-    const ParameterProtectedValueDigest resolved_digest =
-        override_value_digest(type,
-                              schema,
-                              override_record.resolved_value.get(),
-                              executable.factory->has_no_params(),
-                              override_record.local_value_digest);
-    if (!resolved_digest.available() ||
-        override_record.resolved_value_digest != resolved_digest.digest) {
-      append_diagnostic(result, "PARAMETER_OVERRIDE_VALUE_INVALID", source);
+    const std::size_t provenance_size = config_source ? transaction->provenance.config_fields.size()
+                                                      : transaction->provenance.fields.size();
+    std::size_t& next_provenance = config_source ? next_config_provenance : next_rebind_provenance;
+    // Producers emit one contiguous provenance range per target in transaction operator order.
+    if (next_provenance > provenance_size || staged.provenance_begin != next_provenance ||
+        staged.provenance_count > provenance_size - next_provenance) {
+      append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH", source);
       valid = false;
       continue;
     }
+    const std::size_t provenance_end = next_provenance + staged.provenance_count;
+    next_provenance = provenance_end;
 
-    std::vector<ParamFieldId> contributed_fields;
-    contributed_fields.reserve(override_record.contributions.size());
-    bool fields_valid = true;
-    for (const ParamOverrideFieldOriginRecord& contribution : override_record.contributions) {
-      const auto field = std::find_if(schema->fields.begin(),
-                                      schema->fields.end(),
-                                      [&](const ParamFieldDescriptor& descriptor) {
-                                        return descriptor.id == contribution.field &&
-                                               descriptor.full_id == contribution.full_id;
-                                      });
-      if (field == schema->fields.end() ||
-          std::find(contributed_fields.begin(), contributed_fields.end(), contribution.field) !=
-              contributed_fields.end() ||
-          (contribution.origin == ParamOverrideContributionOrigin::kAlias &&
-           field->alias.empty())) {
-        append_diagnostic(result, "PARAMETER_OVERRIDE_FIELD_INVALID", source);
-        valid = false;
-        fields_valid = false;
-        break;
-      }
-      if (compile_context && !contribution.config_provenance_index) {
-        append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH", source);
-        valid = false;
-        fields_valid = false;
-        break;
-      }
-      if (contribution.config_provenance_index) {
-        const std::size_t source_index = *contribution.config_provenance_index;
-        if (source_index >= state.provenance.config_fields.size() ||
-            accepted_config_ordinals[source_index] ||
-            !valid_config_source(state.provenance.config_fields[source_index],
-                                 override_record,
-                                 contribution,
-                                 source_index)) {
+    try {
+      MutableAggregateCopy candidate{
+          type, executable->factory->initial_parameter_value(), complete};
+      std::vector<ParamFieldId> seen_fields;
+      seen_fields.reserve(staged.fields.size());
+      bool fields_valid = true;
+      for (const ParameterTransactionFieldState& contribution : staged.fields) {
+        const auto field = std::ranges::find_if(schema->fields, [&](const auto& descriptor) {
+          return descriptor.id == contribution.field && descriptor.full_id == contribution.full_id;
+        });
+        const bool duplicate =
+            std::ranges::find(seen_fields, contribution.field) != seen_fields.end();
+        if (field == schema->fields.end() || duplicate ||
+            (config_source && contribution.origin == ParamFieldRebindOrigin::kAlias &&
+             field->alias.empty())) {
+          append_diagnostic(result, "PARAMETER_OVERRIDE_FIELD_INVALID", source);
+          valid = false;
+          fields_valid = false;
+          break;
+        }
+        const ParamFieldLocalOperations& operations = field->local_operations;
+        if (contribution.config_provenance_index.has_value() ==
+            contribution.rebind_provenance_index.has_value()) {
           append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH", source);
           valid = false;
           fields_valid = false;
           break;
         }
-        accepted_config_ordinals[source_index] = true;
-        ++accepted_config_ordinal_count;
-      }
-      contributed_fields.push_back(contribution.field);
-    }
-    if (!fields_valid) {
-      continue;
-    }
-
-    if (!override_record.field_replacements_only) {
-      const void* const baseline = executable.factory->initial_parameter_value();
-      for (const ParamFieldDescriptor& field : schema->fields) {
-        ParamScalarValue before;
-        ParamScalarValue after;
-        const bool contributed =
-            std::find(contributed_fields.begin(), contributed_fields.end(), field.id) !=
-            contributed_fields.end();
-        if (read_scalar(field, baseline, before) &&
-            read_scalar(field, override_record.resolved_value.get(), after)) {
-          if (!contributed && before != after) {
-            append_diagnostic(result, "PARAMETER_OVERRIDE_UNDECLARED_CHANGE", source);
+        if (contribution.config_provenance_index) {
+          const std::size_t source_index = *contribution.config_provenance_index;
+          if (source_index < staged.provenance_begin || source_index >= provenance_end ||
+              source_index >= transaction->provenance.config_fields.size() ||
+              accepted_config_ordinals[source_index] ||
+              !valid_config_source(transaction->provenance.config_fields[source_index],
+                                   staged,
+                                   contribution,
+                                   source_index)) {
+            append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH", source);
             valid = false;
             fields_valid = false;
             break;
           }
-        } else if (!contributed &&
-                   !field_values_equal(field, baseline, override_record.resolved_value.get())) {
-          append_diagnostic(result, "PARAMETER_OVERRIDE_UNDECLARED_CHANGE", source);
-          valid = false;
-          fields_valid = false;
-          break;
+          accepted_config_ordinals[source_index] = true;
+          ++accepted_config_ordinal_count;
+        } else {
+          const std::size_t source_index = *contribution.rebind_provenance_index;
+          if (source_index < staged.provenance_begin || source_index >= provenance_end ||
+              source_index >= transaction->provenance.fields.size() ||
+              accepted_rebind_ordinals[source_index]) {
+            append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH", source);
+            valid = false;
+            fields_valid = false;
+            break;
+          }
+          const ParamRebindFieldProvenance& evidence = transaction->provenance.fields[source_index];
+          if (!evidence.target_operator_path.empty() ||
+              evidence.target_schema_id != staged.schema_id ||
+              evidence.target_schema_version != staged.schema_version ||
+              evidence.target_field_id != contribution.field ||
+              evidence.target_full_id != contribution.full_id ||
+              evidence.origin != contribution.origin ||
+              evidence.disposition != ParamFieldRebindDisposition::kContributed) {
+            append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH", source);
+            valid = false;
+            fields_valid = false;
+            break;
+          }
+          accepted_rebind_ordinals[source_index] = true;
+          ++accepted_rebind_ordinal_count;
         }
+        if (contribution.scalar_value) {
+          if (contribution.local_value || contribution.local_value_digest != nullptr ||
+              operations.replace_member_from_scalar == nullptr ||
+              contribution.staged_value_digest !=
+                  parameter_transaction_scalar_digest(*contribution.scalar_value) ||
+              !operations.replace_member_from_scalar(candidate.get(), *contribution.scalar_value)) {
+            append_diagnostic(result, "PARAMETER_OVERRIDE_VALUE_INVALID", source);
+            valid = false;
+            fields_valid = false;
+            break;
+          }
+        } else {
+          ParamSchemaHash observed_digest{};
+          if (contribution.staged_type_token != operations.local_field_type_token ||
+              !contribution.local_value || contribution.local_value_digest == nullptr ||
+              operations.copy_construct_from_staged == nullptr ||
+              operations.destroy_staged == nullptr ||
+              operations.replace_member_from_staged == nullptr || operations.object_size == 0U ||
+              operations.object_alignment == 0U ||
+              !contribution.local_value_digest(contribution.local_value.get(), observed_digest) ||
+              observed_digest != contribution.staged_value_digest) {
+            append_diagnostic(result, "PARAMETER_OVERRIDE_VALUE_INVALID", source);
+            valid = false;
+            fields_valid = false;
+            break;
+          }
+          StagedFieldCopy field_value{operations, contribution.local_value.get()};
+          operations.replace_member_from_staged(candidate.get(), field_value.get());
+        }
+        seen_fields.push_back(contribution.field);
+        contributions[index].push_back(ParameterContributionRecord{
+            .field = contribution.field,
+            .full_id = contribution.full_id,
+            .origin = contribution.origin == ParamFieldRebindOrigin::kAlias
+                          ? ParameterContributionOrigin::kAlias
+                          : ParameterContributionOrigin::kCaptured,
+            .config_provenance_index = contribution.config_provenance_index,
+        });
       }
-    }
-    if (!fields_valid) {
-      continue;
-    }
-    auto cloned = executable.factory->clone_with_params(override_record.resolved_value.get(),
-                                                        type.local_type_token);
-    if (!cloned || !cloned.value()) {
+      if (!fields_valid) {
+        continue;
+      }
+      if (!type.validate_aggregate(candidate.get()).ok()) {
+        append_diagnostic(result, "PARAMETER_OVERRIDE_VALUE_INVALID", source);
+        valid = false;
+        continue;
+      }
+      auto cloned = executable->factory->clone_with_params(candidate.get(), type.local_type_token);
+      if (!cloned || !cloned.value()) {
+        append_diagnostic(result, "PARAMETER_OVERRIDE_VALUE_INVALID", source);
+        valid = false;
+        continue;
+      }
+      if (!replayed_declarations_match(snapshot, executable->vertex, *cloned.value())) {
+        append_diagnostic(result, "PARAMETER_OVERRIDE_DECLARATION_MISMATCH", source);
+        valid = false;
+        continue;
+      }
+      replacements[index] = std::move(cloned).value();
+    } catch (...) {
       append_diagnostic(result, "PARAMETER_OVERRIDE_VALUE_INVALID", source);
       valid = false;
-      continue;
     }
-    if (!replayed_declarations_match(snapshot, executable.vertex, *cloned.value())) {
-      append_diagnostic(result, "PARAMETER_OVERRIDE_DECLARATION_MISMATCH", source);
-      valid = false;
-      continue;
-    }
-    replacements[index] = std::move(cloned).value();
-    contributions[index] = override_record.contributions;
-    std::sort(contributions[index].begin(),
-              contributions[index].end(),
-              [](const auto& lhs, const auto& rhs) { return lhs.field < rhs.field; });
   }
-  if (!valid) {
+  const std::size_t expected_rebind_contributions =
+      static_cast<std::size_t>(std::ranges::count(transaction->provenance.fields,
+                                                  ParamFieldRebindDisposition::kContributed,
+                                                  &ParamRebindFieldProvenance::disposition));
+  if (!valid || next_config_provenance != transaction->provenance.config_fields.size() ||
+      next_rebind_provenance != transaction->provenance.fields.size() ||
+      accepted_config_ordinal_count != transaction->provenance.config_fields.size() ||
+      accepted_rebind_ordinal_count != expected_rebind_contributions) {
+    if (valid) {
+      append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH");
+    }
     return false;
   }
-  if (accepted_config_ordinal_count != state.provenance.config_fields.size()) {
-    append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH");
-    return false;
-  }
-  for (std::size_t index = 0U; index < replacements.size(); ++index) {
+  for (std::size_t index = 0; index < replacements.size(); ++index) {
     if (replacements[index]) {
       factories.operators[index].factory = std::move(replacements[index]);
     }
@@ -1031,9 +1076,7 @@ ParameterPlanLowering lower_parameter_plan(
     const GraphSnapshotData& snapshot, ExecutableFactoryInventory& factories,
     std::span<const std::optional<Profile>> effective_vertex_profiles,
     PlanGenerationId plan_generation, const ParameterCompileOptions& options,
-    const std::optional<LifecycleTransactionOptions>& lifecycle_options,
-    ParamSchemaHash admission_context_digest,
-    const std::optional<ParamOverrideSet>& parameter_overrides) {
+    const std::optional<LifecycleTransactionOptions>& lifecycle_options) {
   ParameterPlanLowering result;
   result.operators.reserve(factories.operators.size());
 
@@ -1068,36 +1111,39 @@ ParameterPlanLowering lower_parameter_plan(
   }
 
   std::vector<std::optional<OperatorPathInfo>> operator_paths;
-  std::vector<ParameterGenerationZeroOrigin> baseline_origins;
-  std::vector<ParameterProtectedValueDigest> baseline_digests;
+  std::vector<ParameterGenerationZeroOrigin> operator_baseline_origins;
+  std::vector<ParameterGenerationZeroOrigin> field_baseline_origins;
+  std::vector<std::vector<std::optional<ParamConfigFieldProvenance>>> local_config_sources(
+      factories.operators.size());
   operator_paths.reserve(factories.operators.size());
-  baseline_origins.reserve(factories.operators.size());
-  baseline_digests.reserve(factories.operators.size());
+  operator_baseline_origins.reserve(factories.operators.size());
+  field_baseline_origins.reserve(factories.operators.size());
   for (const auto& executable : factories.operators) {
     operator_paths.push_back(operator_path(snapshot, executable.vertex));
     if (!executable.factory) {
-      baseline_origins.push_back(ParameterGenerationZeroOrigin::kDefault);
-      baseline_digests.push_back({});
+      operator_baseline_origins.push_back(ParameterGenerationZeroOrigin::kDefault);
+      field_baseline_origins.push_back(ParameterGenerationZeroOrigin::kDefault);
       continue;
     }
-    baseline_origins.push_back(executable.factory->has_explicit_parameter_baseline()
-                                   ? ParameterGenerationZeroOrigin::kTypedBaseline
-                                   : ParameterGenerationZeroOrigin::kDefault);
-    baseline_digests.push_back(parameter_value_digest(executable.factory->parameter_type(),
-                                                      executable.factory->parameter_schema(),
-                                                      executable.factory->initial_parameter_value(),
-                                                      executable.factory->has_no_params()));
+    operator_baseline_origins.push_back(executable.factory->has_explicit_parameter_baseline()
+                                            ? ParameterGenerationZeroOrigin::kTypedBaseline
+                                            : ParameterGenerationZeroOrigin::kDefault);
+    field_baseline_origins.push_back(executable.parameter_input_evidence
+                                         ? (executable.parameter_input_evidence->explicit_baseline
+                                                ? ParameterGenerationZeroOrigin::kTypedBaseline
+                                                : ParameterGenerationZeroOrigin::kDefault)
+                                         : (executable.factory->has_explicit_parameter_baseline()
+                                                ? ParameterGenerationZeroOrigin::kTypedBaseline
+                                                : ParameterGenerationZeroOrigin::kDefault));
   }
-  std::vector<std::vector<ParamOverrideFieldOriginRecord>> accepted_contributions(
+  std::vector<std::vector<ParameterContributionRecord>> accepted_contributions(
       factories.operators.size());
-  if (!apply_parameter_overrides(snapshot,
-                                 factories,
-                                 operator_paths,
-                                 baseline_digests,
-                                 admission_context_digest,
-                                 parameter_overrides,
-                                 accepted_contributions,
-                                 result)) {
+  if (!apply_parameter_transaction(snapshot,
+                                   factories,
+                                   operator_paths,
+                                   effective_vertex_profiles,
+                                   accepted_contributions,
+                                   result)) {
     valid = false;
   }
 
@@ -1136,6 +1182,12 @@ ParameterPlanLowering lower_parameter_plan(
     const ParamSchemaDescriptor* const schema = executable.factory->parameter_schema();
     const bool no_params = executable.factory->has_no_params();
     const auto& path = operator_paths[factory_index];
+    const bool complete_transaction_target =
+        factories.parameter_transaction &&
+        factories.parameter_transaction->provenance.mode == ParamRebindMode::kCompleteObject &&
+        std::any_of(factories.parameter_transaction->operators.begin(),
+                    factories.parameter_transaction->operators.end(),
+                    [&](const auto& target) { return target.target == executable.vertex; });
     const auto schema_admission =
         schema_disposition(no_params, schema, profile, options.require_proven_schema_completeness);
     const bool fixed_scalar_generation = supports_fixed_scalar_generation(type, schema);
@@ -1172,6 +1224,16 @@ ParameterPlanLowering lower_parameter_plan(
       op.schema_coverage = schema->coverage;
       op.schema_proof = schema->proof;
     }
+    if (executable.parameter_input_evidence &&
+        (schema == nullptr || !path ||
+         !collect_local_config_sources(*executable.parameter_input_evidence,
+                                       type,
+                                       *schema,
+                                       path->rendered,
+                                       local_config_sources[factory_index]))) {
+      append_diagnostic(result, "PARAMETER_OVERRIDE_PROVENANCE_MISMATCH", source);
+      valid = false;
+    }
     op.fixed_scalar_generation_strategy = fixed_scalar_generation;
 
     const bool explicit_policies_required =
@@ -1202,7 +1264,7 @@ ParameterPlanLowering lower_parameter_plan(
     }
     result.generation_zero_operators.push_back(ParameterGenerationZeroOperatorRecord{
         .owner = owner,
-        .baseline_origin = baseline_origins[factory_index],
+        .baseline_origin = operator_baseline_origins[factory_index],
         .value_digest = final_digest,
     });
     if (path) {
@@ -1235,7 +1297,9 @@ ParameterPlanLowering lower_parameter_plan(
     if (schema != nullptr) {
       std::vector<ParameterFieldProjectionIdentity> identities;
       identities.reserve(schema->fields.size());
-      for (const ParamFieldDescriptor& descriptor : schema->fields) {
+      for (std::size_t descriptor_index = 0; descriptor_index < schema->fields.size();
+           ++descriptor_index) {
+        const ParamFieldDescriptor& descriptor = schema->fields[descriptor_index];
         const ParameterProjectionCollision field_collision =
             classify_parameter_field_projection(identities, descriptor.id, descriptor.full_id);
         if (field_collision != ParameterProjectionCollision::kNone) {
@@ -1290,6 +1354,7 @@ ParameterPlanLowering lower_parameter_plan(
             .alias = std::string(descriptor.alias),
             .validator_id = std::string(descriptor.validator_id),
             .constraints = descriptor.constraints,
+            .enum_choices = own_enum_choices(descriptor.enum_choices),
             .string_encoding = descriptor.string_encoding,
             .element_string_encoding = descriptor.element_string_encoding,
             .value_route = value_route,
@@ -1302,7 +1367,9 @@ ParameterPlanLowering lower_parameter_plan(
                                 value_route == ParamValueRouteDisposition::kPortableScalar,
         });
 
-        ParameterGenerationZeroOrigin field_origin = baseline_origins[factory_index];
+        ParameterGenerationZeroOrigin field_origin = complete_transaction_target
+                                                         ? ParameterGenerationZeroOrigin::kDefault
+                                                         : field_baseline_origins[factory_index];
         const auto contribution =
             std::find_if(accepted_contributions[factory_index].begin(),
                          accepted_contributions[factory_index].end(),
@@ -1314,19 +1381,30 @@ ParameterPlanLowering lower_parameter_plan(
         }
         std::optional<ParamConfigFieldProvenance> config_source;
         if (contribution != accepted_contributions[factory_index].end() &&
-            contribution->config_provenance_index && parameter_overrides) {
-          const auto& provenance =
-              ParamOverrideSetAccess::state(*parameter_overrides).provenance.config_fields;
+            contribution->config_provenance_index && factories.parameter_transaction) {
+          const auto& provenance = factories.parameter_transaction->provenance.config_fields;
           const std::size_t source_index = *contribution->config_provenance_index;
           if (source_index < provenance.size()) {
             config_source = provenance[source_index];
+            if (factories.parameter_transaction && path) {
+              config_source->target_operator_path = path->rendered;
+            }
           }
+        } else if (!complete_transaction_target &&
+                   contribution == accepted_contributions[factory_index].end() &&
+                   descriptor_index < local_config_sources[factory_index].size() &&
+                   local_config_sources[factory_index][descriptor_index]) {
+          config_source = local_config_sources[factory_index][descriptor_index];
+          field_origin = config_source->origin == ParamFieldRebindOrigin::kAlias
+                             ? ParameterGenerationZeroOrigin::kInputAlias
+                             : ParameterGenerationZeroOrigin::kInputCaptured;
         }
         result.generation_zero_fields.push_back(ParameterGenerationZeroFieldRecord{
             .instance = instance,
             .field = descriptor.id,
             .full_id = descriptor.full_id,
             .origin = field_origin,
+            .transaction_contributed = contribution != accepted_contributions[factory_index].end(),
             .value_digest = parameter_field_value_digest(
                 *schema, descriptor, executable.factory->initial_parameter_value()),
             .config_source = std::move(config_source),
@@ -1355,6 +1433,7 @@ ParameterPlanLowering lower_parameter_plan(
               .alias = std::string(descriptor.alias),
               .validator_id = std::string(descriptor.validator_id),
               .constraints = descriptor.constraints,
+              .enum_choices = own_enum_choices(descriptor.enum_choices),
               .string_encoding = descriptor.string_encoding,
               .element_string_encoding = descriptor.element_string_encoding,
               .value_route = value_route,
@@ -1368,20 +1447,6 @@ ParameterPlanLowering lower_parameter_plan(
           });
         }
       }
-    }
-
-    if ((op.runtime_updates_enabled || op.lifecycle_updates_enabled) &&
-        !op.fixed_scalar_generation_strategy) {
-      for (std::size_t index = field_begin; index < result.fields.size(); ++index) {
-        if (result.fields[index].update_disposition == ParameterFieldUpdateDisposition::kAdmitted) {
-          result.fields[index].update_disposition =
-              ParameterFieldUpdateDisposition::kCapacityUnavailable;
-        }
-      }
-      op.runtime_updates_enabled = false;
-      op.lifecycle_updates_enabled = false;
-      append_diagnostic(result, "PARAMETER_UPDATE_STORAGE_UNSUPPORTED", source);
-      valid = false;
     }
 
     if (op.runtime_updates_enabled) {
@@ -1420,6 +1485,11 @@ ParameterPlanLowering lower_parameter_plan(
   std::sort(result.fields.begin(), result.fields.end(), [](const auto& lhs, const auto& rhs) {
     return std::tuple{lhs.owner.id, lhs.field} < std::tuple{rhs.owner.id, rhs.field};
   });
+  std::sort(result.lifecycle_mutable_fields.begin(),
+            result.lifecycle_mutable_fields.end(),
+            [](const auto& lhs, const auto& rhs) {
+              return std::tuple{lhs.owner.id, lhs.field} < std::tuple{rhs.owner.id, rhs.field};
+            });
   std::sort(result.generation_zero_fields.begin(),
             result.generation_zero_fields.end(),
             [](const auto& lhs, const auto& rhs) {

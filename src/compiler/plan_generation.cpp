@@ -16,6 +16,7 @@
 #include <fmt/format.h>
 
 #include "compiler/execution_plan_identity.hpp"
+#include "compiler/execution_plan_lookup.hpp"
 #include "compiler/parameter_plan_lowering.hpp"
 #include "core/canonical_text_encoding.hpp"
 
@@ -29,13 +30,14 @@ constexpr std::string_view kPlanGenerationDomain = "holoscan.plan_generation.v1"
 PlanGenerationId derive_plan_generation_id(const ExecutionPlanState& canonical_state) noexcept {
   StableHashBuilder hash;
   hash.add(kPlanGenerationDomain);
+  // Authoring origins and source records do not define runtime behavior. Advanced transaction
+  // masks do, so each field retains only whether the transaction contributed its final value.
   for (const std::byte byte : canonical_state.digest.value) {
     hash.add_byte(std::to_integer<std::uint8_t>(byte));
   }
   hash.add_canonical_size(canonical_state.parameter_generation_zero_operators.size());
   for (const auto& record : canonical_state.parameter_generation_zero_operators) {
     hash.add(record.owner.id);
-    hash.add(record.baseline_origin);
     hash.add(record.value_digest.disposition);
     for (const std::byte byte : record.value_digest.digest.value) {
       hash.add_byte(std::to_integer<std::uint8_t>(byte));
@@ -48,34 +50,10 @@ PlanGenerationId derive_plan_generation_id(const ExecutionPlanState& canonical_s
     for (const std::byte byte : record.full_id.value) {
       hash.add_byte(std::to_integer<std::uint8_t>(byte));
     }
-    hash.add(record.origin);
+    hash.add(record.transaction_contributed);
     hash.add(record.value_digest.disposition);
     for (const std::byte byte : record.value_digest.digest.value) {
       hash.add_byte(std::to_integer<std::uint8_t>(byte));
-    }
-    hash.add(record.config_source.has_value());
-    if (record.config_source) {
-      const auto& source = *record.config_source;
-      hash.add(source.document.semantic_version);
-      for (const std::byte byte : source.document.semantic_digest) {
-        hash.add_byte(std::to_integer<std::uint8_t>(byte));
-      }
-      hash.add(source.document.has_raw_source);
-      hash.add(source.document.raw_algorithm_version);
-      for (const std::byte byte : source.document.raw_digest) {
-        hash.add_byte(std::to_integer<std::uint8_t>(byte));
-      }
-      hash.add(source.document.raw_byte_size);
-      hash.add(source.source_path);
-      hash.add(source.source_ordinal);
-      hash.add(source.target_operator_path);
-      hash.add(source.target_schema_id);
-      hash.add(source.target_schema_version);
-      hash.add(source.target_field_id);
-      for (const std::byte byte : source.target_full_id.value) {
-        hash.add_byte(std::to_integer<std::uint8_t>(byte));
-      }
-      hash.add(source.origin);
     }
   }
   const auto digest = hash.finish();
@@ -193,6 +171,9 @@ void rebind_plan_generation(ExecutionPlanState& state, PlanGenerationId plan_gen
   for (auto& record : state.tensor_byte_span_derivations) {
     record.plan_generation = plan_generation;
   }
+  for (auto& record : state.tensor_memory_kind_derivations) {
+    record.plan_generation = plan_generation;
+  }
   for (auto& record : state.tensor_field_allocations) {
     record.plan_generation = plan_generation;
     rebind_logical_id(record.pool_id,
@@ -258,19 +239,79 @@ void rebind_plan_generation(ExecutionPlanState& state, PlanGenerationId plan_gen
     rebind_cuda_pool(record.pool_id);
     rebind_cuda_descendant(record.green_context_id);
   }
-  for (auto& record : state.cuda_compute_streams) {
+  std::vector<std::pair<std::string, std::size_t>> rebound_cuda_streams;
+  rebound_cuda_streams.reserve(state.cuda_compute_streams.size());
+  for (std::size_t index = 0U; index < state.cuda_compute_streams.size(); ++index) {
+    auto& record = state.cuda_compute_streams[index];
     record.plan_generation = plan_generation;
+    std::string prior_stream_id = record.stream_id;
     if (record.green_context_id) {
       rebind_cuda_descendant(*record.green_context_id);
-      const std::string prior_stream_id = record.stream_id;
       rebind_cuda_descendant(record.stream_id);
       rebound_logical_ids.emplace_back(prior_stream_id, record.stream_id);
+    } else if (record.partition) {
+      rebind_logical_id(
+          record.stream_id,
+          tensor_partition_compute_stream_id(
+              plan_generation, record.process_group, record.device, *record.partition));
     } else {
       record.owner_id =
           tensor_allocator_root_id(plan_generation, record.process_group, record.device);
       rebind_logical_id(
           record.stream_id,
           tensor_compute_stream_id(plan_generation, record.process_group, record.device));
+    }
+    rebound_cuda_streams.emplace_back(std::move(prior_stream_id), index);
+  }
+  for (auto& record : state.operator_cuda_stream_bindings) {
+    record.plan_generation = plan_generation;
+    const auto found = std::find_if(
+        rebound_logical_ids.begin(), rebound_logical_ids.end(), [&](const auto& identity) {
+          return identity.first == record.stream_id;
+        });
+    if (found != rebound_logical_ids.end()) {
+      record.stream_id = found->second;
+    }
+  }
+  for (auto& capture_plan : state.cuda_graph_capture_plans) {
+    rebind_operator(capture_plan.source);
+    rebind_operator(capture_plan.sink);
+    for (auto& member : capture_plan.members) {
+      rebind_operator(member.operator_ref);
+    }
+    for (auto& contract : capture_plan.contracts) {
+      rebind_operator(contract.owner);
+    }
+  }
+  const auto rebind_known_identity = [&](std::string& identity) {
+    const auto found = std::find_if(
+        rebound_logical_ids.begin(), rebound_logical_ids.end(), [&](const auto& candidate) {
+          return candidate.first == identity;
+        });
+    if (found != rebound_logical_ids.end()) {
+      identity = found->second;
+    }
+  };
+  for (auto& region : state.cuda_graph_execution_regions) {
+    // A fused region uses its selected CUDA stream's identities. Copy both rebound values from the
+    // stream record so the region cannot retain a different Green Context identity.
+    const auto selected_stream = std::find_if(
+        rebound_cuda_streams.begin(), rebound_cuda_streams.end(), [&](const auto& candidate) {
+          return candidate.first == region.stream_id;
+        });
+    if (selected_stream != rebound_cuda_streams.end()) {
+      const auto& stream = state.cuda_compute_streams[selected_stream->second];
+      region.stream_id = stream.stream_id;
+      region.green_context_id = stream.green_context_id;
+    }
+    for (auto& buffer : region.buffers) {
+      rebind_logical_id(buffer.fixed_allocation_id,
+                        cuda_graph_fixed_allocation_id(plan_generation, region.graph, buffer.edge));
+      rebind_known_identity(buffer.pool_id);
+      const auto* allocation = find_tensor_allocation_by_output(state, buffer.source_port);
+      if (allocation != nullptr) {
+        buffer.allocator_root_id = allocation->allocator_root_id;
+      }
     }
   }
   for (auto& record : state.process_local_channel_services) {
@@ -404,6 +445,7 @@ void rebind_plan_generation(ExecutionPlanState& state, PlanGenerationId plan_gen
     }
   }
   rebind_owner_records(state.lifecycle_mutable_fields);
+  rebind_owner_records(state.operator_hosts);
   rebind_owner_records(state.operator_parameters);
   rebind_owner_records(state.parameter_fields);
   rebind_owner_records(state.parameter_generation_zero_operators);

@@ -87,6 +87,7 @@ class CountedFactoryClock final : public Clock {
 };
 
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 TEST(CompilePurity, HasNoRuntimeArtifactOrOsMutationSideEffects) {
   test::CompileTestOperator::compute_calls = 0U;
   test::CompileTestOperator::lifecycle_calls = 0U;
@@ -107,6 +108,7 @@ TEST(CompilePurity, HasNoRuntimeArtifactOrOsMutationSideEffects) {
 }
 
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // GoogleTest fatal assertions terminate this test before optional access, but clang-tidy does not
 // model the macro's control flow.
 // NOLINTBEGIN(bugprone-unchecked-optional-access)
@@ -170,20 +172,21 @@ TEST(CompileIngress, RetainsExecutableFactoriesAfterTheSourceGraphIsDestroyed) {
   // the source Graph is gone.
   for (const auto& record : state->executable_factories.operators) {
     ASSERT_NE(record.factory, nullptr);
-    const auto created = record.factory->create();
+    const auto created = record.factory->create(nullptr);
     ASSERT_TRUE(created);
     EXPECT_NE(created.value(), nullptr);
   }
   const auto& clock_record = state->executable_factories.clocks.front();
   ASSERT_NE(clock_record.factory, nullptr);
   EXPECT_EQ(clock_record.shared, nullptr);
-  const auto created_clock = clock_record.factory->create();
+  const auto created_clock = clock_record.factory->create(nullptr);
   ASSERT_TRUE(created_clock);
   EXPECT_NE(created_clock.value(), nullptr);
 }
 
 // REQ: COMPILE-002
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 TEST(CompileDeterminism, LoggingThresholdDoesNotChangePlanBytes) {
   const LogLevel original = log_level();
   // source --> target
@@ -205,6 +208,7 @@ TEST(CompileDeterminism, LoggingThresholdDoesNotChangePlanBytes) {
 }
 
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-014
 // REQ: COMPILE-059
 TEST(CompilePortability, DistinguishesGnuAndUnknownLinuxUserspace) {

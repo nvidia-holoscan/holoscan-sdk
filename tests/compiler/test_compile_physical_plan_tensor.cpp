@@ -8,12 +8,17 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
+#include "compiler/channel_service_lowering.hpp"
 #include "compiler/cuda_service_stream_plan.hpp"
 #include "compiler/execution_plan_contracts.hpp"
+#include "compiler/physical_resource_lowering.hpp"
+#include "core/graph_compiler_access.hpp"
 #include "physical_plan_test_support.hpp"
 
 // GTest fatal assertions establish optional preconditions that clang-tidy does not model.
@@ -376,6 +381,9 @@ TEST(CompilePhysicalPlan,
   EXPECT_FALSE(result.tensor_field_allocations[0].device.valid());
   EXPECT_EQ(result.tensor_field_allocations[1].device, kDevice);
   EXPECT_EQ(result.tensor_field_allocations[2].device, kDevice);
+  EXPECT_EQ(result.tensor_field_allocations[0].release_stream_capacity, 1U);
+  EXPECT_EQ(result.tensor_field_allocations[1].release_stream_capacity, 2U);
+  EXPECT_EQ(result.tensor_field_allocations[2].release_stream_capacity, 2U);
   EXPECT_TRUE(validate_tensor_field_allocation_order(result.tensor_field_allocations));
 
   // Key setup: corrupt the canonical output/field order that enables allocation-free spans.
@@ -447,11 +455,375 @@ TEST(CompilePhysicalPlan,
   EXPECT_FALSE(valid_cross_process_channel_plan(state));
 }
 
+namespace {
+
+// Narrow the shared multi-Tensor fixture so its consumer takes one projected Tensor field instead
+// of the schema root. The consumer therefore holds no serialized capacity, declares no descriptor
+// fields of its own, and must opt in to a projected Tensor explicitly.
+void project_multi_tensor_fixture_onto_tensor_sink(GraphSnapshotData& snapshot,
+                                                   const std::uint16_t field_id,
+                                                   const std::uint16_t tensor_index,
+                                                   const std::uint32_t consumer_rank) {
+  snapshot.ports[1] = input_port(2U, 2U, "frames", tensor_payload(), 2U);
+  snapshot.ports[1].setup.accepts_projected_tensor = true;
+  snapshot.ports[1].setup.tensor_layout = TensorRepresentation{
+      .memory_kind = MemoryKind::kHost,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = consumer_rank,
+  };
+  snapshot.edges[0].tensor_projection =
+      TensorProjectionRecord{.field_id = field_id, .tensor_index = tensor_index};
+}
+
+}  // namespace
+
+// A projected edge shares the producer's descriptor-schema service and records the narrowing on
+// its own direct subscriber. The subscriber names the field the consumer receives; mixed schema
+// and Tensor fanout remains outside the supported delivery boundary.
+//
+//   multi-source --[frames: project field 7]--> tensor-sink
+//
+// REQ: GRAPH-043
+TEST(CompilePhysicalPlan, ProjectedTensorEdgeRecordsNarrowingOnItsSubscriber) {
+  const RuntimePortTypeOps* const type_ops = runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(type_ops, nullptr);
+
+  auto fixture = make_multi_tensor_snapshot(type_ops->wire_capacity);
+  auto& snapshot = fixture.graph;
+  // Field 7 is the rank-2, 512-byte host field in the shared fixture.
+  project_multi_tensor_fixture_onto_tensor_sink(snapshot, 7U, 1U, 2U);
+  // Keep both operators in one process so the edge takes the process-local path.
+  fixture.placements = default_process_placements(snapshot);
+  fixture.partitions = default_execution_partitions(snapshot);
+  const std::array selections{InputSelectionPlanRecord{
+      .input = PortId{2U},
+      .selector = InputSelectorKind::kExact,
+      .max_selected_samples = 1U,
+      .cache_capacity = 1U,
+  }};
+
+  auto result = lower_physical_plan(snapshot,
+                                    42U,
+                                    fixture.profiles,
+                                    runtime_package_capability_view(),
+                                    selections,
+                                    {},
+                                    {},
+                                    fixture.placements,
+                                    {},
+                                    fixture.partitions,
+                                    {});
+
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  ASSERT_EQ(result.payload_edges.size(), 1U);
+  const auto& edge = result.payload_edges.front();
+  // The edge still carries the producer's schema sample; only the subscriber narrows it.
+  EXPECT_EQ(edge.payload_identity.kind, PayloadIdentityKind::kSchema);
+  ASSERT_TRUE(edge.tensor_projection);
+  EXPECT_EQ(edge.tensor_projection->field_id, 7U);
+  EXPECT_EQ(edge.tensor_projection->tensor_index, 1U);
+
+  // One service, shaped exactly as the producer's schema service, so the producer publishes once.
+  ASSERT_EQ(result.process_local_channel_services.size(), 1U);
+  const auto& service = result.process_local_channel_services.front();
+  EXPECT_TRUE(service.tensor_payload);
+  EXPECT_EQ(service.payload_identity.kind, PayloadIdentityKind::kSchema);
+  EXPECT_NE(service.payload_size_bytes, 0U);
+
+  ASSERT_EQ(result.process_local_channel_subscribers.size(), 1U);
+  const auto& subscriber = result.process_local_channel_subscribers.front();
+  EXPECT_EQ(subscriber.service_id, service.service_id);
+  ASSERT_TRUE(subscriber.tensor_projection);
+  EXPECT_EQ(subscriber.tensor_projection->field_id, 7U);
+  EXPECT_EQ(subscriber.tensor_projection->tensor_index, 1U);
+}
+
+// Seed a queued schema service independently of the pending edge so the service-reuse guard is
+// exercised even though ordinary topology lowering rejects projected fanout before the lookup.
+// REQ: GRAPH-043
+TEST(CompilePhysicalPlan, ProjectedTensorEdgeRejectsExistingQueuedService) {
+  auto fixture = make_multi_tensor_snapshot(runtime_port_type_ops<schema::ImageT>()->wire_capacity);
+  auto& snapshot = fixture.graph;
+  auto queued = lower_for_test(
+      snapshot, 42U, fixture.profiles, {}, {}, {}, nullptr, {}, {}, kForceHoloMQProcessLocalInline);
+  ASSERT_TRUE(queued.errors.empty());
+  ASSERT_EQ(queued.process_local_channel_services.size(), 1U);
+  ASSERT_EQ(queued.process_local_channel_services.front().delivery_kind,
+            ProcessLocalChannelDeliveryKind::kHoloMQ);
+  ASSERT_EQ(queued.process_local_channel_subscribers.size(), 1U);
+
+  project_multi_tensor_fixture_onto_tensor_sink(snapshot, 7U, 1U, 2U);
+  auto projected = lower_for_test(snapshot, 42U, fixture.profiles);
+  ASSERT_TRUE(projected.errors.empty());
+  ASSERT_EQ(projected.payload_edges.size(), 1U);
+  ASSERT_EQ(process_local_channel_delivery_kind(projected.payload_edges.front()),
+            ProcessLocalChannelDeliveryKind::kDirectRetained);
+
+  PhysicalPlanLoweringResult pending;
+  pending.payload_edges = std::move(projected.payload_edges);
+  pending.process_local_channel_services = std::move(queued.process_local_channel_services);
+  pending.process_local_channel_publishers = std::move(queued.process_local_channel_publishers);
+  pending.process_local_channel_subscribers = std::move(queued.process_local_channel_subscribers);
+  PhysicalTopologyFacts topology;
+  const auto placements = default_process_placements(snapshot);
+  const auto rejected_fanout =
+      lower_preallocation_channel_services(pending, snapshot, 42U, placements, topology, false, {});
+
+  EXPECT_TRUE(rejected_fanout.empty());
+  ASSERT_EQ(pending.errors.size(), 1U);
+  EXPECT_EQ(pending.errors.front().token, "PROCESS_LOCAL_CHANNEL_PLAN_INVALID");
+  EXPECT_EQ(pending.errors.front().source.port, PortId{2U});
+  ASSERT_EQ(pending.process_local_channel_services.size(), 1U);
+  EXPECT_EQ(pending.process_local_channel_services.front().max_subscribers, 1U);
+  EXPECT_EQ(pending.process_local_channel_services.front().delivery_kind,
+            ProcessLocalChannelDeliveryKind::kHoloMQ);
+  EXPECT_EQ(pending.process_local_channel_publishers.size(), 1U);
+  ASSERT_EQ(pending.process_local_channel_subscribers.size(), 1U);
+  EXPECT_FALSE(pending.process_local_channel_subscribers.front().tensor_projection);
+}
+
+// REQ: GRAPH-043
+TEST(CompilePhysicalPlan, ProjectedTensorRejectsQueuedSiblingBeforePublishingChannelRecords) {
+  for (const bool reversed : {false, true}) {
+    SCOPED_TRACE(reversed);
+    auto fixture =
+        make_multi_tensor_snapshot(runtime_port_type_ops<schema::ImageT>()->wire_capacity);
+    auto& snapshot = fixture.graph;
+    project_multi_tensor_fixture_onto_tensor_sink(snapshot, 7U, 1U, 2U);
+    snapshot.vertices.push_back(vertex(3U, "other"));
+    snapshot.ports.push_back(output_port(3U, 1U, "control", scalar_payload()));
+    snapshot.ports.push_back(input_port(4U, 2U, "control", scalar_payload()));
+    snapshot.ports.push_back(input_port(5U, 3U, "control", scalar_payload()));
+    snapshot.edges.push_back(edge(2U, 3U, 4U));
+    snapshot.edges.push_back(edge(3U, 3U, 5U));
+    if (reversed) {
+      std::reverse(snapshot.edges.begin(), snapshot.edges.end());
+    }
+    const auto profiles = standard_profiles(snapshot.vertices.size());
+    const auto result = lower_for_test(snapshot, 42U, profiles);
+
+    // The projection has fanout one, but its sibling's fanout requires the whole Operator
+    // pair to use HoloMQ. Reject it before accounting for delivery or creating its service.
+    ASSERT_EQ(result.errors.size(), 1U);
+    EXPECT_EQ(result.errors.front().token, "PHYSICAL_TENSOR_PROJECTION_DELIVERY_UNSUPPORTED");
+    EXPECT_EQ(result.errors.front().source.port, PortId{2U});
+    EXPECT_EQ(result.payload_edges.size(), 2U);
+    EXPECT_EQ(result.channel_locality.size(), 2U);
+    EXPECT_TRUE(std::ranges::none_of(
+        result.payload_edges, [](const auto& item) { return item.tensor_projection.has_value(); }));
+    ASSERT_EQ(result.process_local_channel_services.size(), 1U);
+    EXPECT_EQ(result.process_local_channel_services.front().source, PortId{3U});
+    EXPECT_EQ(result.process_local_channel_services.front().max_subscribers, 2U);
+    EXPECT_EQ(result.process_local_channel_services.front().delivery_kind,
+              ProcessLocalChannelDeliveryKind::kHoloMQ);
+    EXPECT_EQ(result.process_local_channel_subscribers.size(), 2U);
+  }
+}
+
+// REQ: GRAPH-043
+TEST(CompilePhysicalPlan, ProjectedTensorPlanRejectsInconsistentSelection) {
+  auto fixture = make_multi_tensor_snapshot(runtime_port_type_ops<schema::ImageT>()->wire_capacity);
+  auto& snapshot = fixture.graph;
+  project_multi_tensor_fixture_onto_tensor_sink(snapshot, 7U, 1U, 2U);
+  auto lowered = lower_for_test(snapshot, 42U, fixture.profiles);
+  ASSERT_TRUE(lowered.errors.empty());
+  auto original = published_physical_plan_state(std::move(lowered), 42U);
+  original.graph =
+      GraphCompilerAccess::canonical_view(std::make_shared<GraphSnapshotData>(snapshot));
+  original.admitted = true;
+  ASSERT_TRUE(valid_process_local_channel_plan(original));
+  const auto finalized = finalize_plan_artifact(original);
+  ASSERT_TRUE(finalized) << finalized.error().message;
+
+  const auto expect_rejected = [&](ExecutionPlanState state) {
+    EXPECT_FALSE(valid_process_local_channel_plan(state));
+    const auto emitted = finalize_plan_artifact(state);
+    ASSERT_FALSE(emitted);
+    EXPECT_EQ(emitted.error().message, "PROCESS_LOCAL_CHANNEL_PLAN_INVALID");
+  };
+  const std::array<std::optional<TensorProjectionRecord>, 4U> mutations{
+      std::nullopt,
+      TensorProjectionRecord{.field_id = 2U, .tensor_index = 0U},
+      TensorProjectionRecord{.field_id = 2U, .tensor_index = 1U},
+      TensorProjectionRecord{.field_id = 7U, .tensor_index = 0U},
+  };
+  for (std::size_t record = 0U; record < 3U; ++record) {
+    for (std::size_t mutation = 0U; mutation < mutations.size(); ++mutation) {
+      SCOPED_TRACE(::testing::Message() << "record=" << record << " mutation=" << mutation);
+      auto state = original;
+      if (record == 0U) {
+        auto graph = std::make_shared<GraphSnapshotData>(snapshot);
+        graph->edges.front().tensor_projection = mutations[mutation];
+        state.graph = GraphCompilerAccess::canonical_view(std::move(graph));
+      } else if (record == 1U) {
+        state.payload_edges.front().tensor_projection = mutations[mutation];
+      } else {
+        state.process_local_channel_subscribers.front().tensor_projection = mutations[mutation];
+      }
+      expect_rejected(std::move(state));
+    }
+  }
+  // Agreement alone is insufficient: the selected coordinates must exist in the service.
+  for (const auto projection : {TensorProjectionRecord{.field_id = 7U, .tensor_index = 0U},
+                                TensorProjectionRecord{.field_id = 99U, .tensor_index = 1U}}) {
+    auto state = original;
+    auto graph = std::make_shared<GraphSnapshotData>(snapshot);
+    graph->edges.front().tensor_projection = projection;
+    state.graph = GraphCompilerAccess::canonical_view(std::move(graph));
+    state.payload_edges.front().tensor_projection = projection;
+    state.process_local_channel_subscribers.front().tensor_projection = projection;
+    expect_rejected(std::move(state));
+  }
+  auto transported = original;
+  transported.process_local_channel_services.front().delivery_kind =
+      ProcessLocalChannelDeliveryKind::kHoloMQ;
+  expect_rejected(std::move(transported));
+}
+
+// A projected edge is still a Tensor contract, so a consumer the producer's field cannot satisfy
+// is rejected at compile time. Field 7 is rank 2 and the consumer below demands rank 3.
+//
+//   multi-source --[frames: project field 7]--X--> rank-3 tensor-sink
+//
+// REQ: GRAPH-043
+TEST(CompilePhysicalPlan, ProjectedTensorEdgeRejectsAConsumerTheFieldCannotSatisfy) {
+  const RuntimePortTypeOps* const type_ops = runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(type_ops, nullptr);
+
+  auto fixture = make_multi_tensor_snapshot(type_ops->wire_capacity);
+  auto& snapshot = fixture.graph;
+  project_multi_tensor_fixture_onto_tensor_sink(snapshot, 7U, 1U, 3U);
+  fixture.placements = default_process_placements(snapshot);
+  fixture.partitions = default_execution_partitions(snapshot);
+  const std::array selections{InputSelectionPlanRecord{
+      .input = PortId{2U},
+      .selector = InputSelectorKind::kExact,
+      .max_selected_samples = 1U,
+      .cache_capacity = 1U,
+  }};
+
+  auto result = lower_physical_plan(snapshot,
+                                    42U,
+                                    fixture.profiles,
+                                    runtime_package_capability_view(),
+                                    selections,
+                                    {},
+                                    {},
+                                    fixture.placements,
+                                    {},
+                                    fixture.partitions,
+                                    {});
+
+  ASSERT_FALSE(result.errors.empty());
+  const auto mismatch = std::ranges::find_if(result.errors, [](const auto& error) {
+    return error.token == "PHYSICAL_TENSOR_LAYOUT_MISMATCH";
+  });
+  ASSERT_NE(mismatch, result.errors.end()) << result.errors.front().token;
+  EXPECT_EQ(mismatch->source.port, PortId{2U});
+  ASSERT_TRUE(mismatch->detail);
+  EXPECT_EQ(mismatch->detail->operator_path, "multi-sink");
+  EXPECT_EQ(mismatch->detail->related_operator_path, "multi-source");
+  EXPECT_FALSE(mismatch->detail->mismatches.empty());
+}
+
+// A CUDA descriptor field can be retained concurrently by arbitrary Operators in its process and
+// by the distinct joined staging stream owned by its cross-process service. The disconnected raw
+// Tensor source proves that the bound covers the whole process/device forwarding domain rather
+// than only the descriptor field's immediate subscribers.
+//
+//                         +--> local sink [process A]
+//   multi-source [process A]
+//                         +--> remote sink [process B]
+//
+//   forwarded-source [process A]
+//
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: MEM-STREAM-016
+// REQ: TENSOR-STORAGE-015
+TEST(CompilePhysicalPlan, DescriptorStagingAddsReleaseStreamToMixedLocalAndCrossProcessFanout) {
+  const RuntimePortTypeOps* const type_ops = runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(type_ops, nullptr);
+  auto fixture = make_multi_tensor_snapshot(type_ops->wire_capacity);
+  auto& snapshot = fixture.graph;
+  for (auto& field : snapshot.ports[0].setup.tensor_fields) {
+    field.tensor_layout->memory_kind = MemoryKind::kCudaDevice;
+  }
+  snapshot.ports[1].setup.tensor_fields = snapshot.ports[0].setup.tensor_fields;
+  snapshot.vertices.push_back(vertex(3U, "local-sink"));
+  auto local_input = input_port(3U, 3U, "frames", image_payload(), 2U);
+  local_input.serialized_payload_capacity_bytes = type_ops->wire_capacity;
+  local_input.descriptor_tensor_field_count = 3U;
+  local_input.setup.tensor_fields = snapshot.ports[0].setup.tensor_fields;
+  snapshot.ports.push_back(std::move(local_input));
+  snapshot.edges.push_back(edge(2U, 1U, 3U, 2U));
+  snapshot.vertices.push_back(vertex(4U, "forwarded-source"));
+  auto forwarded_output = output_port(4U, 4U, "out", tensor_payload());
+  forwarded_output.setup.tensor_allocation =
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+  forwarded_output.setup.tensor_layout = TensorRepresentation{
+      .memory_kind = MemoryKind::kCudaDevice,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = 1U,
+  };
+  snapshot.ports.push_back(std::move(forwarded_output));
+
+  fixture.profiles = standard_profiles(snapshot.vertices.size());
+  fixture.placements = split_process_placements(snapshot);
+  fixture.placements[2].process_group = fixture.placements[0].process_group;
+  fixture.placements[2].launch_group = fixture.placements[0].launch_group;
+  fixture.placements[3].process_group = fixture.placements[0].process_group;
+  fixture.placements[3].launch_group = fixture.placements[0].launch_group;
+  fixture.partitions = default_execution_partitions(snapshot);
+  constexpr DeviceId kDevice{0};
+  const std::array bindings{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = kDevice},
+      TensorDeviceBindingRecord{.port = PortId{4U}, .device = kDevice},
+  };
+
+  for (const auto policy : {CudaComputeStreamPolicy::kPerExecutionPartition,
+                            CudaComputeStreamPolicy::kSharedProcessDevice}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+    const auto result = lower_physical_plan(snapshot,
+                                            45U,
+                                            fixture.profiles,
+                                            runtime_package_capability_view(),
+                                            {},
+                                            {},
+                                            {},
+                                            fixture.placements,
+                                            {},
+                                            fixture.partitions,
+                                            bindings,
+                                            false,
+                                            false,
+                                            {},
+                                            {},
+                                            {},
+                                            policy);
+
+    ASSERT_TRUE(result.errors.empty())
+        << (result.errors.empty() ? std::string{} : result.errors.front().token);
+    ASSERT_EQ(result.process_local_channel_services.size(), 1U);
+    ASSERT_EQ(result.cross_process_channel_services.size(), 1U);
+    ASSERT_EQ(result.tensor_field_allocations.size(), 3U);
+    ASSERT_EQ(result.tensor_allocations.size(), 1U);
+    EXPECT_EQ(result.process_local_channel_services.front().max_subscribers, 1U);
+    EXPECT_TRUE(std::ranges::all_of(result.tensor_field_allocations, [](const auto& allocation) {
+      // Two allowances for each other CUDA-active process/device Operator, one producer allowance,
+      // and the descriptor service stream.
+      return allocation.release_stream_capacity == 6U;
+    }));
+    EXPECT_EQ(result.tensor_allocations.front().release_stream_capacity, 6U);
+  }
+}
+
 // A descriptor envelope larger than the HoloMQ fixed-payload family is rejected before Runtime.
 //
 //   multi-source --[oversized descriptor envelope]--X--> multi-sink
 //
-// REQ: CHAN-125
+// REQ: CHAN-145
 TEST(CompilePhysicalPlan, MultiTensorSchemaRejectsOversizedDescriptorEnvelopeAtCompileTime) {
   // Key setup: author a cross-process descriptor schema one byte beyond the endpoint maximum.
   auto fixture = make_multi_tensor_snapshot(channel_internal::kMaximumInlinePayloadBytes + 1U);
@@ -476,6 +848,7 @@ TEST(CompilePhysicalPlan, MultiTensorSchemaRejectsOversizedDescriptorEnvelopeAtC
 //   multi-source[frames: three Tensor fields]   (isolated; no edges)
 //
 // REQ: CHAN-123
+// REQ: PY-CHANNEL-008
 TEST(CompilePhysicalPlan, MultiTensorSchemaRejectsUnboundedUnsupportedAndAggregateFields) {
   const auto payload = image_payload();
   const RuntimePortTypeOps* const type_ops = runtime_port_type_ops<schema::ImageT>();
@@ -676,6 +1049,7 @@ TEST(CompilePhysicalPlan, CrossProcessImageOutputAllocationAdmitsFinalProviderBa
   EXPECT_NE(service.tensor_pool_id, result.tensor_allocations.front().pool_id);
 }
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 TEST(CompilePhysicalPlan, DirectTensorAllocationIsOptInAndOverrideMayOnlyTighten) {
   GraphSnapshotData snapshot;
@@ -760,6 +1134,7 @@ TEST(CompilePhysicalPlan, DirectTensorAllocationUsesSharedFrozenRecordValidation
 // Graph view without claiming an accepted edge, direct pool, or pass-through service.
 // REQ: COMPILE-003
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 TEST(CompilePhysicalPlan, RejectedTensorProfileRetainsPriorDiagnosticWithoutFallbackService) {
   Graph graph{"rejected-tensor-profile"};
@@ -1262,6 +1637,53 @@ TEST(CompilePhysicalPlan, DropOldestTensorUsesSplitIngressAndTypedCapacity) {
   EXPECT_EQ(holomq_allocation->slot_count, 12U);
 }
 
+// REQ: CHAN-146
+// REQ: TENSOR-STORAGE-011
+TEST(CompilePhysicalPlan, BudgetsDepthOneReuseFallbackBesideTheTensorCache) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "sink")};
+  snapshot.ports = {output_port(1U, 1U, "out", tensor_payload()),
+                    input_port(2U, 2U, "in", tensor_payload())};
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
+      .memory_kind = MemoryKind::kHost,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = 1U,
+  };
+  snapshot.ports.front().setup.tensor_allocation =
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  for (const auto policy : {QueuePolicy::kDropOldest, QueuePolicy::kBlocking}) {
+    for (const auto selector : {InputSelectorKind::kLatestWithin, InputSelectorKind::kExact}) {
+      for (const std::uint32_t depth : {1U, 2U}) {
+        SCOPED_TRACE(fmt::format("policy={} selector={} depth={}",
+                                 static_cast<int>(policy),
+                                 static_cast<int>(selector),
+                                 depth));
+        snapshot.edges = {edge(1U, 1U, 2U, depth, policy)};
+        const std::array selections{InputSelectionPlanRecord{
+            .input = PortId{2U},
+            .selector = selector,
+            .max_selected_samples = 1U,
+            .cache_capacity = depth,
+            .missing = TemporalRecordMissingKind::kReuseLast,
+        }};
+        const auto result = lower_for_test(snapshot, 10U, profiles, selections);
+        ASSERT_TRUE(result.errors.empty());
+        ASSERT_EQ(result.tensor_allocations.size(), 1U);
+        const auto* retention =
+            find_contributor(result, result.tensor_allocations.front().pool_id, ".retention");
+        ASSERT_NE(retention, nullptr);
+        const bool private_fallback = policy == QueuePolicy::kDropOldest &&
+                                      selector == InputSelectorKind::kLatestWithin && depth == 1U;
+        EXPECT_EQ(retention->maximum_distinct_slots, depth + (private_fallback ? 1U : 0U));
+        ASSERT_EQ(result.payload_edges.size(), 1U);
+        EXPECT_EQ(result.payload_edges.front().cache_capacity, depth);
+      }
+    }
+  }
+}
+
 // REQ: COMPILE-002
 TEST(CompilePhysicalPlan, CanonicalizesUnconsumedTensorDeviceBindingDiagnostics) {
   GraphSnapshotData snapshot;
@@ -1305,6 +1727,7 @@ TEST(CompilePhysicalPlan, CanonicalizesUnconsumedTensorDeviceBindingDiagnostics)
 //   [holomq://frames] --> boundary --[drop-oldest, depth=5]--> sink
 //
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 // REQ: CHAN-069
 TEST(CompilePhysicalPlan, ExternalServiceAndEndpointFactsAreSymmetricAndPublisherHistoryIsZero) {
@@ -1616,6 +2039,7 @@ TEST(CompilePhysicalPlan, RejectsInlineProviderCapCapabilityAndRecordSchemaMisma
 }
 
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 TEST(CompilePhysicalPlan, RejectsStridedGeometryOverflowAndDistinctSlotOverflow) {
   GraphSnapshotData snapshot;
@@ -1687,6 +2111,7 @@ TEST(CompilePhysicalPlan, RejectsCheckedAggregateTensorByteCapacityOverflow) {
 
 // REQ: COMPILE-005
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 TEST(CompilePhysicalPlan, PreservesUnresolvedProfileWithoutFabricatingStandardCapabilities) {
   GraphSnapshotData snapshot;
   snapshot.generation = GraphGeneration{1U};
@@ -1709,6 +2134,7 @@ TEST(CompilePhysicalPlan, PreservesUnresolvedProfileWithoutFabricatingStandardCa
 }
 
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 TEST(CompilePhysicalPlan, RejectsDeviceVisiblePoolsUntilCompileHasDeviceSelectionEvidence) {
   GraphSnapshotData snapshot;
@@ -1927,8 +2353,737 @@ TEST(CompilePhysicalPlan, AssignsOnlyStrictLinearTensorChainsToTheSharedDeviceSt
   ASSERT_TRUE(result.errors.empty());
   ASSERT_EQ(result.tensor_device_resources.size(), 1U);
   ASSERT_EQ(result.cuda_compute_streams.size(), 1U);
+  ASSERT_EQ(result.operator_cuda_stream_bindings.size(), 6U);
+  EXPECT_TRUE(std::ranges::all_of(result.operator_cuda_stream_bindings, [&](const auto& binding) {
+    return binding.stream_id == result.cuda_compute_streams.front().stream_id;
+  }));
   const std::vector expected{EdgeId{1U}, EdgeId{2U}};
   EXPECT_EQ(result.cuda_compute_streams.front().fused_linear_edges, expected);
+}
+
+// A strict Tensor edge that crosses an authored partition boundary remains eligible for fusion
+// only when both callbacks retain the same final shared stream. Partition-owned streams preserve
+// the boundary and therefore cannot inherit stale pre-partition fusion evidence.
+// REQ: COMPILE-049
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+TEST(CompilePhysicalPlan, RecomputesFusionFromFinalBindingsAcrossPartitionBoundaries) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "sink")};
+  snapshot.ports = {
+      output_port(1U, 1U, "out", tensor_payload()),
+      input_port(2U, 2U, "in", tensor_payload()),
+  };
+  snapshot.ports[0].setup.tensor_allocation =
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+  snapshot.ports[0].setup.tensor_layout = TensorRepresentation{
+      .memory_kind = MemoryKind::kCudaDevice,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = 1U,
+  };
+  snapshot.edges = {edge(1U, 1U, 2U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const std::array device_bindings{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{0}},
+  };
+  const std::array partitions{
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{1U}, .members = {VertexId{1U}}},
+      ExecutionPartitionRecord{
+          .id = ExecutionPartitionId{2U}, .members = {VertexId{2U}}, .execution_lane = 1U},
+  };
+
+  for (const CudaComputeStreamPolicy policy : {CudaComputeStreamPolicy::kSharedProcessDevice,
+                                               CudaComputeStreamPolicy::kPerExecutionPartition}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+    const auto result = lower_for_test(snapshot,
+                                       36U,
+                                       profiles,
+                                       {},
+                                       {},
+                                       {},
+                                       nullptr,
+                                       device_bindings,
+                                       partitions,
+                                       LowerForTestOptions{.cuda_compute_stream_policy = policy});
+
+    ASSERT_TRUE(result.errors.empty())
+        << (result.errors.empty() ? std::string{} : result.errors.front().token);
+    ASSERT_EQ(result.operator_cuda_stream_bindings.size(), 2U);
+    EXPECT_EQ(result.operator_cuda_stream_bindings[0].partition, ExecutionPartitionId{1U});
+    EXPECT_EQ(result.operator_cuda_stream_bindings[1].partition, ExecutionPartitionId{2U});
+    if (policy == CudaComputeStreamPolicy::kSharedProcessDevice) {
+      ASSERT_EQ(result.cuda_compute_streams.size(), 1U);
+      EXPECT_EQ(result.operator_cuda_stream_bindings[0].stream_id,
+                result.operator_cuda_stream_bindings[1].stream_id);
+      EXPECT_EQ(result.cuda_compute_streams.front().fused_linear_edges, (std::vector{EdgeId{1U}}));
+    } else {
+      ASSERT_EQ(result.cuda_compute_streams.size(), 2U);
+      EXPECT_NE(result.operator_cuda_stream_bindings[0].stream_id,
+                result.operator_cuda_stream_bindings[1].stream_id);
+      EXPECT_TRUE(std::ranges::all_of(result.cuda_compute_streams, [](const auto& stream) {
+        return stream.partition.has_value() && stream.fused_linear_edges.empty();
+      }));
+    }
+  }
+}
+
+// A malformed cover that repeats one CUDA-active Operator has no exact partition stream owner.
+// REQ: COMPILE-079
+TEST(CompilePhysicalPlan, RejectsDuplicateCudaOperatorPartitionMembership) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "source")};
+  snapshot.ports = {output_port(1U, 1U, "out", tensor_payload())};
+  snapshot.ports.front().setup.tensor_allocation =
+      TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+  snapshot.ports.front().setup.tensor_layout = TensorRepresentation{
+      .memory_kind = MemoryKind::kCudaDevice,
+      .dtype = DLDataType{kDLUInt, 8U, 1U},
+      .rank = 1U,
+  };
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const std::array device_bindings{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{0}},
+  };
+  const std::array accepted_partitions{
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{1U}, .members = {VertexId{1U}}},
+  };
+  const std::array duplicate_partitions{
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{1U}, .members = {VertexId{1U}}},
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{2U}, .members = {VertexId{1U}}},
+  };
+
+  auto result =
+      lower_for_test(snapshot,
+                     36U,
+                     profiles,
+                     {},
+                     {},
+                     {},
+                     nullptr,
+                     device_bindings,
+                     accepted_partitions,
+                     LowerForTestOptions{.cuda_compute_stream_policy =
+                                             CudaComputeStreamPolicy::kPerExecutionPartition});
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  result.tensor_device_resources.clear();
+  result.cuda_compute_streams.clear();
+  result.operator_cuda_stream_bindings.clear();
+
+  const auto placements = default_process_placements(snapshot);
+  lower_device_resources(result,
+                         36U,
+                         placements,
+                         duplicate_partitions,
+                         CudaComputeStreamPolicy::kPerExecutionPartition);
+
+  EXPECT_TRUE(has_error(result, "CUDA_STREAM_PARTITION_UNBOUND"))
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  EXPECT_TRUE(result.operator_cuda_stream_bindings.empty());
+  EXPECT_TRUE(result.cuda_compute_streams.empty());
+}
+
+// One serial execution partition may contain CUDA-active Operators placed on different devices.
+// The device remains part of physical stream identity, so the partition owns one stream per
+// process-local device instead of accidentally sharing a native handle across devices.
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+TEST(CompilePhysicalPlan, PartitionsOwnOneExactStreamPerDevice) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {
+      vertex(1U, "source-0"),
+      vertex(2U, "sink-0"),
+      vertex(3U, "source-1"),
+      vertex(4U, "sink-1"),
+  };
+  snapshot.ports = {
+      output_port(1U, 1U, "out", tensor_payload()),
+      input_port(2U, 2U, "in", tensor_payload()),
+      output_port(3U, 3U, "out", tensor_payload()),
+      input_port(4U, 4U, "in", tensor_payload()),
+  };
+  for (const std::size_t port_index : {0U, 2U}) {
+    snapshot.ports[port_index].setup.tensor_allocation =
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+    snapshot.ports[port_index].setup.tensor_layout = TensorRepresentation{
+        .memory_kind = MemoryKind::kCudaDevice,
+        .dtype = DLDataType{kDLUInt, 8U, 1U},
+        .rank = 1U,
+    };
+  }
+  snapshot.edges = {edge(1U, 1U, 2U), edge(2U, 3U, 4U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const std::array device_bindings{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{0}},
+      TensorDeviceBindingRecord{.port = PortId{3U}, .device = DeviceId{1}},
+  };
+  const std::array partitions{
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{7U},
+                               .members = {VertexId{1U}, VertexId{2U}, VertexId{3U}, VertexId{4U}}},
+  };
+
+  const auto result =
+      lower_for_test(snapshot,
+                     36U,
+                     profiles,
+                     {},
+                     {},
+                     {},
+                     nullptr,
+                     device_bindings,
+                     partitions,
+                     LowerForTestOptions{.cuda_compute_stream_policy =
+                                             CudaComputeStreamPolicy::kPerExecutionPartition});
+
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  ASSERT_EQ(result.cuda_compute_streams.size(), 2U);
+  ASSERT_EQ(result.operator_cuda_stream_bindings.size(), 4U);
+  EXPECT_TRUE(std::ranges::all_of(result.cuda_compute_streams, [](const auto& stream) {
+    return stream.partition.has_value() && *stream.partition == ExecutionPartitionId{7U};
+  }));
+  EXPECT_EQ(result.cuda_compute_streams[0].device, DeviceId{0});
+  EXPECT_EQ(result.cuda_compute_streams[1].device, DeviceId{1});
+  EXPECT_NE(result.cuda_compute_streams[0].stream_id, result.cuda_compute_streams[1].stream_id);
+  for (const auto& binding : result.operator_cuda_stream_bindings) {
+    EXPECT_EQ(binding.partition, ExecutionPartitionId{7U});
+    const auto stream = std::ranges::find(
+        result.cuda_compute_streams, binding.stream_id, &CudaComputeStreamPlanRecord::stream_id);
+    ASSERT_NE(stream, result.cuda_compute_streams.end());
+    EXPECT_EQ(stream->device, binding.device);
+  }
+}
+
+// Host-only work retains partition scheduling without manufacturing an unused CUDA resource.
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+TEST(CompilePhysicalPlan, HostOnlyPartitionOwnsNoCudaStreamBinding) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "source"), vertex(2U, "sink")};
+  snapshot.ports = {
+      output_port(1U, 1U, "out", scalar_payload()),
+      input_port(2U, 2U, "in", scalar_payload()),
+  };
+  snapshot.edges = {edge(1U, 1U, 2U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const std::array partitions{
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{1U},
+                               .members = {VertexId{1U}, VertexId{2U}}},
+  };
+
+  const auto result =
+      lower_for_test(snapshot,
+                     36U,
+                     profiles,
+                     {},
+                     {},
+                     {},
+                     nullptr,
+                     {},
+                     partitions,
+                     LowerForTestOptions{.cuda_compute_stream_policy =
+                                             CudaComputeStreamPolicy::kPerExecutionPartition});
+
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  EXPECT_TRUE(result.cuda_compute_streams.empty());
+  EXPECT_TRUE(result.operator_cuda_stream_bindings.empty());
+}
+
+// A fan-in join has one exact partition stream of its own and two upstream partition streams.
+// Neither input edge can inherit same-stream fusion evidence.
+// REQ: COMPILE-049
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+TEST(CompilePhysicalPlan, FanInKeepsDistinctUpstreamPartitionStreamsUnfused) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {vertex(1U, "left"), vertex(2U, "right"), vertex(3U, "join")};
+  snapshot.ports = {
+      output_port(1U, 1U, "out", tensor_payload()),
+      output_port(2U, 2U, "out", tensor_payload()),
+      input_port(3U, 3U, "left", tensor_payload()),
+      input_port(4U, 3U, "right", tensor_payload()),
+  };
+  for (const std::size_t port_index : {0U, 1U}) {
+    snapshot.ports[port_index].setup.tensor_allocation =
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+    snapshot.ports[port_index].setup.tensor_layout = TensorRepresentation{
+        .memory_kind = MemoryKind::kCudaDevice,
+        .dtype = DLDataType{kDLUInt, 8U, 1U},
+        .rank = 1U,
+    };
+  }
+  snapshot.edges = {edge(1U, 1U, 3U), edge(2U, 2U, 4U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const std::array device_bindings{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{0}},
+      TensorDeviceBindingRecord{.port = PortId{2U}, .device = DeviceId{0}},
+  };
+  const std::array partitions{
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{1U}, .members = {VertexId{1U}}},
+      ExecutionPartitionRecord{
+          .id = ExecutionPartitionId{2U}, .members = {VertexId{2U}}, .execution_lane = 1U},
+      ExecutionPartitionRecord{
+          .id = ExecutionPartitionId{3U}, .members = {VertexId{3U}}, .execution_lane = 2U},
+  };
+
+  const auto result =
+      lower_for_test(snapshot,
+                     36U,
+                     profiles,
+                     {},
+                     {},
+                     {},
+                     nullptr,
+                     device_bindings,
+                     partitions,
+                     LowerForTestOptions{.cuda_compute_stream_policy =
+                                             CudaComputeStreamPolicy::kPerExecutionPartition});
+
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  ASSERT_EQ(result.cuda_compute_streams.size(), 3U);
+  ASSERT_EQ(result.operator_cuda_stream_bindings.size(), 3U);
+  EXPECT_TRUE(std::ranges::all_of(result.cuda_compute_streams, [](const auto& stream) {
+    return stream.partition.has_value() && stream.fused_linear_edges.empty();
+  }));
+  EXPECT_TRUE(std::ranges::all_of(result.operator_cuda_stream_bindings, [&](const auto& binding) {
+    return std::ranges::count(result.operator_cuda_stream_bindings,
+                              binding.stream_id,
+                              &OperatorCudaStreamBindingPlanRecord::stream_id) == 1;
+  }));
+}
+
+// Partition IDs are globally canonical, while process group remains an explicit part of every
+// physical key. Two process groups therefore receive independent partition-owned CUDA streams.
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+TEST(CompilePhysicalPlan, CanonicalPartitionsRemainDistinctAcrossProcessGroups) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {
+      vertex(1U, "source-a"),
+      vertex(2U, "sink-a"),
+      vertex(3U, "source-b"),
+      vertex(4U, "sink-b"),
+  };
+  snapshot.ports = {
+      output_port(1U, 1U, "out", tensor_payload()),
+      input_port(2U, 2U, "in", tensor_payload()),
+      output_port(3U, 3U, "out", tensor_payload()),
+      input_port(4U, 4U, "in", tensor_payload()),
+  };
+  for (const std::size_t port_index : {0U, 2U}) {
+    snapshot.ports[port_index].setup.tensor_allocation =
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+    snapshot.ports[port_index].setup.tensor_layout = TensorRepresentation{
+        .memory_kind = MemoryKind::kCudaDevice,
+        .dtype = DLDataType{kDLUInt, 8U, 1U},
+        .rank = 1U,
+    };
+  }
+  snapshot.edges = {edge(1U, 1U, 2U), edge(2U, 3U, 4U)};
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  auto placements = default_process_placements(snapshot);
+  for (std::size_t index = 0U; index < placements.size(); ++index) {
+    const ProcessGroupId process_group{index < 2U ? 1U : 2U};
+    placements[index].process_group = process_group;
+    placements[index].isolation = ProcessIsolation::kSeparateProcess;
+    placements[index].launch_group = "process." + std::to_string(process_group.value);
+  }
+  const std::array partitions{
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{10U},
+                               .members = {VertexId{1U}, VertexId{2U}}},
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{20U},
+                               .members = {VertexId{3U}, VertexId{4U}},
+                               .execution_lane = 1U},
+  };
+  const std::array device_bindings{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{0}},
+      TensorDeviceBindingRecord{.port = PortId{3U}, .device = DeviceId{0}},
+  };
+
+  const auto result = lower_physical_plan(snapshot,
+                                          36U,
+                                          profiles,
+                                          runtime_package_capability_view(),
+                                          {},
+                                          {},
+                                          {},
+                                          placements,
+                                          {},
+                                          partitions,
+                                          device_bindings,
+                                          false,
+                                          false,
+                                          {},
+                                          {},
+                                          {},
+                                          CudaComputeStreamPolicy::kPerExecutionPartition);
+
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  ASSERT_EQ(result.cuda_compute_streams.size(), 2U);
+  ASSERT_EQ(result.operator_cuda_stream_bindings.size(), 4U);
+  EXPECT_EQ(result.cuda_compute_streams[0].process_group, ProcessGroupId{1U});
+  EXPECT_EQ(result.cuda_compute_streams[0].partition, ExecutionPartitionId{10U});
+  EXPECT_EQ(result.cuda_compute_streams[1].process_group, ProcessGroupId{2U});
+  EXPECT_EQ(result.cuda_compute_streams[1].partition, ExecutionPartitionId{20U});
+  EXPECT_NE(result.cuda_compute_streams[0].stream_id, result.cuda_compute_streams[1].stream_id);
+  for (const auto& binding : result.operator_cuda_stream_bindings) {
+    const auto stream = std::ranges::find(
+        result.cuda_compute_streams, binding.stream_id, &CudaComputeStreamPlanRecord::stream_id);
+    ASSERT_NE(stream, result.cuda_compute_streams.end());
+    EXPECT_EQ(stream->process_group, binding.process_group);
+    EXPECT_EQ(stream->partition, binding.partition);
+  }
+}
+
+// The same topology under the partition policy receives one stream per exact Operator partition.
+// Since every Tensor edge crosses a stream boundary, no edge carries same-stream fusion evidence.
+//
+//   linear-source --S0--> linear-middle --S1--> linear-sink
+//
+//   fanout-source --S3--> fanout-left
+//                 `--S4-> fanout-right
+// REQ: COMPILE-049
+// REQ: COMPILE-065
+TEST(CompilePhysicalPlan, AssignsExactStreamsPerExecutionPartitionAndKeepsBoundariesUnfused) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {
+      vertex(1U, "linear-source"),
+      vertex(2U, "linear-middle"),
+      vertex(3U, "linear-sink"),
+      vertex(4U, "fanout-source"),
+      vertex(5U, "fanout-left"),
+      vertex(6U, "fanout-right"),
+  };
+  snapshot.ports = {
+      output_port(1U, 1U, "out", tensor_payload()),
+      input_port(2U, 2U, "in", tensor_payload()),
+      output_port(3U, 2U, "out", tensor_payload()),
+      input_port(4U, 3U, "in", tensor_payload()),
+      output_port(5U, 4U, "out", tensor_payload()),
+      input_port(6U, 5U, "in", tensor_payload()),
+      input_port(7U, 6U, "in", tensor_payload()),
+  };
+  for (const std::size_t port_index : {0U, 2U, 4U}) {
+    snapshot.ports[port_index].setup.tensor_allocation =
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+    snapshot.ports[port_index].setup.tensor_layout = TensorRepresentation{
+        .memory_kind = MemoryKind::kCudaDevice,
+        .dtype = DLDataType{kDLUInt, 8U, 1U},
+        .rank = 1U,
+    };
+  }
+  snapshot.edges = {
+      edge(1U, 1U, 2U),
+      edge(2U, 3U, 4U),
+      edge(3U, 5U, 6U),
+      edge(4U, 5U, 7U),
+  };
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const std::array bindings{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{0}},
+      TensorDeviceBindingRecord{.port = PortId{3U}, .device = DeviceId{0}},
+      TensorDeviceBindingRecord{.port = PortId{5U}, .device = DeviceId{0}},
+  };
+  std::array<ExecutionPartitionRecord, 6U> partitions;
+  for (std::size_t index = 0U; index < partitions.size(); ++index) {
+    partitions[index] = ExecutionPartitionRecord{
+        .id = ExecutionPartitionId{static_cast<std::uint32_t>(index + 1U)},
+        .members = {VertexId{static_cast<std::uint64_t>(index + 1U)}},
+        .execution_lane = static_cast<std::uint32_t>(index),
+    };
+  }
+
+  const auto result =
+      lower_for_test(snapshot,
+                     36U,
+                     profiles,
+                     {},
+                     {},
+                     {},
+                     nullptr,
+                     bindings,
+                     partitions,
+                     LowerForTestOptions{.cuda_compute_stream_policy =
+                                             CudaComputeStreamPolicy::kPerExecutionPartition});
+
+  ASSERT_TRUE(result.errors.empty())
+      << (result.errors.empty() ? std::string{} : result.errors.front().token);
+  ASSERT_EQ(result.cuda_compute_streams.size(), 6U);
+  ASSERT_EQ(result.operator_cuda_stream_bindings.size(), 6U);
+  EXPECT_TRUE(std::ranges::all_of(result.cuda_compute_streams, [](const auto& stream) {
+    return stream.partition.has_value() && stream.fused_linear_edges.empty();
+  }));
+  for (std::size_t index = 0U; index < result.operator_cuda_stream_bindings.size(); ++index) {
+    const auto& binding = result.operator_cuda_stream_bindings[index];
+    EXPECT_EQ(binding.operator_vertex, VertexId{static_cast<std::uint64_t>(index + 1U)});
+    EXPECT_EQ(binding.partition, ExecutionPartitionId{static_cast<std::uint32_t>(index + 1U)});
+    EXPECT_EQ(binding.stream_id, result.cuda_compute_streams[index].stream_id);
+  }
+  ASSERT_EQ(result.tensor_allocations.size(), 3U);
+  EXPECT_TRUE(std::ranges::all_of(result.tensor_allocations, [](const auto& allocation) {
+    return allocation.release_stream_capacity == 11U;
+  }));
+}
+
+// A Tensor allocated by the first Operator can retain the same backing while successive callbacks
+// forward it through every later partition. Capacity therefore follows the complete process/device
+// domain rather than only the allocation output's immediate subscriber.
+//
+//   A --> B --> C --> D --> E
+//
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: TENSOR-STORAGE-015
+TEST(CompilePhysicalPlan, ForwardedTensorBackingUsesProcessDeviceReleaseStreamBound) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {
+      vertex(1U, "A"),
+      vertex(2U, "B"),
+      vertex(3U, "C"),
+      vertex(4U, "D"),
+      vertex(5U, "E"),
+  };
+  snapshot.ports = {
+      output_port(1U, 1U, "out", tensor_payload()),
+      input_port(2U, 2U, "in", tensor_payload()),
+      output_port(3U, 2U, "out", tensor_payload()),
+      input_port(4U, 3U, "in", tensor_payload()),
+      output_port(5U, 3U, "out", tensor_payload()),
+      input_port(6U, 4U, "in", tensor_payload()),
+      output_port(7U, 4U, "out", tensor_payload()),
+      input_port(8U, 5U, "in", tensor_payload()),
+  };
+  const std::array output_port_indices{0U, 2U, 4U, 6U};
+  for (const std::size_t port_index : output_port_indices) {
+    snapshot.ports[port_index].setup.tensor_allocation =
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+    snapshot.ports[port_index].setup.tensor_layout = TensorRepresentation{
+        .memory_kind = MemoryKind::kCudaDevice,
+        .dtype = DLDataType{kDLUInt, 8U, 1U},
+        .rank = 1U,
+    };
+  }
+  snapshot.edges = {
+      edge(1U, 1U, 2U),
+      edge(2U, 3U, 4U),
+      edge(3U, 5U, 6U),
+      edge(4U, 7U, 8U),
+  };
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  const std::array bindings{
+      TensorDeviceBindingRecord{.port = PortId{1U}, .device = DeviceId{0}},
+      TensorDeviceBindingRecord{.port = PortId{3U}, .device = DeviceId{0}},
+      TensorDeviceBindingRecord{.port = PortId{5U}, .device = DeviceId{0}},
+      TensorDeviceBindingRecord{.port = PortId{7U}, .device = DeviceId{0}},
+  };
+  std::array<ExecutionPartitionRecord, 5U> partitions;
+  for (std::size_t index = 0U; index < partitions.size(); ++index) {
+    partitions[index] = ExecutionPartitionRecord{
+        .id = ExecutionPartitionId{static_cast<std::uint32_t>(index + 1U)},
+        .members = {VertexId{static_cast<std::uint64_t>(index + 1U)}},
+        .execution_lane = static_cast<std::uint32_t>(index),
+    };
+  }
+
+  for (const CudaComputeStreamPolicy policy : {CudaComputeStreamPolicy::kSharedProcessDevice,
+                                               CudaComputeStreamPolicy::kPerExecutionPartition}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+    const auto result = lower_for_test(snapshot,
+                                       36U,
+                                       profiles,
+                                       {},
+                                       {},
+                                       {},
+                                       nullptr,
+                                       bindings,
+                                       partitions,
+                                       LowerForTestOptions{.cuda_compute_stream_policy = policy});
+
+    ASSERT_TRUE(result.errors.empty())
+        << (result.errors.empty() ? std::string{} : result.errors.front().token);
+    ASSERT_EQ(result.operator_cuda_stream_bindings.size(), 5U);
+    ASSERT_EQ(result.tensor_allocations.size(), output_port_indices.size());
+    EXPECT_TRUE(std::ranges::all_of(result.tensor_allocations, [](const auto& allocation) {
+      // Four potential consumers each retain a runtime and application stream; the producer
+      // contributes the ninth distinct release stream.
+      return allocation.release_stream_capacity == 9U;
+    }));
+    EXPECT_EQ(result.cuda_compute_streams.size(),
+              policy == CudaComputeStreamPolicy::kPerExecutionPartition ? 5U : 1U);
+  }
+}
+
+// The automatic planner's fanout shape is represented here with its accepted A/B/C partitions:
+//
+//          B1 -> B2 -> B3
+//         /
+// A1 -> A2
+//         \
+//          C1 -> C2 -> C3 -> C4
+//
+// The two fanout edges remain unfused under both policies. The six edges internal to A, B, and C
+// remain eligible because their endpoint bindings name the same final stream.
+// REQ: COMPILE-049
+// REQ: COMPILE-065
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: TENSOR-STORAGE-015
+TEST(CompilePhysicalPlan, ForkGeometryUsesExactFinalStreamsUnderBothPolicies) {
+  GraphSnapshotData snapshot;
+  snapshot.generation = GraphGeneration{1U};
+  snapshot.vertices = {
+      vertex(1U, "A1"),
+      vertex(2U, "A2"),
+      vertex(3U, "B1"),
+      vertex(4U, "B2"),
+      vertex(5U, "B3"),
+      vertex(6U, "C1"),
+      vertex(7U, "C2"),
+      vertex(8U, "C3"),
+      vertex(9U, "C4"),
+  };
+  snapshot.ports = {
+      output_port(1U, 1U, "out", tensor_payload()),
+      input_port(2U, 2U, "in", tensor_payload()),
+      output_port(3U, 2U, "out", tensor_payload()),
+      input_port(4U, 3U, "in", tensor_payload()),
+      output_port(5U, 3U, "out", tensor_payload()),
+      input_port(6U, 4U, "in", tensor_payload()),
+      output_port(7U, 4U, "out", tensor_payload()),
+      input_port(8U, 5U, "in", tensor_payload()),
+      input_port(9U, 6U, "in", tensor_payload()),
+      output_port(10U, 6U, "out", tensor_payload()),
+      input_port(11U, 7U, "in", tensor_payload()),
+      output_port(12U, 7U, "out", tensor_payload()),
+      input_port(13U, 8U, "in", tensor_payload()),
+      output_port(14U, 8U, "out", tensor_payload()),
+      input_port(15U, 9U, "in", tensor_payload()),
+  };
+  const std::array output_port_indices{0U, 2U, 4U, 6U, 9U, 11U, 13U};
+  for (const std::size_t port_index : output_port_indices) {
+    snapshot.ports[port_index].setup.tensor_allocation =
+        TensorPoolBounds{.max_rank = 1U, .max_byte_span = 1024U};
+    snapshot.ports[port_index].setup.tensor_layout = TensorRepresentation{
+        .memory_kind = MemoryKind::kCudaDevice,
+        .dtype = DLDataType{kDLUInt, 8U, 1U},
+        .rank = 1U,
+    };
+  }
+  snapshot.edges = {
+      edge(1U, 1U, 2U),    // A1 -> A2
+      edge(2U, 3U, 4U),    // A2 -> B1: fanout boundary
+      edge(3U, 5U, 6U),    // B1 -> B2
+      edge(4U, 7U, 8U),    // B2 -> B3
+      edge(5U, 3U, 9U),    // A2 -> C1: fanout boundary
+      edge(6U, 10U, 11U),  // C1 -> C2
+      edge(7U, 12U, 13U),  // C2 -> C3
+      edge(8U, 14U, 15U),  // C3 -> C4
+  };
+  const auto profiles = standard_profiles(snapshot.vertices.size());
+  std::array<TensorDeviceBindingRecord, output_port_indices.size()> device_bindings;
+  for (std::size_t index = 0U; index < output_port_indices.size(); ++index) {
+    device_bindings[index] = TensorDeviceBindingRecord{
+        .port = PortId{snapshot.ports[output_port_indices[index]].id.value},
+        .device = DeviceId{0},
+    };
+  }
+  const std::array partitions{
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{1U},
+                               .members = {VertexId{1U}, VertexId{2U}}},
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{2U},
+                               .members = {VertexId{3U}, VertexId{4U}, VertexId{5U}},
+                               .execution_lane = 1U},
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{3U},
+                               .members = {VertexId{6U}, VertexId{7U}, VertexId{8U}, VertexId{9U}},
+                               .execution_lane = 2U},
+  };
+  const std::vector expected_fused_edges{
+      EdgeId{1U}, EdgeId{3U}, EdgeId{4U}, EdgeId{6U}, EdgeId{7U}, EdgeId{8U}};
+  std::optional<std::vector<TensorDeviceResourcePlanRecord>> expected_device_resources;
+
+  for (const CudaComputeStreamPolicy policy : {CudaComputeStreamPolicy::kSharedProcessDevice,
+                                               CudaComputeStreamPolicy::kPerExecutionPartition}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+    const auto result = lower_for_test(snapshot,
+                                       37U,
+                                       profiles,
+                                       {},
+                                       {},
+                                       {},
+                                       nullptr,
+                                       device_bindings,
+                                       partitions,
+                                       LowerForTestOptions{.cuda_compute_stream_policy = policy});
+
+    ASSERT_TRUE(result.errors.empty())
+        << (result.errors.empty() ? std::string{} : result.errors.front().token);
+    ASSERT_EQ(result.operator_cuda_stream_bindings.size(), 9U);
+    ASSERT_EQ(result.cuda_compute_streams.size(),
+              policy == CudaComputeStreamPolicy::kPerExecutionPartition ? 3U : 1U);
+    for (std::uint32_t partition = 1U; partition <= 3U; ++partition) {
+      const auto count = std::ranges::count(result.operator_cuda_stream_bindings,
+                                            ExecutionPartitionId{partition},
+                                            &OperatorCudaStreamBindingPlanRecord::partition);
+      EXPECT_EQ(count, static_cast<std::ptrdiff_t>(partition + 1U));
+    }
+
+    std::vector<EdgeId> fused_edges;
+    for (const auto& stream : result.cuda_compute_streams) {
+      fused_edges.insert(
+          fused_edges.end(), stream.fused_linear_edges.begin(), stream.fused_linear_edges.end());
+    }
+    std::ranges::sort(fused_edges,
+                      [](EdgeId left, EdgeId right) { return left.value < right.value; });
+    EXPECT_EQ(fused_edges, expected_fused_edges);
+    EXPECT_EQ(std::ranges::count(fused_edges, EdgeId{2U}), 0);
+    EXPECT_EQ(std::ranges::count(fused_edges, EdgeId{5U}), 0);
+
+    if (policy == CudaComputeStreamPolicy::kPerExecutionPartition) {
+      for (const auto& stream : result.cuda_compute_streams) {
+        ASSERT_TRUE(stream.partition);
+        const auto expected = static_cast<std::ptrdiff_t>(stream.partition->value + 1U);
+        EXPECT_EQ(std::ranges::count(result.operator_cuda_stream_bindings,
+                                     stream.stream_id,
+                                     &OperatorCudaStreamBindingPlanRecord::stream_id),
+                  expected);
+        EXPECT_TRUE(std::ranges::all_of(stream.fused_linear_edges, [&](EdgeId edge_id) {
+          const auto& edge_record = snapshot.edges[edge_id.value - 1U];
+          const VertexId source = snapshot.ports[edge_record.source.value - 1U].owner;
+          const VertexId target = snapshot.ports[edge_record.target.value - 1U].owner;
+          const auto& members = partitions[stream.partition->value - 1U].members;
+          return std::ranges::find(members, source) != members.end() &&
+                 std::ranges::find(members, target) != members.end();
+        }));
+      }
+    } else {
+      EXPECT_TRUE(std::ranges::all_of(result.operator_cuda_stream_bindings, [&](const auto& row) {
+        return row.stream_id == result.cuda_compute_streams.front().stream_id;
+      }));
+    }
+
+    ASSERT_EQ(result.tensor_allocations.size(), output_port_indices.size());
+    const auto fanout_allocation = std::ranges::find(
+        result.tensor_allocations, PortId{3U}, &TensorAllocationPlanRecord::output);
+    ASSERT_NE(fanout_allocation, result.tensor_allocations.end());
+    EXPECT_EQ(fanout_allocation->release_stream_capacity, 17U);
+
+    if (expected_device_resources.has_value()) {
+      EXPECT_EQ(result.tensor_device_resources, *expected_device_resources);
+    } else {
+      expected_device_resources = result.tensor_device_resources;
+    }
+  }
 }
 
 // The Operator has one process-local Tensor successor, but its catalog export makes total fanout
@@ -2833,6 +3988,7 @@ TEST(CompilePhysicalPlan, CrossProcessTensorRejectsUnrealizableDirectLayouts) {
 // Graph authoring rejects conflicts between explicit port declarations. Physical lowering also
 // joins the resolved direct-pool contract so an implicit host default cannot contradict a target.
 // REQ: GRAPH-025
+// REQ: COMPILE-078
 TEST(CompilePhysicalPlan, SameProcessDirectTensorPoolSatisfiesEveryTargetLayout) {
   const auto lower_with_layouts = [](std::optional<TensorRepresentation> source_layout,
                                      TensorRepresentation target_layout) {
@@ -2865,9 +4021,17 @@ TEST(CompilePhysicalPlan, SameProcessDirectTensorPoolSatisfiesEveryTargetLayout)
                                    std::string_view expected_token) {
     SCOPED_TRACE(label);
     const auto result = lower_with_layouts(std::move(source_layout), std::move(target_layout));
-    EXPECT_TRUE(std::any_of(result.errors.begin(), result.errors.end(), [&](const auto& error) {
-      return error.token == expected_token;
-    }));
+    const auto failure = std::ranges::find_if(
+        result.errors, [&](const auto& error) { return error.token == expected_token; });
+    ASSERT_NE(failure, result.errors.end());
+    if (expected_token == "PHYSICAL_TENSOR_LAYOUT_MISMATCH") {
+      ASSERT_TRUE(failure->detail);
+      EXPECT_EQ(failure->detail->operator_path, "sink");
+      EXPECT_EQ(failure->detail->port_name, "in");
+      EXPECT_EQ(failure->detail->related_operator_path, "source");
+      EXPECT_EQ(failure->detail->related_port_name, "out");
+      EXPECT_FALSE(failure->detail->mismatches.empty());
+    }
     EXPECT_TRUE(result.process_local_channel_services.empty());
   };
 
@@ -3027,6 +4191,7 @@ TEST(CompilePhysicalPlan, SameProcessTensorRejectsUnimplementedMemoryConversionP
 //   image-source --[edge 2]--> image-sink
 //
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: CHAN-096
 // REQ: CHAN-119
 TEST(CompilePhysicalPlan, CanonicalizesDescriptorAndRawTensorBindingsAfterCompleteLowering) {
@@ -3083,6 +4248,7 @@ TEST(CompilePhysicalPlan, CanonicalizesDescriptorAndRawTensorBindingsAfterComple
 // REQ: CHAN-119
 // REQ: TENSOR-SCHEMA-005
 // REQ: OPERATOR-035
+// REQ: OPERATOR-049
 // REQ: CHAN-128
 TEST(CompilePhysicalPlan, DescriptorTensorImageUsesTypedServiceWithoutFabricatingPoolEvidence) {
   const auto payload = image_payload();
@@ -3118,9 +4284,10 @@ TEST(CompilePhysicalPlan, DescriptorTensorImageUsesTypedServiceWithoutFabricatin
   ASSERT_TRUE(service.payload_identity.schema);
   ASSERT_TRUE(payload.schema);
   EXPECT_EQ(service.payload_identity.schema->canonical_name, payload.schema->canonical_name);
-  EXPECT_EQ(service.payload_identity.schema->version, payload.schema->version);
-  EXPECT_EQ(service.payload_identity.schema->schema_sha256, payload.schema->schema_sha256);
-  EXPECT_EQ(service.payload_identity.schema->id, payload.schema->id);
+  EXPECT_EQ(service.payload_identity.schema->compatibility_epoch,
+            payload.schema->compatibility_epoch);
+  EXPECT_EQ(service.payload_identity.schema->family_id, payload.schema->family_id);
+  EXPECT_EQ(service.payload_identity.schema->file_identifier, payload.schema->file_identifier);
   EXPECT_TRUE(service.tensor_payload);
   EXPECT_EQ(service.payload_size_bytes, type_ops->wire_capacity);
   EXPECT_EQ(service.tensor_max_byte_span, 0U);

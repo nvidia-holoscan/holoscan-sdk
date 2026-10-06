@@ -12,6 +12,7 @@
 #include "catalog_tensor_clock_health.hpp"
 #include "catalog_tensor_receive_control.hpp"
 #include "channel_common.hpp"
+#include "channel_readiness_handle.hpp"
 #include "channel_runtime_impl.hpp"
 #include "channel_tensor_sidecar_store.hpp"
 #include "channel_tensor_test_access.hpp"
@@ -44,6 +45,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace holoscan {
 
@@ -509,6 +511,8 @@ class ChannelSubscriber<Tensor>::Impl : public channel_internal::WaitSetSubscrib
     return {};
   }
 
+  // Incarnation selection is one ordered state transition; splitting it would obscure precedence.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<bool, Error> fence_pending_incarnations() noexcept {
     if (superseded_producer_generation_ != 0U &&
         discard_pending_generation(superseded_producer_generation_)) {
@@ -580,6 +584,8 @@ class ChannelSubscriber<Tensor>::Impl : public channel_internal::WaitSetSubscrib
     return foreign;
   }
 
+  // The three receive-relevant lanes are staged together to preserve their operation ordering.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<void, Error> stage_catalog_operations() noexcept {
     const auto stage_data = [&]() -> expected<bool, Error> {
       if (pending_inbound_) {
@@ -652,6 +658,8 @@ class ChannelSubscriber<Tensor>::Impl : public channel_internal::WaitSetSubscrib
   }
 
   [[nodiscard]] expected<channel_internal::CatalogReceivedOperation, Error>
+  // Lane arbitration and terminal/incarnation transitions form one ordered state machine.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   receive_catalog_operation(const bool accept_data) noexcept {
     if (!has_receive_contract_) {
       return make_unexpected(Error{ErrorCode::kNotSupported});
@@ -819,7 +827,7 @@ class ChannelSubscriber<Tensor>::Impl : public channel_internal::WaitSetSubscrib
     return *data || *terminal || *health;
   }
 
-  [[nodiscard]] expected<void, Error> detach_wait_set() noexcept {
+  [[nodiscard]] expected<void, Error> detach_wait_set() noexcept override {
     terminal_attachment_.reset();
     terminal_wait_handle_ = 0U;
     attachment_.reset();
@@ -878,7 +886,8 @@ class ChannelSubscriber<Tensor>::Impl : public channel_internal::WaitSetSubscrib
       }
       if (operation->kind == channel_internal::CatalogReceivedOperationKind::kData &&
           operation->tensor_sample) {
-        return std::move(*operation->tensor_sample);
+        // The kind/presence guard above is the state-machine invariant for this access.
+        return std::move(*operation->tensor_sample);  // NOLINT(bugprone-unchecked-optional-access)
       }
       if (operation->kind == channel_internal::CatalogReceivedOperationKind::kEndOfStream) {
         return make_unexpected(Error{ErrorCode::kClosed});
@@ -1039,6 +1048,58 @@ class ChannelSubscriber<Tensor>::Impl : public channel_internal::WaitSetSubscrib
   // The parent Channel runtime owns this transport context and outlives every endpoint created
   // from it, so this borrow stays valid for the subscriber's lifetime.
   [[nodiscard]] void* wait_context_runtime() noexcept override { return context_; }
+
+  [[nodiscard]] bool wait_set_attached() const noexcept override {
+    return subscriber_.has_wait_owner() ||
+           (terminal_subscriber_ && terminal_subscriber_->has_wait_owner()) ||
+           (health_subscriber_ && health_subscriber_->wait_set_attached());
+  }
+
+  [[nodiscard]] bool readiness_handle_attached() const noexcept override {
+    return subscriber_.has_readiness_owner() ||
+           (terminal_subscriber_ && terminal_subscriber_->has_readiness_owner()) ||
+           (health_subscriber_ && health_subscriber_->readiness_handle_attached());
+  }
+
+  [[nodiscard]] expected<ChannelReadinessHandle, Error> readiness() override {
+    auto claim = claim_readiness_owner();
+    if (!claim) {
+      return make_unexpected(std::move(claim).error());
+    }
+    if (stream_closed_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    auto ready = has_samples();
+    if (!ready) {
+      return make_unexpected(std::move(ready).error());
+    }
+
+    std::vector<holomq::ReadinessHandle> holomq_handles;
+    holomq_handles.reserve(terminal_subscriber_ ? 2U : 1U);
+    auto data = subscriber_.readiness();
+    if (!data) {
+      return make_unexpected(from_holomq_error(std::move(data).error()));
+    }
+    holomq_handles.push_back(std::move(*data));
+    if (terminal_subscriber_) {
+      auto terminal = terminal_subscriber_->readiness();
+      if (!terminal) {
+        return make_unexpected(from_holomq_error(std::move(terminal).error()));
+      }
+      holomq_handles.push_back(std::move(*terminal));
+    }
+
+    std::vector<ChannelReadinessHandle> channel_handles;
+    if (health_subscriber_) {
+      auto health = health_subscriber_->readiness();
+      if (!health) {
+        return make_unexpected(std::move(health).error());
+      }
+      channel_handles.push_back(std::move(*health));
+    }
+    return channel_internal::ChannelReadinessHandleAccess::create(
+        std::move(holomq_handles), std::move(channel_handles), *ready);
+  }
 
   [[nodiscard]] expected<bool, Error> has_samples() const override {
     if (stream_closed_) {
@@ -1403,9 +1464,28 @@ ChannelSubscriber<Tensor>::ChannelSubscriber(std::unique_ptr<Impl> impl) noexcep
 ChannelSubscriber<Tensor>::ChannelSubscriber(ChannelSubscriber&& other) noexcept = default;
 
 ChannelSubscriber<Tensor>& ChannelSubscriber<Tensor>::operator=(
-    ChannelSubscriber&& other) noexcept = default;
+    ChannelSubscriber&& other) noexcept {
+  if (this != &other) {
+    static_cast<void>(channel_internal::close_local_subscriber(impl_));
+    impl_ = std::move(other.impl_);
+  }
+  return *this;
+}
 
-ChannelSubscriber<Tensor>::~ChannelSubscriber() = default;
+ChannelSubscriber<Tensor>::~ChannelSubscriber() {
+  static_cast<void>(channel_internal::close_local_subscriber(impl_));
+}
+
+expected<void, Error> ChannelSubscriber<Tensor>::close() noexcept {
+  return channel_internal::close_local_subscriber(impl_);
+}
+
+expected<ChannelReadinessHandle, Error> ChannelSubscriber<Tensor>::readiness() {
+  if (!impl_) {
+    return make_unexpected(Error{ErrorCode::kClosed});
+  }
+  return impl_->readiness();
+}
 
 channel_internal::WaitSetSubscriber* ChannelSubscriber<Tensor>::wait_set_subscriber() noexcept {
   return impl_.get();
@@ -1662,6 +1742,8 @@ expected<ManualTensorPublisher, Error> ChannelRuntime::create_tensor_publisher(
       pressure.enables_graph_retry_boundary(effective_options.publisher_history_depth)));
 }
 
+// Subscriber construction keeps validation, resource acquisition, and rollback visibly ordered.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 expected<ChannelSubscriber<Tensor>, Error> ChannelRuntime::create_tensor_subscriber(
     const std::string_view channel_name, const ChannelOptions& options,
     std::optional<TensorBoundaryContractRecord> receive_contract,

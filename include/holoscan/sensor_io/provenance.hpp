@@ -18,11 +18,19 @@
 /// the descriptor's embedded Tensor member and treat the loan's Tensor as authoritative, so one
 /// call publishes new payload bytes under the metadata that arrived. The operator neither reads nor
 /// names a single field, and needs no change when the schema grows one. To change one field and
-/// forward the rest, copy the descriptor and assign that field; the copy moves scalars, a \c
-/// shared_ptr refcount for the header, and any short vector, never anything proportional to the
-/// payload. Note that a nested table reached through that copied \c shared_ptr is shared with the
-/// received sample, so changing a \c Header field means deep-copying the \c Header rather than
-/// writing through the aliased pointer.
+/// forward the rest, update the received owning descriptor, or copy it if the original is still
+/// needed. Copy behavior depends on the descriptor type. For \c ImageT, the generated copy
+/// constructor copies the \c Header, its optional timestamp and frame ID, the Tensor wrapper, and
+/// the plane-layout vector. These copies may allocate, but the Tensor's pixel storage stays shared;
+/// copying the descriptor does not copy pixels. The copied \c Header is independent, so editing it
+/// does not require another deep copy to protect the original descriptor's header.
+///
+/// For callback-local read-only use, `Input<T>::selected_sample()` avoids that owning copy.
+/// Publish unchanged metadata with `emit_tensor(loan, view.data(), derive_from(view.metadata()))`.
+/// For bounded Image metadata edits, cold-prepare `ImageDescriptorScratch`, copy metadata into it,
+/// and pass its Image alongside the output loan. Keep its Tensor member null and never retain the
+/// borrowed descriptor past the callback. Runtime-admitted stream leases, not the host view,
+/// protect asynchronous Tensor reads.
 ///
 /// The runtime envelope — \ref holoscan::SampleMetadata, holding capture time, clock domain, frame
 /// identity, trace, and flags — is not part of the payload and does not ride along with it. Runtime

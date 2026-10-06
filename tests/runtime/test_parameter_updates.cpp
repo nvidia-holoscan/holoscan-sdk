@@ -11,6 +11,8 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <exception>
 #include <future>
 #include <limits>
 #include <memory>
@@ -23,8 +25,11 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
+#include <holoscan/core/diagnostic.hpp>
 #include <holoscan/core/parameter_control.hpp>
+#include <holoscan/logger/logger.hpp>
 
 #include "../common/allocation_counter.hpp"
 #include "../core/operator_test_fixture.hpp"
@@ -589,6 +594,39 @@ TEST(ParameterUpdateValue, FixedScalarVocabularyIsExactAndAllocationFree) {
       ParamValue::from(-129ms).as<std::chrono::duration<std::int8_t, std::milli>>();
   ASSERT_FALSE(negative_target_overflow);
   EXPECT_EQ(negative_target_overflow.error().code, ErrorCode::kIncompatible);
+}
+
+// REQ: PARAM-018
+TEST(ParameterUpdateValue, OwningPatchValuePreservesNestedAggregateStorage) {
+  // Key setup: Build and copy a cold-path patch value containing scalar, string, sequence, and
+  // nested-object representations.
+  const auto label = ParamPatchValue::from_string("alpha");
+  ASSERT_TRUE(label);
+  std::vector<ParamPatchValue> elements;
+  elements.emplace_back(ParamValue::from(std::int32_t{7}));
+  elements.push_back(*label);
+  const auto sequence = ParamPatchValue::from_sequence(std::move(elements));
+  ASSERT_TRUE(sequence);
+  std::vector<ParamPatchAssignment> assignments;
+  assignments.push_back(ParamPatchAssignment{.name = "values", .value = *sequence});
+  const auto object = ParamPatchValue::from_object(std::move(assignments));
+  ASSERT_TRUE(object);
+  // Copy construction is the behavior under test; a reference would not exercise owned storage.
+  // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
+  const ParamPatchValue copied = *object;
+
+  // Key assertion: Every owning view remains valid through a copied top-level carrier.
+  ASSERT_EQ(copied.kind(), ParamPatchValueKind::kObject);
+  ASSERT_EQ(copied.object().size(), 1U);
+  EXPECT_EQ(copied.object().front().name, "values");
+  ASSERT_EQ(copied.object().front().value.sequence().size(), 2U);
+  const auto scalar = copied.object().front().value.sequence().front().scalar();
+  std::int32_t decoded{};
+  ASSERT_TRUE(scalar.try_as(decoded));
+  EXPECT_EQ(decoded, 7);
+  EXPECT_EQ(copied.object().front().value.sequence().back().string(), "alpha");
+  EXPECT_EQ(ParamPatchValue{}.kind(), ParamPatchValueKind::kUnset);
+  EXPECT_EQ(ParamPatchValue::none().kind(), ParamPatchValueKind::kNone);
 }
 
 // REQ: PARAM-017
@@ -1256,7 +1294,7 @@ TEST(ParameterUpdateCoordinatorTest,
       .field = frozen.field,
   };
   const auto submit = [&](ParamPatch patch) {
-    const std::array patches{patch};
+    const std::array patches{std::move(patch)};
     return coordinator->submit(patches);
   };
 
@@ -1572,6 +1610,46 @@ TEST(ParameterUpdateCoordinatorTest,
     EXPECT_EQ(events[index].reason_id, kReasonId);
   }
   direct.coordinator->unregister_event_cursor(*cursor);
+}
+
+// REQ: PARAM-020
+// REQ: PARAM-022
+TEST(ParameterUpdateCoordinatorTest, MultiFieldBatchSubmissionEvidenceUsesOperatorScope) {
+  const ExecutionPlan plan = test::make_mixed_mutability_param_test_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const ParameterFieldPlanRecord& runtime_field = parameter_field(plan, "runtime_value");
+  const ParameterFieldPlanRecord& lifecycle_field = parameter_field(plan, "lifecycle_value");
+  const OperatorRef owner = run_owner(runtime_field);
+  auto op = std::make_unique<test::MixedMutabilityParamProbeOperator>();
+  const auto binding = make_direct_parameter_binding(plan, *op);
+  auto coordinator_result = detail::ParameterUpdateCoordinator::create(
+      std::span<const detail::ParameterRuntimeOperatorBinding>{&binding, 1U},
+      checked_value(plan.parameter_runtime_capacity()));
+  ASSERT_TRUE(coordinator_result);
+  auto coordinator = std::move(coordinator_result).value();
+  FakeLifecycleSubmitter lifecycle{.outcome = queued_lifecycle_outcome(1U, 11U)};
+  ASSERT_TRUE(coordinator->bind_lifecycle_submitter(lifecycle.binding()));
+  const auto cursor = coordinator->register_event_cursor(full_local_parameter_policy());
+  ASSERT_TRUE(cursor);
+
+  const std::array patches{
+      ParamPatch{.target = ParamAddress{.operator_instance = owner, .field = runtime_field.field},
+                 .value = ParamValue::from(std::int32_t{42})},
+      ParamPatch{.target = ParamAddress{.operator_instance = owner, .field = lifecycle_field.field},
+                 .value = ParamValue::from(std::int32_t{84})},
+  };
+  static_cast<void>(coordinator->submit(patches));
+
+  std::array<ParamEvent, 8U> events{};
+  const auto drained = coordinator->drain_events(*cursor, events);
+  ASSERT_TRUE(drained);
+  const auto submitted = std::find_if(events.begin(), events.begin() + *drained, [](const auto& e) {
+    return e.state == ParamUpdateState::kSubmitted;
+  });
+  ASSERT_NE(submitted, events.begin() + *drained);
+  EXPECT_EQ(submitted->operator_instance, owner);
+  EXPECT_EQ(submitted->field, ParamFieldId{});
+  coordinator->unregister_event_cursor(*cursor);
 }
 
 // REQ: PARAM-020
@@ -3282,6 +3360,136 @@ TEST(ParameterUpdateCoordinatorTest, EmptyActivationMaintenanceDoesNotWaitForMut
   EXPECT_TRUE(maintenance.get());
   coordinator.release(*generation_zero);
 }
+
+#if GTEST_HAS_DEATH_TEST
+namespace {
+enum class FatalLedgerGuard {
+  kReplace,
+  kRelease,
+  kMissingResult,
+  kExhaustedEvent,
+  kLostPublication
+};
+
+// Prepare valid accepted transitions first, then corrupt only the evidence checked by each guard.
+void exercise_fatal_ledger_guard(FatalLedgerGuard guard, bool fail_formatting) {
+  using Access = detail::ParameterUpdateCoordinatorTestAccess;
+  const ExecutionPlan plan = test::make_mixed_mutability_param_test_plan();
+  ASSERT_TRUE(plan.ok());
+  const auto& runtime_field = parameter_field(plan, "runtime_value");
+  const auto& lifecycle_field = parameter_field(plan, "lifecycle_value");
+  const auto owner = run_owner(runtime_field);
+  auto op = std::make_unique<test::MixedMutabilityParamProbeOperator>();
+  const auto binding = make_direct_parameter_binding(plan, *op);
+  auto coordinator = checked_value(detail::ParameterUpdateCoordinator::create(
+      std::span<const detail::ParameterRuntimeOperatorBinding>{&binding, 1U},
+      checked_value(plan.parameter_runtime_capacity())));
+  FakeLifecycleSubmitter lifecycle{.outcome = queued_lifecycle_outcome(1U, 11U)};
+  ASSERT_TRUE(coordinator->bind_lifecycle_submitter(lifecycle.binding()));
+  ParamGeneration lifecycle_generation{};
+  if (guard != FatalLedgerGuard::kReplace && guard != FatalLedgerGuard::kRelease) {
+    const std::array patch{
+        ParamPatch{.target = ParamAddress{.operator_instance = owner, .field = runtime_field.field},
+                   .value = ParamValue::from(std::int32_t{42})}};
+    const auto update = coordinator->submit(patch);
+    ASSERT_TRUE(update.committed);
+    if (guard == FatalLedgerGuard::kMissingResult) {
+      Access::set_result_event_reservations(*coordinator, update.update_sequence, 0U);
+    } else if (guard == FatalLedgerGuard::kExhaustedEvent) {
+      Access::set_event_sequence(*coordinator, std::numeric_limits<ParamEventSequence>::max());
+    } else {
+      ASSERT_TRUE(coordinator->publish_next_at_callback_boundary(
+          owner, coordinator->publication_frontier()));
+      const std::array lifecycle_patch{ParamPatch{
+          .target = ParamAddress{.operator_instance = owner, .field = lifecycle_field.field},
+          .value = ParamValue::from(std::int32_t{84})}};
+      const auto next = coordinator->submit(lifecycle_patch);
+      ASSERT_TRUE(next.committed);
+      lifecycle_generation = next.target_generation;
+      ASSERT_TRUE(coordinator->transition_lifecycle_candidate(
+          owner, lifecycle_generation, 1U, LifecycleTransactionState::kQuiescing));
+      ASSERT_TRUE(coordinator->transition_lifecycle_candidate(
+          owner, lifecycle_generation, 1U, LifecycleTransactionState::kRestarting));
+      Access::invalidate_result(*coordinator, update.update_sequence);
+    }
+  }
+  std::set_terminate([] { std::_Exit(std::current_exception() ? 91 : 90); });
+  std::optional<test::ScopedAllocationFailure> failure;
+  if (fail_formatting)
+    failure.emplace(0U);
+  switch (guard) {
+    case FatalLedgerGuard::kReplace:
+      Access::replace_event_reservation(*coordinator, 1U);
+      break;
+    case FatalLedgerGuard::kRelease:
+      Access::release_event_reservations(*coordinator, 1U);
+      break;
+    case FatalLedgerGuard::kMissingResult:
+    case FatalLedgerGuard::kExhaustedEvent:
+      static_cast<void>(coordinator->publish_next_at_callback_boundary(
+          owner, coordinator->publication_frontier()));
+      break;
+    case FatalLedgerGuard::kLostPublication:
+      static_cast<void>(coordinator->transition_lifecycle_candidate(
+          owner, lifecycle_generation, 1U, LifecycleTransactionState::kPublished));
+      break;
+  }
+  std::_Exit(92);
+}
+
+constexpr std::array kFatalLedgerGuards{
+    std::pair{FatalLedgerGuard::kReplace, "Parameter event reservation replacement exceeded"},
+    std::pair{FatalLedgerGuard::kRelease, "Parameter event reservation release exceeded"},
+    std::pair{FatalLedgerGuard::kMissingResult, "Parameter transition lost its preaccepted"},
+    std::pair{FatalLedgerGuard::kExhaustedEvent, "Parameter transition exhausted a preaccepted"},
+    std::pair{FatalLedgerGuard::kLostPublication, "Unobserved parameter publication lost"}};
+}  // namespace
+
+// REQ: EXPECTED-032
+TEST(ParameterDiagnosticDeathTest, FatalLedgerMessagesBypassAutomaticPolicy) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  for (const auto& [guard, message] : kFatalLedgerGuards) {
+    for (const int policy : {0, 1, 2}) {
+      EXPECT_EXIT(
+          {
+            unsetenv("HOLOSCAN_LOG_LEVEL");
+            unsetenv("HOLOSCAN_LOG_FORMAT");
+            unsetenv("HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING");
+            if (policy == 2)
+              setenv("HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING", "OFF", 1);
+            set_automatic_diagnostic_logging_enabled(policy != 1);
+            set_log_level(LogLevel::ERROR);
+            exercise_fatal_ledger_guard(guard, false);
+            std::_Exit(93);
+          },
+          testing::ExitedWithCode(90),
+          message);
+    }
+  }
+}
+
+// REQ: EXPECTED-032
+TEST(ParameterDiagnosticDeathTest, FatalLedgerTerminationSurvivesFilteringAndFormattingFailure) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  for (const auto& [guard, message] : kFatalLedgerGuards) {
+    static_cast<void>(message);
+    for (const bool fail_formatting : {false, true}) {
+      EXPECT_EXIT(
+          {
+            unsetenv("HOLOSCAN_LOG_LEVEL");
+            unsetenv("HOLOSCAN_LOG_FORMAT");
+            unsetenv("HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING");
+            set_automatic_diagnostic_logging_enabled(true);
+            set_log_level(fail_formatting ? LogLevel::ERROR : LogLevel::OFF);
+            exercise_fatal_ledger_guard(guard, fail_formatting);
+            std::_Exit(93);
+          },
+          testing::ExitedWithCode(90),
+          "^$");
+    }
+  }
+}
+#endif
 
 }  // namespace
 }  // namespace holoscan

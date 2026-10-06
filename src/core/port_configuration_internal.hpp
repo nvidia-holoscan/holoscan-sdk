@@ -32,6 +32,7 @@ namespace holoscan::detail {
     result.queue_depth = metadata.queue_depth;
     result.memory_conversion = metadata.memory_conversion;
     result.payload_options = metadata.payload_options;
+    result.accepts_projected_tensor = metadata.accepts_projected_tensor;
   } else {
     result.max_emits_per_compute = metadata.max_emits_per_compute;
     result.late_joiner_history_depth = metadata.late_joiner_history_depth;
@@ -44,11 +45,13 @@ namespace holoscan::detail {
   result.tensor_layout = metadata.tensor_layout;
   result.tensor_contract = metadata.tensor_contract;
   result.tensor_byte_span_expression = metadata.tensor_byte_span_expression;
+  result.tensor_memory_kind_expression = metadata.tensor_memory_kind_expression;
   if (metadata.descriptor_tensor_field_count == 1U && metadata.tensor_fields.size() == 1U) {
     const auto& field = metadata.tensor_fields.front().configuration;
     result.tensor_layout = field.tensor_layout;
     result.tensor_contract = field.tensor_contract;
     result.tensor_byte_span_expression = field.tensor_byte_span_expression;
+    result.tensor_memory_kind_expression = field.tensor_memory_kind_expression;
     if (field.payload_options) {
       result.payload_options = PayloadOptionsRecord{
           .max_inline_bytes = field.payload_options->max_inline_bytes

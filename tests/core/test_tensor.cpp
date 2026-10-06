@@ -26,6 +26,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
+
 namespace {
 
 // Thread-local flags let the per-TU operator new intercepts charge allocations only to the active
@@ -103,12 +107,26 @@ void* counted_aligned_malloc(std::size_t size, std::align_val_t alignment) {
   if (g_count_test_allocations) {
     ++g_test_allocation_count;
   }
-  void* ptr = nullptr;
   const auto align = std::max(static_cast<std::size_t>(alignment), sizeof(void*));
+#if defined(_WIN32)
+  if (void* ptr = _aligned_malloc(size == 0 ? 1 : size, align)) {
+    return ptr;
+  }
+#else
+  void* ptr = nullptr;
   if (posix_memalign(&ptr, align, size == 0 ? 1 : size) == 0) {
     return ptr;
   }
+#endif
   throw std::bad_alloc();
+}
+
+void counted_aligned_free(void* ptr) noexcept {
+#if defined(_WIN32)
+  _aligned_free(ptr);
+#else
+  std::free(ptr);
+#endif
 }
 
 // RAII guard that activates the per-thread allocation counter for a delimited scope.
@@ -172,19 +190,19 @@ void operator delete[](void* ptr, std::size_t) noexcept {
 }
 
 void operator delete(void* ptr, std::align_val_t) noexcept {
-  std::free(ptr);
+  counted_aligned_free(ptr);
 }
 
 void operator delete[](void* ptr, std::align_val_t) noexcept {
-  std::free(ptr);
+  counted_aligned_free(ptr);
 }
 
 void operator delete(void* ptr, std::size_t, std::align_val_t) noexcept {
-  std::free(ptr);
+  counted_aligned_free(ptr);
 }
 
 void operator delete[](void* ptr, std::size_t, std::align_val_t) noexcept {
-  std::free(ptr);
+  counted_aligned_free(ptr);
 }
 
 namespace holoscan {
@@ -398,7 +416,7 @@ TEST(TensorHandleOperations, MoveTransfersTensorContextHandle) {
   void* expected_data = nullptr;
   auto context = make_test_context(destroyed_counter, &expected_data);
 
-  Tensor source(context);
+  Tensor source(context);  // NOLINT(misc-const-correctness): moved below to verify ownership.
   context.reset();
   Tensor moved_constructed(std::move(source));
 
@@ -1468,6 +1486,97 @@ TEST(TensorMemoryReference, CopyToHostRejectsNonContiguousTensor) {
   EXPECT_NE(std::string(result.error().message).find("contiguous"), std::string::npos);
 }
 
+// REQ: TENSOR-CORE-018
+TEST(TensorMemoryReference, CopyCreatesIndependentOwningContiguousTensor) {
+  // Key setup: Copy a contiguous CPU Tensor whose first logical byte has a nonzero byte offset.
+  auto destroyed_counter = std::make_shared<std::atomic<int>>(0);
+  void* expected_data = nullptr;
+  auto context = make_test_context(destroyed_counter, &expected_data);
+  const Tensor source(context);
+  const auto* source_bytes = static_cast<const std::uint8_t*>(source.data());
+
+  auto copied = source.copy();
+
+  // Key assertion: The result owns distinct storage, preserves values and metadata, and carries the
+  // DLPack copied flag without granting writes through the source view.
+  ASSERT_TRUE(copied) << copied.error().message;
+  EXPECT_NE(copied->data(), source.data());
+  EXPECT_EQ(copied->shape(), source.shape());
+  EXPECT_EQ(copied->dtype().code, source.dtype().code);
+  EXPECT_EQ(copied->dtype().bits, source.dtype().bits);
+  EXPECT_EQ(copied->device().device_type, kDLCPU);
+  EXPECT_EQ(copied->device().device_id, 0);
+  EXPECT_EQ(copied->byte_offset(), 0U);
+  EXPECT_TRUE(copied->is_contiguous());
+  EXPECT_TRUE(copied->is_dlpack_copied());
+  EXPECT_TRUE(std::equal(source_bytes,
+                         source_bytes + source.nbytes(),
+                         static_cast<const std::uint8_t*>(copied->data())));
+
+  auto copied_data = copied->mutable_data_as<std::uint8_t>();
+  ASSERT_TRUE(copied_data) << copied_data.error().message;
+  const std::uint8_t source_first = source_bytes[0];
+  (*copied_data)[0] = static_cast<std::uint8_t>(source_first + 1U);
+  EXPECT_EQ(source_bytes[0], source_first);
+}
+
+// REQ: TENSOR-CORE-018
+TEST(TensorMemoryReference, CopyAcceptsZeroByteTensorWithNullData) {
+  // Key setup: Represent a structurally valid empty Tensor without any backing data pointer.
+  auto destroyed_counter = std::make_shared<std::atomic<int>>(0);
+  void* ignored_data = nullptr;
+  auto context = make_test_context(destroyed_counter, &ignored_data);
+  context->dl_shape = {0};
+  context->dl_strides = {1};
+  context->tensor.dl_tensor.data = nullptr;
+  context->tensor.dl_tensor.ndim = 1;
+  context->tensor.dl_tensor.shape = context->dl_shape.data();
+  context->tensor.dl_tensor.strides = context->dl_strides.data();
+  context->tensor.dl_tensor.byte_offset = 0;
+
+  auto copied = Tensor{context}.copy();
+
+  // Key assertion: Zero bytes require no source or destination data access, but the result still
+  // preserves the empty shape and explicit-copy identity.
+  ASSERT_TRUE(copied) << copied.error().message;
+  EXPECT_EQ(copied->shape(), (std::vector<int64_t>{0}));
+  EXPECT_EQ(copied->nbytes(), 0);
+  EXPECT_TRUE(copied->is_dlpack_copied());
+}
+
+// REQ: TENSOR-CORE-018
+TEST(TensorMemoryReference, CopyRejectsNegativeRank) {
+  // Key setup: Supply malformed DLPack metadata that the contiguity helper alone accepts.
+  auto destroyed_counter = std::make_shared<std::atomic<int>>(0);
+  void* ignored_data = nullptr;
+  auto context = make_test_context(destroyed_counter, &ignored_data);
+  context->tensor.dl_tensor.ndim = -1;
+
+  auto copied = Tensor{context}.copy();
+
+  // Key assertion: Copy rejects the malformed rank before treating it as a rank-zero shape.
+  ASSERT_FALSE(copied);
+  EXPECT_EQ(copied.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_NE(std::string(copied.error().message).find("rank"), std::string::npos);
+}
+
+// REQ: TENSOR-CORE-018
+TEST(TensorMemoryReference, CopyRejectsNonContiguousTensor) {
+  // Key setup: Give an otherwise valid CPU Tensor a non-contiguous logical layout.
+  auto destroyed_counter = std::make_shared<std::atomic<int>>(0);
+  void* expected_data = nullptr;
+  auto context = make_test_context(destroyed_counter, &expected_data);
+  context->dl_strides = {4, 1};
+  context->tensor.dl_tensor.strides = context->dl_strides.data();
+
+  auto copied = Tensor{context}.copy();
+
+  // Key assertion: Allocation-copy helpers fail closed instead of silently restriding.
+  ASSERT_FALSE(copied);
+  EXPECT_EQ(copied.error().code, ErrorCode::kInvalidArgument);
+  EXPECT_NE(std::string(copied.error().message).find("contiguous"), std::string::npos);
+}
+
 // DLPack strides are in elements, so contiguity and byte-stride reporting must account for the full
 // (lanes-aware) element size of vectorized dtypes rather than the per-lane bit width.
 TEST(TensorMetadataViews, IsContiguousUsesElementStridesForVectorizedDTypes) {
@@ -1517,7 +1626,16 @@ TEST(TensorMetadataViews, ScalarTensorHasOneElementAndEmptyShapeViews) {
 // Empty and malformed dtype metadata must remain safe to inspect and must not fabricate a byte
 // count that callers could use to copy beyond the logical Tensor view.
 TEST(TensorMetadataViews, EmptyAndInvalidDtypeMetadataReturnZeroByteSizes) {
+  // Key setup: Inspect every scalar metadata accessor on a default-constructed Tensor.
   const Tensor empty;
+
+  // Key assertion: An empty Tensor exposes deterministic sentinels without dereferencing storage.
+  EXPECT_EQ(empty.device().device_type, kDLCPU);
+  EXPECT_EQ(empty.device().device_id, 0);
+  EXPECT_EQ(empty.dtype().bits, 0U);
+  EXPECT_EQ(empty.dtype().lanes, 0U);
+  EXPECT_EQ(empty.ndim(), 0);
+  EXPECT_EQ(empty.byte_offset(), 0U);
   EXPECT_EQ(empty.size(), 0);
   EXPECT_EQ(empty.itemsize(), 0U);
   EXPECT_EQ(empty.nbytes(), 0);

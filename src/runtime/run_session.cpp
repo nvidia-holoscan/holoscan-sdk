@@ -9,9 +9,15 @@
 #include <array>
 #include <limits>
 #include <memory>
+#include <new>
+#include <string>
 #include <utility>
 
+#include "core/canonical_text_encoding.hpp"
+#include "core/diagnostic_reporting.hpp"
 #include "managed_shutdown_signals_test_control.hpp"
+#include "runtime_cuda_graph_diagnostics.hpp"
+#include "runtime_cuda_graph_region_resources.hpp"
 #include "runtime_test_access.hpp"
 #include "runtime_work_inventory.hpp"
 
@@ -93,6 +99,14 @@ static_assert(runtime_fallback_tokens_are_registered(),
   throw RuntimeError{Error{ErrorCode::kResourceExhausted, "RUNTIME_RUN_GENERATION_EXHAUSTED"}};
 }
 
+[[nodiscard]] PortId requested_diagnostic_port(PortId explicit_port,
+                                               const RuntimeDiagnosticDetail* detail) noexcept {
+  if (detail != nullptr && detail->tensor_failure.port) {
+    return detail->tensor_failure.port;
+  }
+  return explicit_port;
+}
+
 [[nodiscard]] RuntimeTerminalSummary make_terminal_summary(
     RunGenerationId run_generation, std::span<const Diagnostic> diagnostics,
     DiagnosticSource fallback_source = {}) noexcept {
@@ -139,17 +153,12 @@ void publish_terminal_summary(RunGenerationId run_generation,
       sink->publish(summary);
       return;
     }
-    HOLOSCAN_LOG_ERROR(
-        "RunSession failed: run_generation={} category=failed diagnostics={} first_diagnostic={} "
-        "first_token={} graph_generation={} graph={} vertex={} port={}",
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
+        "RunSession failed: run_generation={} category=failed diagnostics={}\n{}",
         summary.run_generation,
         summary.diagnostic_count,
-        summary.first_diagnostic.value,
-        summary.first_token,
-        summary.first_source.graph_generation,
-        summary.first_source.graph.value,
-        summary.first_source.vertex.value,
-        summary.first_source.port.value());
+        diagnostics.empty() ? "No diagnostic detail retained."
+                            : format_diagnostics(diagnostics, ExecutionGraphView{}));
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   } catch (...) {
     // Supplemental observability cannot weaken an already-committed terminal outcome.
@@ -368,6 +377,7 @@ struct QuarantinedRunExecutionOwners {
   std::unique_ptr<GraphExec> graph;
   std::unique_ptr<RuntimeTensorResources> tensors;
   std::shared_ptr<RuntimeChannelSession> channels;
+  std::unique_ptr<RuntimeCUDAGraphRegionResources> cuda_graph;
   std::unique_ptr<RuntimeCudaExecutionResources> cuda;
   QuarantinedRunExecutionOwners* next{};
 };
@@ -375,10 +385,15 @@ struct QuarantinedRunExecutionOwners {
 void quarantine_run_execution_owners(std::unique_ptr<GraphExec> graph,
                                      std::unique_ptr<RuntimeTensorResources> tensors,
                                      std::shared_ptr<RuntimeChannelSession> channels,
+                                     std::unique_ptr<RuntimeCUDAGraphRegionResources> cuda_graph,
                                      std::unique_ptr<RuntimeCudaExecutionResources> cuda) noexcept {
+  if (cuda_graph != nullptr) {
+    cuda_graph->detach_session_state();
+  }
   auto* node = new (std::nothrow) QuarantinedRunExecutionOwners{.graph = std::move(graph),
                                                                 .tensors = std::move(tensors),
                                                                 .channels = std::move(channels),
+                                                                .cuda_graph = std::move(cuda_graph),
                                                                 .cuda = std::move(cuda)};
   if (node == nullptr) {
     // Allocation failure cannot make destruction safe. Deliberately relinquish ownership while
@@ -396,6 +411,7 @@ void quarantine_run_execution_owners(std::unique_ptr<GraphExec> graph,
       }
       static_cast<void>(leaked_channels);
     }
+    static_cast<void>(cuda_graph.release());
     static_cast<void>(cuda.release());
     // NOLINTEND(bugprone-unused-return-value,clang-analyzer-cplusplus.NewDeleteLeaks)
     return;
@@ -449,22 +465,57 @@ RunSessionState::~RunSessionState() {
   try {
 #endif
     retire_parameter_control();
+    if (cuda_graph_quiesce_failure_) {
+      if (cuda_execution_resources_ != nullptr) {
+        cuda_execution_resources_->quarantine_after_external_failure();
+      }
+      quarantine_run_execution_owners(std::move(graph_exec_),
+                                      std::move(tensor_resources_),
+                                      std::move(channel_session_),
+                                      std::move(cuda_graph_region_resources_),
+                                      std::move(cuda_execution_resources_));
+      return;
+    }
+    const bool graph_quiesced = cuda_graph_region_resources_ == nullptr ||
+                                cuda_graph_region_resources_->quiesce().has_value();
+    const bool streams_quiesced =
+        cuda_execution_resources_ == nullptr || cuda_execution_resources_->quiesce().has_value();
+    if (!graph_quiesced || !streams_quiesced) {
+      if (!graph_quiesced && cuda_execution_resources_ != nullptr) {
+        cuda_execution_resources_->quarantine_after_external_failure();
+      }
+      quarantine_run_execution_owners(std::move(graph_exec_),
+                                      std::move(tensor_resources_),
+                                      std::move(channel_session_),
+                                      std::move(cuda_graph_region_resources_),
+                                      std::move(cuda_execution_resources_));
+      return;
+    }
+    if (cuda_graph_region_resources_ != nullptr &&
+        !cuda_graph_region_resources_->shutdown().has_value()) {
+      if (cuda_execution_resources_ != nullptr) {
+        cuda_execution_resources_->quarantine_after_external_failure();
+      }
+      quarantine_run_execution_owners(std::move(graph_exec_),
+                                      std::move(tensor_resources_),
+                                      std::move(channel_session_),
+                                      std::move(cuda_graph_region_resources_),
+                                      std::move(cuda_execution_resources_));
+      return;
+    }
     if (tensor_resources_ != nullptr) {
       tensor_resources_->close();
       tensor_resources_->detach_ports();
     }
-    if (cuda_execution_resources_ != nullptr && !cuda_execution_resources_->quiesce()) {
-      quarantine_run_execution_owners(std::move(graph_exec_),
-                                      std::move(tensor_resources_),
-                                      std::move(channel_session_),
-                                      std::move(cuda_execution_resources_));
-      return;
+    if (cuda_graph_region_resources_ != nullptr) {
+      cuda_graph_region_resources_->detach_session_state();
     }
     // Channel bindings borrow reconstructed Operator ports, while Operators may retain
     // unpublished loans. After CUDA quiescence, destroy the Channel session before its borrowed
     // ports, then destroy Operators while the fixed Tensor slot state still exists.
     channel_session_.reset();
     retained_parameter_updates_.reset();
+    cuda_graph_region_resources_.reset();
     graph_exec_.reset();
     tensor_resources_.reset();
     cuda_execution_resources_.reset();
@@ -475,6 +526,7 @@ RunSessionState::~RunSessionState() {
     quarantine_run_execution_owners(std::move(graph_exec_),
                                     std::move(tensor_resources_),
                                     std::move(channel_session_),
+                                    std::move(cuda_graph_region_resources_),
                                     std::move(cuda_execution_resources_));
   }
 #endif
@@ -702,6 +754,46 @@ void RunSessionState::wait() {
   join_cv_.notify_all();
 }
 
+bool RunSessionState::wait_for(std::chrono::nanoseconds timeout) {
+  if (const auto admission = wait_admission(); !admission) {
+    runtime_log_and_terminate_noexcept([] {
+      HOLOSCAN_LOG_ERROR(
+          "RUNTIME_SELF_JOIN_FORBIDDEN: RunSession bounded wait attempted from a Runtime-owned "
+          "thread");
+    });
+  }
+  if (shared_terminal_) {
+    return true;
+  }
+  std::unique_lock lock(join_mutex_);
+  const auto terminal = [this] {
+    return joined_ || termination_.load(std::memory_order_acquire) != RunTermination::kRunning;
+  };
+  if (timeout <= std::chrono::nanoseconds::zero()) {
+    return terminal();
+  }
+  if (plan_->executable_factories.test_wait_control) {
+    plan_->executable_factories.test_wait_control->bounded_waiter_entered();
+  }
+  return join_cv_.wait_for(lock, timeout, terminal);
+}
+
+expected<void, Error> RunSessionState::wait_admission() const noexcept {
+  if (runtime_callback_context_restricted()) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument, "RUNTIME_SELF_JOIN_FORBIDDEN callback_context"});
+  }
+  if (shared_terminal_) {
+    return {};
+  }
+  const std::lock_guard lock(join_mutex_);
+  if (!joined_ && current_run_owned_session() == this) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument, "RUNTIME_SELF_JOIN_FORBIDDEN run_owned_thread"});
+  }
+  return {};
+}
+
 [[nodiscard]] std::span<const Diagnostic> RunSessionState::diagnostics() const noexcept {
   return diagnostic_buffer_.diagnostics();
 }
@@ -712,21 +804,110 @@ void RunSessionState::count_phase(RuntimePhaseCounter counter) noexcept {
   }
 }
 
+std::string RunSessionState::cuda_graph_region_failure_evidence(
+    const CUDAGraphRuntimeRegionIdentity& identity, const Error& error) const noexcept {
+  std::string evidence;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    if (identity.region) {
+      evidence = "region_id=" + std::to_string(identity.region.value);
+    }
+    if (plan_ != nullptr) {
+      const auto* capture =
+          find_unique_cuda_graph_capture_plan_by_region(*plan_, identity.graph, identity.region);
+      if (capture != nullptr && !capture->region_name.empty()) {
+        if (!evidence.empty()) {
+          evidence += ',';
+        }
+        evidence += "region_name=" + percent_encode_uri_component(capture->region_name);
+      }
+    }
+    if (!evidence.empty()) {
+      evidence += ',';
+    }
+    evidence += "error=" + runtime_error_message(error);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (const std::bad_alloc&) {
+    // Region text is optional. Structural graph and fused-operator identity remain authoritative.
+    evidence.clear();
+  }
+#endif
+  return evidence;
+}
+
+void RunSessionState::append_compute_failure_diagnostic(const RuntimeOperatorInstance& instance,
+                                                        const RuntimeDiagnosticDetail& detail,
+                                                        const Error& error) noexcept {
+  if (instance.fused_cuda_graph_operator == nullptr) {
+    append_diagnostic(
+        "RUNTIME_OPERATOR_CALLBACK_FAILED", instance.vertex, "operator_compute", &detail);
+    return;
+  }
+  CUDAGraphRuntimeRegionIdentity identity;
+  if (plan_ != nullptr) {
+    const auto* region = find_unique_cuda_graph_execution_region_by_member(*plan_, instance.vertex);
+    if (region != nullptr) {
+      identity = {.graph = region->graph,
+                  .region = region->region,
+                  .fused_operator = region->fused_operator};
+    }
+  }
+  append_diagnostic(kCUDAGraphRuntimeExecutionFailed,
+                    instance.vertex,
+                    "cuda_graph_execution",
+                    &detail,
+                    {},
+                    cuda_graph_region_failure_evidence(identity, error),
+                    ::holoscan::DiagnosticSeverity::kError,
+                    identity.graph);
+}
+
+void RunSessionState::append_cuda_graph_quiesce_failure(
+    const Error& error, RuntimeCudaExecutionDiagnostic diagnostic) noexcept {
+  diagnostic.plan_generation = plan_ != nullptr ? plan_->plan_generation : PlanGenerationId{};
+  diagnostic.run_generation = run_generation_;
+  diagnostic.lifecycle_stage = LifecycleStage::kStop;
+  const CUDAGraphRuntimeRegionIdentity identity{.graph = diagnostic.graph,
+                                                .region = diagnostic.region,
+                                                .fused_operator = diagnostic.fused_operator};
+  RuntimeDiagnosticDetail detail{
+      .present = true, .error = Error{error.code}, .cuda_execution = std::move(diagnostic)};
+  if (plan_ != nullptr && plan_->executable_factories.test_cuda_execution_control != nullptr) {
+    plan_->executable_factories.test_cuda_execution_control->notify_failure_observer(
+        RuntimeCudaExecutionObserverPoint::kFailureDiagnostic);
+  }
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    detail.error.message = error.message;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (const std::bad_alloc&) {
+    // Optional text must not prevent cleanup or terminal failed-session publication.
+    detail.error.message.clear();
+  }
+#endif
+  append_diagnostic(kCUDAGraphRuntimeQuiesceFailed,
+                    identity.fused_operator,
+                    "cuda_graph_quiesce",
+                    &detail,
+                    {},
+                    cuda_graph_region_failure_evidence(identity, error),
+                    ::holoscan::DiagnosticSeverity::kError,
+                    identity.graph);
+}
+
 /// Invoke one steady-state task directly on the already verified inline owner.
 ///
 /// The controller and sole partition runner are the same thread in this
 /// specialization. Re-entering ExecutionLaneSet would only reacquire the
 /// lane's stop/serialization locks around a callback that cannot migrate.
 [[nodiscard]] expected<void, Error> RunSessionState::invoke_inline_owner_task(
-    ExecutionLaneTask task) noexcept {
+    const ExecutionLaneTask& task) noexcept {
   if (task.invoke == nullptr) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument, "RUNTIME_LANE_DISPATCH_INVALID"});
   }
-  RuntimeCallbackIdentity identity = task.callback_identity;
-  if (identity.context == RuntimeCallbackContext::kNone) {
-    identity.context = task.callback_context;
-  }
-  const RuntimeCallbackContextScope callback_scope{identity};
+  const RuntimeCallbackContextScope callback_scope{task.callback_identity, task.callback_context};
   count_phase(RuntimePhaseCounter::kLaneInlineOwnerInvocations);
   count_phase(RuntimePhaseCounter::kLaneCallbacksEntered);
   struct CallbackExit {
@@ -955,20 +1136,58 @@ void RunSessionState::append_diagnostic(std::string_view token, VertexId vertex,
                                         std::string_view service,
                                         const RuntimeDiagnosticDetail* detail,
                                         std::string_view required, std::string_view provided,
-                                        ::holoscan::DiagnosticSeverity severity) noexcept {
+                                        ::holoscan::DiagnosticSeverity severity, GraphId graph,
+                                        PortId explicit_port) noexcept {
   const std::lock_guard diagnostic_lock(diagnostic_mutex_);
+  const auto graph_view = plan_ != nullptr ? plan_->graph : GraphView{};
+  GraphId graph_id = graph;
+  if (!graph_id && detail != nullptr) {
+    graph_id = detail->component_graph;
+  }
+  if (!graph_id) {
+    for (const auto& candidate : graph_view.vertices()) {
+      if (candidate.id == vertex) {
+        graph_id = candidate.graph;
+        break;
+      }
+    }
+  }
+  if (!graph_id) {
+    for (const auto& candidate : graph_view.graphs()) {
+      if (!candidate.parent) {
+        graph_id = candidate.id;
+        break;
+      }
+    }
+  }
+  PortId effective_port = explicit_port;
+  std::string_view port_name;
+  const PortId requested_port = requested_diagnostic_port(explicit_port, detail);
+  if (plan_ != nullptr && requested_port) {
+    for (const auto& candidate : plan_->ports) {
+      if (candidate.id == requested_port && candidate.owner == vertex) {
+        effective_port = candidate.id;
+        port_name = candidate.local_name;
+        break;
+      }
+    }
+  }
   diagnostic_buffer_.append(
       diagnostic_id(token),
       token,
       DiagnosticSource{
           .graph_generation = plan_ != nullptr ? plan_->graph.generation() : 0U,
+          .graph = graph_id,
           .vertex = vertex,
+          .port = effective_port,
       },
       service,
       detail,
       required,
       provided,
-      severity);
+      severity,
+      graph_view,
+      port_name);
 }
 
 // Construct the bounded terminal fallback before application code can inject
@@ -995,7 +1214,8 @@ RunSession make_run_session(RunSessionState* state) noexcept {
 [[nodiscard]] RunSession start_run_session_retained(
     const std::shared_ptr<const ExecutionPlanState>& retained,
     const std::optional<ProcessGroupId> process_group,
-    const std::shared_ptr<RuntimeTerminalParticipant>& terminal_participant) {
+    const std::shared_ptr<RuntimeTerminalParticipant>& terminal_participant,
+    const std::shared_ptr<RuntimeFixtureObservation>& observation) {
   const ProcessGroupResolution resolution = resolve_process_group(*retained, process_group);
   RunGenerationId attempted_run_generation{};
   std::unique_ptr<RunSessionState> state;
@@ -1022,6 +1242,7 @@ RunSession make_run_session(RunSessionState* state) noexcept {
     state = std::make_unique<RunSessionState>(
         retained, attempted_run_generation, resolution.process_group);
     state->attach_terminal_participant(terminal_participant);
+    state->attach_fixture_observation(observation);
     state->initialize_after_progress_materialization();
     state->start();
     return make_run_session(state.release());
@@ -1038,6 +1259,44 @@ RunSession make_run_session(RunSessionState* state) noexcept {
     return make_run_session(kStartupFailureSessionState);
   }
 #endif
+}
+
+void RunSessionState::attach_fixture_observation(
+    std::shared_ptr<RuntimeFixtureObservation> observation) {
+  if (observation != nullptr && !observation->bind(plan_->plan_generation, run_generation_)) {
+    throw std::invalid_argument{"operator test observation must belong to one fresh run"};
+  }
+  fixture_observation_ = std::move(observation);
+}
+
+void RunSessionState::observe_input_ingestion(VertexId owner,
+                                              const FrozenRuntimeCandidate& candidate,
+                                              const TemporalSampleRecord& sample) noexcept {
+  const std::array inputs{
+      FixtureObservedInput{.input = candidate.witness.port,
+                           .selection = {InputState::kSelected, SelectionReason::kNone},
+                           .sample = sample,
+                           .has_sample = true}};
+  static_cast<void>(fixture_observation_->append(
+      FixtureObservationRecord{.kind = FixtureObservationKind::kInputIngested,
+                               .owner = owner,
+                               .witness = candidate.witness,
+                               .tag = candidate.candidate.tag},
+      inputs,
+      {}));
+}
+
+RunSession start_operator_test_run(const ExecutionPlan& plan,
+                                   const std::shared_ptr<RuntimeFixtureObservation>& observation) {
+  plan.require_no_errors();
+  const auto retained = ExecutionPlanAccess::retain(plan);
+  if (observation == nullptr || retained->execution_partitions.size() != 1U ||
+      !retained->closed_island_activations.empty() ||
+      !retained->cuda_graph_execution_regions.empty()) {
+    throw std::invalid_argument{
+        "controlled operator tests require one ordinary, non-composite execution partition"};
+  }
+  return start_run_session_retained(retained, {}, {}, observation);
 }
 
 [[nodiscard]] RunSession start_run_session(
@@ -1100,6 +1359,14 @@ void RunSession::wait() {
   if (state_ != nullptr) {
     state_->wait();
   }
+}
+
+bool RunSession::wait_for(std::chrono::nanoseconds timeout) {
+  return state_ == nullptr || state_->wait_for(timeout);
+}
+
+expected<void, Error> RunSession::wait_admission() const noexcept {
+  return state_ != nullptr ? state_->wait_admission() : expected<void, Error>{};
 }
 
 std::span<const Diagnostic> RunSession::diagnostics() const noexcept {

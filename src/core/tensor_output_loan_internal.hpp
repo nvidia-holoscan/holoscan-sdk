@@ -26,6 +26,7 @@ struct TensorOutputWriteGuardOps {
   void* (*data)(const void*) noexcept;
   std::size_t (*byte_size)(const void*) noexcept;
   std::optional<::cuda::stream_ref> (*stream)(const void*) noexcept;
+  Tensor (*tensor)(const void*);
   expected<void, Error> (*commit)(void*) noexcept;
 };
 

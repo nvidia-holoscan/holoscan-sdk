@@ -420,7 +420,7 @@ void validate_generated_endpoint_pins(const DeploymentBinding& deployment, Diagn
       .service_max_subscriber_depth = subscriber_queue,
       .service_max_subscriber_borrowed = subscriber_borrows,
       .payload_identity = topic.payload_identity,
-      .serialized_payload_capacity_bytes = topic.serialized_payload_capacity_bytes,
+      .schema_writer_max_serialized_bytes = topic.serialized_payload_capacity_bytes,
       .schema_identity = topic.schema,
       .memory_conversion = topic.memory_conversion,
       .capture_time_clock =

@@ -24,6 +24,8 @@
 #include "core/domain/tensor_layout_validation.hpp"
 
 #include <holoscan/core/error_helpers.hpp>
+#include <holoscan/memory/tensor_storage.hpp>
+#include <holoscan/memory/unbounded_allocator.hpp>
 
 namespace holoscan {
 
@@ -57,6 +59,66 @@ bool is_host_tensor_device(DLDeviceType device_type) {
 }
 
 using error_detail::make_cuda_error;
+
+class ScopedCudaDevice final {
+ public:
+  explicit ScopedCudaDevice(std::optional<std::int32_t> requested) noexcept {
+    if (!requested || cudaGetDevice(&previous_) != cudaSuccess) {
+      return;
+    }
+    if (previous_ == *requested || cudaSetDevice(*requested) == cudaSuccess) {
+      active_ = true;
+    }
+  }
+
+  ScopedCudaDevice(const ScopedCudaDevice&) = delete;
+  ScopedCudaDevice& operator=(const ScopedCudaDevice&) = delete;
+
+  ~ScopedCudaDevice() {
+    if (active_) {
+      (void)cudaSetDevice(previous_);
+    }
+  }
+
+  [[nodiscard]] bool active() const noexcept { return active_; }
+
+ private:
+  int previous_{};
+  bool active_{};
+};
+
+[[nodiscard]] bool is_cuda_copy_device(DLDeviceType device_type) noexcept {
+  return device_type == kDLCUDA || device_type == kDLCUDAManaged;
+}
+
+[[nodiscard]] expected<MemoryStorageType, Error> copy_storage_type(DLDevice target) {
+  switch (target.device_type) {
+    case kDLCPU:
+      if (target.device_id != 0) {
+        break;
+      }
+      return MemoryStorageType::kSystem;
+    case kDLCUDA:
+      if (target.device_id >= 0) {
+        return MemoryStorageType::kDevice;
+      }
+      break;
+    case kDLCUDAHost:
+      if (target.device_id == 0) {
+        return MemoryStorageType::kHost;
+      }
+      break;
+    case kDLCUDAManaged:
+      if (target.device_id == 0) {
+        return MemoryStorageType::kCudaManaged;
+      }
+      break;
+    default:
+      break;
+  }
+  return make_unexpected(
+      Error{ErrorCode::kInvalidArgument, "Tensor copy target device is unsupported"});
+}
 
 // Export context used by to_dlpack(): owns an unversioned DLManagedTensor plus the memory
 // reference and the shape/stride arrays the tensor points at.
@@ -587,9 +649,21 @@ expected<void, Error> Tensor::copy_to_host_async(void* destination, std::size_t 
     if (!sync_result) {
       return sync_result;
     }
+    auto copied =
+        make_cuda_error(cudaMemcpyAsync(destination, source, bytes, cudaMemcpyDeviceToHost, stream),
+                        "cudaMemcpyAsync failed during Tensor host copy");
+    if (!copied) {
+      return copied;
+    }
+    if (dl_ctx_->memory_reference != nullptr &&
+        dl_ctx_->memory_reference->set_deallocation_stream(stream)) {
+      return {};
+    }
+    // Imported owners without a stream-aware retirement contract can run their deleter as soon as
+    // the final Tensor handle disappears. Complete their read before returning.
     return make_cuda_error(
-        cudaMemcpyAsync(destination, source, bytes, cudaMemcpyDeviceToHost, stream),
-        "cudaMemcpyAsync failed during Tensor host copy");
+        cudaStreamSynchronize(stream),
+        "cudaStreamSynchronize failed while retaining Tensor source for host copy");
   }
 
   return make_unexpected(
@@ -608,6 +682,118 @@ expected<void, Error> Tensor::copy_to_host(void* destination, std::size_t destin
                            "cudaStreamSynchronize failed during Tensor host copy");
   }
   return {};
+}
+
+expected<Tensor, Error> Tensor::copy(cudaStream_t stream) const {
+  if (dl_ctx_ == nullptr) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument, "Tensor copy source is empty"});
+  }
+  return copy_to(device(), stream);
+}
+
+// Copy dispatch deliberately keeps host, device, and peer-device synchronization in one place so
+// source-lifetime completion cannot diverge between paths on this hot operation.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+expected<Tensor, Error> Tensor::copy_to(DLDevice target, cudaStream_t stream) const {
+  if (dl_ctx_ == nullptr) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument, "Tensor copy source is empty"});
+  }
+  if (ndim() < 0) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument, "Tensor copy source rank is negative"});
+  }
+  if (!is_contiguous()) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument, "Tensor copy only supports contiguous tensors"});
+  }
+  const auto byte_count = nbytes();
+  if (byte_count < 0) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument, "Tensor byte size is negative"});
+  }
+  const auto bytes = static_cast<std::size_t>(byte_count);
+  if (bytes != 0U && data() == nullptr) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument, "Tensor copy source is empty"});
+  }
+  const auto destination_storage = copy_storage_type(target);
+  if (!destination_storage) {
+    return make_unexpected(destination_storage.error());
+  }
+
+  const DLDevice source = device();
+  if (!is_host_tensor_device(source.device_type) && !is_cuda_copy_device(source.device_type)) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument, "Tensor copy source device is unsupported"});
+  }
+  const std::optional<std::int32_t> selected_device =
+      target.device_type == kDLCUDA
+          ? std::optional<std::int32_t>{target.device_id}
+          : (source.device_type == kDLCUDA ? std::optional<std::int32_t>{source.device_id}
+                                           : std::nullopt);
+  const ScopedCudaDevice selected{selected_device};
+  if (selected_device && !selected.active()) {
+    return make_unexpected(
+        Error{ErrorCode::kInvalidArgument, "Tensor copy CUDA device selection failed"});
+  }
+
+  // Explicit copy is an escape hatch from borrowed or provider-owned storage, so its independent
+  // lifetime deliberately uses a fresh unbounded allocation rather than an unrelated runtime pool.
+  auto allocator = std::make_shared<UnboundedAllocator>();
+  auto destination = make_tensor(shape_span(),
+                                 dtype(),
+                                 std::nullopt,
+                                 *destination_storage,
+                                 allocator,
+                                 static_cast<void*>(stream));
+  if (!destination) {
+    return make_unexpected(std::move(destination).error());
+  }
+  if (bytes != 0U) {
+    auto destination_data = destination->mutable_data();
+    if (!destination_data) {
+      return make_unexpected(std::move(destination_data).error());
+    }
+    if (is_host_tensor_device(source.device_type) && is_host_tensor_device(target.device_type)) {
+      auto synchronized = synchronize_for_host();
+      if (!synchronized) {
+        return make_unexpected(std::move(synchronized).error());
+      }
+      std::memcpy(*destination_data, data(), bytes);
+    } else {
+      auto synchronized = is_host_tensor_device(source.device_type)
+                              ? synchronize_for_host()
+                              : synchronize_for_consumer_stream(stream);
+      if (!synchronized) {
+        return make_unexpected(std::move(synchronized).error());
+      }
+      cudaError_t copied = cudaSuccess;
+      if (source.device_type == kDLCUDA && target.device_type == kDLCUDA &&
+          source.device_id != target.device_id) {
+        copied = cudaMemcpyPeerAsync(
+            *destination_data, target.device_id, data(), source.device_id, bytes, stream);
+      } else {
+        copied = cudaMemcpyAsync(*destination_data, data(), bytes, cudaMemcpyDefault, stream);
+      }
+      auto copy_result = make_cuda_error(copied, "cudaMemcpyAsync failed during Tensor copy");
+      if (!copy_result) {
+        return make_unexpected(std::move(copy_result).error());
+      }
+      // The returned Tensor owns its destination, but it cannot retain every possible source
+      // backing contract. Complete the source read before the caller can retire its last source
+      // handle. A future asynchronous implementation must carry an equivalent source-lifetime
+      // claim until this copy completes.
+      auto synchronized_copy = make_cuda_error(cudaStreamSynchronize(stream),
+                                               "cudaStreamSynchronize failed during Tensor copy");
+      if (!synchronized_copy) {
+        return make_unexpected(std::move(synchronized_copy).error());
+      }
+      if (!is_host_tensor_device(target.device_type)) {
+        (void)destination->set_readiness_stream(stream);
+        (void)destination->set_deallocation_stream(stream);
+      }
+    }
+  }
+  destination->dl_ctx_->tensor.flags |= DLPACK_FLAG_BITMASK_IS_COPIED;
+  return std::move(*destination);
 }
 
 bool Tensor::set_deallocation_stream(cudaStream_t stream) {
@@ -740,6 +926,11 @@ cudaStream_t TensorAccess::readiness_stream(const Tensor& tensor) noexcept {
   return tensor.dl_ctx_ != nullptr && tensor.dl_ctx_->memory_reference != nullptr
              ? tensor.dl_ctx_->memory_reference->readiness_stream()
              : nullptr;
+}
+
+bool TensorAccess::tracks_deallocation_stream(const Tensor& tensor) noexcept {
+  return tensor.dl_ctx_ != nullptr && tensor.dl_ctx_->memory_reference != nullptr &&
+         tensor.dl_ctx_->memory_reference->tracks_deallocation_stream();
 }
 
 Tensor TensorAccess::from_context(std::shared_ptr<DLManagedTensorContext> context,

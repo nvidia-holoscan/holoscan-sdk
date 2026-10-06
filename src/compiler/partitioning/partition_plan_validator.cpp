@@ -36,7 +36,7 @@ namespace {
   bool first = true;
   for (const PartitionDecisionReason reason : reasons) {
     const ReasonValue value = static_cast<ReasonValue>(reason);
-    if (value > static_cast<ReasonValue>(PartitionDecisionReason::kAuthoredPartitionBoundary) ||
+    if (value > static_cast<ReasonValue>(PartitionDecisionReason::kSerializationDomain) ||
         (!first && value <= previous)) {
       return false;
     }
@@ -47,6 +47,27 @@ namespace {
 }
 
 }  // namespace
+
+expected<void, Error> validate_authored_partition_device_domain(
+    std::span<const PartitionVertexView> vertices, std::span<const VertexIndex> members) {
+  // Fold the whole authored partition in both cover modes. A conflict cannot be repaired by
+  // splitting an explicitly selected instance or ignoring its mixed direct-Operator members.
+  std::optional<std::int32_t> device;
+  for (const VertexIndex member : members) {
+    if (member >= vertices.size()) {
+      return validation_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
+    }
+    const auto obligations = vertices[member].device_obligations;
+    if (obligations.size() > 1U ||
+        (!obligations.empty() && device.has_value() && *device != obligations.front())) {
+      return validation_error(ErrorCode::kIncompatible, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE");
+    }
+    if (!obligations.empty()) {
+      device = obligations.front();
+    }
+  }
+  return {};
+}
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
@@ -138,6 +159,35 @@ expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
     sort_and_unique(predecessors[vertex], vertex_less);
     sort_and_unique(successors[vertex], vertex_less);
   }
+  // Use deterministic Kahn traversal, with vertex identity breaking ties, so every predecessor
+  // partition is known before testing whether a serialization-domain join would create a cycle.
+  std::vector<std::uint32_t> topological_in_degree(vertex_count);
+  for (VertexIndex vertex = 0; vertex < vertex_count; ++vertex) {
+    topological_in_degree[vertex] = static_cast<std::uint32_t>(predecessors[vertex].size());
+  }
+  const auto ready_after = [&](VertexIndex lhs, VertexIndex rhs) { return vertex_less(rhs, lhs); };
+  std::priority_queue<VertexIndex, std::vector<VertexIndex>, decltype(ready_after)>
+      topological_ready(ready_after);
+  for (VertexIndex vertex = 0; vertex < vertex_count; ++vertex) {
+    if (topological_in_degree[vertex] == 0U) {
+      topological_ready.push(vertex);
+    }
+  }
+  std::vector<VertexIndex> topological_order;
+  topological_order.reserve(vertex_count);
+  while (!topological_ready.empty()) {
+    const VertexIndex vertex = topological_ready.top();
+    topological_ready.pop();
+    topological_order.push_back(vertex);
+    for (const VertexIndex successor : successors[vertex]) {
+      if (--topological_in_degree[successor] == 0U) {
+        topological_ready.push(successor);
+      }
+    }
+  }
+  if (topological_order.size() != vertex_count) {
+    return validation_error(ErrorCode::kInvalidArgument, "PARTITION_PROPOSAL_CONTRACT_INVALID");
+  }
 
   std::vector<std::optional<CandidatePartitionId>> assignment_by_vertex(vertex_count);
   std::map<std::uint32_t, std::vector<VertexIndex>> members_by_partition;
@@ -167,7 +217,7 @@ expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
         !reasons_are_canonical(decision.reasons) ||
         static_cast<std::underlying_type_t<PartitionDecisionKind>>(decision.decision) >
             static_cast<std::underlying_type_t<PartitionDecisionKind>>(
-                PartitionDecisionKind::kAuthored)) {
+                PartitionDecisionKind::kSerializationDomain)) {
       return validation_error(ErrorCode::kInvalidArgument, "PARTITION_DECISION_REASON_INVALID");
     }
     decision_by_vertex[decision.vertex] = &decision;
@@ -198,19 +248,9 @@ expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
                               "PARTITION_PROPOSAL_CONSTRAINT_VIOLATION");
     }
 
-    // Independently fold the exact device obligations inside every authored anchor. Empty means
-    // unconstrained, while either one conflicting vertex or two distinct exact devices makes the
-    // anchor impossible without changing its membership.
-    std::optional<std::int32_t> anchor_device;
-    for (const VertexIndex member : constraint.members) {
-      const auto obligations = problem.vertices[member].device_obligations;
-      if (obligations.size() > 1U || (!obligations.empty() && anchor_device.has_value() &&
-                                      *anchor_device != obligations.front())) {
-        return validation_error(ErrorCode::kIncompatible, "PARTITION_ANCHOR_DOMAIN_INCOMPATIBLE");
-      }
-      if (!obligations.empty()) {
-        anchor_device = obligations.front();
-      }
+    auto domain = validate_authored_partition_device_domain(problem.vertices, constraint.members);
+    if (!domain) {
+      return make_unexpected(std::move(domain.error()));
     }
   }
   if (std::any_of(decision_by_vertex.begin(), decision_by_vertex.end(), [](const auto* decision) {
@@ -321,6 +361,84 @@ expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
     return validation_error(ErrorCode::kNotSupported, "PARTITION_PLANNER_NOT_FOUND");
   }
 
+  if (source_chain) {
+    // Each domain retains its legal split candidates in creation order. A later member must reuse
+    // the first compatible candidate, or start a fresh one when execution-domain, boundary, or
+    // quotient-cycle constraints prevent every existing join.
+    std::map<std::uint64_t, std::vector<CandidatePartitionId>> partitions_by_serialization_domain;
+    std::map<std::uint32_t, bool> seen_partitions;
+    std::vector<CandidatePartitionId> incremental_partition_by_vertex(vertex_count);
+    CandidateStructuralTracker incremental_structure(vertex_count);
+    CandidateQuotientGraph incremental_quotient;
+    for (const VertexIndex vertex : topological_order) {
+      const CandidatePartitionId selected = *assignment_by_vertex[vertex];
+      std::vector<CandidatePartitionId> predecessor_partitions;
+      predecessor_partitions.reserve(predecessors[vertex].size());
+      for (const VertexIndex predecessor : predecessors[vertex]) {
+        predecessor_partitions.push_back(*assignment_by_vertex[predecessor]);
+      }
+      std::sort(
+          predecessor_partitions.begin(),
+          predecessor_partitions.end(),
+          [](CandidatePartitionId lhs, CandidatePartitionId rhs) { return lhs.value < rhs.value; });
+      predecessor_partitions.erase(
+          std::unique(predecessor_partitions.begin(), predecessor_partitions.end()),
+          predecessor_partitions.end());
+
+      if (!authored_constraint_by_vertex[vertex].has_value() &&
+          problem.vertices[vertex].serialization_domain) {
+        const auto domain = problem.vertices[vertex].serialization_domain;
+        auto& domain_partitions = partitions_by_serialization_domain[domain.value];
+        CandidatePartitionId expected_partition;
+        for (const CandidatePartitionId candidate : domain_partitions) {
+          bool can_join =
+              domain_by_partition.at(candidate.value) ==
+                  problem.vertices[vertex].execution_domain &&
+              !candidate_join_would_cycle(incremental_quotient, candidate, predecessor_partitions);
+          if (can_join) {
+            for (const EdgeIndex edge_index : incoming_edges[vertex]) {
+              const auto& edge = problem.edges[edge_index];
+              if (*assignment_by_vertex[edge.source] == candidate &&
+                  (!problem.vertices[vertex].boundary_before.empty() ||
+                   !edge.mandatory_boundaries.empty() || !edge.same_partition_collapse_legal ||
+                   !edge.same_stream_fifo_legal)) {
+                can_join = false;
+                break;
+              }
+            }
+          }
+          if (can_join && incremental_structure.has_non_serialized_member(candidate) &&
+              !incremental_structure.would_form_chain_with_vertex(
+                  incremental_partition_by_vertex, candidate, predecessors[vertex])) {
+            can_join = false;
+          }
+          if (can_join) {
+            expected_partition = candidate;
+            break;
+          }
+        }
+        if (expected_partition) {
+          if (selected != expected_partition) {
+            return validation_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
+          }
+        } else {
+          if (seen_partitions.contains(selected.value)) {
+            return validation_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
+          }
+          domain_partitions.push_back(selected);
+        }
+      }
+      incremental_partition_by_vertex[vertex] = selected;
+      incremental_structure.add_vertex(
+          incremental_partition_by_vertex,
+          selected,
+          predecessors[vertex],
+          static_cast<bool>(problem.vertices[vertex].serialization_domain));
+      seen_partitions.try_emplace(selected.value, true);
+      append_candidate_predecessor_edges(incremental_quotient, selected, predecessor_partitions);
+    }
+  }
+
   if (serial_baseline) {
     // Reconstruct the coarsest domain cover from compiler-normalized facts.
     // Proposal-local candidate ids may differ, but their equivalence classes
@@ -374,63 +492,47 @@ expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
     // Validate the submitted source-chain cover semantically. Exact traversal and golden cover
     // vectors remain planner-test responsibilities; this boundary independently checks only
     // structural chain invariants and locally provable decision/reason predicates.
+    std::vector<CandidatePartitionId> cover_partition_by_vertex(vertex_count);
+    CandidateStructuralTracker cover_structure(vertex_count);
+    for (const VertexIndex vertex : topological_order) {
+      const CandidatePartitionId selected = *assignment_by_vertex[vertex];
+      cover_partition_by_vertex[vertex] = selected;
+      cover_structure.add_vertex(cover_partition_by_vertex,
+                                 selected,
+                                 predecessors[vertex],
+                                 static_cast<bool>(problem.vertices[vertex].serialization_domain));
+    }
     for (const auto& [candidate, members] : members_by_partition) {
       if (constraint_by_candidate.contains(candidate)) {
         continue;
       }
-      std::vector<std::pair<VertexIndex, VertexIndex>> simple_edges;
-      for (const auto& edge : problem.edges) {
-        if (assignment_by_vertex[edge.source]->value == candidate &&
-            assignment_by_vertex[edge.target]->value == candidate) {
-          simple_edges.emplace_back(edge.source, edge.target);
-        }
+      const bool pure_serialization_partition =
+          std::all_of(members.begin(), members.end(), [&](VertexIndex member) {
+            return static_cast<bool>(problem.vertices[member].serialization_domain);
+          });
+      if (pure_serialization_partition) {
+        continue;
       }
-      std::sort(simple_edges.begin(), simple_edges.end());
-      simple_edges.erase(std::unique(simple_edges.begin(), simple_edges.end()), simple_edges.end());
-      if (simple_edges.size() + 1U != members.size()) {
-        return validation_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
-      }
-      for (const VertexIndex member : members) {
-        const auto internal_in_degree =
-            std::count_if(simple_edges.begin(), simple_edges.end(), [&](const auto& edge) {
-              return edge.second == member;
-            });
-        const auto internal_out_degree =
-            std::count_if(simple_edges.begin(), simple_edges.end(), [&](const auto& edge) {
-              return edge.first == member;
-            });
-        if (internal_in_degree > 1 || internal_out_degree > 1) {
-          return validation_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
-        }
-      }
-      std::vector<VertexIndex> reachable{members.front()};
-      for (std::size_t cursor = 0U; cursor < reachable.size(); ++cursor) {
-        for (const auto& edge : simple_edges) {
-          const auto append = [&](VertexIndex vertex) {
-            if (std::find(reachable.begin(), reachable.end(), vertex) == reachable.end()) {
-              reachable.push_back(vertex);
-            }
-          };
-          if (edge.first == reachable[cursor]) {
-            append(edge.second);
-          }
-          if (edge.second == reachable[cursor]) {
-            append(edge.first);
-          }
-        }
-      }
-      if (reachable.size() != members.size()) {
+      if (!cover_structure.forms_chain(CandidatePartitionId{candidate})) {
         return validation_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
       }
     }
 
-    for (VertexIndex vertex = 0; vertex < vertex_count; ++vertex) {
+    std::vector<CandidatePartitionId> decision_partition_by_vertex(vertex_count);
+    CandidateStructuralTracker decision_structure(vertex_count);
+    for (const VertexIndex vertex : topological_order) {
       const auto& decision = *decision_by_vertex[vertex];
+      decision_partition_by_vertex[vertex] = *assignment_by_vertex[vertex];
       if (authored_constraint_by_vertex[vertex].has_value()) {
         if (decision.decision != PartitionDecisionKind::kAuthored ||
             decision.reasons != std::vector{PartitionDecisionReason::kAuthoredPartitionBoundary}) {
           return validation_error(ErrorCode::kInvalidArgument, "PARTITION_DECISION_REASON_INVALID");
         }
+        decision_structure.add_vertex(
+            decision_partition_by_vertex,
+            decision.partition,
+            predecessors[vertex],
+            static_cast<bool>(problem.vertices[vertex].serialization_domain));
         continue;
       }
 
@@ -469,6 +571,28 @@ expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
         expected_reasons.push_back(PartitionDecisionReason::kAuthoredPartitionBoundary);
       }
 
+      if (problem.vertices[vertex].serialization_domain) {
+        expected_reasons.push_back(PartitionDecisionReason::kSerializationDomain);
+        const auto domain = problem.vertices[vertex].serialization_domain;
+        for (VertexIndex other = 0U; other < vertex_count; ++other) {
+          if (authored_constraint_by_vertex[other].has_value()) {
+            continue;
+          }
+          if (assignment_by_vertex[other]->value == decision.partition.value &&
+              problem.vertices[other].serialization_domain &&
+              problem.vertices[other].serialization_domain != domain) {
+            return validation_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
+          }
+        }
+        if (decision.decision != PartitionDecisionKind::kSerializationDomain ||
+            decision.reasons != expected_reasons) {
+          return validation_error(ErrorCode::kInvalidArgument, "PARTITION_DECISION_REASON_INVALID");
+        }
+        decision_structure.add_vertex(
+            decision_partition_by_vertex, decision.partition, predecessors[vertex], true);
+        continue;
+      }
+
       PartitionDecisionKind expected_kind = PartitionDecisionKind::kStart;
       if (!expected_reasons.empty()) {
         if (!mandatory.empty() || (follows_authored && !fan_in && !fan_out)) {
@@ -500,6 +624,12 @@ expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
               break;
             }
           }
+          if (can_join &&
+              !decision_structure.would_form_chain_with_vertex(decision_partition_by_vertex,
+                                                               CandidatePartitionId{selected},
+                                                               predecessors[vertex])) {
+            can_join = false;
+          }
         }
         if (can_join) {
           if (decision.partition.value != predecessor_partitions.front()) {
@@ -515,6 +645,8 @@ expected<ValidatedPartitionPlan, Error> validate_partition_proposal(
       if (decision.decision != expected_kind || decision.reasons != expected_reasons) {
         return validation_error(ErrorCode::kInvalidArgument, "PARTITION_DECISION_REASON_INVALID");
       }
+      decision_structure.add_vertex(
+          decision_partition_by_vertex, decision.partition, predecessors[vertex], false);
     }
   }
 

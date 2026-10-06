@@ -38,6 +38,7 @@
 #include "catalog_tensor_receive_control.hpp"
 #include "channel_common.hpp"
 #include "channel_payload_limits.hpp"
+#include "channel_readiness_handle.hpp"
 #include "channel_tensor_schema_payload.hpp"
 #include "channel_tensor_sidecar_store.hpp"
 #include "channel_tensor_test_access.hpp"
@@ -121,12 +122,6 @@ template <typename Bucket>
     }
   }
   return true;
-}
-
-[[nodiscard]] bool schema_identity_equal(const SchemaIdentityRecord& actual,
-                                         const SchemaIdentity expected) noexcept {
-  return actual.canonical_name == expected.canonical_name && actual.version == expected.version &&
-         actual.schema_sha256 == expected.schema_sha256 && actual.id == expected.id;
 }
 
 [[nodiscard]] bool supported_catalog_tensor_memory(const MemoryKind memory_kind) noexcept {
@@ -300,7 +295,12 @@ validate_catalog_tensor_schema_endpoint(const ChannelEndpointCatalog::EndpointVi
       record->service_static.payload_identity.payload_kind != PayloadKind::kDescriptorBacked ||
       !record->service_static.schema_identity ||
       !schema_identity_equal(*record->service_static.schema_identity, expected_schema) ||
-      record->service_static.serialized_payload_capacity_bytes != payload_size) {
+      record->service_static.schema_writer_max_serialized_bytes != payload_size ||
+      record->service_static.required_data_frame_bytes != payload_size ||
+      record->service_static.selected_inline_bucket_bytes !=
+          channel_internal::inline_payload_bucket_size(payload_size).value_or(0U) ||
+      record->service_static.bucket_usable_serialized_bytes !=
+          record->service_static.selected_inline_bucket_bytes) {
     return make_unexpected(Error{ErrorCode::kIncompatible, "ENDPOINT_TYPE_MISMATCH"});
   }
   if (record->service_static.id.empty() ||
@@ -506,6 +506,8 @@ class TensorSchemaStagingPool final : public std::enable_shared_from_this<Tensor
     channel_internal::TensorSchemaPayloadRetainedState retained_state;
   };
 
+  // Pool construction keeps validation and rollback adjacent to each acquired CUDA resource.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] static expected<std::shared_ptr<TensorSchemaStagingPool>, Error> create(
       [[maybe_unused]] holomq::Context& context,
       const channel_internal::TensorSchemaStagingOptions& options) {
@@ -622,7 +624,7 @@ class TensorSchemaStagingPool final : public std::enable_shared_from_this<Tensor
       // destruction; normal Runtime teardown keeps the device available through this pool wait.
       return;
     }
-    for (Slot& slot : slots_) {
+    for (const Slot& slot : slots_) {
       if (slot.copy_complete != nullptr) {
         // A borrowed Runtime stream can outlive this publisher, but its staging buffers cannot.
         // Wait for the slot-local copy before BufferPool releases the backing allocation.
@@ -637,6 +639,8 @@ class TensorSchemaStagingPool final : public std::enable_shared_from_this<Tensor
     }
   }
 
+  // Host, pinned, and device staging share one transactional path to preserve rollback ordering.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<Pending, Error> stage_copy(const Tensor& tensor,
                                                     cudaStream_t joined_stream) {
     const DLDevice device = tensor.device();
@@ -1096,6 +1100,8 @@ class TensorSchemaPayloadPublisherImpl final
         capture_clock_(capture_clock),
         producer_generation_(catalog_control ? channel_internal::mint_producer_generation() : 0U) {}
 
+  // Multi-field reservation is intentionally transactional across validation, staging, and loans.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<channel_internal::TensorSchemaPayloadReservation, Error> reserve_tensors(
       const std::span<const Tensor> tensors, const bool require_direct_export) override {
     if (tensors.empty() || tensors.size() > channel_internal::kMaximumDescriptorTensorFields ||
@@ -1693,6 +1699,58 @@ class TensorSchemaPayloadSubscriberImpl final
   // from it, so this borrow stays valid for the subscriber's lifetime.
   [[nodiscard]] void* wait_context_runtime() noexcept override { return context_; }
 
+  [[nodiscard]] bool wait_set_attached() const noexcept override {
+    return subscriber_.has_wait_owner() ||
+           (terminal_subscriber_ && terminal_subscriber_->has_wait_owner()) ||
+           (health_subscriber_ && health_subscriber_->wait_set_attached());
+  }
+
+  [[nodiscard]] bool readiness_handle_attached() const noexcept override {
+    return subscriber_.has_readiness_owner() ||
+           (terminal_subscriber_ && terminal_subscriber_->has_readiness_owner()) ||
+           (health_subscriber_ && health_subscriber_->readiness_handle_attached());
+  }
+
+  [[nodiscard]] expected<ChannelReadinessHandle, Error> readiness() override {
+    auto claim = claim_readiness_owner();
+    if (!claim) {
+      return make_unexpected(std::move(claim).error());
+    }
+    if (stream_closed_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    auto ready = has_samples();
+    if (!ready) {
+      return make_unexpected(std::move(ready).error());
+    }
+
+    std::vector<holomq::ReadinessHandle> holomq_handles;
+    holomq_handles.reserve(terminal_subscriber_ ? 2U : 1U);
+    auto data = subscriber_.readiness();
+    if (!data) {
+      return make_unexpected(from_holomq_error(std::move(data).error()));
+    }
+    holomq_handles.push_back(std::move(*data));
+    if (terminal_subscriber_) {
+      auto terminal = terminal_subscriber_->readiness();
+      if (!terminal) {
+        return make_unexpected(from_holomq_error(std::move(terminal).error()));
+      }
+      holomq_handles.push_back(std::move(*terminal));
+    }
+
+    std::vector<ChannelReadinessHandle> channel_handles;
+    if (health_subscriber_) {
+      auto health = health_subscriber_->readiness();
+      if (!health) {
+        return make_unexpected(std::move(health).error());
+      }
+      channel_handles.push_back(std::move(*health));
+    }
+    return channel_internal::ChannelReadinessHandleAccess::create(
+        std::move(holomq_handles), std::move(channel_handles), *ready);
+  }
+
   // Known asymmetry with has_samples(): the data and terminal lanes are attached here, but the
   // clock-health lane is not, even though has_samples() ORs its readiness into the answer. A
   // health record therefore cannot wake a thread blocked in WaitSetSubscriber::wait_for_readiness;
@@ -1742,6 +1800,8 @@ class TensorSchemaPayloadSubscriberImpl final
   }
 
   [[nodiscard]] expected<channel_internal::TensorSchemaPayloadReceiveGuard, Error>
+  // Data, terminal, control, and materialization handling form one ordered receive state machine.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   borrow_payload_if_data_accepted(const bool accept_data) override {
     if (payload_loan_active_) {
       return make_unexpected(make_channel_error(
@@ -1925,11 +1985,15 @@ class TensorSchemaPayloadSubscriberImpl final
     return end_of_stream_sequence_;
   }
 
-  [[nodiscard]] expected<void, Error> detach_catalog_wait_set() noexcept override {
+  [[nodiscard]] expected<void, Error> detach_wait_set() noexcept override {
     terminal_attachment_.reset();
     terminal_wait_handle_ = 0U;
     attachment_.reset();
     return {};
+  }
+
+  [[nodiscard]] expected<void, Error> detach_catalog_wait_set() noexcept override {
+    return detach_wait_set();
   }
 
   [[nodiscard]] std::optional<std::uint64_t> protected_terminal_wait_handle()
@@ -2141,6 +2205,8 @@ class TensorSchemaPayloadSubscriberImpl final
     return discarded;
   }
 
+  // Incarnation selection is one ordered transition across all receive-relevant lanes.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<bool, Error> fence_pending_incarnations() noexcept {
     if (superseded_producer_generation_ != 0U &&
         discard_pending_generation(superseded_producer_generation_)) {
@@ -2365,6 +2431,8 @@ class TensorSchemaPayloadSubscriberImpl final
     }
   }
 
+  // Staging the data, terminal, and health lanes together preserves catalog operation ordering.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<void, Error> stage_next() noexcept {
     const auto stage_data = [&]() -> expected<bool, Error> {
       if (inbound_) {
@@ -2485,6 +2553,8 @@ template <std::size_t Size, typename Bucket>
 
 template <std::size_t Size, typename Bucket>
 [[nodiscard]] expected<std::unique_ptr<channel_internal::TensorSchemaPayloadPublisher>, Error>
+// Endpoint construction keeps validation and rollback adjacent to each acquired resource.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 create_tensor_schema_payload_publisher_impl(
     holomq::Context& context, const std::string_view channel_name, const ChannelOptions& options,
     std::shared_ptr<TensorSidecarStore> sidecar_store, const std::size_t payload_size,
@@ -2596,8 +2666,8 @@ template <std::size_t Size, typename Bucket>
 [[nodiscard]] expected<std::unique_ptr<channel_internal::TensorSchemaPayloadSubscriber>, Error>
 create_tensor_schema_payload_subscriber_impl(
     holomq::Context& context, const std::string_view channel_name, const ChannelOptions& options,
-    std::shared_ptr<TensorSidecarStore> sidecar_store, std::shared_ptr<void> runtime_lifetime,
-    const std::uint32_t tensor_field_count,
+    std::shared_ptr<TensorSidecarStore> sidecar_store,
+    const std::shared_ptr<void>& runtime_lifetime, const std::uint32_t tensor_field_count,
     std::vector<channel_internal::TensorSchemaStagingOptions> field_contracts,
     std::unique_ptr<channel_internal::InlinePayloadSubscriber> health_subscriber,
     const bool catalog_control, ReceiveProbeBarrier* receive_probe_barrier,
@@ -2832,6 +2902,8 @@ ChannelRuntime::create_catalog_tensor_schema_payload_publisher(
 }
 
 expected<std::unique_ptr<channel_internal::TensorSchemaPayloadPublisher>, Error>
+// Catalog validation and endpoint construction remain together on this cold attachment path.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 ChannelRuntime::create_catalog_tensor_schema_payload_publisher(
     const ChannelEndpointCatalog::EndpointView endpoint, const SchemaIdentity expected_schema,
     const std::size_t payload_size, const std::span<const std::size_t> descriptor_offsets,
@@ -2890,6 +2962,8 @@ ChannelRuntime::create_catalog_tensor_schema_payload_publisher(
     staging.assign(staging_override.begin(), staging_override.end());
   } else {
     staging.reserve(record.service_static.tensor_fields.size());
+    // Catalog validation above guarantees these required tensor fields are present.
+    // NOLINTBEGIN(bugprone-unchecked-optional-access)
     for (const auto& field : record.service_static.tensor_fields) {
       DeviceId device{};
       // Catalog authoring does not yet carry a resolved CUDA device. Select the attaching
@@ -2916,6 +2990,7 @@ ChannelRuntime::create_catalog_tensor_schema_payload_publisher(
           .foreign_emit_policy = field.tensor.foreign_emit_policy,
       });
     }
+    // NOLINTEND(bugprone-unchecked-optional-access)
   }
 
   const std::string binding =
@@ -2983,6 +3058,8 @@ ChannelRuntime::create_catalog_tensor_schema_payload_subscriber(
   }
   std::vector<channel_internal::TensorSchemaStagingOptions> field_contracts;
   field_contracts.reserve(record.service_static.tensor_fields.size());
+  // Catalog validation above guarantees these required tensor fields are present.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
   for (const auto& field : record.service_static.tensor_fields) {
     field_contracts.push_back(channel_internal::TensorSchemaStagingOptions{
         .max_byte_span = *field.tensor.max_byte_span,
@@ -2994,6 +3071,7 @@ ChannelRuntime::create_catalog_tensor_schema_payload_subscriber(
         .foreign_emit_policy = field.tensor.foreign_emit_policy,
     });
   }
+  // NOLINTEND(bugprone-unchecked-optional-access)
   auto subscriber = create_tensor_schema_payload_subscriber(
       binding,
       payload_size,

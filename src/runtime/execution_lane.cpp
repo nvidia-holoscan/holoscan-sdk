@@ -73,7 +73,7 @@ void count_phase(RuntimePhaseCounters* counters, RuntimePhaseCounter counter) no
 
 [[nodiscard]] expected<void, Error> verify_snapshot(
     const ExecutionLaneOsPlacement& accepted, const ExecutionLanePlacementSnapshot& observed) {
-  if (accepted.affinity && accepted.affinity->cores != observed.affinity.cores) {
+  if (!thread_affinity_readback_matches(accepted.affinity, observed.affinity)) {
     return lane_error(ErrorCode::kIncompatible, "RUNTIME_LANE_AFFINITY_READBACK_MISMATCH");
   }
   if (accepted.scheduling.policy != observed.policy ||
@@ -251,10 +251,12 @@ struct ExecutionLaneSet::Impl {
 
   Impl(SchedulerPlanRecord scheduler, std::span<const ExecutionLanePlanRecord> source,
        std::shared_ptr<ExecutionLanePlacementAdapter> adapter, RuntimePhaseCounters* counters,
-       std::optional<std::uint32_t> inline_execution_lane)
+       std::optional<std::uint32_t> inline_execution_lane,
+       std::optional<CPUAffinity> unbound_worker_affinity)
       : scheduler(std::move(scheduler)),
         placement_adapter(std::move(adapter)),
         phase_counters(counters),
+        unbound_worker_affinity(std::move(unbound_worker_affinity)),
         lane_index_by_execution_lane(this->scheduler.execution_lane_count,
                                      std::numeric_limits<std::size_t>::max()) {
     lanes.reserve(source.size());
@@ -334,7 +336,10 @@ struct ExecutionLaneSet::Impl {
 
   [[nodiscard]] bool prepare_lane_startup(std::size_t index) {
     Lane& lane = *lanes[index];
-    const ExecutionLaneOsPlacement accepted = os_placement(lane.plan.accepted_placement);
+    ExecutionLaneOsPlacement accepted = os_placement(lane.plan.accepted_placement);
+    if (!lane.inline_owner && !accepted.affinity && unbound_worker_affinity) {
+      accepted.affinity = unbound_worker_affinity;
+    }
 
     if (lane.inline_owner) {
       lane.startup_phase = ExecutionLaneStartupPhase::kPlacementReadback;
@@ -808,6 +813,7 @@ struct ExecutionLaneSet::Impl {
   SchedulerPlanRecord scheduler;
   std::shared_ptr<ExecutionLanePlacementAdapter> placement_adapter;
   RuntimePhaseCounters* phase_counters{};
+  std::optional<CPUAffinity> unbound_worker_affinity;
   std::vector<std::unique_ptr<Lane>> lanes;
   std::vector<ExecutionLaneStartupEvidence> evidence;
   std::vector<std::size_t> lane_index_by_execution_lane;
@@ -847,7 +853,8 @@ ExecutionLaneSet::~ExecutionLaneSet() {
 expected<std::unique_ptr<ExecutionLaneSet>, Error> ExecutionLaneSet::create(
     const SchedulerPlanRecord& scheduler, std::span<const ExecutionLanePlanRecord> lanes,
     std::shared_ptr<ExecutionLanePlacementAdapter> placement_adapter,
-    RuntimePhaseCounters* phase_counters, std::optional<std::uint32_t> inline_execution_lane) {
+    RuntimePhaseCounters* phase_counters, std::optional<std::uint32_t> inline_execution_lane,
+    std::optional<CPUAffinity> unbound_worker_affinity) {
   const bool serial_geometry =
       scheduler.max_concurrent_activations == 1U && !scheduler.activation_overlap;
   const bool parallel_owner_geometry =
@@ -882,6 +889,9 @@ expected<std::unique_ptr<ExecutionLaneSet>, Error> ExecutionLaneSet::create(
        }))) {
     return lane_error(ErrorCode::kInvalidArgument, "RUNTIME_INLINE_EXECUTION_LANE_INVALID");
   }
+  if (unbound_worker_affinity && unbound_worker_affinity->cores.empty()) {
+    return lane_error(ErrorCode::kInvalidArgument, "RUNTIME_EXECUTION_LANE_PLAN_INVALID");
+  }
 
   if (!placement_adapter) {
     placement_adapter = make_system_execution_lane_placement_adapter();
@@ -890,8 +900,12 @@ expected<std::unique_ptr<ExecutionLaneSet>, Error> ExecutionLaneSet::create(
     return lane_error(ErrorCode::kResourceExhausted, "RUNTIME_LANE_PLACEMENT_ADAPTER_UNAVAILABLE");
   }
 
-  auto impl = std::make_unique<Impl>(
-      scheduler, lanes, std::move(placement_adapter), phase_counters, inline_execution_lane);
+  auto impl = std::make_unique<Impl>(scheduler,
+                                     lanes,
+                                     std::move(placement_adapter),
+                                     phase_counters,
+                                     inline_execution_lane,
+                                     std::move(unbound_worker_affinity));
   return std::unique_ptr<ExecutionLaneSet>{new ExecutionLaneSet(std::move(impl))};
 }
 

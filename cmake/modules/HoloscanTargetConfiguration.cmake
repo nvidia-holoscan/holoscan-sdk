@@ -17,6 +17,31 @@ function(holoscan_is_linux_gnu_like_frontend output_variable)
     set(${output_variable} ${_holoscan_is_linux_gnu_like_frontend} PARENT_SCOPE)
 endfunction()
 
+# Return whether the target platform provides the Linux file-descriptor primitives used by public
+# Channel readiness handles. Keep this separate from compiler classification: the implementation
+# relies on epoll and eventfd even when another platform uses a GNU-like frontend.
+function(holoscan_platform_has_native_descriptor_readiness output_variable)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(${output_variable} 1 PARENT_SCOPE)
+    else()
+        set(${output_variable} 0 PARENT_SCOPE)
+    endif()
+endfunction()
+
+# Select the implementation source for a native descriptor readiness handle. Unsupported platforms
+# retain the exported API through a checked kNotSupported implementation rather than compiling the
+# Linux system headers or fabricating a Windows HANDLE-to-int conversion.
+function(holoscan_select_native_descriptor_readiness_source
+         output_variable linux_source unsupported_source)
+    holoscan_platform_has_native_descriptor_readiness(_holoscan_has_descriptor_readiness)
+    if(_holoscan_has_descriptor_readiness)
+        set(${output_variable} "${linux_source}" PARENT_SCOPE)
+    else()
+        set(${output_variable} "${unsupported_source}" PARENT_SCOPE)
+    endif()
+    unset(_holoscan_has_descriptor_readiness)
+endfunction()
+
 # Configure the ELF origin-relative build and install lookup paths only for the frontend/platform
 # lane that owns that loader convention. CMAKE_LIBRARY_OUTPUT_DIRECTORY is the configured build-tree
 # library location; the install layout remains independent. Directory-scope variables are returned

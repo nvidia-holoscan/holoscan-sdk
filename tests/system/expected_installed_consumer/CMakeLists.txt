@@ -43,6 +43,24 @@ foreach(imported_target IN ITEMS holoscan::core holoscan::logger)
     endif()
 endforeach()
 
+# Exercise one policy state through two separately compiled consumers of the same Core instance.
+# Static Core uses a static peer: loading independent static runtimes into separate DSOs is outside
+# the process-wide policy contract.
+get_target_property(core_library_type holoscan::core TYPE)
+if(core_library_type STREQUAL "SHARED_LIBRARY")
+    add_library(diagnostic_policy_peer SHARED diagnostic_policy_peer.cpp)
+else()
+    add_library(diagnostic_policy_peer STATIC diagnostic_policy_peer.cpp)
+endif()
+include(GenerateExportHeader)
+generate_export_header(diagnostic_policy_peer)
+target_include_directories(diagnostic_policy_peer PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+if(NOT core_library_type STREQUAL "SHARED_LIBRARY")
+    target_compile_definitions(diagnostic_policy_peer PUBLIC DIAGNOSTIC_POLICY_PEER_STATIC_DEFINE)
+endif()
+target_compile_features(diagnostic_policy_peer PRIVATE cxx_std_20)
+target_link_libraries(diagnostic_policy_peer PRIVATE holoscan::core)
+
 add_executable(expected_installed_consumer main.cpp)
 target_compile_features(expected_installed_consumer PRIVATE cxx_std_20)
 set_target_properties(expected_installed_consumer PROPERTIES CXX_EXTENSIONS OFF)
@@ -50,6 +68,7 @@ target_link_libraries(expected_installed_consumer
     PRIVATE
         holoscan::core
         holoscan::logger
+        diagnostic_policy_peer
 )
 
 # Compile the header-isolation translation unit a second time through the installed package. It
@@ -60,23 +79,53 @@ target_compile_features(expected_macros_installed_consumer PRIVATE cxx_std_20)
 set_target_properties(expected_macros_installed_consumer PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(expected_macros_installed_consumer PRIVATE holoscan::core)
 
+# Include the installed MemoryBuffer header alone and exercise caller-side ERROR compilation.
+add_executable(memory_buffer_header_smoke memory_buffer_header_smoke.cpp)
+target_compile_features(memory_buffer_header_smoke PRIVATE cxx_std_20)
+target_compile_definitions(memory_buffer_header_smoke PRIVATE
+    HOLOSCAN_LOG_ACTIVE_LEVEL=HOLOSCAN_LOG_LEVEL_OFF)
+target_link_libraries(memory_buffer_header_smoke PRIVATE holoscan::core)
+
 include(CTest)
 add_test(NAME expected_installed_consumer.run COMMAND expected_installed_consumer)
+set_tests_properties(expected_installed_consumer.run PROPERTIES
+    ENVIRONMENT "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING="
+)
 add_test(NAME expected_macros_installed_consumer.run COMMAND expected_macros_installed_consumer)
+add_test(NAME memory_buffer_header_smoke.run COMMAND memory_buffer_header_smoke)
+set_tests_properties(memory_buffer_header_smoke.run PROPERTIES
+    ENVIRONMENT "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING=ON;HOLOSCAN_LOG_LEVEL=ERROR;HOLOSCAN_LOG_FORMAT=%v"
+    FAIL_REGULAR_EXPRESSION "Native allocator failed")
+# The executable sets the opposite API preference; the peer DSO reports through the same Core.
+add_test(NAME expected_installed_consumer.memory_buffer_off COMMAND expected_installed_consumer ON)
+set_tests_properties(expected_installed_consumer.memory_buffer_off PROPERTIES
+    ENVIRONMENT "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING=OFF;HOLOSCAN_LOG_LEVEL=ERROR;HOLOSCAN_LOG_FORMAT=%v"
+    FAIL_REGULAR_EXPRESSION "Native allocator failed|Failed to free memory")
+add_test(NAME expected_installed_consumer.memory_buffer_on
+    COMMAND ${CMAKE_COMMAND} "-DCONSUMER=$<TARGET_FILE:expected_installed_consumer>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/check_memory_reporting.cmake")
+set_tests_properties(expected_installed_consumer.memory_buffer_on PROPERTIES
+    ENVIRONMENT "HOLOSCAN_AUTOMATIC_DIAGNOSTIC_LOGGING=ON;HOLOSCAN_LOG_LEVEL=ERROR;HOLOSCAN_LOG_FORMAT=%v")
 if(WIN32)
     set_tests_properties(expected_installed_consumer.run expected_macros_installed_consumer.run
+        expected_installed_consumer.memory_buffer_on expected_installed_consumer.memory_buffer_off
+        memory_buffer_header_smoke.run
         PROPERTIES
         ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${HOLOSCAN_TEST_INSTALL_PREFIX}/bin"
     )
 elseif(APPLE)
     set_tests_properties(expected_installed_consumer.run expected_macros_installed_consumer.run
+        expected_installed_consumer.memory_buffer_on expected_installed_consumer.memory_buffer_off
+        memory_buffer_header_smoke.run
         PROPERTIES
         ENVIRONMENT_MODIFICATION
             "DYLD_LIBRARY_PATH=path_list_prepend:${HOLOSCAN_TEST_INSTALL_PREFIX}/lib"
     )
 else()
     set_tests_properties(expected_installed_consumer.run expected_macros_installed_consumer.run
+        expected_installed_consumer.memory_buffer_on expected_installed_consumer.memory_buffer_off
+        memory_buffer_header_smoke.run
         PROPERTIES
         ENVIRONMENT_MODIFICATION
             "LD_LIBRARY_PATH=path_list_prepend:${HOLOSCAN_TEST_INSTALL_PREFIX}/lib"

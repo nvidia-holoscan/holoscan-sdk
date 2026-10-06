@@ -187,7 +187,7 @@ class JsonConverter {
         return tl::make_unexpected(
             failure(config::ConfigErrorCode::kOutOfRange, "JSON floating value is out of range"));
       }
-      return config::ConfigValue::floating(value);
+      return config::ConfigValue::try_floating(value);
     }
     if (token.front() == '-') {
       std::int64_t value = 0;
@@ -196,7 +196,7 @@ class JsonConverter {
         return tl::make_unexpected(
             failure(config::ConfigErrorCode::kOutOfRange, "JSON signed integer is out of range"));
       }
-      return config::ConfigValue::signed_integer(value);
+      return config::ConfigValue::try_signed_integer(value);
     }
     std::uint64_t value = 0;
     const auto parsed = std::from_chars(token.data(), token.data() + token.size(), value);
@@ -205,9 +205,9 @@ class JsonConverter {
           failure(config::ConfigErrorCode::kOutOfRange, "JSON unsigned integer is out of range"));
     }
     if (value <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-      return config::ConfigValue::signed_integer(static_cast<std::int64_t>(value));
+      return config::ConfigValue::try_signed_integer(static_cast<std::int64_t>(value));
     }
-    return config::ConfigValue::unsigned_integer(value);
+    return config::ConfigValue::try_unsigned_integer(value);
   }
 
   [[nodiscard]] config::ConfigResult<config::ConfigValue> convert_array(yyjson_val* value,
@@ -244,7 +244,7 @@ class JsonConverter {
     if (!closed) {
       return tl::make_unexpected(closed.error());
     }
-    return config::ConfigValue::array(values, limits_);
+    return config::ConfigValue::try_array(values, limits_);
   }
 
   [[nodiscard]] config::ConfigResult<config::ConfigValue> convert_object(yyjson_val* value,
@@ -310,7 +310,7 @@ class JsonConverter {
     for (std::size_t index = 0; index < keys.size(); ++index) {
       entries.push_back({keys[index], values[index]});
     }
-    auto object = config::ConfigValue::object(entries, limits_);
+    auto object = config::ConfigValue::try_object(entries, limits_);
     return object ? decode_reserved_envelope(std::move(*object), limits_) : object;
   }
 
@@ -336,7 +336,7 @@ class JsonConverter {
       auto consumed = cursor_.consume_token(yyjson_get_bool(value) ? "true" : "false");
       result =
           consumed
-              ? config::ConfigValue::boolean(yyjson_get_bool(value))
+              ? config::ConfigValue::try_boolean(yyjson_get_bool(value))
               : config::ConfigResult<config::ConfigValue>{tl::make_unexpected(consumed.error())};
     } else if (yyjson_is_str(value)) {
       const char* text = yyjson_get_str(value);
@@ -348,7 +348,7 @@ class JsonConverter {
       auto consumed = cursor_.consume_string();
       result =
           consumed
-              ? config::ConfigValue::string(std::string_view{text, size}, limits_)
+              ? config::ConfigValue::try_string(std::string_view{text, size}, limits_)
               : config::ConfigResult<config::ConfigValue>{tl::make_unexpected(consumed.error())};
     } else if (yyjson_is_raw(value)) {
       const char* raw = yyjson_get_raw(value);

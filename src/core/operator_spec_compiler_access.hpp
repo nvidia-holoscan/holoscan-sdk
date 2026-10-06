@@ -12,11 +12,15 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
 #include <holoscan/core/operator_spec.hpp>
+
 #include <holoscan/core/readiness_source.hpp>
+#include "memory_kind_validation.hpp"
 
 namespace holoscan::detail {
 
@@ -33,6 +37,7 @@ class OperatorSpecCompilerAccess {
     const RuntimePortTypeOps* runtime_type_ops{};
     std::uint64_t serialized_payload_capacity_bytes{};
     const TensorByteSpanExpression* authored_tensor_byte_span_expression{};
+    const TensorMemoryKindExpression* authored_tensor_memory_kind_expression{};
     const InputBase* follows_input_declaration{};
     std::string_view name;
     std::string_view diagnostic_alias;
@@ -42,10 +47,10 @@ class OperatorSpecCompilerAccess {
     std::optional<Rate> expected_rate;
     std::optional<Rate> max_nominal_rate;
     std::optional<TensorByteSpanExpressionRecord> tensor_byte_span_expression;
+    std::optional<TensorMemoryKindExpressionRecord> tensor_memory_kind_expression;
     Error tensor_contract_error{ErrorCode::kSuccess};
     Error rate_error{ErrorCode::kSuccess};
     std::optional<PayloadOptionsRecord> payload_options;
-    std::optional<SchemaPackagePlanRecord> schema_package;
     std::optional<TensorContractRecord> tensor_contract;
     PayloadIdentityRecord payload_identity;
     std::uint32_t max_emits_per_compute{1};
@@ -56,9 +61,12 @@ class OperatorSpecCompilerAccess {
     std::uint16_t descriptor_tensor_field_count{};
     PortDirection direction{PortDirection::kInput};
     bool tensor{};
+    bool accepts_projected_tensor{};
+    bool optional{};
     PortRateKind rate_kind{PortRateKind::kUnspecified};
     std::optional<MemoryConversionPolicy> memory_conversion;
     std::optional<LifecycleStage> lifecycle_binding_stage;
+    const std::type_info* local_type_info{};
   };
 
   struct SourceMetadata {
@@ -92,8 +100,8 @@ class OperatorSpecCompilerAccess {
     return spec.declaration_error_;
   }
 
-  [[nodiscard]] static bool compute_capture_safe(const OperatorSpec& spec) noexcept {
-    return spec.compute_capture_safe_;
+  [[nodiscard]] static bool cuda_graph_capture_eligible(const OperatorSpec& spec) noexcept {
+    return spec.cuda_graph_capture_eligible_;
   }
 
   [[nodiscard]] static std::size_t port_count(const OperatorSpec& spec) noexcept {
@@ -111,6 +119,20 @@ class OperatorSpecCompilerAccess {
     auto normalized = normalize_tensor_byte_span_expression(spec, *expression);
     if (normalized) {
       result.tensor_byte_span_expression = std::move(*normalized);
+    } else if (result.tensor_contract_error.code == ErrorCode::kSuccess) {
+      result.tensor_contract_error = std::move(normalized.error());
+    }
+  }
+
+  static void normalize_port_memory_kind_expression(
+      const std::optional<TensorMemoryKindExpression>& expression, PortMetadata& result) {
+    if (!expression) {
+      return;
+    }
+    result.authored_tensor_memory_kind_expression = &*expression;
+    auto normalized = normalize_tensor_memory_kind_expression(*expression);
+    if (normalized) {
+      result.tensor_memory_kind_expression = std::move(*normalized);
     } else if (result.tensor_contract_error.code == ErrorCode::kSuccess) {
       result.tensor_contract_error = std::move(normalized.error());
     }
@@ -136,6 +158,25 @@ class OperatorSpecCompilerAccess {
     }
   }
 
+  static void normalize_field_memory_kind_expressions(PortMetadata& result) {
+    if (result.direction != PortDirection::kOutput) {
+      return;
+    }
+    for (auto& field : result.tensor_fields) {
+      if (!field.tensor_memory_kind_expression) {
+        continue;
+      }
+      auto normalized =
+          normalize_tensor_memory_kind_expression(*field.tensor_memory_kind_expression);
+      if (normalized) {
+        field.configuration.tensor_memory_kind_expression = std::move(*normalized);
+      } else if (result.tensor_contract_error.code == ErrorCode::kSuccess) {
+        result.tensor_contract_error =
+            tensor_field_contract_error(std::move(normalized.error()), field.configuration);
+      }
+    }
+  }
+
  public:
   [[nodiscard]] static PortMetadata port(const OperatorSpec& spec, std::size_t index) {
     const auto& record = spec.ports_.at(index);
@@ -149,14 +190,15 @@ class OperatorSpecCompilerAccess {
                 ? static_cast<std::uint64_t>(record.runtime_type_ops->wire_capacity)
                 : 0U,
         .name = record.name,
-        .schema_package = record.schema_package,
         .payload_identity = record.payload_identity,
         .direction = record.direction,
         .tensor = record.tensor,
+        .local_type_info = record.local_type_info,
     };
     if (record.direction == PortDirection::kInput) {
       const auto& builder = spec.input_builders_.at(record.builder_index);
       result.queue_depth = builder.queue_depth_;
+      result.optional = builder.optional_;
       result.rate_kind = builder.rate_.kind;
       result.expected_rate = builder.rate_.expected_rate;
       result.rate_error = builder.rate_.error;
@@ -170,6 +212,7 @@ class OperatorSpecCompilerAccess {
       result.tensor_contract = builder.tensor_contract_;
       result.tensor_contract_error = builder.tensor_contract_error_;
       result.descriptor_tensor_field_count = builder.descriptor_tensor_field_count_;
+      result.accepts_projected_tensor = builder.accepts_projected_tensor_;
       result.tensor_fields = builder.tensor_fields_;
     } else if (record.tensor) {
       const auto& builder = spec.tensor_output_builders_.at(record.builder_index);
@@ -191,6 +234,7 @@ class OperatorSpecCompilerAccess {
       result.tensor_contract = builder.tensor_contract_;
       result.tensor_contract_error = builder.tensor_contract_error_;
       normalize_port_byte_span_expression(spec, builder.tensor_byte_span_expression_, result);
+      normalize_port_memory_kind_expression(builder.tensor_memory_kind_expression_, result);
       if (builder.has_tensor_allocation_)
         result.tensor_allocation = builder.tensor_allocation_;
       result.descriptor_tensor_field_count = builder.descriptor_tensor_field_count_;
@@ -216,6 +260,7 @@ class OperatorSpecCompilerAccess {
       result.tensor_contract_error = builder.tensor_contract_error_;
     }
     normalize_field_byte_span_expressions(spec, result);
+    normalize_field_memory_kind_expressions(result);
     const bool shared_tensor_contract =
         result.tensor_contract ||
         std::any_of(
@@ -234,6 +279,10 @@ class OperatorSpecCompilerAccess {
   [[nodiscard]] static expected<TensorByteSpanExpressionRecord, Error>
   normalize_tensor_byte_span_expression(const OperatorSpec& spec,
                                         const TensorByteSpanExpression& expression) {
+    if (expression.invalid_reason_ == TensorByteSpanExpressionInvalidReason::kProjectionInvalid) {
+      return make_unexpected(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_PROJECTION_INVALID"});
+    }
     if (expression.invalid_reason_ != TensorByteSpanExpressionInvalidReason::kNone ||
         expression.nodes_.empty() ||
         expression.nodes_.size() > kMaximumTensorByteSpanExpressionNodes) {
@@ -242,11 +291,12 @@ class OperatorSpecCompilerAccess {
     }
     TensorByteSpanExpressionRecord result;
     result.nodes.reserve(expression.nodes_.size());
-    std::vector<std::pair<ParamFieldId, ParamSchemaHash>> parameters;
+    ParameterDependencies parameters;
     std::vector<std::string> inputs;
+    std::vector<std::pair<std::string, TensorByteSpanProjectorIdentity>> projectors;
     for (std::size_t index = 0U; index < expression.nodes_.size(); ++index) {
       auto normalized = normalize_tensor_byte_span_node(
-          spec, expression.nodes_[index], index, parameters, inputs);
+          spec, expression.nodes_[index], index, parameters, inputs, projectors);
       if (!normalized) {
         return make_unexpected(std::move(normalized.error()));
       }
@@ -259,7 +309,110 @@ class OperatorSpecCompilerAccess {
     return result;
   }
 
-  using ParameterDependencies = std::vector<std::pair<ParamFieldId, ParamSchemaHash>>;
+  [[nodiscard]] static bool scalar_less(ParamScalarValue left, ParamScalarValue right) noexcept {
+    return std::tuple{left.kind, left.bit_width, left.raw_bits} <
+           std::tuple{right.kind, right.bit_width, right.raw_bits};
+  }
+
+  [[nodiscard]] static Error invalid_memory_kind_derivation() {
+    return Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_MEMORY_KIND_DERIVATION_INVALID"};
+  }
+
+  [[nodiscard]] static Error invalid_memory_kind_mapping() {
+    return Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_MEMORY_KIND_MAPPING_INVALID"};
+  }
+
+  [[nodiscard]] static expected<TensorMemoryKindExpressionRecord, Error>
+  normalize_tensor_memory_kind_expression(const TensorMemoryKindExpression& expression) {
+    if (expression.invalid_reason_ != TensorMemoryKindExpressionInvalidReason::kNone ||
+        !expression.parameter_) {
+      return make_unexpected(invalid_memory_kind_derivation());
+    }
+    const ParamSchemaDescriptor* schema = expression.parameter_.schema();
+    const ParamFieldDescriptor* field = expression.parameter_.field();
+    std::vector<ParamSchemaHash> member_full_ids = expression.parameter_.path_full_ids();
+    const std::string path = expression.parameter_.path();
+    if (schema == nullptr || field == nullptr || field->id == 0U || member_full_ids.empty() ||
+        member_full_ids.back() != field->full_id || path.empty()) {
+      return make_unexpected(invalid_memory_kind_derivation());
+    }
+    TensorMemoryKindExpressionRecord result{
+        .form = expression.form_,
+        .parameter_field = field->id,
+        .parameter_full_id = field->full_id,
+        .parameter_member_full_ids = std::move(member_full_ids),
+        .parameter_path = path,
+        .parameter_schema_id = std::string(schema->stable_id),
+        .parameter_schema_version = schema->version,
+    };
+    if (expression.form_ == TensorMemoryKindExpressionForm::kDirect) {
+      if (expression.parameter_.source != TensorMemoryKindParameterSource::kMemoryKind ||
+          !expression.cases_.empty() || !valid_direct_memory_kind_domain(*field)) {
+        return make_unexpected(invalid_memory_kind_derivation());
+      }
+      return result;
+    }
+    if (expression.form_ != TensorMemoryKindExpressionForm::kMapped || expression.cases_.empty() ||
+        expression.cases_.size() > kMaximumTensorMemoryKindMappingCases) {
+      return make_unexpected(invalid_memory_kind_mapping());
+    }
+    result.mapping.reserve(expression.cases_.size());
+    for (const auto& item : expression.cases_) {
+      if (item.source.kind == ParamScalarKind::kNone ||
+          !valid_concrete_memory_kind(item.memory_kind)) {
+        return make_unexpected(invalid_memory_kind_mapping());
+      }
+      result.mapping.push_back(TensorMemoryKindMappingRecord{
+          .source = item.source,
+          .memory_kind = item.memory_kind,
+      });
+    }
+    std::sort(
+        result.mapping.begin(), result.mapping.end(), [](const auto& left, const auto& right) {
+          return scalar_less(left.source, right.source);
+        });
+    if (std::adjacent_find(
+            result.mapping.begin(), result.mapping.end(), [](const auto& left, const auto& right) {
+              return left.source == right.source;
+            }) != result.mapping.end()) {
+      return make_unexpected(invalid_memory_kind_mapping());
+    }
+
+    if (expression.parameter_.source == TensorMemoryKindParameterSource::kBoolean) {
+      const ParamScalarValue false_value = ParamScalarValue::from(false);
+      const ParamScalarValue true_value = ParamScalarValue::from(true);
+      if (field->logical_type != ParamLogicalType::kBool || result.mapping.size() != 2U ||
+          result.mapping[0].source != false_value || result.mapping[1].source != true_value) {
+        return make_unexpected(invalid_memory_kind_mapping());
+      }
+      return result;
+    }
+    if (expression.parameter_.source != TensorMemoryKindParameterSource::kEnum ||
+        field->enum_choices.count == 0U || result.mapping.size() != field->enum_choices.count) {
+      return make_unexpected(invalid_memory_kind_mapping());
+    }
+    for (std::size_t index = 0U; index < field->enum_choices.count; ++index) {
+      const ParamScalarValue admitted = field->enum_choices.values[index].value;
+      if (std::none_of(result.mapping.begin(), result.mapping.end(), [&](const auto& item) {
+            return item.source == admitted;
+          })) {
+        return make_unexpected(invalid_memory_kind_mapping());
+      }
+    }
+    return result;
+  }
+
+  struct ParameterDependencyIdentity {
+    ParamFieldId field{};
+    ParamSchemaHash full_id{};
+    std::vector<ParamSchemaHash> member_full_ids;
+    std::string path;
+
+    friend bool operator==(const ParameterDependencyIdentity&,
+                           const ParameterDependencyIdentity&) noexcept = default;
+  };
+
+  using ParameterDependencies = std::vector<ParameterDependencyIdentity>;
   using InputDependencies = std::vector<std::string>;
 
   [[nodiscard]] static Error invalid_byte_span_derivation() {
@@ -279,10 +432,12 @@ class OperatorSpecCompilerAccess {
     if (!node.parameter) {
       return make_unexpected(invalid_byte_span_derivation());
     }
-    const ParamSchemaDescriptor* schema = node.parameter.root_schema();
-    const ParamFieldDescriptor* field = node.parameter.final_field();
-    const std::string path = node.parameter.canonical_path();
-    if (schema == nullptr || field == nullptr || field->id == 0U || path.empty()) {
+    const ParamSchemaDescriptor* schema = node.parameter.schema();
+    const ParamFieldDescriptor* field = node.parameter.field();
+    std::vector<ParamSchemaHash> member_full_ids = node.parameter.path_full_ids();
+    const std::string path = node.parameter.path();
+    if (schema == nullptr || field == nullptr || field->id == 0U || member_full_ids.empty() ||
+        member_full_ids.back() != field->full_id || path.empty()) {
       return make_unexpected(invalid_byte_span_derivation());
     }
     record.parameter_field = field->id;
@@ -290,7 +445,13 @@ class OperatorSpecCompilerAccess {
     record.parameter_path = path;
     record.parameter_schema_id = std::string(schema->stable_id);
     record.parameter_schema_version = schema->version;
-    append_unique(parameters, std::pair{field->id, field->full_id});
+    append_unique(parameters,
+                  ParameterDependencyIdentity{
+                      .field = field->id,
+                      .full_id = field->full_id,
+                      .member_full_ids = std::move(member_full_ids),
+                      .path = path,
+                  });
     return {};
   }
 
@@ -311,10 +472,102 @@ class OperatorSpecCompilerAccess {
     return {};
   }
 
+  [[nodiscard]] static bool projection_dependency_less(
+      const TensorByteSpanProjectionDependencyRecord& left,
+      const TensorByteSpanProjectionDependencyRecord& right) noexcept {
+    if (left.parameter_member_full_ids != right.parameter_member_full_ids) {
+      return std::lexicographical_compare(left.parameter_member_full_ids.begin(),
+                                          left.parameter_member_full_ids.end(),
+                                          right.parameter_member_full_ids.begin(),
+                                          right.parameter_member_full_ids.end(),
+                                          [](ParamSchemaHash left_id, ParamSchemaHash right_id) {
+                                            return left_id.value < right_id.value;
+                                          });
+    }
+    return std::tuple{left.parameter_field, left.parameter_full_id.value, left.parameter_path} <
+           std::tuple{right.parameter_field, right.parameter_full_id.value, right.parameter_path};
+  }
+
+  [[nodiscard]] static expected<void, Error> normalize_projection_node(
+      const TensorByteSpanAuthoringNode& node, TensorByteSpanExpressionNodeRecord& record,
+      ParameterDependencies& parameters,
+      std::vector<std::pair<std::string, TensorByteSpanProjectorIdentity>>& projectors) {
+    if (!node.projection ||
+        node.projection.stable_id.size() > kMaximumTensorByteSpanProjectionIdBytes ||
+        !valid_schema_text(node.projection.stable_id) ||
+        node.projection.dependencies.size() > kMaximumTensorByteSpanExpressionDependencies) {
+      return make_unexpected(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_PROJECTION_INVALID"});
+    }
+    const ParamSchemaDescriptor* schema = node.projection.root_schema();
+    if (schema == nullptr || schema->stable_id.empty() || schema->version == 0U) {
+      return make_unexpected(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_PROJECTION_INVALID"});
+    }
+    record.projection_id = node.projection.stable_id;
+    record.parameter_schema_id = std::string{schema->stable_id};
+    record.parameter_schema_version = schema->version;
+    record.projection_dependencies.reserve(node.projection.dependencies.size());
+    for (const auto& dependency : node.projection.dependencies) {
+      if (!dependency || dependency.root_type_token != node.projection.root_type_token) {
+        return make_unexpected(
+            Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_PROJECTION_INVALID"});
+      }
+      const ParamSchemaDescriptor* dependency_schema = dependency.root_schema();
+      const ParamFieldDescriptor* root = dependency.root_field();
+      const ParamFieldDescriptor* field = dependency.final_field();
+      std::vector<ParamSchemaHash> member_full_ids = dependency.member_full_ids();
+      const std::string path = dependency.canonical_path();
+      if (dependency_schema == nullptr || root == nullptr || root->id == 0U || field == nullptr ||
+          field->id == 0U || member_full_ids.empty() || member_full_ids.back() != field->full_id ||
+          path.empty() || dependency_schema->stable_id != schema->stable_id ||
+          dependency_schema->version != schema->version) {
+        return make_unexpected(
+            Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_PROJECTION_INVALID"});
+      }
+      record.projection_dependencies.push_back(TensorByteSpanProjectionDependencyRecord{
+          .parameter_field = field->id,
+          .parameter_full_id = field->full_id,
+          .parameter_member_full_ids = member_full_ids,
+          .parameter_path = path,
+      });
+      append_unique(parameters,
+                    ParameterDependencyIdentity{
+                        .field = field->id,
+                        .full_id = field->full_id,
+                        .member_full_ids = std::move(member_full_ids),
+                        .path = path,
+                    });
+    }
+    std::sort(record.projection_dependencies.begin(),
+              record.projection_dependencies.end(),
+              projection_dependency_less);
+    if (std::adjacent_find(record.projection_dependencies.begin(),
+                           record.projection_dependencies.end(),
+                           [](const auto& left, const auto& right) { return left == right; }) !=
+        record.projection_dependencies.end()) {
+      return make_unexpected(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_PROJECTION_INVALID"});
+    }
+    const auto existing = std::find_if(projectors.begin(), projectors.end(), [&](const auto& item) {
+      return item.first == node.projection.stable_id;
+    });
+    if (existing != projectors.end() &&
+        !same_tensor_byte_span_projector(existing->second, node.projection.implementation)) {
+      return make_unexpected(
+          Error{ErrorCode::kInvalidArgument, "GRAPH_TENSOR_BYTE_SPAN_PROJECTION_INVALID"});
+    }
+    if (existing == projectors.end()) {
+      projectors.emplace_back(node.projection.stable_id, node.projection.implementation);
+    }
+    return {};
+  }
+
   [[nodiscard]] static expected<void, Error> normalize_tensor_byte_span_node_payload(
       const OperatorSpec& spec, const TensorByteSpanAuthoringNode& node, const std::size_t index,
       TensorByteSpanExpressionNodeRecord& record, ParameterDependencies& parameters,
-      InputDependencies& inputs) {
+      InputDependencies& inputs,
+      std::vector<std::pair<std::string, TensorByteSpanProjectorIdentity>>& projectors) {
     // Multiple enum labels intentionally share the same normalized operand rule.
     // NOLINTBEGIN(bugprone-branch-clone)
     switch (node.operation) {
@@ -326,6 +579,8 @@ class OperatorSpecCompilerAccess {
         return normalize_parameter_node(node, record, parameters);
       case TensorByteSpanOperation::kInputMaxByteSpan:
         return normalize_input_node(spec, node, record, inputs);
+      case TensorByteSpanOperation::kParameterProjection:
+        return normalize_projection_node(node, record, parameters, projectors);
       case TensorByteSpanOperation::kMultiply:
       case TensorByteSpanOperation::kCeilingDivide:
       case TensorByteSpanOperation::kMaximum:
@@ -344,9 +599,10 @@ class OperatorSpecCompilerAccess {
   }
 
   [[nodiscard]] static expected<TensorByteSpanExpressionNodeRecord, Error>
-  normalize_tensor_byte_span_node(const OperatorSpec& spec, const TensorByteSpanAuthoringNode& node,
-                                  const std::size_t index, ParameterDependencies& parameters,
-                                  InputDependencies& inputs) {
+  normalize_tensor_byte_span_node(
+      const OperatorSpec& spec, const TensorByteSpanAuthoringNode& node, const std::size_t index,
+      ParameterDependencies& parameters, InputDependencies& inputs,
+      std::vector<std::pair<std::string, TensorByteSpanProjectorIdentity>>& projectors) {
     if (node.depth == 0U || node.depth > kMaximumTensorByteSpanExpressionDepth) {
       return make_unexpected(invalid_byte_span_derivation());
     }
@@ -357,8 +613,8 @@ class OperatorSpecCompilerAccess {
         .value = node.value,
         .depth = node.depth,
     };
-    auto normalized =
-        normalize_tensor_byte_span_node_payload(spec, node, index, record, parameters, inputs);
+    auto normalized = normalize_tensor_byte_span_node_payload(
+        spec, node, index, record, parameters, inputs, projectors);
     if (!normalized) {
       return make_unexpected(std::move(normalized.error()));
     }
@@ -369,6 +625,21 @@ class OperatorSpecCompilerAccess {
   [[nodiscard]] static std::span<const TensorByteSpanAuthoringNode>
   tensor_byte_span_expression_nodes(const TensorByteSpanExpression& expression) noexcept {
     return expression.nodes_;
+  }
+
+  struct TensorMemoryKindAuthoringView {
+    TensorMemoryKindExpressionForm form{TensorMemoryKindExpressionForm::kDirect};
+    TensorMemoryKindParameterDependency parameter;
+    std::span<const TensorMemoryKindAuthoringCase> mapping;
+  };
+
+  [[nodiscard]] static TensorMemoryKindAuthoringView tensor_memory_kind_expression(
+      const TensorMemoryKindExpression& expression) noexcept {
+    return TensorMemoryKindAuthoringView{
+        .form = expression.form_,
+        .parameter = expression.parameter_,
+        .mapping = expression.cases_,
+    };
   }
 
   [[nodiscard]] static std::size_t source_count(const OperatorSpec& spec) noexcept {

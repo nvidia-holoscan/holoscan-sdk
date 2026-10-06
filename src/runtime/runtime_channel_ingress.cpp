@@ -5,11 +5,13 @@
 
 #include <algorithm>
 #include <limits>
+#include <new>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "../channel/pod_codec.hpp"
+#include "core/diagnostic_reporting.hpp"
 #include "runtime_channel_session_impl.hpp"
 
 namespace holoscan::detail {
@@ -17,7 +19,7 @@ namespace holoscan::detail {
 // Transport ingress, retained-sample caches, pump progress, and blocked-head retry.
 
 RuntimeChannelSession::Impl::SubscriberState::~SubscriberState() {
-  clear_samples();
+  clear_samples(0U);
   for (SampleSlot& slot : slots) {
     if (slot.sample_storage_prepared) {
       input->type_ops->destroy_sample(slot.sample.data());
@@ -160,11 +162,14 @@ RuntimeChannelSession::Impl::SubscriberState::discard_one_process_local_transpor
   return {};
 }
 
-void RuntimeChannelSession::Impl::SubscriberState::clear_samples() noexcept {
+void RuntimeChannelSession::Impl::SubscriberState::clear_samples(
+    const std::uint64_t sequence_floor) noexcept {
+  DeferredSampleReleases releases{*input->type_ops, slots.size()};
   const std::scoped_lock lock{mutex};
   for (SampleSlot& slot : slots) {
-    reset_sample_slot(slot);
+    reset_sample_slot(slot, releases);
   }
+  cutover_sequence_floor = sequence_floor;
   next_arrival_sequence = 1U;
   last_producer_sequence = 0U;
   last_direct_ingress_sequence = 0U;
@@ -311,23 +316,57 @@ RuntimeChannelSession::Impl::writable_direct_ingress_slot(SubscriberState& subsc
   }
   const auto oldest = std::min_element(
       subscriber.slots.begin(), subscriber.slots.end(), [](const auto& lhs, const auto& rhs) {
-        const std::uint64_t lhs_sequence = lhs.occupied && lhs.direct_ingress_unread &&
-                                                   !lhs.refill_reserved &&
-                                                   !lhs.staged_arrival_evidence
-                                               ? lhs.temporal.source_sequence
-                                               : std::numeric_limits<std::uint64_t>::max();
-        const std::uint64_t rhs_sequence = rhs.occupied && rhs.direct_ingress_unread &&
-                                                   !rhs.refill_reserved &&
-                                                   !rhs.staged_arrival_evidence
-                                               ? rhs.temporal.source_sequence
-                                               : std::numeric_limits<std::uint64_t>::max();
+        const std::uint64_t lhs_sequence =
+            lhs.occupied && lhs.direct_ingress_unread && !lhs.refill_reserved &&
+                    !lhs.refill_prefix_reserved && !lhs.staged_arrival_evidence
+                ? lhs.temporal.source_sequence
+                : std::numeric_limits<std::uint64_t>::max();
+        const std::uint64_t rhs_sequence =
+            rhs.occupied && rhs.direct_ingress_unread && !rhs.refill_reserved &&
+                    !rhs.refill_prefix_reserved && !rhs.staged_arrival_evidence
+                ? rhs.temporal.source_sequence
+                : std::numeric_limits<std::uint64_t>::max();
         return lhs_sequence < rhs_sequence;
       });
   return oldest != subscriber.slots.end() && oldest->occupied && oldest->direct_ingress_unread &&
                  !oldest->typed_ingress_reserved && !oldest->refill_reserved &&
-                 !oldest->staged_arrival_evidence
+                 !oldest->refill_prefix_reserved && !oldest->staged_arrival_evidence
              ? &*oldest
              : nullptr;
+}
+
+bool RuntimeChannelSession::Impl::normalize_direct_ingress_after_freshness_release(
+    SubscriberState& subscriber, DeferredSampleReleases& releases) noexcept {
+  const std::size_t occupied = static_cast<std::size_t>(
+      std::count_if(subscriber.slots.begin(), subscriber.slots.end(), [](const auto& slot) {
+        return slot.occupied && slot.direct_ingress_unread && !slot.staged_arrival_evidence;
+      }));
+  if (occupied <= subscriber.active_direct_ingress_capacity) {
+    return true;
+  }
+  // Materialization preallocates exactly one refill-headroom slot. A larger excess means the
+  // staging ledger is already inconsistent, and must not be hidden by destructive recovery.
+  if (occupied != static_cast<std::size_t>(subscriber.active_direct_ingress_capacity) + 1U) {
+    return false;
+  }
+  const auto oldest = std::min_element(
+      subscriber.slots.begin(), subscriber.slots.end(), [](const auto& lhs, const auto& rhs) {
+        const std::uint64_t lhs_sequence =
+            lhs.occupied && lhs.direct_ingress_unread && !lhs.staged_arrival_evidence
+                ? lhs.temporal.source_sequence
+                : std::numeric_limits<std::uint64_t>::max();
+        const std::uint64_t rhs_sequence =
+            rhs.occupied && rhs.direct_ingress_unread && !rhs.staged_arrival_evidence
+                ? rhs.temporal.source_sequence
+                : std::numeric_limits<std::uint64_t>::max();
+        return lhs_sequence < rhs_sequence;
+      });
+  if (oldest == subscriber.slots.end() || !oldest->occupied || !oldest->direct_ingress_unread ||
+      oldest->staged_arrival_evidence || oldest->typed_ingress_reserved) {
+    return false;
+  }
+  reset_sample_slot(*oldest, releases);
+  return true;
 }
 
 [[nodiscard]] std::optional<RuntimeChannelSession::Impl::TypedIngressReservation>
@@ -370,9 +409,9 @@ RuntimeChannelSession::Impl::reserve_typed_ingress_destination(
 // Promotion validates and publishes one bounded direct-ingress survivor set atomically.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<std::uint32_t, Error> RuntimeChannelSession::Impl::promote_direct_ingress(
-    SubscriberState& subscriber, std::optional<std::uint64_t> first_arrival_order,
-    SampleSlot* freshness_refill, std::int64_t* promoted_capture_ns,
-    SampleSlot* released_typed_capacity) noexcept {
+    SubscriberState& subscriber, DeferredSampleReleases& releases,
+    std::optional<std::uint64_t> first_arrival_order, SampleSlot* freshness_refill,
+    std::int64_t* promoted_capture_ns, SampleSlot* released_typed_capacity) noexcept {
   if (subscriber.direct_ingress_capacity == 0U) {
     return 0U;
   }
@@ -384,37 +423,59 @@ RuntimeChannelSession::Impl::reserve_typed_ingress_destination(
   while (true) {
     const bool ordinary_promotion =
         freshness_refill == nullptr && released_typed_capacity == nullptr;
+    InputPortState& input = *subscriber.input;
+    SampleSlot* const refill_target = input.freshness_refill_target;
+    const bool refill_transaction_active = input.freshness_reservation_generation != 0U;
+    const auto ordinary_eligible = [&](const SampleSlot& slot) noexcept {
+      if (!slot.occupied || !slot.direct_ingress_unread || slot.refill_prefix_reserved ||
+          slot.staged_arrival_evidence) {
+        return false;
+      }
+      if (refill_target == nullptr) {
+        return !slot.refill_reserved;
+      }
+      if (!input.freshness_refill_prefix_committed ||
+          slot.temporal.producer_epoch != refill_target->temporal.producer_epoch) {
+        return false;
+      }
+      const bool at_or_before_target =
+          slot.temporal == refill_target->temporal ||
+          is_strictly_newer_sample(refill_target->temporal, slot.temporal);
+      return at_or_before_target &&
+             (!slot.refill_reserved || &slot == input.freshness_refill_target);
+    };
     auto pending = subscriber.slots.end();
     if (freshness_refill != nullptr) {
       pending = std::find_if(
           subscriber.slots.begin(), subscriber.slots.end(), [&](const SampleSlot& slot) {
             return &slot == freshness_refill && slot.occupied && slot.direct_ingress_unread &&
-                   slot.refill_reserved && !slot.staged_arrival_evidence;
+                   (slot.refill_reserved || slot.refill_prefix_reserved) &&
+                   !slot.staged_arrival_evidence;
           });
-    } else {
+    } else if (refill_target == nullptr || !refill_transaction_active) {
       // Ordinary promotion must not consume a record reserved for a later freshness handoff.
       // That reservation names both the subscriber and slot whose coordinate justified an
       // eviction; admitting it for unrelated capacity would leave the token pointing nowhere.
+      // Once a prefix step has committed and no transaction is live, however, ordinary capacity
+      // may drain the fenced prefix through the target. Records newer than the target remain
+      // staged until the target publishes, so neither another activation nor terminal drain can
+      // recreate the out-of-order admission this fence exists to prevent.
       pending = std::min_element(
-          subscriber.slots.begin(), subscriber.slots.end(), [](const auto& lhs, const auto& rhs) {
-            const std::uint64_t lhs_sequence = lhs.occupied && lhs.direct_ingress_unread &&
-                                                       !lhs.refill_reserved &&
-                                                       !lhs.staged_arrival_evidence
+          subscriber.slots.begin(), subscriber.slots.end(), [&](const auto& lhs, const auto& rhs) {
+            const std::uint64_t lhs_sequence = ordinary_eligible(lhs)
                                                    ? lhs.temporal.source_sequence
                                                    : std::numeric_limits<std::uint64_t>::max();
-            const std::uint64_t rhs_sequence = rhs.occupied && rhs.direct_ingress_unread &&
-                                                       !rhs.refill_reserved &&
-                                                       !rhs.staged_arrival_evidence
+            const std::uint64_t rhs_sequence = ordinary_eligible(rhs)
                                                    ? rhs.temporal.source_sequence
                                                    : std::numeric_limits<std::uint64_t>::max();
             return lhs_sequence < rhs_sequence;
           });
     }
     if (pending == subscriber.slots.end() || !pending->occupied ||
-        !pending->direct_ingress_unread || (ordinary_promotion && pending->refill_reserved) ||
+        !pending->direct_ingress_unread || (ordinary_promotion && !ordinary_eligible(*pending)) ||
         pending->staged_arrival_evidence) {
-      if (subscriber.end_of_stream_received && !subscriber.end_of_stream_event_emitted &&
-          subscriber.end_of_stream_arrival_order == 0U) {
+      if (input.freshness_refill_target == nullptr && subscriber.end_of_stream_received &&
+          !subscriber.end_of_stream_event_emitted && subscriber.end_of_stream_arrival_order == 0U) {
         auto arrival_order = reserve_arrival_order();
         if (!arrival_order) {
           return make_unexpected(std::move(arrival_order).error());
@@ -440,7 +501,7 @@ RuntimeChannelSession::Impl::reserve_typed_ingress_destination(
           !released->reuse_retained && !released->temporal_retained &&
           !released->retirement_selected && !released->typed_ingress_reserved &&
           !released->direct_ingress_unread && !released->refill_reserved &&
-          !released->owed_to_released_claim;
+          !released->refill_prefix_reserved && !released->owed_to_released_claim;
       if (!released_slot_is_free) {
         return make_unexpected(Error{ErrorCode::kProtocolError});
       }
@@ -462,16 +523,19 @@ RuntimeChannelSession::Impl::reserve_typed_ingress_destination(
       // A later receive can enter newly writable typed storage while an earlier survivor remains
       // staged. Merge the populations by producer identity so promotion cannot regress the
       // newest-N survivor set.
+      const bool pending_is_committed_refill_target =
+          &*pending == refill_target && input.freshness_refill_prefix_committed;
       if (is_strictly_newer_sample(destination->temporal, pending->temporal)) {
         // A transport receive can still own this staged slot while it materializes the payload.
         // Its reservation commits immediately after the store; defer destruction until then.
         if (pending->typed_ingress_reserved) {
           return promoted;
         }
-        reset_sample_slot(*pending);
-        continue;
-      }
-      if (!is_strictly_newer_sample(pending->temporal, destination->temporal)) {
+        if (!pending_is_committed_refill_target) {
+          reset_sample_slot(*pending, releases);
+          continue;
+        }
+      } else if (!is_strictly_newer_sample(pending->temporal, destination->temporal)) {
         return make_unexpected(Error{ErrorCode::kProtocolError});
       }
     }
@@ -487,12 +551,11 @@ RuntimeChannelSession::Impl::reserve_typed_ingress_destination(
       arrival_order = *reserved;
     }
     if (destination->occupied) {
-      reset_sample_slot(*destination);
+      reset_sample_slot(*destination, releases);
     }
     pending->temporal.producer_epoch = subscriber.producer_epoch;
-    // Every staged record receives this identity when it is stored. Promotion can deliberately
-    // admit a newer reserved record before an older staged one, so assigning here would make
-    // arrival identity run backwards when freeze_next later restores capture order.
+    // Every staged record receives this identity when it is stored. Keeping it stable across
+    // promotion preserves producer-arrival identity independently of readiness publication order.
     if (pending->temporal.arrival_sequence == 0U) {
       return make_unexpected(Error{ErrorCode::kProtocolError});
     }
@@ -506,12 +569,22 @@ RuntimeChannelSession::Impl::reserve_typed_ingress_destination(
     pending->reuse_retained = false;
     pending->temporal_retained = false;
     pending->retirement_selected = false;
+    const bool completed_refill_prefix =
+        ordinary_promotion && &*pending == input.freshness_refill_target;
     pending->direct_ingress_unread = false;
     pending->refill_reserved = false;
+    pending->refill_prefix_reserved = false;
+    if (completed_refill_prefix) {
+      input.freshness_refill_target = nullptr;
+      input.freshness_refill_target_reference = {};
+      input.freshness_refill_prefix_committed = false;
+    }
     const bool for_released_claim = &*pending == freshness_refill;
-    pending->owed_to_released_claim = for_released_claim;
-    if (for_released_claim) {
+    pending->owed_to_released_claim = for_released_claim || completed_refill_prefix;
+    if (pending->owed_to_released_claim) {
       subscriber.input->last_refill_outcome.store(0U, std::memory_order_relaxed);
+    }
+    if (for_released_claim) {
       freshness_refill = nullptr;
     }
     if (promoted_capture_ns != nullptr) {
@@ -525,10 +598,11 @@ RuntimeChannelSession::Impl::reserve_typed_ingress_destination(
                 RuntimePhaseTracePoint::kChannelIngressRetained,
                 pending->temporal.source_sequence);
     static_cast<void>(subscriber.input->publish_readiness_change());
-    if (for_released_claim) {
+    if (for_released_claim || completed_refill_prefix) {
       // One released claim buys exactly the reserved successor. Do not let this transaction
       // promote unrelated staging or acquire another fallible arrival-order reservation after
-      // the retained slot has already been reclaimed.
+      // the retained slot has already been reclaimed. The same boundary applies when ordinary
+      // capacity reaches a fenced target: publish that target before any newer staged record.
       return promoted;
     }
   }
@@ -536,8 +610,8 @@ RuntimeChannelSession::Impl::reserve_typed_ingress_destination(
 
 [[nodiscard]] expected<std::optional<std::uint64_t>, Error>
 RuntimeChannelSession::Impl::reserve_immediate_direct_ingress_promotion(
-    SubscriberState& subscriber) noexcept {
-  auto promoted = promote_direct_ingress(subscriber);
+    SubscriberState& subscriber, DeferredSampleReleases& releases) noexcept {
+  auto promoted = promote_direct_ingress(subscriber, releases);
   if (!promoted) {
     return make_unexpected(std::move(promoted).error());
   }
@@ -562,7 +636,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
     terminal_diagnostic->reset();
   }
   if (metadata.publish_clock_id.valid() || metadata.publish_timestamp_ns != 0) {
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "External Channel sample on port {} carried a noncanonical publication coordinate",
         subscriber.target.value());
     return make_unexpected(Error{ErrorCode::kProtocolError});
@@ -571,7 +645,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   const bool catalog_capture_present = subscriber.catalog_capture_clock.valid();
   const bool plan_capture_present = subscriber.plan_capture_clock.valid();
   if (catalog_capture_present != plan_capture_present) {
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "External Channel binding on port {} carried inconsistent catalog and plan capture "
         "clocks {} and {}",
         subscriber.target.value(),
@@ -581,7 +655,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   }
   if (!catalog_capture_present) {
     if (metadata.source_clock_id.valid() || metadata.capture_timestamp_ns != 0) {
-      HOLOSCAN_LOG_ERROR(
+      HOLOSCAN_LOG_AUTOMATIC_ERROR(
           "External Channel sample on port {} carried a capture coordinate for an uncaptured "
           "endpoint",
           subscriber.target.value());
@@ -590,16 +664,17 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
     return {};
   }
   if (!metadata.source_clock_id.valid()) {
-    HOLOSCAN_LOG_ERROR("External Channel sample on port {} omitted promised capture clock {}",
-                       subscriber.target.value(),
-                       subscriber.catalog_capture_clock.value);
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
+        "External Channel sample on port {} omitted promised capture clock {}",
+        subscriber.target.value(),
+        subscriber.catalog_capture_clock.value);
     if (terminal_diagnostic != nullptr) {
       *terminal_diagnostic = StructuralDiagnosticId::kTemporalCaptureTimeRequired;
     }
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
   if (metadata.source_clock_id != subscriber.catalog_capture_clock) {
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "External Channel sample on port {} carried catalog capture clock {}; expected {} "
         "before translation to plan clock {}",
         subscriber.target.value(),
@@ -619,11 +694,12 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
 // Decode, validate, stage, and signal one scalar/schema sample as one ingress transaction.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::store_received(
-    SubscriberState& subscriber, SampleMetadata received,
+    SubscriberState& subscriber, DeferredSampleReleases& releases, SampleMetadata received,
     EndpointClockHealthDisposition clock_health_disposition, std::uint64_t clock_health_generation,
     std::span<const std::byte> borrowed_payload,
     std::optional<StructuralDiagnosticId>* const terminal_diagnostic,
-    SampleSlot* const reserved_destination, const bool reserved_destination_staged) noexcept {
+    SampleSlot* const reserved_destination, const bool reserved_destination_staged,
+    const void* const borrowed_value) noexcept {
   HOLOSCAN_LOG_TRACE(
       "Store Channel sample on port {} with source clock {}; catalog clock {}, "
       "plan clock {}",
@@ -632,15 +708,20 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
       subscriber.catalog_capture_clock.value,
       subscriber.plan_capture_clock.value);
   const RuntimePortTypeOps& type_ops = *subscriber.input->type_ops;
-  const bool payload_size_valid =
-      type_ops.codec_family == RuntimePayloadCodecFamily::kGeneratedSchema
-          ? received.byte_size != 0U && received.byte_size <= type_ops.wire_capacity
-          : received.byte_size == type_ops.wire_capacity;
+  const bool payload_size_valid = [&] {
+    if (type_ops.codec_family == RuntimePayloadCodecFamily::kGeneratedSchema) {
+      return received.byte_size != 0U && received.byte_size <= type_ops.wire_capacity;
+    }
+    if (type_ops.codec_family == RuntimePayloadCodecFamily::kProcessLocalObject) {
+      return received.byte_size == 0U && borrowed_value != nullptr;
+    }
+    return received.byte_size == type_ops.wire_capacity;
+  }();
   if (received.version.major != 1U || received.version.minor != 0U || received.sequence == 0U ||
       (static_cast<std::uint32_t>(received.flags) & ~0x3U) != 0U || !payload_size_valid ||
       received.payload_kind != type_ops.payload_kind) {
-    HOLOSCAN_LOG_ERROR("Channel sample on port {} carried malformed semantic metadata",
-                       subscriber.target.value());
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel sample on port {} carried malformed semantic metadata",
+                                 subscriber.target.value());
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
   if (subscriber.externally_driven_import) {
@@ -657,7 +738,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
         !received.source_clock_id.valid() || !subscriber.input->capture_clock.valid() ||
         received.source_clock_id == subscriber.input->capture_clock;
     if (!capture_coordinate_coherent || !publish_coordinate_admitted || !capture_domain_admitted) {
-      HOLOSCAN_LOG_ERROR(
+      HOLOSCAN_LOG_AUTOMATIC_ERROR(
           "Process-local channel sample on port {} carried an invalid clock "
           "coordinate",
           subscriber.target.value());
@@ -680,7 +761,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   const std::uint64_t prior_sequence =
       staged ? subscriber.last_direct_ingress_sequence : subscriber.last_producer_sequence;
   if (prior_sequence != 0U && received.sequence <= prior_sequence) {
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "Channel subscriber received non-monotonic producer sequence {} after {} on port {}",
         received.sequence,
         prior_sequence,
@@ -689,7 +770,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   }
   std::optional<std::uint64_t> immediate_arrival_order;
   if (staged) {
-    auto reserved = reserve_immediate_direct_ingress_promotion(subscriber);
+    auto reserved = reserve_immediate_direct_ingress_promotion(subscriber, releases);
     if (!reserved) {
       return make_unexpected(std::move(reserved).error());
     }
@@ -777,14 +858,26 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   assert(!replacing || reserved_destination == nullptr || destination == reserved_destination);
   assert(!replacing || !destination->owed_to_released_claim);
   assert(!replacing || !destination->refill_reserved);
+  assert(!replacing || !destination->refill_prefix_reserved);
   assert(!replacing || !destination->staged_arrival_evidence);
   if (replacing && subscriber.replacement_sample_constructed) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
   void* const construction_storage =
       replacing ? subscriber.replacement_sample.data() : destination->sample.data();
-  auto constructed =
-      type_ops.construct_sample(construction_storage, materialized_payload, received);
+  expected<void, Error> constructed;
+  if (type_ops.codec_family == RuntimePayloadCodecFamily::kProcessLocalObject) {
+    if (type_ops.construct_sample_from_value == nullptr) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    constructed =
+        type_ops.construct_sample_from_value(construction_storage, borrowed_value, received);
+  } else {
+    if (type_ops.construct_sample == nullptr) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    constructed = type_ops.construct_sample(construction_storage, materialized_payload, received);
+  }
   if (!constructed) {
     Error error = std::move(constructed).error();
     if (error.code == ErrorCode::kCodecError) {
@@ -795,6 +888,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   if (replacing) {
     subscriber.replacement_sample_constructed = true;
     std::swap(destination->sample, subscriber.replacement_sample);
+    releases.retain(subscriber.replacement_sample.data());
     type_ops.destroy_sample(subscriber.replacement_sample.data());
     subscriber.replacement_sample_constructed = false;
   }
@@ -819,7 +913,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   destination->direct_ingress_unread = staged;
   if (staged) {
     subscriber.last_direct_ingress_sequence = received.sequence;
-    auto promoted = promote_direct_ingress(subscriber, immediate_arrival_order);
+    auto promoted = promote_direct_ingress(subscriber, releases, immediate_arrival_order);
     if (!promoted) {
       return make_unexpected(std::move(promoted).error());
     }
@@ -846,7 +940,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
 // Preserve Tensor backing ownership and typed-slot publication across every ingress mode.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::store_received_tensor(
-    SubscriberState& subscriber, Sample<Tensor> received,
+    SubscriberState& subscriber, DeferredSampleReleases& releases, Sample<Tensor> received,
     std::optional<StructuralDiagnosticId>* const terminal_diagnostic,
     SampleSlot* const reserved_destination, const bool reserved_destination_staged,
     const EndpointClockHealthDisposition clock_health_disposition,
@@ -885,8 +979,9 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
       (subscriber.tensor_logical_requirements &&
        !tensor_matches_logical_requirements(received.data,
                                             *subscriber.tensor_logical_requirements))) {
-    HOLOSCAN_LOG_ERROR("Tensor Channel sample on port {} violated its frozen payload contract",
-                       subscriber.target.value());
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
+        "Tensor Channel sample on port {} violated its frozen payload contract",
+        subscriber.target.value());
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
   withdraw_foreign_publication_coordinate(subscriber, metadata);
@@ -905,7 +1000,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   const std::uint64_t prior_sequence =
       staged ? subscriber.last_direct_ingress_sequence : subscriber.last_producer_sequence;
   if (prior_sequence != 0U && metadata.sequence <= prior_sequence) {
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "Tensor Channel subscriber received non-monotonic producer sequence {} after {} on "
         "port {}",
         metadata.sequence,
@@ -915,7 +1010,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   }
   std::optional<std::uint64_t> immediate_arrival_order;
   if (staged) {
-    auto reserved = reserve_immediate_direct_ingress_promotion(subscriber);
+    auto reserved = reserve_immediate_direct_ingress_promotion(subscriber, releases);
     if (!reserved) {
       return make_unexpected(std::move(reserved).error());
     }
@@ -965,6 +1060,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   assert(!replacing || reserved_destination == nullptr || destination == reserved_destination);
   assert(!replacing || !destination->owed_to_released_claim);
   assert(!replacing || !destination->refill_reserved);
+  assert(!replacing || !destination->refill_prefix_reserved);
   assert(!replacing || !destination->staged_arrival_evidence);
   if (replacing && subscriber.replacement_sample_constructed) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
@@ -999,7 +1095,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   destination->direct_ingress_unread = staged;
   if (staged) {
     subscriber.last_direct_ingress_sequence = metadata.sequence;
-    auto promoted = promote_direct_ingress(subscriber, immediate_arrival_order);
+    auto promoted = promote_direct_ingress(subscriber, releases, immediate_arrival_order);
     if (!promoted) {
       return make_unexpected(std::move(promoted).error());
     }
@@ -1024,9 +1120,10 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
 // Validate all descriptor fields before publishing one schema-backed Tensor sample.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::store_received_tensor_schema(
-    SubscriberState& subscriber, const std::span<const std::byte> encoded,
-    const std::span<Tensor> received, SampleMetadata metadata,
-    SampleSlot* const reserved_destination, const bool reserved_destination_staged,
+    SubscriberState& subscriber, DeferredSampleReleases& releases,
+    const std::span<const std::byte> encoded, const std::span<Tensor> received,
+    SampleMetadata metadata, SampleSlot* const reserved_destination,
+    const bool reserved_destination_staged,
     const EndpointClockHealthDisposition clock_health_disposition,
     const std::uint64_t clock_health_generation,
     std::optional<StructuralDiagnosticId>* const terminal_diagnostic) noexcept {
@@ -1091,7 +1188,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
       metadata.byte_size != aggregate_byte_size || !capture_coordinate_coherent ||
       !publish_coordinate_admitted || !capture_domain_admitted || !pass_through_layout_matches ||
       ops.assign_descriptor_tensors_sample == nullptr) {
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "Tensor-bearing schema sample on port {} violated its frozen payload contract",
         subscriber.target.value());
     return make_unexpected(Error{ErrorCode::kProtocolError});
@@ -1111,7 +1208,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   const std::uint64_t prior_sequence =
       staged ? subscriber.last_direct_ingress_sequence : subscriber.last_producer_sequence;
   if (prior_sequence != 0U && metadata.sequence <= prior_sequence) {
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "Tensor-bearing schema subscriber received non-monotonic producer sequence {} after {} "
         "on port {}",
         metadata.sequence,
@@ -1121,7 +1218,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   }
   std::optional<std::uint64_t> immediate_arrival_order;
   if (staged) {
-    auto reserved = reserve_immediate_direct_ingress_promotion(subscriber);
+    auto reserved = reserve_immediate_direct_ingress_promotion(subscriber, releases);
     if (!reserved) {
       return make_unexpected(std::move(reserved).error());
     }
@@ -1176,6 +1273,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   assert(!replacing || reserved_destination == nullptr || destination == reserved_destination);
   assert(!replacing || !destination->owed_to_released_claim);
   assert(!replacing || !destination->refill_reserved);
+  assert(!replacing || !destination->refill_prefix_reserved);
   assert(!replacing || !destination->staged_arrival_evidence);
   void* const assignment_storage =
       replacing ? subscriber.descriptor_replacement_sample.data() : destination->sample.data();
@@ -1217,7 +1315,7 @@ RuntimeChannelSession::Impl::validate_and_translate_catalog_capture(
   destination->direct_ingress_unread = staged;
   if (staged) {
     subscriber.last_direct_ingress_sequence = metadata.sequence;
-    auto promoted = promote_direct_ingress(subscriber, immediate_arrival_order);
+    auto promoted = promote_direct_ingress(subscriber, releases, immediate_arrival_order);
     if (!promoted) {
       return make_unexpected(std::move(promoted).error());
     }
@@ -1259,8 +1357,9 @@ void RuntimeChannelSession::Impl::signal_owner_progress(VertexId owner) noexcept
     }
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
-  const std::uint64_t prior_sequence =
-      std::max(subscriber.last_producer_sequence, subscriber.last_direct_ingress_sequence);
+  const std::uint64_t prior_sequence = std::max({subscriber.cutover_sequence_floor,
+                                                 subscriber.last_producer_sequence,
+                                                 subscriber.last_direct_ingress_sequence});
   if (prior_sequence == std::numeric_limits<std::uint64_t>::max() ||
       transport_sequence != prior_sequence + 1U) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
@@ -1328,15 +1427,20 @@ void RuntimeChannelSession::Impl::signal_owner_progress(VertexId owner) noexcept
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
   observe_typed_ingress_for_test(subscriber);
+  DeferredSampleReleases releases{*subscriber.input->type_ops, subscriber.slots.size() + 1U};
   const std::scoped_lock cache_lock{subscriber.mutex};
   const bool destination_staged = reservation->staged();
   SampleSlot* const destination = reservation->destination_locked();
-  auto stored = store_received_tensor(
-      subscriber, std::move(*received), terminal_diagnostic, destination, destination_staged);
+  auto stored = store_received_tensor(subscriber,
+                                      releases,
+                                      std::move(*received),
+                                      terminal_diagnostic,
+                                      destination,
+                                      destination_staged);
   if (!stored) {
     return stored;
   }
-  return commit_typed_ingress_reservation(subscriber, *reservation);
+  return commit_typed_ingress_reservation(subscriber, *reservation, releases);
 }
 
 // Decode and stage every descriptor field before committing the reserved typed slot.
@@ -1429,10 +1533,12 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
     tensors[index] = std::move(*tensor);
   }
   observe_typed_ingress_for_test(subscriber);
+  DeferredSampleReleases releases{*subscriber.input->type_ops, subscriber.slots.size() + 1U};
   const std::scoped_lock cache_lock{subscriber.mutex};
   const bool destination_staged = reservation.staged();
   SampleSlot* const destination = reservation.destination_locked();
   auto stored = store_received_tensor_schema(subscriber,
+                                             releases,
                                              wire_payload,
                                              std::span<Tensor>{tensors},
                                              *metadata,
@@ -1444,16 +1550,23 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
   if (!stored) {
     return stored;
   }
-  return commit_typed_ingress_reservation(subscriber, reservation);
+  return commit_typed_ingress_reservation(subscriber, reservation, releases);
 }
 
 // Keep endpoint-family decode and transport acknowledgement in one ordered receive operation.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::receive_one(
     SubscriberState& subscriber, std::optional<StructuralDiagnosticId>* const terminal_diagnostic,
-    CudaDeviceCursor* const scan_device,
-    const std::optional<TemporalSampleRecord> reuse_handoff) noexcept {
+    CudaDeviceCursor* const scan_device, const std::optional<TemporalSampleRecord> reuse_handoff,
+    const channel_internal::StagedDataState* const expected_staged_data) noexcept {
   const std::scoped_lock transport_lock{subscriber.transport_mutex};
+  if (expected_staged_data != nullptr) {
+    const auto staged = subscriber.staged_data_state();
+    if (!staged || staged->sequence != expected_staged_data->sequence ||
+        staged->capture_time != expected_staged_data->capture_time) {
+      return make_unexpected(Error{ErrorCode::kNotReady});
+    }
+  }
   const auto reserve_reuse_replacement =
       [&](std::optional<TypedIngressReservation>& reservation,
           const std::optional<channel_internal::StagedDataState>& staged_data_before)
@@ -1462,7 +1575,7 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
       return false;
     }
     auto replacement =
-        reserve_staged_newer_data_reuse_replacement(subscriber, reuse_handoff, staged_data_before);
+        reserve_staged_newer_data_replacement(subscriber, reuse_handoff, staged_data_before);
     if (!replacement) {
       return false;
     }
@@ -1563,8 +1676,9 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
     if (subscriber.end_of_stream_received) {
       return store_end_of_stream(subscriber, subscriber.end_of_stream_transport_sequence);
     }
-    const std::uint64_t prior_sequence =
-        std::max(subscriber.last_producer_sequence, subscriber.last_direct_ingress_sequence);
+    const std::uint64_t prior_sequence = std::max({subscriber.cutover_sequence_floor,
+                                                   subscriber.last_producer_sequence,
+                                                   subscriber.last_direct_ingress_sequence});
     if (prior_sequence == std::numeric_limits<std::uint64_t>::max()) {
       return make_unexpected(Error{ErrorCode::kResourceExhausted});
     }
@@ -1609,10 +1723,12 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
         payload = payload.subspan(kSchemaEnvelopeHeaderSize, *payload_size);
       }
       observe_typed_ingress_for_test(subscriber);
+      DeferredSampleReleases releases{*subscriber.input->type_ops, subscriber.slots.size() + 1U};
       const std::scoped_lock cache_lock{subscriber.mutex};
       const bool destination_staged = reservation->staged();
       SampleSlot* const destination = reservation->destination_locked();
       auto stored = store_received(subscriber,
+                                   releases,
                                    received->metadata(),
                                    EndpointClockHealthDisposition::kNotApplicable,
                                    0U,
@@ -1623,7 +1739,7 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
       if (!stored) {
         return stored;
       }
-      return commit_typed_ingress_reservation(subscriber, *reservation);
+      return commit_typed_ingress_reservation(subscriber, *reservation, releases);
     }
   }
   if (!reservation && staged_data_before) {
@@ -1649,10 +1765,12 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
                                  "received payload byte size does not match its endpoint type"});
   }
   observe_typed_ingress_for_test(subscriber);
+  DeferredSampleReleases releases{*subscriber.input->type_ops, subscriber.slots.size() + 1U};
   const std::scoped_lock cache_lock{subscriber.mutex};
   const bool destination_staged = reservation->staged();
   SampleSlot* const destination = reservation->destination_locked();
   auto stored = store_received(subscriber,
+                               releases,
                                received->metadata,
                                EndpointClockHealthDisposition::kNotApplicable,
                                0U,
@@ -1663,7 +1781,7 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
   if (!stored) {
     return stored;
   }
-  return commit_typed_ingress_reservation(subscriber, *reservation);
+  return commit_typed_ingress_reservation(subscriber, *reservation, releases);
 }
 
 // Clock-health and data operations share one ordered monitored-input drain boundary.
@@ -1838,6 +1956,7 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
                                                       &terminal_diagnostic);
       } else {
         observe_typed_ingress_for_test(subscriber);
+        DeferredSampleReleases releases{*subscriber.input->type_ops, subscriber.slots.size() + 1U};
         const std::scoped_lock cache_lock{subscriber.mutex};
         const bool destination_staged = reservation->staged();
         SampleSlot* const destination = reservation->destination_locked();
@@ -1847,6 +1966,7 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
             return make_unexpected(Error{ErrorCode::kProtocolError});
           }
           stored = store_received_tensor(subscriber,
+                                         releases,
                                          std::move(tensor_sample.value()),
                                          &terminal_diagnostic,
                                          destination,
@@ -1855,6 +1975,7 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
                                          health_generation);
         } else {
           stored = store_received(subscriber,
+                                  releases,
                                   operation->metadata,
                                   health_disposition,
                                   health_generation,
@@ -1864,7 +1985,7 @@ RuntimeChannelSession::Impl::store_received_tensor_schema_payload(
                                   destination_staged);
         }
         if (stored) {
-          stored = commit_typed_ingress_reservation(subscriber, reservation.value());
+          stored = commit_typed_ingress_reservation(subscriber, reservation.value(), releases);
         }
       }
       if (!stored) {
@@ -2077,8 +2198,8 @@ RuntimeChannelSession::Impl::wait_for_transport_activity() noexcept {
   }
   auto waited = wait_set_->wait_for(kPumpWait);
   if (!waited) {
-    HOLOSCAN_LOG_ERROR("Channel pump WaitSet wait failed with {}",
-                       error_code_name(waited.error().code));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel pump WaitSet wait failed with {}",
+                                 error_code_name(waited.error().code));
     return make_unexpected(std::move(waited).error());
   }
   if (!*waited) {
@@ -2086,14 +2207,14 @@ RuntimeChannelSession::Impl::wait_for_transport_activity() noexcept {
   }
   auto ready = wait_set_->ready_handles(ready_handles_);
   if (!ready) {
-    HOLOSCAN_LOG_ERROR("Channel pump WaitSet ready-handle collection failed with {}",
-                       error_code_name(ready.error().code));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel pump WaitSet ready-handle collection failed with {}",
+                                 error_code_name(ready.error().code));
     return make_unexpected(std::move(ready).error());
   }
   for (std::size_t index = 0U; index < *ready; ++index) {
     if (!wait_subscriber_by_handle_.contains(ready_handles_[index])) {
-      HOLOSCAN_LOG_ERROR("Channel WaitSet returned unknown readiness handle {}",
-                         ready_handles_[index]);
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel WaitSet returned unknown readiness handle {}",
+                                   ready_handles_[index]);
       return make_unexpected(Error{ErrorCode::kProtocolError});
     }
   }
@@ -2102,24 +2223,37 @@ RuntimeChannelSession::Impl::wait_for_transport_activity() noexcept {
 }
 
 [[nodiscard]] bool RuntimeChannelSession::Impl::enter_pump_support_thread() noexcept {
-  if (support_thread_control_ == nullptr) {
-    return true;
-  }
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   try {
 #endif
-    auto entered = support_thread_control_->enter(RuntimeSupportThreadRole::kChannelPump);
+    auto placement = apply_support_thread_affinity(support_thread_affinities_,
+                                                   SupportThreadRole::kChannelPump,
+                                                   &support_thread_placement_failure_);
+    if (!placement) {
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel pump thread placement failed with {}: {}",
+                                   error_code_name(placement.error().code),
+                                   placement.error().message);
+      fail(placement.error(), {}, StructuralDiagnosticId::kRuntimeStartupFailed);
+      return false;
+    }
+    if (support_thread_control_ == nullptr) {
+      return true;
+    }
+    auto entered = support_thread_control_->enter(SupportThreadRole::kChannelPump);
     if (!entered) {
-      HOLOSCAN_LOG_ERROR("Channel pump thread setup failed with {}: {}",
-                         error_code_name(entered.error().code),
-                         entered.error().message);
-      fail(entered.error().code);
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel pump thread setup failed with {}: {}",
+                                   error_code_name(entered.error().code),
+                                   entered.error().message);
+      fail(entered.error(), {}, StructuralDiagnosticId::kRuntimeStartupFailed);
       return false;
     }
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (const std::bad_alloc&) {
+    fail(Error{ErrorCode::kResourceExhausted}, {}, StructuralDiagnosticId::kRuntimeStartupFailed);
+    return false;
   } catch (...) {
-    HOLOSCAN_LOG_ERROR("Channel pump thread setup raised an exception");
-    fail(ErrorCode::kFailure);
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel pump thread setup raised an exception");
+    fail(Error{ErrorCode::kFailure}, {}, StructuralDiagnosticId::kRuntimeStartupFailed);
     return false;
   }
 #endif
@@ -2170,7 +2304,7 @@ void RuntimeChannelSession::Impl::freeze_descriptor_import_inventory() {
   pump_device.emplace();
   const bool initialized = initialize_descriptor_import(*pump_device);
   if (!initialized) {
-    HOLOSCAN_LOG_ERROR("Channel pump could not initialize CUDA VMM descriptor import");
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel pump could not initialize CUDA VMM descriptor import");
     fail(ErrorCode::kNotSupported);
     return false;
   }
@@ -2192,7 +2326,8 @@ void RuntimeChannelSession::Impl::freeze_descriptor_import_inventory() {
   // once per sequential controller-thread handoff before any descriptor import can occur.
   CudaDeviceCursor controller_device;
   if (!initialize_descriptor_import(controller_device) || !controller_device.restore()) {
-    HOLOSCAN_LOG_ERROR("Channel controller could not initialize CUDA VMM descriptor import");
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
+        "Channel controller could not initialize CUDA VMM descriptor import");
     fail(ErrorCode::kNotSupported);
     return false;
   }
@@ -2242,9 +2377,9 @@ void RuntimeChannelSession::Impl::pump() noexcept {
                                               terminal_diagnostic,
                                               pump_device.has_value() ? &*pump_device : nullptr);
       if (!drained) {
-        HOLOSCAN_LOG_ERROR("Channel subscriber drain failed with {} on port {}",
-                           runtime_error_message(drained.error()),
-                           failed_port.value());
+        HOLOSCAN_LOG_AUTOMATIC_ERROR("Channel subscriber drain failed with {} on port {}",
+                                     runtime_error_message(drained.error()),
+                                     failed_port.value());
         fail(drained.error(), failed_owner, terminal_diagnostic);
         return;
       }
@@ -2350,7 +2485,7 @@ expected<void, Error> RuntimeChannelSession::flush_process_local_activation_cut(
   return impl_->ensure_process_local_activation_cut();
 }
 
-[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::store_direct_inline_payload(
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::retain_direct_inline_payload(
     SubscriberState& subscriber, std::span<const std::byte> payload,
     SampleMetadata metadata) noexcept {
   // REQ: CHAN-096
@@ -2366,24 +2501,69 @@ expected<void, Error> RuntimeChannelSession::flush_process_local_activation_cut(
       !payload_size_valid) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
-  const bool signal_progress = owner_progress_wake_enabled();
-  const std::uint64_t prior_revision =
-      signal_progress ? subscriber.input->readiness_revision.load(std::memory_order_acquire) : 0U;
+  std::size_t schema_payload_size = 0U;
+  if (generated_schema) {
+    // Validate the exact incoming frame before copying it into capacity-sized scratch storage.
+    // store_received() reuses the decoded payload span below instead of decoding the envelope
+    // again.
+    auto decoded =
+        channel_internal::decode_schema_envelope(payload,
+                                                 *subscriber.process_local_schema_identity,
+                                                 subscriber.input->type_ops->wire_capacity);
+    if (!decoded) {
+      return make_unexpected(std::move(decoded).error());
+    }
+    if (*decoded != payload.size() - kSchemaEnvelopeHeaderSize) {
+      return make_unexpected(Error{ErrorCode::kProtocolError});
+    }
+    schema_payload_size = *decoded;
+  }
   expected<void, Error> stored;
+  DeferredSampleReleases releases{*subscriber.input->type_ops, subscriber.slots.size() + 1U};
   {
     const std::scoped_lock cache_lock{subscriber.mutex};
     std::copy(payload.begin(), payload.end(), subscriber.scratch_bytes().begin());
-    stored =
-        store_received(subscriber, metadata, EndpointClockHealthDisposition::kNotApplicable, 0U);
-  }
-  if (stored && signal_progress &&
-      subscriber.input->readiness_revision.load(std::memory_order_acquire) != prior_revision) {
-    signal_owner_progress(subscriber.owner);
+    const std::span<const std::byte> validated_payload =
+        generated_schema
+            ? subscriber.scratch_bytes().subspan(kSchemaEnvelopeHeaderSize, schema_payload_size)
+            : std::span<const std::byte>{};
+    stored = store_received(subscriber,
+                            releases,
+                            metadata,
+                            EndpointClockHealthDisposition::kNotApplicable,
+                            0U,
+                            validated_payload);
   }
   return stored;
 }
 
-[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::store_direct_tensor_sample(
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::store_direct_object_payload(
+    SubscriberState& subscriber, DeferredSampleReleases& releases, const void* payload,
+    SampleMetadata metadata) noexcept {
+  if (payload == nullptr || !subscriber.direct_process_local || subscriber.endpoint != nullptr ||
+      subscriber.tensor_endpoint.has_value() || subscriber.tensor_schema_endpoint != nullptr ||
+      subscriber.input->type_ops->codec_family != RuntimePayloadCodecFamily::kProcessLocalObject ||
+      subscriber.scratch_size != 0U || subscriber.process_local_schema_identity.has_value()) {
+    return make_unexpected(Error{ErrorCode::kProtocolError});
+  }
+  expected<void, Error> stored;
+  {
+    const std::scoped_lock cache_lock{subscriber.mutex};
+    stored = store_received(subscriber,
+                            releases,
+                            metadata,
+                            EndpointClockHealthDisposition::kNotApplicable,
+                            0U,
+                            {},
+                            nullptr,
+                            nullptr,
+                            false,
+                            payload);
+  }
+  return stored;
+}
+
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::retain_direct_tensor_sample(
     SubscriberState& subscriber, Sample<Tensor> received) noexcept {
   // REQ: CHAN-098
   if (!subscriber.direct_process_local || subscriber.endpoint != nullptr ||
@@ -2391,22 +2571,16 @@ expected<void, Error> RuntimeChannelSession::flush_process_local_activation_cut(
       subscriber.input->type_ops != runtime_port_type_ops<Tensor>()) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
-  const bool signal_progress = owner_progress_wake_enabled();
-  const std::uint64_t prior_revision =
-      signal_progress ? subscriber.input->readiness_revision.load(std::memory_order_acquire) : 0U;
   expected<void, Error> stored;
+  DeferredSampleReleases releases{*subscriber.input->type_ops, subscriber.slots.size() + 1U};
   {
     const std::scoped_lock cache_lock{subscriber.mutex};
-    stored = store_received_tensor(subscriber, std::move(received));
-  }
-  if (stored && signal_progress &&
-      subscriber.input->readiness_revision.load(std::memory_order_acquire) != prior_revision) {
-    signal_owner_progress(subscriber.owner);
+    stored = store_received_tensor(subscriber, releases, std::move(received));
   }
   return stored;
 }
 
-[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::store_direct_tensor_schema_sample(
+[[nodiscard]] expected<void, Error> RuntimeChannelSession::Impl::retain_direct_tensor_schema_sample(
     SubscriberState& subscriber, const std::span<const std::byte> encoded,
     const std::span<const Tensor> received) noexcept {
   // REQ: CHAN-099
@@ -2421,9 +2595,6 @@ expected<void, Error> RuntimeChannelSession::flush_process_local_activation_cut(
       encoded.size() > ops.wire_capacity) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
   }
-  const bool signal_progress = owner_progress_wake_enabled();
-  const std::uint64_t prior_revision =
-      signal_progress ? subscriber.input->readiness_revision.load(std::memory_order_acquire) : 0U;
   auto& retained = subscriber.tensor_schema_scratch;
   if (retained.size() != received.size()) {
     return make_unexpected(Error{ErrorCode::kProtocolError});
@@ -2431,6 +2602,7 @@ expected<void, Error> RuntimeChannelSession::flush_process_local_activation_cut(
   const TensorScratchReset reset{retained};
   std::copy(received.begin(), received.end(), retained.begin());
   expected<void, Error> stored;
+  DeferredSampleReleases releases{*subscriber.input->type_ops, subscriber.slots.size() + 1U};
   {
     const std::scoped_lock cache_lock{subscriber.mutex};
     auto metadata = ops.descriptor_tensor_sample_metadata(encoded, 0U, plan_generation_);
@@ -2438,11 +2610,7 @@ expected<void, Error> RuntimeChannelSession::flush_process_local_activation_cut(
       return make_unexpected(std::move(metadata).error());
     }
     stored = store_received_tensor_schema(
-        subscriber, encoded, std::span<Tensor>{retained}, std::move(*metadata));
-  }
-  if (stored && signal_progress &&
-      subscriber.input->readiness_revision.load(std::memory_order_acquire) != prior_revision) {
-    signal_owner_progress(subscriber.owner);
+        subscriber, releases, encoded, std::span<Tensor>{retained}, std::move(*metadata));
   }
   return stored;
 }

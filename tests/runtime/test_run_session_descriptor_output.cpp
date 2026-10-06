@@ -32,7 +32,7 @@
 #include <holoscan/core/tensor_output_loan.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
 // Provides generated owning types and schema-trait specializations.
-#include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
+#include <holoscan/schema/sdk_schemas.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
@@ -148,6 +148,23 @@ struct RuntimeDescriptorOutputProbeState {
             std::ranges::equal(std::span<const std::uint8_t>{bytes, 8U},
                                DescriptorOutputScenario<Native>::bytes) &&
             DescriptorOutputScenario<Native>::matches(sample);
+    ++observations;
+    observed = observations >= expected;
+    cv.notify_all();
+  }
+
+  // A projected consumer receives the producer's Tensor field itself rather than the schema root,
+  // so the same provider pointer must arrive with no descriptor around it and no copy.
+  static void record_projected_sink(const Sample<Tensor>& sample) {
+    const std::lock_guard lock(mutex);
+    const Tensor& tensor = sample.data;
+    const std::uint8_t* const bytes = tensor.data_as<std::uint8_t>();
+    valid = valid && tensor.data() == source_pointer && tensor.nbytes() == 8 &&
+            tensor.ndim() == 1 && std::ranges::equal(tensor.shape_span(), kShape) &&
+            tensor.dtype().code == kDLUInt && tensor.dtype().bits == 8U &&
+            tensor.dtype().lanes == 1U && bytes != nullptr &&
+            std::ranges::equal(std::span<const std::uint8_t>{bytes, 8U},
+                               DescriptorOutputScenario<Native>::bytes);
     ++observations;
     observed = observations >= expected;
     cv.notify_all();
@@ -288,6 +305,45 @@ class RuntimeDescriptorOutputSinkOperator final : public Operator<> {
   }
 
   Input<Native> input;
+};
+
+// Consumes the producer's Tensor field off a payload-narrowing edge. The port admits a projected
+// Tensor and states the contract the producer's field has to satisfy.
+// Used by ProjectedTensorEdgeDeliversTheFieldWithoutCopying.
+template <typename Native, MemoryKind Storage = MemoryKind::kHost>
+class RuntimeProjectedTensorSinkOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .accepts_projected_tensor()
+        .expects_tensor(TensorInputSpec{
+            .representation =
+                holoscan::TensorRepresentation{
+                    .memory_kind = Storage,
+                    .dtype = DLDataType{kDLUInt, 8U, 1U},
+                    .rank = 1U,
+                },
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      RuntimeDescriptorOutputProbeState<Native>::fail(sample.error().code);
+      return make_unexpected(std::move(sample).error());
+    }
+    RuntimeDescriptorOutputProbeState<Native>::record_projected_sink(*sample);
+    return {};
+  }
+
+  Input<Tensor> input;
 };
 
 struct RuntimeDescriptorStreamBindingProbe {
@@ -534,6 +590,20 @@ template <typename Native, MemoryKind Storage = MemoryKind::kHost, bool Fanout =
   return compile(graph, std::move(options));
 }
 
+// Graph topology:
+//   descriptor source --[queue_depth=1, projects the only Tensor field]--> Tensor sink
+// The schema declares one Tensor field, so add_flow names it implicitly and the producer's
+// port-level pool is the projected edge's provider.
+[[nodiscard]] ExecutionPlan make_runtime_projected_tensor_plan() {
+  Graph graph{"runtime-projected-tensor"};
+  auto source = graph.op<RuntimeDescriptorOutputSourceOperator<schema::ImageT>>("source");
+  auto sink = graph.op<RuntimeProjectedTensorSinkOperator<schema::ImageT>>("sink");
+  graph.add_flow(source->output, sink->input, ConnectionOptions{.queue_depth = 1U});
+  const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
+  graph.set_default_clock(default_clock);
+  return compile(graph, CompileOptions{});
+}
+
 template <typename Native>
 class DescriptorOutputScenarioTest : public testing::Test {};
 
@@ -573,6 +643,40 @@ TYPED_TEST(DescriptorOutputScenarioTest, PreservesProviderBackingAndMetadata) {
       << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
   const std::lock_guard lock(Probe::mutex);
   EXPECT_FALSE(Probe::error.has_value());
+  EXPECT_TRUE(Probe::valid);
+}
+
+// A payload-narrowing edge hands the consumer the producer's own field storage, so the Tensor that
+// arrives must be the provider allocation itself rather than a copy of it.
+//
+// REQ: GRAPH-043
+TEST(RunSessionDescriptorOutput, ProjectedTensorEdgeDeliversTheFieldWithoutCopying) {
+  using Probe = RuntimeDescriptorOutputProbeState<schema::ImageT>;
+  Probe::reset();
+  const ExecutionPlan plan = make_runtime_projected_tensor_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.payload_edges().size(), 1U);
+  const auto& edge = plan.payload_edges().front();
+  ASSERT_TRUE(edge.tensor_projection);
+  // The edge still carries the producer's schema sample; narrowing is recorded per subscriber.
+  EXPECT_EQ(edge.payload_identity.kind, PayloadIdentityKind::kSchema);
+  // The artifact has to name the projected field, otherwise two plans that deliver different
+  // Tensor members of the same schema would serialize identically and share one plan digest.
+  EXPECT_NE(plan.json().find("\"tensor_projection\":{\"field_id\":"), std::string::npos);
+
+  RunSession session = run_async(plan);
+  const bool observed = Probe::wait();
+  session.request_stop();
+  session.wait();
+
+  ASSERT_TRUE(observed) << (session.diagnostics().empty() ? "no runtime diagnostic"
+                                                          : session.diagnostics().front().token);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  const std::lock_guard lock(Probe::mutex);
+  EXPECT_FALSE(Probe::error.has_value())
+      << static_cast<std::uint32_t>(Probe::error.value_or(ErrorCode::kInvalidArgument));
   EXPECT_TRUE(Probe::valid);
 }
 
@@ -753,6 +857,9 @@ TEST(RunSessionDescriptorOutput, AllocationFreeInputDoesNotConflictWithCudaOutpu
 //                                +--> relay --[CUDA Tensor]--> (unconnected output)
 //   second source --[CUDA Image]--+
 // REQ: COMPILE-049
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: RUNTIME-056
 // REQ: TENSOR-SCHEMA-005
 TEST(RunSessionDescriptorOutput, NonLinearCudaJoinUsesServiceDeviceWithoutFusion) {
   if (!cuda_device_available()) {
@@ -801,10 +908,18 @@ TEST(RunSessionDescriptorOutput, NonLinearCudaJoinUsesServiceDeviceWithoutFusion
   }
   ASSERT_EQ(descriptor_edges.size(), 2U);
   ASSERT_EQ(state->tensor_device_resources.size(), 1U);
-  ASSERT_EQ(state->cuda_compute_streams.size(), 1U);
+  ASSERT_EQ(state->cuda_compute_streams.size(), 3U);
+  ASSERT_EQ(state->operator_cuda_stream_bindings.size(), 3U);
+  EXPECT_NE(state->operator_cuda_stream_bindings[0].stream_id,
+            state->operator_cuda_stream_bindings[1].stream_id);
+  EXPECT_NE(state->operator_cuda_stream_bindings[0].stream_id,
+            state->operator_cuda_stream_bindings[2].stream_id);
+  EXPECT_NE(state->operator_cuda_stream_bindings[1].stream_id,
+            state->operator_cuda_stream_bindings[2].stream_id);
   for (const EdgeId edge : descriptor_edges) {
-    EXPECT_EQ(std::ranges::find(state->cuda_compute_streams.front().fused_linear_edges, edge),
-              state->cuda_compute_streams.front().fused_linear_edges.end());
+    EXPECT_TRUE(std::ranges::all_of(state->cuda_compute_streams, [&](const auto& stream) {
+      return std::ranges::find(stream.fused_linear_edges, edge) == stream.fused_linear_edges.end();
+    }));
   }
 
   RunSession session = run_async(plan);
@@ -812,7 +927,7 @@ TEST(RunSessionDescriptorOutput, NonLinearCudaJoinUsesServiceDeviceWithoutFusion
   session.request_stop();
   session.wait();
 
-  // Key assertion: both non-fused services select the common CUDA worker stream.
+  // Key assertion: each non-fused service resolves its consumer's exact partition stream.
   EXPECT_TRUE(observed) << (session.diagnostics().empty() ? "not all source callbacks ran"
                                                           : session.diagnostics().front().token);
   EXPECT_TRUE(session.diagnostics().empty())

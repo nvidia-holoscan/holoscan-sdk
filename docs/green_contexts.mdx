@@ -28,6 +28,10 @@ if you are not yet familiar with the HSDK 5 stream and Tensor lifetime model.
   - How Green Context placement interacts with multiple devices and processes
 </Note>
 
+For an isolated operator test using the same placement rules, see
+[operator testing deployment](/holoscan/sdk-user-guide/debugging-and-testing/testing#graph-configuration-and-deployment)
+and its installed grouped-CUDA-input example.
+
 ## Query the execution target
 
 Always query an explicit CUDA ordinal on the deployment target:
@@ -160,6 +164,14 @@ ordinary primary-context stream:
   excluded from HSDK work; and
 - every assigned partition, including one without a Tensor allocation, gets a
   planned and verified stream before callbacks can begin.
+
+This explicit placement is stronger than
+`CompileOptions::cuda_execution.compute_stream_policy`. The compiler first
+forms ordinary partition/device or shared process/device bindings, then replaces
+the opted-in device's final bindings with dedicated or residual Green Context
+streams. Fence fusion is decided only afterward and requires exact final stream
+ID equality. Selecting `kSharedProcessDevice` therefore does not collapse two
+partitions whose accepted Green Context placement gives them different streams.
 
 The split can consume the complete structured device when the graph needs no
 residual CUDA work. Otherwise, compilation must retain sufficient residual

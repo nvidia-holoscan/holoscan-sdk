@@ -293,24 +293,8 @@ struct ClaimContributorIds {
 
 [[nodiscard]] expected<std::uint32_t, Error> release_stream_capacity_impl(
     const ExecutionPlanState& plan, const TensorAllocationPlanRecord& allocation) noexcept {
-  std::uint32_t result = 0U;
-  for (const auto& service : plan.process_local_channel_services) {
-    if (service.source != allocation.output || !service.tensor_payload) {
-      continue;
-    }
-    if (service.max_subscribers > std::numeric_limits<std::uint32_t>::max() - result) {
-      return make_unexpected(tensor_resource_error(
-          "release-stream capacity overflow", "output", allocation.output.value()));
-    }
-    result += service.max_subscribers;
-  }
-  // Runtime installs one shared device stream before compute. Reserve one additional distinct
-  // stream per downstream subscriber for an application-selected working stream.
-  if (result == std::numeric_limits<std::uint32_t>::max()) {
-    return make_unexpected(tensor_resource_error(
-        "release-stream capacity exhausted", "output", allocation.output.value()));
-  }
-  return result + 1U;
+  static_cast<void>(plan);
+  return allocation.release_stream_capacity;
 }
 
 [[nodiscard]] bool requires_transport_retention(
@@ -581,9 +565,9 @@ struct ClaimContributorIds {
   const auto pool_dependency_count = std::ranges::count_if(
       plan.pool_capacity_dependencies,
       [&](const auto& dependency) { return dependency.pool_id == allocation.pool_id; });
-  if (predecessor_count != pool_contributor_count ||
-      provider.sizing_dependency_count != pool_dependency_count || !producer_seen ||
-      !retirement_seen || !delivery_seen ||
+  if (std::cmp_not_equal(predecessor_count, pool_contributor_count) ||
+      std::cmp_not_equal(provider.sizing_dependency_count, pool_dependency_count) ||
+      !producer_seen || !retirement_seen || !delivery_seen ||
       transport_seen != requires_transport_retention(plan, allocation)) {
     return make_unexpected(
         tensor_resource_error("incomplete pool dependency coverage", "pool", allocation.pool_id));
@@ -713,10 +697,11 @@ struct ClaimContributorIds {
       }
       ++predecessor_count;
     }
-    if (predecessor_count !=
-        std::ranges::count_if(plan.pool_capacity_contributors, [&](const auto& contributor) {
-          return contributor.pool_id == allocation.pool_id;
-        })) {
+    if (std::cmp_not_equal(
+            predecessor_count,
+            std::ranges::count_if(plan.pool_capacity_contributors, [&](const auto& contributor) {
+              return contributor.pool_id == allocation.pool_id;
+            }))) {
       return make_unexpected(tensor_resource_error(
           "static pool dependency coverage mismatch", "pool", allocation.pool_id));
     }

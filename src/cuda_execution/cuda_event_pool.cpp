@@ -20,6 +20,7 @@
 
 #include <holoscan/logger/logger.hpp>
 
+#include "core/diagnostic_reporting.hpp"
 #include "cuda_driver_entry_points.hpp"
 
 namespace holoscan {
@@ -68,8 +69,8 @@ CudaEventPool::EventLease& CudaEventPool::EventLease::operator=(
 CudaEventPool::EventLease::~EventLease() {
   auto result = release();
   if (!result) {
-    HOLOSCAN_LOG_ERROR("Failed to release CUDA event lease: {}",
-                       runtime_error_message(result.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to release CUDA event lease: {}",
+                                 runtime_error_message(result.error()));
   }
 }
 
@@ -165,8 +166,8 @@ CudaEventPool::CudaEventPool(int32_t device_id, cuda::event_flags event_flags,
 CudaEventPool::~CudaEventPool() {
   auto result = deinitialize_pool();
   if (!result) {
-    HOLOSCAN_LOG_ERROR("Failed to deinitialize CUDA event pool: {}",
-                       runtime_error_message(result.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to deinitialize CUDA event pool: {}",
+                                 runtime_error_message(result.error()));
   }
 }
 
@@ -191,7 +192,7 @@ expected<void, Error> CudaEventPool::deinitialize_pool() {
   stage_ = AllocatorStage::kDeinitializationInProgress;
 
   if (!allocated_events_.empty()) {
-    HOLOSCAN_LOG_WARN("CudaEventPool still has leased events");
+    HOLOSCAN_LOG_AUTOMATIC_WARN("CudaEventPool still has leased events");
   }
   alive_token_.reset();
   allocated_events_.clear();

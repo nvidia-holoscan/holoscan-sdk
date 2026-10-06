@@ -106,14 +106,18 @@ for the failure discipline.
 
 ### Domain operator modules
 
-[Holoscan Vision](/holoscan/sdk-user-guide/advanced/holoscan-vision) provides
-eight C++ operators backed by CV-CUDA for image
-transformation, normalization, format conversion, and non-maximum suppression.
-Other domain-specific libraries — including inference, multimedia, and robotics
-modules — are planned as separately installable modules in upcoming releases.
-Until they arrive, you can write your own operators (see
-[Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator))
-and can browse community components through
+[Holoscan Modules](/holoscan/sdk-user-guide/modules) are separately
+selectable libraries of operators that extend the core runtime with a domain
+capability. Holoscan SDK 5.x ships three core modules:
+[Inference](/holoscan/sdk-user-guide/modules/inference) (`InferenceOp`, backed
+by TensorRT), [Vision](/holoscan/sdk-user-guide/modules/vision) (nine
+CV-CUDA and NPP image and detection operators), and
+[Visualization](/holoscan/sdk-user-guide/modules/visualization) (`HolovizOp`,
+backed by the HoloViz renderer). Further domains — multimedia, networking,
+robotics, sensor bridge — are planned as additional modules in upcoming
+releases. You can always write your own operators (see
+[Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator)),
+and community modules and reference applications live on
 [HoloHub](/holoscan/sdk-user-guide/resources/holohub).
 
 ## What the SDK provides today
@@ -126,10 +130,13 @@ and can browse community components through
   may still evolve. The generated
   [C++ API reference](/holoscan/sdk-user-guide/api-reference/holoscan)
   documents the core public API.
-- **Holoscan Vision.** C++ operators provide GPU-resident
-  resizing, cropping, borders, remapping, normalization, type conversion,
-  layout conversion, and non-maximum suppression. See the
-  [operator and tensor compatibility guide](/holoscan/sdk-user-guide/advanced/holoscan-vision).
+- **Core modules.** [Inference](/holoscan/sdk-user-guide/modules/inference)
+  runs one or more TensorRT models behind a single operator;
+  [Vision](/holoscan/sdk-user-guide/modules/vision) provides GPU-resident
+  Bayer demosaic, resizing, cropping, borders, remapping, normalization, type conversion,
+  layout conversion, and non-maximum suppression;
+  [Visualization](/holoscan/sdk-user-guide/modules/visualization) renders
+  layered image and geometry output at a fixed display rate.
 - **Examples.** A graded `hello_*` series (core runtime, logging, schemas,
   tensors, MatX and CCCL interop) plus fuller reference applications:
   `camera_imu_control` (camera + IMU fusion driving a control output),
@@ -170,11 +177,11 @@ and can browse community components through
   sensor pipelines with strict latency bounds, for robotics, medical imaging,
   and industrial inspection.
 - It is layered: the HoloMQ zero-copy transport underneath, an opinionated
-  periodic sensor-processing runtime on top, and separately installable domain
-  modules, including Holoscan Vision.
+  periodic sensor-processing runtime on top, and separately selectable domain
+  modules — Inference, Vision, and Visualization in 5.x.
 - Every application follows **compose → compile → run**; timing is declared per
   operator in a temporal contract and validated before the pipeline starts.
-- Today the SDK ships a C++ API, the Vision operators, a graded
+- Today the SDK ships a C++ API, three core modules, a graded
   example set, and channel and runtime benchmarks.
 - Next:
   [Highlights](/holoscan/sdk-user-guide/introduction/highlights).

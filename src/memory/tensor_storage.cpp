@@ -19,6 +19,7 @@
 
 #include <holoscan/logger/logger.hpp>
 #include <holoscan/memory/allocator.hpp>
+#include "core/diagnostic_reporting.hpp"
 
 namespace holoscan {
 
@@ -35,6 +36,10 @@ class MemoryBufferTensorMemoryReference final : public TensorMemoryReference {
       return false;
     }
     return memory_buffer_->set_stream(stream);
+  }
+
+  [[nodiscard]] bool tracks_deallocation_stream() const noexcept override {
+    return stream_aware_ && memory_buffer_ != nullptr;
   }
 
   bool set_readiness_stream(cudaStream_t stream) override {
@@ -372,8 +377,8 @@ expected<void, Error> reshape_custom_impl(Tensor& tensor, TensorShapeView shape,
   auto allocation = BufferAllocation::allocate_with_options(
       allocator, maybe_size.value(), storage_type, memory_options, stream);
   if (!allocation) {
-    HOLOSCAN_LOG_ERROR("reshape_custom failed to allocate tensor storage: {}",
-                       runtime_error_message(allocation.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("reshape_custom failed to allocate tensor storage: {}",
+                                 runtime_error_message(allocation.error()));
     return forward_error(allocation);
   }
 

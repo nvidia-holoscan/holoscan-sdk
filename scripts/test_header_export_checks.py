@@ -96,6 +96,46 @@ class ExportMacroCheckTest(unittest.TestCase):
 
 
 class ExportMacroSemanticCheckTest(unittest.TestCase):
+    def test_inference_uses_its_own_export_boundary(self) -> None:
+        for prefix, core_prefix in (
+            ("public/modules/inference/operators/include", "public/include"),
+            ("include", "include"),
+        ):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as tmp_dir:
+                root = Path(tmp_dir)
+                header = root / prefix / "holoscan/operators/inference/operator_catalog.hpp"
+                header.parent.mkdir(parents=True)
+                header.write_text(
+                    "HOLOSCAN_OP_INFERENCE_EXPORT Result register_catalog();\n",
+                    encoding="utf-8",
+                )
+                core_header = root / core_prefix / "holoscan/core/scratch.hpp"
+                core_header.parent.mkdir(parents=True)
+                core_header.write_text(
+                    "HOLOSCAN_CORE_EXPORT Result make_result();\n", encoding="utf-8"
+                )
+                headers = check_export_macro_semantics.public_headers(root)
+                assert dict(headers) == {
+                    header: "HOLOSCAN_OP_INFERENCE_EXPORT",
+                    core_header: "HOLOSCAN_CORE_EXPORT",
+                }
+                for public_header in headers:
+                    assert check_export_macro_semantics.check_header(*public_header) == []
+
+    def test_sensor_io_uses_its_own_export_boundary(self) -> None:
+        for prefix in ("public/include", "include"):
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                root = Path(tmp_dir)
+                header = root / prefix / "holoscan/sensor_io/scratch.hpp"
+                header.parent.mkdir(parents=True)
+                header.write_text(
+                    "class HOLOSCAN_SENSOR_IO_EXPORT Scratch {\n public:\n  void reset();\n};\n",
+                    encoding="utf-8",
+                )
+                headers = check_export_macro_semantics.public_headers(root)
+                assert headers == [(header, "HOLOSCAN_SENSOR_IO_EXPORT")]
+                assert check_export_macro_semantics.check_header(*headers[0]) == []
+
     def test_ignores_multiline_preprocessor_macro_body(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             header = Path(tmp_dir) / "macro.hpp"
@@ -245,6 +285,53 @@ class ExportMacroSemanticCheckTest(unittest.TestCase):
         assert check_export_macro_semantics.canonical_header_path(absolute_path) == (
             "public/include/holomq/publisher.hpp"
         )
+
+
+class TestingExportPolicyTest(unittest.TestCase):
+    def test_generated_component_includes_are_rejected_only_in_detail_headers(self) -> None:
+        for component in ("testing", "config", "logger"):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "include/holoscan" / component
+                public_header = root / "fixture.hpp"
+                detail_header = root / "detail/fixture.hpp"
+                detail_header.parent.mkdir(parents=True)
+                contents = f"#include <holoscan/holoscan_{component}_export.h>\n"
+                public_header.write_text(contents)
+                detail_header.write_text(contents)
+                assert check_export_macros.check_file(public_header) == []
+                errors = check_export_macros.check_file(detail_header)
+                assert len(errors) == 1, errors
+                assert "detail" in errors[0]
+
+    def test_testing_headers_use_their_own_dso_macro(self) -> None:
+        for prefix in ("public/include", "include"):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                header = root / prefix / "holoscan/testing/fixture.hpp"
+                header.parent.mkdir(parents=True)
+                header.write_text("HOLOSCAN_TESTING_EXPORT void run_fixture();\n")
+                assert check_export_macro_semantics.public_headers(root) == [
+                    (header, "HOLOSCAN_TESTING_EXPORT")
+                ]
+
+    def test_testing_exports_require_generated_component_header(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            header = Path(directory) / "include/holoscan/testing/fixture.hpp"
+            header.parent.mkdir(parents=True)
+            header.write_text("HOLOSCAN_TESTING_EXPORT void run_fixture();\n")
+            assert any(
+                "holoscan_testing_export.h" in error
+                for error in check_export_macros.check_file(header)
+            )
+            header.write_text(
+                "#include <holoscan/holoscan_testing_export.h>\n"
+                "HOLOSCAN_TESTING_EXPORT void run_fixture();\n"
+            )
+            assert check_export_macros.check_file(header) == []
+            header.write_text(
+                '#define HOLOSCAN_TESTING_EXPORT __attribute__((visibility("default")))\n'
+            )
+            assert any("hand-written" in error for error in check_export_macros.check_file(header))
 
 
 if __name__ == "__main__":

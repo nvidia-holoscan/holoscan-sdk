@@ -4,6 +4,7 @@
  */
 
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -22,22 +23,29 @@
 #include <flatbuffers/verifier.h>
 #include <gtest/gtest.h>
 
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
+#include <holoscan/schema/tensor_materialization.hpp>
+#include <holoscan/sensor_io/image_metadata.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include "channel/channel_payload_limits.hpp"
 #include "core/domain/tensor_access.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/schema/flatbuffer_schema_package.hpp"
-#include "holoscan/schema/tensor_materialization.hpp"
-#include "holoscan/sensor_io/image_metadata.hpp"
-#include "holoscan/sensor_io/sensor_schema_package.hpp"
 
 #include "header_generated.h"
 #include "image_generated.h"
 #include "imu_generated.h"
 #include "string_generated.h"
 #include "tensor_generated.h"
+#include "tensor_packet_generated.h"
 #include "time_generated.h"
 
 namespace holoscan {
+
+template <typename T>
+concept HasGeneratedFlatBufferName = requires {
+  { T::GetFullyQualifiedName() } -> std::convertible_to<const char*>;
+};
 
 using DescriptorTensorAssign =
     decltype(detail::RuntimePortTypeOps{}.assign_descriptor_tensors_sample);
@@ -50,13 +58,32 @@ static_assert(!std::is_invocable_r_v<expected<void, Error>, DescriptorTensorAssi
                                      detail::DescriptorTensorSampleMetadata,
                                      detail::DescriptorTensorWireMetadata>);
 
+// REQ: SCHEMA-001
+TEST(Schema, GeneratedNamesAndRootNativeMappingsUseShippedCodegen) {
+  using Root = schema::TensorPacket;
+  using Native = schema::TensorPacketT;
+
+  static_assert(HasGeneratedFlatBufferName<Root>);
+  static_assert(HasGeneratedFlatBufferName<Native>);
+  static_assert(HasGeneratedFlatBufferName<schema::Tensor>);
+  static_assert(std::same_as<typename Native::TableType, Root>);
+  static_assert(std::same_as<typename Root::NativeTableType, Native>);
+  static_assert(std::same_as<typename schema::Tensor::NativeTableType, Tensor>);
+  static_assert(std::string_view(Root::GetFullyQualifiedName()) == "holoscan.schema.TensorPacket");
+  static_assert(std::string_view(Native::GetFullyQualifiedName()) ==
+                "holoscan.schema.TensorPacketT");
+  static_assert(std::string_view(schema::Tensor::GetFullyQualifiedName()) ==
+                "holoscan.schema.Tensor");
+}
+
 struct IndexedDescriptorSchemaNative {
   std::array<std::shared_ptr<Tensor>, 3U> tensors;
 };
 
-struct InvalidMultiTensorSingularTraitsNative {
+struct InvalidMissingIndexedTensorAccessNative {
   std::shared_ptr<Tensor> tensor;
 };
+struct InvalidMissingSingleTensorFieldIdNative {};
 
 struct InvalidDuplicateTensorFieldIdsNative {};
 struct InvalidDescendingTensorFieldIdsNative {};
@@ -75,14 +102,26 @@ struct DescriptorTensorSchemaNativeTraits<IndexedDescriptorSchemaNative> {
 };
 
 template <>
-struct DescriptorTensorSchemaNativeTraits<InvalidMultiTensorSingularTraitsNative> {
+struct DescriptorTensorSchemaNativeTraits<InvalidMissingIndexedTensorAccessNative> {
   using root_type = schema::Image;
   static constexpr std::size_t metadata_capacity = 512U;
   static constexpr std::size_t tensor_count = 3U;
 
   [[nodiscard]] static const Tensor* tensor(
-      const InvalidMultiTensorSingularTraitsNative& value) noexcept {
+      const InvalidMissingIndexedTensorAccessNative& value) noexcept {
     return value.tensor.get();
+  }
+};
+
+template <>
+struct DescriptorTensorSchemaNativeTraits<InvalidMissingSingleTensorFieldIdNative> {
+  using root_type = schema::Image;
+  static constexpr std::size_t metadata_capacity = 512U;
+  static constexpr std::size_t tensor_count = 1U;
+
+  [[nodiscard]] static const Tensor* tensor_at(const InvalidMissingSingleTensorFieldIdNative&,
+                                               std::size_t) noexcept {
+    return nullptr;
   }
 };
 
@@ -115,7 +154,7 @@ struct DescriptorTensorSchemaNativeTraits<InvalidDescendingTensorFieldIdsNative>
 // codegen + runtime-link path end to end.
 TEST(Schema, StringSchemaRoundTrips) {
   flatbuffers::FlatBufferBuilder builder;
-  builder.Finish(schema::CreateStringDirect(builder, "hello flatbuffers"));
+  schema::FinishStringBuffer(builder, schema::CreateStringDirect(builder, "hello flatbuffers"));
 
   flatbuffers::Verifier verifier(builder.GetBufferPointer(), builder.GetSize());
   ASSERT_TRUE(schema::VerifyStringBuffer(verifier));
@@ -128,7 +167,7 @@ TEST(Schema, StringSchemaRoundTrips) {
 
 TEST(Schema, TimeSchemaRoundTrips) {
   flatbuffers::FlatBufferBuilder builder;
-  builder.Finish(schema::CreateTime(builder, 123456789, 123456790));
+  schema::FinishTimeBuffer(builder, schema::CreateTime(builder, 123456789, 123456790));
 
   flatbuffers::Verifier verifier(builder.GetBufferPointer(), builder.GetSize());
   ASSERT_TRUE(schema::VerifyTimeBuffer(verifier));
@@ -143,7 +182,7 @@ TEST(Schema, HeaderSchemaRoundTrips) {
   flatbuffers::FlatBufferBuilder builder;
   const auto stamp = schema::CreateTime(builder, 100, 200);
   const auto frame_id = builder.CreateString("camera_0");
-  builder.Finish(schema::CreateHeader(builder, stamp, frame_id, 300, 5U));
+  schema::FinishHeaderBuffer(builder, schema::CreateHeader(builder, stamp, frame_id, 300, 5U));
 
   flatbuffers::Verifier verifier(builder.GetBufferPointer(), builder.GetSize());
   ASSERT_TRUE(schema::VerifyHeaderBuffer(verifier));
@@ -166,7 +205,8 @@ TEST(Schema, ImuSchemaRoundTrips) {
   const schema::Quaternionf orientation{0.0F, 0.0F, 0.0F, 1.0F};
   const schema::Vector3f angular_velocity{0.1F, 0.2F, 0.3F};
   const schema::Vector3f linear_acceleration{9.8F, 0.0F, -0.1F};
-  builder.Finish(
+  schema::FinishImuBuffer(
+      builder,
       schema::CreateImu(builder, header, &orientation, &angular_velocity, &linear_acceleration));
 
   flatbuffers::Verifier verifier(builder.GetBufferPointer(), builder.GetSize());
@@ -185,11 +225,31 @@ TEST(Schema, ImuSchemaRoundTrips) {
   EXPECT_FLOAT_EQ(imu->linear_acceleration()->x(), 9.8F);
 }
 
+TEST(Schema, GeometryDoublePrecisionStructsMatchFloatFieldOrder) {
+  const schema::Quaterniond orientation{0.0, 0.0, 0.0, 1.0};
+  EXPECT_DOUBLE_EQ(orientation.x(), 0.0);
+  EXPECT_DOUBLE_EQ(orientation.w(), 1.0);
+
+  const schema::Vector3d position{1.5, -2.5, 3.5};
+  EXPECT_DOUBLE_EQ(position.x(), 1.5);
+  EXPECT_DOUBLE_EQ(position.y(), -2.5);
+  EXPECT_DOUBLE_EQ(position.z(), 3.5);
+
+  double covariance[9] = {};
+  covariance[0] = 1.0;
+  covariance[4] = 1.0;
+  covariance[8] = 1.0;
+  const schema::Matrix3d identity_covariance{covariance};
+  EXPECT_DOUBLE_EQ(identity_covariance.m()->Get(0), 1.0);
+  EXPECT_DOUBLE_EQ(identity_covariance.m()->Get(4), 1.0);
+  EXPECT_DOUBLE_EQ(identity_covariance.m()->Get(8), 1.0);
+}
+
 // REQ: OPERATOR-035
 TEST(Schema, ImageDescriptorPortOpsPreserveLegacyTableShape) {
   using Payload = schema::DescriptorFlatBufferPayload<
       schema::Image,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>;
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>>;
   struct Envelope {
     SampleMetadata metadata{};
     Payload payload{};
@@ -323,13 +383,15 @@ TEST(Schema, TensorPacketUsesGenericDescriptorTensorOperations) {
 
 // REQ: OPERATOR-035
 TEST(Schema, IndexedDescriptorTraitsExposeThreeTensorTypeOps) {
-  // Key setup: a three-field native trait exposes only indexed access while a malformed
-  //   three-field trait deliberately retains only the legacy singular accessor.
+  // Key setup: a three-field native trait exposes the mandatory indexed inventory while malformed
+  //   traits omit indexed access or provide invalid field IDs.
   // Key assertion: indexed count/read operations preserve canonical order, transactional
-  //   assignment receives all three handles, and the malformed singular trait is not admitted.
+  //   assignment receives all three handles, and malformed traits are not admitted.
   static_assert(detail::HasDescriptorTensorSchemaNativeTraits<IndexedDescriptorSchemaNative>);
   static_assert(
-      !detail::HasDescriptorTensorSchemaNativeTraits<InvalidMultiTensorSingularTraitsNative>);
+      !detail::HasDescriptorTensorSchemaNativeTraits<InvalidMissingIndexedTensorAccessNative>);
+  static_assert(
+      !detail::HasDescriptorTensorSchemaNativeTraits<InvalidMissingSingleTensorFieldIdNative>);
   static_assert(
       !detail::HasDescriptorTensorSchemaNativeTraits<InvalidDuplicateTensorFieldIdsNative>);
   static_assert(
@@ -392,45 +454,77 @@ TEST(Schema, IndexedDescriptorTraitsExposeThreeTensorTypeOps) {
   }
 }
 
-// REQ: CHAN-124
-// REQ: CHAN-125
+// REQ: CHAN-145
 // REQ: CHAN-120
 // REQ: OPERATOR-035
 template <typename Payload>
-void expect_version_three_descriptor_layout() {
+void expect_current_descriptor_layout() {
   static_assert(std::is_standard_layout_v<Payload>);
   EXPECT_EQ(sizeof(Payload), 880U);
   EXPECT_EQ(offsetof(Payload, envelope_abi_version), 0U);
   EXPECT_EQ(offsetof(Payload, envelope_header_size), 4U);
-  EXPECT_EQ(offsetof(Payload, schema_id), 8U);
-  EXPECT_EQ(offsetof(Payload, schema_version), 24U);
-  EXPECT_EQ(offsetof(Payload, metadata_size), 28U);
+  EXPECT_EQ(offsetof(Payload, schema_family_id), 8U);
+  EXPECT_EQ(offsetof(Payload, metadata_size), 24U);
+  EXPECT_EQ(offsetof(Payload, transport_profile_tag), 28U);
   EXPECT_EQ(offsetof(Payload, endpoint_generation), 32U);
   EXPECT_EQ(offsetof(Payload, descriptor), 40U);
   EXPECT_EQ(offsetof(Payload, metadata), 368U);
 }
 
-TEST(Schema, SingularDescriptorSchemasUseVersionThreeCarriage) {
+TEST(Schema, SingularDescriptorSchemasUseCurrentCarriage) {
   // Key setup: instantiate both SDK descriptor-backed schemas with one Tensor field.
-  // Key assertion: both use the same explicit version-3 count-and-mask carriage as N-field schemas.
+  // Key assertion: both use the same explicit count-and-mask carriage as N-field schemas.
   using ImagePayload = schema::DescriptorFlatBufferPayload<
       schema::Image,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>;
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>>;
   using TensorPacketPayload = schema::DescriptorFlatBufferPayload<
       schema::TensorPacket,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::TensorPacket>>;
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::TensorPacket>>;
 
-  EXPECT_EQ(kSchemaEnvelopeABIVersion, 2U);
-  EXPECT_EQ(kDescriptorTensorSchemaEnvelopeABIVersion, 3U);
+  EXPECT_EQ(kSchemaEnvelopeABIVersion, 1U);
+  EXPECT_EQ(kDescriptorTensorSchemaEnvelopeABIVersion, 1U);
   EXPECT_EQ(kSchemaEnvelopeHeaderSize, 40U);
-  expect_version_three_descriptor_layout<ImagePayload>();
-  expect_version_three_descriptor_layout<TensorPacketPayload>();
+  expect_current_descriptor_layout<ImagePayload>();
+  expect_current_descriptor_layout<TensorPacketPayload>();
   EXPECT_EQ(ImagePayload{}.descriptor_count(), 1U);
   EXPECT_EQ(ImagePayload{}.tensor_presence_mask(), 1U);
   EXPECT_EQ(ImagePayload{}.tensor_descriptor_mask(), 1U);
 }
 
-// REQ: CHAN-125
+// REQ: SCHEMA-004
+TEST(Schema, DescriptorTransportProfileTracksGeneratedTensorInventoryAndCarriage) {
+  constexpr auto image_profile =
+      detail::descriptor_tensor_schema_transport_profile_v<schema::ImageT>;
+  constexpr auto packet_profile =
+      detail::descriptor_tensor_schema_transport_profile_v<schema::TensorPacketT>;
+  constexpr auto indexed_profile =
+      detail::descriptor_tensor_schema_transport_profile_v<IndexedDescriptorSchemaNative>;
+  constexpr std::array<std::uint16_t, 2U> expanded_field_ids{4U, 7U};
+  constexpr auto expanded_profile_tag = derive_descriptor_tensor_transport_profile_tag(
+      std::span{expanded_field_ids}, image_profile.metadata_capacity_bytes);
+
+  static_assert(schema_transport_profile_tag(image_profile) != 0U);
+  static_assert(image_profile.tensor_field_ids.size() == 1U);
+  static_assert(image_profile.tensor_field_ids.front() == 4U);
+  static_assert(schema_transport_profile_field_mask(image_profile) == 1U);
+  static_assert(schema_transport_profile_tag(image_profile) !=
+                schema_transport_profile_tag(packet_profile));
+  static_assert(schema_transport_profile_tag(image_profile) != expanded_profile_tag);
+  static_assert(indexed_profile.tensor_field_ids.size() == 3U);
+  static_assert(indexed_profile.tensor_field_ids[0] == 2U);
+  static_assert(indexed_profile.tensor_field_ids[1] == 5U);
+  static_assert(indexed_profile.tensor_field_ids[2] == 9U);
+  static_assert(schema_transport_profile_field_mask(indexed_profile) == 7U);
+  static_assert(schema_transport_profile_tag(indexed_profile) !=
+                schema_transport_profile_tag(image_profile));
+  EXPECT_EQ(schema_transport_profile_tag(schema_package<schema::Image>().transport_profile()),
+            schema_transport_profile_tag(image_profile));
+  EXPECT_EQ(detail::operator_spec_payload_identity<schema::ImageT>().transport_profile_tag,
+            schema_transport_profile_tag(image_profile));
+  EXPECT_EQ(detail::operator_spec_payload_identity<schema::StringT>().transport_profile_tag, 0U);
+}
+
+// REQ: CHAN-145
 TEST(Schema, DescriptorTensorCarriageStructurallySupportsSixtyFourFields) {
   // Key setup: instantiate the public envelope at its exact structural field-count ceiling.
   using MaximumPayload = schema::DescriptorFlatBufferPayload<schema::Image, 1U, 64U>;
@@ -446,13 +540,13 @@ TEST(Schema, DescriptorTensorCarriageStructurallySupportsSixtyFourFields) {
   EXPECT_LE(sizeof(MaximumPayload), channel_internal::kMaximumInlinePayloadBytes);
 }
 
-// REQ: CHAN-124
-// REQ: CHAN-125
-TEST(Schema, DescriptorTensorEnvelopeUsesUniformVersionThreeArrayAndExplicitMasks) {
+// REQ: CHAN-145
+// REQ: SCHEMA-004
+TEST(Schema, DescriptorTensorEnvelopeUsesUniformArrayAndExplicitMasks) {
   // Key setup: encode the same metadata into one- and three-Tensor descriptor envelopes, then
-  //   deliberately stamp the superseded early-access ABI version.
-  // Key assertion: both envelopes carry explicit count-and-mask state under version 3 and reject
-  //   version 2 before typed access.
+  //   deliberately stamp an unsupported ABI version.
+  // Key assertion: both envelopes carry explicit count-and-mask state and reject an unsupported
+  //   version before typed access.
   constexpr std::size_t kMetadataCapacity = 512U;
   using SingularPayload = schema::DescriptorFlatBufferPayload<schema::Image, kMetadataCapacity>;
   using MultiPayload = schema::DescriptorFlatBufferPayload<schema::Image, kMetadataCapacity, 3U>;
@@ -475,7 +569,7 @@ TEST(Schema, DescriptorTensorEnvelopeUsesUniformVersionThreeArrayAndExplicitMask
   const auto make_descriptor = [](std::uint64_t token) {
     return PayloadDescriptor{
         .payload_kind = ChannelPayloadKind::kLocalBufferDescriptor,
-        .schema_id = schema::flatbuffer_schema_identity_v<schema::Image>.id,
+        .schema_id = schema::flatbuffer_schema_identity_v<schema::Image>.family_id,
         .local =
             LocalPayloadReference{
                 .process_id = 1U,
@@ -490,41 +584,17 @@ TEST(Schema, DescriptorTensorEnvelopeUsesUniformVersionThreeArrayAndExplicitMask
       make_descriptor(2U),
       make_descriptor(3U),
   };
-  auto multi = MultiPayload::copy_from_builder(builder, descriptors, 9U);
-  ASSERT_TRUE(multi) << runtime_error_message(multi.error());
-  EXPECT_EQ(multi->envelope_abi_version, kDescriptorTensorSchemaEnvelopeABIVersion);
-  EXPECT_EQ(multi->envelope_header_size, kSchemaEnvelopeHeaderSize);
-  EXPECT_EQ(multi->descriptor_count(), 3U);
-  EXPECT_EQ(multi->tensor_presence_mask(), 0b111U);
-  EXPECT_EQ(multi->tensor_descriptor_mask(), 0b111U);
-  for (std::size_t index = 0U; index < descriptors.size(); ++index) {
-    ASSERT_NE(multi->descriptor_at(index), nullptr);
-    EXPECT_EQ(multi->descriptor_at(index)->local.token, index + 1U);
-  }
-  EXPECT_EQ(multi->descriptor_at(descriptors.size()), nullptr);
-  EXPECT_TRUE(multi->validate());
-
-  auto invalid_count = *multi;
-  invalid_count.descriptor.tensor_count = 65U;
-  EXPECT_EQ(invalid_count.descriptor_count(), 3U);
-  EXPECT_FALSE(invalid_count.validate());
-  auto invalid_reserved = *multi;
-  invalid_reserved.descriptor.reserved = 1U;
-  EXPECT_FALSE(invalid_reserved.validate());
-  auto invalid_presence = *multi;
-  invalid_presence.descriptor.presence_mask = 0b011U;
-  EXPECT_FALSE(invalid_presence.validate());
-  auto invalid_carriage = *multi;
-  invalid_carriage.descriptor.descriptor_mask = 0b101U;
-  EXPECT_FALSE(invalid_carriage.validate());
-
   const auto& package = schema_package<schema::Image>();
-  EXPECT_TRUE(multi->verified_root(package, 9U));
-  auto wrong_multi_version = *multi;
-  wrong_multi_version.envelope_abi_version = kSchemaEnvelopeABIVersion;
-  auto rejected_multi = wrong_multi_version.verified_root(package, 9U);
-  ASSERT_FALSE(rejected_multi);
-  EXPECT_EQ(rejected_multi.error().code, ErrorCode::kProtocolError);
+  // The generated Image profile has one Tensor field. A manually enlarged wrapper is rejected
+  // even though its structural descriptor array is otherwise representable.
+  auto incompatible_multi = MultiPayload::copy_from_builder(builder, descriptors, 9U);
+  ASSERT_FALSE(incompatible_multi);
+  EXPECT_EQ(incompatible_multi.error().code, ErrorCode::kCodecError);
+  const auto metadata = std::span<const std::byte>{
+      reinterpret_cast<const std::byte*>(builder.GetBufferPointer()), builder.GetSize()};
+  auto incompatible_trusted = MultiPayload::copy_from_trusted_metadata(metadata, descriptors, 9U);
+  ASSERT_FALSE(incompatible_trusted);
+  EXPECT_EQ(incompatible_trusted.error().code, ErrorCode::kCodecError);
 
   auto singular = SingularPayload::copy_from_builder(builder, descriptors.front(), 9U);
   ASSERT_TRUE(singular) << runtime_error_message(singular.error());
@@ -533,7 +603,21 @@ TEST(Schema, DescriptorTensorEnvelopeUsesUniformVersionThreeArrayAndExplicitMask
   EXPECT_EQ(singular->tensor_presence_mask(), 1U);
   EXPECT_EQ(singular->tensor_descriptor_mask(), 1U);
   EXPECT_TRUE(singular->verified_root(package, 9U));
-  singular->envelope_abi_version = kSchemaEnvelopeABIVersion;
+  auto wrong_family = *singular;
+  wrong_family.schema_family_id.value.front() ^= std::byte{0xFF};
+  auto rejected_family_validation = wrong_family.validate();
+  ASSERT_FALSE(rejected_family_validation);
+  EXPECT_EQ(rejected_family_validation.error().message, "FlatBuffer schema family mismatch");
+  auto wrong_profile = *singular;
+  ++wrong_profile.transport_profile_tag;
+  auto rejected_profile_validation = wrong_profile.validate();
+  ASSERT_FALSE(rejected_profile_validation);
+  EXPECT_EQ(rejected_profile_validation.error().message,
+            "FlatBuffer transport profile tag mismatch");
+  auto rejected_profile = wrong_profile.verified_root(package, 9U);
+  ASSERT_FALSE(rejected_profile);
+  EXPECT_EQ(rejected_profile.error().code, ErrorCode::kProtocolError);
+  singular->envelope_abi_version = kDescriptorTensorSchemaEnvelopeABIVersion + 1U;
   auto rejected_singular = singular->verified_root(package, 9U);
   ASSERT_FALSE(rejected_singular);
   EXPECT_EQ(rejected_singular.error().code, ErrorCode::kProtocolError);
@@ -690,7 +774,7 @@ TEST(Schema, StandardDescriptorTensorAdapterOwnsCommonLifecycle) {
   using Native = schema::TensorPacketT;
   using Payload = schema::DescriptorFlatBufferPayload<
       schema::TensorPacket,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::TensorPacket>>;
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::TensorPacket>>;
   struct Envelope {
     SampleMetadata metadata{};
     Payload payload{};
@@ -727,7 +811,7 @@ TEST(Schema, StandardDescriptorTensorAdapterOwnsCommonLifecycle) {
   PayloadDescriptor* const descriptor = encoded_envelope.payload.descriptor_at(0U);
   ASSERT_NE(descriptor, nullptr);
   descriptor->payload_kind = ChannelPayloadKind::kLocalBufferDescriptor;
-  descriptor->schema_id = schema_identity<Native>().id;
+  descriptor->schema_id = schema_identity<Native>().family_id;
   descriptor->byte_size = metadata.byte_size;
   descriptor->local.token = 1U;
   descriptor->local.generation = 1U;
@@ -805,7 +889,7 @@ TEST(Schema, StandardDescriptorTensorAdapterRejectsMismatchBeforeAssignment) {
   using Native = schema::TensorPacketT;
   using Payload = schema::DescriptorFlatBufferPayload<
       schema::TensorPacket,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::TensorPacket>>;
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::TensorPacket>>;
   struct Envelope {
     SampleMetadata metadata{};
     Payload payload{};
@@ -841,7 +925,7 @@ TEST(Schema, StandardDescriptorTensorAdapterRejectsMismatchBeforeAssignment) {
 TEST(Schema, StandardDescriptorTensorAdapterBoundsEncodingAndForwardsPrepareFailure) {
   using Native = schema::TensorPacketT;
   constexpr std::size_t kMetadataCapacity =
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::TensorPacket>;
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::TensorPacket>;
   using Payload = schema::DescriptorFlatBufferPayload<schema::TensorPacket, kMetadataCapacity>;
   struct Envelope {
     SampleMetadata metadata{};
@@ -1155,9 +1239,8 @@ TEST(Schema, ImageMetadataHelperRoundTrips) {
 // field missed by either the encoder or the decoder fails here rather than silently arriving as
 // zero at a consumer.
 //
-// sequence and significant_bits are exercised only here. Both are unsigned on the wire with no
-// reserved range, so unlike the fields in the two rejection tests further down there is no bad
-// value for them to refuse, and round-tripping is the whole contract.
+// The sequence is an unsigned source identifier. Precision has encoding-specific bounds and an
+// explicit unknown sentinel, covered by the validation tests below.
 TEST(Schema, ImageMetadataHelperRoundTripsTheCameraDescriptorFields) {
   // Spans the two planes below, since a Tensor that cannot contain them is rejected before any
   // field reaches the wire to be read back.
@@ -1416,6 +1499,7 @@ TEST(Schema, ImageMetadataHelperRejectsInvalidDimensions) {
 // The signed and enumerated descriptor fields can each hold a state the schema gives no meaning
 // to. The receive path copies them through verbatim, so a value rejected here is one that would
 // otherwise reach a consumer looking exactly like a measurement.
+// REQ: SENSOR-IO-010
 TEST(Schema, ImageMetadataHelperRejectsFieldsTheSchemaGivesNoMeaning) {
   const Tensor tensor = make_cpu_tensor_2x3();
   const auto rejects = [&tensor](const schema::ImageMetadataOptions& options) {
@@ -1440,7 +1524,7 @@ TEST(Schema, ImageMetadataHelperRejectsFieldsTheSchemaGivesNoMeaning) {
   // any element type is wider than 64 bits, so a larger figure describes no sample anywhere. The
   // per-encoding bounds are the subject of their own test below.
   rejects({.height = 2, .width = 3, .significant_bits = 65U});
-  rejects({.height = 2, .width = 3, .significant_bits = 255U});
+  rejects({.height = 2, .width = 3, .significant_bits = 254U});
 
   const auto admits = [&tensor](const schema::ImageMetadataOptions& options) {
     EXPECT_TRUE(schema::build_image_metadata(tensor, options).has_value());
@@ -1457,7 +1541,7 @@ TEST(Schema, ImageMetadataHelperRejectsFieldsTheSchemaGivesNoMeaning) {
 // the element type would cap the encoding at 8 and reject its own definition. Measuring against the
 // widest component any type provides, which is what this used to do, bounds nothing in practice and
 // accepts 64 bits of precision in an 8-bit component.
-// REQ: SENSOR-IO-008
+// REQ: SENSOR-IO-010
 TEST(Schema, ImageMetadataHelperBoundsSignificantBitsByTheEncodingsComponent) {
   const auto build = [](const Tensor& tensor,
                         const schema::ImageEncoding encoding,
@@ -1514,6 +1598,25 @@ TEST(Schema, ImageMetadataHelperBoundsSignificantBitsByTheEncodingsComponent) {
   // against a 16-bit element type and not against an 8-bit one.
   EXPECT_TRUE(build(make_cpu_uint16_tensor(64), schema::ImageEncoding_BAYER_RGGB, 12U).has_value());
   rejects(bytes, schema::ImageEncoding_BAYER_RGGB, 12U);
+}
+
+// REQ: SENSOR-IO-010
+TEST(Schema, ImageUnknownPrecisionRoundTripsWithoutClaimingContainerWidth) {
+  const Tensor tensor = make_cpu_byte_tensor(64);
+  for (const auto encoding : {schema::ImageEncoding_MONO8,
+                              schema::ImageEncoding_MONO16,
+                              schema::ImageEncoding_BAYER_RGGB,
+                              schema::ImageEncoding_CUSTOM}) {
+    const schema::ImageMetadataOptions options{
+        .height = 2, .width = 3, .encoding = encoding, .significant_bits = 255U};
+    auto metadata = schema::build_image_metadata(tensor, options);
+    ASSERT_TRUE(metadata) << metadata.error().message;
+    const auto* image = schema::GetImage(metadata->data());
+    ASSERT_NE(image, nullptr);
+    EXPECT_EQ(image->significant_bits(), 255U);
+    EXPECT_TRUE(schema::DescriptorFlatBufferTensorViewTraits<schema::Image>::tensor_view_metadata(
+        *metadata));
+  }
 }
 
 namespace {
@@ -1618,7 +1721,7 @@ TEST(Schema, ImageMetadataHelperRejectsPlanesTooSmallForTheEncodedGeometry) {
       [&build](
           const schema::ImageEncoding encoding, std::vector<schema::ImagePlaneLayout> layouts) {
         auto result = build(encoding, std::move(layouts));
-        ASSERT_FALSE(result.has_value());
+        ASSERT_FALSE(result.has_value()) << "encoding=" << static_cast<int>(encoding);
         EXPECT_EQ(result.error().code, ErrorCode::kInvalidArgument);
       };
 
@@ -1662,15 +1765,20 @@ TEST(Schema, ImageMetadataHelperRejectsPlanesTooSmallForTheEncodedGeometry) {
           {schema::ImagePlaneLayout{0U, 6U, 24U}, schema::ImagePlaneLayout{24U, 6U, 12U}});
 
   // Three co-sited full-frame planes, with no subsampling to reason about.
-  EXPECT_TRUE(build(schema::ImageEncoding_R8_G8_B8,
-                    {schema::ImagePlaneLayout{0U, 6U, 24U},
-                     schema::ImagePlaneLayout{24U, 6U, 24U},
-                     schema::ImagePlaneLayout{48U, 6U, 24U}})
-                  .has_value());
-  rejects(schema::ImageEncoding_R8_G8_B8,
-          {schema::ImagePlaneLayout{0U, 6U, 24U},
-           schema::ImagePlaneLayout{24U, 6U, 24U},
-           schema::ImagePlaneLayout{48U, 6U, 18U}});
+  for (const auto encoding : {schema::ImageEncoding_R8_G8_B8, schema::ImageEncoding_B8_G8_R8}) {
+    const std::vector<schema::ImagePlaneLayout> valid{
+        {0U, 6U, 24U}, {24U, 6U, 24U}, {48U, 6U, 24U}};
+    EXPECT_TRUE(build(encoding, valid).has_value());
+    for (std::size_t plane = 0; plane < valid.size(); ++plane) {
+      SCOPED_TRACE(plane);
+      auto undersized = valid;
+      undersized[plane] = schema::ImagePlaneLayout{valid[plane].offset_bytes(), 6U, 23U};
+      rejects(encoding, undersized);
+      auto short_row = valid;
+      short_row[plane] = schema::ImagePlaneLayout{valid[plane].offset_bytes(), 5U, 24U};
+      rejects(encoding, short_row);
+    }
+  }
 
   // A generously padded layout stays admissible: the minimums are lower bounds, and a producer
   // aligning its rows or reserving trailing padding owes no justification for either.
@@ -2034,7 +2142,7 @@ TEST(Schema, ImageMetadataHelperRejectsVectorizedElementsForOrganizedEncodings) 
 namespace {
 
 using ReceivedImagePayload = schema::DescriptorFlatBufferPayload<
-    schema::Image, schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>;
+    schema::Image, schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>>;
 
 /// @brief Wire layout the descriptor-backed Image port type ops encode into.
 struct ReceivedImageEnvelope {
@@ -2113,12 +2221,132 @@ void splice_forged_metadata(const std::span<std::byte> wire,
 
 }  // namespace
 
+// REQ: SENSOR-IO-010
+TEST(Schema, ImageRGB16AndRGBA16ValidateAndRoundTrip) {
+  const auto* ops = detail::runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(ops, nullptr);
+  for (const auto encoding : {schema::ImageEncoding_RGB16, schema::ImageEncoding_RGBA16}) {
+    SCOPED_TRACE(schema::EnumNameImageEncoding(encoding));
+    const std::int64_t frame_bytes = encoding == schema::ImageEncoding_RGB16 ? 36 : 48;
+    for (const auto& tensor :
+         {make_cpu_uint16_tensor(frame_bytes), make_cpu_byte_tensor(frame_bytes)}) {
+      SCOPED_TRACE(tensor.dtype().bits);
+      for (const std::uint8_t precision : {0, 12, 16, 255}) {
+        SCOPED_TRACE(precision);
+        schema::ImageMetadataOptions options{
+            .height = 2, .width = 3, .encoding = encoding, .significant_bits = precision};
+        const auto built = schema::build_image_metadata(tensor, options);
+        ASSERT_TRUE(built) << runtime_error_message(built.error());
+        const auto parsed = schema::parse_image_metadata(*built);
+        ASSERT_TRUE(parsed);
+        EXPECT_EQ(parsed->image->encoding(), encoding);
+        EXPECT_EQ(parsed->image->significant_bits(), precision);
+
+        schema::ImageT source{};
+        source.height = 2;
+        source.width = 3;
+        source.encoding = encoding;
+        source.significant_bits = precision;
+        source.data = std::make_shared<Tensor>(tensor);
+        const SampleMetadata metadata{.sequence = 11U,
+                                      .byte_size = static_cast<std::uint64_t>(frame_bytes)};
+        alignas(std::max_align_t) std::array<std::byte, sizeof(ReceivedImageEnvelope)> wire{};
+        const auto encoded = ops->encode_descriptor_tensor_sample(&source, metadata, 1U, wire);
+        ASSERT_TRUE(encoded) << runtime_error_message(encoded.error());
+        alignas(Sample<schema::ImageT>) std::array<std::byte, sizeof(Sample<schema::ImageT>)>
+            storage{};
+        ASSERT_TRUE(ops->prepare_sample_storage(storage.data()));
+        const auto assigned =
+            ops->assign_descriptor_tensor_sample(storage.data(),
+                                                 wire,
+                                                 tensor,
+                                                 detail::DescriptorTensorWireMetadata{metadata},
+                                                 detail::DescriptorTensorSampleMetadata{metadata});
+        EXPECT_TRUE(assigned);
+        const auto* sample = reinterpret_cast<const Sample<schema::ImageT>*>(storage.data());
+        EXPECT_EQ(sample->data.encoding, encoding);
+        EXPECT_EQ(sample->data.significant_bits, precision);
+        EXPECT_EQ(sample->data.height, 2);
+        EXPECT_EQ(sample->data.width, 3);
+        if (sample->data.data) {
+          EXPECT_EQ(sample->data.data->dtype().bits, tensor.dtype().bits);
+        } else {
+          ADD_FAILURE() << "Received image has no Tensor";
+        }
+        ops->destroy_sample(storage.data());
+      }
+    }
+  }
+}
+
+// REQ: SENSOR-IO-010
+TEST(Schema, ImageRGB16AndRGBA16RejectInvalidStorageAndMetadata) {
+  const auto* ops = detail::runtime_port_type_ops<schema::ImageT>();
+  ASSERT_NE(ops, nullptr);
+  for (const auto encoding : {schema::ImageEncoding_RGB16, schema::ImageEncoding_RGBA16}) {
+    SCOPED_TRACE(schema::EnumNameImageEncoding(encoding));
+    const std::int64_t frame_bytes = encoding == schema::ImageEncoding_RGB16 ? 36 : 48;
+    const auto rejects = [&](const Tensor& tensor, const schema::ImageMetadataOptions& options) {
+      const auto built = schema::build_image_metadata(tensor, options);
+      ASSERT_FALSE(built);
+      EXPECT_EQ(built.error().code, ErrorCode::kInvalidArgument);
+
+      // A peer may bypass the authoring validator, so exercise the same facts on receive.
+      schema::ImageT source{};
+      source.height = 1;
+      source.width = 1;
+      source.encoding = schema::ImageEncoding_CUSTOM;
+      source.data = std::make_shared<Tensor>(tensor);
+      const SampleMetadata metadata{.sequence = 11U};
+      alignas(std::max_align_t) std::array<std::byte, sizeof(ReceivedImageEnvelope)> wire{};
+      ASSERT_TRUE(ops->encode_descriptor_tensor_sample(&source, metadata, 1U, wire));
+      splice_forged_metadata(wire,
+                             forge_image_metadata(tensor,
+                                                  {.height = options.height,
+                                                   .width = options.width,
+                                                   .encoding = options.encoding,
+                                                   .significant_bits = options.significant_bits,
+                                                   .plane_layouts = options.plane_layouts}));
+      alignas(Sample<schema::ImageT>) std::array<std::byte, sizeof(Sample<schema::ImageT>)>
+          storage{};
+      ASSERT_TRUE(ops->prepare_sample_storage(storage.data()));
+      const auto assigned =
+          ops->assign_descriptor_tensor_sample(storage.data(),
+                                               wire,
+                                               tensor,
+                                               detail::DescriptorTensorWireMetadata{metadata},
+                                               detail::DescriptorTensorSampleMetadata{metadata});
+      EXPECT_FALSE(assigned);
+      if (!assigned) {
+        EXPECT_EQ(assigned.error().code, ErrorCode::kProtocolError);
+      }
+      const auto* sample = reinterpret_cast<const Sample<schema::ImageT>*>(storage.data());
+      EXPECT_EQ(sample->data.height, 0);
+      EXPECT_EQ(sample->metadata.sequence, 0U);
+      ops->destroy_sample(storage.data());
+    };
+    const schema::ImageMetadataOptions options{.height = 2, .width = 3, .encoding = encoding};
+    rejects(make_cpu_byte_tensor(frame_bytes - 1), options);
+    rejects(make_cpu_uint16_tensor(frame_bytes - 2), options);
+    rejects(make_cpu_tensor_2x3(), {.height = 1, .width = 1, .encoding = encoding});
+    rejects(make_cpu_lane_tensor(frame_bytes, 2), options);
+    auto invalid = options;
+    invalid.significant_bits = 17;
+    rejects(make_cpu_uint16_tensor(frame_bytes), invalid);
+    rejects(make_cpu_byte_tensor(frame_bytes), invalid);
+    invalid = options;
+    invalid.plane_layouts = {schema::ImagePlaneLayout{
+        0U, static_cast<std::uint32_t>(frame_bytes / 2), static_cast<std::uint64_t>(frame_bytes)}};
+    rejects(make_cpu_uint16_tensor(frame_bytes), invalid);
+  }
+}
+
 // FlatBuffers verification proves an envelope is structurally an Image and says nothing about
 // whether its values mean anything, so the receive path has to take the same semantic verdict the
 // encoder takes. Each case below is a state a Channel or external producer can put on the wire and
 // no consumer can interpret, and each has to be refused before the sample slot is touched: a
 // half-updated slot is one a consumer reads as a measurement.
-// REQ: SENSOR-IO-008
+// REQ: SENSOR-IO-010
 TEST(Schema, ImageReceivePathRejectsDescriptorFieldsTheSchemaGivesNoMeaning) {
   const detail::RuntimePortTypeOps* const ops = detail::runtime_port_type_ops<schema::ImageT>();
   ASSERT_NE(ops, nullptr);

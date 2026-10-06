@@ -1,5 +1,9 @@
 coverage>=6.5,<8
+gcovr>=8.0,<9.0
 pytest>=7.4.3,<9.0
 pytest-cov>=4.1.0,<7.0
 pytest-mock>=3.12.0,<4.0
 pyyaml>=6.0,<7.0
+mypy==2.3.1
+pyright[nodejs]==1.1.411
+ty==0.0.78

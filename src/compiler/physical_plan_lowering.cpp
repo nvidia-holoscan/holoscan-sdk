@@ -52,7 +52,8 @@ PhysicalPlanLoweringResult lower_physical_plan(
     bool force_holomq_process_local_inline, bool force_holomq_process_local_event_wake,
     std::span<const TensorByteSpanDerivationPlanRecord> tensor_byte_span_derivations,
     std::span<const ResolvedQueueSizing> resolved_queue_sizings,
-    std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes) {
+    std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes,
+    CudaComputeStreamPolicy stream_policy) {
   PhysicalPlanLoweringResult result;
   auto topology = lower_physical_topology(result,
                                           snapshot,
@@ -193,9 +194,10 @@ PhysicalPlanLoweringResult lower_physical_plan(
 
   validate_lifecycle_queue_geometry(result, snapshot, queue_sizing_recipes);
 
-  // Aggregate device-backed pools by process/device only after final cover validation. The
-  // accepted partition count is intentionally absent from the key and capacity equations.
-  lower_device_resources(result, plan_generation, process_placements);
+  // Aggregate device-backed pools only after final cover validation. The stream policy may change
+  // compute-stream ownership, but partition count remains absent from every capacity equation.
+  lower_device_resources(
+      result, plan_generation, process_placements, execution_partitions, stream_policy);
   std::vector<std::pair<std::uint64_t, DeviceId>> unconsumed_device_bindings;
   unconsumed_device_bindings.reserve(device_by_port.size());
   for (const auto& [port, device] : device_by_port) {

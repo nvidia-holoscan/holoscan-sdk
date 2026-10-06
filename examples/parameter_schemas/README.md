@@ -168,7 +168,7 @@ aggregate stays on generation 0 for the whole run — but the markers are far
 from dead code. Their engines ship today behind explicit opt-ins: a plan
 compiled with the runtime-updates policy can live-tune `gain` (see the
 `runtime_params` example), Core snapshot capture/projection redacts the value
-of `auth_token`, and the default-on optional `params_io` component persists
+of `auth_token`, and the core-bundled `params_io` library persists
 already-projected snapshots through `params::save(...)`/`params::load(...)`.
 The external catalog exposes `gain` as a writable tuning field only because it
 is also runtime-mutable, public, and non-sensitive. One caution stands:

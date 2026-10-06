@@ -45,6 +45,13 @@ TEST(ExecutionPlanIdentity, RendersChannelAndTensorIdentitiesFromCompleteTypedKe
             "tensor-allocator.17.process.31.device.5");
   EXPECT_EQ(tensor_compute_stream_id(generation, process_group, DeviceId{5}),
             "tensor-stream.17.process.31.device.5");
+  EXPECT_EQ(tensor_partition_compute_stream_id(
+                generation, process_group, DeviceId{5}, ExecutionPartitionId{7U}),
+            "tensor-stream.17.process.31.device.5.partition.7");
+  EXPECT_NE(tensor_partition_compute_stream_id(
+                generation, ProcessGroupId{31U}, DeviceId{5}, ExecutionPartitionId{7U}),
+            tensor_partition_compute_stream_id(
+                generation, ProcessGroupId{32U}, DeviceId{5}, ExecutionPartitionId{7U}));
 }
 
 TEST(ExecutionPlanIdentity, RendersGreenContextDescendantsFromOwningIdentities) {

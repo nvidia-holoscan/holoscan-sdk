@@ -34,6 +34,7 @@ using LifecycleTargetRecords = std::span<const LifecycleRestartTargetPlanRecord>
 using LifecycleClosureRecords = std::span<const LifecycleRestartClosurePlanRecord>;
 using LifecycleMutableFieldRecords = std::span<const LifecycleMutableFieldPlanRecord>;
 using LifecycleCapacity = std::optional<LifecycleTransactionCapacityPlanRecord>;
+using OperatorHostRecords = std::span<const OperatorHostPlanRecord>;
 using OperatorParameterRecords = std::span<const OperatorParameterPlanRecord>;
 using ParameterFieldRecords = std::span<const ParameterFieldPlanRecord>;
 using ParameterDerivedTermRecords = std::span<const ParameterDerivedTermPlanRecord>;
@@ -97,6 +98,19 @@ DeploymentBinding& DeploymentBinding::bind_thread_placement(std::string_view par
   return *this;
 }
 
+DeploymentBinding& DeploymentBinding::bind_support_thread_affinity(SupportThreadRole role,
+                                                                   CPUAffinity affinity) {
+  support_thread_affinities_.push_back(SupportThreadAffinityBinding{
+      .role = role,
+      .placement =
+          ThreadPlacement{
+              .affinity = std::move(affinity),
+              .probe_failure_policy = ProbeFailurePolicy::kFailAdmission,
+          },
+  });
+  return *this;
+}
+
 DeploymentBinding& DeploymentBinding::bind_cuda_green_context(std::string_view partition_name,
                                                               CudaGreenContextPlacement placement) {
   cuda_green_contexts_.push_back(PartitionCudaGreenContextBinding{
@@ -108,9 +122,8 @@ DeploymentBinding& DeploymentBinding::bind_cuda_green_context(std::string_view p
 
 expected<CudaGreenContextCapability, Error> query_cuda_green_context_capability(DeviceId device) {
   if (!device.valid()) {
-    return make_unexpected(
-        Error{ErrorCode::kInvalidArgument,
-              "CUDA Green Context capability query requires an explicit nonnegative device"});
+    return make_unexpected(Error{ErrorCode::kInvalidArgument,
+                                 "CUDA_GREEN_CONTEXT_INVALID_PLACEMENT reason=device_invalid"});
   }
 #if HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE
   auto driver = cuda_execution_detail::cuda_green_context_driver();
@@ -133,8 +146,7 @@ expected<CudaGreenContextCapability, Error> query_cuda_green_context_capability(
   };
 #else
   return make_unexpected(
-      Error{ErrorCode::kFailure,
-            "CUDA Green Context capability query requires a CUDA 12.4 or newer toolkit"});
+      Error{ErrorCode::kFailure, "CUDA_GREEN_CONTEXT_CAPABILITY_UNSUPPORTED reason=toolkit"});
 #endif
 }
 
@@ -268,7 +280,7 @@ void ExecutionPlan::require_no_errors() const {
     throw CompileError{"EXECUTION_PLAN_EMPTY"};
   }
   if (!ok()) {
-    throw CompileError{"EXECUTION_PLAN_REJECTED"};
+    throw CompileError{"EXECUTION_PLAN_REJECTED: " + format_diagnostics(diagnostics(), graph())};
   }
 }
 
@@ -300,6 +312,10 @@ std::span<const VertexId> ExecutionPartitionView::members() const noexcept {
 
 std::span<const std::string> ExecutionPartitionView::operator_paths() const noexcept {
   return state_->execution_partitions[index_].operator_paths;
+}
+
+std::span<const GraphId> ExecutionPartitionView::graph_members() const noexcept {
+  return state_->execution_partitions[index_].graph_members;
 }
 
 std::uint32_t ExecutionPartitionView::execution_lane() const noexcept {
@@ -471,6 +487,11 @@ std::span<const PartitionPlacementPlanRecord> ExecutionPlan::partition_placement
   return plan_span(state_, &detail::ExecutionPlanState::partition_placements);
 }
 
+std::span<const SupportThreadAffinityPlanRecord> ExecutionPlan::support_thread_affinities()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::support_thread_affinities);
+}
+
 std::span<const ExecutionLanePlanRecord> ExecutionPlan::execution_lanes() const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::execution_lanes);
 }
@@ -511,10 +532,6 @@ std::span<const HardFloorContributorPlanRecord> ExecutionPlan::hard_floor_contri
 
 std::span<const QueueSizingRecipePlanRecord> ExecutionPlan::queue_sizing_recipes() const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::queue_sizing_recipes);
-}
-
-std::span<const SchemaPackagePlanRecord> ExecutionPlan::schema_packages() const noexcept {
-  return plan_span(state_, &detail::ExecutionPlanState::schema_packages);
 }
 
 std::span<const InterfacePortBindingPlanRecord> ExecutionPlan::interface_port_bindings()
@@ -597,6 +614,51 @@ const TensorByteSpanDerivationPlanRecord* ExecutionPlan::find_tensor_byte_span_d
   return match;
 }
 
+std::span<const TensorMemoryKindDerivationPlanRecord>
+ExecutionPlan::tensor_memory_kind_derivations() const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::tensor_memory_kind_derivations);
+}
+
+const TensorMemoryKindDerivationPlanRecord* ExecutionPlan::find_tensor_memory_kind_derivation(
+    std::string_view operator_path, std::string_view output_name,
+    std::optional<std::uint16_t> field_id,
+    std::optional<std::uint16_t> tensor_index) const noexcept {
+  if (!state_ || operator_path.empty() || output_name.empty() ||
+      field_id.has_value() != tensor_index.has_value()) {
+    return nullptr;
+  }
+  const auto owner = std::ranges::find(
+      state_->operator_parameters, operator_path, &OperatorParameterPlanRecord::operator_path);
+  if (owner == state_->operator_parameters.end()) {
+    return nullptr;
+  }
+  const auto factory = std::ranges::find(state_->executable_factories.operators,
+                                         owner->owner.id,
+                                         &detail::ExecutableOperatorFactoryRecord::operator_id);
+  if (factory == state_->executable_factories.operators.end()) {
+    return nullptr;
+  }
+  const auto output = std::ranges::find_if(state_->ports, [&](const auto& candidate) {
+    return candidate.owner == factory->vertex && candidate.direction == PortDirection::kOutput &&
+           candidate.local_name == output_name;
+  });
+  if (output == state_->ports.end()) {
+    return nullptr;
+  }
+  const TensorMemoryKindDerivationPlanRecord* match{};
+  for (const auto& candidate : state_->tensor_memory_kind_derivations) {
+    if (candidate.output != output->id ||
+        (field_id && (candidate.field_id != field_id || candidate.tensor_index != tensor_index))) {
+      continue;
+    }
+    if (match != nullptr) {
+      return nullptr;
+    }
+    match = &candidate;
+  }
+  return match;
+}
+
 std::span<const TensorFieldAllocationPlanRecord> ExecutionPlan::tensor_field_allocations()
     const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::tensor_field_allocations);
@@ -634,6 +696,16 @@ ExecutionPlan::cuda_green_context_assignments() const noexcept {
 
 std::span<const CudaComputeStreamPlanRecord> ExecutionPlan::cuda_compute_streams() const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::cuda_compute_streams);
+}
+
+CudaComputeStreamPolicy ExecutionPlan::cuda_compute_stream_policy() const noexcept {
+  return state_ ? state_->cuda_compute_stream_policy
+                : CudaComputeStreamPolicy::kPerExecutionPartition;
+}
+
+std::span<const OperatorCudaStreamBindingPlanRecord> ExecutionPlan::operator_cuda_stream_bindings()
+    const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::operator_cuda_stream_bindings);
 }
 
 std::span<const TensorInlineRecordPlanRecord> ExecutionPlan::tensor_inline_records()
@@ -773,6 +845,10 @@ LifecycleCapacity ExecutionPlan::lifecycle_transaction_capacity() const noexcept
 
 OperatorParameterRecords ExecutionPlan::operator_parameters() const noexcept {
   return plan_span(state_, &detail::ExecutionPlanState::operator_parameters);
+}
+
+OperatorHostRecords ExecutionPlan::operator_hosts() const noexcept {
+  return plan_span(state_, &detail::ExecutionPlanState::operator_hosts);
 }
 
 ParameterFieldRecords ExecutionPlan::parameter_fields() const noexcept {

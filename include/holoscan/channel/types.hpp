@@ -13,6 +13,7 @@
 #include <holoscan/core/schema_identity.hpp>
 #include <holoscan/memory/memory_storage_type.hpp>
 #include <holoscan/memory/tensor_storage.hpp>
+#include <holoscan/schema/flatbuffer_schema_traits.hpp>
 
 #include <array>
 #include <chrono>
@@ -48,7 +49,7 @@ struct ChannelAttachOptions {
 
 namespace schema {
 
-template <typename Root, std::size_t Capacity>
+template <OrdinaryFlatBufferSchemaRoot Root, std::size_t Capacity>
 struct InlineFlatBufferPayload;
 
 template <typename Root, std::size_t MetadataCapacity, std::size_t MaxTensors = 1U>

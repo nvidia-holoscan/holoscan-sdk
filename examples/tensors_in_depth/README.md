@@ -101,11 +101,12 @@ nonzero exit code means a verification step failed.
 ## Expected output
 
 With a CUDA device (frame counts, staged byte values, and dropped frame
-numbers vary with scheduling; the *checks* — shared stream identity, uniform
+numbers vary with scheduling; the *checks* — every operator receiving a real
+runtime stream distinct from the inspector's private stream, uniform
 strictly-increasing staged bytes, `kResourceExhausted` codes — do not):
 
 ```text
-shared runtime stream: producer == device consumer (one per process group + device)
+runtime streams: producer != device consumer (separate execution partitions), one per active partition and device
 device consumer: 6 frames received pre-ordered, 0 synchronization calls
 inspector: staged bytes 1 2 3 (uniform, increasing) via copy_to_host_async + one final sync
 inspector: private release stream registered with the pool
@@ -153,8 +154,12 @@ the producer's writes. The guide's rule is reproduced here in behavior:
 **never call `cudaStreamSynchronize` on the hot path** — a blocking sync in
 `compute()` serializes the pipeline and buys no additional correctness. The
 example also verifies the stream model itself: producer and device consumer
-record the same `cuda_stream()` handle, because 5.x materializes one
-non-blocking stream per (process group, device) pair.
+record distinct runtime-owned `cuda_stream()` handles because they occupy
+separate execution partitions. Under the default policy, operators share a
+stream only within the same process group, device, and execution partition;
+the runtime preserves Tensor readiness when an edge crosses streams. Selecting
+`CudaComputeStreamPolicy::kSharedProcessDevice` explicitly restores one
+ordinary stream per process group and device.
 
 ### Why the inspection tap is depth-one drop-oldest, on its own stream, with one final sync
 
@@ -169,10 +174,27 @@ staged with `copy_to_host_async` on a private non-blocking stream, and the
 tensor's `set_deallocation_stream(private_stream)` registers that stream for
 release tracking — fanout release behavior made visible: the slot returns to
 the pool only after *every* consumer's release work, including this pending
-copy, completes. The single `cudaStreamSynchronize` in the whole program runs
-once, after the last staged copy, at the edge — host access is the entire
-blocking surface of the tensor data path, and it is budgeted off the
-steady-state path.
+copy, completes. On the normal path, `cudaStreamSynchronize` runs once, after
+the last staged copy, at the edge. Host inspection stays off the steady-state
+path.
+
+Release-stream registration borrows the stream. `InspectionResources` in
+`main()` owns the private stream and staging buffers until after session
+cleanup has released Tensor handles and enqueued deferred deallocation.
+Destroying the stream in the operator destructor would be too early. If the
+run ends before the final inspection synchronization, the resource owner
+synchronizes during cleanup before releasing the buffers and stream.
+
+### Retry transient capacity refusals without blocking
+
+The blocking device edge preserves accepted samples; `emit()` still refuses
+immediately with `kBackpressured` when its queue is full. During streaming,
+the producer retries the same logical frame on a later clock tick after
+`kBackpressured` or an allocation's `kResourceExhausted`. A Tensor loan is
+consumed by every terminal emit attempt, so each retry allocates and writes a
+fresh loan using the current activation's stream. The frame sequence advances
+only after successful publication. Other errors, including partial or uncertain
+publication, remain fatal.
 
 ### Why exhaustion drops instead of waiting
 
@@ -193,7 +215,7 @@ section for those rules.
 
 | Concern | HSDK 4.x | HSDK 5.x (this example) |
 |---|---|---|
-| Stream assignment | One unique internal stream per operator; `receive_cuda_stream(port)` | One shared stream per process group + device; `ExecutionContext::cuda_stream()` |
+| Stream assignment | One unique internal stream per operator; `receive_cuda_stream(port)` | One stream per active execution partition + device; `ExecutionContext::cuda_stream()` |
 | Producer/consumer ordering | Event record + stream wait on every hop, visible to the author | Runtime records readiness at `commit()` and inserts the consumer wait; received tensors arrive pre-ordered |
 | Device selection | Allocator/operator parameter at runtime | `bind_tensor_output_device` at compile; never inferred |
 | Release tracking | Buffer not stream-aware; one release path | One release stream per fanout consumer, registered via `set_deallocation_stream`, bounded caps |
@@ -201,8 +223,11 @@ section for those rules.
 
 Fewer streams means fewer cross-stream fences: in 4.x a chain of three
 operators paid an event record and wait at every hop just to bridge three
-private streams; in 5.x those operators usually share one stream, and the
-author never manages ordering by hand.
+private streams; in 5.x operators that share an execution partition share one
+stream and need no fence at all, while a partition boundary keeps exactly one
+runtime-inserted fence. Either way the author never manages ordering by hand.
+Selecting `CudaComputeStreamPolicy::kSharedProcessDevice` in `CompileOptions`
+restores one ordinary stream per process group and device.
 
 ## What's next
 
@@ -223,7 +248,7 @@ author never manages ordering by hand.
 | `loan->write(context.cuda_stream())` | Open a stream-ordered device write phase (runtime stream only) |
 | `std::move(*writer).commit()` | Record the readiness event — never syncs, never publishes |
 | `emit(std::move(*loan), EmitOptions{.capture_time})` | Explicit publication, separate from commit |
-| `ExecutionContext::cuda_stream()` | The shared runtime compute stream (one per process group + device) |
+| `ExecutionContext::cuda_stream()` | This operator's runtime compute stream (one per active execution partition + device) |
 | `has_readiness_stream_contract()` | Whether a received tensor can be stream-ordered at all |
 | `copy_to_host_async(dst, bytes, stream)` | Enqueue readiness-fenced D2H staging on a caller-owned stream |
 | `set_deallocation_stream(stream)` | Register a consumer release stream gating pool-slot recycle |

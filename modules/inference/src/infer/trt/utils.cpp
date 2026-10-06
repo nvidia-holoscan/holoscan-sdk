@@ -15,6 +15,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace holoscan {
@@ -176,7 +177,8 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
     // size. If some intermediate input is not dynamic user must provide default profile for that
     // in the trt profile in the parameter set.
 
-    if (num_of_opt_profiles != 1 && num_of_opt_profiles != network->getNbInputs()) {
+    if (num_of_opt_profiles != 1 &&
+        std::cmp_not_equal(num_of_opt_profiles, network->getNbInputs())) {
       HOLOSCAN_LOG_ERROR(
           "Size of TRT optimization profile must either be 1 or equal to the number of inputs.");
       return false;

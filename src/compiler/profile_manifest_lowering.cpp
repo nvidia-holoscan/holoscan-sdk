@@ -207,7 +207,7 @@ void add_partition_and_lane_requirements(ExecutionPlanState& state) {
                         LifecycleStage::kStart,
                         "holoscan.compile.thread_placement.validation/v1");
   }
-  if (!state.partition_placements.empty()) {
+  if (!state.partition_placements.empty() || !state.support_thread_affinities.empty()) {
     add_capability(manifest,
                    "holoscan.runtime.thread_placement.apply_readback",
                    "holoscan.runtime.thread_placement.apply_readback/v1",
@@ -409,6 +409,17 @@ void add_physical_requirements(ExecutionPlanState& state) {
                         "holoscan.runtime.tensor_output_pool/v1",
                         pool.materialize_before,
                         "holoscan.compile.tensor_pool_plan/v1");
+  }
+  std::map<std::string, std::uint64_t> cuda_graph_fixed_allocations;
+  for (const auto& region : state.cuda_graph_execution_regions) {
+    for (const auto& buffer : region.buffers) {
+      cuda_graph_fixed_allocations.emplace(buffer.fixed_allocation_id,
+                                           buffer.aggregate_byte_capacity);
+    }
+  }
+  for (const auto& [allocation_id, aggregate_bytes] : cuda_graph_fixed_allocations) {
+    add_capacity(manifest, allocation_id, "active_slots", 1U);
+    add_capacity(manifest, allocation_id, "aggregate_bytes", aggregate_bytes);
   }
   for (const auto& provider : state.provider_allocation_plans) {
     if (provider.disposition != PlanDisposition::kAccepted ||

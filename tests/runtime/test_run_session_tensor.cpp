@@ -51,6 +51,14 @@ namespace {
 
 using namespace std::chrono_literals;
 
+template <typename T>
+[[nodiscard]] const T* optional_value(const std::optional<T>& value) noexcept {
+  if (!value.has_value()) {
+    return nullptr;
+  }
+  return std::addressof(value.value());
+}
+
 // Runtime-materializing tests publish into the host-wide HoloMQ namespace. Give each invocation
 // its own graph identity so concurrent CTest runs and parallel SDK containers cannot derive the
 // same Channel service names.
@@ -462,51 +470,61 @@ TEST(RunSessionTest, ComputeCallsZeroPublishesRequiredCatalogTensorEndOfStreamWi
 
 template <typename SourceOperator>
 [[nodiscard]] ExecutionPlan make_runtime_catalog_terminal_tensor_plan(
-    const std::string& graph_name, const std::string& endpoint_name) {
+    const std::string& graph_name, const std::span<const std::string> endpoint_names) {
   Graph graph{graph_name};
   const ClockKey runtime_clock = graph.add_clock<RealtimeClock>("runtime-clock");
   graph.set_default_clock(runtime_clock);
   const auto source = graph.op<SourceOperator>("source");
 
-  TopicOptions topic_options;
-  topic_options.endpoint_name = endpoint_name;
-  topic_options.attach = TopicAttachPolicy{
-      .peer = PeerRequirement::kRequired,
-      .max_wait = 10s,
-  };
-  topic_options.bounds.subscriber = SubscriberEndpointBounds{
-      .queue_depth = 1U,
-      .max_borrowed_samples = 1U,
-  };
-  topic_options.tensor = TensorBoundaryContract{
-      .representation = {.memory_kind = MemoryKind::kHost,
-                         .dtype = DLDataType{kDLUInt, 64U, 1U},
-                         .rank = 0U,
-                         .strides = TensorStridePolicy::kContiguousOnly},
-      .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
-      .transfer =
-          TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
-  };
-  auto exported = graph.export_topic<Tensor>("holomq://" + endpoint_name, std::move(topic_options));
-  graph.add_flow(source->output,
-                 exported.input(),
-                 ConnectionOptions{.queue_policy = QueuePolicy::kBlocking, .queue_depth = 1U});
+  for (const std::string& endpoint_name : endpoint_names) {
+    TopicOptions topic_options;
+    topic_options.endpoint_name = endpoint_name;
+    topic_options.attach = TopicAttachPolicy{
+        .peer = PeerRequirement::kRequired,
+        .max_wait = 10s,
+    };
+    topic_options.bounds.subscriber = SubscriberEndpointBounds{
+        .queue_depth = 1U,
+        .max_borrowed_samples = 1U,
+    };
+    topic_options.tensor = TensorBoundaryContract{
+        .representation = {.memory_kind = MemoryKind::kHost,
+                           .dtype = DLDataType{kDLUInt, 64U, 1U},
+                           .rank = 0U,
+                           .strides = TensorStridePolicy::kContiguousOnly},
+        .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
+        .transfer =
+            TensorTransferPolicy{.foreign_emit_policy = InterfaceTensorEmitPolicy::kCopyIfNeeded},
+    };
+    auto exported =
+        graph.export_topic<Tensor>("holomq://" + endpoint_name, std::move(topic_options));
+    graph.add_flow(source->output,
+                   exported.input(),
+                   ConnectionOptions{.queue_policy = QueuePolicy::kBlocking, .queue_depth = 1U});
+  }
   return compile(graph);
+}
+
+template <typename SourceOperator>
+[[nodiscard]] ExecutionPlan make_runtime_catalog_terminal_tensor_plan(
+    const std::string& graph_name, const std::string& endpoint_name) {
+  return make_runtime_catalog_terminal_tensor_plan<SourceOperator>(
+      graph_name, std::span<const std::string>{&endpoint_name, 1U});
 }
 
 // A terminal catalog close has no authority while an unpublished direct Tensor loan remains
 // retained. The public subscriber must observe neither EOS nor completion before that loan drops.
 // REQ: CHAN-136
 // REQ: RUNTIME-050
-TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedUnpublishedOutputLoan) {
+TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedOutputLoanAcrossFanout) {
   RuntimeCatalogTensorTerminalProbeState::reset();
   const std::string graph_name =
       unique_runtime_graph_name("runtime-catalog-retained-unpublished-tensor-loan");
-  const std::string endpoint_name = graph_name + "-topic";
+  const std::array endpoint_names{graph_name + "-first", graph_name + "-second"};
   const auto counters = std::make_shared<detail::RuntimePhaseCounters>();
   const ExecutionPlan compiled =
       make_runtime_catalog_terminal_tensor_plan<RuntimeCatalogRetainedTensorLoanSourceOperator>(
-          graph_name, endpoint_name);
+          graph_name, endpoint_names);
   ASSERT_TRUE(compiled.ok()) << compiled.json();
   const ExecutionPlan plan = detail::RuntimeTestPlanAccess::with_phase_counters(compiled, counters);
   ASSERT_TRUE(plan.ok()) << plan.json();
@@ -527,22 +545,27 @@ TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedUnpublishedOutputLo
   } const cleanup{&session};
 
   const bool source_started = RuntimeCatalogTensorTerminalProbeState::wait_for_start();
-  auto subscriber = [&]() -> expected<ChannelSubscriber<Tensor>, Error> {
+  const auto create_subscriber =
+      [&](const std::string& endpoint_name) -> expected<ChannelSubscriber<Tensor>, Error> {
     if (!source_started) {
       return make_unexpected(Error{ErrorCode::kTimeout});
     }
     return client_runtime->create_subscriber<Tensor>(plan.endpoint_catalog(), endpoint_name);
-  }();
-  if (!source_started || !subscriber) {
+  };
+  auto first_subscriber = create_subscriber(endpoint_names[0]);
+  auto second_subscriber = create_subscriber(endpoint_names[1]);
+  if (!source_started || !first_subscriber || !second_subscriber) {
     session.request_stop();
   }
   RuntimeCatalogTensorTerminalProbeState::release_start();
-  if (!source_started || !subscriber) {
+  if (!source_started || !first_subscriber || !second_subscriber) {
     session.wait();
   }
 
   ASSERT_TRUE(source_started);
-  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+  ASSERT_TRUE(first_subscriber) << runtime_error_message(first_subscriber.error());
+  ASSERT_TRUE(second_subscriber) << runtime_error_message(second_subscriber.error());
+  const std::array subscribers{&*first_subscriber, &*second_subscriber};
   ASSERT_TRUE(RuntimeCatalogTensorTerminalProbeState::wait_for_loan());
   ASSERT_TRUE(wait_for_runtime_phase_count(
       counters, detail::RuntimePhaseCounter::kActivationsCompleted, 1U));
@@ -555,35 +578,47 @@ TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedUnpublishedOutputLo
   bool premature_terminal{};
   const auto no_eos_deadline = std::chrono::steady_clock::now() + 100ms;
   while (std::chrono::steady_clock::now() < no_eos_deadline) {
-    auto observed = subscriber->receive_sample();
-    if (!observed && observed.error().code == ErrorCode::kClosed) {
-      premature_terminal = true;
-      break;
+    for (ChannelSubscriber<Tensor>* const subscriber : subscribers) {
+      auto observed = subscriber->receive_sample();
+      if (!observed && observed.error().code == ErrorCode::kClosed) {
+        premature_terminal = true;
+        break;
+      }
+      EXPECT_FALSE(observed);
+      if (!observed) {
+        EXPECT_EQ(observed.error().code, ErrorCode::kNotReady);
+      }
     }
-    EXPECT_FALSE(observed);
-    if (!observed) {
-      EXPECT_EQ(observed.error().code, ErrorCode::kNotReady);
+    if (premature_terminal) {
+      break;
     }
     std::this_thread::sleep_for(1ms);
   }
   EXPECT_FALSE(premature_terminal);
-  EXPECT_EQ(
-      detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber), 0U);
+  for (ChannelSubscriber<Tensor>* const subscriber : subscribers) {
+    EXPECT_EQ(
+        detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber),
+        0U);
+  }
   EXPECT_TRUE(session.is_running());
   EXPECT_EQ(session.termination(), RunTermination::kRunning);
 
   RuntimeCatalogTensorTerminalProbeState::release_loan();
-  expected<Sample<Tensor>, Error> terminal = make_unexpected(Error{ErrorCode::kNotReady});
-  const auto terminal_deadline = std::chrono::steady_clock::now() + 5s;
-  while (!terminal && terminal.error().code == ErrorCode::kNotReady &&
-         std::chrono::steady_clock::now() < terminal_deadline) {
-    terminal = subscriber->receive_sample();
-    if (!terminal) {
-      std::this_thread::sleep_for(1ms);
+  bool observed_every_terminal = true;
+  for (ChannelSubscriber<Tensor>* const subscriber : subscribers) {
+    expected<Sample<Tensor>, Error> terminal = make_unexpected(Error{ErrorCode::kNotReady});
+    const auto terminal_deadline = std::chrono::steady_clock::now() + 5s;
+    while (!terminal && terminal.error().code == ErrorCode::kNotReady &&
+           std::chrono::steady_clock::now() < terminal_deadline) {
+      terminal = subscriber->receive_sample();
+      if (!terminal) {
+        std::this_thread::sleep_for(1ms);
+      }
     }
+    observed_every_terminal =
+        observed_every_terminal && !terminal && terminal.error().code == ErrorCode::kClosed;
   }
-  const bool observed_terminal = !terminal && terminal.error().code == ErrorCode::kClosed;
-  if (!observed_terminal) {
+  if (!observed_every_terminal) {
     session.request_stop();
   }
   const auto completion_deadline = std::chrono::steady_clock::now() + 5s;
@@ -596,14 +631,16 @@ TEST(RunSessionTest, CatalogTensorEndOfStreamWaitsForRetainedUnpublishedOutputLo
   }
   session.wait();
 
-  ASSERT_TRUE(observed_terminal) << (terminal ? "unexpected Tensor payload"
-                                              : runtime_error_message(terminal.error()));
+  ASSERT_TRUE(observed_every_terminal);
   EXPECT_TRUE(completed_without_timeout);
   EXPECT_EQ(session.termination(), RunTermination::kCompleted);
   EXPECT_TRUE(session.diagnostics().empty())
       << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
-  EXPECT_EQ(
-      detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber), 1U);
+  for (ChannelSubscriber<Tensor>* const subscriber : subscribers) {
+    EXPECT_EQ(
+        detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber),
+        1U);
+  }
 }
 
 // A commit-readiness fault quarantines its unpublished slot. Completion must fail before the
@@ -2063,6 +2100,15 @@ class RuntimeTensorContractAdmissionSourceOperator final : public Operator<> {
       if (!writer) {
         return make_unexpected(std::move(writer.error()));
       }
+      Tensor tensor = writer->tensor();
+      auto writable = tensor.mutable_data();
+      const bool same_shape =
+          tensor.shape_span().size() == loan.shape().size() &&
+          std::equal(tensor.shape_span().begin(), tensor.shape_span().end(), loan.shape().begin());
+      if (!writable || *writable != writer->data() || !same_shape ||
+          tensor.dtype().code != loan.dtype().code || tensor.dtype().bits != loan.dtype().bits) {
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
       auto committed = std::move(*writer).commit();
       if (!committed) {
         return committed;
@@ -2593,17 +2639,401 @@ class RuntimeTransportTensorSinkOperator final : public Operator<> {
   Input<Tensor> input;
 };
 
+struct RuntimeForwardedTensorProbeState {
+  static void reset() {
+    const std::lock_guard lock(mutex);
+    source_pointer = nullptr;
+    sink_pointer = nullptr;
+    probe_count = 0U;
+    probe_result.reset();
+    premature_reuse = false;
+    sink_callback_started = false;
+    release_sink_callback.store(false, std::memory_order_release);
+    error.reset();
+  }
+
+  static void record_source(const void* pointer) {
+    const std::lock_guard lock(mutex);
+    source_pointer = pointer;
+  }
+
+  static void fail(ErrorCode code) {
+    {
+      const std::lock_guard lock(mutex);
+      error = code;
+    }
+    cv.notify_all();
+  }
+
+  static void CUDART_CB blocking_stream_callback(void*) noexcept {
+    {
+      const std::lock_guard lock(mutex);
+      sink_callback_started = true;
+    }
+    cv.notify_all();
+    while (!release_sink_callback.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  }
+
+  static void CUDART_CB stream_work_callback(void*) noexcept {}
+
+  static void record_sink(const void* pointer) {
+    const std::lock_guard lock(mutex);
+    sink_pointer = pointer;
+  }
+
+  static void record_probe(const void* pointer) {
+    {
+      const std::lock_guard lock(mutex);
+      ++probe_count;
+      if (pointer == source_pointer && !release_sink_callback.load(std::memory_order_acquire)) {
+        premature_reuse = true;
+      }
+    }
+    cv.notify_all();
+  }
+
+  static void record_probe_exhaustion() {
+    {
+      const std::lock_guard lock(mutex);
+      probe_result = ErrorCode::kResourceExhausted;
+    }
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static bool wait_for_sink_callback() {
+    std::unique_lock lock(mutex);
+    return cv.wait_for(lock, 5s, [] { return sink_callback_started || error.has_value(); }) &&
+           sink_callback_started && !error.has_value();
+  }
+
+  [[nodiscard]] static bool wait_for_probe_exhaustion() {
+    std::unique_lock lock(mutex);
+    return cv.wait_for(lock, 5s, [] { return probe_result.has_value() || error.has_value(); }) &&
+           probe_result == ErrorCode::kResourceExhausted && !error.has_value();
+  }
+
+  static void release_sink() noexcept {
+    release_sink_callback.store(true, std::memory_order_release);
+  }
+
+  static inline std::mutex mutex;
+  static inline std::condition_variable cv;
+  static inline std::atomic_bool release_sink_callback{false};
+  static inline const void* source_pointer{};
+  static inline const void* sink_pointer{};
+  static inline std::uint64_t probe_count{};
+  static inline std::optional<ErrorCode> probe_result;
+  static inline bool premature_reuse{};
+  static inline bool sink_callback_started{};
+  static inline std::optional<ErrorCode> error;
+};
+
+class RuntimeForwardedTensorSourceOperator final : public Operator<> {
+ public:
+  explicit RuntimeForwardedTensorSourceOperator(bool complete_after_one = true)
+      : complete_after_one_(complete_after_one) {}
+
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaManaged,
+                               .dtype = DLDataType{kDLUInt, 64U, 1U}},
+            .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    if (complete_after_one_) {
+      result.complete_after(ComputeCalls{.limit = 1U});
+    }
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    if (probes_exhausted_) {
+      return {};
+    }
+    auto loan = output.allocate_tensor(
+        TensorLoanRequest{.shape = TensorShapeView{}, .dtype = DLDataType{kDLUInt, 64U, 1U}});
+    if (!loan) {
+      if (emitted_ && loan.error().code == ErrorCode::kResourceExhausted) {
+        for (auto& retained : retained_probe_loans_) {
+          auto canceled = std::move(retained).cancel();
+          if (!canceled) {
+            RuntimeForwardedTensorProbeState::fail(canceled.error().code);
+            return canceled;
+          }
+        }
+        retained_probe_loans_.clear();
+        probes_exhausted_ = true;
+        RuntimeForwardedTensorProbeState::record_probe_exhaustion();
+        return {};
+      }
+      RuntimeForwardedTensorProbeState::fail(loan.error().code);
+      return make_unexpected(std::move(loan.error()));
+    }
+    auto writer = loan->write(context.cuda_stream());
+    if (!writer) {
+      RuntimeForwardedTensorProbeState::fail(writer.error().code);
+      return make_unexpected(std::move(writer.error()));
+    }
+    const auto stream = context.cuda_stream().get();
+    if (stream == nullptr ||
+        cudaMemsetAsync(writer->data(), 0x5A, writer->byte_size(), stream) != cudaSuccess) {
+      RuntimeForwardedTensorProbeState::fail(ErrorCode::kFailure);
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    void* const pointer = writer->data();
+    if (emitted_) {
+      RuntimeForwardedTensorProbeState::record_probe(pointer);
+    } else {
+      RuntimeForwardedTensorProbeState::record_source(pointer);
+    }
+    auto committed = std::move(*writer).commit();
+    if (!committed) {
+      RuntimeForwardedTensorProbeState::fail(committed.error().code);
+      return make_unexpected(std::move(committed.error()));
+    }
+    if (emitted_) {
+      retained_probe_loans_.emplace_back(std::move(*loan));
+      return {};
+    }
+    emitted_ = true;
+    auto emitted = output.emit(std::move(*loan));
+    if (!emitted) {
+      RuntimeForwardedTensorProbeState::fail(emitted.error().code);
+    }
+    return emitted;
+  }
+
+  Output<Tensor> output;
+
+ private:
+  bool complete_after_one_{};
+  bool emitted_{};
+  bool probes_exhausted_{};
+  std::vector<TensorOutputLoan> retained_probe_loans_;
+};
+
+class RuntimeForwardedTensorRelayOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    const TensorRepresentation representation{
+        .memory_kind = MemoryKind::kCudaManaged,
+        .dtype = DLDataType{kDLUInt, 64U, 1U},
+    };
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{.representation = representation});
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = representation,
+            .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
+            .storage = TensorOutputStorage::kPassThrough,
+        });
+    spec.output(cuda_obligation, "cuda_obligation")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = representation,
+            .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      RuntimeForwardedTensorProbeState::fail(sample.error().code);
+      return make_unexpected(std::move(sample.error()));
+    }
+    const auto stream = context.cuda_stream().get();
+    if (stream == nullptr ||
+        cudaLaunchHostFunc(stream,
+                           RuntimeForwardedTensorProbeState::stream_work_callback,
+                           nullptr) != cudaSuccess) {
+      RuntimeForwardedTensorProbeState::fail(ErrorCode::kFailure);
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    auto emitted = output.emit(std::move(*sample));
+    if (!emitted) {
+      RuntimeForwardedTensorProbeState::fail(emitted.error().code);
+    }
+    return emitted;
+  }
+
+  Input<Tensor> input;
+  Output<Tensor> output;
+  Output<Tensor> cuda_obligation;
+};
+
+class RuntimeForwardedTensorSinkOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    const TensorRepresentation representation{
+        .memory_kind = MemoryKind::kCudaManaged,
+        .dtype = DLDataType{kDLUInt, 64U, 1U},
+    };
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{.representation = representation});
+    spec.output(cuda_obligation, "cuda_obligation")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = representation,
+            .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      RuntimeForwardedTensorProbeState::fail(sample.error().code);
+      return make_unexpected(std::move(sample.error()));
+    }
+    const auto stream = context.cuda_stream().get();
+    RuntimeForwardedTensorProbeState::record_sink(sample->data.data());
+    if (stream == nullptr ||
+        cudaLaunchHostFunc(stream,
+                           RuntimeForwardedTensorProbeState::blocking_stream_callback,
+                           nullptr) != cudaSuccess) {
+      RuntimeForwardedTensorProbeState::fail(ErrorCode::kFailure);
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    return {};
+  }
+
+  Input<Tensor> input;
+  Output<Tensor> cuda_obligation;
+};
+
+// Explicit Green Context placement supplies the CUDA binding for these forwarding operators;
+// neither class declares a dummy allocation solely to create a pre-Green device obligation.
+class RuntimeGreenOnlyForwardedTensorRelayOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    const TensorRepresentation representation{
+        .memory_kind = MemoryKind::kCudaManaged,
+        .dtype = DLDataType{kDLUInt, 64U, 1U},
+    };
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{.representation = representation});
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = representation,
+            .bounds = TensorBounds{.max_rank = 1U, .max_byte_span = 8U},
+            .storage = TensorOutputStorage::kPassThrough,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      RuntimeForwardedTensorProbeState::fail(sample.error().code);
+      return make_unexpected(std::move(sample.error()));
+    }
+    const auto stream = context.cuda_stream().get();
+    if (stream == nullptr ||
+        cudaLaunchHostFunc(stream,
+                           RuntimeForwardedTensorProbeState::stream_work_callback,
+                           nullptr) != cudaSuccess) {
+      RuntimeForwardedTensorProbeState::fail(ErrorCode::kFailure);
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    auto emitted = output.emit(std::move(*sample));
+    if (!emitted) {
+      RuntimeForwardedTensorProbeState::fail(emitted.error().code);
+    }
+    return emitted;
+  }
+
+  Input<Tensor> input;
+  Output<Tensor> output;
+};
+
+class RuntimeGreenOnlyForwardedTensorSinkOperator final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaManaged,
+                               .dtype = DLDataType{kDLUInt, 64U, 1U}},
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      RuntimeForwardedTensorProbeState::fail(sample.error().code);
+      return make_unexpected(std::move(sample.error()));
+    }
+    const auto stream = context.cuda_stream().get();
+    RuntimeForwardedTensorProbeState::record_sink(sample->data.data());
+    if (stream == nullptr ||
+        cudaLaunchHostFunc(stream,
+                           RuntimeForwardedTensorProbeState::blocking_stream_callback,
+                           nullptr) != cudaSuccess) {
+      RuntimeForwardedTensorProbeState::fail(ErrorCode::kFailure);
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    return {};
+  }
+
+  Input<Tensor> input;
+};
+
 // Used by: DirectTensorPoolWaitsForEveryFanoutConsumerStreamBeforeReuse,
 //          ComputeCallCompletionWaitsForCudaConsumerStreamRetirement
 struct RuntimeDirectTensorFanoutStreamProbeState {
-  static void reset(cudaStream_t blocked, cudaStream_t quick) {
+  static void reset(cudaStream_t blocked, cudaStream_t quick, cudaStream_t overflow = nullptr) {
     const std::lock_guard lock(mutex);
     blocked_stream = blocked;
     quick_stream = quick;
+    overflow_stream = overflow;
+    source_context_stream = nullptr;
+    blocked_context_stream = nullptr;
+    quick_context_stream = nullptr;
     first_pointer = nullptr;
     sink_count = 0U;
     probe_count = 0U;
     blocked_callback_started = false;
+    capacity_prefix_registered = false;
+    producer_stream_registered = false;
+    capacity_overflow_rejected = false;
     premature_reuse = false;
     error.reset();
     release_blocked_stream.store(false, std::memory_order_release);
@@ -2625,10 +3055,45 @@ struct RuntimeDirectTensorFanoutStreamProbeState {
     cv.notify_all();
   }
 
-  static void record_sink() {
+  static void record_source_stream(cudaStream_t stream) {
+    const std::lock_guard lock(mutex);
+    source_context_stream = stream;
+  }
+
+  [[nodiscard]] static cudaStream_t source_stream() {
+    const std::lock_guard lock(mutex);
+    return source_context_stream;
+  }
+
+  static void record_sink(cudaStream_t stream, bool blocked) {
     {
       const std::lock_guard lock(mutex);
+      (blocked ? blocked_context_stream : quick_context_stream) = stream;
       ++sink_count;
+    }
+    cv.notify_all();
+  }
+
+  static void record_capacity_prefix() {
+    {
+      const std::lock_guard lock(mutex);
+      capacity_prefix_registered = true;
+    }
+    cv.notify_all();
+  }
+
+  [[nodiscard]] static bool wait_for_capacity_prefix() {
+    std::unique_lock lock(mutex);
+    const bool observed =
+        cv.wait_for(lock, 5s, [] { return capacity_prefix_registered || error.has_value(); });
+    return observed && capacity_prefix_registered;
+  }
+
+  static void record_capacity_result(bool producer_registered, bool overflow_rejected) {
+    {
+      const std::lock_guard lock(mutex);
+      producer_stream_registered = producer_registered;
+      capacity_overflow_rejected = overflow_rejected;
     }
     cv.notify_all();
   }
@@ -2655,6 +3120,11 @@ struct RuntimeDirectTensorFanoutStreamProbeState {
     return cv.wait_for(lock, 5s, [] {
       return (blocked_callback_started && sink_count == 2U) || error.has_value();
     });
+  }
+
+  [[nodiscard]] static bool wait_for_sinks() {
+    std::unique_lock lock(mutex);
+    return cv.wait_for(lock, 5s, [] { return sink_count == 2U || error.has_value(); });
   }
 
   [[nodiscard]] static bool wait_for_probes(std::uint64_t minimum) {
@@ -2710,10 +3180,17 @@ struct RuntimeDirectTensorFanoutStreamProbeState {
   static inline std::atomic_bool release_blocked_stream{false};
   static inline cudaStream_t blocked_stream{};
   static inline cudaStream_t quick_stream{};
+  static inline cudaStream_t overflow_stream{};
+  static inline cudaStream_t source_context_stream{};
+  static inline cudaStream_t blocked_context_stream{};
+  static inline cudaStream_t quick_context_stream{};
   static inline const void* first_pointer{};
   static inline std::uint64_t sink_count{};
   static inline std::uint64_t probe_count{};
   static inline bool blocked_callback_started{};
+  static inline bool capacity_prefix_registered{};
+  static inline bool producer_stream_registered{};
+  static inline bool capacity_overflow_rejected{};
   static inline bool premature_reuse{};
   static inline std::optional<ErrorCode> error;
 };
@@ -2752,6 +3229,7 @@ class RuntimeDirectTensorFanoutStreamSourceOperator final : public Operator<> {
   }
 
   [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    RuntimeDirectTensorFanoutStreamProbeState::record_source_stream(context.cuda_stream().get());
     auto loan = output.allocate_tensor(
         TensorLoanRequest{.shape = TensorShapeView{}, .dtype = DLDataType{kDLUInt, 64U, 1U}});
     if (!loan) {
@@ -2811,7 +3289,8 @@ class RuntimeDirectTensorFanoutStreamSourceOperator final : public Operator<> {
 // exhaustion; kBlockStream=false completes immediately without blocking.
 // Used by: DirectTensorPoolWaitsForEveryFanoutConsumerStreamBeforeReuse,
 //          ComputeCallCompletionWaitsForCudaConsumerStreamRetirement
-template <bool kBlockStream, bool kUseExecutionContextStream = false>
+template <bool kBlockStream, bool kUseExecutionContextStream = false,
+          bool kHoldStream = kBlockStream, bool kExerciseReleaseCapacity = false>
 class RuntimeDirectTensorFanoutStreamSinkOperator final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -2838,6 +3317,12 @@ class RuntimeDirectTensorFanoutStreamSinkOperator final : public Operator<> {
       RuntimeDirectTensorFanoutStreamProbeState::fail(sample.error().code);
       return make_unexpected(std::move(sample.error()));
     }
+    if constexpr (kExerciseReleaseCapacity && !kBlockStream) {
+      if (!RuntimeDirectTensorFanoutStreamProbeState::wait_for_capacity_prefix()) {
+        RuntimeDirectTensorFanoutStreamProbeState::fail(ErrorCode::kFailure);
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
+    }
     cudaStream_t stream =
         kUseExecutionContextStream
             ? context.cuda_stream().get()
@@ -2850,7 +3335,24 @@ class RuntimeDirectTensorFanoutStreamSinkOperator final : public Operator<> {
       RuntimeDirectTensorFanoutStreamProbeState::fail(error.code);
       return make_unexpected(error);
     }
-    if constexpr (kBlockStream) {
+    if constexpr (kExerciseReleaseCapacity && kBlockStream) {
+      if (!sample->data.set_deallocation_stream(
+              RuntimeDirectTensorFanoutStreamProbeState::blocked_stream) ||
+          !sample->data.set_deallocation_stream(
+              RuntimeDirectTensorFanoutStreamProbeState::quick_stream)) {
+        RuntimeDirectTensorFanoutStreamProbeState::fail(ErrorCode::kFailure);
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
+      RuntimeDirectTensorFanoutStreamProbeState::record_capacity_prefix();
+    } else if constexpr (kExerciseReleaseCapacity) {
+      const bool producer_registered = sample->data.set_deallocation_stream(
+          RuntimeDirectTensorFanoutStreamProbeState::source_stream());
+      RuntimeDirectTensorFanoutStreamProbeState::record_capacity_result(
+          producer_registered,
+          !sample->data.set_deallocation_stream(
+              RuntimeDirectTensorFanoutStreamProbeState::overflow_stream));
+    }
+    if constexpr (kHoldStream) {
       if (cudaLaunchHostFunc(stream,
                              RuntimeDirectTensorFanoutStreamProbeState::blocking_stream_callback,
                              nullptr) != cudaSuccess) {
@@ -2858,7 +3360,8 @@ class RuntimeDirectTensorFanoutStreamSinkOperator final : public Operator<> {
         return make_unexpected(Error{ErrorCode::kFailure});
       }
     }
-    RuntimeDirectTensorFanoutStreamProbeState::record_sink();
+    RuntimeDirectTensorFanoutStreamProbeState::record_sink(context.cuda_stream().get(),
+                                                           kBlockStream);
     return {};
   }
 
@@ -2883,8 +3386,15 @@ struct RuntimeDirectTensorRestartProbeState {
     restart_allocate_count = 0U;
     restart_stage = stage;
     consumer_stream = consumer;
+    predecessor_source_stream = nullptr;
+    successor_source_stream = nullptr;
     escaped_tensor.reset();
     error.reset();
+  }
+
+  static void record_source_stream(cudaStream_t stream, bool successor) {
+    const std::lock_guard lock(mutex);
+    (successor ? successor_source_stream : predecessor_source_stream) = stream;
   }
 
   static void record_sink(const Tensor& tensor, std::uint64_t value) {
@@ -2956,6 +3466,8 @@ struct RuntimeDirectTensorRestartProbeState {
   static inline std::uint32_t restart_allocate_count{};
   static inline LifecycleStage restart_stage{LifecycleStage::kAllocate};
   static inline cudaStream_t consumer_stream{};
+  static inline cudaStream_t predecessor_source_stream{};
+  static inline cudaStream_t successor_source_stream{};
   static inline std::optional<Tensor> escaped_tensor;
   static inline std::optional<ErrorCode> error;
 };
@@ -2990,6 +3502,8 @@ class RuntimeDirectTensorRestartSourceOperator final : public Operator<> {
 
   [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     if (phase_ == 0U) {
+      RuntimeDirectTensorRestartProbeState::record_source_stream(context.cuda_stream().get(),
+                                                                 false);
       auto first = emit_value(kFirstValue, context.cuda_stream());
       if (!first) {
         return first;
@@ -3030,6 +3544,7 @@ class RuntimeDirectTensorRestartSourceOperator final : public Operator<> {
     if (!stale_writer_) {
       return fail(ErrorCode::kFailure);
     }
+    RuntimeDirectTensorRestartProbeState::record_source_stream(context.cuda_stream().get(), true);
 
     auto stale_commit = std::move(*stale_writer_).commit();
     const bool stale_rejected =
@@ -3911,7 +4426,7 @@ class RuntimeGreenContextTensorSourceOperator final : public Operator<> {
       return {};
     }
     const std::uint32_t sample_index = emitted_count_;
-    const cudaStream_t stream = context.cuda_stream().get();
+    const auto stream = context.cuda_stream().get();
     RuntimeGreenContextTensorProbeState::record_source(stream);
     auto loan = output.allocate_tensor(
         TensorLoanRequest{.shape = TensorShapeView{}, .dtype = DLDataType{kDLUInt, 64U, 1U}});
@@ -3985,7 +4500,7 @@ class RuntimeGreenContextTensorSinkOperator final : public Operator<> {
       RuntimeGreenContextTensorProbeState::fail(sample.error().code);
       return make_unexpected(std::move(sample.error()));
     }
-    const cudaStream_t stream = context.cuda_stream().get();
+    const auto stream = context.cuda_stream().get();
     std::uint64_t value = 0U;
     auto copied = sample->data.copy_to_host(&value, sizeof(value), context.cuda_stream());
     if (stream == nullptr || !copied || cudaStreamSynchronize(stream) != cudaSuccess) {
@@ -4081,7 +4596,7 @@ class RuntimeGreenContextForeignTensorSourceOperator final : public Operator<> {
       return {};
     }
     emitted_ = true;
-    const cudaStream_t stream = context.cuda_stream().get();
+    const auto stream = context.cuda_stream().get();
     if (!pool_ready_ || stream == nullptr) {
       RuntimeGreenContextTransferProbeState::finish(stream, ErrorCode::kFailure);
       return make_unexpected(Error{ErrorCode::kFailure});
@@ -4569,19 +5084,109 @@ class RuntimeTensorPublicationSinkOperator final : public Operator<> {
   return detail::compile_with_process_local_holomq(graph, CompileOptions{});
 }
 
+// Graph topology (one Operator per explicit execution partition):
+//   source --> relay-a --> relay-b --> relay-c --> sink
+[[nodiscard]] ExecutionPlan make_runtime_forwarded_tensor_plan(
+    const std::shared_ptr<detail::RuntimeTensorOutputTestControl>& control,
+    CudaComputeStreamPolicy policy) {
+  Graph graph{unique_runtime_graph_name("runtime-forwarded-tensor")};
+  const auto source = graph.op<RuntimeForwardedTensorSourceOperator>("source");
+  const auto relay_a = graph.op<RuntimeForwardedTensorRelayOperator>("relay-a");
+  const auto relay_b = graph.op<RuntimeForwardedTensorRelayOperator>("relay-b");
+  const auto relay_c = graph.op<RuntimeForwardedTensorRelayOperator>("relay-c");
+  const auto sink = graph.op<RuntimeForwardedTensorSinkOperator>("sink");
+  graph.add_flow(source->output, relay_a->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(relay_a->output, relay_b->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(relay_b->output, relay_c->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(relay_c->output, sink->input, ConnectionOptions{.queue_depth = 1U});
+  graph.partition("source-partition").add(source);
+  graph.partition("relay-a-partition").add(relay_a);
+  graph.partition("relay-b-partition").add(relay_b);
+  graph.partition("relay-c-partition").add(relay_c);
+  graph.partition("sink-partition").add(sink);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-forwarded-tensor-clock"));
+  CompileOptions options;
+  options.cuda_execution.compute_stream_policy = policy;
+  options.deployment.bind_tensor_output_device(TensorOutputDevicePlacement{
+      .operator_path = "source", .output_port = "output", .device = DeviceId{0}});
+  for (const std::string_view operator_path : {"relay-a", "relay-b", "relay-c", "sink"}) {
+    options.deployment.bind_tensor_output_device(TensorOutputDevicePlacement{
+        .operator_path = std::string{operator_path},
+        .output_port = "cuda_obligation",
+        .device = DeviceId{0},
+    });
+  }
+  const ExecutionPlan plan = compile(graph, std::move(options));
+  return detail::RuntimeTestPlanAccess::with_tensor_output_test_control(plan, control);
+}
+
+// Graph topology (one explicitly assigned Green Context partition per Operator):
+//   source --> relay-a --> relay-b --> relay-c --> sink
+// Only the source declares an allocation. Every downstream CUDA binding comes from final Green
+// placement, while all relays preserve the source pool's original backing.
+[[nodiscard]] ExecutionPlan make_runtime_green_forwarded_tensor_plan(
+    const CudaGreenContextCapability& capability,
+    const std::shared_ptr<detail::RuntimeTensorOutputTestControl>& control,
+    CudaComputeStreamPolicy policy) {
+  Graph graph{unique_runtime_graph_name("runtime-green-forwarded-tensor")};
+  const auto source = graph.op<RuntimeForwardedTensorSourceOperator>("source", false);
+  const auto relay_a = graph.op<RuntimeGreenOnlyForwardedTensorRelayOperator>("relay-a");
+  const auto relay_b = graph.op<RuntimeGreenOnlyForwardedTensorRelayOperator>("relay-b");
+  const auto relay_c = graph.op<RuntimeGreenOnlyForwardedTensorRelayOperator>("relay-c");
+  const auto sink = graph.op<RuntimeGreenOnlyForwardedTensorSinkOperator>("sink");
+  graph.add_flow(source->output, relay_a->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(relay_a->output, relay_b->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(relay_b->output, relay_c->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(relay_c->output, sink->input, ConnectionOptions{.queue_depth = 1U});
+  graph.partition("source-partition").add(source);
+  graph.partition("relay-a-partition").add(relay_a);
+  graph.partition("relay-b-partition").add(relay_b);
+  graph.partition("relay-c-partition").add(relay_c);
+  graph.partition("sink-partition").add(sink);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-green-forwarded-tensor-clock"));
+
+  const std::uint32_t quantum =
+      std::lcm(capability.min_sm_partition_size, capability.sm_coscheduled_alignment);
+  CompileOptions options;
+  options.cuda_execution.compute_stream_policy = policy;
+  options.deployment.bind_tensor_output_device(TensorOutputDevicePlacement{
+      .operator_path = "source", .output_port = "output", .device = DeviceId{0}});
+  for (const std::string_view partition : {"source-partition",
+                                           "relay-a-partition",
+                                           "relay-b-partition",
+                                           "relay-c-partition",
+                                           "sink-partition"}) {
+    options.deployment.bind_cuda_green_context(
+        partition, CudaGreenContextPlacement{.device = DeviceId{0}, .sm_count = quantum});
+  }
+  const ExecutionPlan plan = compile(graph, std::move(options));
+  return detail::RuntimeTestPlanAccess::with_tensor_output_test_control(plan, control);
+}
+
 // Graph topology:
 //   source --[queue_depth=1]--> sink-a-blocked  (holds CUDA stream via host callback)
 //          --[queue_depth=1]--> sink-b-quick    (completes without blocking)
 // Device binding for the output port enables managed-memory fanout with two streams.
+template <bool kUseExecutionContextStream = false, bool kHoldBlockedStream = true,
+          bool kExerciseReleaseCapacity = false>
 [[nodiscard]] ExecutionPlan make_runtime_direct_tensor_fanout_stream_plan(
     const std::shared_ptr<detail::RuntimeTensorOutputTestControl>& control,
     const bool complete_after_one = false,
-    const std::string_view graph_name = "runtime-direct-tensor-fanout-streams") {
+    const std::string_view graph_name = "runtime-direct-tensor-fanout-streams",
+    CudaComputeStreamPolicy policy = CudaComputeStreamPolicy::kPerExecutionPartition) {
   Graph graph{std::string{graph_name}};
   auto source =
       graph.op<RuntimeDirectTensorFanoutStreamSourceOperator>("source", complete_after_one);
-  auto blocked = graph.op<RuntimeDirectTensorFanoutStreamSinkOperator<true>>("sink-a-blocked");
-  auto quick = graph.op<RuntimeDirectTensorFanoutStreamSinkOperator<false>>("sink-b-quick");
+  auto blocked = graph.op<RuntimeDirectTensorFanoutStreamSinkOperator<true,
+                                                                      kUseExecutionContextStream,
+                                                                      kHoldBlockedStream,
+                                                                      kExerciseReleaseCapacity>>(
+      "sink-a-blocked");
+  auto quick = graph.op<RuntimeDirectTensorFanoutStreamSinkOperator<false,
+                                                                    kUseExecutionContextStream,
+                                                                    false,
+                                                                    kExerciseReleaseCapacity>>(
+      "sink-b-quick");
   graph.add_flow(source->output, blocked->input, ConnectionOptions{.queue_depth = 1U});
   graph.add_flow(source->output, quick->input, ConnectionOptions{.queue_depth = 1U});
   const ClockKey default_clock = graph.add_clock<RealtimeClock>("runtime-test-clock");
@@ -4609,9 +5214,11 @@ class RuntimeTensorPublicationSinkOperator final : public Operator<> {
       detail::TensorDeviceBindingRecord{.port = PortId{output_port->id.value},
                                         .device = DeviceId{0}},
   };
+  CompileOptions options;
+  options.cuda_execution.compute_stream_policy = policy;
   const ExecutionPlan plan = detail::compile_with_runtime_evidence(
       graph,
-      {},
+      std::move(options),
       detail::RuntimeCompileEvidenceView{
           .package_capabilities = detail::runtime_package_capability_view(),
           .tensor_device_bindings = device_bindings,
@@ -4884,7 +5491,7 @@ TEST(RunSessionTest, GreenContextTensorFlowUsesCrossContextReadinessAndRetiremen
   EXPECT_GE(metrics.cuda_release_records, kGreenContextTensorSampleCount);
   EXPECT_GT(metrics.cuda_retirement_queries, 0U);
   EXPECT_EQ(metrics.cuda_events_created,
-            static_cast<std::uint64_t>(plan.tensor_allocations().front().slot_count) * 3U);
+            static_cast<std::uint64_t>(plan.tensor_allocations().front().slot_count) * 4U);
 }
 
 // REQ: TENSOR-STORAGE-014
@@ -4970,7 +5577,7 @@ TEST(RunSessionTest, GreenContextTensorFlowElidesSamePartitionReadiness) {
   EXPECT_EQ(metrics.cuda_events_destroyed, metrics.cuda_events_created);
   ASSERT_EQ(plan.tensor_allocations().size(), 1U);
   EXPECT_EQ(metrics.cuda_events_created,
-            static_cast<std::uint64_t>(plan.tensor_allocations().front().slot_count) * 3U);
+            static_cast<std::uint64_t>(plan.tensor_allocations().front().slot_count) * 4U);
 }
 
 // REQ: TENSOR-STORAGE-014
@@ -5043,7 +5650,7 @@ TEST(RunSessionTest, GreenContextTensorFlowCrossesDedicatedAndResidualStreams) {
   EXPECT_EQ(metrics.cuda_events_destroyed, metrics.cuda_events_created);
   ASSERT_EQ(plan.tensor_allocations().size(), 1U);
   EXPECT_EQ(metrics.cuda_events_created,
-            static_cast<std::uint64_t>(plan.tensor_allocations().front().slot_count) * 3U);
+            static_cast<std::uint64_t>(plan.tensor_allocations().front().slot_count) * 4U);
 }
 
 // REQ: TENSOR-STORAGE-014
@@ -5111,7 +5718,8 @@ TEST(RunSessionTest, GreenContextExternalTensorCopyUsesPlannedServiceStream) {
     const std::lock_guard lock(RuntimeGreenContextTransferProbeState::mutex);
     const auto observed_copy = control->service_copy_snapshot();
     ASSERT_FALSE(RuntimeGreenContextTransferProbeState::error.has_value())
-        << static_cast<std::uint32_t>(*RuntimeGreenContextTransferProbeState::error)
+        << static_cast<std::uint32_t>(
+               RuntimeGreenContextTransferProbeState::error.value_or(ErrorCode::kSuccess))
         << " service copies=" << observed_copy.count;
   }
 
@@ -5318,20 +5926,21 @@ TEST(RunSessionTest, DiscoverRateRestartReusesCompatibleTensorBackingAndPublishe
               observed_successor_compute_rate.rate_generation);
   }
   const auto timing = RuntimeLifecycleTensorRateRestartProbeState::restart_timing();
-  ASSERT_TRUE(timing.has_value());
-  EXPECT_GE(timing->request_to_discover_ns, 0);
-  EXPECT_GE(timing->discover_to_allocate_ns, 0);
-  EXPECT_GE(timing->allocate_to_successor_compute_ns, 0);
-  EXPECT_GT(timing->request_to_successor_compute_ns, 0);
-  EXPECT_EQ(timing->request_to_successor_compute_ns,
-            timing->request_to_discover_ns + timing->discover_to_allocate_ns +
-                timing->allocate_to_successor_compute_ns);
-  RecordProperty("restart_request_to_discover_ns", timing->request_to_discover_ns);
-  RecordProperty("restart_discover_to_user_allocate_ns", timing->discover_to_allocate_ns);
+  const auto* timing_value = optional_value(timing);
+  ASSERT_NE(timing_value, nullptr);
+  EXPECT_GE(timing_value->request_to_discover_ns, 0);
+  EXPECT_GE(timing_value->discover_to_allocate_ns, 0);
+  EXPECT_GE(timing_value->allocate_to_successor_compute_ns, 0);
+  EXPECT_GT(timing_value->request_to_successor_compute_ns, 0);
+  EXPECT_EQ(timing_value->request_to_successor_compute_ns,
+            timing_value->request_to_discover_ns + timing_value->discover_to_allocate_ns +
+                timing_value->allocate_to_successor_compute_ns);
+  RecordProperty("restart_request_to_discover_ns", timing_value->request_to_discover_ns);
+  RecordProperty("restart_discover_to_user_allocate_ns", timing_value->discover_to_allocate_ns);
   RecordProperty("restart_user_allocate_to_successor_compute_ns",
-                 timing->allocate_to_successor_compute_ns);
+                 timing_value->allocate_to_successor_compute_ns);
   RecordProperty("restart_request_to_successor_compute_ns",
-                 timing->request_to_successor_compute_ns);
+                 timing_value->request_to_successor_compute_ns);
   const auto generations = session.capture_rate_generations();
   ASSERT_TRUE(generations) << generations.error().message;
   ASSERT_NE(generations->published(), nullptr);
@@ -5345,11 +5954,17 @@ TEST(RunSessionTest, DiscoverRateRestartReusesCompatibleTensorBackingAndPublishe
   EXPECT_EQ(provider.run_generation, observed_successor_compute_rate.run_generation);
   EXPECT_EQ(provider.rate_generation, observed_successor_compute_rate.rate_generation);
   EXPECT_EQ(provider.action, AllocationAction::kReusedLarger);
-  ASSERT_TRUE(provider.allocation_generation);
-  ASSERT_TRUE(provider.storage_binding_generation);
-  ASSERT_TRUE(provider.previous_allocation_generation);
+  const auto* allocation_generation = optional_value(provider.allocation_generation);
+  const auto* storage_binding_generation = optional_value(provider.storage_binding_generation);
+  const auto* previous_allocation_generation =
+      optional_value(provider.previous_allocation_generation);
+  const auto* provider_materialized_entries =
+      optional_value(provider.provider_materialized_entries);
+  ASSERT_NE(allocation_generation, nullptr);
+  ASSERT_NE(storage_binding_generation, nullptr);
+  ASSERT_NE(previous_allocation_generation, nullptr);
   EXPECT_EQ(provider.previous_allocation_generation, provider.allocation_generation);
-  ASSERT_TRUE(provider.provider_materialized_entries);
+  ASSERT_NE(provider_materialized_entries, nullptr);
   EXPECT_FALSE(provider.provider_reserved_bytes_total);
   EXPECT_EQ(retained_metrics.materialization_count, 1U);
   EXPECT_EQ(retained_metrics.live_materialization_count, 1U);
@@ -5370,7 +5985,7 @@ TEST(RunSessionTest, DiscoverRateRestartReusesCompatibleTensorBackingAndPublishe
   EXPECT_GE(retained_metrics.maximum_pool_generation, 2U);
   EXPECT_EQ(retained_metrics.maximum_published_pool_generation,
             retained_metrics.maximum_pool_generation);
-  EXPECT_EQ(provider.allocation_generation->value, retained_metrics.maximum_allocation_generation);
+  EXPECT_EQ(allocation_generation->value, retained_metrics.maximum_allocation_generation);
   EXPECT_EQ(provider.provider_materialized_entries, retained_metrics.physical_slot_count);
   EXPECT_EQ(released_metrics.live_materialization_count, 0U);
   EXPECT_EQ(released_metrics.live_physical_entry_count, 0U);
@@ -5393,12 +6008,11 @@ TEST(RunSessionTest, DiscoverRateRestartReusesCompatibleTensorBackingAndPublishe
                  observed_successor_compute_rate.rate_generation);
   RecordProperty("restart_published_run_generation", generations->published()->run_generation);
   RecordProperty("restart_published_rate_generation", generations->published()->rate_generation);
-  RecordProperty("restart_retained_allocation_generation", provider.allocation_generation->value);
-  RecordProperty("restart_previous_allocation_generation",
-                 provider.previous_allocation_generation->value);
+  RecordProperty("restart_retained_allocation_generation", allocation_generation->value);
+  RecordProperty("restart_previous_allocation_generation", previous_allocation_generation->value);
   RecordProperty("restart_maximum_allocation_generation",
                  retained_metrics.maximum_allocation_generation);
-  RecordProperty("restart_storage_binding_generation", provider.storage_binding_generation->value);
+  RecordProperty("restart_storage_binding_generation", storage_binding_generation->value);
   RecordProperty("restart_allocation_action", "reused_larger");
   RecordProperty("restart_materialization_count", retained_metrics.materialization_count);
   RecordProperty("restart_live_materialization_count", retained_metrics.live_materialization_count);
@@ -5414,7 +6028,7 @@ TEST(RunSessionTest, DiscoverRateRestartReusesCompatibleTensorBackingAndPublishe
   RecordProperty("restart_peak_live_logical_requested_payload_bytes",
                  retained_metrics.peak_live_requested_payload_backing_bytes);
   RecordProperty("restart_logical_requested_payload_byte_span_per_slot", 8U);
-  RecordProperty("restart_provider_materialized_entries", *provider.provider_materialized_entries);
+  RecordProperty("restart_provider_materialized_entries", *provider_materialized_entries);
   RecordProperty("restart_post_stop_live_materialization_count",
                  released_metrics.live_materialization_count);
   RecordProperty("restart_post_stop_live_physical_entry_count",
@@ -5459,11 +6073,14 @@ TEST(RunSessionTest, SameDiscoverRateRestartReusesExactTensorBackingWithoutOverl
     ASSERT_NE(generations->published(), nullptr);
     const auto providers = generations->provider_allocations(*generations->published());
     ASSERT_EQ(providers.size(), 1U);
-    EXPECT_EQ(providers.front().action, AllocationAction::kReusedExact);
-    ASSERT_TRUE(providers.front().allocation_generation);
-    ASSERT_TRUE(providers.front().storage_binding_generation);
-    EXPECT_EQ(providers.front().allocation_generation->value, 1U);
-    EXPECT_GE(providers.front().storage_binding_generation->value, 2U);
+    const auto& provider = providers.front();
+    EXPECT_EQ(provider.action, AllocationAction::kReusedExact);
+    const auto* allocation_generation = optional_value(provider.allocation_generation);
+    const auto* storage_binding_generation = optional_value(provider.storage_binding_generation);
+    ASSERT_NE(allocation_generation, nullptr);
+    ASSERT_NE(storage_binding_generation, nullptr);
+    EXPECT_EQ(allocation_generation->value, 1U);
+    EXPECT_GE(storage_binding_generation->value, 2U);
 
     EXPECT_EQ(live.materialization_count, 1U);
     EXPECT_EQ(live.live_materialization_count, 1U);
@@ -6013,21 +6630,23 @@ TEST(RunSessionTest, InGraphDescriptorTensorCarriesRuntimePublicationCoordinate)
     error = RuntimeTensorPublicationProbeState::error;
   }
   ASSERT_FALSE(error.has_value()) << "descriptor Tensor publication failed with error code "
-                                  << static_cast<std::uint32_t>(*error);
+                                  << static_cast<std::uint32_t>(
+                                         error.value_or(ErrorCode::kSuccess));
   ASSERT_TRUE(observed) << (session.diagnostics().empty() ? "no runtime diagnostic"
                                                           : session.diagnostics().front().token);
-  ASSERT_TRUE(metadata.has_value());
+  const auto* metadata_value = optional_value(metadata);
+  ASSERT_NE(metadata_value, nullptr);
   EXPECT_TRUE(session.diagnostics().empty())
       << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
 
   // Key assertion: the coordinate names the Graph default clock, which is what lets the consumer
   // place this sample on the same timeline Runtime published it against.
-  EXPECT_EQ(metadata->payload_kind, PayloadKind::kDescriptorBacked);
+  EXPECT_EQ(metadata_value->payload_kind, PayloadKind::kDescriptorBacked);
   const ClockId publish_clock = plan.clock_catalog().root_default_clock;
   ASSERT_TRUE(publish_clock.valid());
-  EXPECT_EQ(metadata->publish_clock_id, publish_clock);
-  EXPECT_GT(metadata->publish_timestamp_ns, 0);
-  EXPECT_TRUE(metadata->publish_time().valid());
+  EXPECT_EQ(metadata_value->publish_clock_id, publish_clock);
+  EXPECT_GT(metadata_value->publish_timestamp_ns, 0);
+  EXPECT_TRUE(metadata_value->publish_time().valid());
 }
 
 // REQ: OPERATOR-042
@@ -6177,6 +6796,115 @@ TEST(RunSessionTest, PinnedHostTensorHostWritesDoNotRecordCudaReadiness) {
   EXPECT_EQ(snapshot.cuda_readiness_record_elisions, 0U);
 }
 
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: RUNTIME-056
+// REQ: TENSOR-STORAGE-015
+TEST(RunSessionTest, ForwardedTensorBackingReachesFinalPartitionUnderBothStreamPolicies) {
+  if (cudaFree(nullptr) != cudaSuccess) {
+    GTEST_SKIP() << "CUDA managed allocation is unavailable";
+  }
+
+  for (const CudaComputeStreamPolicy policy : {CudaComputeStreamPolicy::kSharedProcessDevice,
+                                               CudaComputeStreamPolicy::kPerExecutionPartition}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+    RuntimeForwardedTensorProbeState::reset();
+    const auto control = std::make_shared<detail::RuntimeTensorOutputTestControl>();
+    const ExecutionPlan plan = make_runtime_forwarded_tensor_plan(control, policy);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.tensor_allocations().size(), 5U);
+    EXPECT_TRUE(std::ranges::all_of(plan.tensor_allocations(), [](const auto& allocation) {
+      return allocation.release_stream_capacity == 9U;
+    }));
+    ASSERT_EQ(plan.operator_cuda_stream_bindings().size(), 5U);
+    EXPECT_EQ(plan.cuda_compute_streams().size(),
+              policy == CudaComputeStreamPolicy::kPerExecutionPartition ? 5U : 1U);
+
+    RunSession session = run_async(plan);
+    const bool reached_final_stream = RuntimeForwardedTensorProbeState::wait_for_sink_callback();
+    EXPECT_TRUE(session.is_running());
+    RuntimeForwardedTensorProbeState::release_sink();
+    session.wait();
+
+    ASSERT_TRUE(reached_final_stream)
+        << (session.diagnostics().empty() ? "no runtime diagnostic"
+                                          : session.diagnostics().front().token);
+    EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+    EXPECT_TRUE(session.diagnostics().empty())
+        << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+    {
+      const std::lock_guard lock(RuntimeForwardedTensorProbeState::mutex);
+      EXPECT_FALSE(RuntimeForwardedTensorProbeState::error.has_value());
+      EXPECT_NE(RuntimeForwardedTensorProbeState::source_pointer, nullptr);
+      EXPECT_EQ(RuntimeForwardedTensorProbeState::sink_pointer,
+                RuntimeForwardedTensorProbeState::source_pointer);
+    }
+    const auto metrics = control->snapshot(0U);
+    EXPECT_EQ(metrics.cuda_events_destroyed, metrics.cuda_events_created);
+    EXPECT_EQ(metrics.cuda_streams_destroyed, metrics.cuda_streams_created);
+  }
+}
+
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: RUNTIME-056
+// REQ: TENSOR-STORAGE-015
+TEST(RunSessionTest, GreenOnlyForwardingBindingsRetainOriginalBackingUnderBothPolicies) {
+  auto capability = query_cuda_green_context_capability(DeviceId{0});
+  if (!capability) {
+    GTEST_SKIP() << runtime_error_message(capability.error());
+  }
+  const std::uint32_t quantum =
+      std::lcm(capability->min_sm_partition_size, capability->sm_coscheduled_alignment);
+  if (quantum == 0U || capability->max_structured_context_count < 5U ||
+      capability->total_sm_count < 5U * static_cast<std::uint64_t>(quantum)) {
+    GTEST_SKIP() << "device cannot provide five dedicated Green Context groups";
+  }
+
+  for (const CudaComputeStreamPolicy policy : {CudaComputeStreamPolicy::kSharedProcessDevice,
+                                               CudaComputeStreamPolicy::kPerExecutionPartition}) {
+    SCOPED_TRACE(static_cast<std::uint32_t>(policy));
+    RuntimeForwardedTensorProbeState::reset();
+    const auto control = std::make_shared<detail::RuntimeTensorOutputTestControl>();
+    const ExecutionPlan plan =
+        make_runtime_green_forwarded_tensor_plan(*capability, control, policy);
+    ASSERT_TRUE(plan.ok()) << plan.json();
+    ASSERT_EQ(plan.tensor_allocations().size(), 1U);
+    EXPECT_EQ(plan.tensor_allocations().front().release_stream_capacity, 9U);
+    ASSERT_EQ(plan.cuda_green_context_assignments().size(), 5U);
+    ASSERT_EQ(plan.operator_cuda_stream_bindings().size(), 5U);
+    ASSERT_EQ(plan.cuda_compute_streams().size(), 5U);
+
+    RunSession session = run_async(plan);
+    struct SinkRelease {
+      ~SinkRelease() { RuntimeForwardedTensorProbeState::release_sink(); }
+    };
+    const SinkRelease release_on_exit;
+    ASSERT_TRUE(RuntimeForwardedTensorProbeState::wait_for_sink_callback());
+    ASSERT_TRUE(RuntimeForwardedTensorProbeState::wait_for_probe_exhaustion());
+    EXPECT_TRUE(session.is_running());
+    {
+      const std::lock_guard lock(RuntimeForwardedTensorProbeState::mutex);
+      EXPECT_FALSE(RuntimeForwardedTensorProbeState::error.has_value());
+      EXPECT_NE(RuntimeForwardedTensorProbeState::source_pointer, nullptr);
+      EXPECT_EQ(RuntimeForwardedTensorProbeState::sink_pointer,
+                RuntimeForwardedTensorProbeState::source_pointer);
+      EXPECT_EQ(RuntimeForwardedTensorProbeState::probe_result, ErrorCode::kResourceExhausted);
+      EXPECT_FALSE(RuntimeForwardedTensorProbeState::premature_reuse);
+    }
+
+    RuntimeForwardedTensorProbeState::release_sink();
+    session.request_stop();
+    session.wait();
+    EXPECT_EQ(session.termination(), RunTermination::kStopped);
+    EXPECT_TRUE(session.diagnostics().empty())
+        << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+    const auto metrics = control->snapshot(0U);
+    EXPECT_EQ(metrics.cuda_events_destroyed, metrics.cuda_events_created);
+    EXPECT_EQ(metrics.cuda_streams_destroyed, metrics.cuda_streams_created);
+  }
+}
+
 // Each fanout consumer registers a distinct application stream. Releasing the stream that was
 // registered last must not permit slot reuse while earlier consumer work remains queued.
 // REQ: TENSOR-STORAGE-012
@@ -6248,6 +6976,165 @@ TEST(RunSessionTest, DirectTensorPoolWaitsForEveryFanoutConsumerStreamBeforeReus
   EXPECT_EQ(snapshot.cuda_host_waits, 0U);
   EXPECT_GE(snapshot.cuda_release_stream_assignments, 3U);
   EXPECT_GE(snapshot.cuda_release_records, 3U);
+}
+
+// REQ: MEM-STREAM-016
+// REQ: RUNTIME-056
+// REQ: TENSOR-STORAGE-012
+// REQ: TENSOR-STORAGE-015
+TEST(RunSessionTest, PerPartitionTensorFanoutPublishesDistinctStreamsAndRetiresEveryConsumer) {
+  // Key setup: let each automatically selected execution partition consume its compiler-owned
+  // stream, while one sink holds its stream so premature output-slot reuse remains observable.
+  RuntimeDirectTensorFanoutStreamProbeState::reset(nullptr, nullptr);
+  auto control = std::make_shared<detail::RuntimeTensorOutputTestControl>();
+  const ExecutionPlan plan = make_runtime_direct_tensor_fanout_stream_plan<true>(
+      control,
+      false,
+      unique_runtime_graph_name("runtime-per-partition-tensor-fanout"),
+      CudaComputeStreamPolicy::kPerExecutionPartition);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  EXPECT_EQ(plan.cuda_compute_stream_policy(), CudaComputeStreamPolicy::kPerExecutionPartition);
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 3U);
+  ASSERT_EQ(plan.operator_cuda_stream_bindings().size(), 3U);
+  ASSERT_EQ(plan.tensor_allocations().size(), 1U);
+  EXPECT_EQ(plan.tensor_allocations().front().release_stream_capacity, 5U);
+  EXPECT_TRUE(std::ranges::all_of(plan.cuda_compute_streams(), [](const auto& stream) {
+    return stream.partition.has_value() && stream.fused_linear_edges.empty();
+  }));
+
+  std::optional<RunSession> session{run_async(plan)};
+  struct BlockedStreamRelease {
+    ~BlockedStreamRelease() { RuntimeDirectTensorFanoutStreamProbeState::release_blocked(); }
+  } const release_on_exit;
+  ASSERT_TRUE(RuntimeDirectTensorFanoutStreamProbeState::wait_for_blocked_stream());
+  ASSERT_TRUE(RuntimeDirectTensorFanoutStreamProbeState::wait_for_probes(8U));
+  {
+    const std::lock_guard lock(RuntimeDirectTensorFanoutStreamProbeState::mutex);
+    EXPECT_FALSE(RuntimeDirectTensorFanoutStreamProbeState::error.has_value());
+    EXPECT_FALSE(RuntimeDirectTensorFanoutStreamProbeState::premature_reuse);
+    EXPECT_NE(RuntimeDirectTensorFanoutStreamProbeState::source_context_stream, nullptr);
+    EXPECT_NE(RuntimeDirectTensorFanoutStreamProbeState::blocked_context_stream, nullptr);
+    EXPECT_NE(RuntimeDirectTensorFanoutStreamProbeState::quick_context_stream, nullptr);
+    EXPECT_NE(RuntimeDirectTensorFanoutStreamProbeState::source_context_stream,
+              RuntimeDirectTensorFanoutStreamProbeState::blocked_context_stream);
+    EXPECT_NE(RuntimeDirectTensorFanoutStreamProbeState::source_context_stream,
+              RuntimeDirectTensorFanoutStreamProbeState::quick_context_stream);
+    EXPECT_NE(RuntimeDirectTensorFanoutStreamProbeState::blocked_context_stream,
+              RuntimeDirectTensorFanoutStreamProbeState::quick_context_stream);
+  }
+
+  RuntimeDirectTensorFanoutStreamProbeState::release_blocked();
+  ASSERT_TRUE(RuntimeDirectTensorFanoutStreamProbeState::wait_for_first_slot_retirement(control));
+  session->request_stop();
+  session->wait();
+  EXPECT_EQ(session->termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session->diagnostics().empty())
+      << (session->diagnostics().empty() ? "" : session->diagnostics().front().token);
+  session.reset();
+
+  const auto metrics = control->snapshot(0U);
+  EXPECT_EQ(metrics.cuda_streams_created, 3U);
+  EXPECT_EQ(metrics.cuda_streams_destroyed, metrics.cuda_streams_created);
+  EXPECT_EQ(metrics.cuda_events_destroyed, metrics.cuda_events_created);
+  EXPECT_GE(metrics.cuda_release_stream_assignments, 2U);
+  EXPECT_GE(metrics.cuda_release_records, 2U);
+}
+
+// REQ: MEM-STREAM-016
+// REQ: RUNTIME-056
+TEST(RunSessionTest, SharedPolicyPublishesOneNativeStreamToEveryFanoutPartition) {
+  RuntimeDirectTensorFanoutStreamProbeState::reset(nullptr, nullptr);
+  auto control = std::make_shared<detail::RuntimeTensorOutputTestControl>();
+  const ExecutionPlan plan = make_runtime_direct_tensor_fanout_stream_plan<true, false>(
+      control,
+      true,
+      unique_runtime_graph_name("runtime-shared-tensor-fanout"),
+      CudaComputeStreamPolicy::kSharedProcessDevice);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  EXPECT_EQ(plan.cuda_compute_stream_policy(), CudaComputeStreamPolicy::kSharedProcessDevice);
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 1U);
+  ASSERT_EQ(plan.operator_cuda_stream_bindings().size(), 3U);
+  EXPECT_TRUE(std::ranges::all_of(plan.operator_cuda_stream_bindings(), [&](const auto& binding) {
+    return binding.stream_id == plan.cuda_compute_streams().front().stream_id;
+  }));
+
+  RunSession session = run_async(plan);
+  ASSERT_TRUE(RuntimeDirectTensorFanoutStreamProbeState::wait_for_sinks());
+  session.wait();
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  {
+    const std::lock_guard lock(RuntimeDirectTensorFanoutStreamProbeState::mutex);
+    EXPECT_FALSE(RuntimeDirectTensorFanoutStreamProbeState::error.has_value());
+    EXPECT_NE(RuntimeDirectTensorFanoutStreamProbeState::source_context_stream, nullptr);
+    EXPECT_EQ(RuntimeDirectTensorFanoutStreamProbeState::source_context_stream,
+              RuntimeDirectTensorFanoutStreamProbeState::blocked_context_stream);
+    EXPECT_EQ(RuntimeDirectTensorFanoutStreamProbeState::source_context_stream,
+              RuntimeDirectTensorFanoutStreamProbeState::quick_context_stream);
+  }
+
+  const auto metrics = control->snapshot(0U);
+  EXPECT_EQ(metrics.cuda_streams_created, 1U);
+  EXPECT_EQ(metrics.cuda_streams_destroyed, metrics.cuda_streams_created);
+}
+
+// REQ: MEM-STREAM-016
+// REQ: TENSOR-STORAGE-015
+TEST(RunSessionTest, ReleaseCapacityAdmitsPartitionAndExternalStreamsThenRejectsOverflow) {
+  cudaStream_t first_external = nullptr;
+  if (cudaStreamCreateWithFlags(&first_external, cudaStreamNonBlocking) != cudaSuccess) {
+    GTEST_SKIP() << "CUDA stream creation is unavailable";
+  }
+  cudaStream_t second_external = nullptr;
+  if (cudaStreamCreateWithFlags(&second_external, cudaStreamNonBlocking) != cudaSuccess) {
+    static_cast<void>(cudaStreamDestroy(first_external));
+    GTEST_SKIP() << "second CUDA stream creation is unavailable";
+  }
+  cudaStream_t overflow = nullptr;
+  if (cudaStreamCreateWithFlags(&overflow, cudaStreamNonBlocking) != cudaSuccess) {
+    static_cast<void>(cudaStreamDestroy(second_external));
+    static_cast<void>(cudaStreamDestroy(first_external));
+    GTEST_SKIP() << "overflow CUDA stream creation is unavailable";
+  }
+  struct StreamCleanup {
+    cudaStream_t first{};
+    cudaStream_t second{};
+    cudaStream_t overflow{};
+    ~StreamCleanup() {
+      static_cast<void>(cudaStreamDestroy(overflow));
+      static_cast<void>(cudaStreamDestroy(second));
+      static_cast<void>(cudaStreamDestroy(first));
+    }
+  } const stream_cleanup{first_external, second_external, overflow};
+
+  RuntimeDirectTensorFanoutStreamProbeState::reset(first_external, second_external, overflow);
+  auto control = std::make_shared<detail::RuntimeTensorOutputTestControl>();
+  const ExecutionPlan plan = make_runtime_direct_tensor_fanout_stream_plan<true, false, true>(
+      control,
+      true,
+      unique_runtime_graph_name("runtime-release-stream-capacity"),
+      CudaComputeStreamPolicy::kPerExecutionPartition);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.tensor_allocations().size(), 1U);
+  EXPECT_EQ(plan.tensor_allocations().front().release_stream_capacity, 5U);
+
+  RunSession session = run_async(plan);
+  ASSERT_TRUE(RuntimeDirectTensorFanoutStreamProbeState::wait_for_sinks());
+  session.wait();
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+  {
+    const std::lock_guard lock(RuntimeDirectTensorFanoutStreamProbeState::mutex);
+    EXPECT_FALSE(RuntimeDirectTensorFanoutStreamProbeState::error.has_value());
+    EXPECT_TRUE(RuntimeDirectTensorFanoutStreamProbeState::capacity_prefix_registered);
+    EXPECT_TRUE(RuntimeDirectTensorFanoutStreamProbeState::producer_stream_registered);
+    EXPECT_TRUE(RuntimeDirectTensorFanoutStreamProbeState::capacity_overflow_rejected);
+  }
+  const auto metrics = control->snapshot(0U);
+  EXPECT_EQ(metrics.cuda_release_stream_assignments, 5U);
+  EXPECT_EQ(metrics.cuda_streams_destroyed, metrics.cuda_streams_created);
 }
 
 // A positive-limit producer and both downstream callbacks have retired, but one consumer's
@@ -6411,7 +7298,7 @@ TEST(RunSessionTest, GreenContextTensorFanoutWaitsForEveryConsumerBeforeReuse) {
   EXPECT_GE(metrics.cuda_release_records, 2U);
   ASSERT_EQ(plan.tensor_allocations().size(), 1U);
   EXPECT_EQ(metrics.cuda_events_created,
-            static_cast<std::uint64_t>(plan.tensor_allocations().front().slot_count) * 4U);
+            static_cast<std::uint64_t>(plan.tensor_allocations().front().slot_count) * 6U);
 }
 
 // REQ: TENSOR-STORAGE-014
@@ -6562,6 +7449,7 @@ TEST(RunSessionTest, DirectTensorLoanOutlivingRunSessionFailsClosed) {
 // REQ: CHAN-094
 // REQ: OPERATOR-025
 // REQ: RUNTIME-008
+// REQ: RUNTIME-056
 // REQ: TENSOR-STORAGE-011
 TEST(RunSessionTest, DirectTensorPoolDeepRestartPreservesCommittedOutputAndRejectsStaleGuard) {
   // Key setup: restart from kAllocate replaces the pool; the pre-restart write guard
@@ -6583,6 +7471,8 @@ TEST(RunSessionTest, DirectTensorPoolDeepRestartPreservesCommittedOutputAndRejec
   bool observed_source_completed{};
   bool observed_restart_accepted{};
   std::uint32_t observed_restart_allocate_count{};
+  cudaStream_t observed_predecessor_source_stream{};
+  cudaStream_t observed_successor_source_stream{};
   std::optional<ErrorCode> observed_source_error;
   {
     const std::lock_guard lock(RuntimeDirectTensorRestartProbeState::mutex);
@@ -6590,6 +7480,10 @@ TEST(RunSessionTest, DirectTensorPoolDeepRestartPreservesCommittedOutputAndRejec
     observed_source_completed = RuntimeDirectTensorRestartProbeState::source_completed;
     observed_restart_accepted = RuntimeDirectTensorRestartProbeState::restart_accepted;
     observed_restart_allocate_count = RuntimeDirectTensorRestartProbeState::restart_allocate_count;
+    observed_predecessor_source_stream =
+        RuntimeDirectTensorRestartProbeState::predecessor_source_stream;
+    observed_successor_source_stream =
+        RuntimeDirectTensorRestartProbeState::successor_source_stream;
     observed_source_error = RuntimeDirectTensorRestartProbeState::error;
   }
   ASSERT_TRUE(observed) << (session->diagnostics().empty() ? "no runtime diagnostic"
@@ -6618,6 +7512,8 @@ TEST(RunSessionTest, DirectTensorPoolDeepRestartPreservesCommittedOutputAndRejec
     EXPECT_EQ(RuntimeDirectTensorRestartProbeState::second_value, 22U);
     ASSERT_TRUE(RuntimeDirectTensorRestartProbeState::escaped_tensor.has_value());
   }
+  ASSERT_NE(observed_predecessor_source_stream, nullptr);
+  EXPECT_EQ(observed_successor_source_stream, observed_predecessor_source_stream);
 
   // Race the escaped Tensor's final backing claim against session-owned pool detachment. The
   // shared reference control either completes the release under a live pool pin or observes the
@@ -6645,7 +7541,7 @@ TEST(RunSessionTest, DirectTensorPoolDeepRestartPreservesCommittedOutputAndRejec
   const std::uint32_t normal_claims = snapshot.admitted_claim_mask & ~quarantine_claim;
   EXPECT_EQ(snapshot.observed_claim_mask & normal_claims, normal_claims);
   EXPECT_EQ(snapshot.observed_claim_mask & quarantine_claim, 0U);
-  EXPECT_GT(snapshot.cuda_streams_created, 0U);
+  EXPECT_EQ(snapshot.cuda_streams_created, plan.cuda_compute_streams().size());
   EXPECT_EQ(snapshot.cuda_streams_destroyed, snapshot.cuda_streams_created);
   EXPECT_GT(snapshot.cuda_events_created, 0U);
   EXPECT_EQ(snapshot.cuda_events_destroyed, snapshot.cuda_events_created);
@@ -6733,6 +7629,9 @@ TEST(RunSessionTest, DirectTensorSameStreamElisionFallsBackToLazyCrossStreamFenc
 // linear chain. Compiler evidence must omit the edge so Runtime constructs with normal fences.
 // REQ: COMPILE-049
 // REQ: COMPILE-065
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: RUNTIME-056
 TEST(RunSessionTest, DirectTensorMixedCatalogFanoutConstructsWithFencesEnabled) {
   auto control = std::make_shared<detail::RuntimeTensorOutputTestControl>();
   RuntimeDirectTensorRestartProbeState::reset();
@@ -6744,8 +7643,13 @@ TEST(RunSessionTest, DirectTensorMixedCatalogFanoutConstructsWithFencesEnabled) 
       make_runtime_direct_tensor_restart_plan(control, true, "runtime-direct-tensor-mixed-export");
   ASSERT_TRUE(plan.ok()) << plan.json();
   ASSERT_EQ(plan.tensor_device_resources().size(), 1U);
-  ASSERT_EQ(plan.cuda_compute_streams().size(), 1U);
-  EXPECT_TRUE(plan.cuda_compute_streams().front().fused_linear_edges.empty());
+  ASSERT_EQ(plan.cuda_compute_streams().size(), 2U);
+  ASSERT_EQ(plan.operator_cuda_stream_bindings().size(), 2U);
+  EXPECT_NE(plan.operator_cuda_stream_bindings()[0].stream_id,
+            plan.operator_cuda_stream_bindings()[1].stream_id);
+  EXPECT_TRUE(std::ranges::all_of(plan.cuda_compute_streams(), [](const auto& stream) {
+    return stream.fused_linear_edges.empty();
+  }));
   const auto plan_state = detail::ExecutionPlanAccess::retain(plan);
   ASSERT_NE(plan_state, nullptr);
   ASSERT_EQ(plan_state->execution_partitions.size(), 3U);
@@ -6848,9 +7752,9 @@ TEST(RunSessionTest, DirectTensorPoolShallowRestartRetainsMaterializedBacking) {
   EXPECT_TRUE(snapshot.terminal);
   EXPECT_EQ(snapshot.active_claim_mask, 0U);
   EXPECT_EQ(snapshot.active_slot_count, 0U);
-  // Each slot owns one readiness event, one Runtime-stream release event, and one bounded
-  // application-selected release event for this one-subscriber graph.
-  EXPECT_EQ(snapshot.cuda_events_created, 3U * plan.tensor_allocations().front().slot_count);
+  // Each slot owns one readiness event, one producer release event, one Runtime-stream release
+  // event, and one bounded application-selected release event for this one-subscriber graph.
+  EXPECT_EQ(snapshot.cuda_events_created, 4U * plan.tensor_allocations().front().slot_count);
   EXPECT_EQ(snapshot.cuda_events_destroyed, snapshot.cuda_events_created);
   EXPECT_EQ(snapshot.cuda_streams_created, 1U);
   EXPECT_EQ(snapshot.cuda_streams_destroyed, 1U);

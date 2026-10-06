@@ -16,9 +16,7 @@ file(WRITE "${unavailable_temp_root}" "not a directory\n")
 execute_process(
     COMMAND
         "${CMAKE_COMMAND}" -E env
-        "TMPDIR=${unavailable_temp_root}"
-        "TMP=${unavailable_temp_root}"
-        "TEMP=${unavailable_temp_root}"
+        "HOLOSCAN_EXAMPLE_WORKSPACE_ROOT=${unavailable_temp_root}"
         "${PLAN_ARTIFACTS_EXAMPLE}"
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output

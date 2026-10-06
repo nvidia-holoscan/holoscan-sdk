@@ -529,6 +529,10 @@ class TestArgumentValidation:
                 },
                 "must not share one logical CPU",
             ),
+            (
+                {"operator_lanes": "shared", "source_cpu": 2, "controller_cpu": 4},
+                "must match when the sole Operator lane shares the controller thread",
+            ),
             ({"relay_cpu": 3}, "requires --scenario sample_forward"),
             (
                 {"partition_cover": "automatic", "source_cpu": 2},
@@ -1812,15 +1816,22 @@ class TestArgumentValidation:
         assert command[command.index("--notification-capacity") + 1] == "1"
         assert command[command.index("--notification-driver-cpu") + 1] == "6"
 
-    def test_shared_operator_lane_uses_only_source_cpu(self) -> None:
-        # Key setup: source and sink share one lane while the exact pump control retains its
-        # independently pinned support thread.
+    @pytest.mark.parametrize(
+        ("source_cpu", "controller_cpu"),
+        [(2, -1), (-1, 2), (2, 2)],
+    )
+    def test_shared_operator_lane_uses_one_controller_owner(
+        self, source_cpu: int, controller_cpu: int
+    ) -> None:
+        # Key setup: source and sink share the controller thread while the exact pump control
+        # retains its independently pinned support thread.
         args = make_args(
             operator_lanes="shared",
             workload="notification_latency",
-            source_cpu=2,
-            controller_cpu=4,
+            source_cpu=source_cpu,
+            controller_cpu=controller_cpu,
             channel_pump_cpu=5,
+            notification_driver_cpu=6,
             force_holomq_process_local_inline=True,
             force_process_local_channel_pump=True,
         )
@@ -1831,16 +1842,23 @@ class TestArgumentValidation:
         )
         topology = runner.collect_cpu_topology(args)
 
-        # Key assertion: topology reports one shared operator lane and the explicit pump control,
-        # without introducing a separate sink lane.
+        # Key assertion: topology reports the controller-owned lane once and keeps the explicit
+        # pump control without inventing a separate source or sink thread.
         assert command[command.index("--operator-lanes") + 1] == "shared"
         assert command[command.index("--channel-pump-cpu") + 1] == "5"
         assert [item["role"] for item in topology] == [
-            "shared_operator_lane",
             "controller",
             "channel_pump",
             "notification_driver",
         ]
+        assert topology[0]["cpu"] == 2
+        quality = runner.quality_gate(
+            args,
+            topology,
+            {"coefficient_of_variation": 0.0},
+        )
+        assert quality["publishable"] is True
+        assert quality["issues"] == []
 
     def test_source_only_notification_latency_omits_sink_placement(self) -> None:
         # Key setup: isolate notification-to-source activation without a Channel edge or sink.
@@ -1848,21 +1866,22 @@ class TestArgumentValidation:
             workload="notification_latency",
             scenario="source_only",
             source_cpu=2,
-            controller_cpu=4,
+            controller_cpu=2,
             notification_driver_cpu=6,
         )
 
         runner.validate_args(args)
-        topology = runner.collect_cpu_topology(
-            make_args(workload="notification_latency", scenario="source_only")
-        )
+        topology = runner.collect_cpu_topology(args)
 
         # Key assertion: result naming and topology expose the reduced measurement boundary.
         assert runner.benchmark_name(args.scenario, args.workload) == (
             "runtime_graph_source_activation_notification_latency"
         )
-        assert all(item["role"] != "sink" for item in topology)
-        assert all(item["role"] != "channel_pump" for item in topology)
+        assert [item["role"] for item in topology] == [
+            "controller",
+            "notification_driver",
+        ]
+        assert topology[0]["cpu"] == 2
 
     def test_source_only_saturated_uses_only_activation_roles(self) -> None:
         # Key setup: saturate one portless Operator with bounded notification credits.
@@ -1873,19 +1892,18 @@ class TestArgumentValidation:
             notification_capacity=8,
             publisher_period_us=0,
             source_cpu=2,
-            controller_cpu=4,
+            controller_cpu=2,
             notification_driver_cpu=6,
         )
 
         runner.validate_args(args)
         topology = runner.collect_cpu_topology(args)
 
-        # Key assertion: the row retains only the source lane, controller, and driver.
+        # Key assertion: the row retains one controller-owned lane and the independent driver.
         assert runner.benchmark_name(args.scenario, args.workload) == (
             "runtime_graph_source_activation_saturated"
         )
         assert [item["role"] for item in topology] == [
-            "source",
             "controller",
             "notification_driver",
         ]
@@ -2292,6 +2310,38 @@ class TestSummaries:
 
 
 class TestResultValidation:
+    @pytest.mark.parametrize("fanout", [1, 2, 4, 8])
+    def test_tensor_phase_timing_counts_receive_samples_per_sink(self, fanout: int) -> None:
+        # Key setup: loan and write are producer phases recorded once per publication, while each
+        # fanout recipient contributes one independently paired public receive-call interval.
+        args = make_args(samples=8, scenario="tensor", fanout=fanout)
+        timing = {
+            "tensor_loan_acquire_ns": {"samples": 8},
+            "tensor_write_commit_ns": {"samples": 8},
+            "tensor_receive_call_ns": {"samples": 8 * fanout},
+        }
+
+        runner.validate_tensor_phase_timing(timing, args, Path("result.json"))
+
+        # Key assertion: dropping even one sink interval fails the aggregate receive evidence.
+        timing["tensor_receive_call_ns"]["samples"] -= 1
+        with pytest.raises(RuntimeError, match="incomplete Tensor phase timing"):
+            runner.validate_tensor_phase_timing(timing, args, Path("result.json"))
+
+    @pytest.mark.parametrize("field", ["tensor_loan_acquire_ns", "tensor_write_commit_ns"])
+    def test_tensor_phase_timing_does_not_multiply_producer_samples(self, field: str) -> None:
+        args = make_args(samples=8, scenario="tensor", fanout=2)
+        timing = {
+            "tensor_loan_acquire_ns": {"samples": 8},
+            "tensor_write_commit_ns": {"samples": 8},
+            "tensor_receive_call_ns": {"samples": 16},
+        }
+        timing[field]["samples"] = 16
+
+        # Key assertion: only the recipient-side phase scales with fanout.
+        with pytest.raises(RuntimeError, match="incomplete Tensor phase timing"):
+            runner.validate_tensor_phase_timing(timing, args, Path("result.json"))
+
     def test_callback_counts_accept_reported_clocked_terminal_drain_entries(self) -> None:
         # Key setup: reproduce the aarch64 fanout control result where final Tensor retirement
         # took long enough for three more periodic source candidates to enter compute.
@@ -2487,6 +2537,7 @@ class TestResultValidation:
         # Channel backpressure expectation.
         runner.validate_callback_counts(Path("result.json"), counts, args, 3, 3)
 
+    # REQ: RUNTIME-041
     @pytest.mark.parametrize(
         "args",
         [
@@ -2500,10 +2551,10 @@ class TestResultValidation:
         ],
         ids=("direct-retained-tensor", "holomq-pod"),
     )
-    def test_tensor_and_holomq_rows_reject_continuation_receipt_evidence(
+    def test_direct_tensor_allows_and_holomq_rejects_continuation_receipt_evidence(
         self, args: SimpleNamespace
     ) -> None:
-        # Key setup: model a complete Tensor or HoloMQ shared-lane cycle using ordinary dispatch.
+        # Key setup: model a complete direct Tensor or HoloMQ shared-lane cycle.
         counts = {
             "source_callbacks": 1,
             "source_compute_entries": 2,
@@ -2525,6 +2576,7 @@ class TestResultValidation:
             "candidates_frozen": 3,
             "candidates_selected": 3,
             "readiness_poll_dispatches": 1,
+            "readiness_poll_contention_retries": 0,
             "direct_continuation_receipts_accepted": 0,
             "direct_continuation_poll_elisions": 0,
             "direct_composite_attempts": 0,
@@ -2548,6 +2600,7 @@ class TestResultValidation:
             "channel_activation_cut_drains": 0,
             "channel_activation_cut_skips": 0,
             "channel_receive_backpressured": 0,
+            "channel_poll_incomplete": 0,
             "channel_activation_cut_inventory_scans": 0,
             "channel_activation_cut_subscriber_probes": 0,
             "channel_activation_cut_transport_probes": 0,
@@ -2573,7 +2626,7 @@ class TestResultValidation:
             counters["channel_activation_cuts"] = 3
             counters["channel_activation_cut_skips"] = 3
 
-        # Key assertion: zero receipts pass, while fabricated receipt evidence fails closed.
+        # Key assertion: zero receipts remain valid for both delivery paths.
         runner.validate_runtime_phase_counters(counters, counts, args)
 
         if runner.uses_holomq(args):
@@ -2606,7 +2659,13 @@ class TestResultValidation:
             runner.validate_runtime_phase_counters(terminal_frozen, counts, args)
         counters["direct_continuation_receipts_accepted"] = 1
         counters["direct_continuation_poll_elisions"] = 1
-        with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+        if runner.uses_holomq(args):
+            # Key assertion: transported delivery rejects direct continuation evidence.
+            with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+                runner.validate_runtime_phase_counters(counters, counts, args)
+        else:
+            # Key assertion: direct-retained Tensor delivery admits matched receipt and poll-elision
+            # evidence under the same cardinality bounds as other process-local payloads.
             runner.validate_runtime_phase_counters(counters, counts, args)
 
     def test_runtime_phase_counters_require_exact_activation_cardinality(self) -> None:
@@ -2633,6 +2692,7 @@ class TestResultValidation:
             "candidates_frozen": 3,
             "candidates_selected": 3,
             "readiness_poll_dispatches": 1,
+            "readiness_poll_contention_retries": 0,
             "direct_continuation_receipts_accepted": 0,
             "direct_continuation_poll_elisions": 0,
             "direct_composite_attempts": 0,
@@ -2656,6 +2716,7 @@ class TestResultValidation:
             "channel_activation_cut_drains": 0,
             "channel_activation_cut_skips": 0,
             "channel_receive_backpressured": 0,
+            "channel_poll_incomplete": 0,
             "channel_activation_cut_inventory_scans": 0,
             "channel_activation_cut_subscriber_probes": 0,
             "channel_activation_cut_transport_probes": 0,
@@ -2863,6 +2924,18 @@ class TestResultValidation:
         # claim cardinality decide whether this row observes them.
         assert runner.pressured_staged_diagnostics_required(args)
         runner.validate_runtime_phase_counters(counters, counts, args)
+        # A private fallback can let all three revisions become retired witnesses, although only
+        # two payloads are read. Otherwise the extra revision is replaced before publication.
+        runner.validate_runtime_phase_counters(
+            {**counters, "channel_witness_retired": 3, "channel_pre_witness_replacements": 0},
+            counts,
+            args,
+        )
+        for retired in (1, 3):
+            with pytest.raises(RuntimeError, match="inconsistent Runtime phase counters"):
+                runner.validate_runtime_phase_counters(
+                    {**counters, "channel_witness_retired": retired}, counts, args
+                )
         runner.validate_runtime_phase_counters(
             {**counters, "channel_protected_terminal_probes_with_pending_data": 1}, counts, args
         )

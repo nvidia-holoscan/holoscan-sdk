@@ -1,1 +1,0 @@
-{"schema":"holoscan.tooling-component/v1","component":"holoscan-params","target":"holoscan::params","version":"@PROJECT_VERSION@","direct_holoscan_dependencies":["holoscan::core","holoscan::config"],"features":{"param_codec_version":1,"rebind_version":1},"experimental":false}

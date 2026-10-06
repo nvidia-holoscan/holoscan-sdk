@@ -594,7 +594,7 @@ void emit_optional_duration(std::ostream& os, const char* const name,
   holoscan::PayloadDescriptor payload_descriptor =
       holoscan::channel_internal::payload_descriptor_from_holomq_tensor_descriptor(
           tensor_descriptor.value());
-  payload_descriptor.schema_id = holoscan::schema_identity<holoscan::schema::Image>().id;
+  payload_descriptor.schema_id = holoscan::schema_identity<holoscan::schema::Image>().family_id;
   payload_descriptor.sequence = sequence;
   payload_descriptor.byte_size = static_cast<std::uint64_t>(tensor.nbytes());
 

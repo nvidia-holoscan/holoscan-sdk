@@ -7,6 +7,8 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include <holoscan/core/errors.hpp>
@@ -20,6 +22,17 @@ struct ExecutionPlanState;
 /// Construct one cold Operator-reconstruction diagnostic.
 [[nodiscard]] inline Error operator_reconstruction_error(ErrorCode code, const char* token) {
   return Error{code, token};
+}
+
+/// Construct one cold Operator-reconstruction diagnostic with human-readable failure detail.
+[[nodiscard]] inline Error operator_reconstruction_error(ErrorCode code, std::string_view token,
+                                                         std::string_view detail) {
+  std::string message{token};
+  if (!detail.empty()) {
+    message.append(": ");
+    message.append(detail);
+  }
+  return Error{code, std::move(message)};
 }
 
 /// Validate the complete frozen lifecycle inventory.

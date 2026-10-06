@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "holoscan/sensor_io/image_metadata.hpp"
+#include <holoscan/sensor_io/image_metadata.hpp>
 
 #include "sensor_io/image_metadata_internal.hpp"
 
@@ -17,7 +17,6 @@
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -25,11 +24,11 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/schema/bounded_span_allocator.hpp>
+#include <holoscan/schema/tensor_materialization.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include "core/domain/tensor_layout_validation.hpp"
 #include "header_generated.h"
-#include "holoscan/schema/flatbuffer_schema_package.hpp"
-#include "holoscan/schema/tensor_materialization.hpp"
-#include "holoscan/sensor_io/sensor_schema_package.hpp"
 #include "tensor_generated.h"
 #include "time_generated.h"
 
@@ -60,6 +59,8 @@ const std::uint8_t* metadata_bytes(std::span<const std::byte> metadata) {
       return 2U;
     case ImageEncoding_RGB8:
     case ImageEncoding_RGBA8:
+    case ImageEncoding_RGB16:
+    case ImageEncoding_RGBA16:
     case ImageEncoding_BGR8:
     case ImageEncoding_BGRA8:
     case ImageEncoding_MONO8:
@@ -98,7 +99,10 @@ struct ImagePlaneGeometry {
   return (static_cast<std::uint64_t>(extent) + 1U) / 2U;
 }
 
-/// @brief Geometry of one plane, or absence when the encoding does not determine it.
+/// @brief Geometry of one plane, or zero rows when the encoding does not determine it.
+///
+/// Zero rows is unambiguous after dimension validation. Returning initialized geometry also avoids
+/// GCC 13.3's -O3 loop unswitching dropping planar RGB checks with an optional aggregate result.
 ///
 /// Only the multi-planar encodings appear, because they are the only encodings that carry plane
 /// layouts at all and this function exists to size those records. A single-plane encoding must
@@ -113,9 +117,10 @@ struct ImagePlaneGeometry {
 ///
 /// Every case is listed for the same reason \ref encoding_plane_count lists them: a new encoding
 /// should fail to compile here rather than silently acquire the unchecked answer.
-[[nodiscard]] std::optional<ImagePlaneGeometry> encoding_plane_geometry(
-    const ImageEncoding encoding, const std::size_t plane, const std::int32_t width,
-    const std::int32_t height) noexcept {
+[[nodiscard]] ImagePlaneGeometry encoding_plane_geometry(const ImageEncoding encoding,
+                                                         const std::size_t plane,
+                                                         const std::int32_t width,
+                                                         const std::int32_t height) noexcept {
   const auto full_width = static_cast<std::uint64_t>(width);
   const auto full_height = static_cast<std::uint64_t>(height);
   switch (encoding) {
@@ -141,6 +146,8 @@ struct ImagePlaneGeometry {
     case ImageEncoding_CUSTOM:
     case ImageEncoding_RGB8:
     case ImageEncoding_RGBA8:
+    case ImageEncoding_RGB16:
+    case ImageEncoding_RGBA16:
     case ImageEncoding_BGR8:
     case ImageEncoding_BGRA8:
     case ImageEncoding_MONO8:
@@ -157,9 +164,9 @@ struct ImagePlaneGeometry {
     case ImageEncoding_BAYER_BGGR:
     case ImageEncoding_BAYER_GRBG:
     case ImageEncoding_BAYER_GBRG:
-      return std::nullopt;
+      return {};
   }
-  return std::nullopt;
+  return {};
 }
 
 /// @brief Decide whether the declared planes describe memory, and the memory the encoding implies.
@@ -179,6 +186,8 @@ struct ImagePlaneGeometry {
 /// Containment against the Tensor is deliberately not here. It holds for every encoding, including
 /// the ones this function answers early for, so it belongs to the caller rather than to a branch
 /// this function can return past. See \ref validate_plane_layouts.
+// Plane bounds, overlap, and encoding-specific geometry are one validation transaction.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] detail::ImageFactViolation validate_plane_layout_geometry(
     const detail::ImageFacts& facts) noexcept {
   using Violation = detail::ImageFactViolation;
@@ -228,12 +237,12 @@ struct ImagePlaneGeometry {
     return Violation::kPlaneCountMismatch;
   }
   for (std::size_t plane = 0U; plane < layouts.size(); ++plane) {
-    const std::optional<ImagePlaneGeometry> geometry =
+    const ImagePlaneGeometry geometry =
         encoding_plane_geometry(facts.encoding, plane, facts.width, facts.height);
-    if (!geometry) {
+    if (geometry.rows == 0U) {
       continue;
     }
-    if (layouts[plane].row_stride_bytes() < geometry->row_bytes) {
+    if (layouts[plane].row_stride_bytes() < geometry.row_bytes) {
       return Violation::kPlaneRowStrideTooSmall;
     }
     // The minimum an extent can be and still hold every row: the stride carries the reader to the
@@ -242,7 +251,7 @@ struct ImagePlaneGeometry {
     // rows is bounded by the int32 height, the stride by uint32, and the row width by four times
     // the int32 width, so the sum stays well inside the uint64 the extent is expressed in.
     const std::uint64_t required_bytes =
-        (geometry->rows - 1U) * layouts[plane].row_stride_bytes() + geometry->row_bytes;
+        (geometry.rows - 1U) * layouts[plane].row_stride_bytes() + geometry.row_bytes;
     if (layouts[plane].size_bytes() < required_bytes) {
       return Violation::kPlaneSizeTooSmall;
     }
@@ -339,9 +348,10 @@ struct ImageSampleType {
     case ImageEncoding_UYVY:
       return ImageSampleType{kDLUInt, 8U};
     case ImageEncoding_MONO16:
+    case ImageEncoding_RGB16:
+    case ImageEncoding_RGBA16:
       return ImageSampleType{kDLUInt, 16U};
     case ImageEncoding_MONO32:
-      return ImageSampleType{kDLUInt, 32U};
     // Four components packed into one 32-bit word, so the word is the addressable container even
     // though no single component fills it.
     case ImageEncoding_RGBA1010102:
@@ -393,6 +403,8 @@ struct ImageSampleType {
     case ImageEncoding_I420:
       return 8U;
     case ImageEncoding_MONO16:
+    case ImageEncoding_RGB16:
+    case ImageEncoding_RGBA16:
     // The 16-bit container the encoding's 10-bit samples sit in the high bits of. A producer
     // reporting 10 here is the case the field exists for, and one reporting 16 is claiming the
     // container is full rather than claiming something impossible.
@@ -479,6 +491,10 @@ struct ImageSampleType {
     case ImageEncoding_RGB8:
     case ImageEncoding_BGR8:
       return 3U * full_width;
+    case ImageEncoding_RGB16:
+      return 6U * full_width;
+    case ImageEncoding_RGBA16:
+      return 8U * full_width;
     case ImageEncoding_RGBA8:
     case ImageEncoding_BGRA8:
     case ImageEncoding_RGBA1010102:
@@ -778,7 +794,9 @@ constexpr std::uint8_t kMaximumComponentBits = 64U;
     component_bits = facts.element_type.bits;
   }
   const std::uint8_t bound = component_bits.value_or(kMaximumComponentBits);
-  return facts.significant_bits > bound ? Violation::kSignificantBits : Violation::kNone;
+  return facts.significant_bits != kUnknownImageSignificantBits && facts.significant_bits > bound
+             ? Violation::kSignificantBits
+             : Violation::kNone;
 }
 
 }  // namespace
@@ -957,9 +975,8 @@ expected<std::vector<std::byte>, Error> build_image_metadata(const holoscan::Ten
   image.exposure_time_ns = options.exposure_time_ns;
   image.gain = options.gain;
 
-  alignas(std::max_align_t)
-      std::array<std::byte, flatbuffer_default_descriptor_metadata_capacity_v<Image>>
-          storage{};
+  alignas(std::max_align_t) std::array<std::byte, flatbuffer_descriptor_metadata_capacity_v<Image>>
+      storage{};
   auto encoded = detail::encode_image_metadata(image, storage);
   if (!encoded) {
     return make_unexpected(std::move(encoded).error());

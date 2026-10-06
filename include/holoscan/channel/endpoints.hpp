@@ -10,6 +10,7 @@
 #include <holoscan/channel/endpoint_interfaces.hpp>
 #include <holoscan/channel/inline_endpoints.hpp>
 #include <holoscan/channel/manual_tensor_publisher.hpp>
+#include <holoscan/channel/readiness_handle.hpp>
 #include <holoscan/channel/runtime.hpp>
 #include <holoscan/channel/tensor_endpoints.hpp>
 #include <holoscan/channel/tensor_schema_endpoints.hpp>

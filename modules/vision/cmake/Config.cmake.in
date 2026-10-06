@@ -4,11 +4,13 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
-find_dependency(holoscan @PROJECT_VERSION@ CONFIG COMPONENTS core)
+find_dependency(holoscan @PROJECT_VERSION@ CONFIG COMPONENTS core sensor_io)
 if(NOT @BUILD_SHARED_LIBS@)
     # CV-CUDA's package configuration consumes the nvcv_types target without discovering it.
     find_dependency(nvcv_types @HOLOSCAN_VISION_CVCUDA_VERSION_MIN@...<@HOLOSCAN_VISION_CVCUDA_VERSION_MAX@ CONFIG)
     find_dependency(cvcuda @HOLOSCAN_VISION_CVCUDA_VERSION_MIN@...<@HOLOSCAN_VISION_CVCUDA_VERSION_MAX@ CONFIG)
+    # Static BayerDemosaicOp consumers need CUDA::nppicc_static and its dependencies.
+    find_dependency(CUDAToolkit)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/holoscan-vision-targets.cmake")

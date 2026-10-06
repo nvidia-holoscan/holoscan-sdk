@@ -34,7 +34,7 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/run.hpp>
 #include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/image_metadata.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/manual_clock.hpp>
@@ -72,12 +72,12 @@ using namespace std::chrono_literals;
 // controller-owned catalog drain from the process-local HoloMQ pump.
 class ExternalImportSupportThreadProbe final : public detail::RuntimeSupportThreadControl {
  public:
-  [[nodiscard]] expected<void, Error> enter(const detail::RuntimeSupportThreadRole role) override {
+  [[nodiscard]] expected<void, Error> enter(const SupportThreadRole role) override {
     entered_[static_cast<std::size_t>(role)].store(true, std::memory_order_release);
     return {};
   }
 
-  [[nodiscard]] bool entered(const detail::RuntimeSupportThreadRole role) const noexcept {
+  [[nodiscard]] bool entered(const SupportThreadRole role) const noexcept {
     return entered_[static_cast<std::size_t>(role)].load(std::memory_order_acquire);
   }
 
@@ -1092,6 +1092,52 @@ class ExternalImageForwarder final : public Operator<> {
   Output<schema::ImageT> output;
 };
 
+// Forwards imported raw Tensor samples to an external export while preserving the
+// Tensor contract and ownership across the graph boundary.
+// Representative test: RequiredRawTensorExportSubscriberCloseFailsWithoutTerminalRetry.
+class ExternalTensorForwarder final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost,
+                               .dtype = kExternalTensorDtype,
+                               .rank = 1U,
+                               .strides = TensorStridePolicy::kContiguousOnly},
+            .bounds = tensor_bounds(kExternalTensorShape),
+        });
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost,
+                               .dtype = kExternalTensorDtype,
+                               .rank = 1U,
+                               .strides = TensorStridePolicy::kContiguousOnly},
+            .bounds = tensor_bounds(kExternalTensorShape),
+            .transfer = TensorTransferPolicy{.foreign_emit_policy =
+                                                 InterfaceTensorEmitPolicy::kCopyIfNeeded},
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample).error());
+    }
+    return output.emit(std::move(*sample));
+  }
+
+  Input<Tensor> input;
+  Output<Tensor> output;
+};
+
 struct ExternalImageDeadlineProbe {
   static void reset() noexcept {
     const std::lock_guard lock{mutex};
@@ -1712,7 +1758,7 @@ struct LockedSiblingInputNotificationPollProbe {
     self.control->notification_posted();
     const auto contention_deadline = std::chrono::steady_clock::now() + 5s;
     while (self.notification_posted && self.session->is_running() &&
-           self.control->poll_contention_count() < 2U &&
+           self.control->poll_contention_count() < 1U &&
            std::chrono::steady_clock::now() < contention_deadline) {
       std::this_thread::yield();
     }
@@ -2128,7 +2174,8 @@ void expect_completion_progress(const RunSession& session, const std::uint64_t l
 
 // Polls has_samples() until a publisher is seen on two consecutive checks, guarding against
 // a transient first observation before the Runtime-owned publisher is fully live.
-[[nodiscard]] expected<void, Error> wait_for_publisher(ChannelSubscriber<std::uint32_t>& subscriber,
+template <typename T>
+[[nodiscard]] expected<void, Error> wait_for_publisher(ChannelSubscriber<T>& subscriber,
                                                        std::chrono::milliseconds timeout = 5s) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   std::uint32_t consecutive_observations = 0U;
@@ -2147,6 +2194,25 @@ void expect_completion_progress(const RunSession& session, const std::uint64_t l
       }
     } else {
       consecutive_observations = 0U;
+    }
+    std::this_thread::sleep_for(1ms);
+  }
+  return make_unexpected(Error{ErrorCode::kTimeout});
+}
+
+[[nodiscard]] expected<Sample<Tensor>, Error> wait_for_tensor_sample(
+    ChannelSubscriber<Tensor>& subscriber, std::chrono::milliseconds timeout = 5s) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto ready = subscriber.has_samples();
+    if (!ready) {
+      return make_unexpected(std::move(ready).error());
+    }
+    if (*ready) {
+      auto sample = subscriber.receive_sample();
+      if (sample || sample.error().code != ErrorCode::kNotReady) {
+        return sample;
+      }
     }
     std::this_thread::sleep_for(1ms);
   }
@@ -2847,8 +2913,8 @@ TEST(RuntimeExternalChannelTest, UnmonitoredScalarImportDrainsEverySampleInPubli
   EXPECT_EQ(ExternalImportProbe::values[1], kValues[1]);
   EXPECT_EQ(ExternalImportProbe::sequences[0], 1U);
   EXPECT_EQ(ExternalImportProbe::sequences[1], 2U);
-  EXPECT_TRUE(support_threads->entered(detail::RuntimeSupportThreadRole::kController));
-  EXPECT_FALSE(support_threads->entered(detail::RuntimeSupportThreadRole::kChannelPump));
+  EXPECT_TRUE(support_threads->entered(SupportThreadRole::kController));
+  EXPECT_FALSE(support_threads->entered(SupportThreadRole::kChannelPump));
 }
 
 // The catalog inline wrapper may retain N+1 in its own bounded staging buffer while the typed
@@ -3006,7 +3072,7 @@ TEST(RuntimeExternalChannelTest,
   ASSERT_TRUE(prepared_metadata) << runtime_error_message(prepared_metadata.error());
   const PayloadDescriptor oversized_descriptor{
       .payload_kind = ChannelPayloadKind::kLocalBufferDescriptor,
-      .schema_id = schema_identity<schema::Tensor>().id,
+      .schema_id = schema_identity<schema::Tensor>().family_id,
       .sequence = 1U,
       .byte_size = 9U,
       .local =
@@ -3396,7 +3462,7 @@ TEST(RuntimeExternalChannelTest, DescriptorTensorSchemaHasSamplesIncludesClockHe
   // with otherwise structural metadata that independently violates each constrained dimension.
   const PayloadDescriptor valid_descriptor{
       .payload_kind = ChannelPayloadKind::kLocalBufferDescriptor,
-      .schema_id = schema_identity<schema::Tensor>().id,
+      .schema_id = schema_identity<schema::Tensor>().family_id,
       .sequence = 1U,
       .byte_size = 8U,
       .local =
@@ -5372,10 +5438,16 @@ void run_raw_tensor_full_reuse_last_scenario(const RawTensorFullReuseLastScenari
   auto phase_counters = std::make_shared<detail::RuntimePhaseCounters>();
   const ExecutionPlan counted =
       detail::RuntimeTestPlanAccess::with_phase_counters(compiled, phase_counters);
+  // The contended-poll scenario also forces the owner's contention retries incomplete while the
+  // sibling lock is held, so that round still ends with an incomplete ordinary scan while the
+  // sole witness is pending. It is armed only at that point so ordinary pump contention earlier
+  // in the run cannot consume the budget.
   const auto incomplete_poll_control =
       defer_replacement_prerequisite
           ? std::make_shared<detail::RuntimeChannelIncompletePollTestControl>(1U)
-          : nullptr;
+      : contend_freshness ? std::make_shared<detail::RuntimeChannelIncompletePollTestControl>(
+                                0U, detail::RuntimeChannelIncompletePollKind::kContentionRetry)
+                          : nullptr;
   const ExecutionPlan poll_controlled =
       incomplete_poll_control
           ? detail::RuntimeTestPlanAccess::with_channel_incomplete_poll_test_control(
@@ -5794,7 +5866,18 @@ void run_raw_tensor_full_reuse_last_scenario(const RawTensorFullReuseLastScenari
   } else {
     // Hold an inert sibling input's cache while publishing ordered EOS and the later notification.
     // The exact failed try-lock observer acknowledges only after that notification post completes,
-    // proving the owner-local Channel poll was incomplete while the sole witness was pending.
+    // proving the owner-local Channel poll was incomplete while the sole witness was pending. The
+    // observer fires only from a real lost try_lock, and this probe releases the lock as soon as it
+    // has seen one, so the owner's following contention retries are forced incomplete: the round
+    // that lost the lock still ends unpolled (the owner may then take the bounded fallback park,
+    // exactly as before the retry existed) instead of converting the revision through a retry once
+    // the lock is gone. One post-notification decline is sufficient because RUNTIME-051 requires
+    // one actual incomplete ordinary scan for the exact binding. Four forced retries cover an
+    // EOS-triggered pre-post round plus a post-notification round with margin; leftover budget is
+    // harmless because a forced retry only follows a real decline and then costs that round nothing
+    // more than the pre-existing bounded park.
+    ASSERT_NE(incomplete_poll_control, nullptr);
+    incomplete_poll_control->arm(4U);
     LockedSiblingInputNotificationPollProbe contention{
         .sender = RetainedTensorEndOfStreamProbe::sender_copy(),
         .publisher = &*publisher,
@@ -5807,7 +5890,16 @@ void run_raw_tensor_full_reuse_last_scenario(const RawTensorFullReuseLastScenari
     ASSERT_TRUE(contention.publisher_closed)
         << "publisher close failed with " << static_cast<std::uint32_t>(contention.close_error);
     ASSERT_TRUE(contention.notification_posted);
-    ASSERT_GE(contention.poll_contention_count, 2U);
+    ASSERT_GE(contention.poll_contention_count, 1U);
+    // The probe returns the moment the observer counts the lost try_lock, while the owner is still
+    // inside that poll; the forced contention retry runs afterwards on the owner thread, so wait
+    // for it instead of racing it.
+    const auto forced_retry_deadline = std::chrono::steady_clock::now() + 5s;
+    while (incomplete_poll_control->forced() < 1U && session.is_running() &&
+           std::chrono::steady_clock::now() < forced_retry_deadline) {
+      std::this_thread::yield();
+    }
+    EXPECT_GE(incomplete_poll_control->forced(), 1U);
     ASSERT_TRUE(replacement_control->poll_contention_identity_matches());
     ASSERT_EQ(contention.delivery_count_while_contended, 2U);
   }
@@ -6507,6 +6599,346 @@ TEST(RuntimeExternalChannelTest, OptionalGraphExportAcceptsZeroConnectedRecipien
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty())
       << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+}
+
+// Retiring an attached external subscriber is local client teardown, not graph terminal evidence.
+// The unbounded source remains running, its optional export follows the ordinary no-observer path,
+// and only the explicit session stop produces a terminal outcome.
+// REQ: CHAN-143
+// REQ: RUNTIME-017
+TEST(RuntimeExternalChannelTest, LocalSubscriberCloseDoesNotCompleteGraphExport) {
+  ExternalScalarExportSource::reset();
+  const std::string export_name = unique_endpoint_name();
+
+  Graph graph{"runtime-local-subscriber-close-isolation"};
+  const ClockKey runtime_clock = graph.add_clock<RealtimeClock>("runtime-clock");
+  graph.set_default_clock(runtime_clock);
+  TopicOptions export_options;
+  export_options.endpoint_name = export_name;
+  const auto exported =
+      graph.export_topic<std::uint32_t>("holomq://" + export_name, std::move(export_options));
+  const auto source = graph.op<ExternalScalarExportSource>("source");
+  graph.add_flow(source->output,
+                 exported.input(),
+                 ConnectionOptions{.queue_policy = QueuePolicy::kDropOldest, .queue_depth = 4U});
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto external_runtime = ChannelRuntime::create();
+  ASSERT_TRUE(external_runtime) << runtime_error_message(external_runtime.error());
+  auto subscriber =
+      external_runtime->create_subscriber<std::uint32_t>(plan.endpoint_catalog(), export_name);
+  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+
+  RunSession session = run_async(plan);
+  ASSERT_TRUE(ExternalScalarExportSource::wait_for_compute_started());
+  auto publisher_ready = wait_for_publisher(*subscriber);
+  ASSERT_TRUE(publisher_ready) << runtime_error_message(publisher_ready.error());
+  ASSERT_TRUE(subscriber->close());
+  EXPECT_TRUE(session.is_running());
+  EXPECT_EQ(session.termination(), RunTermination::kRunning);
+  EXPECT_TRUE(session.diagnostics().empty());
+
+  ExternalScalarExportSource::allow_emit();
+  ASSERT_TRUE(ExternalScalarExportSource::wait_for_emit_completed());
+  EXPECT_EQ(ExternalScalarExportSource::emit_error.load(std::memory_order_relaxed),
+            ErrorCode::kSuccess);
+  EXPECT_TRUE(session.is_running());
+
+  session.request_stop();
+  session.wait();
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty())
+      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token);
+}
+
+// A raw-Tensor export that has already delivered data remains obligated to its required external
+// consumer. Retiring that consumer before imported EOS must fail the run without delivering EOS.
+// REQ: CHAN-136
+// REQ: CHAN-144
+// REQ: RUNTIME-017
+TEST(RuntimeExternalChannelTest, RequiredRawTensorExportSubscriberCloseFailsWithoutTerminalRetry) {
+  const std::string import_name = unique_endpoint_name();
+  const std::string export_name = unique_endpoint_name();
+
+  Graph graph{"runtime-required-raw-tensor-export-abandonment"};
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-clock"));
+  TopicOptions import_options = optional_tensor_export_options(import_name);
+  import_options.bounds.subscriber.reset();
+  import_options.bounds.publisher = PublisherEndpointBounds{.max_loaned_samples = 1U};
+  const auto imported =
+      graph.import_topic<Tensor>("holomq://" + import_name, std::move(import_options));
+  TopicOptions export_options = optional_tensor_export_options(export_name);
+  export_options.attach = TopicAttachPolicy{
+      .peer = PeerRequirement::kRequired,
+      .max_wait = 10s,
+  };
+  const auto exported =
+      graph.export_topic<Tensor>("holomq://" + export_name, std::move(export_options));
+  const auto forwarder = graph.op<ExternalTensorForwarder>("forwarder");
+  graph.add_flow(imported.output(), forwarder->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(forwarder->output, exported.input(), ConnectionOptions{.queue_depth = 1U});
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto external_runtime = ChannelRuntime::create();
+  ASSERT_TRUE(external_runtime) << runtime_error_message(external_runtime.error());
+  auto publisher = external_runtime->create_publisher<Tensor>(plan.endpoint_catalog(), import_name);
+  ASSERT_TRUE(publisher) << runtime_error_message(publisher.error());
+
+  RunSession session = run_async(plan);
+  auto subscriber =
+      external_runtime->create_subscriber<Tensor>(plan.endpoint_catalog(), export_name);
+  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+
+  ASSERT_TRUE(wait_for_subscriber(*publisher));
+  ASSERT_TRUE(wait_for_publisher(*subscriber));
+  ASSERT_TRUE(publish_external_host_tensor(*publisher, std::nullopt));
+  {
+    auto received = wait_for_tensor_sample(*subscriber);
+    ASSERT_TRUE(received) << runtime_error_message(received.error());
+    ASSERT_NE(received->data.data_as<std::uint8_t>(), nullptr);
+    EXPECT_EQ(received->data.data_as<std::uint8_t>()[0], 0x2aU);
+  }
+  EXPECT_EQ(
+      detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber), 0U);
+
+  ASSERT_TRUE(subscriber->close());
+  ASSERT_TRUE(publisher->close());
+  const bool failed_without_timeout = wait_for_session_terminal(session);
+  if (!failed_without_timeout) {
+    session.request_stop();
+  }
+  session.wait();
+
+  ASSERT_TRUE(failed_without_timeout);
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  ASSERT_EQ(session.diagnostics().size(), 1U);
+  EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_READINESS_BINDING_UNAVAILABLE");
+  EXPECT_EQ(session.diagnostics().front().service, "terminal_input_end_of_stream");
+  EXPECT_EQ(
+      detail::RuntimeChannelBindingAccess::accepted_tensor_end_of_stream_sequence(*subscriber), 0U);
+}
+
+// A replacement raw-Tensor subscriber attached before terminal drain becomes the current required
+// recipient and receives EOS after the initial subscriber's accepted data.
+// REQ: CHAN-136
+// REQ: CHAN-144
+// REQ: RUNTIME-017
+TEST(RuntimeExternalChannelTest,
+     RequiredRawTensorExportReplacementPresentAtTerminalDrainReceivesEndOfStream) {
+  const std::string import_name = unique_endpoint_name();
+  const std::string export_name = unique_endpoint_name();
+
+  Graph graph{"runtime-required-raw-tensor-export-replacement-terminal"};
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-clock"));
+  TopicOptions import_options = optional_tensor_export_options(import_name);
+  import_options.bounds.subscriber.reset();
+  import_options.bounds.publisher = PublisherEndpointBounds{.max_loaned_samples = 1U};
+  const auto imported =
+      graph.import_topic<Tensor>("holomq://" + import_name, std::move(import_options));
+  TopicOptions export_options = optional_tensor_export_options(export_name);
+  export_options.attach = TopicAttachPolicy{
+      .peer = PeerRequirement::kRequired,
+      .max_wait = 10s,
+  };
+  const auto exported =
+      graph.export_topic<Tensor>("holomq://" + export_name, std::move(export_options));
+  const auto forwarder = graph.op<ExternalTensorForwarder>("forwarder");
+  graph.add_flow(imported.output(), forwarder->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(forwarder->output, exported.input(), ConnectionOptions{.queue_depth = 1U});
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto external_runtime = ChannelRuntime::create();
+  ASSERT_TRUE(external_runtime) << runtime_error_message(external_runtime.error());
+  auto publisher = external_runtime->create_publisher<Tensor>(plan.endpoint_catalog(), import_name);
+  ASSERT_TRUE(publisher) << runtime_error_message(publisher.error());
+
+  RunSession session = run_async(plan);
+  auto initial_subscriber =
+      external_runtime->create_subscriber<Tensor>(plan.endpoint_catalog(), export_name);
+  ASSERT_TRUE(initial_subscriber) << runtime_error_message(initial_subscriber.error());
+  ASSERT_TRUE(wait_for_subscriber(*publisher));
+  ASSERT_TRUE(wait_for_publisher(*initial_subscriber));
+  ASSERT_TRUE(publish_external_host_tensor(*publisher, std::nullopt));
+  {
+    auto received = wait_for_tensor_sample(*initial_subscriber);
+    ASSERT_TRUE(received) << runtime_error_message(received.error());
+    ASSERT_NE(received->data.data_as<std::uint8_t>(), nullptr);
+    EXPECT_EQ(received->data.data_as<std::uint8_t>()[0], 0x2aU);
+  }
+  ASSERT_TRUE(initial_subscriber->close());
+
+  auto replacement =
+      external_runtime->create_subscriber<Tensor>(plan.endpoint_catalog(), export_name);
+  ASSERT_TRUE(replacement) << runtime_error_message(replacement.error());
+  ASSERT_TRUE(wait_for_publisher(*replacement));
+  ASSERT_TRUE(publisher->close());
+
+  auto terminal = wait_for_tensor_sample(*replacement);
+  ASSERT_FALSE(terminal);
+  EXPECT_EQ(terminal.error().code, ErrorCode::kClosed);
+  const bool completed_without_timeout = wait_for_session_terminal(session);
+  if (!completed_without_timeout) {
+    session.request_stop();
+  }
+  session.wait();
+
+  ASSERT_TRUE(completed_without_timeout);
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_TRUE(replacement->close());
+}
+
+// Descriptor-Tensor output closure has a distinct result shape from raw Tensor closure. Exercise
+// that branch after one accepted value so subscriber abandonment is terminal and non-retryable.
+// REQ: CHAN-136
+// REQ: CHAN-144
+// REQ: RUNTIME-017
+TEST(RuntimeExternalChannelTest,
+     RequiredDescriptorTensorExportSubscriberCloseFailsWithoutTerminalRetry) {
+  const std::string import_name = unique_endpoint_name();
+  const std::string export_name = unique_endpoint_name();
+
+  Graph graph{"runtime-required-descriptor-tensor-export-abandonment"};
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-clock"));
+  const auto imported =
+      graph.import_topic<schema::ImageT>("holomq://" + import_name,
+                                         external_image_import_options(import_name),
+                                         external_image_contract());
+  TopicOptions export_options = external_image_export_options(export_name);
+  export_options.attach = TopicAttachPolicy{
+      .peer = PeerRequirement::kRequired,
+      .max_wait = 10s,
+  };
+  const auto exported = graph.export_topic<schema::ImageT>(
+      "holomq://" + export_name, std::move(export_options), external_image_contract());
+  const auto forwarder = graph.op<ExternalImageForwarder>("forwarder");
+  graph.add_flow(imported.output(), forwarder->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(forwarder->output, exported.input(), ConnectionOptions{.queue_depth = 1U});
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto external_runtime = ChannelRuntime::create();
+  ASSERT_TRUE(external_runtime) << runtime_error_message(external_runtime.error());
+  auto publisher = external_runtime->create_tensor_schema_publisher<ExternalImagePayload>(
+      plan.endpoint_catalog(), import_name);
+  ASSERT_TRUE(publisher) << runtime_error_message(publisher.error());
+
+  RunSession session = run_async(plan);
+  auto subscriber = external_runtime->create_tensor_schema_subscriber<ExternalImagePayload>(
+      plan.endpoint_catalog(), export_name);
+  ASSERT_TRUE(subscriber) << runtime_error_message(subscriber.error());
+
+  ASSERT_TRUE(wait_for_schema_subscriber(*publisher));
+  ASSERT_TRUE(wait_for_schema_publisher(*subscriber));
+  auto tensor = make_external_image_tensor(0x3cU);
+  ASSERT_TRUE(tensor) << runtime_error_message(tensor.error());
+  auto metadata = schema::build_image_metadata(
+      *tensor,
+      schema::ImageMetadataOptions{
+          .height = 1U, .width = 8U, .encoding = schema::ImageEncoding_MONO8});
+  ASSERT_TRUE(metadata) << runtime_error_message(metadata.error());
+  ASSERT_TRUE(publisher->emit(*metadata, std::move(*tensor)));
+  {
+    auto received = wait_for_schema_sample(*subscriber);
+    ASSERT_TRUE(received) << runtime_error_message(received.error());
+    ASSERT_NE(received->tensor.data_as<std::uint8_t>(), nullptr);
+    EXPECT_EQ(received->tensor.data_as<std::uint8_t>()[0], 0x3cU);
+  }
+
+  ASSERT_TRUE(subscriber->close());
+  ASSERT_TRUE(publisher->close());
+  const bool failed_without_timeout = wait_for_session_terminal(session);
+  if (!failed_without_timeout) {
+    session.request_stop();
+  }
+  session.wait();
+
+  ASSERT_TRUE(failed_without_timeout);
+  EXPECT_EQ(session.termination(), RunTermination::kFailed);
+  ASSERT_EQ(session.diagnostics().size(), 1U);
+  EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_READINESS_BINDING_UNAVAILABLE");
+  EXPECT_EQ(session.diagnostics().front().service, "terminal_input_end_of_stream");
+}
+
+// A replacement descriptor-Tensor subscriber attached before terminal drain becomes the current
+// required recipient and receives EOS after the initial subscriber's accepted data.
+// REQ: CHAN-136
+// REQ: CHAN-144
+// REQ: RUNTIME-017
+TEST(RuntimeExternalChannelTest,
+     RequiredDescriptorTensorExportReplacementPresentAtTerminalDrainReceivesEndOfStream) {
+  const std::string import_name = unique_endpoint_name();
+  const std::string export_name = unique_endpoint_name();
+
+  Graph graph{"runtime-required-descriptor-tensor-export-replacement-terminal"};
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-clock"));
+  const auto imported =
+      graph.import_topic<schema::ImageT>("holomq://" + import_name,
+                                         external_image_import_options(import_name),
+                                         external_image_contract());
+  TopicOptions export_options = external_image_export_options(export_name);
+  export_options.attach = TopicAttachPolicy{
+      .peer = PeerRequirement::kRequired,
+      .max_wait = 10s,
+  };
+  const auto exported = graph.export_topic<schema::ImageT>(
+      "holomq://" + export_name, std::move(export_options), external_image_contract());
+  const auto forwarder = graph.op<ExternalImageForwarder>("forwarder");
+  graph.add_flow(imported.output(), forwarder->input, ConnectionOptions{.queue_depth = 1U});
+  graph.add_flow(forwarder->output, exported.input(), ConnectionOptions{.queue_depth = 1U});
+
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  auto external_runtime = ChannelRuntime::create();
+  ASSERT_TRUE(external_runtime) << runtime_error_message(external_runtime.error());
+  auto publisher = external_runtime->create_tensor_schema_publisher<ExternalImagePayload>(
+      plan.endpoint_catalog(), import_name);
+  ASSERT_TRUE(publisher) << runtime_error_message(publisher.error());
+
+  RunSession session = run_async(plan);
+  auto initial_subscriber = external_runtime->create_tensor_schema_subscriber<ExternalImagePayload>(
+      plan.endpoint_catalog(), export_name);
+  ASSERT_TRUE(initial_subscriber) << runtime_error_message(initial_subscriber.error());
+  ASSERT_TRUE(wait_for_schema_subscriber(*publisher));
+  ASSERT_TRUE(wait_for_schema_publisher(*initial_subscriber));
+  auto tensor = make_external_image_tensor(0x3cU);
+  ASSERT_TRUE(tensor) << runtime_error_message(tensor.error());
+  auto metadata = schema::build_image_metadata(
+      *tensor,
+      schema::ImageMetadataOptions{
+          .height = 1U, .width = 8U, .encoding = schema::ImageEncoding_MONO8});
+  ASSERT_TRUE(metadata) << runtime_error_message(metadata.error());
+  ASSERT_TRUE(publisher->emit(*metadata, std::move(*tensor)));
+  {
+    auto received = wait_for_schema_sample(*initial_subscriber);
+    ASSERT_TRUE(received) << runtime_error_message(received.error());
+    ASSERT_NE(received->tensor.data_as<std::uint8_t>(), nullptr);
+    EXPECT_EQ(received->tensor.data_as<std::uint8_t>()[0], 0x3cU);
+  }
+  ASSERT_TRUE(initial_subscriber->close());
+
+  auto replacement = external_runtime->create_tensor_schema_subscriber<ExternalImagePayload>(
+      plan.endpoint_catalog(), export_name);
+  ASSERT_TRUE(replacement) << runtime_error_message(replacement.error());
+  ASSERT_TRUE(wait_for_schema_publisher(*replacement));
+  ASSERT_TRUE(publisher->close());
+
+  auto terminal = wait_for_schema_sample(*replacement);
+  ASSERT_FALSE(terminal);
+  EXPECT_EQ(terminal.error().code, ErrorCode::kClosed);
+  const bool completed_without_timeout = wait_for_session_terminal(session);
+  if (!completed_without_timeout) {
+    session.request_stop();
+  }
+  session.wait();
+
+  ASSERT_TRUE(completed_without_timeout);
+  EXPECT_EQ(session.termination(), RunTermination::kCompleted);
+  EXPECT_TRUE(session.diagnostics().empty());
+  EXPECT_TRUE(replacement->close());
 }
 
 // REQ: CHAN-090

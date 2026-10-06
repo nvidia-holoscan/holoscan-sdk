@@ -645,6 +645,14 @@ struct ExecutionPlanState;
 struct RuntimeOperatorInstance;
 class RuntimeCudaExecutionResources;
 
+/// Describes the fixed address of a one-slot Tensor RuntimePool.
+struct RuntimeFixedTensorAddress {
+  void* data{};            ///< Address returned for every allocation from this pool.
+  std::size_t capacity{};  ///< Maximum Tensor byte span supported by the address.
+  MemoryKind memory_kind{MemoryKind::kUnknown};  ///< Memory location of the address.
+  DeviceId device{};  ///< CUDA device for device memory; invalid for ordinary host memory.
+};
+
 /// Own the physically materialized direct-Tensor resources for one RunSession.
 ///
 /// Construction is cold and consumes only accepted immutable plan records. Every allocation,
@@ -665,6 +673,17 @@ class RuntimeTensorResources final {
       RunGenerationId run_generation, ProcessGroupId process_group,
       const RuntimeCudaExecutionResources& cuda_resources,
       RuntimeRateMaterializationView materialization = {});
+
+  /// Return the single active slot used by a CUDA Graph boundary or internal edge.
+  [[nodiscard]] expected<RuntimeFixedTensorAddress, Error> fixed_output_address(
+      PortId output) noexcept;
+
+  /// Return whether the fixed output slot can be acquired without consuming it.
+  /// Completed Tensor retirements are reconciled before reporting availability.
+  [[nodiscard]] expected<bool, Error> fixed_output_available(PortId output) noexcept;
+
+  /// Restore the ordinary RuntimePool binding after temporary capture-time port binding.
+  [[nodiscard]] bool restore_output_binding(PortId output) noexcept;
 
   /// Reject new Tensor authority and tombstone outstanding unpublished slots.
   void close() noexcept;

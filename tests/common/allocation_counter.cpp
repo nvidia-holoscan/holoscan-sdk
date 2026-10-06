@@ -16,18 +16,26 @@ constinit thread_local bool g_count_test_allocations = false;
 constinit thread_local std::size_t g_test_allocation_count = 0;
 constinit thread_local bool g_fail_test_allocation = false;
 constinit thread_local std::size_t g_successful_allocations_before_failure = 0;
+constinit thread_local bool g_exhaust_test_allocations = false;
+constinit thread_local std::size_t g_successful_allocations_before_exhaustion = 0;
 constinit thread_local bool g_fail_next_test_aligned_allocation = false;
 
 void fail_test_allocation_if_requested() {
-  if (!g_fail_test_allocation) {
-    return;
+  if (g_fail_test_allocation && g_successful_allocations_before_failure == 0U) {
+    g_fail_test_allocation = false;
+    throw std::bad_alloc();
   }
-  if (g_successful_allocations_before_failure != 0U) {
+  if (g_exhaust_test_allocations) {
+    if (g_successful_allocations_before_exhaustion == 0U) {
+      throw std::bad_alloc();
+    }
+  }
+  if (g_fail_test_allocation) {
     --g_successful_allocations_before_failure;
-    return;
   }
-  g_fail_test_allocation = false;
-  throw std::bad_alloc();
+  if (g_exhaust_test_allocations) {
+    --g_successful_allocations_before_exhaustion;
+  }
 }
 
 void fail_test_aligned_allocation_if_requested() {
@@ -112,6 +120,25 @@ ScopedAllocationFailure::ScopedAllocationFailure(
 ScopedAllocationFailure::~ScopedAllocationFailure() noexcept {
   g_fail_test_allocation = previous_enabled_;
   g_successful_allocations_before_failure = previous_remaining_;
+}
+
+ScopedAllocationExhaustion::ScopedAllocationExhaustion(
+    const std::size_t successful_allocations_before_failure) noexcept
+    : previous_enabled_(g_exhaust_test_allocations),
+      previous_remaining_(g_successful_allocations_before_exhaustion) {
+  g_exhaust_test_allocations = true;
+  g_successful_allocations_before_exhaustion = successful_allocations_before_failure;
+}
+
+ScopedAllocationExhaustion::~ScopedAllocationExhaustion() noexcept {
+  g_exhaust_test_allocations = previous_enabled_;
+  g_successful_allocations_before_exhaustion = previous_remaining_;
+}
+
+void fail_allocation_on_current_thread(
+    const std::size_t successful_allocations_before_failure) noexcept {
+  g_fail_test_allocation = true;
+  g_successful_allocations_before_failure = successful_allocations_before_failure;
 }
 
 ScopedAlignedAllocationFailure::ScopedAlignedAllocationFailure() noexcept

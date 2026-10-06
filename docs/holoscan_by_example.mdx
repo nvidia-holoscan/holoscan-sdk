@@ -90,6 +90,7 @@ there while the capability it demonstrates is Beta.
 | E33 | [`descriptor_tensor_schema`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_schema/cpp) | Core | Application-owned FlatBuffer metadata with descriptor-backed Tensor storage. | [Custom FlatBuffer Schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas) |
 | E34 | [`descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic) | Core | Application-owned multi-Tensor schema exchange between a Graph and standalone catalog client. | [External Topics](/holoscan/sdk-user-guide/composing-applications/external-topics) |
 | E35 | [`derived_tensor_pool_capacity`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/derived_tensor_pool_capacity/cpp) | Core | Compose Parameter- and input-derived bytes per slot with fixed, expected, followed, and lifecycle-selected rates; compare automatic sizing with an exact explicit depth. | [Tensors in Depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth#size-queue-entries-from-nominal-rates) |
+| E36 | [`cuda_graph_region`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/cuda_graph_region/cpp) | Core | Compare ordinary dispatch with an explicitly fused, fixed-shape CUDA Graph region. | [CUDA Graph Regions](/holoscan/sdk-user-guide/composing-applications/cuda-graph-regions) |
 
 ### Essential, advanced, and experimental
 
@@ -207,8 +208,10 @@ to the hero application from separate processes:
 
 - **`sensor_daemon`** publishes `uint32_t` IMU samples with caller-owned
   capture coordinates.
-- **`recorder`** consumes the exported control result with
-  `receive_sample()` and prints the public `SampleMetadata`.
+- **`recorder`** consumes exported control results with `receive_sample()` and
+  prints the public `SampleMetadata`. It drains finite streams through remote
+  EOS by default and accepts a positive sample limit for an unbounded graph
+  such as the hero application.
 
 Each receives the exact `endpoint-catalog.json` path emitted by the
 graph-definition executable and attaches by explicit endpoint name — there is
@@ -238,15 +241,37 @@ Every example ships with two CMake entry points:
   the exact `COMPONENTS` they consume. This is the file to copy when starting
   your own project.
 
+Each example's `CMakeLists.txt` follows one layout so it can be configured
+in-tree or by itself: it declares `cmake_minimum_required` and its own
+`project()` unconditionally (project name `holoscan_<example>`, languages
+identical to `CMakeLists.min.txt`), then defers to `CMakeLists.min.txt` when it
+is the top-level project. Executable targets, install destinations, and CTest
+names use the plain example name.
+
+```cmake
+cmake_minimum_required(VERSION 4.0)
+project(holoscan_hello_world LANGUAGES CXX)
+
+if(PROJECT_IS_TOP_LEVEL)
+    include("${CMAKE_CURRENT_LIST_DIR}/CMakeLists.min.txt")
+    return()
+endif()
+
+add_executable(hello_world hello_world.cpp)
+target_link_libraries(hello_world PRIVATE holoscan::core)
+```
+
 <Note>
-  **Installed optional tooling.** Packages built with the configuration and
-  Parameter components export them for installed consumers. For example,
-  `find_package(holoscan REQUIRED CONFIG COMPONENTS params_io)` imports
-  `core`, `config`, `config_io`, `params`, and `params_io`, and fails when that
-  package variant omits any required component. An unqualified aggregate find
-  exposes every optional target present in the installed variant;
-  component-qualified discovery is the precise, portable spelling for
-  applications that depend on optional tooling. See
+  **Installed tooling.** `params` and `params_io` ship with `holoscan-core`; a
+  `COMPONENTS params_io` request remains accepted for compatibility but is
+  unnecessary. The lightweight `config` and `config_io`
+  components are prerequisites of every Core install. A plain
+  `find_package(holoscan REQUIRED CONFIG)` therefore imports `core`, `config`,
+  `config_io`, `params`, and `params_io`, and fails only when the install is
+  incomplete. An unqualified aggregate find also exposes every optional module
+  present in the installed variant; component-qualified discovery is the precise,
+  portable spelling for applications that depend on optional tooling such as the
+  experimental web tuner. See
   [Configuring applications](/holoscan/sdk-user-guide/configuration/configuring-applications)
   and the example's `CMakeLists.min.txt` for the exact request.
 </Note>

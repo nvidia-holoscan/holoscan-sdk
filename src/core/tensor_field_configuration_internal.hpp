@@ -55,7 +55,8 @@ namespace holoscan::detail {
         left.memory_conversion != right.memory_conversion || !allocation_equal ||
         !tensor_field_payload_options_equal(left.payload_options, right.payload_options) ||
         !optional_tensor_contract_equal(left.tensor_contract, right.tensor_contract) ||
-        left.tensor_byte_span_expression != right.tensor_byte_span_expression) {
+        left.tensor_byte_span_expression != right.tensor_byte_span_expression ||
+        left.tensor_memory_kind_expression != right.tensor_memory_kind_expression) {
       return false;
     }
   }

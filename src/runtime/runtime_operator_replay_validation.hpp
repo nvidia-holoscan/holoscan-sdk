@@ -23,6 +23,7 @@ namespace holoscan::detail {
 [[nodiscard]] expected<void, Error> validate_replayed_operator(
     const ExecutionPlanState& plan, const ExecutableOperatorFactoryRecord& record, OperatorBase& op,
     const OperatorSpec& replay, std::uint32_t factory_slot,
-    RuntimeReplayMismatchDetail* replay_mismatch);
+    RuntimeReplayMismatchDetail* replay_mismatch,
+    RuntimeDiagnosticDetail* failure_detail = nullptr);
 
 }  // namespace holoscan::detail

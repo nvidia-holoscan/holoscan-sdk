@@ -23,7 +23,7 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/run.hpp>
 // Provides generated owning types and schema-trait specializations.
-#include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
+#include <holoscan/schema/sdk_schemas.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/time/realtime_clock.hpp>
 
 #include "channel/channel_catalog_binding.hpp"
@@ -130,13 +130,14 @@ class RuntimeExternalSchemaSink final : public Operator<> {
 }
 
 // [external: holomq://endpoint] --[queue=1]--> RuntimeExternalSchemaSink("sink")
-// Five catalog-frame corruption variants are each run in a separate graph instance;
+// Six catalog-frame corruption variants are each run in a separate graph instance;
 // all must fail the session before the typed sample reaches the sink.
 //
 // Malformed catalog bytes must cross the actual external transport and Runtime drain path, but
 // must fail before generated-schema materialization can publish readiness or invoke the sink.
 // REQ: CHAN-075
 // REQ: RUNTIME-019
+// REQ: SCHEMA-003
 TEST(RuntimeExternalSchemaTest, CorruptCatalogFramesFailBeforeTypedExposure) {
   using channel_internal::CatalogChannelBindingTestAccess;
   using channel_internal::CatalogSchemaFrameCorruption;
@@ -145,9 +146,10 @@ TEST(RuntimeExternalSchemaTest, CorruptCatalogFramesFailBeforeTypedExposure) {
   constexpr std::array kCorruptions{
       CatalogSchemaFrameCorruption::kMalformedEnvelope,
       CatalogSchemaFrameCorruption::kSchemaId,
-      CatalogSchemaFrameCorruption::kSchemaVersion,
+      CatalogSchemaFrameCorruption::kPayloadSize,
       CatalogSchemaFrameCorruption::kEndpointGeneration,
       CatalogSchemaFrameCorruption::kPayloadVerifier,
+      CatalogSchemaFrameCorruption::kEnvelopeAbi,
   };
 
   for (const auto corruption : kCorruptions) {

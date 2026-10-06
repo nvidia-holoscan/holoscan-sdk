@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 User guide pages are committed as **MDX** (`.mdx`) in this directory, alongside images.
 Fern configuration lives under `fern/` (`fern.config.json`, `docs.yml`, `index.yml`,
-`assets/`, `dist/`). C++ API pages are generated at build time under `fern/generated/`
-(gitignored).
+`assets/`, `dist/`). C++ and Python API pages are generated at build time under
+`fern/generated/` (gitignored).
 
 Paths in this README use the public repository layout (`docs/`). The
 `build_holoscan_docs.py` helper script also detects the internal source layout
@@ -59,9 +59,9 @@ internal source layout, run the same commands as `./public/run build_docs` and
 `./public/run live_docs` from the repository root.
 
 For these zero-argument commands, a nonempty `FERN_TOKEN` opts in to automatic
-C++ API generation. When the variable is empty or unset, the wrapper selects
+library API generation. When the variable is empty or unset, the wrapper selects
 `--skip-library-mdx`: an existing generated tree is still post-processed and
-included, while a clean checkout temporarily omits both the C++ library and
+included, while a clean checkout temporarily omits both configured libraries and
 API-reference navigation blocks for the local validation or preview. The
 checked-in Fern configuration is never changed, and the temporary project is
 removed when the command exits or is interrupted.
@@ -75,9 +75,66 @@ validation), or `--skip-link-check` to bypass internal link validation. Remote
 preview and production publication retain their authentication and generated-
 content requirements; they never use the tokenless local fallback.
 
-C++ API generation uses Fern's local parser and requires a running Docker
-daemon. On macOS with Colima, keep the selected checkout and publishing
-`--work-dir` under the home directory, which Colima shares by default.
+Library API generation includes the C++ parser and requires a running Docker
+daemon. With a VM-backed runtime such as Colima (Linux or macOS), keep the
+selected checkout and publishing `--work-dir` in directories shared with the
+VM. Colima shares the home directory by default.
+Without `--work-dir`, the publishing helper uses
+`~/.cache/holoscan-docs/work/holoscan-docs-<TAG>` (or `dev-<commit>` in place of
+the tag). Local previews retain this directory for reuse. Remote publication
+uses a fresh directory under the same parent and cleans it up unless
+`--keep-workdir` is requested. Explicit work directories retain their existing
+ownership and cleanup policy. The host's `TMPDIR` no longer chooses the default
+publishing work directory.
+
+The publishing helper places isolated Fern HOME directories under
+`<work-dir>/fern-state`, beside rendered documentation so Fern does not watch
+its own state files. Standalone Python-helper runs use `~/.cache/holoscan-docs/`
+as this state location, not as their documentation work directory; inputs and
+generated output remain in the selected checkout/docs tree.
+
+Only local `--preview` reuses Fern HOME and its `.fern/` cache. Repeated
+`--preview --docker` runs with the same work directory can reuse cached bundles.
+Each invocation gets fresh `tmp/parser-<id>` scratch space, removed on exit or
+interruption. Validation, remote `--publish-preview`, publication, and deletion
+keep a fresh `run-<id>` HOME that is removed afterward, preserving CI isolation.
+
+An advisory lock rejects simultaneous local previews using the same HOME. Stop the
+existing run or select a different work directory to run another preview.
+The `.lock` file remains after exit, but its lock is released automatically;
+do not delete the file to bypass an active run.
+
+Generate both APIs and preview them in one containerized run; no host `TMPDIR`
+setting is needed:
+
+```bash
+python3 docs/scripts/build_holoscan_docs.py --with-library-mdx --preview
+```
+
+The helper first probes the active socket path from the daemon's filesystem,
+preserving native and rootless Docker paths. If that path cannot be mounted as
+a socket, it tries the daemon-side `/var/run/docker.sock`. This also handles
+Colima's host proxy without depending on the host OS. The helper shares its
+isolated container HOME and parser files at identical paths and sets the
+container's `TMPDIR` automatically. Use the publishing helper's
+`--work-dir <shared-directory> --docker --preview` options for a local preview.
+For a standalone run with a custom VM sharing configuration, set
+`HOLOSCAN_DOCS_FERN_STATE_DIR` to another shared directory outside the checkout.
+The publishing helper sets this variable from `--work-dir`; the host's general
+`TMPDIR` does not select the Fern state directory.
+
+Docker previews default to `NODE_OPTIONS=--max-old-space-size=4096` to give
+large documentation trees a 4 GiB Node.js old-space heap limit. This is a
+project default, not a Fern requirement or a reservation of VM memory. Leave
+additional Docker VM memory for other Node processes, native allocations, and
+the operating system. An explicit `NODE_OPTIONS` value is forwarded unchanged
+by both entry points; an empty value disables this default. Validation and
+publication do not receive a default heap override. For example:
+
+```bash
+NODE_OPTIONS="--max-old-space-size=2048" \
+  python3 docs/scripts/build_holoscan_docs.py --skip-library-mdx --preview
+```
 
 In Docker mode the helper reuses your host Fern authentication: if `FERN_TOKEN` is set
 it is passed into the container, otherwise only the host `~/.fern/token` and `~/.fern/id`
@@ -96,18 +153,20 @@ CI publishes remote Fern previews instead of running `fern check --local`:
 
 The `build_holoscan_docs.py` helper script builds the Docker image containing the
 pinned Fern CLI, runs the pipeline in that container, generates and post-processes
-the C++ API MDX, and asks Fern to publish the preview. Set `FERN_TOKEN` in Jenkins
+the C++ and Python API MDX, and asks Fern to publish the preview. Set `FERN_TOKEN` in Jenkins
 (Secret text credential ID `FERN_TOKEN`) so generation and preview publication can
 authenticate.
 
-The preview ID names the Fern deployment; it does not select a Git revision for the
-C++ library input. The current `fern/docs.yml` instead points at the selected
-checkout's local `include/holoscan` directory. The helper removes any previous
-generated tree and invokes `fern docs md generate --local`, then runs
-`docs/scripts/fix_generated_library_mdx.py` on the resulting
-`fern/generated/api-reference/cpp` tree. User-guide and C++ API pages therefore come
-from the same checkout, including MR changes and internal release tags that are not
-yet available from the public GitHub repository.
+The preview ID names the Fern deployment; it does not select a Git revision for
+either library input. The current `fern/docs.yml` points at the selected checkout's
+local `include/holoscan` headers and a generated parser tree projected from the
+public facade stubs under `python/holoscan`. The private `_core` extension inventory
+is excluded. The helper removes any previous generated tree and invokes
+`fern docs md generate --local`, then runs
+`docs/scripts/fix_generated_library_mdx.py` across the resulting generated API tree.
+User-guide, C++, and Python API pages therefore come from the same checkout,
+including MR changes and internal release tags that are not yet available from the
+public GitHub repository.
 See Fern's
 [library reference documentation](https://buildwithfern.com/learn/docs/api-references/library-reference).
 
@@ -126,7 +185,7 @@ build_holoscan_docs.py --no-docker
 The docs Docker image is expected to supply the pinned Fern CLI and its supporting
 tools. In Docker mode, the helper script builds that image from
 `docs/Dockerfile` before each run; Docker may reuse its build cache.
-Fresh C++ API generation also forwards the active Unix Docker socket into the
+Fresh library API generation also forwards the active Unix Docker socket into the
 docs container so Fern can run its local parser as a sibling container. The
 socket is not forwarded when the generated API tree is reused.
 `--container-name` controls only the transient runtime container name (`docs` by
@@ -134,11 +193,11 @@ default), not the image. Using the image avoids dependence on host-installed too
 versions and matches the CI environment. `--no-docker` is useful when equivalent
 tools are already available on the host.
 
-Within either environment, it generates or reuses the local C++ API MDX tree,
+Within either environment, it generates or reuses the local API MDX trees,
 post-processes that tree, and then performs the selected final action:
 
 ```text
-generate or reuse local C++ API MDX
+generate or reuse local C++ and Python API MDX
   |
   v
 post-process local MDX
@@ -154,7 +213,25 @@ check internal links (check_doc_links.py)
 
 The internal link check runs in every mode, including preview and publication, and
 fails the pipeline on unresolvable links, anchors, assets, or `docs.yml` redirect
-destinations. It validates C++ API links only when a generated tree is present.
+destinations. It validates library API links only when generated trees are present.
+After API generation, when reusing complete API trees, and before remote publication,
+the check also requires every navigation folder to contain MDX pages. Source-only
+local checks continue to allow absent generated output.
+
+Fern initially nests the Python package under its library ID
+(`python/holoscan-python/holoscan`). Post-processing flattens this to
+`python/holoscan`, matching `cpp/holoscan` and the configured navigation folders.
+Generated navigation page IDs follow the moved files. Python page slugs and
+cross-links use `/holoscan/sdk-user-guide/python/api-reference/holoscan/`; C++ keeps
+`/holoscan/sdk-user-guide/api-reference/holoscan/`. The generated Python tree appears
+once, under **Python → API reference**, beside the Python guides. The shared
+**API reference → Python API** entry links directly to it in the same tab; it
+does not duplicate the generated tree or require a redirect. Archive assembly
+rewrites that shortcut and other internal links to use the selected archive's
+version prefix. Source-only local previews omit both generated references and
+the shortcut when API output is unavailable.
+Reusing an already normalized tree is supported;
+publication with `--skip-library-mdx` checks the tree without modifying it.
 
 Here, **local validation** means `fern check --local --warnings`. The helper script
 stops after Fern reports publication success; it does not perform the public URL
@@ -254,9 +331,9 @@ fern generate --docs --preview
 
 ## Publish the production user guide
 
-Production publication requires Fern authentication and a generated C++ API tree. To
-regenerate, post-process, validate, and publish the documentation from the current
-checkout:
+Production publication requires Fern authentication and generated C++ and Python API
+trees. To regenerate, post-process, validate, and publish the documentation from the
+current checkout:
 
 ```bash
 python3 docs/scripts/build_holoscan_docs.py \
@@ -275,15 +352,14 @@ python3 docs/scripts/build_holoscan_docs.py \
   --publish
 ```
 
-For production reuse, the helper requires a non-empty generated C++ API tree and
-runs the postprocessor in check-only mode across every generated MDX file. Any file
-that still requires a rewrite blocks publication without modifying the tree.
+For production reuse, the helper requires non-empty generated C++ and Python API trees
+and runs the postprocessor in check-only mode across every generated MDX file. Any
+file that still requires a rewrite blocks publication without modifying the tree.
 
 An updated copy of the helper script from one checkout can operate on a separate
 clean release checkout. The selected checkout supplies the documentation source,
-Fern configuration, local generated API output path, Dockerfile, and version. When
-C++ API generation is requested, Fern still obtains the headers from
-the configured public GitHub repository:
+Fern configuration, local generated API output paths, Dockerfile, and version. When
+API generation is requested, Fern reads both libraries from that selected checkout:
 
 ```bash
 python3 /path/to/holoscan-sdk/docs/scripts/build_holoscan_docs.py \

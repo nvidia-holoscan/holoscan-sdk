@@ -174,6 +174,10 @@ class CatalogTensorSlotMemoryReference final
     return stream == nullptr || buffer_->enqueue_ready_set(stream);
   }
 
+  [[nodiscard]] bool tracks_deallocation_stream() const noexcept override {
+    return buffer_.has_value();
+  }
+
   bool set_readiness_stream(cudaStream_t stream) override {
     if (!buffer_) {
       return false;
@@ -769,10 +773,9 @@ class CatalogTensorPublisherControl {
         source_device.device_type == kDLCUDA || source_device.device_type == kDLCUDAManaged;
     // Pageable-host staging is synchronous, so execute it on the explicit producer stream rather
     // than introducing a cross-stream event for a pool with no declared CUDA device.
-    const cudaStream_t execution_stream =
-        memory_kind_ == MemoryKind::kHost && cuda_source
-            ? producer_stream
-            : (copy_stream != nullptr ? copy_stream : producer_stream);
+    auto* const execution_stream = memory_kind_ == MemoryKind::kHost && cuda_source
+                                       ? producer_stream
+                                       : (copy_stream != nullptr ? copy_stream : producer_stream);
     const bool asynchronous_copy =
         execution_stream != nullptr && (memory_kind_ == MemoryKind::kCudaDevice ||
                                         (memory_kind_ == MemoryKind::kPinnedHost && cuda_source));

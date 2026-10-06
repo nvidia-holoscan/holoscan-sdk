@@ -75,6 +75,26 @@ expected<std::unique_ptr<RuntimeTensorResources>, Error> RuntimeTensorResources:
   return std::unique_ptr<RuntimeTensorResources>{new RuntimeTensorResources{std::move(impl)}};
 }
 
+expected<RuntimeFixedTensorAddress, Error> RuntimeTensorResources::fixed_output_address(
+    const PortId output) noexcept {
+  if (impl_ == nullptr || impl_->outputs == nullptr) {
+    return make_unexpected(tensor_resource_error("Tensor resources are unavailable"));
+  }
+  return impl_->outputs->fixed_output_address(output);
+}
+
+expected<bool, Error> RuntimeTensorResources::fixed_output_available(const PortId output) noexcept {
+  if (impl_ == nullptr || impl_->outputs == nullptr) {
+    return make_unexpected(tensor_resource_error("Tensor resources are unavailable"));
+  }
+  return impl_->outputs->fixed_output_available(output);
+}
+
+bool RuntimeTensorResources::restore_output_binding(const PortId output) noexcept {
+  return impl_ != nullptr && impl_->outputs != nullptr &&
+         impl_->outputs->restore_output_binding(output);
+}
+
 void RuntimeTensorResources::close() noexcept {
   if (impl_ != nullptr && impl_->outputs != nullptr) {
     impl_->outputs->close();

@@ -3,6 +3,8 @@
 
 cmake_minimum_required(VERSION 3.30.4)
 
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/consumer_coverage.cmake")
+
 foreach(_required IN ITEMS
         HOLOSCAN_BUILD_DIR
         HOLOSCAN_CONSUMER_SOURCE_DIR
@@ -21,29 +23,15 @@ foreach(_required_mode IN ITEMS config full)
   endif()
 endforeach()
 
-# sensor_io is built for every mode below because the prefixes that carry Core also carry the
-# holoscan-sensor-io component, and installing a component whose target was never built leaves a
-# dangling import file. It is not one of the modes: this test varies which *config* components an
-# install carries.
-#
-# holoscan::sensor_io no longer rides the shared holoscan-targets.cmake -- it has its own export
-# file, so its absence from a prefix is not an error. The consumer therefore asserts the two halves
-# of that boundary it can reach from these prefixes: an unqualified find_package in "full" mode must
-# yield holoscan::sensor_io from the separate export file, and an explicit COMPONENTS find in the
-# other Core-bearing modes must not, even though the export file is installed. The remaining half,
-# a Core-bearing prefix installed *without* holoscan-sensor-io at all, needs an install mode of its
-# own and is not covered here.
-set(_build_targets core holoscan_schema sensor_io config)
+# Every target exported by holoscan-core is built for every mode below: installing a component
+# whose target was never built leaves a dangling import file, and the shared holoscan-targets.cmake
+# declares core, params, params_io, sensor_io, and sensor_io_schemas together. This test varies
+# which *requestable* components a consumer names, not which Core DSOs an install carries.
+set(_build_targets core holoscan_schema sensor_io config config_io params params_io)
 foreach(_mode IN LISTS _available_modes)
-  if(_mode STREQUAL "config_io")
-    list(APPEND _build_targets config_io)
-  elseif(_mode STREQUAL "params")
-    list(APPEND _build_targets params)
-  elseif(_mode STREQUAL "params_io")
-    list(APPEND _build_targets params_io)
-  elseif(_mode STREQUAL "tuner")
+  if(_mode STREQUAL "tuner")
     list(APPEND _build_targets experimental_params_web_tuner)
-  elseif(NOT _mode STREQUAL "config" AND NOT _mode STREQUAL "full")
+  elseif(NOT _mode MATCHES "^(config|config_io|params|params_io|full)$")
     message(FATAL_ERROR "Unknown available component mode: ${_mode}")
   endif()
 endforeach()
@@ -51,55 +39,48 @@ list(REMOVE_DUPLICATES _build_targets)
 
 set(_sdk_build_command
     "${CMAKE_COMMAND}" --build "${HOLOSCAN_BUILD_DIR}" --target ${_build_targets})
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-  list(APPEND _sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+  list(APPEND _sdk_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(COMMAND ${_sdk_build_command} RESULT_VARIABLE _build_result)
 if(NOT _build_result EQUAL 0)
   message(FATAL_ERROR "Failed to build targets for the installed component matrix")
 endif()
 
+# holoscan-core exports holoscan::params and holoscan::params_io, which link the separately
+# installed config components, so every Core-bearing prefix carries both config components.
 set(_core_install_components
     holoscan
     holoscan-dependencies
     iceoryx2-lib
     dev
-    holomq
+    holoscan-holomq
     holoscan-core
-    holoscan-sensor-io)
+    holoscan-sensor-io
+    holoscan-config
+    holoscan-config-io)
 
 foreach(_mode IN LISTS _available_modes)
   set(_install_prefix "${HOLOSCAN_CONSUMER_WORK_DIR}/${_mode}/install")
   set(_consumer_build_dir "${HOLOSCAN_CONSUMER_WORK_DIR}/${_mode}/build")
   file(REMOVE_RECURSE "${_install_prefix}" "${_consumer_build_dir}")
+  file(MAKE_DIRECTORY "${_consumer_build_dir}")
+  holoscan_exclude_consumer_coverage("${HOLOSCAN_BUILD_DIR}" "${_consumer_build_dir}")
 
   if(_mode STREQUAL "config")
     set(_install_components holoscan holoscan-config)
   elseif(_mode STREQUAL "config_io")
     set(_install_components holoscan holoscan-config holoscan-config-io)
-  elseif(_mode STREQUAL "params")
-    set(_install_components ${_core_install_components} holoscan-config holoscan-params)
-  elseif(_mode STREQUAL "params_io")
-    set(_install_components ${_core_install_components}
-        holoscan-config holoscan-config-io holoscan-params holoscan-params-io)
+  elseif(_mode STREQUAL "params" OR _mode STREQUAL "params_io")
+    set(_install_components ${_core_install_components})
   elseif(_mode STREQUAL "tuner")
     set(_install_components ${_core_install_components}
-        holoscan-config holoscan-params holoscan-experimental-params-web-tuner)
+        holoscan-experimental-params-web-tuner)
   elseif(_mode STREQUAL "full")
     set(_install_components ${_core_install_components})
-    foreach(_available_mode IN LISTS _available_modes)
-      if(_available_mode STREQUAL "config")
-        list(APPEND _install_components holoscan-config)
-      elseif(_available_mode STREQUAL "config_io")
-        list(APPEND _install_components holoscan-config-io)
-      elseif(_available_mode STREQUAL "params")
-        list(APPEND _install_components holoscan-params)
-      elseif(_available_mode STREQUAL "params_io")
-        list(APPEND _install_components holoscan-params-io)
-      elseif(_available_mode STREQUAL "tuner")
-        list(APPEND _install_components holoscan-experimental-params-web-tuner)
-      endif()
-    endforeach()
+    if("tuner" IN_LIST _available_modes)
+      list(APPEND _install_components holoscan-experimental-params-web-tuner)
+    endif()
   endif()
   list(REMOVE_DUPLICATES _install_components)
 
@@ -107,8 +88,8 @@ foreach(_mode IN LISTS _available_modes)
     set(_install_command
         "${CMAKE_COMMAND}" --install "${HOLOSCAN_BUILD_DIR}"
         --prefix "${_install_prefix}" --component "${_component}")
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-      list(APPEND _install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+      list(APPEND _install_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(COMMAND ${_install_command} RESULT_VARIABLE _install_result)
     if(NOT _install_result EQUAL 0)
@@ -130,8 +111,21 @@ foreach(_mode IN LISTS _available_modes)
   if(DEFINED HOLOSCAN_CXX_COMPILER AND NOT HOLOSCAN_CXX_COMPILER STREQUAL "")
     list(APPEND _configure_command "-DCMAKE_CXX_COMPILER:FILEPATH=${HOLOSCAN_CXX_COMPILER}")
   endif()
-  if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND _configure_command "-DCMAKE_BUILD_TYPE:STRING=${HOLOSCAN_BUILD_CONFIG}")
+  if(DEFINED HOLOSCAN_GENERATOR_PLATFORM AND NOT HOLOSCAN_GENERATOR_PLATFORM STREQUAL "")
+    list(APPEND _configure_command -A "${HOLOSCAN_GENERATOR_PLATFORM}")
+  endif()
+  if(DEFINED HOLOSCAN_GENERATOR_TOOLSET AND NOT HOLOSCAN_GENERATOR_TOOLSET STREQUAL "")
+    list(APPEND _configure_command -T "${HOLOSCAN_GENERATOR_TOOLSET}")
+  endif()
+  if(DEFINED HOLOSCAN_TOOLCHAIN_FILE AND NOT HOLOSCAN_TOOLCHAIN_FILE STREQUAL "")
+    list(APPEND _configure_command "-DCMAKE_TOOLCHAIN_FILE:FILEPATH=${HOLOSCAN_TOOLCHAIN_FILE}")
+  endif()
+  if(DEFINED HOLOSCAN_MSVC_RUNTIME_LIBRARY AND NOT HOLOSCAN_MSVC_RUNTIME_LIBRARY STREQUAL "")
+    list(APPEND _configure_command
+        "-DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=${HOLOSCAN_MSVC_RUNTIME_LIBRARY}")
+  endif()
+  if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND _configure_command "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}")
   endif()
 
   foreach(_configure_pass RANGE 1 2)
@@ -143,8 +137,8 @@ foreach(_mode IN LISTS _available_modes)
   endforeach()
 
   set(_consumer_build_command "${CMAKE_COMMAND}" --build "${_consumer_build_dir}")
-  if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND _consumer_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+  if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND _consumer_build_command --config "${CMAKE_BUILD_TYPE}")
   endif()
   execute_process(COMMAND ${_consumer_build_command} RESULT_VARIABLE _consumer_build_result)
   if(NOT _consumer_build_result EQUAL 0)
@@ -155,8 +149,8 @@ foreach(_mode IN LISTS _available_modes)
   set(_consumer_test_command
       "${_cmake_bin_dir}/ctest${CMAKE_EXECUTABLE_SUFFIX}"
       --test-dir "${_consumer_build_dir}" --output-on-failure)
-  if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND _consumer_test_command -C "${HOLOSCAN_BUILD_CONFIG}")
+  if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND _consumer_test_command -C "${CMAKE_BUILD_TYPE}")
   endif()
   execute_process(COMMAND ${_consumer_test_command} RESULT_VARIABLE _consumer_test_result)
   if(NOT _consumer_test_result EQUAL 0)
@@ -168,7 +162,7 @@ foreach(_mode IN LISTS _available_modes)
   endif()
 endforeach()
 
-set(_recognized_modes config config_io params params_io tuner)
+set(_recognized_modes tuner)
 foreach(_mode IN LISTS _recognized_modes)
   if(_mode IN_LIST _available_modes)
     continue()

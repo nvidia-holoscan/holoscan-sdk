@@ -26,6 +26,7 @@
 #include <holoscan/core/graph.hpp>
 #include <holoscan/core/operator_spec.hpp>
 
+#include "channel/channel_payload_limits.hpp"
 #include "channel/process_identity.hpp"
 #include "compiler/compile_internal.hpp"
 #include "compiler/execution_plan_state.hpp"
@@ -97,6 +98,10 @@ expected<void, Error> ScriptedInlinePublisher::close_stream() {
 }
 
 expected<void, Error> ScriptedInlinePublisher::update_connections() noexcept {
+  ++refresh_count;
+  if (remove_subscribers_on_refresh) {
+    subscribers_present = false;
+  }
   if (next_refresh_result_ == refresh_results_.size()) {
     return {};
   }
@@ -106,7 +111,7 @@ expected<void, Error> ScriptedInlinePublisher::update_connections() noexcept {
 }
 
 bool ScriptedInlinePublisher::has_subscribers() const noexcept {
-  return true;
+  return subscribers_present;
 }
 
 ScriptedInlineSubscriber::ScriptedInlineSubscriber(const std::int32_t value,
@@ -258,6 +263,8 @@ SessionFixture::SessionFixture() {
           .service_id = service,
           .payload_identity = output.payload_identity,
           .payload_size_bytes = sizeof(std::int32_t),
+          .selected_inline_bucket_bytes =
+              *channel_internal::inline_payload_bucket_size(sizeof(std::int32_t)),
           .queue_policy = QueuePolicy::kBlocking,
           .max_subscribers = 1U,
           .max_subscriber_queue_depth = 8U,
@@ -481,6 +488,7 @@ void SessionFixture::set_primary_queue_policy(QueuePolicy policy) {
 void SessionFixture::use_direct_retained_delivery() {
   auto& service = plan.process_local_channel_services.front();
   service.delivery_kind = ProcessLocalChannelDeliveryKind::kDirectRetained;
+  service.selected_inline_bucket_bytes = 0U;
   service.event_wake = false;
   plan.process_local_channel_subscribers.front().event_wake = false;
 }
@@ -535,6 +543,8 @@ void SessionFixture::use_cross_process_edge() {
           .service_id = service,
           .payload_identity = plan.ports.front().payload_identity,
           .payload_size_bytes = sizeof(std::int32_t),
+          .selected_inline_bucket_bytes =
+              *channel_internal::inline_payload_bucket_size(sizeof(std::int32_t)),
           .queue_policy = QueuePolicy::kBlocking,
           .max_subscribers = 1U,
           .max_subscriber_queue_depth = 8U,
@@ -603,6 +613,8 @@ void SessionFixture::add_mixed_policy_fanout() {
       .service_id = service,
       .payload_identity = plan.ports.front().payload_identity,
       .payload_size_bytes = sizeof(std::int32_t),
+      .selected_inline_bucket_bytes =
+          *channel_internal::inline_payload_bucket_size(sizeof(std::int32_t)),
       .queue_policy = QueuePolicy::kDropOldest,
       .max_subscribers = 1U,
       .max_subscriber_queue_depth = 8U,

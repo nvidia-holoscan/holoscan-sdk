@@ -19,3 +19,14 @@ Runtime component validation includes both focused GoogleTest cases and the
 `RUNTIME_SMOKE.fake_input_and_synthetic_clock` system test. A process exit alone
 is insufficient: direct-runtime tests also inspect callback ordering, terminal
 state, stable diagnostics where applicable, and coordinated teardown.
+
+## Borrowed descriptor production graphs
+
+`BorrowedDescriptorGraph` uses compiled SDK graphs and public compute callbacks, with direct
+retained and forced HoloMQ delivery. It checks descriptor allocations on the actual worker,
+metadata/provenance, fanout, bounded pools, and rejected-copy/publication retry.
+
+`BorrowedDescriptorCuda` separately qualifies delayed GPU reads after CPU callback return,
+fanout, failure, cancellation, stop, restart, and completion. It uses existing Runtime Tensor
+read leases and registered streams, not synthetic CUDA handles. See the maintained
+[CUDA qualification and reproduction notes](borrowed_descriptor_cuda.md).

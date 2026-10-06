@@ -118,13 +118,12 @@ void dispatch_log(LogLevel level, const char* file, int line, const char* functi
     return;
   }
 
-  initialize_log_level_from_env();
-
   LogHandler handler = nullptr;
   void* user_data = nullptr;
   LogLevel active_level = LogLevel::Info;
   {
     const std::lock_guard lock(g_log_mutex);
+    initialize_log_level_from_env();
     active_level = g_log_level;
     handler = g_log_handler;
     user_data = g_log_user_data;

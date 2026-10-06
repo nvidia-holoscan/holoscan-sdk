@@ -18,52 +18,38 @@
 #include <utility>
 #include <vector>
 
-#include <holoviz/imgui/imgui.h>
+#include <holoviz/imgui/vendor/imgui.h>
 
+#include <holoviz/adapter.hpp>
+#include <holoviz/buffer.hpp>
+#include <holoviz/descriptor.hpp>
+#include <holoviz/device.hpp>
+#include <holoviz/image.hpp>
 #include <holoviz/logger.hpp>
-#include <holoviz/rhi/adapter.hpp>
-#include <holoviz/rhi/buffer.hpp>
-#include <holoviz/rhi/descriptor.hpp>
-#include <holoviz/rhi/device.hpp>
-#include <holoviz/rhi/image.hpp>
-#include <holoviz/rhi/pipeline.hpp>
-#include <holoviz/rhi/slang_compiler.hpp>
+#include <holoviz/pipeline.hpp>
 
 #include "text/detail/text_renderer_impl.hpp"
-#include "text/monospace_shader.hpp"
+#include "text/monospace_interface.hpp"
+
+#include "text/monospace.slang.hpp"  // generated from text/monospace.slang
 
 namespace holoviz::text {
 
 namespace detail {
 
+// PushConstants and GlyphInfo come from text/monospace_interface.hpp, the header monospace.slang
+// compiles from too; the generated monospace.slang.hpp static_asserts the block's layout against
+// the shader reflection. What the renderer additionally leans on is pinned here.
+static_assert(sizeof(PushConstants) == 256,
+              "the push block must fill the 256-byte NVIDIA push-constant budget exactly");
+static_assert(sizeof(GlyphInfo) == 32, "glyph table entries are two float4 in natural layout");
+static_assert(kMonospaceMaxCharsPerDraw == kMaxCharsPerDraw,
+              "public constant out of sync with the shared push block");
+static_assert(kMonospacePushHeaderBytes ==
+                  offsetof(PushConstants, rgba) + sizeof(PushConstants::rgba),
+              "public constant out of sync with the shared push block");
+
 namespace {
-
-/// Host mirror of the shader's std140 push-constant block: 24-byte header,
-/// 8 pad bytes before the uint4[14] char words, 256 bytes total (the NVIDIA
-/// push-constant budget this renderer assumes; validated at creation).
-struct MonospacePushData {
-  float origin_px[2];
-  float clip_scale[2];  // patched at record() time from the real framebuffer extent
-  float glyph_height_px = 0.0F;
-  uint32_t rgba = 0;
-  uint32_t reserved[2];       // std140 pad: uint4 array aligns to 16
-  uint32_t packed_chars[56];  // uint4[14] = 56 contiguous words = 224 chars
-};
-static_assert(sizeof(MonospacePushData) == 256, "push block must match the shader's std140 layout");
-static_assert(kMonospaceMaxCharsPerDraw == sizeof(MonospacePushData::packed_chars),
-              "public constant out of sync with the push block");
-
-/// One shader glyph-table entry; must mirror the Slang GlyphInfo struct
-/// (StructuredBuffer natural layout: two float4 = 32 bytes).
-struct GlyphInfo {
-  float uv[4];    // u0, v0, u1, v1
-  float quad[4];  // x0, y0, x1, y1 (bake px, relative to the top-left pen)
-};
-static_assert(sizeof(GlyphInfo) == 32, "glyph table must match the shader layout");
-
-constexpr uint32_t kFirstGlyphCode = 32;
-constexpr uint32_t kLastGlyphCode = 127;
-constexpr uint32_t kGlyphTableEntries = kLastGlyphCode - kFirstGlyphCode + 2;  // [0] = metrics
 
 /// Anchor -> fraction of the text bounding box subtracted from the position.
 /// (Local copy of the helper in text_renderer.cpp, which is file-local there.)
@@ -114,10 +100,9 @@ uint8_t to_drawable_ascii(char byte) {
 /// constants: no buffer uploads, no CUDA stream, no frames-in-flight ring.
 class MonospaceTextRendererImpl final : public TextRendererImpl {
  public:
-  MonospaceTextRendererImpl(rhi::Device& device, rhi::Image atlas_image, rhi::Buffer glyph_table,
-                            rhi::Pipeline pipeline, rhi::Descriptor descriptor,
-                            float bake_font_size_px, float advance_bake_px,
-                            uint32_t vertices_per_glyph, uint32_t max_glyphs)
+  MonospaceTextRendererImpl(Device& device, Image atlas_image, Buffer glyph_table,
+                            Pipeline pipeline, Descriptor descriptor, float bake_font_size_px,
+                            float advance_bake_px, uint32_t vertices_per_glyph, uint32_t max_glyphs)
       : device_(&device),
         atlas_image_(std::move(atlas_image)),
         glyph_table_(std::move(glyph_table)),
@@ -147,9 +132,9 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     return result;
   }
 
-  expected<void> begin_frame([[maybe_unused]] rhi::Extent2D framebuffer_extent,
+  expected<void> begin_frame([[maybe_unused]] Extent2D framebuffer_extent,
                              [[maybe_unused]] uint32_t renderer_slot,
-                             [[maybe_unused]] rhi::SubmitSyncToken slot_last_use) override {
+                             [[maybe_unused]] SubmitSyncToken slot_last_use) override {
     // Nothing per frame touches GPU memory, so the slot and reuse token are deliberately
     // unused.
     if (frame_open_) {
@@ -215,8 +200,8 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     PendingDraw draw{};
     const auto start_chunk = [&]() {
       draw = PendingDraw{};
-      draw.push.origin_px[0] = left + static_cast<float>(column) * advance_px;
-      draw.push.origin_px[1] = top + static_cast<float>(line_index) * desc.size_px;
+      draw.push.origin_px = float2(left + static_cast<float>(column) * advance_px,
+                                   top + static_cast<float>(line_index) * desc.size_px);
       draw.push.glyph_height_px = desc.size_px;
       draw.push.rgba = desc.color;
       chunk_fill = 0;
@@ -241,8 +226,11 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
       if (chunk_fill == 0) {
         start_chunk();
       }
+      // Same indexing expression as the shader unpacks with (monospace.slang).
       const auto code = static_cast<uint32_t>(to_drawable_ascii(byte));
-      draw.push.packed_chars[chunk_fill / 4] |= code << ((chunk_fill % 4) * 8);
+      const auto word_index = static_cast<uint32_t>(chunk_fill / kCharsPerWord);
+      draw.push.packed_chars[word_index / 4][word_index % 4] |=
+          code << ((chunk_fill % kCharsPerWord) * 8);
       ++chunk_fill;
       ++column;
       if (chunk_fill == kMonospaceMaxCharsPerDraw) {
@@ -253,7 +241,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     return {};
   }
 
-  expected<rhi::ExternalSyncToken> end_frame() override {
+  expected<ExternalSyncToken> end_frame() override {
     if (!frame_open_) {
       return make_unexpected(Error{
           .code = ErrorCode::kInvalidState,
@@ -262,7 +250,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     }
     frame_open_ = false;
     // Nothing was uploaded: return the no-op token, which Device::submit() skips.
-    return rhi::ExternalSyncToken{};
+    return ExternalSyncToken{};
   }
 
   expected<void> cancel_frame() override {
@@ -272,7 +260,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     return {};
   }
 
-  expected<void> record(rhi::CommandList& command_list, rhi::Extent2D framebuffer_extent) override {
+  expected<void> record(CommandList& command_list, Extent2D framebuffer_extent) override {
     if (draws_.empty()) {
       return {};  // nothing was drawn this frame
     }
@@ -283,7 +271,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
       });
     }
 
-    const rhi::Rect2D full_extent{0, 0, framebuffer_extent.width, framebuffer_extent.height};
+    const Rect2D full_extent{0, 0, framebuffer_extent.width, framebuffer_extent.height};
     VIZ_FORWARD_ERROR(command_list.set_viewport(full_extent));
     VIZ_FORWARD_ERROR(command_list.set_scissor(full_extent));
     VIZ_FORWARD_ERROR(command_list.bind_pipeline(pipeline_));
@@ -292,8 +280,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
     const float clip_scale_x = 2.0F / static_cast<float>(framebuffer_extent.width);
     const float clip_scale_y = 2.0F / static_cast<float>(framebuffer_extent.height);
     for (PendingDraw& draw : draws_) {
-      draw.push.clip_scale[0] = clip_scale_x;
-      draw.push.clip_scale[1] = clip_scale_y;
+      draw.push.clip_scale = float2(clip_scale_x, clip_scale_y);
       VIZ_FORWARD_ERROR(command_list.set_push_data(
           pipeline_, std::span{reinterpret_cast<const std::byte*>(&draw.push), sizeof(draw.push)}));
       VIZ_FORWARD_ERROR(command_list.draw(vertices_per_glyph_, draw.char_count));
@@ -303,15 +290,15 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
 
  private:
   struct PendingDraw {
-    MonospacePushData push{};
+    PushConstants push{};
     uint32_t char_count = 0;
   };
 
-  rhi::Device* device_ = nullptr;
-  rhi::Image atlas_image_;
-  rhi::Buffer glyph_table_;
-  rhi::Pipeline pipeline_;
-  rhi::Descriptor descriptor_;
+  Device* device_ = nullptr;
+  Image atlas_image_;
+  Buffer glyph_table_;
+  Pipeline pipeline_;
+  Descriptor descriptor_;
   float bake_font_size_px_ = 0.0F;
   float advance_bake_px_ = 0.0F;
   // 6 for the two-triangle path; 3 in fill-rectangle mode, where the first
@@ -325,7 +312,7 @@ class MonospaceTextRendererImpl final : public TextRendererImpl {
 
 }  // namespace detail
 
-expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
+expected<TextRenderer> create_monospace_text_renderer(Device& device,
                                                       const MonospaceTextRendererDesc& desc) {
   if (!(desc.atlas_glyph_height_px > 0.0F) || !std::isfinite(desc.atlas_glyph_height_px)) {
     return make_unexpected(Error{
@@ -337,8 +324,8 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
 
   // This renderer packs its whole per-draw payload into a 256-byte push-constant block —
   // NVIDIA's budget, above the 128-byte Vulkan minimum — so validate the assumption up front.
-  VIZ_UNWRAP(rhi::CapabilityReport, capabilities, device.capabilities());
-  if (capabilities.max_push_data_bytes < sizeof(detail::MonospacePushData)) {
+  VIZ_UNWRAP(CapabilityReport, capabilities, device.capabilities());
+  if (capabilities.max_push_data_bytes < sizeof(detail::PushConstants)) {
     return make_unexpected(Error{
         .code = ErrorCode::kPushConstantOverflow,
         .message = "[holoviz] create_monospace_text_renderer: this renderer assumes a 256-byte "
@@ -427,10 +414,10 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
   }
   glyph_table_data[0] = {{advance, font->FontSize, font->Ascent, 0.0F}, {0, 0, 0, 0}};
 
-  const rhi::ImageDesc atlas_image_desc{
+  const ImageDesc atlas_image_desc{
       .extent = {static_cast<uint32_t>(atlas_width), static_cast<uint32_t>(atlas_height)},
-      .format = rhi::Format::kR8G8B8A8Unorm,
-      .usage = rhi::ImageUsage::kSampled,
+      .format = Format::kR8G8B8A8Unorm,
+      .usage = ImageUsage::kSampled,
       .debug_name = "monospace font atlas",
   };
   auto atlas_image = device.create_image(atlas_image_desc);
@@ -444,7 +431,7 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
 
   auto glyph_table = device.create_buffer({
       .size_bytes = sizeof(glyph_table_data),
-      .share = rhi::ShareMode::kPrivate,
+      .share = ShareMode::kPrivate,
       .debug_name = "monospace glyph table",
   });
   if (!glyph_table) {
@@ -459,24 +446,10 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
                               std::span{reinterpret_cast<const std::byte*>(glyph_table_data.data()),
                                         sizeof(glyph_table_data)}));
 
-  VIZ_UNWRAP(rhi::Backend, backend, device.backend());
-  VIZ_UNWRAP(rhi::ShaderBlob,
-             shader_blob,
-             rhi::compile_slang_shader(backend,
-                                       detail::kMonospaceVertexEntryPoint,
-                                       detail::kMonospaceFragmentEntryPoint,
-                                       detail::kMonospaceSlangSource));
-  // Guard the two layout invariants the design leans on: the std140 push block
-  // size and the zero-attribute (vertex-buffer-less) input.
-  if (shader_blob.push_constant_size != sizeof(detail::MonospacePushData)) {
-    return make_unexpected(Error{
-        .code = ErrorCode::kFailure,
-        .message = "[holoviz] create_monospace_text_renderer: Slang push-constant layout "
-                   "changed: reflected " +
-                   std::to_string(shader_blob.push_constant_size) + " bytes, expected " +
-                   std::to_string(sizeof(detail::MonospacePushData)),
-    });
-  }
+  // monospace.slang is compiled to SPIR-V at build time and its generated header asserts the
+  // shared push block's layout; the remaining invariant the design leans on is the
+  // zero-attribute (vertex-buffer-less) input.
+  ShaderBlob shader_blob = detail::monospace::make_shader_blob();
   if (!shader_blob.attributes.empty()) {
     return make_unexpected(Error{
         .code = ErrorCode::kFailure,
@@ -487,19 +460,18 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
 
   // Text outputs straight (non-premultiplied) alpha; the BlendState defaults compose
   // premultiplied, so set the factors explicitly (same state as the ImGui pipeline).
-  const rhi::BlendState straight_alpha_blend{
+  const BlendState straight_alpha_blend{
       .enable = true,
-      .src_color = rhi::BlendFactor::kSrcAlpha,
-      .dst_color = rhi::BlendFactor::kOneMinusSrcAlpha,
-      .src_alpha = rhi::BlendFactor::kOne,
-      .dst_alpha = rhi::BlendFactor::kOneMinusSrcAlpha,
+      .src_color = BlendFactor::kSrcAlpha,
+      .dst_color = BlendFactor::kOneMinusSrcAlpha,
+      .src_alpha = BlendFactor::kOne,
+      .dst_alpha = BlendFactor::kOneMinusSrcAlpha,
   };
-  rhi::PipelineDesc pipeline_desc{
+  PipelineDesc pipeline_desc{
       .shader_blob = std::move(shader_blob),
-      .topology = rhi::PrimitiveTopology::kTriangleList,
-      .raster = {.cull = rhi::CullMode::kNone,
-                 .polygon_mode =
-                     fill_rectangle ? rhi::PolygonMode::kFillRectangle : rhi::PolygonMode::kFill},
+      .topology = PrimitiveTopology::kTriangleList,
+      .raster = {.cull = CullMode::kNone,
+                 .polygon_mode = fill_rectangle ? PolygonMode::kFillRectangle : PolygonMode::kFill},
       .depth = {.test = false, .write = false},
       .blend = straight_alpha_blend,
       .debug_name = desc.debug_name != nullptr ? desc.debug_name : "monospace text renderer",
@@ -518,7 +490,8 @@ expected<TextRenderer> create_monospace_text_renderer(rhi::Device& device,
 
   // In fill-rectangle mode one triangle per glyph suffices: the first corner-table
   // triangle's axis-aligned bounding rect is the whole glyph quad.
-  const uint32_t vertices_per_glyph = fill_rectangle ? 3 : 6;
+  const uint32_t vertices_per_glyph =
+      fill_rectangle ? detail::kFillRectangleVerticesPerGlyph : detail::kVerticesPerGlyph;
   return TextRenderer{std::make_unique<detail::MonospaceTextRendererImpl>(device,
                                                                           std::move(*atlas_image),
                                                                           std::move(*glyph_table),

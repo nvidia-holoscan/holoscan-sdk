@@ -293,7 +293,8 @@ namespace holoscan::detail {
       }
       selector.end_of_stream_received = false;
       selector.end_of_stream_decision_pending = false;
-      selector.reuse_replacement_prerequisite_reference.reset();
+      selector.freshness_refill_prerequisite.reset();
+      selector.freshness_refill_target.reset();
     }
   }
   for (auto& aligned : state.aligned_selectors) {
@@ -372,6 +373,8 @@ namespace holoscan::detail {
   return true;
 }
 
+// Restart publication validates and updates the aggregate lifecycle as one ordered transition.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] bool RunSessionState::publish_runtime_restart(GraphExec& exec,
                                                             std::span<ReadyRunState> states,
                                                             OperatorRef target,
@@ -429,7 +432,7 @@ namespace holoscan::detail {
   if (!runtime_internal::commit_rate_candidate_temporal_depths(states)) {
     return false;
   }
-  if (channels_quiesced && !aggregate.channels->arm()) {
+  if (channels_quiesced && !arm_channels_with_diagnostics(aggregate.channels)) {
     return false;
   }
   // Direct Tensor pools are the final publication participant. Every earlier Channel,
@@ -458,7 +461,8 @@ namespace holoscan::detail {
   ReadyRunState& aggregate = states.front();
   const bool tensor_rolled_back =
       tensor_resources_ == nullptr || tensor_resources_->rollback_restart().has_value();
-  const bool channels_rearmed = !channels_quiesced || aggregate.channels->arm().has_value();
+  const bool channels_rearmed =
+      !channels_quiesced || arm_channels_with_diagnostics(aggregate.channels);
   if (aggregate.notifications != nullptr) {
     aggregate.notifications->rollback_restart(aggregate.restart.aggregate_vertices);
   }
@@ -487,6 +491,7 @@ namespace holoscan::detail {
       // NOLINTNEXTLINE(readability-function-cognitive-complexity)
       [](void* state, const LifecycleRestartExecutionRequest& request) noexcept {
         auto& publication = *static_cast<RestartPublicationState*>(state);
+        publication.exec->clear_lifecycle_failure_evidence();
         const auto transition_candidates = [&](LifecycleTransactionState lifecycle_state) {
           for (const auto& candidate : request.parameter_candidates) {
             if (!publication.exec->parameter_updates().transition_lifecycle_candidate(
@@ -567,6 +572,10 @@ namespace holoscan::detail {
             publication.session->rate_state_->reject_candidate(
                 Error{ErrorCode::kLifecycleStageFailed, std::string{failure_token}});
           }
+        }
+        if (outcome.disposition == LifecycleRestartExecutionDisposition::kRolledBack) {
+          publication.session->append_lifecycle_diagnostics(
+              *publication.exec, ::holoscan::DiagnosticSeverity::kWarning);
         }
         return outcome;
       },

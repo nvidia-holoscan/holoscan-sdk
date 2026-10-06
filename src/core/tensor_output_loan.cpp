@@ -33,6 +33,11 @@ std::optional<::cuda::stream_ref> TensorOutputWriteGuard::stream() const noexcep
                                                                          : std::nullopt;
 }
 
+Tensor TensorOutputWriteGuard::tensor() const {
+  return state_ != nullptr && ops_ != nullptr && ops_->tensor != nullptr ? ops_->tensor(state_)
+                                                                         : Tensor{};
+}
+
 expected<void, Error> TensorOutputWriteGuard::commit() && {
   if (state_ == nullptr || ops_ == nullptr || ops_->commit == nullptr) {
     return make_unexpected(Error{ErrorCode::kInvalidArgument});

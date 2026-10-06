@@ -7,7 +7,6 @@
 #include <memory>
 
 #include <holoscan/vision/holoscan_vision_export.h>
-#include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/expected.hpp>
@@ -16,6 +15,7 @@
 #include <holoscan/core/parameter_schema.hpp>
 #include <holoscan/core/port.hpp>
 #include <holoscan/core/temporal_contract.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/vision/vision_types.hpp>
 
 namespace holoscan::vision {
@@ -25,12 +25,14 @@ struct ReformatOpParams {
   ReformatMode mode{ReformatMode::kInterleavedToPlanar};  ///< Input-to-output layout conversion.
 };
 
-HOLOSCAN_PARAM_SCHEMA(ReformatOpParams,
-                      holoscan::param_schema("com.nvidia.holoscan.vision.ReformatOpParams", 1),
-                      holoscan::field<&ReformatOpParams::mode>("mode")
-                          .allowed_values({ReformatMode::kInterleavedToPlanar,
-                                           ReformatMode::kPlanarToInterleaved})
-                          .description("Input-to-output image layout conversion."));
+HOLOSCAN_PARAM_SCHEMA(
+    ReformatOpParams, holoscan::param_schema("com.nvidia.holoscan.vision.ReformatOpParams", 2),
+    holoscan::field<&ReformatOpParams::mode>("mode")
+        .enum_values({holoscan::param_enum_value("interleaved_to_planar",
+                                                 ReformatMode::kInterleavedToPlanar),
+                      holoscan::param_enum_value("planar_to_interleaved",
+                                                 ReformatMode::kPlanarToInterleaved)})
+        .description("Input-to-output image layout conversion."));
 
 /// @brief Convert CUDA image tensors between interleaved and planar layouts.
 ///
@@ -42,20 +44,33 @@ HOLOSCAN_PARAM_SCHEMA(ReformatOpParams,
 /// packed. Planar input pixels must be tightly packed. Row, channel, and batch
 /// pitch may include padding where the layout defines those dimensions. Output
 /// storage is contiguous.
+///
+/// Ports carry schema::ImageT with a scalar CUDA tensor in its data field.
+/// Image dimensions, encoding, and supplied planes must match tensor geometry,
+/// dtype, channels, layout, and strides. Compatible CUSTOM encodings are
+/// supported; packed and chroma-subsampled encodings are rejected.
+/// Output planes are rebuilt from actual tensor strides; for a batch they
+/// describe the first image, repeated by the tensor batch stride. Image header,
+/// exposure, and gain are preserved. Publication attaches the committed output
+/// loan through emit_tensor() without copying pixel storage.
+///
+/// Image geometry, ROI offsets, color space, and significant_bits are preserved.
+/// RGB8/BGR8 encodings become R8_G8_B8/B8_G8_R8 for planar storage, and those
+/// planar encodings map back to RGB8/BGR8. Encoding/layout combinations without
+/// a corresponding named encoding become CUSTOM.
 class HOLOSCAN_VISION_EXPORT ReformatOp final : public Operator<ReformatOpParams> {
  public:
-  /// @brief Construct an operator with fixed output-pool capacity.
-  /// @param capacity Maximum admitted image width, image height, and batch size.
-  explicit ReformatOp(VisionImageCapacity capacity);
+  /// @brief Construct an operator whose output capacity follows its connected input.
+  ReformatOp();
 
   /// @brief Destroy the operator and its retained CV-CUDA resource after runtime quiescence.
   ~ReformatOp() override;
 
-  /// @brief Declare tensor ports and bounded output allocation.
+  /// @brief Declare image ports and bounded output allocation.
   /// @param spec Fresh operator declaration surface.
   void setup(OperatorSpec& spec) override;
 
-  /// @brief Trigger once for each selected input tensor.
+  /// @brief Trigger once for each selected input image.
   /// @return The operator's cold temporal contract.
   [[nodiscard]] Contract contract() const override;
 
@@ -65,18 +80,17 @@ class HOLOSCAN_VISION_EXPORT ReformatOp final : public Operator<ReformatOpParams
   /// @brief End a session while retaining the CV-CUDA resource through runtime quiescence.
   void stop() override;
 
-  /// @brief Reformat one image tensor and publish a plan-owned output tensor.
+  /// @brief Reformat one image tensor and publish a plan-owned output image.
   /// @param context Callback-lifetime runtime services and pinned parameters.
   /// @return Success after asynchronous submission and publication, or a typed error.
   [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override;
 
-  Input<Tensor> input{"input"};     ///< Input interleaved or planar CUDA image tensor.
-  Output<Tensor> output{"output"};  ///< Output tensor in the configured target layout.
+  Input<schema::ImageT> input{"input"};  ///< Image carrying an interleaved or planar CUDA tensor.
+  Output<schema::ImageT> output{"output"};  ///< Image with data in the configured target layout.
 
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;
-  VisionImageCapacity capacity_;
 };
 
 static_assert(param_schema_availability<ReformatOpParams>() == ParamSchemaAvailability::kDeclared,

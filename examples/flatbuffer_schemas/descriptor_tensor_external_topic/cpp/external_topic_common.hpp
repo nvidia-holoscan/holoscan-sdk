@@ -31,7 +31,7 @@
 #include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
 #include <holoscan/schema/tensor_materialization.hpp>
 
-#include "external_frame_traits.hpp"
+#include "external_frame_schema_traits.hpp"
 
 namespace descriptor_tensor_external_topic {
 
@@ -167,7 +167,7 @@ make_client_tensors() {
   const auto source_offset = builder.CreateString(source);
   const auto root =
       tensor_topic::CreateExternalFrame(builder, sequence, source_offset, *pixels, *calibration);
-  builder.Finish(root);
+  tensor_topic::FinishExternalFrameBuffer(builder, root);
   const auto* const first =
       reinterpret_cast<const std::byte*>(builder.GetBufferPointer());  // NOLINT
   return std::vector<std::byte>{first, first + builder.GetSize()};

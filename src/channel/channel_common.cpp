@@ -118,6 +118,8 @@ struct HoloMQErrorTranslation {
       return {ErrorCode::kIncompatible, nullptr};
     case holomq::ErrorCode::kIncompleteFanout:
       return {ErrorCode::kNotReady, nullptr};
+    case holomq::ErrorCode::kNotSupported:
+      return {ErrorCode::kNotSupported, nullptr};
   }
   return {ErrorCode::kFailure, "HOLOMQ_ERROR_UNMAPPED"};
 }

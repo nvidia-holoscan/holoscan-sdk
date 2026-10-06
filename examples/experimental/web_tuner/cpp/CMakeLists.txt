@@ -1,16 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    cmake_minimum_required(VERSION 4.0)
-    project(holoscan_web_tuner LANGUAGES CXX)
+cmake_minimum_required(VERSION 4.0)
+project(holoscan_web_tuner LANGUAGES CXX)
+
+if(PROJECT_IS_TOP_LEVEL)
     include("${CMAKE_CURRENT_LIST_DIR}/CMakeLists.min.txt")
     return()
 endif()
 
 # The experimental loopback tuner ships behind
-# HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER, which defaults to ON and
-# requires HOLOSCAN_BUILD_PARAMS=ON. Guard on the exported target so this file
+# HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER, which defaults to ON.
+# Guard on the exported target so this file
 # works both in-tree (where the alias
 # holoscan::experimental_params_web_tuner exists — same gate idea as
 # tests/params/CMakeLists.txt's `if(TARGET experimental_params_web_tuner)`)
@@ -38,11 +39,10 @@ if(TARGET holoscan::experimental_params_web_tuner)
 
     install(TARGETS web_tuner
         RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/web_tuner/cpp"
-        COMPONENT holoscan-examples
+        COMPONENT holoscan-core-examples
     )
 else()
     message(STATUS
         "web_tuner example excluded: the experimental web tuner was not built. "
-        "Configure the SDK with -DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=ON "
-        "(requires HOLOSCAN_BUILD_PARAMS=ON) to build it.")
+        "Configure the SDK with -DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=ON to build it.")
 endif()

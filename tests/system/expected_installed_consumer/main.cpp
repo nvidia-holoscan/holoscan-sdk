@@ -9,13 +9,28 @@
 #error "installed Holoscan targets must not define HOLOSCAN_LOG_ACTIVE_LEVEL for consumers"
 #endif
 
+#include <string>
+#include <string_view>
+
+#include <holoscan/core/diagnostic.hpp>
+
 #include <holoscan/core/errors.hpp>
+#include <holoscan/core/execution_plan.hpp>
 #include <holoscan/core/expected.hpp>
 #include <holoscan/core/expected_macros.hpp>
 #include <holoscan/logger/logger.hpp>
+#include "diagnostic_policy_peer_export.h"
 
 static_assert(HOLOSCAN_LOG_ACTIVE_LEVEL == HOLOSCAN_LOG_LEVEL_TRACE,
               "logger.hpp must retain its caller-owned default threshold");
+
+extern "C" DIAGNOSTIC_POLICY_PEER_EXPORT bool diagnostic_policy_peer_get();
+extern "C" DIAGNOSTIC_POLICY_PEER_EXPORT void diagnostic_policy_peer_set(bool enabled);
+extern "C" DIAGNOSTIC_POLICY_PEER_EXPORT bool diagnostic_policy_peer_memory_failures();
+
+// REQ: EXPECTED-032
+static_assert(noexcept(holoscan::set_automatic_diagnostic_logging_enabled(false)));
+static_assert(noexcept(holoscan::automatic_diagnostic_logging_enabled()));
 
 namespace {
 
@@ -59,9 +74,59 @@ bool has_expected_failure(const holoscan::expected<int, holoscan::Error>& result
 
 // REQ: EXPECTED-018
 // REQ: EXPECTED-021
-int main() {
+// REQ: EXPECTED-030
+// REQ: EXPECTED-033
+// REQ: EXPECTED-032
+int main(int argc, char** argv) {
+  if (argc == 2) {
+    const bool preference = std::string_view(argv[1]) == "ON";
+    holoscan::set_automatic_diagnostic_logging_enabled(preference);
+    holoscan::set_log_level(holoscan::LogLevel::ERROR);
+    return diagnostic_policy_peer_memory_failures() ? 0 : 3;
+  }
   holoscan::set_log_level(holoscan::LogLevel::OFF);
   HOLOSCAN_LOG_INFO("installed package consumer linked the public logger surface");
+
+  const holoscan::Diagnostic diagnostic{
+      .token = "RUNTIME_OPERATOR_CALLBACK_FAILED",
+      .detail =
+          holoscan::DiagnosticDetail{
+              .operation = holoscan::DiagnosticOperation::kCompute,
+              .error = holoscan::Error{holoscan::ErrorCode::kInvalidArgument,
+                                       "installed diagnostic cause"},
+              .operator_path = "installed/consumer",
+              .related_source = {.graph_generation = 3U,
+                                 .graph = holoscan::GraphId{2U},
+                                 .vertex = holoscan::VertexId{7U},
+                                 .port = holoscan::PortId{5U}},
+          },
+  };
+  holoscan::set_automatic_diagnostic_logging_enabled(false);
+  if (diagnostic_policy_peer_get()) {
+    return 3;
+  }
+  diagnostic_policy_peer_set(true);
+  if (!holoscan::automatic_diagnostic_logging_enabled()) {
+    return 4;
+  }
+  diagnostic_policy_peer_set(false);
+  if (holoscan::automatic_diagnostic_logging_enabled()) {
+    return 5;
+  }
+  holoscan::log_diagnostics(holoscan::ExecutionPlan{});
+  holoscan::log_diagnostics(std::span<const holoscan::Diagnostic>{&diagnostic, 1U},
+                            holoscan::ExecutionGraphView{});
+  holoscan::set_automatic_diagnostic_logging_enabled(true);
+  const auto report = holoscan::format_diagnostic(diagnostic, holoscan::ExecutionGraphView{});
+  const auto full_report = holoscan::format_diagnostics(
+      std::span<const holoscan::Diagnostic>{&diagnostic, 1U}, holoscan::ExecutionGraphView{});
+  if (full_report != report + " [diagnostic_index=0]" ||
+      report.find("installed diagnostic cause") == std::string::npos ||
+      report.find("installed/consumer") == std::string::npos ||
+      report.find("related_vertex_id=7") == std::string::npos ||
+      report.find("related_port_id=5") == std::string::npos) {
+    return 2;
+  }
 
   const auto try_success = propagate_try_forms(false, false);
   const auto try_value_failure = propagate_try_forms(true, false);

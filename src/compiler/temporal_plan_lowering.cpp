@@ -21,6 +21,7 @@
 #include <holoscan/core/parameter_schema.hpp>
 #include "core/canonical_text_encoding.hpp"
 #include "core/clock_binding_resolution.hpp"
+#include "core/diagnostic_context.hpp"
 #include "core/graph_compiler_access.hpp"
 #include "core/operator_spec_compiler_access.hpp"
 #include "core/readiness_source_internal.hpp"
@@ -34,6 +35,15 @@ namespace {
 
 [[nodiscard]] unexpected<Error> replay_error(std::string_view token) {
   return make_unexpected(Error{ErrorCode::kFailure, std::string(token)});
+}
+
+[[nodiscard]] unexpected<Error> replay_error(std::string_view token, const Error& cause) {
+  std::string message{token};
+  if (!cause.message.empty()) {
+    message.append(": ");
+    message.append(cause.message);
+  }
+  return make_unexpected(Error{cause.code, std::move(message)});
 }
 
 [[nodiscard]] const PortRecord* find_port(const GraphSnapshotData& snapshot, VertexId owner,
@@ -530,9 +540,22 @@ void add_error(TemporalPlanLoweringResult& result, std::string token, VertexId o
       {.token = std::move(token), .source = DiagnosticSource{.vertex = owner, .port = port}});
 }
 
-void add_warning(TemporalPlanLoweringResult& result, std::string token, VertexId owner = {}) {
+void add_replay_error(TemporalPlanLoweringResult& result, const Error& error) {
+  const std::string_view message = error.message;
+  const std::size_t separator = message.find(": ");
+  const std::string_view token =
+      separator == std::string_view::npos ? message : message.substr(0U, separator);
+  const std::string_view detail =
+      separator == std::string_view::npos ? std::string_view{} : message.substr(separator + 2U);
+  result.errors.push_back(
+      {.token = token.empty() ? "TEMPORAL_CONTRACT_REPLAY_FAILED" : std::string(token),
+       .provided = std::string(detail)});
+}
+
+void add_warning(TemporalPlanLoweringResult& result, std::string token, VertexId owner = {},
+                 PortId port = {}) {
   result.warnings.push_back(
-      {.token = std::move(token), .source = DiagnosticSource{.vertex = owner}});
+      {.token = std::move(token), .source = DiagnosticSource{.vertex = owner, .port = port}});
 }
 
 [[nodiscard]] bool completion_trigger_supported(TemporalTriggerKind kind) noexcept {
@@ -571,12 +594,37 @@ void add_missing_default_clock_error(TemporalPlanLoweringResult& result,
                                      const GraphSnapshotData& snapshot, GraphId graph) {
   const GraphRecord* record = find_graph(snapshot, graph);
   const std::size_t index = record == nullptr ? 0U : static_cast<std::size_t>(graph.value - 1U);
+  const bool embedded = record != nullptr && record->parent.has_value();
+  const std::string scope = std::string(embedded ? "embedded graph \"" : "root graph \"") +
+                            (record == nullptr ? "_root" : canonical_graph_path(*record)) + "\"";
+  const bool has_import = std::any_of(snapshot.clock_imports.begin(),
+                                      snapshot.clock_imports.end(),
+                                      [&](const auto& item) { return item.graph == graph; });
+  const bool has_clock = std::any_of(snapshot.clocks.begin(),
+                                     snapshot.clocks.end(),
+                                     [&](const auto& item) { return item.graph == graph; });
+  std::string required;
+  std::string provided = scope + " has no selected default clock";
+  if (embedded && !has_import && !has_clock) {
+    const GraphRecord* parent = find_graph(snapshot, *record->parent);
+    required = "Declare a clock dependency using import_clock() in " + scope +
+               ", select it using set_default_clock(), and bind it using bind_clock() in "
+               "the immediate parent graph \"" +
+               (parent == nullptr ? "_root" : canonical_graph_path(*parent)) + "\"";
+    provided += " and has not declared a clock import";
+  } else if (has_import || has_clock) {
+    required = "Select a declared " + std::string(has_import ? "clock import" : "clock") +
+               " using set_default_clock() in " + scope;
+  } else {
+    required =
+        "Declare a clock using add_clock() and select it using set_default_clock() in " + scope;
+  }
   result.errors.push_back(TemporalPlanDiagnostic{
       .token = "TEMPORAL_CLOCK_UNDECLARED",
       .source = DiagnosticSource{.graph_generation = snapshot.generation, .graph = graph},
       .json_pointer = "/graphs/" + std::to_string(index) + "/default_clock",
-      .required = "one selected default clock on the owning Graph",
-      .provided = "none; call add_clock and set_default_clock, or bind an imported child clock",
+      .required = std::move(required),
+      .provided = std::move(provided),
   });
 }
 
@@ -676,6 +724,108 @@ void add_undeclared_temporal_clock_error(TemporalPlanLoweringResult& result,
   return result;
 }
 
+[[nodiscard]] bool optional_safe_default_contract(const TemporalContractSnapshot& contract,
+                                                  const TemporalInputRecord& input) noexcept {
+  if (input.selector != TemporalSelectorKind::kExact ||
+      input.missing != TemporalMissingKind::kSafeDefault) {
+    return false;
+  }
+
+  switch (contract.trigger.kind) {
+    case TemporalTriggerKind::kAnyInput:
+    case TemporalTriggerKind::kClock:
+    case TemporalTriggerKind::kReadable:
+    case TemporalTriggerKind::kNotified:
+    case TemporalTriggerKind::kDoorbell:
+    case TemporalTriggerKind::kSpin:
+      return true;
+    case TemporalTriggerKind::kEach:
+    case TemporalTriggerKind::kWindow:
+      return input.port_name != contract.trigger.port_name;
+    case TemporalTriggerKind::kAligned:
+      return std::find(contract.trigger.ports.begin(),
+                       contract.trigger.ports.end(),
+                       input.port_name) == contract.trigger.ports.end();
+    case TemporalTriggerKind::kPredicate:
+      return (contract.trigger.predicate_clock_source ||
+              input.port_name != contract.trigger.port_name) &&
+             std::find(contract.trigger.predicate_input_names.begin(),
+                       contract.trigger.predicate_input_names.end(),
+                       input.port_name) == contract.trigger.predicate_input_names.end();
+    case TemporalTriggerKind::kNone:
+      return false;
+  }
+  return false;
+}
+
+// Retain supplemental text only after the structural row exists. Allocation failure may lose
+// explanation, but cannot change the diagnostic's classification or invent an underlying Error.
+void attach_optional_input_context(TemporalPlanDiagnostic& diagnostic,
+                                   const GraphSnapshotData& snapshot, const PortRecord& port,
+                                   std::string_view provided, std::string_view remedy) noexcept {
+  auto& detail = diagnostic.detail.emplace(DiagnosticDetail{
+      .operation = DiagnosticOperation::kCompile, .error = Error{ErrorCode::kSuccess}});
+  try {
+    if (const auto* owner = find_vertex(snapshot, port.owner)) {
+      copy_diagnostic_context(detail.operator_path,
+                              canonical_operator_path(snapshot, *owner).value_or(owner->name),
+                              detail,
+                              DiagnosticCapture::kTextCapacity / 2U);
+    }
+    copy_diagnostic_context(detail.port_name, port.name, detail, 255U);
+    detail.mismatches.push_back(DiagnosticMismatch{.field = "optional input contract",
+                                                   .provided = std::string(provided),
+                                                   .required = std::string(remedy)});
+  } catch (...) {
+    detail.truncated = true;
+  }
+}
+
+[[nodiscard]] std::string_view optional_contract_violation(const TemporalContractSnapshot* contract,
+                                                           std::string_view port_name) noexcept {
+  if (contract == nullptr) {
+    return "input has no temporal contract";
+  }
+  const auto input = std::find_if(contract->inputs.begin(),
+                                  contract->inputs.end(),
+                                  [&](const auto& item) { return item.port_name == port_name; });
+  if (input == contract->inputs.end()) {
+    return "input is not selected by its temporal contract";
+  }
+  switch (input->selector) {
+    case TemporalSelectorKind::kLatestWithin:
+      return "LatestWithin is not eligible for optional absence";
+    case TemporalSelectorKind::kDrainAll:
+      return "DrainAll is a batch selector";
+    case TemporalSelectorKind::kBracketedWindow:
+      return "BracketedWindow is a batch selector";
+    case TemporalSelectorKind::kExact:
+      break;
+  }
+  switch (input->missing) {
+    case TemporalMissingKind::kUnspecified:
+      return "missing policy is unspecified";
+    case TemporalMissingKind::kSkip:
+      return "Skip suppresses activation instead of providing SafeDefault";
+    case TemporalMissingKind::kReuseLast:
+      return "ReuseLast requires previously observed input data";
+    case TemporalMissingKind::kSafeDefault:
+      break;
+  }
+  switch (contract->trigger.kind) {
+    case TemporalTriggerKind::kAligned:
+      return "input is a required OnAligned member";
+    case TemporalTriggerKind::kWindow:
+      return "input is the OnWindow anchor";
+    case TemporalTriggerKind::kPredicate:
+      return "input supplies predicate evaluation or trigger authority";
+    case TemporalTriggerKind::kEach:
+      return "input is the OnEach trigger driver";
+    default:
+      return "input has no independent activation authority";
+  }
+}
+
 [[nodiscard]] bool runtime_parameter_updates_requested(
     const ParameterCompileOptions& options) noexcept {
   return options.runtime_updates == ParamRuntimeUpdatePolicy::kEnabledIfAdmitted ||
@@ -697,7 +847,7 @@ void add_undeclared_temporal_clock_error(TemporalPlanLoweringResult& result,
   }
   const ParamFieldDescriptor* field = dependency.final_field();
   const std::string field_path = dependency.canonical_path();
-  if (field == nullptr || field_path.empty() ||
+  if (field == nullptr || field_path.empty() || field->type_shape.optional ||
       field->logical_type != ParamLogicalType::kDuration || !field->type_shape.has_stable_shape ||
       (field->type_shape.element_or_rep_type != ParamLogicalType::kSignedInteger &&
        field->type_shape.element_or_rep_type != ParamLogicalType::kUnsignedInteger) ||
@@ -756,7 +906,8 @@ expected<std::vector<GraphCompilerAccess::TemporalReplay>, Error>
 GraphCompilerAccess::replay_temporal_contracts(const ExecutableFactoryInventory& factories,
                                                const GraphSnapshotData& snapshot,
                                                PlanGenerationId plan_generation,
-                                               std::span<const ReadinessPlanRecord> readiness) {
+                                               std::span<const ReadinessPlanRecord> readiness,
+                                               Diagnostic* failure) {
   // REQ: COMPILE-015 - replay typed declarations into the canonical plan
   // generation before resolving copied temporal identities.
   if (plan_generation == 0U) {
@@ -773,23 +924,42 @@ GraphCompilerAccess::replay_temporal_contracts(const ExecutableFactoryInventory&
     if (!owner || vertex == nullptr) {
       return replay_error("TEMPORAL_CONTRACT_OWNER_UNRESOLVED");
     }
-    auto created = entry.factory->create();
+    DiagnosticCapture capture;
+    const auto failed =
+        [&](std::string_view token, DiagnosticOperation operation, const Error* cause = nullptr) {
+          if (capture.count == 0U && cause != nullptr) {
+            capture.append(cause->code, cause->message);
+          }
+          if (failure != nullptr) {
+            failure->source = DiagnosticSource{
+                .graph_generation = snapshot.generation, .graph = vertex->graph, .vertex = owner};
+            failure->detail = capture.detail(operation);
+            failure->detail->operator_path =
+                canonical_operator_path(snapshot, *vertex).value_or(vertex->name);
+          }
+          return replay_error(token);
+        };
+    auto created = entry.factory->create(&capture);
     if (!created || !created.value()) {
-      return replay_error("TEMPORAL_CONTRACT_FACTORY_REPLAY_FAILED");
+      if (created) {
+        capture.append(ErrorCode::kFailure, "factory returned no operator");
+      }
+      return failed("TEMPORAL_CONTRACT_FACTORY_REPLAY_FAILED",
+                    DiagnosticOperation::kConstruct,
+                    created ? nullptr : &created.error());
     }
 
     OperatorSpec spec;
     try {
       created.value()->setup(spec);
-    } catch (const RuntimeError&) {
-      return replay_error("TEMPORAL_CONTRACT_SETUP_FAILED");
-    } catch (const std::exception&) {
-      return replay_error("TEMPORAL_CONTRACT_SETUP_FAILED");
     } catch (...) {
-      return replay_error("TEMPORAL_CONTRACT_SETUP_FAILED");
+      capture.capture_exception();
+      return failed("TEMPORAL_CONTRACT_SETUP_FAILED", DiagnosticOperation::kSetup);
     }
     if (OperatorSpecCompilerAccess::declaration_error(spec).code != ErrorCode::kSuccess) {
-      return replay_error("TEMPORAL_CONTRACT_SETUP_FAILED");
+      return failed("TEMPORAL_CONTRACT_SETUP_FAILED",
+                    DiagnosticOperation::kSetup,
+                    &OperatorSpecCompilerAccess::declaration_error(spec));
     }
 
     TemporalReplay replay{
@@ -825,12 +995,9 @@ GraphCompilerAccess::replay_temporal_contracts(const ExecutableFactoryInventory&
     Contract contract;
     try {
       contract = created.value()->contract();
-    } catch (const RuntimeError&) {
-      return replay_error("TEMPORAL_CONTRACT_REPLAY_FAILED");
-    } catch (const std::exception&) {
-      return replay_error("TEMPORAL_CONTRACT_REPLAY_FAILED");
     } catch (...) {
-      return replay_error("TEMPORAL_CONTRACT_REPLAY_FAILED");
+      capture.capture_exception();
+      return failed("TEMPORAL_CONTRACT_REPLAY_FAILED", DiagnosticOperation::kContract);
     }
     const std::size_t connected_count = connected_input_count(snapshot, owner);
     // Existing operators that have no temporal authoring and no connected input are inert in
@@ -841,7 +1008,8 @@ GraphCompilerAccess::replay_temporal_contracts(const ExecutableFactoryInventory&
     }
     auto normalized = ContractTestAccess::normalize(contract, connected_count);
     if (!normalized) {
-      return replay_error("TEMPORAL_CONTRACT_INVALID");
+      return failed(
+          "TEMPORAL_CONTRACT_INVALID", DiagnosticOperation::kContract, &normalized.error());
     }
     replay.contract = std::move(*normalized);
     result.push_back(std::move(replay));
@@ -855,25 +1023,50 @@ GraphCompilerAccess::replay_temporal_contracts(const ExecutableFactoryInventory&
 // Keep every temporal record family and cross-family join in one fail-closed pass.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TemporalPlanLoweringResult lower_temporal_plan(
-    const ExecutableFactoryInventory& factories, const GraphSnapshotData& snapshot,
-    PlanGenerationId plan_generation, std::span<const ClockPlanRecord> clocks,
-    std::span<const ClockConversionRecord> conversions, std::vector<ReadinessPlanRecord>& readiness,
+    std::span<const GraphCompilerAccess::TemporalReplay> normalized_contracts,
+    const GraphSnapshotData& snapshot, PlanGenerationId plan_generation,
+    std::span<const ClockPlanRecord> clocks, std::span<const ClockConversionRecord> conversions,
+    std::vector<ReadinessPlanRecord>& readiness,
     std::span<const std::optional<Profile>> effective_profiles,
     const ParameterCompileOptions& parameter_options,
     const RuntimePackageCapabilityView& package_capabilities) {
   TemporalPlanLoweringResult result;
-  auto replayed = GraphCompilerAccess::replay_temporal_contracts(
-      factories, snapshot, plan_generation, std::span<const ReadinessPlanRecord>{readiness});
-  if (!replayed) {
-    add_error(result,
-              replayed.error().message.empty() ? "TEMPORAL_CONTRACT_REPLAY_FAILED"
-                                               : replayed.error().message);
+  // Validate permission even when wired, or when an inert Operator has no temporal replay.
+  // A reusable Operator must not advertise optionality that depends on the application's wiring.
+  for (const auto& port : snapshot.ports) {
+    if (!port.optional) {
+      continue;
+    }
+    const auto replay = std::find_if(normalized_contracts.begin(),
+                                     normalized_contracts.end(),
+                                     [&](const auto& item) { return item.owner == port.owner; });
+    const bool eligible =
+        port.owner_kind == PortOwnerKind::kOperator && port.direction == PortDirection::kInput &&
+        replay != normalized_contracts.end() &&
+        std::any_of(
+            replay->contract.inputs.begin(), replay->contract.inputs.end(), [&](const auto& input) {
+              return input.port_name == port.name &&
+                     optional_safe_default_contract(replay->contract, input);
+            });
+    if (!eligible) {
+      add_error(result, "TEMPORAL_INPUT_OPTIONAL_INVALID", port.owner, PortId{port.id.value});
+      attach_optional_input_context(
+          result.errors.back(),
+          snapshot,
+          port,
+          optional_contract_violation(
+              replay == normalized_contracts.end() ? nullptr : &replay->contract, port.name),
+          "use a compute-only single-sample Exact selector with explicit SafeDefault; "
+          "otherwise remove .optional() and wire the required input");
+    }
+  }
+  if (!result.accepted()) {
     return result;
   }
 
   std::uint32_t next_temporal_source = first_unassigned_source_id(readiness);
 
-  for (const auto& replay : *replayed) {
+  for (const auto& replay : normalized_contracts) {
     const VertexRecord* vertex = find_vertex(snapshot, replay.owner);
     if (vertex == nullptr) {
       add_error(result, "TEMPORAL_CONTRACT_OWNER_UNRESOLVED", replay.owner);
@@ -915,14 +1108,51 @@ TemporalPlanLoweringResult lower_temporal_plan(
     }
     const ClockId effective_reference_clock =
         readiness_trigger ? readiness_source->resolved_clock : reference_clock;
+    const bool readiness_selection_requires_clock =
+        readiness_trigger &&
+        std::any_of(contract.inputs.begin(), contract.inputs.end(), [](const auto& input) {
+          return requires_capture_time(input.selector);
+        });
     const bool requires_resolved_clock = contract.trigger.kind == TemporalTriggerKind::kAnyInput ||
                                          contract.trigger.kind == TemporalTriggerKind::kEach ||
                                          contract.trigger.kind == TemporalTriggerKind::kClock ||
                                          contract.trigger.kind == TemporalTriggerKind::kAligned ||
                                          contract.trigger.kind == TemporalTriggerKind::kWindow ||
-                                         contract.trigger.kind == TemporalTriggerKind::kPredicate;
-    if (requires_resolved_clock && !reference_clock.valid()) {
-      add_missing_default_clock_error(result, snapshot, vertex->graph);
+                                         contract.trigger.kind == TemporalTriggerKind::kPredicate ||
+                                         readiness_selection_requires_clock;
+    if (requires_resolved_clock && !effective_reference_clock.valid()) {
+      // Clock-catalog failures publish no partial catalog. An unbound import (including one
+      // farther up an explicit binding chain) is diagnosed at its exact boundary by that pass;
+      // do not tell already configured graphs to create another clock as a consequence.
+      const auto authored = resolve_authored_clock(snapshot.graphs,
+                                                   snapshot.clocks,
+                                                   snapshot.clock_imports,
+                                                   snapshot.clock_bindings,
+                                                   vertex->graph,
+                                                   reference_key);
+      if (authored.status == AuthoredClockResolutionStatus::kNotFound) {
+        if (reference_key.is_default()) {
+          add_missing_default_clock_error(result, snapshot, vertex->graph);
+        } else {
+          const auto* graph = find_graph(snapshot, vertex->graph);
+          const std::string scope = graph == nullptr ? "_root" : canonical_graph_path(*graph);
+          const std::string clock = "clock \"" + std::string(reference_key.name()) + "\"";
+          const std::string required =
+              graph != nullptr && graph->parent
+                  ? "Declare " + clock + " using import_clock() in graph \"" + scope +
+                        "\" and bind it using bind_clock() in the immediate parent"
+                  : "Declare " + clock + " using add_clock() in graph \"" + scope + "\"";
+          add_undeclared_temporal_clock_error(
+              result,
+              snapshot,
+              *vertex,
+              {},
+              "/vertices/" + std::to_string(vertex_index(snapshot, replay.owner)) +
+                  "/temporal_contract/trigger/clock",
+              required,
+              "The trigger references undeclared " + clock + " in graph \"" + scope + "\"");
+        }
+      }
       continue;
     }
 
@@ -1006,9 +1236,48 @@ TemporalPlanLoweringResult lower_temporal_plan(
       }
       const EdgeRecord* edge = incoming_edge(snapshot, port->id);
       if (edge == nullptr) {
-        add_error(result, "TEMPORAL_INPUT_UNCONNECTED", replay.owner, replayed_port->id);
-        selection_error = true;
-        break;
+        if (!port->optional || !optional_safe_default_contract(contract, input)) {
+          add_error(result, "TEMPORAL_INPUT_UNCONNECTED", replay.owner, replayed_port->id);
+          attach_optional_input_context(
+              result.errors.back(),
+              snapshot,
+              *port,
+              "required input has no graph connection",
+              optional_safe_default_contract(contract, input)
+                  ? "connect this input; its operator may instead permit intentional absence "
+                    "with .optional() for this compute-only Exact + SafeDefault contract"
+                  : "connect this required input; its current contract does not permit "
+                    "optional absence");
+          selection_error = true;
+          break;
+        }
+        // preserve one ordinary bounded selector record for an explicitly
+        // degraded optional input without fabricating a graph edge or transport endpoint.
+        context.edges.push_back({
+            .resolved = true,
+            .input_name = input.port_name,
+            .reference = {.resolved = true,
+                          .clock = {.is_default = reference_key.is_default(),
+                                    .name = std::string(reference_key.name())},
+                          .conversion = TemporalRecordConversionKind::kSameClock,
+                          .conversion_record_id = {}},
+            .cache_capacity = 1U,
+            .cache_capacity_origin = TemporalRecordBoundOrigin::kSingleSample,
+            .drain_all_max_samples = 0U,
+            .provenance = {.source = "contract.unconnected-safe-default",
+                           .declaration_order = static_cast<std::uint32_t>(index)},
+        });
+        selection_conversion_ids.push_back(0U);
+        add_warning(
+            result, "TEMPORAL_INPUT_UNCONNECTED_SAFE_DEFAULT", replay.owner, replayed_port->id);
+        attach_optional_input_context(
+            result.warnings.back(),
+            snapshot,
+            *port,
+            "input is intentionally unwired",
+            "handle SafeDefault/NotConnected with an operator-owned fallback; "
+            "connect the input when its data is required");
+        continue;
       }
       // REQ: COMPILE-017 - freeze the final retained geometry before deriving
       // selector cardinality or selected-sample bounds.
@@ -1333,6 +1602,7 @@ TemporalPlanLoweringResult lower_temporal_plan(
           .reuse_max_age_ns = edge.reuse_max_age_ns,
           .lookbehind = edge.lookbehind,
           .lookahead = edge.lookahead,
+          .unwired_safe_default = incoming_edge(snapshot, GraphPortId{port->id.value()}) == nullptr,
       });
       if (edge.selector == TemporalRecordSelectorKind::kBracketedWindow) {
         const PortRecord* selected_port = find_port(snapshot, GraphPortId{port->id.value()});

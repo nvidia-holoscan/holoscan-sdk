@@ -30,6 +30,7 @@ namespace {
   return PayloadIdentityRecord{
       .kind = PayloadIdentityKind::kSchema,
       .payload_kind = PayloadKind::kDescriptorBacked,
+      .transport_profile_tag = 1U,
   };
 }
 
@@ -157,23 +158,26 @@ TEST(ExecutionPlanContracts, ProviderSizingDependenciesRejectMalformedRanges) {
 }
 
 TEST(ExecutionPlanContracts, DerivesEveryBoundedChannelPayloadSizeFromOneContract) {
+  // Pair each scalar identity and native enum width with its expected bounded payload size.
+  // Used by ExecutionPlanContracts.DerivesEveryBoundedChannelPayloadSizeFromOneContract.
   struct ScalarExpectation {
     ScalarIdentityKind kind;
+    std::uint8_t native_object_size{};
     std::optional<std::uint64_t> size;
   };
   const std::array scalar_expectations{
-      ScalarExpectation{ScalarIdentityKind::kBoolean, sizeof(bool)},
-      ScalarExpectation{ScalarIdentityKind::kInt8, 1U},
-      ScalarExpectation{ScalarIdentityKind::kUInt8, 1U},
-      ScalarExpectation{ScalarIdentityKind::kInt16, 2U},
-      ScalarExpectation{ScalarIdentityKind::kUInt16, 2U},
-      ScalarExpectation{ScalarIdentityKind::kInt32, 4U},
-      ScalarExpectation{ScalarIdentityKind::kUInt32, 4U},
-      ScalarExpectation{ScalarIdentityKind::kFloat32, 4U},
-      ScalarExpectation{ScalarIdentityKind::kInt64, 8U},
-      ScalarExpectation{ScalarIdentityKind::kUInt64, 8U},
-      ScalarExpectation{ScalarIdentityKind::kFloat64, 8U},
-      ScalarExpectation{ScalarIdentityKind::kLocalEnum, std::nullopt},
+      ScalarExpectation{ScalarIdentityKind::kBoolean, 0U, sizeof(bool)},
+      ScalarExpectation{ScalarIdentityKind::kInt8, 0U, 1U},
+      ScalarExpectation{ScalarIdentityKind::kUInt8, 0U, 1U},
+      ScalarExpectation{ScalarIdentityKind::kInt16, 0U, 2U},
+      ScalarExpectation{ScalarIdentityKind::kUInt16, 0U, 2U},
+      ScalarExpectation{ScalarIdentityKind::kInt32, 0U, 4U},
+      ScalarExpectation{ScalarIdentityKind::kUInt32, 0U, 4U},
+      ScalarExpectation{ScalarIdentityKind::kFloat32, 0U, 4U},
+      ScalarExpectation{ScalarIdentityKind::kInt64, 0U, 8U},
+      ScalarExpectation{ScalarIdentityKind::kUInt64, 0U, 8U},
+      ScalarExpectation{ScalarIdentityKind::kFloat64, 0U, 8U},
+      ScalarExpectation{ScalarIdentityKind::kLocalEnum, 4U, 4U},
   };
 
   // Key setup: evaluate every scalar identity and the POD, serialized-schema,
@@ -182,10 +186,20 @@ TEST(ExecutionPlanContracts, DerivesEveryBoundedChannelPayloadSizeFromOneContrac
     const PayloadIdentityRecord scalar{
         .kind = PayloadIdentityKind::kScalar,
         .payload_kind = PayloadKind::kInlineTyped,
-        .scalar = ScalarIdentityRecord{.kind = expectation.kind},
+        .scalar =
+            ScalarIdentityRecord{
+                .kind = expectation.kind,
+                .native_object_size = expectation.native_object_size,
+            },
     };
     EXPECT_EQ(channel_payload_size_bytes(scalar, 0U, true), expectation.size);
   }
+  const PayloadIdentityRecord unsized_local_enum{
+      .kind = PayloadIdentityKind::kScalar,
+      .payload_kind = PayloadKind::kInlineTyped,
+      .scalar = ScalarIdentityRecord{.kind = ScalarIdentityKind::kLocalEnum},
+  };
+  EXPECT_EQ(channel_payload_size_bytes(unsized_local_enum, 0U, true), std::nullopt);
   const PayloadIdentityRecord pod{
       .kind = PayloadIdentityKind::kPod,
       .payload_kind = PayloadKind::kInlineTyped,
@@ -198,11 +212,12 @@ TEST(ExecutionPlanContracts, DerivesEveryBoundedChannelPayloadSizeFromOneContrac
   };
   PayloadIdentityRecord descriptor_schema = serialized_schema;
   descriptor_schema.payload_kind = PayloadKind::kDescriptorBacked;
+  descriptor_schema.transport_profile_tag = 1U;
   PayloadIdentityRecord invalid_schema = serialized_schema;
   invalid_schema.payload_kind = PayloadKind::kInlineTyped;
 
   // Key assertion: native scalar/POD widths, schema-envelope overhead, and
-  // overflow/local-enum rejection have one exact producer/validator result.
+  // invalid enum-width and overflow rejection have one exact producer/validator result.
   EXPECT_EQ(channel_payload_size_bytes(pod, 0U, true), 23U);
   EXPECT_EQ(channel_payload_size_bytes(serialized_schema, 41U, false), 41U);
   EXPECT_EQ(channel_payload_size_bytes(serialized_schema, 41U, true),
@@ -433,6 +448,82 @@ TEST(ExecutionPlanContracts, CrossProcessStreamRequirementUsesGroupAndExactDevic
   EXPECT_FALSE(cross_process_tensor_service_requires_stream_in_group(descriptor, kOtherGroup));
   EXPECT_FALSE(cross_process_tensor_service_requires_stream_for_device_in_group(
       descriptor, kOtherGroup, kCUDADevice));
+}
+
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: TENSOR-STORAGE-015
+TEST(ExecutionPlanContracts, ReleaseCapacityCountsDescriptorStagingStreamInTargetGroup) {
+  constexpr ProcessGroupId kSourceGroup{1U};
+  constexpr ProcessGroupId kTargetGroup{2U};
+  constexpr DeviceId kDevice{5};
+  constexpr PortId kOutput{11U};
+  constexpr VertexId kProducer{7U};
+  auto descriptor = cross_process_service(true);
+  descriptor.source_process_group = kSourceGroup;
+  descriptor.target_process_group = kTargetGroup;
+  descriptor.target_process_groups = {kTargetGroup};
+  descriptor.tensor_fields = {
+      TensorFieldServiceStorageContract{
+          .memory_kind = MemoryKind::kCudaDevice,
+          .device = kDevice,
+      },
+  };
+  const std::array bindings{
+      OperatorCudaStreamBindingPlanRecord{
+          .operator_vertex = kProducer,
+          .process_group = kTargetGroup,
+          .device = kDevice,
+      },
+  };
+
+  // Key setup: the descriptor service is imported into the allocation-owning target group, so
+  // its source process differs from the allocator even though staging retains target-side CUDA
+  // backing on the exact device.
+  const std::array services{descriptor};
+  const auto capacity =
+      tensor_output_release_stream_capacity(std::span<const ProcessLocalChannelServicePlanRecord>{},
+                                            services,
+                                            bindings,
+                                            kProducer,
+                                            kOutput,
+                                            std::nullopt,
+                                            kTargetGroup,
+                                            kDevice);
+
+  // Key assertion: reserve the producer stream and the imported descriptor staging stream.
+  ASSERT_TRUE(capacity);
+  EXPECT_EQ(*capacity, 2U);
+}
+
+// REQ: COMPILE-086
+// REQ: COMPILE-090
+// REQ: TENSOR-STORAGE-015
+TEST(ExecutionPlanContracts, ReleaseCapacityCountsFinalGreenOnlyOperatorBindings) {
+  constexpr ProcessGroupId kProcessGroup{1U};
+  constexpr DeviceId kDevice{0};
+  constexpr PortId kOutput{11U};
+  constexpr VertexId kProducer{1U};
+  std::array<OperatorCudaStreamBindingPlanRecord, 5U> bindings;
+  for (std::size_t index = 0U; index < bindings.size(); ++index) {
+    bindings[index].operator_vertex = VertexId{index + 1U};
+    bindings[index].process_group = kProcessGroup;
+    bindings[index].device = kDevice;
+  }
+
+  const auto capacity =
+      tensor_output_release_stream_capacity(std::span<const ProcessLocalChannelServicePlanRecord>{},
+                                            std::span<const CrossProcessChannelServicePlanRecord>{},
+                                            bindings,
+                                            kProducer,
+                                            kOutput,
+                                            std::nullopt,
+                                            kProcessGroup,
+                                            kDevice);
+
+  // Key assertion: four final downstream bindings reserve two streams each plus the producer.
+  ASSERT_TRUE(capacity);
+  EXPECT_EQ(*capacity, 9U);
 }
 
 }  // namespace

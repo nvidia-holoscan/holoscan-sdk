@@ -25,6 +25,7 @@
 #include <holoscan/core/tensor_output_loan.hpp>
 
 #include "../compiler/execution_plan_state.hpp"
+#include "../core/diagnostic_context.hpp"
 #include "../core/tag_internal.hpp"
 #include "../time/clock_registry_internal.hpp"
 #include "parameter_update_coordinator.hpp"
@@ -42,8 +43,11 @@ namespace holoscan::detail {
 class RuntimeLifecycleExecutor;
 class RuntimeNotificationSourceRegistry;
 class ExecutionLaneSet;
+class CUDAGraphRegionOperator;
 struct LifecycleRestartExecutionOutcome;
 struct LifecycleRestartExecutionRequest;
+struct RuntimeLifecycleFailure;
+struct LifecycleExecutionResult;
 
 /// @brief Own one freshly reconstructed Operator and its session-local tag allocator.
 struct RuntimeOperatorInstance {
@@ -64,11 +68,20 @@ struct RuntimeOperatorInstance {
   // defaults and therefore issue no CUDA query or device switch.
   cudaStream_t compute_stream{};
   DeviceId compute_device{};
+  // Bound only on the region source. Capture still invokes `op`; steady-state dispatch invokes
+  // this fused operator, which launches the executable CUDA Graph.
+  CUDAGraphRegionOperator* fused_cuda_graph_operator{};
+  // The plan's canonical percent-encoded rendered path grammar.
+  std::string_view canonical_operator_path{};
   PinnedParameterHeader static_parameter_header{};
   std::span<const ParameterDerivedTermPlanRecord> parameter_derived_terms;
   bool runtime_parameter_updates_enabled{};
   bool lifecycle_parameter_updates_enabled{};
+  // Bound from verified replay declarations, independent of channel/direct-continuation binding.
+  bool has_output_ports{};
   nvtx3::message compute_nvtx_message{nvtxStringHandle_t{}};
+  DiagnosticCapture failure_capture;
+  TensorContractMismatchCapture tensor_failure;
 };
 
 /// @brief Own immutable plan state plus every fresh object for one RunSession.
@@ -87,7 +100,8 @@ class GraphExec {
   /// @return Fresh isolated runtime state, or a stable startup failure.
   [[nodiscard]] static expected<std::unique_ptr<GraphExec>, Error> reconstruct(
       std::shared_ptr<const ExecutionPlanState> plan, RunGenerationId run_generation,
-      ProcessGroupId process_group = {}, RuntimeReplayMismatchDetail* replay_mismatch = nullptr);
+      ProcessGroupId process_group = {}, RuntimeReplayMismatchDetail* replay_mismatch = nullptr,
+      RuntimeDiagnosticDetail* failure_detail = nullptr);
 
   [[nodiscard]] std::span<RuntimeOperatorInstance> operators() noexcept { return operators_; }
   [[nodiscard]] std::span<const RuntimeOperatorInstance> operators() const noexcept {
@@ -153,6 +167,11 @@ class GraphExec {
       const LifecycleRestartExecutionRequest& request) noexcept;
   [[nodiscard]] bool lifecycle_shutdown() noexcept;
   [[nodiscard]] std::string_view lifecycle_failure_token() const noexcept;
+  [[nodiscard]] const Error& lifecycle_failure_error() const noexcept;
+  [[nodiscard]] VertexId lifecycle_failure_vertex() const noexcept;
+  [[nodiscard]] std::span<const RuntimeLifecycleFailure> lifecycle_failures() const noexcept;
+  [[nodiscard]] const LifecycleExecutionResult* lifecycle_result() const noexcept;
+  void clear_lifecycle_failure_evidence() noexcept;
   [[nodiscard]] ParameterUpdateCoordinator& parameter_updates() noexcept {
     return *parameter_updates_;
   }

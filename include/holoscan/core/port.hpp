@@ -29,6 +29,7 @@
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/expected.hpp>
 #include <holoscan/core/sample.hpp>
+#include <holoscan/core/tensor_field.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
 #include <holoscan/core/tensor_schema_output_loan.hpp>
 #include <holoscan/schema/schema_package.hpp>
@@ -176,6 +177,8 @@ template <PublishedPayload T>
 struct ScalarReadBinding {
   const Sample<T>* sample{};
   PublishedReadClaimBinding claim{};
+  const std::uint64_t* view_generation{};
+  std::uint64_t expected_view_generation{};
 };
 
 template <PublishedPayload T>
@@ -221,6 +224,8 @@ struct OutputBinding {
 struct RuntimeScalarReadBinding {
   const void* sample{};
   PublishedReadClaimBinding claim{};
+  const std::uint64_t* view_generation{};
+  std::uint64_t expected_view_generation{};
 };
 
 /// @brief Describe one type-erased activation-scoped batch supplied by Runtime.
@@ -282,6 +287,7 @@ enum class RuntimePayloadCodecFamily : std::uint8_t {
   kGeneratedSchema = 2,         ///< Bounded generated-package serialization and materialization.
   kCustomPod = 3,               ///< Explicit fieldwise custom-POD encoding and materialization.
   kDescriptorTensorSchema = 4,  ///< Bounded schema metadata plus sidecar-retained Tensor storage.
+  kProcessLocalObject = 5,      ///< Typed process-local retention with no wire representation.
 };
 
 /// @brief Metadata decoded verbatim from one descriptor-Tensor wire envelope.
@@ -307,6 +313,8 @@ struct RuntimePortTypeOps {
   std::size_t payload_alignment{};
   /// Maximum canonical encoded payload size in bytes.
   std::size_t wire_capacity{};
+  /// Exact generated Holoscan carriage-profile tag, or zero for ordinary payloads.
+  std::uint32_t transport_profile_tag{};
   /// Native `Sample<T>` object size in bytes.
   std::size_t sample_size{};
   /// Native `Sample<T>` object alignment in bytes.
@@ -336,8 +344,14 @@ struct RuntimePortTypeOps {
   /// Construct one `Sample<T>` in caller-provided storage from canonical payload bytes.
   expected<void, Error> (*construct_sample)(void*, std::span<const std::byte>,
                                             SampleMetadata) noexcept {};
+  /// Construct one `Sample<T>` by copying an exact borrowed process-local payload value.
+  expected<void, Error> (*construct_sample_from_value)(void*, const void*,
+                                                       SampleMetadata) noexcept {};
   /// Destroy one `Sample<T>` previously constructed by \ref construct_sample.
   void (*destroy_sample)(void*) noexcept {};
+  /// Retain ownership whose final release must occur after Runtime drops its channel locks.
+  void (*retain_sample_payload_for_deferred_release)(const void*,
+                                                     std::shared_ptr<void>*) noexcept {};
   /// Cold-construct one persistent sample slot before Runtime enters steady state.
   expected<void, Error> (*prepare_sample_storage)(void*) noexcept {};
   /// Clear one persistent sample while retaining its cold allocation capacity.
@@ -594,6 +608,58 @@ class PortRef {
  private:
   const void* port_{};
   PortDirection direction_{PortDirection::kInput};
+};
+
+/// @brief Borrow one immutable scalar sample during its Operator activation.
+///
+/// Copying this view neither copies the payload nor acquires a read claim. The view and all
+/// references extracted from it expire when the callback's selection retires. Each accessor
+/// terminates on an expired view in every build, provided the Runtime owner still exists;
+/// accessing a view after that owner's destruction is unsupported. Extracted references cannot
+/// check expiry. Use Input::receive() when ownership must outlive the activation.
+/// @warning Do not modify any reachable selected state, including mutable pointees exposed by
+/// generated shared-pointer fields. Const access does not enforce deep immutability.
+/// @tparam T Published payload type of the selected sample.
+template <PublishedPayload T>
+class SelectedSampleView {
+ public:
+  /// @brief Return the selected sample without an owning copy.
+  /// @return Immutable activation-scoped sample reference.
+  /// @note Bind with `const auto&`; `auto sample = view.sample()` makes an owning copy.
+  [[nodiscard]] const Sample<T>& sample() const noexcept {
+    if (sample_ == nullptr || epoch_ == nullptr || expected_epoch_ == 0 ||
+        *epoch_ != expected_epoch_) {
+      std::terminate();
+    }
+    return *sample_;
+  }
+
+  /// @brief Return the selected payload without copying it.
+  /// @return Immutable activation-scoped payload reference.
+  [[nodiscard]] const T& data() const noexcept { return sample().data; }
+
+  /// @brief Return the Core sample metadata, not payload-specific metadata.
+  /// @return Immutable activation-scoped metadata reference.
+  [[nodiscard]] const SampleMetadata& metadata() const noexcept { return sample().metadata; }
+
+  /// @brief Dereference the selected sample.
+  /// @return Immutable activation-scoped sample reference.
+  [[nodiscard]] const Sample<T>& operator*() const noexcept { return sample(); }
+
+  /// @brief Return pointer access to the selected sample.
+  /// @return Immutable activation-scoped sample pointer.
+  [[nodiscard]] const Sample<T>* operator->() const noexcept { return &sample(); }
+
+ private:
+  SelectedSampleView(const Sample<T>* sample, const std::uint64_t* epoch,
+                     std::uint64_t expected_epoch) noexcept
+      : sample_(sample), epoch_(epoch), expected_epoch_(expected_epoch) {}
+
+  const Sample<T>* sample_;
+  const std::uint64_t* epoch_;
+  std::uint64_t expected_epoch_;
+
+  friend class Input<T>;
 };
 
 /// @brief Borrow the samples selected for one batch-shaped input activation.
@@ -1050,6 +1116,36 @@ class Input : public InputBase {
     return result->sample->data;
   }
 
+  /// @brief Borrow the frozen scalar selection without copying or acquiring a read claim.
+  /// @return Immutable activation-scoped view, or the same classified scalar accessor error.
+  /// @retval ErrorCode::kReceiveError The private binding returned malformed borrow evidence.
+  /// @note Repeated calls expose the same sample, even when owning read claims are exhausted.
+  /// The view does not extend descriptor, Tensor, or backing ownership. Submit GPU work only on
+  /// Runtime-registered streams; do not retain the view or its descriptor pointers past compute.
+  [[nodiscard]] expected<SelectedSampleView<T>, Error> selected_sample() const noexcept {
+    if (binding_.state == nullptr || binding_.ops == nullptr || binding_.ops->scalar == nullptr) {
+      return make_unexpected(Error{ErrorCode::kInputUndeclared});
+    }
+    auto result = binding_.ops->scalar(binding_.state, binding_.generation, false);
+    if (!result) {
+      return make_unexpected(std::move(result).error());
+    }
+    if (result->claim.state != nullptr || result->claim.retain != nullptr ||
+        result->claim.release != nullptr) {
+      if (result->claim.state != nullptr && result->claim.release != nullptr) {
+        result->claim.release(result->claim.state);
+      }
+      return make_unexpected(Error{ErrorCode::kReceiveError});
+    }
+    if (result->sample == nullptr || result->view_generation == nullptr ||
+        result->expected_view_generation == 0 ||
+        *result->view_generation != result->expected_view_generation) {
+      return make_unexpected(Error{ErrorCode::kReceiveError});
+    }
+    return SelectedSampleView<T>{
+        result->sample, result->view_generation, result->expected_view_generation};
+  }
+
   /// @brief Borrow the completed batch-shaped selection.
   /// @return Immutable activation-scoped view, including a successful empty view, or a classified
   /// accessor error.
@@ -1104,6 +1200,39 @@ class Input : public InputBase {
 
   friend class detail::SyntheticOperatorBinding;
   friend class detail::RuntimePortBindingAccess;
+};
+
+/// @brief Name one Tensor field of a descriptor-backed schema output for a Tensor-typed edge.
+///
+/// A projection exposes a Tensor that the producer already publishes as a sidecar payload
+/// alongside the schema metadata. It narrows the declared payload for one edge; it does not
+/// transform the data and introduces no Tensor data-buffer allocation or copy. Sample metadata
+/// such as capture time, clock identity, and flags is a property of the sample rather than the
+/// payload and therefore survives the narrowing.
+///
+/// The view borrows the output declaration and is meant to be consumed immediately as an
+/// `add_flow` source rather than stored.
+///
+/// @tparam SchemaT Owning descriptor-backed schema type declared on the output port.
+template <PublishedPayload SchemaT>
+class ProjectedTensorOutput {
+ public:
+  using schema_type = SchemaT;  ///< Owning descriptor-backed schema type.
+
+  /// @brief Borrow one schema output declaration and the Tensor field named on it.
+  ProjectedTensorOutput(const Output<SchemaT>& source,
+                        TensorFieldSelector<SchemaT> selector) noexcept
+      : source_{&source}, selector_{selector} {}
+
+  /// @brief Return the borrowed schema output declaration.
+  [[nodiscard]] const Output<SchemaT>& source() const noexcept { return *source_; }
+
+  /// @brief Return the named Tensor field identity.
+  [[nodiscard]] TensorFieldSelector<SchemaT> selector() const noexcept { return selector_; }
+
+ private:
+  const Output<SchemaT>* source_{};
+  TensorFieldSelector<SchemaT> selector_{};
 };
 
 /// @brief Declare one typed sample output as a stable Operator member.
@@ -1394,6 +1523,18 @@ class Output : public OutputBase {
         options);
   }
 
+  /// @brief Name one Tensor field of this schema output for a Tensor-typed edge.
+  /// @param selector Generated field constant, such as `schema::ImageTensorFields::data`.
+  /// @return Borrowing projection usable as an `add_flow` source.
+  /// @note The returned view borrows this declaration and must not outlive it. Naming the field
+  /// is required rather than inferred whenever the schema carries more than one Tensor, so the
+  /// choice appears in the Graph instead of following from declaration order.
+  [[nodiscard]] ProjectedTensorOutput<T> project(TensorFieldSelector<T> selector) const noexcept
+    requires detail::kRuntimeDescriptorTensorSchemaPayload<T>
+  {  // NOLINT(whitespace/braces)
+    return ProjectedTensorOutput<T>{*this, selector};
+  }
+
  private:
   detail::OutputBinding<T> binding_{};
 
@@ -1630,6 +1771,8 @@ class RuntimePortBindingAccess {
           return ScalarReadBinding<T>{
               .sample = static_cast<const Sample<T>*>(selected->sample),
               .claim = selected->claim,
+              .view_generation = selected->view_generation,
+              .expected_view_generation = selected->expected_view_generation,
           };
         },
         .batch = [](const void* state,
@@ -1756,6 +1899,13 @@ template <PublishedPayload T>
         .payload_size = sizeof(T),
         .payload_alignment = alignof(T),
         .wire_capacity = kWireCapacity,
+        .transport_profile_tag =
+            [] {
+              if constexpr (kRuntimeGeneratedSchemaPayload<T>) {
+                return schema_transport_profile_tag(schema_package<T>().transport_profile());
+              }
+              return std::uint32_t{0U};
+            }(),
         .sample_size = sizeof(Sample<T>),
         .sample_alignment = alignof(Sample<T>),
         .predicate_view_size = sizeof(PredicateInputView<T>),

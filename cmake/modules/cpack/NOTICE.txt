@@ -21,7 +21,7 @@ Licensed under BSD-3-Clause (https://github.com/cloudpipe/cloudpickle/blob/maste
 
 CV-CUDA (https://github.com/CVCUDA/CV-CUDA)
 Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-Licensed under Apache-2.0 (https://github.com/CVCUDA/CV-CUDA/blob/v0.17.0/LICENSE.md)
+Licensed under Apache-2.0 (https://github.com/CVCUDA/CV-CUDA/blob/v0.18.0/LICENSE.md)
 
 dear_imgui (https://github.com/ocornut/imgui)
 Copyright (c) 2014-2023 Omar Cornut
@@ -133,7 +133,7 @@ Licensed under BSD-3-Clause (https://github.com/NVIDIA/MatX/blob/186c72d4794ead2
 
 nanobind (https://github.com/wjakob/nanobind)
 Copyright (c) 2022 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
-Licensed under BSD-3-Clause (https://github.com/wjakob/nanobind/blob/v2.12.0/LICENSE)
+Licensed under BSD-3-Clause (https://github.com/wjakob/nanobind/blob/v3.0.1/LICENSE)
 
 nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.
@@ -157,12 +157,6 @@ Licensed under Linux-OpenIB (https://github.com/linux-rdma/rdma-core/blob/master
 
 Google Fonts Roboto (https://github.com/googlefonts/roboto/releases/download/v2.138/roboto-android.zip)
 Licensed under Apache-2.0 (https://github.com/googlefonts/roboto/blob/v2.138/LICENSE)
-
-Slang (https://github.com/shader-slang/slang)
-Copyright (c) 2024 Shader Slang Contributors
-Licensed under Apache-2.0 WITH LLVM-exception AND Apache-2.0 AND MIT AND BSD-3-Clause AND BSD-2-Clause (https://github.com/shader-slang/slang/blob/v2026.14/LICENSE)
-Bundled components: ankerl unordered_dense, fast_float, glslang, lz4, miniz, SPIRV-Headers, SPIRV-Tools
-The source code for Slang is available at <https://github.com/shader-slang/slang/archive/refs/tags/v2026.14.tar.gz>.
 
 spdlog (https://github.com/gabime/spdlog)
 Copyright (c) 2016 Gabi Melman.

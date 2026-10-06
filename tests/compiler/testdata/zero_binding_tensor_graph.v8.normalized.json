@@ -1,0 +1,1051 @@
+{
+  "admitted": true,
+  "aligned_triggers": [],
+  "bracketed_windows": [],
+  "channel_locality": [],
+  "channel_publishers": [],
+  "channel_services": [],
+  "channel_subscribers": [],
+  "clock_catalog": {
+    "clocks": [
+      {
+        "graph": 1,
+        "id": 1,
+        "is_default": true,
+        "can_read_now": true,
+        "can_wait_until": true,
+        "steady": true,
+        "independent_progress": false,
+        "finite_deadline": false,
+        "external_driver_admitted": false,
+        "capability_evidence_id": "holoscan.clock.manual.external-progress-required.v1",
+        "key": "compile_test_default_clock",
+        "shared": false
+      }
+    ],
+    "plan_generation": 1,
+    "root_default_clock": 1
+  },
+  "clock_conversions": [],
+  "clock_import_resolutions": [],
+  "clock_triggers": [
+    {
+      "arithmetic_failure_identity": "holoscan.temporal.clock-arithmetic-terminal.v1",
+      "checked_terminal_no_wrap": true,
+      "clock": 1,
+      "coalesced_range_capacity": 1,
+      "coalesced_range_identity": "holoscan.temporal.clock-coalesced-range.v1",
+      "epoch_discontinuity": 0,
+      "exact_now_eligible": true,
+      "explicit_phase": null,
+      "explicit_phase_preserved_on_restart": true,
+      "failed_rollback_restores_watermark": true,
+      "global_start_barrier": true,
+      "greatest_due_constant_time": true,
+      "initial_handled_index": null,
+      "initial_tick_index": 0,
+      "omitted_phase_index_zero_immediate": true,
+      "omitted_phase_recaptured_on_restart": true,
+      "one_candidate_per_observation": true,
+      "owner": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "period_ns": 1000000,
+      "phase_conversion_id": 0,
+      "phase_origin": 0,
+      "scheduled_tick_is_reference": true,
+      "skipped_indices_have_no_candidate": true,
+      "stale_anchor_identity": "holoscan.temporal.clock-stale-anchor.v1",
+      "stop_blocks_future_freeze": true,
+      "tick_policy": 0
+    }
+  ],
+  "deadlines": [],
+  "diagnostics": [],
+  "endpoint_catalog": {
+    "format": "holoscan.channel-endpoints",
+    "version": 2,
+    "scope": "ordinary-tensor-stream",
+    "digest": "sha256:db4f53c771aea15c1f47a4c8ca2a200fd26e90513244ad93b017ff5f5cb2bc60",
+    "clocks": [],
+    "clock_conversions": [],
+    "services": [],
+    "endpoints": []
+  },
+  "endpoint_clock_health": [],
+  "clock_health_reason_schema": [
+    {
+      "id": 0,
+      "token": "none"
+    },
+    {
+      "id": 1,
+      "token": "synchronization_lock_lost"
+    },
+    {
+      "id": 2,
+      "token": "phase_error_limit_exceeded"
+    },
+    {
+      "id": 3,
+      "token": "rate_error_limit_exceeded"
+    },
+    {
+      "id": 4,
+      "token": "calibration_expired"
+    },
+    {
+      "id": 5,
+      "token": "clock_stalled"
+    },
+    {
+      "id": 6,
+      "token": "timestamp_regression"
+    },
+    {
+      "id": 7,
+      "token": "timestamp_source_fault"
+    },
+    {
+      "id": 8,
+      "token": "monitor_fault"
+    },
+    {
+      "id": 9,
+      "token": "unspecified"
+    }
+  ],
+  "graph_generation": 4,
+  "graph_hash": "30b68c90064da7c8fba79e12922c0c7137f5dcbf9ffbc62adb00a5e9b824e265",
+  "generic_output_loans": [],
+  "imported_generation_capacities": [],
+  "input_selections": [],
+  "interface_port_bindings": [],
+  "lifecycle_checkpoints": [
+    {
+      "callback": false,
+      "level": 0,
+      "operator": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "required": false,
+      "stage": 0
+    },
+    {
+      "callback": false,
+      "level": 0,
+      "operator": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "required": false,
+      "stage": 1
+    },
+    {
+      "callback": false,
+      "level": 0,
+      "operator": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "required": false,
+      "stage": 2
+    },
+    {
+      "callback": false,
+      "level": 0,
+      "operator": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "required": false,
+      "stage": 3
+    },
+    {
+      "callback": false,
+      "level": 0,
+      "operator": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "required": false,
+      "stage": 4
+    },
+    {
+      "callback": false,
+      "level": 0,
+      "operator": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "required": false,
+      "stage": 5
+    },
+    {
+      "callback": false,
+      "level": 0,
+      "operator": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "required": false,
+      "stage": 6
+    },
+    {
+      "callback": false,
+      "level": 0,
+      "operator": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "required": false,
+      "stage": 7
+    }
+  ],
+  "lifecycle_dependencies": [],
+  "lifecycle_mutable_fields": [],
+  "lifecycle_restart_closures": [
+    {
+      "closure": [
+        {
+          "id": 1,
+          "plan_generation": 1,
+          "run_generation": 0
+        }
+      ],
+      "required_fenced_operators": 1,
+      "required_quiesce_records": 0,
+      "required_rollback_records": 0,
+      "stage_resolutions": [
+        {
+          "effective_stage": 0,
+          "reason": 0,
+          "required_quiesce_records": 0,
+          "required_rollback_records": 0,
+          "required_structural_event_records": 8,
+          "requested_stage": 0
+        },
+        {
+          "effective_stage": 1,
+          "reason": 0,
+          "required_quiesce_records": 0,
+          "required_rollback_records": 0,
+          "required_structural_event_records": 8,
+          "requested_stage": 1
+        },
+        {
+          "effective_stage": 2,
+          "reason": 0,
+          "required_quiesce_records": 0,
+          "required_rollback_records": 0,
+          "required_structural_event_records": 8,
+          "requested_stage": 2
+        },
+        {
+          "effective_stage": 3,
+          "reason": 0,
+          "required_quiesce_records": 0,
+          "required_rollback_records": 0,
+          "required_structural_event_records": 8,
+          "requested_stage": 3
+        },
+        {
+          "effective_stage": 4,
+          "reason": 0,
+          "required_quiesce_records": 0,
+          "required_rollback_records": 0,
+          "required_structural_event_records": 8,
+          "requested_stage": 4
+        },
+        {
+          "effective_stage": 5,
+          "reason": 0,
+          "required_quiesce_records": 0,
+          "required_rollback_records": 0,
+          "required_structural_event_records": 8,
+          "requested_stage": 5
+        }
+      ],
+      "target": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "valid_requested_stage_mask": 63
+    }
+  ],
+  "lifecycle_restart_permissions": [],
+  "lifecycle_restart_targets": [
+    {
+      "allowed_from_stage_mask": 0,
+      "disposition": 0,
+      "external_control_allowed": false,
+      "parameter_origin_allowed": false,
+      "profile": "standard",
+      "reason": 27,
+      "scope": "graph:1/operator:1",
+      "self_allowed": false,
+      "target": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      }
+    }
+  ],
+  "lifecycle_transaction_capacity": null,
+  "missing_aggregates": [
+    {
+      "absent_callback_count": 0,
+      "absent_without_safe_default_no_fires": true,
+      "aggregate_identity": "holoscan.temporal.missing-aggregate.v1",
+      "bracketed_window_all_or_nothing": true,
+      "degraded_callback_count": 1,
+      "degraded_commits_destructive_selection": true,
+      "evaluate_complete_set": true,
+      "input_state_identity": "holoscan.input-state.v1",
+      "inputs": [],
+      "no_fire_preserves_provisional_selection": true,
+      "nominal_callback_count": 1,
+      "owner": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "phase": 0,
+      "safe_default_dominates": true,
+      "selection_reason_identity": "holoscan.selection-reason.v1"
+    }
+  ],
+  "operator_hosts": [
+    {
+      "kind": 0,
+      "owner": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "serialization_domain": "",
+      "vertex": 1
+    }
+  ],
+  "operator_parameters": [
+    {
+      "contract_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "effective_profile": "standard",
+      "fixed_scalar_generation_strategy": false,
+      "initial_generation": 0,
+      "lifecycle_updates_enabled": false,
+      "metadata_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "no_params": true,
+      "object_alignment": 1,
+      "object_size": 1,
+      "operator_path": "source",
+      "owner": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "runtime_updates_enabled": false,
+      "schema_availability": 0,
+      "schema_coverage": 0,
+      "schema_id": "",
+      "schema_proof": 0,
+      "schema_version": 0,
+      "storage": {
+        "fixed_object_extent": true,
+        "has_portable_codec": false,
+        "inline_bytes": 0,
+        "owns_dynamic_storage": false,
+        "supports_bounded_materialization": true
+      },
+      "structural_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "parameter_derived_terms": [],
+  "parameter_fields": [],
+  "parameter_runtime_capacity": {
+    "arena_strategy": 0,
+    "audit_capacity": 0,
+    "compute_ingress_capacity": 0,
+    "enabled_operator_count": 0,
+    "event_capacity": 0,
+    "generation_slots_per_operator": 0,
+    "lifecycle_updates_enabled": false,
+    "max_arena_alignment": 0,
+    "max_compute_patches_per_request": 0,
+    "max_event_cursors": 0,
+    "max_pending_updates_per_operator": 0,
+    "parameter_arena_bytes": 0,
+    "required_lifecycle_capacity": {
+      "max_audit_records": 0,
+      "max_candidate_generations": 0,
+      "max_events": 0,
+      "max_fenced_operators": 0,
+      "max_pending_requests": 0,
+      "max_pending_transactions": 0,
+      "max_quiesce_records": 0,
+      "max_receipts": 0,
+      "max_rollback_records": 0
+    },
+    "resolved_update_policy": 1,
+    "runtime_updates_enabled": false
+  },
+  "port_rates": [
+    {
+      "declared_expected_rate": null,
+      "declared_max_nominal_rate": null,
+      "declared_nominal_rate": null,
+      "disposition": 0,
+      "follows_input": null,
+      "follows_ratio": null,
+      "kind": 0,
+      "lifecycle_binding_stage": null,
+      "port": 1,
+      "reason": 0
+    }
+  ],
+  "accumulation_horizons": [],
+  "hard_floor_contributors": [],
+  "queue_sizing_recipes": [],
+  "payload_edges": [],
+  "pool_capacity_contributors": [
+    {
+      "contributor_id": "tensor-output-pool.1.1.producer",
+      "maximum_distinct_slots": 1,
+      "pool_id": "tensor-output-pool.1.1",
+      "reasons": [
+        "producer_loan",
+        "producer_writer",
+        "producer_readiness"
+      ]
+    },
+    {
+      "contributor_id": "tensor-output-pool.1.1.retirement",
+      "maximum_distinct_slots": 1,
+      "pool_id": "tensor-output-pool.1.1",
+      "reasons": [
+        "cancellation",
+        "quarantine",
+        "retirement_service"
+      ]
+    }
+  ],
+  "pool_capacity_dependencies": [
+    {
+      "alternative_group": 1,
+      "id": 1,
+      "mapping_multiplicity": 1,
+      "origin": 3,
+      "pool_id": "tensor-output-pool.1.1",
+      "predecessor_contributor_id": "tensor-output-pool.1.1.producer",
+      "queue_sizing_recipe": 0,
+      "reasons": [],
+      "scenario": 1,
+      "source": 1
+    },
+    {
+      "alternative_group": 2,
+      "id": 2,
+      "mapping_multiplicity": 1,
+      "origin": 7,
+      "pool_id": "tensor-output-pool.1.1",
+      "predecessor_contributor_id": "tensor-output-pool.1.1.retirement",
+      "queue_sizing_recipe": 0,
+      "reasons": [],
+      "scenario": 1,
+      "source": 1
+    }
+  ],
+  "provider_allocation_plans": [
+    {
+      "allocation_kind": 1,
+      "complete_before": 2,
+      "disposition": 0,
+      "first_sizing_dependency": 1,
+      "geometry_mode": 0,
+      "id": 1,
+      "interface_topic": null,
+      "output": 1,
+      "pool_id": "tensor-output-pool.1.1",
+      "reason": 0,
+      "sizing_dependency_count": 2,
+      "tensor_field_id": null,
+      "tensor_index": null,
+      "tensor_template": null
+    }
+  ],
+  "ports": [
+    {
+      "direction": 1,
+      "effective_profile": "standard",
+      "generic_loan_slot_size_bytes": 0,
+      "generic_loan_supported": false,
+      "id": 1,
+      "late_joiner_history_depth": 0,
+      "local_name": "output",
+      "max_emits_per_compute": 1,
+      "optional": false,
+      "owner": 1,
+      "owner_kind": 0,
+      "payload_identity": {
+        "kind": 1,
+        "payload_kind": 2,
+        "transport_profile_tag": 0,
+        "pod": null,
+        "scalar_kind": null,
+        "scalar_native_object_size": null,
+        "schema": null
+      },
+      "queue_depth": 0,
+      "serialized_payload_capacity_bytes": 0,
+      "tensor_layout": {
+        "dtype": {
+          "bits": 8,
+          "code": 1,
+          "lanes": 1
+        },
+        "memory_kind": 3,
+        "rank": null,
+        "strides": null
+      },
+      "tensor_contract": {
+        "bounds": {
+          "axes": [],
+          "max_byte_span": 16,
+          "max_rank": 1
+        },
+        "memory_conversion": null,
+        "representation": {
+          "dtype": {
+            "bits": 8,
+            "code": 1,
+            "lanes": 1
+          },
+          "memory_kind": 3,
+          "rank": null,
+          "strides": null
+        },
+        "role": 1,
+        "storage": 1,
+        "transfer": null,
+        "origins": {
+          "dtype": "authored",
+          "max_byte_span": "authored",
+          "max_rank": "authored",
+          "max_staging_byte_span": "absent",
+          "memory_kind": "authored",
+          "rank": "absent",
+          "strides": "absent"
+        }
+      }
+    }
+  ],
+  "publication_outcomes": [
+    {
+      "output": 1,
+      "post_submit_assigns_sequence": true,
+      "post_submit_consumes_authority": true,
+      "post_submit_error": 22,
+      "post_submit_partial_error": 36,
+      "pre_submit_assigns_sequence": false,
+      "pre_submit_authority": 1,
+      "pre_submit_error": 8,
+      "retain_claims_until_retirement": true,
+      "runtime_retry_enabled": false,
+      "tensor": true
+    }
+  ],
+  "partition_decisions": [
+    {
+      "decision": 0,
+      "partition": 1,
+      "reasons": [
+        8
+      ],
+      "vertex": 1
+    }
+  ],
+  "partitioning": {
+    "accepted_algorithm": {
+      "id": "holoscan.partition.source_chain",
+      "version": 1
+    },
+    "authored_partition_count": 0,
+    "automatic_partition_count": 1,
+    "config_digest": "a7fbdac52f986c1624cf4e8793b2e6fd5751f65ad99a1236cec515bb1db53b83",
+    "disposition": 0,
+    "interface_version": 3,
+    "maturity": 0,
+    "mode": 0,
+    "reason": 0,
+    "requested_algorithm": {
+      "id": "holoscan.partition.source_chain",
+      "version": 1
+    },
+    "selection_source": 0
+  },
+  "partitions": [
+    {
+      "authored_name": null,
+      "graph_members": [],
+      "id": 1,
+      "lane": 0,
+      "members": [
+        1
+      ],
+      "operator_paths": [
+        "source"
+      ]
+    }
+  ],
+  "predicate_inputs": [],
+  "predicate_callables": [],
+  "predicate_triggers": [],
+  "process_roles": [],
+  "process_selectors": [],
+  "vertex_process_placements": [
+    {
+      "isolation": 0,
+      "launch_group": "holoscan.default_process",
+      "process_group": 1,
+      "process_role": null,
+      "runtime_seal_required": false,
+      "vertex": 1
+    }
+  ],
+  "profile": {
+    "disposition": 0,
+    "derived_capacities": [
+      {
+        "capacity_id": "partitions",
+        "limit": 1,
+        "object_id": "partitioning",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "execution_lanes",
+        "limit": 1,
+        "object_id": "scheduler",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "max_concurrent_activations",
+        "limit": 1,
+        "object_id": "scheduler",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "control_records",
+        "limit": 2,
+        "object_id": "tensor-allocator.1.process.1.device.0",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "loan_credits",
+        "limit": 1,
+        "object_id": "tensor-allocator.1.process.1.device.0",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "pools",
+        "limit": 1,
+        "object_id": "tensor-allocator.1.process.1.device.0",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "quarantine_records",
+        "limit": 2,
+        "object_id": "tensor-allocator.1.process.1.device.0",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "readiness_tokens",
+        "limit": 2,
+        "object_id": "tensor-allocator.1.process.1.device.0",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "release_records",
+        "limit": 2,
+        "object_id": "tensor-allocator.1.process.1.device.0",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "retirement_records",
+        "limit": 2,
+        "object_id": "tensor-allocator.1.process.1.device.0",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "slots",
+        "limit": 2,
+        "object_id": "tensor-allocator.1.process.1.device.0",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "aggregate_bytes",
+        "limit": 32,
+        "object_id": "tensor-output-pool.1.1",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "control_records",
+        "limit": 2,
+        "object_id": "tensor-output-pool.1.1",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "quarantine_records",
+        "limit": 2,
+        "object_id": "tensor-output-pool.1.1",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "readiness_tokens",
+        "limit": 2,
+        "object_id": "tensor-output-pool.1.1",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "release_records",
+        "limit": 2,
+        "object_id": "tensor-output-pool.1.1",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "retirement_records",
+        "limit": 2,
+        "object_id": "tensor-output-pool.1.1",
+        "unit": "count"
+      },
+      {
+        "capacity_id": "slots",
+        "limit": 2,
+        "object_id": "tensor-output-pool.1.1",
+        "unit": "count"
+      }
+    ],
+    "effective": "standard",
+    "evidence_references": [
+      {
+        "id": "holoscan.compile.cuda_compute_stream_plan/v1",
+        "kind": "compile_requirement",
+        "version": 1
+      },
+      {
+        "id": "holoscan.compile.execution_plan.private.v1",
+        "kind": "compile_requirement",
+        "version": 1
+      },
+      {
+        "id": "holoscan.compile.scheduler.ready_policy/v1",
+        "kind": "compile_requirement",
+        "version": 1
+      },
+      {
+        "id": "holoscan.compile.temporal_plan/v1",
+        "kind": "compile_requirement",
+        "version": 1
+      },
+      {
+        "id": "holoscan.compile.tensor_pool_plan/v1",
+        "kind": "compile_requirement",
+        "version": 1
+      }
+    ],
+    "explicit_fallbacks": [],
+    "feature_dispositions": [
+      {
+        "disposition": 0,
+        "evidence_id": "holoscan.compile.partitioning_plan/v1",
+        "feature_id": "partitioning",
+        "rule_id": "holoscan.partition.exact_cover/v1"
+      },
+      {
+        "disposition": 0,
+        "evidence_id": "",
+        "feature_id": "profile.standard",
+        "rule_id": "holoscan.profile.standard.baseline/v1"
+      },
+      {
+        "disposition": 0,
+        "evidence_id": "holoscan.compile.physical_plan/v1",
+        "feature_id": "publication_outcomes",
+        "rule_id": "holoscan.publication.no_runtime_retry/v1"
+      },
+      {
+        "disposition": 0,
+        "evidence_id": "holoscan.compile.temporal_plan/v1",
+        "feature_id": "temporal_contracts",
+        "rule_id": "holoscan.temporal.bounded_state/v1"
+      }
+    ],
+    "generated_endpoint_names": [],
+    "materialization_obligations": [
+      {
+        "cleanup_stage_mask": 192,
+        "complete_before_stage": 5,
+        "evidence_id": "holoscan.compile.thread_placement.validation/v1",
+        "max_cleanup_actions": 1,
+        "object_id": "lane:0",
+        "strategy_id": "holoscan.runtime.execution_lane/v1"
+      },
+      {
+        "cleanup_stage_mask": 192,
+        "complete_before_stage": 4,
+        "evidence_id": "holoscan.compile.tensor_pool_plan/v1",
+        "max_cleanup_actions": 1,
+        "object_id": "tensor-output-pool.1.1",
+        "strategy_id": "holoscan.runtime.tensor_output_pool/v1"
+      },
+      {
+        "cleanup_stage_mask": 192,
+        "complete_before_stage": 4,
+        "evidence_id": "holoscan.compile.cuda_compute_stream_plan/v1",
+        "max_cleanup_actions": 1,
+        "object_id": "tensor-stream.1.process.1.device.0.partition.1",
+        "strategy_id": "holoscan.runtime.cuda_compute_stream/v1"
+      }
+    ],
+    "policy_digest": "sha256:deb27bac29f1e11ef258d8208fc4d9324baeeb73bc45d4c6a5d1eeadf312738d",
+    "policy_major": 1,
+    "policy_minor": 0,
+    "plan_schema_version": "holoscan.execution_plan.private.v8",
+    "producer_build_id": "holoscan-core-5.0",
+    "regions": [],
+    "requested": "standard",
+    "required_capabilities": [
+      {
+        "capability_id": "holoscan.runtime.cuda_compute_stream_materialization",
+        "evidence_id": "holoscan.compile.cuda_compute_stream_plan/v1",
+        "version": 1
+      },
+      {
+        "capability_id": "holoscan.runtime.execution_plan",
+        "evidence_id": "holoscan.compile.execution_plan.private.v1",
+        "version": 1
+      },
+      {
+        "capability_id": "holoscan.runtime.ready.deterministic_serial",
+        "evidence_id": "holoscan.compile.scheduler.ready_policy/v1",
+        "version": 1
+      },
+      {
+        "capability_id": "holoscan.runtime.temporal_contracts",
+        "evidence_id": "holoscan.compile.temporal_plan/v1",
+        "version": 1
+      },
+      {
+        "capability_id": "holoscan.runtime.tensor_pool_materialization",
+        "evidence_id": "holoscan.compile.tensor_pool_plan/v1",
+        "version": 1
+      }
+    ],
+    "runtime_abi_version": "holoscan.runtime_abi.v1",
+    "scope_resolutions": [
+      {
+        "contributing_regions": [],
+        "effective_profile": "standard",
+        "object_id": "partitioning",
+        "object_kind": "feature"
+      },
+      {
+        "contributing_regions": [],
+        "effective_profile": "standard",
+        "object_id": "profile.standard",
+        "object_kind": "feature"
+      },
+      {
+        "contributing_regions": [],
+        "effective_profile": "standard",
+        "object_id": "publication_outcomes",
+        "object_kind": "feature"
+      },
+      {
+        "contributing_regions": [],
+        "effective_profile": "standard",
+        "object_id": "temporal_contracts",
+        "object_kind": "feature"
+      },
+      {
+        "contributing_regions": [],
+        "effective_profile": "standard",
+        "object_id": "operator:1",
+        "object_kind": "operator"
+      },
+      {
+        "contributing_regions": [],
+        "effective_profile": "standard",
+        "object_id": "port:1",
+        "object_kind": "port"
+      }
+    ],
+    "target_triple": "normalized-target-triple"
+  },
+  "readable_triggers": [],
+  "readiness": [],
+  "schedule_edges": [],
+  "scheduler": {
+    "activation_overlap": false,
+    "max_concurrent_activations": 1,
+    "execution_lane_count": 1,
+    "intra_path_parallelism": 1,
+    "ready_policy": "holoscan.ready.deterministic_serial",
+    "ready_policy_version": 1,
+    "reason": 0,
+    "worker_count": 1
+  },
+  "temporal_triggers": [
+    {
+      "bounded_state_capacity": 1,
+      "conversion_id": 0,
+      "deadline_ns": null,
+      "declared_inputs": [],
+      "kind": 2,
+      "origin": 0,
+      "owner": {
+        "id": 1,
+        "plan_generation": 1,
+        "run_generation": 0
+      },
+      "period_ns": 1000000,
+      "phase": null,
+      "presence_guaranteed_inputs": [],
+      "readiness_source": 1,
+      "reference_clock": 1,
+      "replay_identity": "holoscan.temporal.replay.v1/decision",
+      "trigger_clock": 1,
+      "trigger_input": 0,
+      "violation": null,
+      "witness_identity": "holoscan.temporal.witness.v1/2"
+    }
+  ],
+  "tensor_allocations": [
+    {
+      "aggregate_byte_capacity": 32,
+      "allocator_process_group": 1,
+      "allocator_root_id": "tensor-allocator.1.process.1.device.0",
+      "axes": [],
+      "bounds": {
+        "max_byte_span": 16,
+        "max_rank": 1
+      },
+      "control_capacity": 2,
+      "device": 0,
+      "disposition": 0,
+      "effective_profile": "standard",
+      "fallback_rejected": true,
+      "layout": {
+        "dtype": {
+          "bits": 8,
+          "code": 1,
+          "lanes": 1
+        },
+        "memory_kind": 3,
+        "rank": null,
+        "strides": null
+      },
+      "materialize_before": 4,
+      "max_emits_per_compute": 1,
+      "max_outstanding_loans": 1,
+      "memory_kind": 3,
+      "output": 1,
+      "plan_generation": 1,
+      "pool_id": "tensor-output-pool.1.1",
+      "quarantine_capacity": 2,
+      "readiness_capacity": 2,
+      "release_capacity": 2,
+      "release_stream_capacity": 1,
+      "retirement_capacity": 2,
+      "run_generation": 0,
+      "slot_count": 2
+    }
+  ],
+  "tensor_byte_span_derivations": [],
+  "cuda_compute_stream_policy": 0,
+  "cuda_compute_streams": [
+    {
+      "device": 0,
+      "fused_linear_edges": [],
+      "green_context_id": null,
+      "materialize_before": 4,
+      "owner_id": "partition.1",
+      "partition": 1,
+      "plan_generation": 1,
+      "process_group": 1,
+      "run_generation": 0,
+      "stream_id": "tensor-stream.1.process.1.device.0.partition.1"
+    }
+  ],
+  "operator_cuda_stream_bindings": [
+    {
+      "device": 0,
+      "operator_vertex": 1,
+      "partition": 1,
+      "plan_generation": 1,
+      "process_group": 1,
+      "run_generation": 0,
+      "stream_id": "tensor-stream.1.process.1.device.0.partition.1"
+    }
+  ],
+  "cuda_green_context_assignments": [],
+  "cuda_green_context_pools": [],
+  "cuda_green_context_requests": [],
+  "cuda_green_context_resources": [],
+  "tensor_device_resources": [
+    {
+      "allocator_root_id": "tensor-allocator.1.process.1.device.0",
+      "control_capacity": 2,
+      "device": 0,
+      "fallback_rejected": true,
+      "gpu_resident_backend_selected": false,
+      "loan_credit_capacity": 1,
+      "materialize_before": 4,
+      "plan_generation": 1,
+      "pool_count": 1,
+      "process_group": 1,
+      "quarantine_capacity": 2,
+      "readiness_capacity": 2,
+      "release_capacity": 2,
+      "retirement_capacity": 2,
+      "run_generation": 0,
+      "slot_capacity": 2
+    }
+  ],
+  "tensor_inline_records": [],
+  "tensor_interface_pools": [],
+  "tensor_transfer_plans": [],
+  "partition_placements": [],
+  "support_thread_affinities": [],
+  "placement_probes": [],
+  "execution_lanes": [
+    {
+      "accepted_placement": {
+        "affinity": null,
+        "irq_isolation": 0,
+        "probe_failure_policy": 0,
+        "scheduling": {
+          "deadline": null,
+          "policy": "other",
+          "priority": null
+        },
+        "wake_mode": 0
+      },
+      "execution_lane": 0,
+      "partition": 1
+    }
+  ],
+  "window_triggers": [],
+  "schema": "holoscan.execution_plan.private.v8"
+}

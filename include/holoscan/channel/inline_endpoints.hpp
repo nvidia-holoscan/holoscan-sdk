@@ -121,8 +121,9 @@ template <ChannelSchemaEnvelopePayload T>
 /// outlive it. Catalog attachment is available only when \c T satisfies
 /// \ref CatalogChannelPayload. The catalog binding owns scalar/raw-POD wire conversion and the
 /// exact generated-schema envelope. An owning generated-schema facade serializes into endpoint-
-/// owned bounded scratch before publication. The manual name-based compatibility factory remains
-/// available only when \c T satisfies \ref ChannelInlinePayload and retains its host-object path.
+/// owned bounded scratch before publication. The name-based compatibility factory accepts owning
+/// generated schemas through that same bounded codec and retains the host-object path for types
+/// satisfying \ref ChannelInlinePayload.
 /// Calls on one facade are not internally serialized. Moving transfers the endpoint; the source
 /// becomes closed, its checked operations return \ref ErrorCode::kClosed, and
 /// \ref has_subscribers returns false.
@@ -356,11 +357,12 @@ class ChannelPublisher<T> {
 /// \ref CatalogChannelPayload. The catalog binding decodes canonical scalar/raw-POD fields and
 /// verifies the generated-schema envelope. An owning generated-schema facade receives serialized
 /// bytes into endpoint-owned bounded scratch, invokes the exact package verifier, and materializes
-/// \c T only after successful verification. The manual name-based compatibility factory remains
-/// available only when \c T satisfies \ref ChannelInlinePayload. Receive operations consume one
-/// queued sample and calls on one facade are not internally serialized. Moving transfers the
-/// endpoint; the source becomes closed, its checked operations return \ref ErrorCode::kClosed, and
-/// \ref has_publishers returns false.
+/// \c T only after successful verification. The name-based compatibility factory accepts owning
+/// generated schemas through that same bounded codec and retains the host-object path for types
+/// satisfying \ref ChannelInlinePayload. Receive operations consume one queued sample and calls on
+/// one facade are not internally serialized. Moving transfers the endpoint; the source becomes
+/// closed, its checked operations return \ref ErrorCode::kClosed, and \ref has_publishers returns
+/// false.
 ///
 /// @tparam T Manual inline payload or admitted scalar, raw-POD, or owning generated-schema type.
 template <typename T>
@@ -368,11 +370,30 @@ template <typename T>
 class ChannelSubscriber<T> {
  public:
   ChannelSubscriber(ChannelSubscriber&& other) noexcept = default;
-  ChannelSubscriber& operator=(ChannelSubscriber&& other) noexcept = default;
-  ~ChannelSubscriber() = default;
+  ChannelSubscriber& operator=(ChannelSubscriber&& other) noexcept {
+    if (this != &other) {
+      static_cast<void>(channel_internal::close_local_subscriber(subscriber_));
+      subscriber_ = std::move(other.subscriber_);
+      receive_scratch_ = std::move(other.receive_scratch_);
+    }
+    return *this;
+  }
+  ~ChannelSubscriber() { static_cast<void>(channel_internal::close_local_subscriber(subscriber_)); }
 
   ChannelSubscriber(const ChannelSubscriber&) = delete;
   ChannelSubscriber& operator=(const ChannelSubscriber&) = delete;
+
+  /// @brief Retire this process's local subscriber endpoint.
+  /// @return Success on the first live close, or a code-only cleanup error. Repeated close and
+  /// close on a moved-from facade return @ref ErrorCode::kClosed.
+  /// @note This externally serialized, consuming operation publishes no producer end-of-stream
+  /// record and supplies no graph-completion evidence. Cancel and join any active waiter before
+  /// closing. Already returned owning values retain their ordinary independent lifetime; unread
+  /// local data may be discarded. A cleanup failure still consumes the endpoint; later checked
+  /// operations return @ref ErrorCode::kClosed.
+  [[nodiscard]] expected<void, Error> close() noexcept {
+    return channel_internal::close_local_subscriber(subscriber_);
+  }
 
   /// @brief Query pending inline samples without consuming one.
   /// @return True or false readiness, or an error when closed or when the backend query fails.
@@ -385,6 +406,29 @@ class ChannelSubscriber<T> {
     return subscriber_->has_samples();
   }
 
+  /// @brief Claim an externally pollable readiness descriptor for this subscriber.
+  /// @return A move-only handle, or a checked closed, capability, or ownership error.
+  /// @retval ErrorCode::kClosed This facade is locally closed, moved from, or already observed
+  /// producer end of stream.
+  /// @retval ErrorCode::kNotSupported Native descriptor readiness is unavailable on this platform,
+  /// or this endpoint was created without event wake.
+  /// @retval ErrorCode::kInvalidArgument A wait is in flight, the Runtime readiness pump owns the
+  /// subscriber, or another readiness handle is live.
+  /// @note Readability means this endpoint may have a sample. Call
+  /// \ref ChannelReadinessHandle::acknowledge first, then drain \ref receive or
+  /// \ref receive_sample until \ref ErrorCode::kNotReady. A wake arriving during that drain stays
+  /// pending. Producer end of stream and a changed producer incarnation also make the descriptor
+  /// readable so the next receive reports \ref ErrorCode::kClosed or
+  /// \ref ErrorCode::kStaleEndpoint.
+  /// @note The handle claims the subscriber's single wait-owner slot. Blocking wait operations
+  /// return \ref ErrorCode::kInvalidArgument until the handle is destroyed.
+  [[nodiscard]] expected<ChannelReadinessHandle, Error> readiness() {
+    if (!subscriber_ || stream_closed_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    return subscriber_->readiness();
+  }
+
   /// @brief Return whether the endpoint currently observes at least one publisher.
   /// @return True when a publisher is connected; false when closed or disconnected.
   /// @note This cold-path advisory observation is not receive readiness and does not prove that a
@@ -394,6 +438,26 @@ class ChannelSubscriber<T> {
   /// optional peer.
   [[nodiscard]] bool has_publishers() const noexcept {
     return subscriber_ && subscriber_->has_publishers();
+  }
+
+  /// @brief Refresh the backend mappings consulted by \ref has_publishers.
+  /// @return Success, or a checked closed or backend refresh error.
+  /// @note This cold operation does not consume a sample. The publisher-presence value remains an
+  /// advisory snapshot and does not prove that a following receive will succeed.
+  /// @note The backend's readiness query also refreshes receiver-side publisher mappings. This
+  /// method deliberately calls `has_samples()` for that side effect and discards its snapshot.
+  [[nodiscard]] expected<void, Error> refresh_connections() {
+    if (!subscriber_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    if (stream_closed_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    auto refreshed = subscriber_->has_samples();
+    if (!refreshed) {
+      return make_unexpected(std::move(refreshed).error());
+    }
+    return {};
   }
 
   /// @brief Receive and consume the next typed payload value.
@@ -433,6 +497,9 @@ class ChannelSubscriber<T> {
       return channel_internal::materialize_catalog_schema<T>(
           std::span<const std::byte>(receive_scratch_).first(*admitted));
     } else {
+      if constexpr (ChannelSchemaEnvelopePayload<T>) {
+        receive_scratch_.fill(std::byte{});
+      }
       auto received = subscriber_->receive(receive_scratch_);
       if (!received) {
         // Same one-shot end-of-stream latch as above.
@@ -470,6 +537,8 @@ class ChannelSubscriber<T> {
   /// rather than waiting out its deadline. The result of this call is unaffected.
   template <PublishedPayload U = T>
     requires std::same_as<U, T>
+  // The generated-schema and POD paths intentionally share one terminal/error-latching facade.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<Sample<U>, Error> receive_sample() {
     if (!subscriber_) {
       return make_unexpected(
@@ -495,6 +564,9 @@ class ChannelSubscriber<T> {
       }
       return Sample<U>(std::move(*value), received->metadata);
     } else {
+      if constexpr (ChannelSchemaEnvelopePayload<U>) {
+        receive_scratch_.fill(std::byte{});
+      }
       auto received = subscriber_->receive(receive_scratch_);
       if (!received) {
         // Same one-shot end-of-stream latch as above.
@@ -528,9 +600,9 @@ class ChannelSubscriber<T> {
   /// @param deadline Steady-clock coordinate after which the wait reports a timeout.
   /// @return The sample on success, or the first checked error.
   /// @retval ErrorCode::kTimeout \p deadline elapsed. Retryable; endpoint state is unchanged.
-  /// @retval ErrorCode::kClosed The producer published end of stream, or this facade was moved
-  /// from. Both mean no later sample arrives, and this facade latches the state so every later
-  /// call reports it.
+  /// @retval ErrorCode::kClosed The producer published end of stream, this facade was locally
+  /// closed, or this facade was moved from. Each means no later sample arrives through this
+  /// facade, and it latches the state so every later call reports it.
   /// @retval ErrorCode::kStaleEndpoint The producer incarnation changed; rebuild the subscriber.
   /// @retval ErrorCode::kNotSupported This endpoint was created with
   /// \c ChannelOptions::enable_event_wake disabled, so it has no kernel event lane. Reported only
@@ -603,8 +675,8 @@ class ChannelSubscriber<T> {
   /// @return Empty success when a sample may be available, or a checked wait error.
   /// @retval ErrorCode::kTimeout \p deadline elapsed with no readiness.
   /// @retval ErrorCode::kInterrupted \p token requested a stop.
-  /// @retval ErrorCode::kClosed This facade was moved from, or a previous
-  /// \ref wait_and_receive_sample observed end of stream.
+  /// @retval ErrorCode::kClosed This facade was locally closed or moved from, or a previous
+  /// \ref receive, \ref receive_sample, or \ref wait_and_receive_sample observed end of stream.
   /// @retval ErrorCode::kNotSupported This endpoint was created with
   /// \c ChannelOptions::enable_event_wake disabled and has no queued sample.
   /// @retval ErrorCode::kInvalidArgument This subscriber's readiness is already owned by another

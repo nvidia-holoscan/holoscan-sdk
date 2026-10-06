@@ -7,15 +7,15 @@
 
 #include <holomq/errors.hpp>
 
-#include "iox2/bb/semantic_string.hpp"
-#include "iox2/listener_error.hpp"
-#include "iox2/node_failure_enums.hpp"
-#include "iox2/notifier_error.hpp"
-#include "iox2/publisher_error.hpp"
-#include "iox2/service_builder_event_error.hpp"
-#include "iox2/service_builder_publish_subscribe_error.hpp"
-#include "iox2/subscriber_error.hpp"
-#include "iox2/waitset_enums.hpp"
+#include <iox2/bb/semantic_string.hpp>
+#include <iox2/listener_error.hpp>
+#include <iox2/node_failure_enums.hpp>
+#include <iox2/notifier_error.hpp>
+#include <iox2/publisher_error.hpp>
+#include <iox2/service_builder_event_error.hpp>
+#include <iox2/service_builder_publish_subscribe_error.hpp>
+#include <iox2/subscriber_error.hpp>
+#include <iox2/waitset_enums.hpp>
 
 #include <string>
 #include <string_view>
@@ -239,6 +239,21 @@ namespace holomq::detail::transport {
       return make_setup_error(holomq::ErrorCode::kFailure, "event service setup failed internally");
   }
   return make_setup_error(holomq::ErrorCode::kFailure, "event service setup failed");
+}
+
+[[nodiscard]] inline bool is_retryable_event_open_or_create_error(
+    const iox2::EventOpenOrCreateError error) noexcept {
+  using IoxError = iox2::EventOpenOrCreateError;
+  switch (error) {
+    case IoxError::OpenDoesNotExist:
+    case IoxError::OpenServiceInCorruptedState:
+    case IoxError::OpenIsMarkedForDestruction:
+    case IoxError::CreateServiceInCorruptedState:
+    case IoxError::CreateOldConnectionsStillActive:
+      return true;
+    default:
+      return false;
+  }
 }
 
 [[nodiscard]] inline auto map_publisher_create_error(const iox2::PublisherCreateError error)

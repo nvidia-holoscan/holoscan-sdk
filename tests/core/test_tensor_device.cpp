@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -342,6 +343,148 @@ TEST(TensorDevice, CopyToHostWaitsForProducerStream) {
 
   tensor = Tensor();
   EXPECT_TRUE(allocator->deinitialize_pool());
+}
+
+// An explicit CUDA copy must finish reading its source before returning. Otherwise a runtime pool
+// may recycle the source block while the destination copy remains queued on another stream.
+// REQ: TENSOR-CORE-018
+TEST(TensorDevice, ExplicitDeviceCopyCompletesBeforeSourceCanRetire) {
+  skip_without_cuda_device();
+
+  UniqueCudaStream producer_stream;
+  ASSERT_EQ(create_non_blocking_cuda_stream(producer_stream), cudaSuccess);
+  UniqueCudaStream copy_stream;
+  ASSERT_EQ(create_non_blocking_cuda_stream(copy_stream), cudaSuccess);
+
+  constexpr std::size_t kSize = 64;
+  constexpr uint8_t kOriginal = 0xA5;
+  constexpr uint8_t kReused = 0x2A;
+  auto pool = std::make_shared<BlockMemoryPool>(MemoryStorageType::kDevice, kSize, 1);
+  ASSERT_TRUE(pool->initialize_pool());
+
+  Tensor source;
+  const std::array<int64_t, 1> shape{static_cast<int64_t>(kSize)};
+  const auto reshaped = reshape_custom(source,
+                                       shape,
+                                       uint8_dtype(),
+                                       std::nullopt,
+                                       MemoryStorageType::kDevice,
+                                       pool,
+                                       producer_stream.get());
+  ASSERT_TRUE(reshaped) << runtime_error_message(reshaped.error());
+  auto source_data = source.mutable_data();
+  ASSERT_TRUE(source_data) << runtime_error_message(source_data.error());
+  ASSERT_EQ(cudaMemsetAsync(source_data.value(), kOriginal, kSize, producer_stream.get()),
+            cudaSuccess);
+  ASSERT_EQ(cudaStreamSynchronize(producer_stream.get()), cudaSuccess);
+  EXPECT_TRUE(source.set_readiness_stream(producer_stream.get()));
+
+  BlockingHostState copy_block;
+  ASSERT_EQ(cudaLaunchHostFunc(copy_stream.get(), blocking_host_callback, &copy_block),
+            cudaSuccess);
+  if (!wait_until_started(copy_block)) {
+    release_blocking_host(copy_block);
+    EXPECT_EQ(cudaStreamSynchronize(copy_stream.get()), cudaSuccess);
+    source = Tensor{};
+    EXPECT_TRUE(pool->deinitialize_pool());
+    FAIL() << "Timed out waiting for CUDA copy-stream host function to start";
+  }
+
+  auto copied_future = std::async(
+      std::launch::async, [&source, &copy_stream]() { return source.copy(copy_stream.get()); });
+  const auto blocked_status = copied_future.wait_for(std::chrono::milliseconds(100));
+  release_blocking_host(copy_block);
+  EXPECT_EQ(blocked_status, std::future_status::timeout)
+      << "Tensor::copy returned while its source read was still queued";
+
+  auto copied = copied_future.get();
+  ASSERT_TRUE(copied) << runtime_error_message(copied.error());
+  EXPECT_TRUE(source.set_deallocation_stream(copy_stream.get()));
+  source = Tensor{};
+
+  // Reuse and overwrite the source pool block immediately after copy_to returns. The independent
+  // destination must retain the bytes read before source retirement.
+  auto reused = pool->allocate(kSize, MemoryStorageType::kDevice);
+  const auto reuse_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!reused && std::chrono::steady_clock::now() < reuse_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    reused = pool->allocate(kSize, MemoryStorageType::kDevice);
+  }
+  ASSERT_TRUE(reused) << runtime_error_message(reused.error());
+  ASSERT_EQ(cudaMemsetAsync(reused.value(), kReused, kSize, copy_stream.get()), cudaSuccess);
+  ASSERT_EQ(cudaStreamSynchronize(copy_stream.get()), cudaSuccess);
+
+  void* raw_host = nullptr;
+  ASSERT_EQ(cudaMallocHost(&raw_host, kSize), cudaSuccess);
+  const std::unique_ptr<uint8_t, CudaPinnedHostDeleter> host(static_cast<uint8_t*>(raw_host));
+  auto host_copy = copied->copy_to_host(host.get(), kSize, copy_stream.get());
+  ASSERT_TRUE(host_copy) << runtime_error_message(host_copy.error());
+  EXPECT_TRUE(std::all_of(
+      host.get(), host.get() + kSize, [](uint8_t value) { return value == kOriginal; }));
+
+  EXPECT_TRUE(pool->free(reused.value()));
+  ASSERT_EQ(cudaStreamSynchronize(copy_stream.get()), cudaSuccess);
+  EXPECT_TRUE(pool->deinitialize_pool());
+}
+
+TEST(TensorDevice, HostAsyncCopyCompletesBeforeSourceCanRetire) {
+  skip_without_cuda_device();
+
+  UniqueCudaStream producer_stream;
+  ASSERT_EQ(create_non_blocking_cuda_stream(producer_stream), cudaSuccess);
+  UniqueCudaStream copy_stream;
+  ASSERT_EQ(create_non_blocking_cuda_stream(copy_stream), cudaSuccess);
+
+  constexpr std::size_t kSize = 64;
+  auto pool = std::make_shared<BlockMemoryPool>(MemoryStorageType::kDevice, kSize, 1);
+  ASSERT_TRUE(pool->initialize_pool());
+
+  Tensor source;
+  const std::array<int64_t, 1> shape{static_cast<int64_t>(kSize)};
+  const auto reshaped = reshape_custom(source,
+                                       shape,
+                                       uint8_dtype(),
+                                       std::nullopt,
+                                       MemoryStorageType::kDevice,
+                                       pool,
+                                       producer_stream.get());
+  ASSERT_TRUE(reshaped) << runtime_error_message(reshaped.error());
+  auto source_data = source.mutable_data();
+  ASSERT_TRUE(source_data) << runtime_error_message(source_data.error());
+  ASSERT_EQ(cudaMemsetAsync(source_data.value(), 0xA5, kSize, producer_stream.get()), cudaSuccess);
+  ASSERT_EQ(cudaStreamSynchronize(producer_stream.get()), cudaSuccess);
+  EXPECT_TRUE(source.set_readiness_stream(producer_stream.get()));
+
+  void* raw_host = nullptr;
+  ASSERT_EQ(cudaMallocHost(&raw_host, kSize), cudaSuccess);
+  const std::unique_ptr<uint8_t, CudaPinnedHostDeleter> host(static_cast<uint8_t*>(raw_host));
+  BlockingHostState copy_block;
+  ASSERT_EQ(cudaLaunchHostFunc(copy_stream.get(), blocking_host_callback, &copy_block),
+            cudaSuccess);
+  if (!wait_until_started(copy_block)) {
+    release_blocking_host(copy_block);
+    EXPECT_EQ(cudaStreamSynchronize(copy_stream.get()), cudaSuccess);
+    source = Tensor{};
+    EXPECT_TRUE(pool->deinitialize_pool());
+    FAIL() << "Timed out waiting for CUDA host-copy stream function to start";
+  }
+
+  auto copied = source.copy_to_host_async(host.get(), kSize, copy_stream.get());
+  ASSERT_TRUE(copied) << runtime_error_message(copied.error());
+  source = Tensor{};
+  auto premature_reuse = pool->allocate(kSize, MemoryStorageType::kDevice);
+  EXPECT_FALSE(premature_reuse)
+      << "Tensor source storage was reused before its host copy completed";
+
+  release_blocking_host(copy_block);
+  ASSERT_EQ(cudaStreamSynchronize(copy_stream.get()), cudaSuccess);
+  EXPECT_TRUE(
+      std::all_of(host.get(), host.get() + kSize, [](uint8_t value) { return value == 0xA5; }));
+
+  auto reused = pool->allocate(kSize, MemoryStorageType::kDevice);
+  ASSERT_TRUE(reused) << runtime_error_message(reused.error());
+  EXPECT_TRUE(pool->free(reused.value()));
+  EXPECT_TRUE(pool->deinitialize_pool());
 }
 
 // Verifies Tensor's CUDA-facing methods accept borrowed CCCL stream references from the native

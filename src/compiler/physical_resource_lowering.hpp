@@ -13,6 +13,8 @@ namespace holoscan::detail {
 
 /// @brief Aggregate admitted Tensor pools into process/device resources and compute streams.
 void lower_device_resources(PhysicalPlanLoweringResult& result, PlanGenerationId plan_generation,
-                            std::span<const VertexProcessPlacementPlanRecord> process_placements);
+                            std::span<const VertexProcessPlacementPlanRecord> process_placements,
+                            std::span<const ExecutionPartitionRecord> execution_partitions,
+                            CudaComputeStreamPolicy stream_policy);
 
 }  // namespace holoscan::detail

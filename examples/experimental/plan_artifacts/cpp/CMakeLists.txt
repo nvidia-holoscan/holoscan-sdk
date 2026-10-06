@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    cmake_minimum_required(VERSION 4.0)
-    project(holoscan_plan_artifacts LANGUAGES CXX)
+cmake_minimum_required(VERSION 4.0)
+project(holoscan_plan_artifacts LANGUAGES CXX)
+
+if(PROJECT_IS_TOP_LEVEL)
     include("${CMAKE_CURRENT_LIST_DIR}/CMakeLists.min.txt")
     return()
 endif()
@@ -13,6 +14,8 @@ target_link_libraries(plan_artifacts PRIVATE holoscan::core)
 holoscan_configure_example_install(plan_artifacts)
 
 if(BUILD_TESTING)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../../common/ctest_workspace.cmake")
+    holoscan_configure_example_test_workspace(plan_artifacts)
     # REQ: SYSTEM-015
     add_test(NAME EXAMPLE_CPP_PLAN_ARTIFACTS_TEST COMMAND plan_artifacts)
     set_tests_properties(EXAMPLE_CPP_PLAN_ARTIFACTS_TEST
@@ -23,6 +26,7 @@ if(BUILD_TESTING)
             TIMEOUT 30)
 
     add_executable(plan_artifacts_workspace_test plan_artifacts_workspace_test.cpp)
+    holoscan_configure_example_test_workspace(plan_artifacts_workspace_test)
     add_test(
         NAME EXAMPLE_CPP_PLAN_ARTIFACTS_WORKSPACE_COLLISION_TEST
         COMMAND plan_artifacts_workspace_test)
@@ -50,5 +54,5 @@ endif()
 
 install(TARGETS plan_artifacts
     RUNTIME DESTINATION "${HOLOSCAN_EXAMPLES_INSTALL_DIR}/experimental/plan_artifacts/cpp"
-    COMPONENT holoscan-examples
+    COMPONENT holoscan-core-examples
 )

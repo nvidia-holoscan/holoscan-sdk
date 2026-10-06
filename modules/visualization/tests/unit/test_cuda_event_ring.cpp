@@ -24,7 +24,6 @@
 
 namespace {
 
-namespace rhi = holoviz::rhi;
 using holoviz::examples::CudaEventSpanRing;
 
 class CudaEventRingTest : public ::testing::Test {
@@ -52,7 +51,7 @@ class CudaEventRingTest : public ::testing::Test {
     }
   }
 
-  rhi::Device device_;
+  holoviz::Device device_;
   CUstream stream_ = nullptr;
 };
 

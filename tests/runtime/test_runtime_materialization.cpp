@@ -30,7 +30,10 @@
 #include "runtime/graph_exec.hpp"
 #include "runtime/lifecycle_executor.hpp"
 #include "runtime/runtime_cuda_execution_resources.hpp"
+#include "runtime/runtime_diagnostic_sink.hpp"
+#include "runtime/runtime_fixture_observation.hpp"
 #include "runtime/runtime_materialization.hpp"
+#include "runtime/runtime_tensor_resource_materialization.hpp"
 #include "runtime/runtime_tensor_resources.hpp"
 #include "runtime/runtime_test_access.hpp"
 #include "runtime_cuda_green_context_test_support.hpp"
@@ -135,6 +138,31 @@ class LifecycleCandidateMaterializationTensorSink final : public Operator<> {
   [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override { return {}; }
 
   Input<Tensor> input_;
+};
+
+class OutputFailureCapabilityTensorSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .produces_tensor(TensorOutputSpec{
+            .representation = {.memory_kind = MemoryKind::kHost,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U,
+                               .strides = TensorStridePolicy::kContiguousOnly},
+            .bounds = tensor_bounds(64U),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = std::chrono::seconds{1}});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override { return {}; }
+
+  Output<Tensor> output;
 };
 
 // Provides a clock-driven, Tensor-inactive operator whose assigned compute stream can be inspected
@@ -326,6 +354,60 @@ class CudaExecutionDiagnosticSink final : public RuntimeStructuralDiagnosticSink
 };
 
 #if HOLOSCAN_CUDA_GREEN_CONTEXT_AVAILABLE
+// One finite POD publication gives the observed output thunk a real retired activation before
+// quiescence. The depth-two connection keeps this graph on ordinary dispatch, as required by the
+// existing private observation profile.
+class CudaGreenContextObservedSource final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.output(output, "output"); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = std::chrono::milliseconds{1}})
+        .complete_after(ComputeCalls{.limit = 1U});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    return output.emit(37U);
+  }
+
+  Output<std::uint32_t> output;
+};
+
+class CudaGreenContextObservedSink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override { spec.input(input, "input").queue_depth(2U); }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+    auto received = input.receive_data();
+    if (!received) {
+      return make_unexpected(std::move(received.error()));
+    }
+    return *received == 37U ? expected<void, Error>{} : make_unexpected(Error{ErrorCode::kFailure});
+  }
+
+  Input<std::uint32_t> input;
+};
+
+[[nodiscard]] ExecutionPlan fake_observed_green_context_channel_plan() {
+  Graph graph{"runtime-observed-green-context-channel-lifetime"};
+  const auto source = graph.op<CudaGreenContextObservedSource>("source");
+  const auto sink = graph.op<CudaGreenContextObservedSink>("sink");
+  graph.add_flow(source->output, sink->input, ConnectionOptions{.queue_depth = 2U});
+  graph.partition("fixture").include_all();
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-test-clock"));
+  CompileOptions options;
+  options.deployment.bind_cuda_green_context("fixture", {.device = DeviceId{0}, .sm_count = 80U});
+  return compile(graph, std::move(options));
+}
+
 // Graph topology (each probe is isolated in its own execution partition):
 //   probe-0   probe-1   ...   probe-(partition_count - 1)
 [[nodiscard]] ExecutionPlan fake_green_context_plan(std::size_t partition_count = 2U,
@@ -500,7 +582,7 @@ template <typename Handle>
     if (record.factory == nullptr) {
       return make_unexpected(Error{ErrorCode::kFailure, "RUNTIME_OPERATOR_FACTORY_INVALID"});
     }
-    auto created = record.factory->create();
+    auto created = record.factory->create(nullptr);
     if (!created || created.value() == nullptr) {
       return make_unexpected(Error{ErrorCode::kFailure, "RUNTIME_OPERATOR_RECONSTRUCTION_FAILED"});
     }
@@ -696,6 +778,43 @@ TEST(RuntimeMaterializationTest, HostOnlyReconstructionKeepsCudaSelectionDisable
   }
 }
 
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
+TEST(RuntimeMaterializationTest, ReconstructionRetainsOutputFailureCaptureCapability) {
+  // All endpoints use ordinary host placement. The input-only and portless operators cannot
+  // produce output rejection evidence; both POD and Tensor producers retain the reset path.
+  Graph graph{"runtime-output-failure-capability"};
+  graph.op<CudaGreenContextMaterializationProbeOperator>("portless");
+  const auto pod_source = graph.op<CudaGreenContextChannelSourceOperator>("pod-source");
+  const auto pod_sink = graph.op<CudaGreenContextChannelSinkOperator>("pod-sink");
+  graph.add_flow(pod_source->output, pod_sink->input);
+  const auto tensor_source = graph.op<OutputFailureCapabilityTensorSource>("tensor-source");
+  const auto tensor_sink = graph.op<LifecycleCandidateMaterializationTensorSink>("tensor-sink");
+  graph.add_flow(tensor_source->output, tensor_sink->input_);
+  graph.set_default_clock(graph.add_clock<test::RuntimeProbeClock>("runtime-test-clock"));
+  const ExecutionPlan plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto accepted = ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(accepted);
+
+  for (const auto generation : {17U, 18U}) {
+    RuntimeReplayMismatchDetail mismatch;
+    auto reconstructed =
+        GraphExec::reconstruct(accepted, RunGenerationId{generation}, {}, &mismatch);
+    ASSERT_TRUE(reconstructed) << reconstructed.error().message << "; replay category "
+                               << static_cast<unsigned>(mismatch.category);
+    ASSERT_EQ((*reconstructed)->operators().size(), 5U);
+    for (const RuntimeOperatorInstance& instance : (*reconstructed)->operators()) {
+      const auto vertex = std::ranges::find_if(
+          accepted->graph.vertices(), [&](const auto& row) { return row.id == instance.vertex; });
+      ASSERT_NE(vertex, accepted->graph.vertices().end());
+      EXPECT_EQ(instance.has_output_ports,
+                vertex->name == "pod-source" || vertex->name == "tensor-source")
+          << vertex->name << " in generation " << generation;
+    }
+  }
+}
+
 // A pinned-host descriptor schema carries a CUDA placement identity for its BufferHandle contract,
 // but its host-to-host staging does not require a CUDA service stream or zero-pool device resource.
 // REQ: CHAN-126
@@ -739,6 +858,7 @@ TEST(RuntimeMaterializationTest, PinnedDescriptorSchemaWithoutDeviceResourceMate
           PayloadIdentityRecord{
               .kind = PayloadIdentityKind::kSchema,
               .payload_kind = PayloadKind::kDescriptorBacked,
+              .transport_profile_tag = 1U,
           },
       .tensor_payload = true,
       .tensor_max_byte_span = 1024U,
@@ -1040,6 +1160,99 @@ TEST(RuntimeMaterializationTest, RunSessionPreservesDetailedCudaMaterializationD
   EXPECT_TRUE(details.front().cuda_execution.stream_id.empty());
 }
 
+// REQ: RUNTIME-056
+TEST(RuntimeMaterializationTest, StreamBindingMismatchRetainsExpectedAndObservedContext) {
+  auto driver_state = cuda_test::make_state();
+  cuda_test::FakeDriverScope driver_scope(driver_state);
+  const ExecutionPlan plan = fake_green_context_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto state = ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(state);
+  auto operators = reconstruct_operators(*state);
+  ASSERT_TRUE(operators) << runtime_error_message(operators.error());
+  ASSERT_FALSE(operators->empty());
+  ASSERT_FALSE(state->operator_cuda_stream_bindings.empty());
+  const auto& binding = state->operator_cuda_stream_bindings.front();
+  auto instance =
+      std::ranges::find(*operators, binding.operator_vertex, &RuntimeOperatorInstance::vertex);
+  ASSERT_NE(instance, operators->end());
+  instance->compute_device = DeviceId{7};
+  RuntimeCudaExecutionDiagnostic cuda_diagnostic;
+
+  auto resources = RuntimeCudaExecutionResources::create(*state,
+                                                         *operators,
+                                                         RunGenerationId{181U},
+                                                         green_process_group(*state),
+                                                         {},
+                                                         {},
+                                                         &cuda_diagnostic);
+
+  ASSERT_FALSE(resources);
+  EXPECT_EQ(resources.error().message, "CUDA_STREAM_BINDING_STREAM_MISMATCH");
+  EXPECT_EQ(cuda_diagnostic.operation, "operator_stream_binding");
+  EXPECT_EQ(cuda_diagnostic.device, binding.device);
+  EXPECT_EQ(cuda_diagnostic.stream_id, binding.stream_id);
+  EXPECT_EQ(cuda_diagnostic.mismatch.field, "operator_cuda_stream_binding");
+  EXPECT_NE(cuda_diagnostic.mismatch.provided.find("reason=operator device differs"),
+            std::string::npos);
+  EXPECT_NE(cuda_diagnostic.mismatch.required.find("stream=" + binding.stream_id),
+            std::string::npos);
+
+  RuntimeDiagnosticBuffer buffer{DiagnosticId{999U}, DiagnosticSource{}};
+  const RuntimeDiagnosticDetail runtime_detail{
+      .present = true,
+      .error = resources.error(),
+      .cuda_execution = cuda_diagnostic,
+      .operation = DiagnosticOperation::kRuntime,
+  };
+  buffer.append(DiagnosticId{998U},
+                "CUDA_STREAM_BINDING_STREAM_MISMATCH",
+                DiagnosticSource{.graph_generation = state->graph.generation(),
+                                 .vertex = binding.operator_vertex},
+                {},
+                &runtime_detail,
+                {},
+                {},
+                ::holoscan::DiagnosticSeverity::kError,
+                state->graph);
+
+  ASSERT_EQ(buffer.diagnostics().size(), 1U);
+  const auto& retained = buffer.diagnostics().front();
+  ASSERT_TRUE(retained.detail);
+  ASSERT_EQ(retained.detail->mismatches.size(), 1U);
+  EXPECT_EQ(retained.detail->mismatches.front().field, "operator_cuda_stream_binding");
+  const std::string formatted = format_diagnostic(retained, plan.graph());
+  EXPECT_NE(formatted.find("operator_cuda_stream_binding"), std::string::npos);
+  EXPECT_NE(formatted.find("operator device differs"), std::string::npos);
+  EXPECT_NE(formatted.find(binding.stream_id), std::string::npos);
+}
+
+// REQ: RUNTIME-055
+TEST(RuntimeMaterializationTest, TensorStartupAuthenticatesExactOperatorStreamId) {
+  auto driver_state = cuda_test::make_state();
+  cuda_test::FakeDriverScope driver_scope(driver_state);
+  const ExecutionPlan plan = fake_green_context_plan();
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto state = ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(state);
+  auto operators = reconstruct_operators(*state);
+  ASSERT_TRUE(operators) << runtime_error_message(operators.error());
+  auto resources = RuntimeCudaExecutionResources::create(
+      *state, *operators, RunGenerationId{182U}, green_process_group(*state));
+  ASSERT_TRUE(resources) << runtime_error_message(resources.error());
+
+  auto forged = *state;
+  ASSERT_GE(forged.operator_cuda_stream_bindings.size(), 2U);
+  forged.operator_cuda_stream_bindings.front().stream_id =
+      forged.operator_cuda_stream_bindings.back().stream_id;
+
+  // Key assertion: matching process/device/partition fields cannot hide a forged retained stream
+  // identity during the Tensor startup cross-check.
+  const auto bound = bind_tensor_operator_streams(forged, *operators, **resources);
+  ASSERT_FALSE(bound);
+  EXPECT_NE(bound.error().message.find("operator CUDA stream binding mismatch"), std::string::npos);
+}
+
 // REQ: RUNTIME-045
 TEST(RuntimeMaterializationTest, ConcurrentRunSessionsRejectSecondPhysicalDeviceOwner) {
   // Graph topology (each probe is an isolated Green Context partition):
@@ -1283,6 +1496,123 @@ TEST(RuntimeMaterializationTest, ChannelMappingsOutliveGreenContextQuiesce) {
   EXPECT_EQ(driver_state.stream_synchronize_calls, driver_state.created_streams.size());
 }
 
+void expect_observed_channel_quiesce_lifetime(bool quiesce_fails) {
+  auto driver_state = cuda_test::make_state();
+  // A quarantined device claim intentionally survives the test. Keep its fake UUID distinct from
+  // all other fake-driver tests and from the healthy twin.
+  driver_state.uuid_offset = quiesce_fails ? 0x71U : 0x72U;
+  driver_state.stream_synchronize_result = quiesce_fails ? CUDA_ERROR_UNKNOWN : CUDA_SUCCESS;
+  const cuda_test::FakeDriverScope driver_scope(driver_state);
+  const auto channel_control = std::make_shared<RuntimeChannelTeardownTestControl>();
+  const auto diagnostic_sink = std::make_shared<CudaExecutionDiagnosticSink>();
+  const ExecutionPlan plan = RuntimeTestPlanAccess::with_diagnostic_sink(
+      RuntimeTestPlanAccess::with_channel_teardown_test_control(
+          fake_observed_green_context_channel_plan(), channel_control),
+      diagnostic_sink);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto retained = ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(retained);
+  ASSERT_EQ(retained->execution_partitions.size(), 1U);
+  ASSERT_TRUE(retained->closed_island_activations.empty());
+
+  auto observation = std::make_shared<RuntimeFixtureObservation>(32U, 1U, 4U);
+  const std::weak_ptr<RuntimeFixtureObservation> weak_observation = observation;
+  std::atomic_bool owners_alive_during_quiesce{true};
+  driver_state.stream_synchronize_hook = [&]() {
+    if (channel_control->runtime_destroyed() || weak_observation.expired()) {
+      owners_alive_during_quiesce.store(false, std::memory_order_release);
+    }
+  };
+
+  {
+    RunSession session = start_operator_test_run(plan, observation);
+    observation.reset();
+    // Bound the natural-completion wait so a scheduling regression becomes a failed assertion.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    while (session.is_running() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    const bool completed_without_stop = !session.is_running();
+    if (!completed_without_stop) {
+      session.request_stop();
+    }
+    session.wait();
+    ASSERT_TRUE(completed_without_stop);
+    EXPECT_EQ(session.termination(),
+              quiesce_fails ? RunTermination::kFailed : RunTermination::kCompleted);
+
+    // Prove the observed binding actually published and retired before testing its owner closure.
+    // This temporary strong reference is destroyed before the RunSession wrapper below.
+    const auto completed_observation = weak_observation.lock();
+    ASSERT_TRUE(completed_observation);
+    EXPECT_FALSE(completed_observation->invalid());
+    std::size_t retired_publications = 0U;
+    std::size_t retired_inputs = 0U;
+    for (const auto& record : completed_observation->records()) {
+      if (record.kind != FixtureObservationKind::kCandidateFinished || !record.admitted ||
+          record.outcome != FixtureCandidateOutcome::kRetired) {
+        continue;
+      }
+      for (const auto& publication : record.publications) {
+        EXPECT_EQ(publication.error, ErrorCode::kSuccess);
+        EXPECT_TRUE(publication.sequence_consumed);
+        ++retired_publications;
+      }
+      for (const auto& input : record.inputs) {
+        retired_inputs += input.has_sample ? 1U : 0U;
+      }
+    }
+    EXPECT_EQ(retired_publications, 1U);
+    EXPECT_EQ(retired_inputs, 1U);
+    if (quiesce_fails) {
+      EXPECT_TRUE(
+          test::has_runtime_diagnostic(session, "CUDA_GREEN_CONTEXT_MATERIALIZATION_FAILED"));
+      const auto details = diagnostic_sink->details();
+      const auto cleanup = std::find_if(details.begin(), details.end(), [](const auto& row) {
+        return row.cuda_execution.operation == "stream_quiesce";
+      });
+      ASSERT_NE(cleanup, details.end());
+      EXPECT_EQ(cleanup->cuda_execution.driver_result,
+                static_cast<std::int32_t>(CUDA_ERROR_UNKNOWN));
+      EXPECT_EQ(cleanup->cuda_execution.lifecycle_stage, LifecycleStage::kRelease);
+    } else {
+      EXPECT_TRUE(session.diagnostics().empty());
+    }
+  }
+
+  ASSERT_FALSE(driver_state.created_streams.empty());
+  EXPECT_EQ(driver_state.stream_synchronize_calls, driver_state.created_streams.size());
+  EXPECT_TRUE(owners_alive_during_quiesce.load(std::memory_order_acquire));
+  if (quiesce_fails) {
+    EXPECT_FALSE(channel_control->runtime_destroyed());
+    EXPECT_TRUE(driver_state.destroyed_streams.empty());
+    EXPECT_TRUE(driver_state.destroyed_contexts.empty());
+    // The RunSession and every caller-held strong observer are gone. Only the quarantined channel
+    // closure can now retain the observer borrowed by its OutputState thunks. This assertion is
+    // safely red for the former raw-only binding without calling through its dangling pointer.
+    EXPECT_FALSE(weak_observation.expired());
+  } else {
+    EXPECT_TRUE(channel_control->runtime_destroyed());
+    EXPECT_TRUE(
+        destroyed_exactly_once(driver_state.created_streams, driver_state.destroyed_streams));
+    EXPECT_TRUE(
+        destroyed_exactly_once(driver_state.created_contexts, driver_state.destroyed_contexts));
+    EXPECT_TRUE(weak_observation.expired());
+  }
+}
+
+// REQ: LIFECYCLE-010
+// REQ: RUNTIME-062
+TEST(RuntimeMaterializationTest, FailedQuiesceRetainsObservationWithQuarantinedChannel) {
+  expect_observed_channel_quiesce_lifetime(true);
+}
+
+// REQ: LIFECYCLE-010
+// REQ: RUNTIME-062
+TEST(RuntimeMaterializationTest, HealthyQuiesceReleasesChannelAndObservationAfterRunSession) {
+  expect_observed_channel_quiesce_lifetime(false);
+}
+
 // REQ: LIFECYCLE-010
 TEST(RuntimeMaterializationTest, TeardownDiagnosticDoesNotReplacePrimaryCallbackFailure) {
   // Graph topology (each probe is an isolated Green Context partition):
@@ -1315,6 +1645,13 @@ TEST(RuntimeMaterializationTest, TeardownDiagnosticDoesNotReplacePrimaryCallback
   });
   ASSERT_NE(cleanup, diagnostics.end());
   EXPECT_GT(std::distance(diagnostics.begin(), cleanup), 0);
+  const auto& cleanup_evidence = cleanup->detail;
+  if (!cleanup_evidence.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(cleanup_evidence->role, DiagnosticFailureRole::kTeardown);
+  EXPECT_EQ(cleanup_evidence->operation, DiagnosticOperation::kRuntime);
+  EXPECT_EQ(cleanup_evidence->primary_diagnostic_index, 0U);
   const auto details = diagnostic_sink->details();
   const auto cleanup_detail = std::find_if(details.begin(), details.end(), [](const auto& row) {
     return row.cuda_execution.operation == "stream_quiesce";
@@ -1660,6 +1997,38 @@ TEST(RuntimeMaterializationTest, QuiesceFailureQuarantinesDeviceAndDependents) {
   EXPECT_EQ(retry.error().message, "CUDA_GREEN_CONTEXT_ACTIVE_OWNER_CONFLICT");
 }
 
+// REQ: LIFECYCLE-011
+TEST(RuntimeMaterializationTest, ExternalCudaOwnerFailureQuarantinesDeviceClaim) {
+  // A CUDA Graph owner is outside RuntimeCudaExecutionResources, but it shares the same device
+  // claim. Simulate that owner's failure on a unique fake device and retain the owner closure.
+  auto driver_state = cuda_test::make_state();
+  driver_state.uuid_offset = 0x71U;
+  cuda_test::FakeDriverScope driver_scope(driver_state);
+  const ExecutionPlan plan = fake_green_context_plan(1U, true, DeviceId{37});
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  const auto state = ExecutionPlanAccess::retain(plan);
+  ASSERT_TRUE(state);
+  auto operators = reconstruct_operators(*state);
+  ASSERT_TRUE(operators);
+  const ProcessGroupId process_group = green_process_group(*state);
+  auto resources = RuntimeCudaExecutionResources::create(
+      *state, *operators, RunGenerationId{233U}, process_group);
+  ASSERT_TRUE(resources) << runtime_error_message(resources.error());
+
+  (*resources)->quarantine_after_external_failure();
+  auto retry_operators = reconstruct_operators(*state);
+  ASSERT_TRUE(retry_operators);
+  auto retry = RuntimeCudaExecutionResources::create(
+      *state, *retry_operators, RunGenerationId{234U}, process_group);
+
+  ASSERT_FALSE(retry);
+  EXPECT_EQ(retry.error().message, "CUDA_GREEN_CONTEXT_ACTIVE_OWNER_CONFLICT");
+  // Match the production quarantine path: uncertain owners intentionally survive until process
+  // exit. Device 37 is unique to this fake-driver regression.
+  // NOLINTNEXTLINE(bugprone-unused-return-value,clang-analyzer-cplusplus.NewDeleteLeaks)
+  static_cast<void>(resources->release());
+}
+
 // REQ: LIFECYCLE-010
 TEST(RuntimeMaterializationTest, NativeDestroyFailureQuarantinesDeviceClaim) {
   // Graph topology (each probe is an isolated Green Context partition):
@@ -1847,8 +2216,10 @@ TEST(RuntimeMaterializationTest, ResidualPartitionsResolveByCompleteStreamKey) {
   EXPECT_NE(second, nullptr);
   EXPECT_NE(third, nullptr);
   EXPECT_NE(second, third);
-  EXPECT_EQ((*operators)[1].compute_stream, second);
-  EXPECT_EQ((*operators)[2].compute_stream, third);
+  // Stream ownership alone must not recreate the retired partition-membership binding heuristic.
+  // These tensor-inactive probes have no exact binding rows and therefore remain unbound.
+  EXPECT_EQ((*operators)[1].compute_stream, nullptr);
+  EXPECT_EQ((*operators)[2].compute_stream, nullptr);
 }
 
 // REQ: RUNTIME-045
@@ -2040,7 +2411,9 @@ TEST(RuntimeMaterializationTest, RejectsLifecycleTensorInventoryBeforeStreamBind
 
 // REQ: COMPILE-048
 // REQ: COMPILE-064
+// REQ: MEM-STREAM-016
 // REQ: OPERATOR-025
+// REQ: RUNTIME-056
 TEST(RuntimeMaterializationTest, ValidatesTensorDeviceStreamObligationAtArm) {
   auto fixture = started_lane();
   ASSERT_NE(fixture.lanes, nullptr);

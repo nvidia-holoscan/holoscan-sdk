@@ -1,0 +1,33 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace schema_evolution;
+
+enum State : byte { UNKNOWN = 0, READY = 1 }
+
+table Point {
+  x:int (id: 0);
+  y:int (id: 1);
+}
+
+table TextPayload {
+  text:string (id: 0);
+}
+
+table CountPayload {
+  count:int (id: 0);
+}
+
+union Payload { TextPayload, CountPayload }
+
+table Frame {
+  sequence:ulong (id: 0);
+  label:string (id: 1);
+  level:int = 7 (id: 2);
+  point:Point (id: 3);
+  state:State = UNKNOWN (id: 4);
+  payload:Payload (id: 6);
+}
+
+root_type Frame;
+file_identifier "EVO1";

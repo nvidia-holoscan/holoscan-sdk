@@ -17,6 +17,7 @@
 #include <vector>
 
 #include <holoscan/logger/logger.hpp>
+#include "core/diagnostic_reporting.hpp"
 
 namespace holoscan {
 namespace {
@@ -91,8 +92,8 @@ BlockMemoryPool::BlockMemoryPool(MemoryStorageType storage_type, uint64_t block_
 BlockMemoryPool::~BlockMemoryPool() {
   auto result = deinitialize_pool();
   if (!result) {
-    HOLOSCAN_LOG_ERROR("Failed to deinitialize BlockMemoryPool: {}",
-                       runtime_error_message(result.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to deinitialize BlockMemoryPool: {}",
+                                 runtime_error_message(result.error()));
   }
 }
 
@@ -127,7 +128,7 @@ expected<void, Error> BlockMemoryPool::initialize_pool() {
       const cudaError_t error = cudaMallocHost(&raw_pointer, total_size);
       if (error != cudaSuccess) {
         stage_ = AllocatorStage::kUninitialized;
-        HOLOSCAN_LOG_ERROR("Failure in cudaMallocHost: {}", cudaGetErrorString(error));
+        HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaMallocHost: {}", cudaGetErrorString(error));
         return unexpected_cuda_runtime_error("cudaMallocHost failed", error);
       }
       break;
@@ -141,7 +142,7 @@ expected<void, Error> BlockMemoryPool::initialize_pool() {
       const cudaError_t error = cudaMalloc(&raw_pointer, total_size);
       if (error != cudaSuccess) {
         stage_ = AllocatorStage::kUninitialized;
-        HOLOSCAN_LOG_ERROR("Failure in cudaMalloc: {}", cudaGetErrorString(error));
+        HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaMalloc: {}", cudaGetErrorString(error));
         return unexpected_cuda_runtime_error("cudaMalloc failed", error);
       }
       break;
@@ -155,7 +156,7 @@ expected<void, Error> BlockMemoryPool::initialize_pool() {
       const cudaError_t error = cudaMallocManaged(&raw_pointer, total_size, cudaMemAttachGlobal);
       if (error != cudaSuccess) {
         stage_ = AllocatorStage::kUninitialized;
-        HOLOSCAN_LOG_ERROR("Failure in cudaMallocManaged: {}", cudaGetErrorString(error));
+        HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaMallocManaged: {}", cudaGetErrorString(error));
         return unexpected_cuda_runtime_error("cudaMallocManaged failed", error);
       }
       break;
@@ -233,8 +234,8 @@ expected<void, Error> BlockMemoryPool::deinitialize_pool() {
       if (stack_ != nullptr) {
         auto result = stack_->push(deferred.index);
         if (!result) {
-          HOLOSCAN_LOG_ERROR("Failed to return deferred block to pool: {}",
-                             runtime_error_message(result.error()));
+          HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to return deferred block to pool: {}",
+                                       runtime_error_message(result.error()));
         }
       }
     }
@@ -242,7 +243,7 @@ expected<void, Error> BlockMemoryPool::deinitialize_pool() {
     block_deferred_.clear();
 
     if (stack_ != nullptr && stack_->size() != config_.num_blocks) {
-      HOLOSCAN_LOG_WARN("BlockMemoryPool still has unreleased memory");
+      HOLOSCAN_LOG_AUTOMATIC_WARN("BlockMemoryPool still has unreleased memory");
     }
     stack = std::move(stack_);
     block_events = std::move(block_events_);
@@ -262,7 +263,7 @@ expected<void, Error> BlockMemoryPool::deinitialize_pool() {
         const cudaError_t error = cudaFreeHost(pointer);
         if (error != cudaSuccess) {
           stage_ = AllocatorStage::kUninitialized;
-          HOLOSCAN_LOG_ERROR("Failure in cudaFreeHost: {}", cudaGetErrorString(error));
+          HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaFreeHost: {}", cudaGetErrorString(error));
           return unexpected_cuda_runtime_error("cudaFreeHost failed", error);
         }
         break;
@@ -272,7 +273,7 @@ expected<void, Error> BlockMemoryPool::deinitialize_pool() {
         const cudaError_t error = cudaFree(pointer);
         if (error != cudaSuccess) {
           stage_ = AllocatorStage::kUninitialized;
-          HOLOSCAN_LOG_ERROR("Failure in cudaFree: {}", cudaGetErrorString(error));
+          HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaFree: {}", cudaGetErrorString(error));
           return unexpected_cuda_runtime_error("cudaFree failed", error);
         }
         break;
@@ -326,7 +327,7 @@ expected<std::byte*, Error> BlockMemoryPool::allocate(uint64_t size,
   }
   if (size > config_.block_size) {
     record_failed_acquisition();
-    HOLOSCAN_LOG_ERROR(
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
         "Requested {} bytes of memory in a pool with block size {}", size, config_.block_size);
     return unexpected_runtime_error(ErrorCode::kInvalidArgument,
                                     "Requested allocation exceeds block size");
@@ -342,7 +343,8 @@ expected<std::byte*, Error> BlockMemoryPool::allocate(uint64_t size,
   auto maybe_index = stack_->pop();
   if (!maybe_index) {
     record_failed_acquisition();
-    HOLOSCAN_LOG_ERROR("Too many chunks allocated, memory of size {} not available", size);
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Too many chunks allocated, memory of size {} not available",
+                                 size);
     return forward_error(maybe_index);
   }
   if (config_.enable_stats) {
@@ -376,7 +378,8 @@ expected<void, Error> BlockMemoryPool::initialize_block_events() {
     cudaEvent_t event = nullptr;
     const cudaError_t error = cudaEventCreateWithFlags(&event, cudaEventDisableTiming);
     if (error != cudaSuccess) {
-      HOLOSCAN_LOG_ERROR("cudaEventCreateWithFlags failed: {}", cudaGetErrorString(error));
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("cudaEventCreateWithFlags failed: {}",
+                                   cudaGetErrorString(error));
       return unexpected_cuda_runtime_error("cudaEventCreateWithFlags failed", error);
     }
     block_events_[index] = event;
@@ -398,7 +401,7 @@ void BlockMemoryPool::reclaim_completed_deferred_blocks() {
   while (i < deferred_blocks_.size()) {
     const uint64_t index = deferred_blocks_[i].index;
     if (index >= block_events_.size() || block_events_[index] == nullptr) {
-      HOLOSCAN_LOG_ERROR("Missing CUDA event for deferred block {}", index);
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Missing CUDA event for deferred block {}", index);
       deferred_blocks_[i] = std::move(deferred_blocks_.back());
       deferred_blocks_.pop_back();
       continue;
@@ -408,8 +411,8 @@ void BlockMemoryPool::reclaim_completed_deferred_blocks() {
     if (status == cudaSuccess) {
       auto result = stack_->push(index);
       if (!result) {
-        HOLOSCAN_LOG_ERROR("Failed to return deferred block to pool: {}",
-                           runtime_error_message(result.error()));
+        HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to return deferred block to pool: {}",
+                                     runtime_error_message(result.error()));
       }
       if (index < block_deferred_.size()) {
         block_deferred_[index] = 0;
@@ -419,7 +422,7 @@ void BlockMemoryPool::reclaim_completed_deferred_blocks() {
     } else if (status == cudaErrorNotReady) {
       ++i;
     } else {
-      HOLOSCAN_LOG_ERROR(
+      HOLOSCAN_LOG_AUTOMATIC_ERROR(
           "cudaEventQuery failed for deferred block {}: {}", index, cudaGetErrorString(status));
       if (index < block_deferred_.size()) {
         block_deferred_[index] = 0;
@@ -527,7 +530,7 @@ expected<void, Error> BlockMemoryPool::free_async_impl(std::byte* pointer, cudaS
   const cudaError_t error =
       cudaEventRecord(block_events_[index], static_cast<cudaStream_t>(stream));
   if (error != cudaSuccess) {
-    HOLOSCAN_LOG_ERROR("cudaEventRecord failed: {}", cudaGetErrorString(error));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("cudaEventRecord failed: {}", cudaGetErrorString(error));
     return unexpected_cuda_runtime_error("cudaEventRecord failed", error);
   }
 

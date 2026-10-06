@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -19,6 +20,17 @@ namespace holoscan::detail {
 /// is disarmed.
 class RuntimeChannelSessionTestAccess {
  public:
+  /// Describe allocated input resources independently of live payload occupancy.
+  struct InputResourceState {
+    std::size_t subscriber_count{};
+    std::size_t payload_slot_count{};
+    bool claim_pool_present{};
+  };
+
+  /// Return an existing input's resource inventory while the session is disarmed.
+  [[nodiscard]] static expected<InputResourceState, Error> input_resource_state(
+      const RuntimeChannelSession& session, PortId input) noexcept;
+
   /// Return the published active logical queue depth for one payload edge.
   [[nodiscard]] static expected<std::uint32_t, Error> active_queue_depth(
       const RuntimeChannelSession& session, EdgeId edge) noexcept;
@@ -45,16 +57,27 @@ class RuntimeChannelSessionTestAccess {
   [[nodiscard]] static expected<void, Error> fail_next_activation_retirement(
       RuntimeChannelSession& session) noexcept;
 
+  /// Fail one fixed-Tensor shape allocation after the requested number of successful copies.
+  [[nodiscard]] static expected<void, Error> fail_fixed_tensor_shape_allocation_after_successes(
+      RuntimeChannelSession& session, std::size_t successful_allocations) noexcept;
+
   /// Observe validated activation retirement before Channel mutates any activation-owned state.
   [[nodiscard]] static expected<void, Error> set_activation_retirement_observer(
       RuntimeChannelSession& session, void* state,
       RuntimeChannelActivationRetirementObserver observer) noexcept;
 
+  /// Install scripted peer policy and publication outcomes for cold-session tests such as
+  /// ExhaustedOptionalNoPeerCloseResolvesLocally.
   [[nodiscard]] static expected<void, Error> replace_output_publishers(
       RuntimeChannelSession& session, PortId output,
       std::vector<std::unique_ptr<channel_internal::InlinePayloadPublisher>> publishers,
       std::span<const std::uint32_t> expected_recipient_counts = {},
-      bool refresh_before_emit = false) noexcept;
+      bool refresh_before_emit = false, bool peer_required = true) noexcept;
+
+  /// Count resolved terminal arms in a cold output, for example after required-peer abandonment
+  /// in ExhaustedRequiredExportAbandonmentReturnsClosed. This observes resolution, not EOS receipt.
+  [[nodiscard]] static expected<std::size_t, Error> resolved_output_terminal_arms(
+      const RuntimeChannelSession& session, PortId output) noexcept;
 
   /// Replace one descriptor-schema output with a scripted non-local publisher while disarmed.
   [[nodiscard]] static expected<void, Error> replace_output_with_nonlocal_tensor_schema_publisher(
@@ -112,6 +135,14 @@ class RuntimeChannelSessionTestAccess {
       RuntimeChannelSession& session, PortId input, void* state,
       void (*observer)(void*) noexcept) noexcept;
 
+  /// Hold one real reuse replacement reservation around a scripted cold-session owner action.
+  ///
+  /// No data is received or committed. Destruction exercises the production rollback protocol
+  /// after the callback returns, without adding an observer to a production execution path.
+  [[nodiscard]] static expected<void, Error> with_reuse_replacement_reservation(
+      RuntimeChannelSession& session, PortId input, void* state,
+      void (*callback)(void*) noexcept) noexcept;
+
   /// Fail one staged-newer-data reuse replacement after reserving its exact destination.
   [[nodiscard]] static expected<void, Error> fail_next_reuse_replacement_receive(
       RuntimeChannelSession& session, PortId input) noexcept;
@@ -123,6 +154,13 @@ class RuntimeChannelSessionTestAccess {
   /// Observe the exact transport-staged data sequence for one source-tree input.
   [[nodiscard]] static expected<std::optional<std::uint64_t>, Error> staged_data_sequence(
       const RuntimeChannelSession& session, PortId input) noexcept;
+
+  /// Discard one exact process-local transport data head while holding its ingress serialization.
+  ///
+  /// This cold-session seam lets a test deterministically advance from a probed staged identity to
+  /// its successor without opening a production scheduler or pump race.
+  [[nodiscard]] static expected<void, Error> discard_staged_data_head(
+      RuntimeChannelSession& session, PortId input) noexcept;
 
   /// Fail the auxiliary process-local retry after one committed freshness handoff.
   [[nodiscard]] static expected<void, Error> fail_next_freshness_handoff_retry(
@@ -163,7 +201,8 @@ class RuntimeChannelSessionTestAccess {
 
   /// Exercise deferred promotion and post-commit retry for a live stale staging reservation.
   [[nodiscard]] static expected<void, Error> commit_staged_reservation_after_newer_typed_overtake(
-      RuntimeChannelSession& session, PortId input) noexcept;
+      RuntimeChannelSession& session, PortId input,
+      bool staged_is_committed_freshness_target = false) noexcept;
 
   /// Temporarily include a second input's subscriber in one freshness-identity scan.
   [[nodiscard]] static expected<void, Error> set_freshness_subscriber_alias(
@@ -190,6 +229,23 @@ class RuntimeChannelSessionTestAccess {
   [[nodiscard]] static expected<void, Error> set_input_poll_contention_observer(
       RuntimeChannelSession& session, PortId input, void* state,
       RuntimeChannelInputPollContentionObserver observer) noexcept;
+
+  /// Observe each failed try_lock that one bounded contention retry follows with another attempt
+  /// on one exact input; the final failure that expires the budget is not reported.
+  ///
+  /// A source-tree test uses this to release a real holder only after the retry loop has actually
+  /// re-armed, which makes the release-during-budget success path deterministic. Installed before
+  /// the session is armed and immutable until teardown.
+  [[nodiscard]] static expected<void, Error> set_input_contention_retry_attempt_observer(
+      RuntimeChannelSession& session, PortId input, void* state,
+      RuntimeChannelInputPollContentionObserver observer) noexcept;
+
+  /// Replace the bounded contention retry budget of an unarmed session.
+  ///
+  /// Production keeps \ref kContentionRetryBudget; a test widens it so a scheduler pause cannot
+  /// expire the retry whose success path it is proving.
+  [[nodiscard]] static expected<void, Error> set_contention_retry_budget(
+      RuntimeChannelSession& session, std::chrono::nanoseconds budget) noexcept;
 
   /// Pause one readiness poll after it saves the oldest candidate and releases all input locks.
   ///
@@ -292,6 +348,10 @@ class RuntimeChannelSessionTestAccess {
   [[nodiscard]] static expected<RuntimeChannelInputResetState, Error> input_reset_state(
       const RuntimeChannelSession& session, PortId input) noexcept;
 
+  /// Observe the production no-claim scalar binding without copying its selected sample.
+  [[nodiscard]] static expected<RuntimeScalarReadBinding, Error> selected_scalar_binding(
+      const RuntimeChannelSession& session, PortId input) noexcept;
+
   [[nodiscard]] static expected<RuntimeChannelPumpIndexState, Error> pump_index_state(
       const RuntimeChannelSession& session) noexcept;
 
@@ -326,6 +386,13 @@ class RuntimeChannelSessionTestAccess {
   /// @return Endpoint-family snapshot, or a checked identity/session error.
   [[nodiscard]] static expected<RuntimeChannelTensorTransferState, Error> tensor_transfer_state(
       const RuntimeChannelSession& session, PortId output, PortId input) noexcept;
+
+  /// Inspect or seed exhaustion only while the session is disarmed and the output is inactive.
+  [[nodiscard]] static expected<void, Error> set_output_next_sequence(
+      RuntimeChannelSession& session, PortId output, std::uint64_t next_sequence) noexcept;
+
+  [[nodiscard]] static expected<std::uint64_t, Error> output_next_sequence(
+      const RuntimeChannelSession& session, PortId output) noexcept;
 
   [[nodiscard]] static expected<void, Error> set_output_active_generation(
       RuntimeChannelSession& session, PortId output, std::uint64_t active_generation) noexcept;

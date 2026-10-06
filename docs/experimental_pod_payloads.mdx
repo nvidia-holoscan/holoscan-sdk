@@ -49,11 +49,12 @@ own external storage: pointers are rejected, and putting a Tensor or buffer
 handle in the struct does not create a valid lifetime or transport contract.
 
 <Note>
-  Generated schemas also use exact-match package identity in this release; they
-  do not negotiate compatible versions at runtime. Their advantage is that
-  identity, native types, verification, and codecs are generated consistently
-  from one machine-readable `.fbs` source instead of duplicated manual layout
-  declarations.
+  Generated schemas retain a stable family identity across source edits accepted
+  by a maintained conformance baseline; they do not negotiate compatibility at
+  runtime. Their advantage is that identity, native types, verification, and
+  codecs are generated consistently from one machine-readable `.fbs` source
+  instead of duplicated manual layout declarations. Early-access participants
+  must still be rebuilt against the current schema set.
 </Note>
 
 <Warning>

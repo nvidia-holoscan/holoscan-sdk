@@ -19,7 +19,11 @@ function(holoscan_configure_cuda_execution_test_clang_tidy target_name)
 endfunction()
 
 add_executable(cuda_execution_test
+    ${holoscan_SOURCE_DIR}/src/compiler/execution_plan_lookup.cpp
+    ${holoscan_SOURCE_DIR}/src/runtime/runtime_cuda_graph_region_resources.cpp
+    ${holoscan_SOURCE_DIR}/src/runtime/runtime_cuda_graph_tensor_resources.cpp
     test_cuda_event_pool.cpp
+    test_cuda_graph_region_resources.cpp
     test_cuda_green_context.cpp
     test_cuda_green_context_driver.cpp
     test_cuda_stream_pool.cpp

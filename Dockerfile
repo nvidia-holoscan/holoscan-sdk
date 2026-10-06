@@ -12,15 +12,20 @@ ARG LIBCUSPARSELT_VERSION=0.9      # match DLFW 26.03 development stack
 ARG TENSORRT_VERSION=10.16
 ARG NSYS_VERSION=2026.4.1
 ARG NVCOMP_VERSION=5.0.0.6    # Pin to <5.1 for stable CRC32 functionality on arm64 platforms.
-ARG CVCUDA_VERSION=0.17.0
-ARG CVCUDA_DEV_SHA256_AMD64=9e2fbdf00af4608280acc54bb5eeb11cc0851c0fe153e6a34c98102cc75ba47a
-ARG CVCUDA_DEV_SHA256_ARM64=7e6047ff56275e40de735ae69b1fb23bb4ab85d918dd7d2bba196c37dd92a0a4
-ARG CVCUDA_LIB_SHA256_AMD64=70a6033ee6b39d2797b1eb742d633b8970e51992a12c0318df386bb719524bac
-ARG CVCUDA_LIB_SHA256_ARM64=5afaeeff7da0487eaf8108b0020c0066ffbebf70bccf81653afc91f081273048
+ARG CVCUDA_VERSION=0.18.0
+ARG CVCUDA_DEV_SHA256_AMD64=379f4333b3e3e093a00db8607b64614d8c992ae6039165be8eaa5a23a4166b2c
+ARG CVCUDA_DEV_SHA256_ARM64=5697357517176c0ea22df74bef2704fd7ff7395bda8157d93b9c5ca487d5260f
+ARG CVCUDA_LIB_SHA256_AMD64=75b2e996a3a2d9edefa28ef16332619cc01c6149abd6adf80f4ffb122e094ae7
+ARG CVCUDA_LIB_SHA256_ARM64=cc8009cc759bd0c89dbd5d856e7d217538645f9fe3c0dd7a7e5aa19263b5351b
 ARG RUST_VERSION=1.85.0
 ARG RUSTUP_VERSION=1.29.0
 ARG RUSTUP_INIT_SHA256_AMD64=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
 ARG RUSTUP_INIT_SHA256_ARM64=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792
+# Slang shader compiler (build-time tool only). Keep HOLOSCAN_SLANG_VERSION in
+# public/cmake/deps/slang.cmake in lockstep: the CMake recipe rejects any other version.
+ARG SLANG_VERSION=2026.14
+ARG SLANG_SHA256_AMD64=9445cf0b35332bfda055c9424e307f957ff58befb04c5b45b9f9f29894a41cf8
+ARG SLANG_SHA256_ARM64=7acbfe80260009263346f72efaadabfa7666248a045e720b573ba78fb008ac42
 
 ############################################################
 # Generic base image
@@ -249,7 +254,7 @@ FROM nsight-cli-dev AS cuda-toolkit-dev
 #  libcurand: runtime needed by libtorch, cupy-cuda, and headers (-dev) for matx.
 #  libcusolver: runtime needed by libtorch, cupy-cuda, and headers (-dev) for matx.
 #  libcusparse: runtime needed by libtorch, cupy-cuda, and headers (-dev) for matx.
-#  libnpp-dev: needed by bayer_demosaic, format_converter.
+#  libnpp-dev: needed by Vision's BayerDemosaicOp.
 #  libnvjitlink: needed by libtorch, cupy-cuda.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=${APT_CACHE_ID} \
     --mount=type=cache,target=/var/lib/apt,sharing=locked,id=${APT_LIB_ID} \
@@ -435,6 +440,34 @@ RUN curl -S -# -L -o sccache.tar.gz \
     tar -xzf sccache.tar.gz -C /opt/sccache --strip-components=1 sccache-${SCCACHE_VERSION}-$(uname -m)-unknown-linux-musl/sccache
 
 ############################################################
+# Slang downloader
+############################################################
+FROM base AS slang-downloader
+
+# HoloViz compiles its built-in shaders to SPIR-V with slangc at build time; no Slang
+# library ships with the SDK. Install the pinned upstream prebuilt release under /opt/slang.
+# slangc loads the libslang*.so beside it from lib/, so both bin/ and lib/ are kept.
+ARG TARGETARCH
+ARG SLANG_VERSION
+ARG SLANG_SHA256_AMD64
+ARG SLANG_SHA256_ARM64
+RUN case "${TARGETARCH}" in \
+        amd64) slang_arch="x86_64"; slang_sha256="${SLANG_SHA256_AMD64}" ;; \
+        arm64) slang_arch="aarch64"; slang_sha256="${SLANG_SHA256_ARM64}" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && slang_archive="slang-${SLANG_VERSION}-linux-${slang_arch}.tar.gz" \
+    && curl -fsSL --retry 5 --retry-delay 3 \
+        "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/${slang_archive}" \
+        -o "/tmp/${slang_archive}" \
+    && echo "${slang_sha256}  /tmp/${slang_archive}" | sha256sum -c - \
+    && mkdir -p /opt/slang \
+    && tar -xzf "/tmp/${slang_archive}" -C /opt/slang bin lib \
+    && rm -rf "/tmp/${slang_archive}" /opt/slang/lib/cmake /opt/slang/lib/pkgconfig \
+    && chmod -R a+rX /opt/slang \
+    && test "$(/opt/slang/bin/slangc -v 2>&1)" = "${SLANG_VERSION}"
+
+############################################################
 # PyTorch downloader
 ############################################################
 FROM python-base AS pytorch-downloader
@@ -574,7 +607,8 @@ COPY --from=apt-repo-config /etc/apt/trusted.gpg.d/ /etc/apt/trusted.gpg.d/
 #  abigail-tools - ABI diff utilities, including abidiff
 #  xvfb - testing on headless systems
 #  libx* - X packages
-#  libdrm-dev - Holoviz direct-display DRM ownership (VK_EXT_acquire_drm_display)
+#  (Holoviz direct display talks to the kernel DRM UAPI directly; its headers come from
+#   linux-libc-dev, a libc6-dev dependency. libdrm is deliberately not linked.)
 #  libvulkan-dev, glslang-tools - for Vulkan apps (Holoviz)
 #  (the Vulkan validation layer is built from source instead of the stale
 #   Ubuntu 24.04 vulkan-validationlayers package; see vulkan-validation-layers-builder)
@@ -600,7 +634,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=${APT_CACHE_ID} \
         libxi-dev \
         libxinerama-dev \
         libxrandr-dev \
-        libdrm-dev \
         libvulkan-dev \
         glslang-tools \
         libwayland-dev \
@@ -640,6 +673,7 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 # PIP INSTALLS
 #  requirements.dev.txt
 #    coverage - test coverage of python tests
+#    gcovr    - convert gcov data to Sonar generic coverage XML
 #    pytest*  - testing
 #  requirements
 #    cloudpickle - dependency for distributed apps
@@ -660,6 +694,9 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=${PIP_CACHE_ID} \
     python3 -m pip install --upgrade --ignore-installed \
         -r /tmp/requirements.dev.txt \
         -r /tmp/requirements.txt
+# Warm the Python wrapper's pinned Node.js distribution and pyright package while the image build
+# has network access so type checks remain hermetic in offline test containers.
+RUN pyright --version
 
 # Disable the keep-archives setting at the end of the build stage
 # so it doesn't persist for users interacting directly with this image.
@@ -683,6 +720,11 @@ ENV PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8
 # Copy sccache
 ENV SCCACHE=/opt/sccache
 COPY --from=sccache-downloader ${SCCACHE}/sccache /usr/local/bin
+
+# Copy the Slang shader compiler; cmake/deps/slang.cmake finds slangc on the PATH.
+ENV SLANG_DIR=/opt/slang
+COPY --from=slang-downloader ${SLANG_DIR} ${SLANG_DIR}
+ENV PATH="${PATH}:${SLANG_DIR}/bin"
 
 
 ############################################################

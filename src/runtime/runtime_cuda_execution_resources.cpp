@@ -36,6 +36,7 @@
 #include "../compiler/execution_plan_lookup.hpp"
 #include "../compiler/execution_plan_state.hpp"
 #include "../cuda_execution/cuda_green_context_driver.hpp"
+#include "core/diagnostic_reporting.hpp"
 #include "graph_exec.hpp"
 #include "runtime_cuda_execution_diagnostic.hpp"
 #include "runtime_tensor_resources.hpp"
@@ -379,8 +380,8 @@ class RuntimeCudaExecutionResources::Impl final {
     ~StreamOwner() {
       if (auto destroyed = destroy(); !destroyed) {
         try {
-          HOLOSCAN_LOG_ERROR("Failed to destroy CUDA Green Context stream: {}",
-                             runtime_error_message(destroyed.error()));
+          HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to destroy CUDA Green Context stream: {}",
+                                       runtime_error_message(destroyed.error()));
         } catch (...) {  // NOLINT(bugprone-empty-catch)
           // Destruction is best-effort and must not terminate during stack unwinding.
         }
@@ -442,6 +443,7 @@ void record_diagnostic(RuntimeCudaExecutionResources::Impl& impl, std::string_vi
   impl.diagnostic.pool_id.clear();
   impl.diagnostic.green_context_id.clear();
   impl.diagnostic.stream_id.clear();
+  impl.diagnostic.mismatch = {};
   if (pool != nullptr) {
     impl.diagnostic.device = pool->device;
     impl.diagnostic.deployment_device_id = pool->deployment_device_id;
@@ -465,6 +467,42 @@ void record_diagnostic(RuntimeCudaExecutionResources::Impl& impl, std::string_vi
     }
   }
   impl.diagnostic.driver_result = driver_result;
+  if (impl.diagnostic_output != nullptr) {
+    *impl.diagnostic_output = impl.diagnostic;
+  }
+}
+
+void record_operator_binding_mismatch(RuntimeCudaExecutionResources::Impl& impl,
+                                      const OperatorCudaStreamBindingPlanRecord& binding,
+                                      const RuntimeOperatorInstance* instance,
+                                      std::string_view reason) {
+  record_diagnostic(impl, "operator_stream_binding");
+  impl.diagnostic.device = binding.device;
+  impl.diagnostic.stream_id = binding.stream_id;
+  const std::string observed_partition =
+      instance != nullptr ? std::to_string(instance->partition.value) : "missing";
+  const std::string observed_device = instance != nullptr && instance->compute_device.valid()
+                                          ? std::to_string(instance->compute_device.value)
+                                          : "unbound";
+  const std::string_view observed_stream =
+      instance == nullptr
+          ? "operator-missing"
+          : (instance->compute_stream == nullptr ? "unbound" : "native-stream-bound");
+  impl.diagnostic.mismatch = DiagnosticMismatch{
+      .field = "operator_cuda_stream_binding",
+      .provided = fmt::format("reason={},operator={},partition={},device={},stream={}",
+                              reason,
+                              binding.operator_vertex.value,
+                              observed_partition,
+                              observed_device,
+                              observed_stream),
+      .required = fmt::format("operator={},process_group={},partition={},device={},stream={}",
+                              binding.operator_vertex.value,
+                              binding.process_group.value,
+                              binding.partition.value,
+                              binding.device.value,
+                              binding.stream_id),
+  };
   if (impl.diagnostic_output != nullptr) {
     *impl.diagnostic_output = impl.diagnostic;
   }
@@ -860,7 +898,7 @@ reprobe_pool(const CudaGreenContextPoolPlanRecord& pool_plan,
 // Cross-check every stream, assignment, partition, and operator against the accepted plan.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<void, Error> validate_materialized_streams(
-    const ExecutionPlanState& plan, const RuntimeCudaExecutionResources::Impl& impl,
+    const ExecutionPlanState& plan, RuntimeCudaExecutionResources::Impl& impl,
     std::span<const RuntimeOperatorInstance> operators) {
   for (const auto& stream : plan.cuda_compute_streams) {
     if (stream.process_group != impl.process_group) {
@@ -882,6 +920,38 @@ reprobe_pool(const CudaGreenContextPoolPlanRecord& pool_plan,
         });
     if (std::cmp_equal(member_count, 0U)) {
       return cuda_execution_error("CUDA_GREEN_CONTEXT_STREAM_MISMATCH");
+    }
+  }
+  for (const auto& binding : plan.operator_cuda_stream_bindings) {
+    if (binding.process_group != impl.process_group) {
+      continue;
+    }
+    const auto owner = std::find_if(impl.streams.begin(), impl.streams.end(), [&](const auto& row) {
+      return row.plan->stream_id == binding.stream_id &&
+             row.plan->process_group == binding.process_group && row.plan->device == binding.device;
+    });
+    const auto instance = std::find_if(operators.begin(), operators.end(), [&](const auto& row) {
+      return row.vertex == binding.operator_vertex;
+    });
+    std::string_view mismatch_reason;
+    if (owner == impl.streams.end()) {
+      mismatch_reason = "planned stream owner missing";
+    } else if (owner->native_handle() == nullptr) {
+      mismatch_reason = "planned native stream missing";
+    } else if (instance == operators.end()) {
+      mismatch_reason = "operator instance missing";
+    } else if (instance->partition != binding.partition) {
+      mismatch_reason = "operator partition differs";
+    } else if (instance->compute_stream != nullptr &&
+               instance->compute_stream != owner->native_handle()) {
+      mismatch_reason = "operator stream differs";
+    } else if (instance->compute_device.valid() && instance->compute_device != binding.device) {
+      mismatch_reason = "operator device differs";
+    }
+    if (!mismatch_reason.empty()) {
+      record_operator_binding_mismatch(
+          impl, binding, instance != operators.end() ? &*instance : nullptr, mismatch_reason);
+      return cuda_execution_error("CUDA_STREAM_BINDING_STREAM_MISMATCH");
     }
   }
   for (const auto& assignment : plan.cuda_green_context_assignments) {
@@ -912,43 +982,70 @@ reprobe_pool(const CudaGreenContextPoolPlanRecord& pool_plan,
   return {};
 }
 
-void bind_partition_streams(const RuntimeCudaExecutionResources::Impl& impl,
-                            std::span<RuntimeOperatorInstance> operators) {
-  for (const auto& owner : impl.streams) {
-    const auto& partition = owner.plan->partition;
-    if (!partition) {
+[[nodiscard]] expected<void, Error> publish_operator_stream_bindings(
+    const ExecutionPlanState& plan, RuntimeCudaExecutionResources::Impl& impl,
+    std::span<RuntimeOperatorInstance> operators, std::vector<std::size_t>& published) {
+  published.reserve(plan.operator_cuda_stream_bindings.size());
+  for (const auto& binding : plan.operator_cuda_stream_bindings) {
+    if (binding.process_group != impl.process_group) {
       continue;
     }
-    // The immediately preceding guard proves the plan-owned optional is engaged.
-    const ExecutionPartitionId partition_id =
-        *partition;  // NOLINT(bugprone-unchecked-optional-access)
-    cudaStream_t stream = owner.native_handle();
-    for (auto& instance : operators) {
-      if (instance.partition != partition_id) {
-        continue;
-      }
-      instance.compute_stream = stream;
-      instance.compute_device = owner.plan->device;
+    const auto owner = std::find_if(impl.streams.begin(), impl.streams.end(), [&](const auto& row) {
+      return row.plan->stream_id == binding.stream_id &&
+             row.plan->process_group == binding.process_group && row.plan->device == binding.device;
+    });
+    const auto instance = std::find_if(operators.begin(), operators.end(), [&](const auto& row) {
+      return row.vertex == binding.operator_vertex;
+    });
+    std::string_view mismatch_reason;
+    if (owner == impl.streams.end()) {
+      mismatch_reason = "planned stream owner missing";
+    } else if (owner->native_handle() == nullptr) {
+      mismatch_reason = "planned native stream missing";
+    } else if (instance == operators.end()) {
+      mismatch_reason = "operator instance missing";
+    } else if (instance->partition != binding.partition) {
+      mismatch_reason = "operator partition differs";
+    } else if (instance->compute_stream != nullptr) {
+      mismatch_reason = "operator stream already bound";
+    } else if (instance->compute_device.valid()) {
+      mismatch_reason = "operator device already bound";
     }
+    if (!mismatch_reason.empty()) {
+      record_operator_binding_mismatch(
+          impl, binding, instance != operators.end() ? &*instance : nullptr, mismatch_reason);
+      return cuda_execution_error("CUDA_STREAM_BINDING_STREAM_MISMATCH");
+    }
+    instance->compute_stream = owner->native_handle();
+    instance->compute_device = binding.device;
+    published.push_back(static_cast<std::size_t>(std::distance(operators.begin(), instance)));
   }
+  return {};
 }
 
-void clear_partition_streams(const RuntimeCudaExecutionResources::Impl& impl,
-                             std::span<RuntimeOperatorInstance> operators) noexcept {
-  for (const auto& owner : impl.streams) {
-    const auto& partition = owner.plan->partition;
-    if (!partition) {
+void clear_published_operator_stream_bindings(const ExecutionPlanState& plan,
+                                              const RuntimeCudaExecutionResources::Impl& impl,
+                                              std::span<RuntimeOperatorInstance> operators,
+                                              std::span<const std::size_t> published) noexcept {
+  for (const std::size_t index : published) {
+    if (index >= operators.size()) {
       continue;
     }
-    // The immediately preceding guard proves the plan-owned optional is engaged.
-    const ExecutionPartitionId partition_id =
-        *partition;  // NOLINT(bugprone-unchecked-optional-access)
-    for (auto& instance : operators) {
-      if (instance.partition == partition_id && instance.compute_stream == owner.native_handle() &&
-          instance.compute_device == owner.plan->device) {
-        instance.compute_stream = nullptr;
-        instance.compute_device = {};
-      }
+    auto& instance = operators[index];
+    const auto binding =
+        std::find_if(plan.operator_cuda_stream_bindings.begin(),
+                     plan.operator_cuda_stream_bindings.end(),
+                     [&](const auto& row) { return row.operator_vertex == instance.vertex; });
+    if (binding == plan.operator_cuda_stream_bindings.end()) {
+      continue;
+    }
+    const auto owner = std::find_if(impl.streams.begin(), impl.streams.end(), [&](const auto& row) {
+      return row.plan->stream_id == binding->stream_id;
+    });
+    if (owner != impl.streams.end() && instance.compute_stream == owner->native_handle() &&
+        instance.compute_device == binding->device) {
+      instance.compute_stream = nullptr;
+      instance.compute_device = {};
     }
   }
 }
@@ -1007,13 +1104,14 @@ RuntimeCudaExecutionResources::Impl::~Impl() {
         }
 #endif
       }
-      HOLOSCAN_LOG_ERROR("Failed to shut down Runtime CUDA execution resources: {}",
-                         runtime_error_message(result.error()));
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to shut down Runtime CUDA execution resources: {}",
+                                   runtime_error_message(result.error()));
     }
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
   } catch (...) {
     try {
-      HOLOSCAN_LOG_ERROR("Failed to shut down Runtime CUDA execution resources: unknown exception");
+      HOLOSCAN_LOG_AUTOMATIC_ERROR(
+          "Failed to shut down Runtime CUDA execution resources: unknown exception");
     } catch (...) {  // NOLINT(bugprone-empty-catch)
       // Destruction is best-effort and must not terminate while reporting another exception.
     }
@@ -1321,7 +1419,7 @@ RuntimeCudaExecutionResources::create(
     }
   }
   // Validate native owners and any pre-existing bindings before mutating Operator instances. The
-  // second pass below verifies the bindings that bind_partition_streams() publishes.
+  // second pass verifies the exact binding-row publication transaction.
   record_diagnostic(*impl, "stream_binding_validation");
   auto bindings = validate_materialized_streams(plan, *impl, operators);
   if (!bindings) {
@@ -1332,14 +1430,19 @@ RuntimeCudaExecutionResources::create(
         injected_materialization_failure(RuntimeCudaExecutionFailurePoint::kBinding));
   }
   record_diagnostic(*impl, "stream_binding_publish");
-  bind_partition_streams(*impl, operators);
+  std::vector<std::size_t> published_bindings;
+  auto published = publish_operator_stream_bindings(plan, *impl, operators, published_bindings);
+  if (!published) {
+    clear_published_operator_stream_bindings(plan, *impl, operators, published_bindings);
+    return make_unexpected(std::move(published.error()));
+  }
   bindings = validate_materialized_streams(plan, *impl, operators);
   if (!bindings) {
-    clear_partition_streams(*impl, operators);
+    clear_published_operator_stream_bindings(plan, *impl, operators, published_bindings);
     return make_unexpected(std::move(bindings.error()));
   }
   if (inject_failure(*impl, RuntimeCudaExecutionFailurePoint::kPublish)) {
-    clear_partition_streams(*impl, operators);
+    clear_published_operator_stream_bindings(plan, *impl, operators, published_bindings);
     return make_unexpected(
         injected_materialization_failure(RuntimeCudaExecutionFailurePoint::kPublish));
   }
@@ -1350,7 +1453,7 @@ RuntimeCudaExecutionResources::create(
                                  impl->run_generation,
                                  impl->claim_owner_id,
                                  DeviceClaim::State::kActive)) {
-      clear_partition_streams(*impl, operators);
+      clear_published_operator_stream_bindings(plan, *impl, operators, published_bindings);
       return make_unexpected(
           Error{ErrorCode::kFailure, "CUDA_GREEN_CONTEXT_ACTIVE_OWNER_CONFLICT"});
     }
@@ -1371,6 +1474,12 @@ expected<void, Error> RuntimeCudaExecutionResources::quiesce(
   return impl_ != nullptr ? impl_->quiesce(diagnostic) : expected<void, Error>{};
 }
 
+void RuntimeCudaExecutionResources::quarantine_after_external_failure() noexcept {
+  if (impl_ != nullptr) {
+    quarantine_all_device_claims(*impl_);
+  }
+}
+
 cudaStream_t RuntimeCudaExecutionResources::partition_stream(
     ProcessGroupId process_group, DeviceId device, ExecutionPartitionId partition) const noexcept {
   // This cold lookup is resolved once while binding Runtime endpoint/operator state.
@@ -1389,6 +1498,17 @@ cudaStream_t RuntimeCudaExecutionResources::service_stream(
       std::find_if(impl_->streams.begin(), impl_->streams.end(), [&](const auto& row) {
         return row.plan->process_group == process_group && row.plan->device == device &&
                row.plan->owner_id == owner_id && !row.plan->partition;
+      });
+  return found == impl_->streams.end() ? nullptr : found->native_handle();
+}
+
+cudaStream_t RuntimeCudaExecutionResources::compute_stream(
+    ProcessGroupId process_group, DeviceId device, std::string_view stream_id) const noexcept {
+  // Compute streams are resolved during cold operator and Tensor-resource binding.
+  const auto found =
+      std::find_if(impl_->streams.begin(), impl_->streams.end(), [&](const auto& row) {
+        return row.plan->process_group == process_group && row.plan->device == device &&
+               row.plan->stream_id == stream_id;
       });
   return found == impl_->streams.end() ? nullptr : found->native_handle();
 }

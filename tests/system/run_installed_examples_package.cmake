@@ -9,11 +9,16 @@ foreach(required_variable IN ITEMS
         HOLOSCAN_EXAMPLES_INSTALL_DIR
         HOLOSCAN_EXPECT_SHARED
         HOLOSCAN_GENERATOR
+        HOLOSCAN_PYTHON_COMPONENT_ENABLED
         HOLOSCAN_CTEST_COMMAND)
     if(NOT DEFINED ${required_variable} OR "${${required_variable}}" STREQUAL "")
         message(FATAL_ERROR "${required_variable} is required")
     endif()
 endforeach()
+if(HOLOSCAN_PYTHON_COMPONENT_ENABLED AND
+   (NOT DEFINED HOLOSCAN_PYTHON_EXECUTABLE OR HOLOSCAN_PYTHON_EXECUTABLE STREQUAL ""))
+    message(FATAL_ERROR "HOLOSCAN_PYTHON_EXECUTABLE is required when Python support is enabled")
+endif()
 
 set(install_destination "/usr")
 set(install_staging_root "${HOLOSCAN_EXAMPLES_WORK_DIR}/stage")
@@ -39,6 +44,7 @@ set(sdk_build_command
         camera_imu_control
         sensor_daemon
         result_recorder
+        external_client_relay
         first_pipeline
         first_operator
         tensors_101
@@ -55,6 +61,7 @@ set(sdk_build_command
         errors_as_values
         time_and_clocks
         compile_and_check
+        diagnostic_reporting
         running_and_stopping
         retained_tensor_compositor
         embedded_device_tensor
@@ -67,6 +74,7 @@ set(sdk_build_command
         lifecycle_callbacks
         graph_composition
         automatic_partitioning
+        cuda_graph_region
         reusable_graphs
         pod_payloads
         schema_payloads
@@ -80,18 +88,21 @@ set(sdk_build_command
         multi_tensor_schema
         descriptor_tensor_external_topic_graph
         descriptor_tensor_external_topic_client
+        config_file
 )
-if(HOLOSCAN_CONFIG_COMPONENT_ENABLED AND
-   HOLOSCAN_CONFIG_IO_COMPONENT_ENABLED AND
-   HOLOSCAN_PARAMS_COMPONENT_ENABLED AND
-   HOLOSCAN_PARAMS_IO_COMPONENT_ENABLED)
-    list(APPEND sdk_build_command config_file)
+if(HOLOSCAN_TESTING_COMPONENT_ENABLED)
+    list(APPEND sdk_build_command
+        operator_testing operator_testing_tensor operator_testing_image operator_testing_device
+        operator_testing_schema operator_testing_lifecycle operator_testing_clock)
 endif()
 if(HOLOSCAN_WEB_TUNER_COMPONENT_ENABLED)
     list(APPEND sdk_build_command web_tuner)
 endif()
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(HOLOSCAN_PYTHON_COMPONENT_ENABLED)
+    list(APPEND sdk_build_command holoscan-python)
+endif()
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND sdk_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${sdk_build_command}
@@ -111,46 +122,36 @@ file(REMOVE_RECURSE "${sdk_artifact_output}")
 file(MAKE_DIRECTORY "${sdk_artifact_output}/stale-graph-id/developer")
 file(WRITE "${sdk_artifact_output}/stale-graph-id/developer/stale-marker.txt" "stale\n")
 
-# holoscan-sensor-io is unconditional, unlike the optional components appended below: the install
-# exports one holoscan-targets.cmake covering every exported target, so leaving it out fails
-# find_package regardless of whether the examples here use a sensor payload.
 set(installed_example_components
     holoscan
     holoscan-dependencies
     iceoryx2-lib
     dev
-    holomq
+    holoscan-holomq
     holoscan-core
     holoscan-sensor-io
+    holoscan-core-examples
+    holoscan-config
+    holoscan-config-io
 )
+if(HOLOSCAN_TESTING_COMPONENT_ENABLED)
+    list(APPEND installed_example_components holoscan-testing holoscan-testing-examples)
+endif()
 # On Windows, a shared iceoryx2 library's DLL is installed in the bin component.
 if(WIN32 AND HOLOSCAN_EXPECT_SHARED)
     list(APPEND installed_example_components bin)
 endif()
-# Optional tooling is shipped as independently selectable install components.
-# Install each enabled dependency before its consumers so this fixture proves
-# the same component closure expected from a package assembled with those
-# features, rather than relying on a build-tree target that is absent from the
+# Optional tooling is shipped as an independently selectable install component. Install it after
+# its dependencies so this fixture proves the same component closure expected from a package
+# assembled with that feature, rather than relying on a build-tree target that is absent from the
 # isolated prefix.
-if(HOLOSCAN_CONFIG_COMPONENT_ENABLED)
-    list(APPEND installed_example_components holoscan-config)
-endif()
-if(HOLOSCAN_CONFIG_IO_COMPONENT_ENABLED)
-    list(APPEND installed_example_components holoscan-config-io)
-endif()
-if(HOLOSCAN_PARAMS_COMPONENT_ENABLED)
-    list(APPEND installed_example_components holoscan-params)
-endif()
-if(HOLOSCAN_PARAMS_IO_COMPONENT_ENABLED)
-    list(APPEND installed_example_components holoscan-params-io)
-endif()
 if(HOLOSCAN_WEB_TUNER_COMPONENT_ENABLED)
     list(APPEND installed_example_components holoscan-experimental-params-web-tuner)
 endif()
-list(APPEND installed_example_components
-    holoscan-examples
-    holoscan-graph-artifacts
-)
+if(HOLOSCAN_PYTHON_COMPONENT_ENABLED)
+    list(APPEND installed_example_components holoscan-python_libs)
+endif()
+list(APPEND installed_example_components holoscan-graph-artifacts)
 
 foreach(component IN LISTS installed_example_components)
     set(install_command
@@ -159,8 +160,8 @@ foreach(component IN LISTS installed_example_components)
         --prefix "${install_destination}"
         --component "${component}"
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND install_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${install_command}
@@ -189,6 +190,76 @@ foreach(component IN LISTS installed_example_components)
             "${install_diagnostic}")
     endif()
 endforeach()
+
+set(installed_example_runner
+    "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/testing/run_example_tests")
+if(NOT EXISTS "${installed_example_runner}")
+    message(FATAL_ERROR "Missing installed example runner: ${installed_example_runner}")
+endif()
+if(UNIX AND NOT IS_EXECUTABLE "${installed_example_runner}")
+    message(FATAL_ERROR "Installed example runner is not executable: ${installed_example_runner}")
+endif()
+
+if(HOLOSCAN_PYTHON_COMPONENT_ENABLED)
+    set(installed_external_clients_source
+        "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/external_clients")
+    set(installed_external_clients_test
+        "${installed_external_clients_source}/python/test_run_clients.py")
+    if(NOT EXISTS "${installed_external_clients_test}")
+        message(FATAL_ERROR
+            "Missing installed external-client test helper: ${installed_external_clients_test}")
+    endif()
+
+    # Configure the component-installed source inventory independently in both consumer modes.
+    # The external-clients target lists every Python source even when tests are disabled, while
+    # BUILD_TESTING=ON additionally resolves the pytest command that uses this helper.
+    foreach(external_clients_testing IN ITEMS ON OFF)
+        string(TOLOWER "${external_clients_testing}" external_clients_testing_lower)
+        set(external_clients_build_dir
+            "${HOLOSCAN_EXAMPLES_WORK_DIR}/external-clients-${external_clients_testing_lower}")
+        file(REMOVE_RECURSE "${external_clients_build_dir}")
+        set(external_clients_configure_command
+            "${CMAKE_COMMAND}"
+            -S "${CMAKE_CURRENT_LIST_DIR}/installed_external_clients_source"
+            -B "${external_clients_build_dir}"
+            -G "${HOLOSCAN_GENERATOR}"
+            "-DEXAMPLE_SOURCE:PATH=${installed_external_clients_source}"
+            "-DBUILD_TESTING:BOOL=${external_clients_testing}"
+        )
+        if(external_clients_testing)
+            list(APPEND external_clients_configure_command
+                "-DPython3_EXECUTABLE:FILEPATH=${HOLOSCAN_PYTHON_EXECUTABLE}")
+        endif()
+        if(DEFINED HOLOSCAN_GENERATOR_PLATFORM AND
+           NOT HOLOSCAN_GENERATOR_PLATFORM STREQUAL "")
+            list(APPEND external_clients_configure_command
+                -A "${HOLOSCAN_GENERATOR_PLATFORM}")
+        endif()
+        if(DEFINED HOLOSCAN_GENERATOR_TOOLSET AND
+           NOT HOLOSCAN_GENERATOR_TOOLSET STREQUAL "")
+            list(APPEND external_clients_configure_command
+                -T "${HOLOSCAN_GENERATOR_TOOLSET}")
+        endif()
+        if(DEFINED HOLOSCAN_MAKE_PROGRAM AND NOT HOLOSCAN_MAKE_PROGRAM STREQUAL "")
+            list(APPEND external_clients_configure_command
+                "-DCMAKE_MAKE_PROGRAM:FILEPATH=${HOLOSCAN_MAKE_PROGRAM}")
+        endif()
+        execute_process(
+            COMMAND ${external_clients_configure_command}
+            RESULT_VARIABLE external_clients_configure_result
+            OUTPUT_VARIABLE external_clients_configure_output
+            ERROR_VARIABLE external_clients_configure_error_output
+            TIMEOUT 60
+        )
+        if(NOT external_clients_configure_result EQUAL 0)
+            message(FATAL_ERROR
+                "Failed to configure installed external-client sources with "
+                "BUILD_TESTING=${external_clients_testing}:\n"
+                "${external_clients_configure_output}"
+                "${external_clients_configure_error_output}")
+        endif()
+    endforeach()
+endif()
 
 # The upstream iceoryx2 install exports both the static and the shared C++ targets and
 # ships both library flavors, so only the flavor HoloMQ links against is asserted here.
@@ -318,29 +389,34 @@ set(holoscan_package_dir
 set(required_install_paths
     "${install_prefix}/include/holoscan/holoscan.hpp"
     "${holoscan_package_dir}/holoscan-config.cmake"
+    "${holoscan_package_dir}/holoscan-config-targets.cmake"
+    "${holoscan_package_dir}/holoscan-config-io-targets.cmake"
     "${holoscan_package_dir}/HoloscanLoggingPolicy.cmake"
     "${holoscan_package_dir}/HoloscanGraphArtifacts.cmake"
     "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/CMakeLists.txt"
 )
-if(HOLOSCAN_CONFIG_COMPONENT_ENABLED)
-    list(APPEND required_install_paths
-        "${holoscan_package_dir}/holoscan-config-targets.cmake")
-endif()
-if(HOLOSCAN_CONFIG_IO_COMPONENT_ENABLED)
-    list(APPEND required_install_paths
-        "${holoscan_package_dir}/holoscan-config-io-targets.cmake")
-endif()
-if(HOLOSCAN_PARAMS_COMPONENT_ENABLED)
-    list(APPEND required_install_paths
-        "${holoscan_package_dir}/holoscan-params-targets.cmake")
-endif()
-if(HOLOSCAN_PARAMS_IO_COMPONENT_ENABLED)
-    list(APPEND required_install_paths
-        "${holoscan_package_dir}/holoscan-params-io-targets.cmake")
-endif()
 if(HOLOSCAN_WEB_TUNER_COMPONENT_ENABLED)
     list(APPEND required_install_paths
         "${holoscan_package_dir}/holoscan-experimental-params-web-tuner-targets.cmake")
+endif()
+if(HOLOSCAN_PYTHON_COMPONENT_ENABLED)
+    file(GLOB installed_python_initializers LIST_DIRECTORIES FALSE
+        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/python*/site-packages/holoscan/__init__.py")
+    file(GLOB installed_python_core_modules LIST_DIRECTORIES FALSE
+        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/python*/site-packages/holoscan/_core*.so"
+        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/python*/site-packages/holoscan/_core*.pyd"
+        "${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/python*/site-packages/holoscan/_core*.dylib")
+    list(LENGTH installed_python_initializers installed_python_initializer_count)
+    if(NOT installed_python_initializer_count EQUAL 1 OR NOT installed_python_core_modules)
+        message(FATAL_ERROR
+            "Installed Python example prerequisites are incomplete: initializers="
+            "${installed_python_initializers}; Core extensions=${installed_python_core_modules}")
+    endif()
+    list(GET installed_python_initializers 0 installed_python_initializer)
+    get_filename_component(installed_python_holoscan_dir
+        "${installed_python_initializer}" DIRECTORY)
+    get_filename_component(installed_python_package_dir
+        "${installed_python_holoscan_dir}" DIRECTORY)
 endif()
 foreach(required_install_path IN LISTS required_install_paths)
     if(NOT EXISTS "${required_install_path}")
@@ -472,12 +548,21 @@ set(configure_command
     -S "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}"
     -B "${examples_build_dir}"
     -G "${HOLOSCAN_GENERATOR}"
-    "-DCMAKE_PREFIX_PATH:PATH=${install_prefix}"
+    "-Dholoscan_DIR:PATH=${install_prefix}/${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
     "-DCMAKE_INSTALL_PREFIX:PATH=${install_prefix}"
     "-DCMAKE_INSTALL_DATADIR:STRING=${custom_examples_data_dir}"
     "-DBUILD_TESTING:BOOL=ON"
     "-DHOLOSCAN_INSTALL_EXAMPLE_SOURCE:BOOL=OFF"
+    "-DHOLOSCAN_BUILD_PYTHON_EXAMPLES:BOOL=${HOLOSCAN_PYTHON_COMPONENT_ENABLED}"
 )
+if(DEFINED HOLOSCAN_CONSUMER_CACHE AND NOT HOLOSCAN_CONSUMER_CACHE STREQUAL "")
+    list(APPEND configure_command -C "${HOLOSCAN_CONSUMER_CACHE}")
+endif()
+if(HOLOSCAN_PYTHON_COMPONENT_ENABLED)
+    list(APPEND configure_command
+        "-DPython3_EXECUTABLE:FILEPATH=${HOLOSCAN_PYTHON_EXECUTABLE}"
+    )
+endif()
 if(DEFINED HOLOSCAN_GENERATOR_PLATFORM AND NOT HOLOSCAN_GENERATOR_PLATFORM STREQUAL "")
     list(APPEND configure_command -A "${HOLOSCAN_GENERATOR_PLATFORM}")
 endif()
@@ -515,8 +600,8 @@ if(DEFINED HOLOSCAN_MSVC_RUNTIME_LIBRARY AND NOT HOLOSCAN_MSVC_RUNTIME_LIBRARY S
         "-DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=${HOLOSCAN_MSVC_RUNTIME_LIBRARY}"
     )
 endif()
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}")
 endif()
 
 execute_process(
@@ -528,9 +613,134 @@ if(NOT configure_result EQUAL 0)
     message(FATAL_ERROR "Failed to configure the complete isolated installed examples tree")
 endif()
 
+# An SDK that advertises Python support must reject an explicitly requested Python example when
+# its native extension is absent. Temporarily hide only the staged copy, restore it regardless of
+# the configure result, and require the helper's bounded diagnostic.
+if(HOLOSCAN_PYTHON_COMPONENT_ENABLED)
+    set(hidden_python_core_modules)
+    foreach(installed_python_core_module IN LISTS installed_python_core_modules)
+        set(hidden_python_core_module "${installed_python_core_module}.incomplete")
+        file(RENAME "${installed_python_core_module}" "${hidden_python_core_module}")
+        list(APPEND hidden_python_core_modules "${hidden_python_core_module}")
+    endforeach()
+    set(incomplete_python_build_dir "${HOLOSCAN_EXAMPLES_WORK_DIR}/incomplete-python")
+    file(REMOVE_RECURSE "${incomplete_python_build_dir}")
+    set(incomplete_python_configure_command
+        "${CMAKE_COMMAND}"
+        -S "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/first_pipeline/python"
+        -B "${incomplete_python_build_dir}"
+        -G "${HOLOSCAN_GENERATOR}"
+        "-DCMAKE_PREFIX_PATH:PATH=${install_prefix}"
+        "-DBUILD_TESTING:BOOL=OFF"
+        "-DHOLOSCAN_EXAMPLES_IN_SDK_BUILD:BOOL=OFF"
+        "-DHOLOSCAN_PYTHON_EXAMPLE_PACKAGE_DIR:PATH=${installed_python_package_dir}"
+        "-DPython3_EXECUTABLE:FILEPATH=${HOLOSCAN_PYTHON_EXECUTABLE}"
+    )
+    if(DEFINED HOLOSCAN_GENERATOR_PLATFORM AND NOT HOLOSCAN_GENERATOR_PLATFORM STREQUAL "")
+        list(APPEND incomplete_python_configure_command -A "${HOLOSCAN_GENERATOR_PLATFORM}")
+    endif()
+    if(DEFINED HOLOSCAN_GENERATOR_TOOLSET AND NOT HOLOSCAN_GENERATOR_TOOLSET STREQUAL "")
+        list(APPEND incomplete_python_configure_command -T "${HOLOSCAN_GENERATOR_TOOLSET}")
+    endif()
+    if(DEFINED HOLOSCAN_MAKE_PROGRAM AND NOT HOLOSCAN_MAKE_PROGRAM STREQUAL "")
+        list(APPEND incomplete_python_configure_command
+            "-DCMAKE_MAKE_PROGRAM:FILEPATH=${HOLOSCAN_MAKE_PROGRAM}")
+    endif()
+    execute_process(
+        COMMAND ${incomplete_python_configure_command}
+        RESULT_VARIABLE incomplete_python_result
+        OUTPUT_VARIABLE incomplete_python_output
+        ERROR_VARIABLE incomplete_python_error_output
+        TIMEOUT 60
+    )
+    foreach(hidden_python_core_module IN LISTS hidden_python_core_modules)
+        string(REGEX REPLACE "\\.incomplete$" "" installed_python_core_module
+            "${hidden_python_core_module}")
+        file(RENAME "${hidden_python_core_module}" "${installed_python_core_module}")
+    endforeach()
+    string(CONCAT incomplete_python_log
+        "${incomplete_python_output}" "${incomplete_python_error_output}")
+    if(incomplete_python_result EQUAL 0 OR
+       NOT incomplete_python_log MATCHES
+           "installed Holoscan Python package does not include its Core extension")
+        message(FATAL_ERROR
+            "An explicitly requested incomplete Python package was not rejected as expected: "
+            "${incomplete_python_log}")
+    endif()
+
+    # Configure this example as an independent installed consumer without injecting the
+    # interpreter or Python package directory. Its two CTests must use the values discovered in
+    # the same directory scope that registers the additional rejection test.
+    set(standalone_derived_tensor_build_dir
+        "${HOLOSCAN_EXAMPLES_WORK_DIR}/standalone-derived-tensor-python")
+    file(REMOVE_RECURSE "${standalone_derived_tensor_build_dir}")
+    set(standalone_derived_tensor_configure_command
+        "${CMAKE_COMMAND}"
+        -S
+        "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/derived_tensor_pool_capacity/python"
+        -B "${standalone_derived_tensor_build_dir}"
+        -G "${HOLOSCAN_GENERATOR}"
+        "-DCMAKE_PREFIX_PATH:PATH=${install_prefix}"
+        "-DBUILD_TESTING:BOOL=ON"
+    )
+    if(DEFINED HOLOSCAN_GENERATOR_PLATFORM AND NOT HOLOSCAN_GENERATOR_PLATFORM STREQUAL "")
+        list(APPEND standalone_derived_tensor_configure_command
+            -A "${HOLOSCAN_GENERATOR_PLATFORM}")
+    endif()
+    if(DEFINED HOLOSCAN_GENERATOR_TOOLSET AND NOT HOLOSCAN_GENERATOR_TOOLSET STREQUAL "")
+        list(APPEND standalone_derived_tensor_configure_command
+            -T "${HOLOSCAN_GENERATOR_TOOLSET}")
+    endif()
+    if(DEFINED HOLOSCAN_MAKE_PROGRAM AND NOT HOLOSCAN_MAKE_PROGRAM STREQUAL "")
+        list(APPEND standalone_derived_tensor_configure_command
+            "-DCMAKE_MAKE_PROGRAM:FILEPATH=${HOLOSCAN_MAKE_PROGRAM}")
+    endif()
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND standalone_derived_tensor_configure_command
+            "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}")
+    endif()
+    execute_process(
+        COMMAND ${standalone_derived_tensor_configure_command}
+        RESULT_VARIABLE standalone_derived_tensor_configure_result
+        OUTPUT_VARIABLE standalone_derived_tensor_configure_output
+        ERROR_VARIABLE standalone_derived_tensor_configure_error_output
+        TIMEOUT 60
+    )
+    if(NOT standalone_derived_tensor_configure_result EQUAL 0)
+        message(FATAL_ERROR
+            "Failed to configure the standalone installed Python Tensor example: "
+            "${standalone_derived_tensor_configure_output}"
+            "${standalone_derived_tensor_configure_error_output}")
+    endif()
+
+    set(standalone_derived_tensor_test_command
+        "${HOLOSCAN_CTEST_COMMAND}"
+        --test-dir "${standalone_derived_tensor_build_dir}"
+        --output-on-failure
+        --no-tests=error
+        -R "^EXAMPLE_PYTHON_DERIVED_TENSOR_POOL_CAPACITY(_REJECTS_NON_RGBA)?_TEST$"
+    )
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND standalone_derived_tensor_test_command -C "${CMAKE_BUILD_TYPE}")
+    endif()
+    execute_process(
+        COMMAND ${standalone_derived_tensor_test_command}
+        RESULT_VARIABLE standalone_derived_tensor_test_result
+        OUTPUT_VARIABLE standalone_derived_tensor_test_output
+        ERROR_VARIABLE standalone_derived_tensor_test_error_output
+        TIMEOUT 90
+    )
+    if(NOT standalone_derived_tensor_test_result EQUAL 0)
+        message(FATAL_ERROR
+            "Failed to run the standalone installed Python Tensor example tests: "
+            "${standalone_derived_tensor_test_output}"
+            "${standalone_derived_tensor_test_error_output}")
+    endif()
+endif()
+
 set(examples_build_command "${CMAKE_COMMAND}" --build "${examples_build_dir}")
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND examples_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND examples_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${examples_build_command}
@@ -544,10 +754,10 @@ endif()
 set(examples_install_command
     "${CMAKE_COMMAND}" --install "${examples_build_dir}"
     --prefix "${install_prefix}"
-    --component holoscan-examples
+    --component holoscan-core-examples
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND examples_install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND examples_install_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${examples_install_command}
@@ -560,7 +770,7 @@ if(NOT examples_install_result EQUAL 0)
 endif()
 
 set(custom_installed_automatic_partitioning_executable
-    "${install_prefix}/${custom_examples_data_dir}/examples/automatic_partitioning/cpp/automatic_partitioning${HOLOSCAN_EXECUTABLE_SUFFIX}"
+    "${install_prefix}/${HOLOSCAN_EXAMPLES_INSTALL_DIR}/automatic_partitioning/cpp/automatic_partitioning${HOLOSCAN_EXECUTABLE_SUFFIX}"
 )
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env
@@ -581,7 +791,7 @@ if(NOT custom_installed_automatic_partitioning_result EQUAL 0 OR
    NOT custom_installed_automatic_partitioning_log MATCHES
        "automatic_partitioning cpu example complete")
     message(FATAL_ERROR
-        "Failed to execute the custom-data-directory automatic partitioning target with "
+        "Failed to execute the custom-data-directory reinstalled automatic partitioning target with "
         "sanitized loader paths: ${custom_installed_automatic_partitioning_log}")
 endif()
 
@@ -608,14 +818,34 @@ set(installed_example_tests
     EXAMPLE_CPP_NOTIFICATION_BRIDGE_FAILURE_TEST
     EXAMPLE_CPP_NOTIFICATION_BRIDGE_UNSUPPORTED_TEST
 )
+if(HOLOSCAN_PYTHON_COMPONENT_ENABLED)
+    list(APPEND installed_example_tests
+        EXAMPLE_PYTHON_FIRST_PIPELINE_TEST
+        EXAMPLE_PYTHON_COMPILE_AND_CHECK_TEST)
+endif()
 # These smoke tests are not among the reference applications, but execute the experimental POD
 # example and any available descriptor-Tensor external-topic example from the relocated installed
 # tree to verify their deeper install paths resolve the SDK libraries.
+# REQ: EXPECTED-033
+# REQ: EXPECTED-032
 set(installed_example_smoke_tests
+    EXAMPLE_CPP_COMPILE_AND_CHECK_TEST
+    EXAMPLE_CPP_DIAGNOSTIC_REPORTING_TEST
     EXAMPLE_CPP_DERIVED_TENSOR_POOL_CAPACITY_TEST
     EXAMPLE_CPP_RATE_AWARE_PORTS_TEST
     EXAMPLE_CPP_POD_PAYLOADS_TEST
 )
+if(HOLOSCAN_TESTING_COMPONENT_ENABLED)
+    list(APPEND installed_example_smoke_tests
+        EXAMPLE_CPP_OPERATOR_TESTING_TEST
+        EXAMPLE_CPP_OPERATOR_TESTING_TENSOR_TEST
+        EXAMPLE_CPP_OPERATOR_TESTING_IMAGE_TEST
+        EXAMPLE_CPP_OPERATOR_TESTING_DEVICE_TEST
+        EXAMPLE_CPP_OPERATOR_TESTING_GREEN_CONTEXT_TEST
+        EXAMPLE_CPP_OPERATOR_TESTING_SCHEMA_TEST
+        EXAMPLE_CPP_OPERATOR_TESTING_LIFECYCLE_TEST
+        EXAMPLE_CPP_OPERATOR_TESTING_CLOCK_TEST)
+endif()
 set(optional_installed_example_smoke_test EXAMPLE_CPP_DESCRIPTOR_TENSOR_EXTERNAL_TOPIC_TEST)
 
 # The descriptor-Tensor driver is registered only when the isolated consumer finds Python 3.
@@ -627,8 +857,8 @@ set(optional_example_test_list_command
     --show-only=json-v1
     -R "^${optional_installed_example_smoke_test}$"
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND optional_example_test_list_command -C "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND optional_example_test_list_command -C "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${optional_example_test_list_command}
@@ -662,8 +892,8 @@ foreach(installed_example_test IN LISTS installed_example_execution_tests)
         --show-only=json-v1
         -R "^${installed_example_test}$"
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND examples_test_list_command -C "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND examples_test_list_command -C "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${examples_test_list_command}
@@ -704,8 +934,8 @@ set(examples_test_command
     --no-tests=error
     -R "${installed_example_test_regex}"
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND examples_test_command -C "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND examples_test_command -C "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${examples_test_command}
@@ -767,4 +997,37 @@ endif()
 if(NOT examples_test_log MATCHES "notification_bridge: worker failure propagated through RUNTIME_OPERATOR_CALLBACK_FAILED|SKIP: notification_bridge requires Linux eventfd")
     message(FATAL_ERROR
         "Installed notification README replay omitted its failure success-or-skip output witness")
+endif()
+
+# On Unix, examples are private SDK programs rather than data files. Reconfigure
+# the installed source tree with a nondefault libdir and inspect its generated
+# install rule to ensure the source-and-binary bundle follows that libdir.
+if(NOT WIN32)
+    set(custom_examples_lib_dir "custom-example-lib")
+    set(custom_libdir_configure_command ${configure_command})
+    list(APPEND custom_libdir_configure_command
+        "-DCMAKE_INSTALL_LIBDIR:STRING=${custom_examples_lib_dir}")
+    execute_process(
+        COMMAND ${custom_libdir_configure_command}
+        RESULT_VARIABLE custom_libdir_configure_result
+        TIMEOUT 300
+    )
+    if(NOT custom_libdir_configure_result EQUAL 0)
+        message(FATAL_ERROR "Failed to configure installed examples with a custom libdir")
+    endif()
+
+    set(custom_libdir_install_script
+        "${examples_build_dir}/automatic_partitioning/cpp/cmake_install.cmake")
+    if(NOT EXISTS "${custom_libdir_install_script}")
+        message(FATAL_ERROR
+            "Missing generated automatic partitioning install script: ${custom_libdir_install_script}")
+    endif()
+    file(READ "${custom_libdir_install_script}" custom_libdir_install_contents)
+    string(FIND "${custom_libdir_install_contents}"
+        "${custom_examples_lib_dir}/holoscan/examples/automatic_partitioning/cpp"
+        custom_libdir_install_offset)
+    if(custom_libdir_install_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Installed examples do not follow CMAKE_INSTALL_LIBDIR=${custom_examples_lib_dir}")
+    endif()
 endif()

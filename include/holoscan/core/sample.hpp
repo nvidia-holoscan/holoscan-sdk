@@ -174,7 +174,12 @@ constexpr SampleFlags& operator|=(SampleFlags& lhs, SampleFlags rhs) noexcept {
 /// attachment before exposing or locally rebinding these identifiers.
 struct SampleMetadata {
   SampleMetadataVersion version{};  ///< Semantic metadata record version.
-  std::uint64_t sequence{};  ///< Producer or Runtime publication sequence; zero when unstamped.
+  /// Producer or Runtime publication sequence; zero when unstamped.
+  /// Runtime-owned outputs start at one in a new session and retain their publication counter
+  /// across lifecycle reset and restart. The counter belongs to each output, independently of
+  /// producer epochs and logical flow identity; re-emission uses the emitting output's counter.
+  /// External endpoints retain their own sequence authority and transport projection.
+  std::uint64_t sequence{};
   std::int64_t capture_timestamp_ns{};  ///< Genuine acquisition coordinate when its clock is valid.
   ClockId source_clock_id{};  ///< Capture-time clock domain, or zero when capture time is absent.
   std::int64_t publish_timestamp_ns{};  ///< Publication coordinate when its clock is valid.

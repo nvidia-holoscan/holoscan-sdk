@@ -12,7 +12,8 @@ Everything on this page happens before `compile()`, and the failure style here
 is distinct: authoring throws, while compile and run report failures as
 values.
 
-**Complete C++ example:** [`examples/graph_composition/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/graph_composition/cpp)
+**Complete C++ example:** [`examples/graph_composition/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/graph_composition/cpp).
+The Python tabs below show the corresponding composition API.
 
 **Partitioning example:** [`examples/automatic_partitioning/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/automatic_partitioning/cpp)
 
@@ -29,26 +30,48 @@ values.
 
 ## Derived reusable graphs
 
-A subclass of `holoscan::Graph` is a reusable building block. Declare
-`Input<T>`/`Output<T>` members as its public interface, and author the private
-body by overriding `compose()`:
+A `Graph` subclass is a reusable building block. Declare input/output members
+as its public interface, and author the private body by overriding `compose()`:
 
-```cpp
-class FusionStage final : public holoscan::Graph {
- public:
-  holoscan::Input<Frame> camera{"camera"};
-  holoscan::Input<Imu>   imu{"imu"};
-  holoscan::Output<Pose> pose{"pose"};
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    class FusionStage final : public holoscan::Graph {
+     public:
+      holoscan::Input<Frame> camera{"camera"};
+      holoscan::Input<Imu> imu{"imu"};
+      holoscan::Output<Pose> pose{"pose"};
 
- protected:
-  void compose() override {
-    auto fusion = op<FusionOperator>("fusion");
-    export_input(camera, fusion->camera);   // public <- internal
-    export_input(imu,    fusion->imu);
-    export_output(pose,  fusion->pose);     // public <- internal
-  }
-};
-```
+     protected:
+      void compose() override {
+        auto fusion = op<FusionOperator>("fusion");
+        export_input(camera, fusion->camera);
+        export_input(imu, fusion->imu);
+        export_output(pose, fusion->pose);
+      }
+    };
+    ```
+  </Tab>
+  <Tab title="Python">
+    Python reusable-graph ports are class attributes carrying payload tokens:
+
+    ```python
+    import holoscan as hs
+    from custom_holoscan.operators import WindowFusion
+
+    class FusionGraph(hs.Graph):
+        camera = hs.Input("camera", hs.payload.Tensor)
+        imu = hs.Input("imu", hs.payload.uint32)
+        control = hs.Output("control", hs.payload.uint32)
+
+        def compose(self) -> None:
+            fusion = self.op(WindowFusion, "fusion")
+            self.export_input(self.camera, fusion.camera)
+            self.export_input(self.imu, fusion.imu)
+            self.export_output(self.control, fusion.control)
+    ```
+  </Tab>
+</Tabs>
 
 A containing graph embeds the component with `embed<G>("instance-name")` and
 wires only its exported interface — the internal operators stay private. The
@@ -66,6 +89,17 @@ two consequences:
   `compose()` failure is retained and replayed on every later observation —
   the graph does not silently half-compose.
 </Warning>
+
+Execution partitions are also the default ordinary CUDA-stream parallelism
+boundary. Every CUDA-active `(process group, partition, device)` tuple receives
+one runtime-owned stream; host-only partitions receive none. Separate streams
+permit independent GPU submission but do not guarantee concurrent execution,
+and Tensor readiness/release fences preserve ordering across partition
+boundaries. Applications that have measured a benefit from serialized
+submission can set
+`CompileOptions::cuda_execution.compute_stream_policy` to
+`CudaComputeStreamPolicy::kSharedProcessDevice`; that policy changes stream
+sharing, not callback ownership or Tensor pool sizing.
 
 The `Graph` itself is non-copyable and non-movable: handles into it are tied
 to that one instance. Handles (`OperatorHandle<Op>`, flow handles, and
@@ -105,15 +139,27 @@ interface plumbing.
 Structural wiring goes through `add_flow()`; *policy* on a port or edge goes
 through fluent configurators returned by `configure()`:
 
-```cpp
-g.configure(worker->input).queue_depth(4);              // input history depth
-g.configure(worker->output).max_emits_per_compute(2);   // output burst bound
-g.configure(worker->output).late_joiner_history_depth(8);
-g.configure(worker->input).diagnostic_alias("frames-in");
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    g.configure(worker->input).queue_depth(4);
+    g.configure(worker->output).max_emits_per_compute(2);
+    g.configure(worker->output).late_joiner_history_depth(8);
+    g.configure(worker->input).diagnostic_alias("frames-in");
 
-auto flow = g.add_flow(camera->output, worker->input);
-g.configure(flow).queue_depth(4);                       // per-edge override
-```
+    auto flow = g.add_flow(camera->output, worker->input);
+    g.configure(flow).queue_depth(4);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    graph.configure(sink.input).queue_depth(1).diagnostic_alias("frames-in")
+
+    flow = graph.add_flow(source.output, sink.input)
+    graph.configure(flow).queue_policy(hs.QueuePolicy.DROP_OLDEST)
+    ```
+  </Tab>
+</Tabs>
 
 You can also pass initial edge options directly at wiring time —
 `add_flow(src, dst, holoscan::ConnectionOptions{.queue_depth = 4U})` — and
@@ -140,23 +186,33 @@ if (auto cfg = g.try_configure(worker->input)) {
 
 ## Regions: coarse policy over groups of operators
 
-A **region** names a group of operators (or embedded graphs) so that
-constraints, optimization hints, and profiles can be authored once at graph
-scope instead of per operator. `region(name)` returns a fluent
-`RegionHandle`:
+A **region** names a group of operators (or embedded graphs) so that constraints
+and profiles can be authored once at graph scope instead of per operator.
+`region(name)` returns a fluent `RegionHandle`:
 
 ```cpp
 g.region("gpu-stage")
     .add(preprocess)
     .add(fusion)
+    .constrain(RegionConstraint::cuda_graph())
     .profile(/* ... */);
 ```
 
 `RegionHandle` offers `add(...)` for membership (operator handles and
 embedded-graph handles alike), `constrain(...)` for placement or resource
-constraints, `optimize(...)` for optimization hints, and `profile(...)` for a
-named profile. Regions are pure authoring metadata here — the compiler
-consumes them when it lowers the graph to an executable plan.
+constraints, and `profile(...)` for a named profile. CUDA Graph execution is
+optional and explicitly requested with `RegionConstraint::cuda_graph()`;
+regions without it use ordinary execution. If the compiler cannot safely lower
+a requested CUDA Graph region, compilation fails instead of silently ignoring
+the request. Regions are pure authoring metadata here; the compiler consumes
+them when it lowers the graph to an executable plan.
+
+CUDA Graph regions have a deliberately strict contract: capture-eligible
+operators in a linear Tensor chain, exact Runtime-owned Tensor storage, one
+process and CUDA context, and capture-safe `compute()` callbacks. See
+[CUDA Graph Regions](/holoscan/sdk-user-guide/composing-applications/cuda-graph-regions)
+for the complete authoring pattern, supported triggers, Tensor and placement
+rules, backpressure behavior, diagrams, and troubleshooting guide.
 
 ## Execution partitions
 
@@ -248,6 +304,23 @@ The frozen authoring view exposes this directive directly through
 `graph.view().automatic_partition_remaining()`, alongside the exact manual
 declarations returned by `graph.view().partitions()`.
 
+A named partition can also select an embedded Graph without enumerating its
+internal Operators:
+
+```cpp
+graph.partition("fusion-owner").add(fusion);  // GraphHandle returned by embed<G>().
+graph.auto_partition_remaining();
+```
+
+The selection includes all nested descendants and may contain independent
+sources. The selected subtree must have no internal partition declarations,
+even empty ones. Chaining adds sibling instances or direct Operators to the
+same exact set; direct-Operator-only partitions keep their single-root rule.
+The retained `graph_members()` view reports selected instance roots, while
+`members()` and `operator_paths()` report resolved work. See
+[atomic instance placement](/holoscan/sdk-user-guide/composing-applications/reusable-graphs#assigning-an-instance-to-one-thread-partition)
+for ownership, conflict and lifetime rules.
+
 Use `partition(name).include_all()` on the compile root when one explicit
 serial owner should cover the complete composed application, including
 embedded Graph descendants:
@@ -297,6 +370,7 @@ const holoscan::ClockKey clock = add_clock<holoscan::RealtimeClock>(
     "capture-clock", holoscan::RealtimeClock::Config{.use_time_since_epoch = true});
 set_default_clock(clock);
 ```
+
 ## Lifecycle ordering
 
 Most pipelines never need explicit lifecycle ordering — the runtime already
@@ -385,13 +459,14 @@ for the full boundary rules.
 - Tune ports and edges with `configure()`/`try_configure()` configurators;
   apply them immediately, never stash them.
 - Group operators with `region(name).add(...)` for graph-scope policy.
-- Use `partition(name).add(...)` only for an exact flat-Graph serial-owner cover.
+- Use `partition(name).add(...)` for exact direct-Operator or atomic embedded-instance ownership.
 - Declare clocks with `add_clock`/`bind_shared_clock`/`set_default_clock`;
   order lifecycle work with `lifecycle().before(...)`.
 - `view()` freezes an immutable `GraphView` — spans over vertices, edges,
   regions, partitions, and every other authored fact, plus a stable
   `identity()`.
-- Authoring throws `RuntimeError`; compile and run report failures as values.
+- C++ authoring throws `RuntimeError`, while Python authoring raises
+  `HoloscanError`; compile and run report failures as values.
 
 Next: package and version these components properly in
 [Reusable graphs](/holoscan/sdk-user-guide/composing-applications/reusable-graphs),

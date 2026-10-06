@@ -57,12 +57,7 @@ template <CatalogChannelPayload T>
     const SchemaIdentity identity = schema_identity<T>();
     result.kind = PayloadIdentityKind::kSchema;
     result.payload_kind = PayloadKind::kSerializedBytes;
-    result.schema = SchemaIdentityRecord{
-        .canonical_name = std::string(identity.canonical_name),
-        .version = identity.version,
-        .schema_sha256 = identity.schema_sha256,
-        .id = identity.id,
-    };
+    result.schema = make_schema_identity_record(identity);
   } else if constexpr (CatalogChannelPod<T>) {
     result.kind = PayloadIdentityKind::kPod;
     PodIdentityRecord pod{
@@ -122,25 +117,24 @@ template <CatalogChannelSchema T>
     return make_unexpected(
         Error{ErrorCode::kIncompatible, "catalog endpoint is not generated-schema backed"});
   }
-  SchemaIdentity expected{
+  const SchemaIdentity expected{
       .canonical_name = catalog_identity->canonical_name(),
-      .version = catalog_identity->version(),
-      .schema_sha256 = {},
-      .id = catalog_identity->id(),
+      .compatibility_epoch = catalog_identity->compatibility_epoch(),
+      .family_id = catalog_identity->family_id(),
+      .file_identifier = catalog_identity->file_identifier(),
   };
-  const auto digest = catalog_identity->schema_sha256();
-  std::copy(digest.begin(), digest.end(), expected.schema_sha256.begin());
   const auto& package = schema_package<T>();
   if (package.max_serialized_size() != generated_schema_max_serialized_size_v<T>) {
     return make_unexpected(
         Error{ErrorCode::kInvalidArgument, "generated schema package capacity evidence mismatch"});
   }
-  const auto catalog_capacity = endpoint.schema_max_serialized_size();
+  const auto catalog_capacity = endpoint.schema_writer_max_serialized_bytes();
   if (!catalog_capacity) {
     return make_unexpected(
         Error{ErrorCode::kIncompatible, "catalog schema serialized capacity is absent"});
   }
-  return validate_schema_package_for_attach(expected, package);
+  return validate_schema_package_for_attach(
+      expected, package, endpoint.schema_transport_profile_tag().value_or(0U));
 }
 }  // namespace channel_internal
 namespace detail {
@@ -201,13 +195,15 @@ class ChannelRuntime {
   [[nodiscard]] HOLOSCAN_CORE_EXPORT expected<ChannelDescriptorSubscriber, Error>
   create_descriptor_subscriber(std::string_view channel_name, const ChannelOptions& options = {});
 
-  /** @brief Create a typed inline publisher.
-   * @tparam T Fixed-size inline payload type.
+  /** @brief Create a typed name-based publisher.
+   * @tparam T Fixed-size inline payload or owning generated-schema type.
    * @param channel_name Logical channel name.
    * @param options Channel queue and sidecar options.
    * @return Publisher or Error for invalid options, unsupported transport, or setup failure. */
   template <typename T>
-    requires ChannelInlinePayload<T>
+    requires(ChannelInlinePayload<T> ||
+             (CatalogChannelSchema<T> &&
+              !holoscan::detail::kRuntimeDescriptorTensorSchemaPayload<T>))
   [[nodiscard]] expected<ChannelPublisher<T>, Error> create_publisher(
       std::string_view channel_name, const ChannelOptions& options = {});
 
@@ -265,13 +261,16 @@ class ChannelRuntime {
   [[nodiscard]] expected<ChannelPublisher<Tensor>, Error> create_publisher(
       ChannelEndpointCatalog::EndpointView endpoint, ChannelAttachOptions options = {});
 
-  /** @brief Create a typed subscriber.
-   * @tparam T Inline payload type or Tensor.
+  /** @brief Create a typed name-based subscriber.
+   * @tparam T Inline payload, owning generated-schema type, or Tensor.
    * @param channel_name Logical channel name.
    * @param options Channel queue and sidecar options.
    * @return Subscriber or Error for invalid options, unsupported transport, or setup failure. */
   template <typename T>
-    requires(ChannelInlinePayload<T> || std::is_same_v<T, Tensor>)
+    requires(ChannelInlinePayload<T> ||
+             (CatalogChannelSchema<T> &&
+              !holoscan::detail::kRuntimeDescriptorTensorSchemaPayload<T>) ||
+             std::is_same_v<T, Tensor>)
   [[nodiscard]] expected<ChannelSubscriber<T>, Error> create_subscriber(
       std::string_view channel_name, const ChannelOptions& options = {});
 
@@ -587,10 +586,16 @@ class ChannelRuntime {
 };
 
 template <typename T>
-  requires ChannelInlinePayload<T>
+  requires(ChannelInlinePayload<T> ||
+           (CatalogChannelSchema<T> && !holoscan::detail::kRuntimeDescriptorTensorSchemaPayload<T>))
 expected<ChannelPublisher<T>, Error> ChannelRuntime::create_publisher(
     std::string_view channel_name, const ChannelOptions& options) {
-  constexpr std::size_t kPayloadSize = sizeof(T);
+  constexpr std::size_t kPayloadSize = [] {
+    if constexpr (CatalogChannelSchema<T>) {
+      return generated_schema_max_serialized_size_v<T>;
+    }
+    return sizeof(T);
+  }();
   auto publisher = create_inline_payload_publisher(channel_name, kPayloadSize, options);
   if (!publisher.has_value()) {
     return make_unexpected(std::move(publisher).error());
@@ -715,13 +720,21 @@ expected<ChannelSubscriber<T>, Error> ChannelRuntime::create_subscriber(
 }
 
 template <typename T>
-  requires(ChannelInlinePayload<T> || std::is_same_v<T, Tensor>)
+  requires(ChannelInlinePayload<T> ||
+           (CatalogChannelSchema<T> &&
+            !holoscan::detail::kRuntimeDescriptorTensorSchemaPayload<T>) ||
+           std::is_same_v<T, Tensor>)
 expected<ChannelSubscriber<T>, Error> ChannelRuntime::create_subscriber(
     std::string_view channel_name, const ChannelOptions& options) {
   if constexpr (std::is_same_v<T, Tensor>) {
     return create_tensor_subscriber(channel_name, options);
   } else {
-    constexpr std::size_t kPayloadSize = sizeof(T);
+    constexpr std::size_t kPayloadSize = [] {
+      if constexpr (CatalogChannelSchema<T>) {
+        return generated_schema_max_serialized_size_v<T>;
+      }
+      return sizeof(T);
+    }();
     auto subscriber = create_inline_payload_subscriber(channel_name, kPayloadSize, options);
     if (!subscriber.has_value()) {
       return make_unexpected(std::move(subscriber).error());

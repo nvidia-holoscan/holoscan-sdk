@@ -1,7 +1,7 @@
 # Tensor Python Protocol Benchmark
 
-This pure-Python benchmark compares `holoscan.core.Tensor.as_tensor()` import
-and `holoscan.core.Tensor` export across the supported zero-copy Python
+This pure-Python benchmark compares `holoscan.Tensor.as_tensor()` import
+and `holoscan.Tensor` export across the supported zero-copy Python
 protocols.
 
 For import, the DLPack C exchange fast path is measured by passing a
@@ -22,17 +22,43 @@ round-trips the exported tensor, Python `__dlpack__` consumed by PyTorch, host
 `__array_interface__` consumed by NumPy, and device `__cuda_array_interface__`
 consumed by CuPy.
 
-Run directly from the repository root after building Python bindings:
+The benchmark also includes stable-ABI evaluation rows: repeated
+`Tensor.shape` and `Tensor.strides` property access, versioned `Tensor.__dlpack__`
+capsule creation, and `Tensor.as_tensor()` round-trip from another Holoscan
+Tensor. Use a multi-dimensional shape when comparing sequence builders so the
+measurement includes more than one tuple entry.
 
-```sh
-PYTHONPATH=build-cu13-x86_64/python/lib \
+Run directly from the SDK source root after building Python bindings.
+Use the same `HOLOSCAN_BUILD_ARCH` setting as the build when selecting a target explicitly:
+
+```bash
+BUILD_DIR=$(./run get_build_dir)
+PYTHONPATH="${BUILD_DIR}/python/lib" \
   python3 benchmark/tensor_python_as_tensor/tensor_as_tensor_fastpath_benchmark.py \
-  --device auto --shape 1024 --iterations 10000 --repeats 7
+  --device auto --shape 2x2x2x2x2x2x2x2x2x2x2x2 \
+  --iterations 50000 --warmup 5000 --repeats 11 \
+  --configuration nanobind-3.0.1-abi3 \
+  --benchmark_out=nanobind-3.0.1-abi3.json --benchmark_out_format=json
 ```
 
-From a build container:
+To run in the build container, invoke `launch` from the same host source root.
+It selects the build directory and sets the Python module search path:
+
+```bash
+./run launch --run-cmd \
+  "python3 ../benchmark/tensor_python_as_tensor/tensor_as_tensor_fastpath_benchmark.py"
+```
+
+For the measurement-only nanobind split-mode prototype, install the official
+`nanobind-backend` package into the benchmark environment and configure with:
 
 ```sh
-./run launch build-cu13-x86_64 --run-cmd \
-  "python3 /workspace/holoscan-sdk/benchmark/tensor_python_as_tensor/tensor_as_tensor_fastpath_benchmark.py"
+cmake -S . -B build-python-split \
+  -DHOLOSCAN_PYTHON_NANOBIND_SPLIT_MODE_PROTOTYPE=ON
+cmake --build build-python-split --target holoscan-python
 ```
+
+The prototype option is off by default. Production builds continue to use the
+linked `STABLE_ABI` module unless recorded performance evidence changes that
+decision. This manual path was last built and imported on x86_64 during the
+2026-09-01 S0 evaluation; CI does not exercise it.

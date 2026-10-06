@@ -10,6 +10,7 @@
 #include <holomq/errors.hpp>
 #include <holomq/expected.hpp>
 #include <holomq/inbound_message.hpp>
+#include <holomq/readiness_handle.hpp>
 #include <holomq/wait_strategy.hpp>
 
 #include <cstdint>
@@ -63,8 +64,9 @@ class Subscriber {
    * @brief Wait for and take a sample using \p strategy.
    * @param strategy Wait behavior to use for this call.
    * @return An inbound message on success; \ref ErrorCode::kTimeout when the wait expires, \ref
-   * ErrorCode::kInvalidArgument when \ref WaitMode::KernelWait lacks event wake, or another typed
-   * transport error on failure.
+   * ErrorCode::kInvalidArgument when this subscriber is already owned by a wait set or readiness
+   * handle or when \ref WaitMode::KernelWait lacks event wake, or another typed transport error on
+   * failure.
    * @note Retries internally after a spurious kernel wake with no queued sample. Recoverable
    * transport failures are returned as \ref Error, not thrown.
    */
@@ -112,6 +114,62 @@ class Subscriber {
   /// can check admissibility before attempting a wait instead of interpreting a failure.
   [[nodiscard]] bool is_event_wake_enabled() const noexcept {
     return port_ != nullptr && port_->is_event_wake_enabled();
+  }
+
+  /// @brief Return whether a wait set or readiness handle currently owns this subscriber's
+  /// listener.
+  /// @return True while the port is attached to one exclusive wait owner.
+  /// @note This is a snapshot for ownership checks, not receive readiness.
+  [[nodiscard]] bool has_wait_owner() const noexcept {
+    return port_ != nullptr && port_->is_attached_to_wait_set();
+  }
+
+  /// @brief Return whether a readiness handle specifically owns this subscriber's listener.
+  /// @return True while one readiness handle retains the port.
+  /// @note This ownership snapshot exists for composite Channel diagnostics.
+  [[nodiscard]] bool has_readiness_owner() const noexcept {
+    return port_ != nullptr && port_->is_attached_to_readiness_handle();
+  }
+
+  /// @brief Claim this subscriber's readiness descriptor for an external event loop.
+  /// @return A move-only readiness handle, or a checked capability or ownership error.
+  /// @retval ErrorCode::kClosed This subscriber was moved from.
+  /// @retval ErrorCode::kNotSupported Native descriptor readiness is unavailable on this platform,
+  /// or this subscriber was created without event wake.
+  /// @retval ErrorCode::kInvalidArgument This subscriber is already attached to a wait set or owns
+  /// another readiness handle.
+  /// @note The handle retains the transport port and releases its claim on destruction. While it
+  /// is live, blocking subscriber waits and \ref WaitSet::attach are rejected.
+  [[nodiscard]] expected<ReadinessHandle, Error> readiness() {
+    if (port_ == nullptr) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    auto source = port_->acquire_readiness();
+    if (!source) {
+      if (source.error() == ErrorCode::kInvalidArgument) {
+        return make_unexpected_nothrow<ReadinessHandle>(
+            source.error(),
+            has_readiness_owner() ? "subscriber is already owned by a readiness handle"
+                                  : "subscriber is already owned by a wait set");
+      }
+      return make_unexpected(Error{source.error()});
+    }
+    auto handle = ReadinessHandle::create(
+        port_,
+        source->descriptor,
+        source->initially_ready,
+        [](void* const owner) noexcept -> expected<bool, Error> {
+          auto acknowledged = static_cast<detail::transport::SubscriberPort<Payload>*>(owner)
+                                  ->acknowledge_readiness();
+          if (!acknowledged) {
+            return make_unexpected(Error{acknowledged.error()});
+          }
+          return *acknowledged;
+        },
+        [](void* const owner) noexcept {
+          static_cast<detail::transport::SubscriberPort<Payload>*>(owner)->release_readiness();
+        });
+    return handle;
   }
 
   /// @brief Return the backend-independent recipient id used by per-recipient delivery

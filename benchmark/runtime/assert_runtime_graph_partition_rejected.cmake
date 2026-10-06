@@ -20,6 +20,14 @@ elseif(REJECTION_CASE STREQUAL "automatic_forced_holomq")
         --force-holomq-process-local-inline)
     set(expected_diagnostic
         "automatic partition-cover rows cannot force HoloMQ because compiler-derived ownership")
+elseif(REJECTION_CASE STREQUAL "shared_owner_conflict")
+    set(rejection_arguments
+        --operator-lanes shared
+        --source-cpu 0
+        --controller-cpu 1)
+    string(CONCAT expected_diagnostic
+        "--source-cpu and --controller-cpu must match when the sole Operator lane "
+        "shares the controller thread")
 else()
     message(FATAL_ERROR "unknown REJECTION_CASE: ${REJECTION_CASE}")
 endif()

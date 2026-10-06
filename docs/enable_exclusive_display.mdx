@@ -1,3 +1,132 @@
 <Anchor id="exclusive-display-mode" />
 
-By default, applications use a borderless full screen window managed by the window manager. Because the window manager also manages other applications, applications may suffer a performance hit. To improve performance, exclusive display mode can be used with Holoscan's new visualization module (Holoviz), allowing the application to bypass the window manager and render directly to the display. Refer to the Holoviz documentation for details.
+By default a Holoscan visualization application renders into a window that the desktop's window
+manager composites with everything else on the screen. Compositing adds at least one frame of
+latency and lets other applications compete for the panel. Exclusive display mode removes the
+window system from the path: `HolovizOp` acquires a display that no desktop session owns, sets a
+video mode, and scans out to it directly through the NVIDIA driver.
+
+This page covers the supported configuration, how to select a display from an application, and
+the errors you will see when a prerequisite is missing. The visualization module's README in the
+SDK source tree (`public/modules/visualization/README.md`, section "Exclusive display") documents
+the implementation.
+
+<Warning>
+In this release exclusive display is supported on Linux only, through the kernel's DRM interface
+(`VK_EXT_acquire_drm_display`), and only while no display server owns the GPU. Running inside an
+X11 or Wayland desktop session, and on Windows, is not supported yet.
+</Warning>
+
+## Prerequisites
+
+- **Linux with an NVIDIA GPU and driver.** No `libdrm` is required: HoloViz talks to the kernel
+  DRM interface directly, so the Tegra `libdrm` shim shipped on NVIDIA IGX systems does not affect it.
+- **No display server owning the GPU.** The application must become DRM master, which fails while
+  an X server or Wayland compositor holds the device. Stop the display manager and run from a
+  text console (Ctrl-Alt-F3) or an SSH session:
+
+  ```bash
+  sudo systemctl stop gdm     # gdm3, sddm, or lightdm, whichever your system uses
+  # ... run the application ...
+  sudo systemctl start gdm    # hands the panels back to the desktop
+  ```
+
+- **Access to the DRM device nodes.** The user must belong to the `video` and `render` groups,
+  which own `/dev/dri/card*` and `/dev/dri/renderD*`:
+
+  ```bash
+  sudo usermod -aG video,render "$USER"   # log out and back in afterwards
+  ```
+
+- **In a container**, pass the device nodes and the group ids, and use the NVIDIA runtime with
+  `NVIDIA_DRIVER_CAPABILITIES=all` so the Vulkan ICD and the display libraries are mounted:
+
+  ```bash
+  docker run --rm --runtime=nvidia -e NVIDIA_DRIVER_CAPABILITIES=all \
+      --device /dev/dri \
+      --group-add "$(getent group video | cut -d: -f3)" \
+      --group-add "$(getent group render | cut -d: -f3)" \
+      <image> <application>
+  ```
+
+  The SDK's `./run launch` helper adds the group ids and the NVIDIA runtime for you; append
+  `--device /dev/dri` if `ls /dev/dri` is empty inside the container.
+
+## Find the display name
+
+Display names are the DRM connector names (`DP-2`, `HDMI-A-1`). They are not the names an X11
+session shows in `xrandr` or in the desktop display settings for the same panels: a monitor listed
+as `DP-0` under X may be `DP-2` here. The `holoviz_direct_display` example, built with the SDK
+examples, lists what is connected and who owns it:
+
+```bash
+holoviz_direct_display --list
+```
+
+```text
+Adapter: <your GPU>
+  Display: "DP-2" - available for direct display, current mode 2560x1440 180 Hz, VRR/G-Sync: advertised by EDID (floor 48 Hz)
+    Best mode: 2560x1440 180 Hz (12 modes total, --all-modes to list)
+  Display: "DP-3" - compositor-owned, current mode 1920x1080 144 Hz
+    Best mode: 1920x1080 144 Hz (9 modes total, --all-modes to list)
+```
+
+Names, modes, and the VRR marker depend on your hardware. A display reported as `compositor-owned`
+is still held by a desktop session; only `available for direct display` panels can be acquired.
+Add `--display DP-2 --frames 600` to render a color sweep to the panel and confirm the path works
+before wiring up an application.
+
+## Select the display in an application
+
+Pass an `ExclusiveDisplaySinkDesc` instead of a `WindowSinkDesc` when constructing `HolovizOp`.
+Everything else about the operator (layers, inputs, trigger) is unchanged.
+
+```cpp
+#include <holoscan/visualization/holoviz_op.hpp>
+
+using namespace holoscan::visualization;
+
+holoscan::Graph graph{"exclusive-display-app"};
+// ... add the operator that produces the frames and connect it to "holoviz" below ...
+
+LayerStack stack;
+stack.add_image_layer("video",
+                      ImageLayerDesc{.format = ImageFormat::kR8G8B8A8Unorm,
+                                     .max_width = 1920,
+                                     .max_height = 1080});
+
+// Exclusive scanout to the panel whose DRM connector name contains "DP-2", at its largest,
+// fastest mode.
+// The default LayerTrigger presents each frame as it arrives on the "video" layer; pass
+// ClockTrigger{std::chrono::nanoseconds{16'666'667}} instead to present at a fixed 60 Hz.
+const auto viz = graph.op<HolovizOp>("holoviz",
+                                     std::move(stack),
+                                     ExclusiveDisplaySinkDesc{.display_name = "DP-2"});
+```
+
+`ExclusiveDisplaySinkDesc` fields:
+
+| Field | Meaning |
+|---|---|
+| `display_name` | Case-sensitive substring of the DRM connector name. Empty selects the first display classified as free, falling back to one whose ownership could not be classified (logged as a warning); compositor-owned displays are never selected. |
+| `width`, `height` | Requested resolution; 0 selects the largest supported resolution. |
+| `refresh_hz` | Requested refresh rate; 0 selects the fastest refresh at that resolution. The closest supported mode wins (scored by width, then height, then refresh), and an inexact match logs the alternatives. |
+| `present_mode` | `PresentMode::kAuto` (the default) picks the best tear-free mode the surface offers: `kFIFOLatestReady` where available, otherwise `kFIFO`. `kImmediate` and `kFIFORelaxed` are explicit opt-ins. |
+
+The surface keeps the chosen mode for the life of the operator: it never resizes, and layers are
+scaled to it. The display is released when the graph stops.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `Display "DP-3" is owned by the compositor and cannot be acquired for direct scanout` | A desktop session is still driving the panel. Stop the display manager (`sudo systemctl stop gdm`) and run from a text console; turning the monitor off in the desktop settings is not enough. |
+| `Failed to become DRM master: ...` | Another process holds DRM master (a running X server or compositor), or the user is not in the `video`/`render` groups. |
+| `HolovizOp: no display matches "DP-0"; connected displays: ...` | The name is an X11/RandR name or a typo. Use a name from `holoviz_direct_display --list`; the error lists the connected displays with their ownership. If it ends with `adapters skipped after enumeration errors: ...`, a GPU's display query failed with the quoted driver error (for example a missing `VK_KHR_display` or a Vulkan error) and that GPU's panels are not listed; fix the driver problem before renaming the display. |
+| `HolovizOp: no display is free for exclusive scanout` | `display_name` was empty and every panel is compositor-owned. Stop the desktop session or name a free panel. The same `adapters skipped after enumeration errors` suffix applies: a free panel on a GPU whose display query failed cannot be selected until the driver error is resolved. |
+| `No displays connected.` from `--list`, or an empty `/dev/dri` in a container | The DRM nodes are not visible. Check the `--device /dev/dri` and `--group-add` flags above and `NVIDIA_DRIVER_CAPABILITIES=all`. |
+| Presents stall for about a second each | The panel is asleep (DPMS off). Wake it before starting the application. |
+
+Variable refresh (G-SYNC / Adaptive-Sync) is reported for a panel that advertises it but is not
+controlled from this path; whether the driver engages it is the driver's decision. For fullscreen
+windows on a desktop, see [Enable G-SYNC](/holoscan/sdk-user-guide/setup/additional-setup/gsync).

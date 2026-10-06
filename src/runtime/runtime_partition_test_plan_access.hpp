@@ -56,6 +56,10 @@ class RuntimePartitionTestPlanAccess {
     kProbeOrphan,
     kProbeDuplicate,
     kProbePartitionMismatch,
+    kSupportAffinityDuplicate,
+    kSupportAffinityUnknownRole,
+    kSupportAffinityMalformedRequest,
+    kInlineControllerAffinityConflict,
     kPartitionRunnerOrdinal,
   };
 
@@ -286,6 +290,42 @@ class RuntimePartitionTestPlanAccess {
         }
         state->placement_probes.front().partition = unmatched_partition();
         break;
+      case PartitionMutation::kSupportAffinityDuplicate:
+        if (state->support_thread_affinities.empty()) {
+          return {};
+        }
+        state->support_thread_affinities.push_back(state->support_thread_affinities.front());
+        break;
+      case PartitionMutation::kSupportAffinityUnknownRole:
+        if (state->support_thread_affinities.empty()) {
+          return {};
+        }
+        state->support_thread_affinities.front().role =
+            static_cast<SupportThreadRole>(std::numeric_limits<std::uint8_t>::max());
+        break;
+      case PartitionMutation::kSupportAffinityMalformedRequest:
+        if (state->support_thread_affinities.empty()) {
+          return {};
+        }
+        state->support_thread_affinities.front().requested.affinity = CPUAffinity{};
+        break;
+      case PartitionMutation::kInlineControllerAffinityConflict: {
+        const auto controller = std::ranges::find(state->support_thread_affinities,
+                                                  SupportThreadRole::kController,
+                                                  &SupportThreadAffinityPlanRecord::role);
+        if (controller == state->support_thread_affinities.end() || !controller->accepted ||
+            !controller->accepted->affinity || state->execution_lanes.size() != 1U ||
+            state->partition_placements.size() != 1U ||
+            !state->partition_placements.front().accepted) {
+          return {};
+        }
+        const std::uint32_t controller_core = controller->accepted->affinity->cores.front();
+        const std::uint32_t conflicting_core = controller_core == 0U ? 1U : 0U;
+        state->execution_lanes.front().accepted_placement.affinity = CPUAffinity{conflicting_core};
+        state->partition_placements.front().requested.affinity = CPUAffinity{conflicting_core};
+        state->partition_placements.front().accepted->affinity = CPUAffinity{conflicting_core};
+        break;
+      }
       case PartitionMutation::kPartitionRunnerOrdinal:
         ++state->partition_runners.front().ordinal;
         break;

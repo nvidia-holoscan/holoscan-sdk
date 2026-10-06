@@ -42,11 +42,16 @@ comparison.
 
 ## Matched matrix
 
-Build `runtime_graph_benchmark`, then run:
+Build `runtime_graph_benchmark`, then run from the source root in an
+environment with the benchmark's runtime dependencies and a supported GPU.
+Resolve the build directory using
+the same `HOLOSCAN_BUILD_ARCH` setting as the build. Keep `BUILD_DIR` in the
+same shell for the profiling and sanitizer commands below:
 
 ```bash
-python3 public/benchmark/runtime/run_green_context_qualification.py \
-  build-cu13-x86_64/benchmark/runtime/runtime_graph_benchmark \
+BUILD_DIR=$(./run get_build_dir)
+python3 benchmark/runtime/run_green_context_qualification.py \
+  "${BUILD_DIR}/benchmark/runtime/runtime_graph_benchmark" \
   --output-dir /tmp/green-context-qualification \
   --revision "$(git rev-parse HEAD)" \
   --samples 10000 --warmup 1000 --repetitions 5
@@ -100,7 +105,7 @@ For example:
 nsys profile --trace=cuda,nvtx --sample=none --cpuctxsw=none \
   --force-overwrite true \
   --output /tmp/green-context-dedicated-residual \
-  build-cu13-x86_64/benchmark/runtime/runtime_graph_benchmark \
+  "${BUILD_DIR}/benchmark/runtime/runtime_graph_benchmark" \
   --scenario tensor --tensor-storage device --tensor-bytes 1048576 \
   --operator-lanes separate \
   --green-context-layout dedicated_to_residual \
@@ -128,7 +133,7 @@ tests under Compute Sanitizer where the target supports the selected tool:
 
 ```bash
 compute-sanitizer --tool racecheck --error-exitcode 99 \
-  build-cu13-x86_64/tests/runtime/runtime_test \
+  "${BUILD_DIR}/tests/runtime/runtime_test" \
   --gtest_filter='RunSessionTest.GreenContext*'
 ```
 

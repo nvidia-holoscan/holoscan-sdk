@@ -6,7 +6,7 @@
 #include <holoscan/channel/channel.hpp>
 #include <holoscan/channel/endpoint_catalog_builder.hpp>
 // Provides generated owning types and schema-trait specializations.
-#include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
+#include <holoscan/schema/sdk_schemas.hpp>  // NOLINT(misc-include-cleaner)
 
 #include "../../src/channel/catalog_inline_payload_contract.hpp"
 #include "../../src/channel/channel_catalog_binding.hpp"
@@ -119,6 +119,36 @@ constexpr std::uint64_t kMaximumSchemaCapacity =
     holoscan::channel_internal::kMaximumCatalogDataFrameBytes -
     holoscan::channel_internal::kCatalogDataAttributionBytes - holoscan::kSchemaEnvelopeHeaderSize;
 
+// REQ: PY-CHANNEL-001
+TEST(CatalogChannelTest, NameBasedOwningSchemaUsesTheBoundedGeneratedCodec) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  const std::string channel_name = make_unique_channel_name();
+  holoscan::ChannelOptions options{};
+  options.enable_event_wake = true;
+
+  auto publisher = runtime->create_publisher<holoscan::schema::StringT>(channel_name, options);
+  auto subscriber = runtime->create_subscriber<holoscan::schema::StringT>(channel_name, options);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_subscribers(*publisher, std::chrono::seconds{2}));
+
+  holoscan::schema::StringT sent;
+  sent.data = "name-based schema";
+  const auto emitted = publisher->emit(std::move(sent));
+  ASSERT_TRUE(emitted) << holoscan::runtime_error_message(emitted.error());
+  auto received = subscriber->wait_and_receive_sample(std::chrono::steady_clock::now() +
+                                                      std::chrono::seconds{2});
+
+  ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  EXPECT_EQ(received->data.data, "name-based schema");
+  ASSERT_TRUE(publisher->close());
+  const auto closed = subscriber->wait_and_receive_sample(std::chrono::steady_clock::now() +
+                                                          std::chrono::seconds{2});
+  ASSERT_FALSE(closed);
+  EXPECT_EQ(closed.error().code, holoscan::ErrorCode::kClosed);
+}
+
 // REQ: CHAN-068
 TEST(CatalogChannelTest, ScalarCodecUsesCanonicalLittleEndianBytesAndRejectsInvalidBool) {
   std::uint32_t value = 0x01020304U;
@@ -221,6 +251,7 @@ TEST(CatalogChannelTest, BuilderAcceptsMaximumCatalogFrameAndRejectsOneByteMore)
 // REQ: CHAN-075
 // REQ: CHAN-120
 // REQ: CHAN-137
+// REQ: SCHEMA-003
 TEST(CatalogChannelTest, SchemaCapacityRoundTripsAndBoundsMetadataAndTypedAttachment) {
   using Payload = holoscan::schema::StringT;
   constexpr std::uint64_t kCapacity{holoscan::generated_schema_max_serialized_size_v<Payload>};
@@ -229,14 +260,26 @@ TEST(CatalogChannelTest, SchemaCapacityRoundTripsAndBoundsMetadataAndTypedAttach
   ASSERT_TRUE(catalog) << holoscan::runtime_error_message(catalog.error());
   const auto endpoint = catalog->endpoint(endpoint_name);
   ASSERT_TRUE(endpoint);
-  const auto schema_capacity = endpoint->schema_max_serialized_size();
+  const auto schema_capacity = endpoint->schema_writer_max_serialized_bytes();
   if (!schema_capacity.has_value()) {
     ADD_FAILURE() << "schema endpoint omitted its compiled serialized-capacity bound";
     return;
   }
   EXPECT_EQ(*schema_capacity, kCapacity);
-  EXPECT_NE(catalog->json().find("\"max_serialized_size\":" + std::to_string(kCapacity)),
+  EXPECT_NE(catalog->json().find("\"writer_max_serialized_bytes\":" + std::to_string(kCapacity)),
             std::string::npos);
+  constexpr std::uint64_t kSchemaFramingOverhead =
+      holoscan::channel_internal::kCatalogDataAttributionBytes +
+      holoscan::kSchemaEnvelopeHeaderSize;
+  constexpr std::uint64_t kRequiredFrame = kCapacity + kSchemaFramingOverhead;
+  const auto kSelectedBucket =
+      holoscan::channel_internal::inline_payload_bucket_size(kRequiredFrame);
+  ASSERT_TRUE(kSelectedBucket);
+  const std::uint64_t selected_bucket = kSelectedBucket.value_or(0U);
+  EXPECT_EQ(endpoint->schema_required_frame_bytes(), kRequiredFrame);
+  EXPECT_EQ(endpoint->schema_selected_inline_bucket_bytes(), selected_bucket);
+  EXPECT_EQ(endpoint->schema_bucket_usable_serialized_bytes(),
+            selected_bucket - kSchemaFramingOverhead);
 
   auto parsed = holoscan::ChannelEndpointCatalog::parse_json(catalog->json());
   ASSERT_TRUE(parsed) << holoscan::runtime_error_message(parsed.error());
@@ -244,14 +287,17 @@ TEST(CatalogChannelTest, SchemaCapacityRoundTripsAndBoundsMetadataAndTypedAttach
   EXPECT_EQ(parsed->digest(), catalog->digest());
   const auto parsed_endpoint = parsed->endpoint(endpoint_name);
   ASSERT_TRUE(parsed_endpoint);
-  EXPECT_EQ(parsed_endpoint->schema_max_serialized_size(), kCapacity);
+  EXPECT_EQ(parsed_endpoint->schema_writer_max_serialized_bytes(), kCapacity);
 
-  const std::string capacity_field = ",\"max_serialized_size\":" + std::to_string(kCapacity);
-  const auto expect_invalid_capacity = [&](const std::string& malformed) {
+  const std::string capacity_field =
+      ",\"writer_max_serialized_bytes\":" + std::to_string(kCapacity);
+  const auto expect_invalid_capacity = [&](const std::string& malformed,
+                                           const std::string_view diagnostic =
+                                               "ENDPOINT_PAYLOAD_IDENTITY_INVALID") {
     const auto invalid = holoscan::ChannelEndpointCatalog::parse_json(malformed);
     ASSERT_FALSE(invalid);
     EXPECT_EQ(invalid.error().code, holoscan::ErrorCode::kInvalidArgument);
-    EXPECT_EQ(invalid.error().message, "ENDPOINT_PAYLOAD_IDENTITY_INVALID");
+    EXPECT_EQ(invalid.error().message, diagnostic);
   };
   std::string missing_capacity = catalog->json();
   const std::size_t capacity_offset = missing_capacity.find(capacity_field);
@@ -260,15 +306,27 @@ TEST(CatalogChannelTest, SchemaCapacityRoundTripsAndBoundsMetadataAndTypedAttach
   expect_invalid_capacity(std::move(missing_capacity));
 
   std::string zero_capacity = catalog->json();
-  zero_capacity.replace(
-      zero_capacity.find(capacity_field), capacity_field.size(), ",\"max_serialized_size\":0");
+  zero_capacity.replace(zero_capacity.find(capacity_field),
+                        capacity_field.size(),
+                        ",\"writer_max_serialized_bytes\":0");
   expect_invalid_capacity(std::move(zero_capacity));
 
   std::string overflowing_capacity = catalog->json();
   overflowing_capacity.replace(overflowing_capacity.find(capacity_field),
                                capacity_field.size(),
-                               ",\"max_serialized_size\":4294967296");
+                               ",\"writer_max_serialized_bytes\":4294967296");
   expect_invalid_capacity(std::move(overflowing_capacity));
+
+  const std::string bucket_field =
+      ",\"selected_inline_bucket_bytes\":" + std::to_string(selected_bucket);
+  std::string mismatched_bucket = catalog->json();
+  const std::size_t bucket_offset = mismatched_bucket.find(bucket_field);
+  ASSERT_NE(bucket_offset, std::string::npos);
+  mismatched_bucket.replace(
+      bucket_offset,
+      bucket_field.size(),
+      ",\"selected_inline_bucket_bytes\":" + std::to_string(selected_bucket / 2U));
+  expect_invalid_capacity(std::move(mismatched_bucket), "ENDPOINT_SERVICE_INVALID");
 
   holoscan::SampleMetadata metadata{
       .sequence = 1U,
@@ -288,16 +346,13 @@ TEST(CatalogChannelTest, SchemaCapacityRoundTripsAndBoundsMetadataAndTypedAttach
   ASSERT_NE(state, nullptr);
   const auto normalize_schema_capacity = [&](const std::uint64_t capacity) {
     auto endpoints = state->endpoints;
-    endpoints.front().serialized_payload_capacity_bytes = capacity;
+    endpoints.front().schema_writer_max_serialized_bytes = capacity;
     return holoscan::detail::ChannelEndpointCatalogAccess::normalize(
         state->scope, std::move(endpoints), state->clocks, state->clock_conversions);
   };
   auto maximum_schema = normalize_schema_capacity(kMaximumSchemaCapacity);
   ASSERT_TRUE(maximum_schema) << holoscan::runtime_error_message(maximum_schema.error());
   constexpr std::uint64_t kOversizedSchemaCapacity = kMaximumSchemaCapacity + 1U;
-  constexpr std::uint64_t kSchemaFramingOverhead =
-      holoscan::channel_internal::kCatalogDataAttributionBytes +
-      holoscan::kSchemaEnvelopeHeaderSize;
   constexpr std::uint64_t kRequiredOversizedSchemaFrame =
       kOversizedSchemaCapacity + kSchemaFramingOverhead;
   auto oversized_schema = normalize_schema_capacity(kOversizedSchemaCapacity);
@@ -320,28 +375,32 @@ TEST(CatalogChannelTest, SchemaCapacityRoundTripsAndBoundsMetadataAndTypedAttach
   auto runtime = holoscan::ChannelRuntime::create();
   ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
 
-  auto larger_state = std::make_shared<holoscan::detail::ChannelEndpointCatalogState>(*state);
-  ASSERT_EQ(larger_state->endpoints.size(), 1U);
-  ++larger_state->endpoints.front().serialized_payload_capacity_bytes;
-  ++larger_state->endpoints.front().service_static.serialized_payload_capacity_bytes;
-  const auto larger_catalog =
-      holoscan::detail::ChannelEndpointCatalogAccess::make(std::move(larger_state));
-  const auto larger_endpoint = larger_catalog.endpoint(endpoint_name);
+  auto larger_catalog = normalize_schema_capacity(kCapacity + 1U);
+  ASSERT_TRUE(larger_catalog) << holoscan::runtime_error_message(larger_catalog.error());
+  const auto larger_endpoint = larger_catalog->endpoint(endpoint_name);
   ASSERT_TRUE(larger_endpoint);
   const auto accepted = runtime->create_publisher<Payload>(*larger_endpoint);
   ASSERT_TRUE(accepted) << holoscan::runtime_error_message(accepted.error());
 
-  auto smaller_state = std::make_shared<holoscan::detail::ChannelEndpointCatalogState>(*state);
-  --smaller_state->endpoints.front().serialized_payload_capacity_bytes;
-  --smaller_state->endpoints.front().service_static.serialized_payload_capacity_bytes;
-  const auto smaller_catalog =
-      holoscan::detail::ChannelEndpointCatalogAccess::make(std::move(smaller_state));
-  const auto smaller_endpoint = smaller_catalog.endpoint(endpoint_name);
+  auto smaller_catalog = normalize_schema_capacity(kCapacity - 1U);
+  ASSERT_TRUE(smaller_catalog) << holoscan::runtime_error_message(smaller_catalog.error());
+  const auto smaller_endpoint = smaller_catalog->endpoint(endpoint_name);
   ASSERT_TRUE(smaller_endpoint);
-  const auto rejected = runtime->create_publisher<Payload>(*smaller_endpoint);
-  ASSERT_FALSE(rejected);
-  EXPECT_EQ(rejected.error().code, holoscan::ErrorCode::kIncompatible);
-  EXPECT_EQ(rejected.error().message, "ENDPOINT_PAYLOAD_CAPACITY_INCOMPATIBLE");
+  const auto rejected_writer = runtime->create_publisher<Payload>(*smaller_endpoint);
+  ASSERT_FALSE(rejected_writer);
+  EXPECT_EQ(rejected_writer.error().code, holoscan::ErrorCode::kIncompatible);
+  EXPECT_EQ(rejected_writer.error().message, "ENDPOINT_PAYLOAD_CAPACITY_INCOMPATIBLE");
+
+  constexpr std::uint64_t kLowerBucketWriterMaximum = 512U - kSchemaFramingOverhead;
+  auto lower_bucket_catalog = normalize_schema_capacity(kLowerBucketWriterMaximum);
+  ASSERT_TRUE(lower_bucket_catalog)
+      << holoscan::runtime_error_message(lower_bucket_catalog.error());
+  const auto lower_bucket_endpoint = lower_bucket_catalog->endpoint(endpoint_name);
+  ASSERT_TRUE(lower_bucket_endpoint);
+  const auto rejected_bucket = runtime->create_publisher<Payload>(*lower_bucket_endpoint);
+  ASSERT_FALSE(rejected_bucket);
+  EXPECT_EQ(rejected_bucket.error().code, holoscan::ErrorCode::kIncompatible);
+  EXPECT_EQ(rejected_bucket.error().message, "ENDPOINT_PAYLOAD_CAPACITY_INCOMPATIBLE");
 
   const std::string export_name = unique_endpoint_name();
   auto export_catalog = build_catalog<Payload>(holoscan::TopicDirection::kExport, export_name);
@@ -349,29 +408,84 @@ TEST(CatalogChannelTest, SchemaCapacityRoundTripsAndBoundsMetadataAndTypedAttach
   const auto* export_state = holoscan::detail::ChannelEndpointCatalogAccess::state(*export_catalog);
   ASSERT_NE(export_state, nullptr);
 
-  auto smaller_export_state =
-      std::make_shared<holoscan::detail::ChannelEndpointCatalogState>(*export_state);
-  --smaller_export_state->endpoints.front().serialized_payload_capacity_bytes;
-  --smaller_export_state->endpoints.front().service_static.serialized_payload_capacity_bytes;
-  const auto smaller_export_catalog =
-      holoscan::detail::ChannelEndpointCatalogAccess::make(std::move(smaller_export_state));
-  const auto smaller_export_endpoint = smaller_export_catalog.endpoint(export_name);
+  const auto normalize_export_capacity = [&](const std::uint64_t capacity) {
+    auto endpoints = export_state->endpoints;
+    endpoints.front().schema_writer_max_serialized_bytes = capacity;
+    return holoscan::detail::ChannelEndpointCatalogAccess::normalize(
+        export_state->scope,
+        std::move(endpoints),
+        export_state->clocks,
+        export_state->clock_conversions);
+  };
+  auto smaller_export_catalog = normalize_export_capacity(kCapacity - 1U);
+  ASSERT_TRUE(smaller_export_catalog)
+      << holoscan::runtime_error_message(smaller_export_catalog.error());
+  const auto smaller_export_endpoint = smaller_export_catalog->endpoint(export_name);
   ASSERT_TRUE(smaller_export_endpoint);
   const auto accepted_reader = runtime->create_subscriber<Payload>(*smaller_export_endpoint);
   ASSERT_TRUE(accepted_reader) << holoscan::runtime_error_message(accepted_reader.error());
 
-  auto larger_export_state =
-      std::make_shared<holoscan::detail::ChannelEndpointCatalogState>(*export_state);
-  ++larger_export_state->endpoints.front().serialized_payload_capacity_bytes;
-  ++larger_export_state->endpoints.front().service_static.serialized_payload_capacity_bytes;
-  const auto larger_export_catalog =
-      holoscan::detail::ChannelEndpointCatalogAccess::make(std::move(larger_export_state));
-  const auto larger_export_endpoint = larger_export_catalog.endpoint(export_name);
+  auto larger_export_catalog = normalize_export_capacity(kCapacity + 1U);
+  ASSERT_TRUE(larger_export_catalog)
+      << holoscan::runtime_error_message(larger_export_catalog.error());
+  const auto larger_export_endpoint = larger_export_catalog->endpoint(export_name);
   ASSERT_TRUE(larger_export_endpoint);
   const auto rejected_reader = runtime->create_subscriber<Payload>(*larger_export_endpoint);
   ASSERT_FALSE(rejected_reader);
   EXPECT_EQ(rejected_reader.error().code, holoscan::ErrorCode::kIncompatible);
   EXPECT_EQ(rejected_reader.error().message, "ENDPOINT_PAYLOAD_CAPACITY_INCOMPATIBLE");
+}
+
+// A catalog may describe another valid schema family, epoch, or file identifier, but a typed
+// endpoint built from the current generated package must reject it before backend service creation.
+// REQ: CHAN-075
+// REQ: SCHEMA-003
+TEST(CatalogChannelTest, SchemaAttachRejectsEveryMismatchedStableIdentityCoordinate) {
+  using Payload = holoscan::schema::StringT;
+  const std::string endpoint_name = unique_endpoint_name();
+  auto catalog = build_catalog<Payload>(holoscan::TopicDirection::kImport, endpoint_name);
+  ASSERT_TRUE(catalog) << holoscan::runtime_error_message(catalog.error());
+  const auto* state = holoscan::detail::ChannelEndpointCatalogAccess::state(*catalog);
+  ASSERT_NE(state, nullptr);
+  ASSERT_EQ(state->endpoints.size(), 1U);
+  const auto& schema = state->endpoints.front().payload_identity.schema;
+  if (!schema.has_value()) {
+    ADD_FAILURE() << "catalog endpoint omitted its schema identity";
+    return;
+  }
+
+  const holoscan::SchemaIdentityRecord exact = schema.value();
+  std::array<holoscan::SchemaIdentityRecord, 3> mismatches{exact, exact, exact};
+  mismatches[0].canonical_name += ".Other";
+  mismatches[0].family_id = holoscan::derive_schema_family_id(mismatches[0].canonical_name,
+                                                              mismatches[0].compatibility_epoch);
+  ++mismatches[1].compatibility_epoch;
+  mismatches[1].family_id = holoscan::derive_schema_family_id(mismatches[1].canonical_name,
+                                                              mismatches[1].compatibility_epoch);
+  mismatches[2].file_identifier.value[0] ^= 0x01;
+
+  auto runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(runtime) << holoscan::runtime_error_message(runtime.error());
+  for (const auto& mismatch : mismatches) {
+    SCOPED_TRACE(mismatch.canonical_name);
+    auto endpoints = state->endpoints;
+    endpoints.front().payload_identity.schema = mismatch;
+    endpoints.front().schema_identity = mismatch;
+    auto mismatched_catalog = holoscan::detail::ChannelEndpointCatalogAccess::normalize(
+        state->scope, std::move(endpoints), state->clocks, state->clock_conversions);
+    ASSERT_TRUE(mismatched_catalog) << holoscan::runtime_error_message(mismatched_catalog.error());
+    const auto endpoint = mismatched_catalog->endpoint(endpoint_name);
+    ASSERT_TRUE(endpoint) << holoscan::runtime_error_message(endpoint.error());
+
+    auto attached = runtime->create_publisher<Payload>(*endpoint);
+    ASSERT_FALSE(attached);
+    EXPECT_EQ(attached.error().code, holoscan::ErrorCode::kIncompatible);
+    EXPECT_NE(
+        attached.error().message.find("attached endpoint requires a different schema package"),
+        std::string::npos);
+    EXPECT_NE(attached.error().message.find("expected={"), std::string::npos);
+    EXPECT_NE(attached.error().message.find("; local={"), std::string::npos);
+  }
 }
 
 // REQ: CHAN-068
@@ -546,6 +660,64 @@ template <typename Publisher, typename Subscriber>
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
   return false;
+}
+
+// REQ: SCHEMA-003
+TEST(CatalogChannelTest, SchemaPublisherNeverAcceptsPayloadAboveCatalogWriterMaximum) {
+  using Payload = holoscan::schema::StringT;
+  constexpr std::size_t kLocalCapacity = holoscan::generated_schema_max_serialized_size_v<Payload>;
+  constexpr std::size_t kWriterMaximum = kLocalCapacity - 1U;
+  const std::string endpoint_name = unique_endpoint_name();
+  auto original_catalog = build_catalog<Payload>(holoscan::TopicDirection::kExport, endpoint_name);
+  ASSERT_TRUE(original_catalog) << holoscan::runtime_error_message(original_catalog.error());
+  const auto* state = holoscan::detail::ChannelEndpointCatalogAccess::state(*original_catalog);
+  ASSERT_NE(state, nullptr);
+  auto endpoints = state->endpoints;
+  endpoints.front().schema_writer_max_serialized_bytes = kWriterMaximum;
+  auto catalog = holoscan::detail::ChannelEndpointCatalogAccess::normalize(
+      state->scope, std::move(endpoints), state->clocks, state->clock_conversions);
+  ASSERT_TRUE(catalog) << holoscan::runtime_error_message(catalog.error());
+  const auto endpoint = catalog->endpoint(endpoint_name);
+  ASSERT_TRUE(endpoint) << holoscan::runtime_error_message(endpoint.error());
+
+  auto publisher_runtime = holoscan::ChannelRuntime::create();
+  auto subscriber_runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(publisher_runtime) << holoscan::runtime_error_message(publisher_runtime.error());
+  ASSERT_TRUE(subscriber_runtime) << holoscan::runtime_error_message(subscriber_runtime.error());
+  auto publisher = CatalogChannelBindingAccess::create_payload_publisher(
+      *publisher_runtime, *endpoint, kWriterMaximum);
+  auto subscriber = subscriber_runtime->create_subscriber<Payload>(*endpoint);
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  ASSERT_TRUE(subscriber) << holoscan::runtime_error_message(subscriber.error());
+  ASSERT_TRUE(wait_for_catalog_subscribers(**publisher, *subscriber, std::chrono::seconds{2}));
+
+  Payload source;
+  source.data = "writer-bound schema payload";
+  alignas(std::max_align_t) std::array<std::byte, kLocalCapacity> encoded{};
+  auto encoded_size = holoscan::schema_package<Payload>().encode(source, encoded);
+  ASSERT_TRUE(encoded_size) << holoscan::runtime_error_message(encoded_size.error());
+  ASSERT_LE(*encoded_size, kWriterMaximum);
+  const holoscan::SampleMetadata metadata{
+      .byte_size = static_cast<std::uint32_t>(*encoded_size),
+      .payload_kind = holoscan::PayloadKind::kSerializedBytes,
+  };
+  auto emitted =
+      (*publisher)->emit(std::span<const std::byte>{encoded}.first(*encoded_size), metadata);
+  ASSERT_TRUE(emitted) << holoscan::runtime_error_message(emitted.error());
+  auto received = subscriber->receive_sample();
+  ASSERT_TRUE(received) << holoscan::runtime_error_message(received.error());
+  EXPECT_EQ(received->data.data, source.data);
+
+  const holoscan::SampleMetadata oversized_metadata{
+      .byte_size = static_cast<std::uint32_t>(kWriterMaximum + 1U),
+      .payload_kind = holoscan::PayloadKind::kSerializedBytes,
+  };
+  auto oversized = (*publisher)
+                       ->emit(std::span<const std::byte>{encoded}.first(kWriterMaximum + 1U),
+                              oversized_metadata);
+  ASSERT_FALSE(oversized);
+  EXPECT_EQ(oversized.error().code, holoscan::ErrorCode::kInvalidArgument);
+  EXPECT_EQ(oversized.error().message, "ENDPOINT_TYPE_MISMATCH");
 }
 
 // REQ: CHAN-137
@@ -1373,6 +1545,57 @@ TEST(CatalogChannelTest, ExplicitEndOfStreamIsOrderedAndConsumesPublisherAuthori
   auto drained = CatalogChannelBindingAccess::receive_next(**receiver, payload);
   ASSERT_TRUE(drained) << holoscan::runtime_error_message(drained.error());
   EXPECT_EQ(drained->kind, holoscan::channel_internal::CatalogReceivedOperationKind::kNone);
+}
+
+// Topology (kImport, blocking, clock_health, replacement subscriber):
+//   external_runtime[publisher] --[H1 to first receiver, EOS to replacement]--> graph_runtime
+// The replacement attaches after H1 and must baseline its unseen health history from EOS.
+TEST(CatalogChannelTest, LateSubscriberAcceptsEndOfStreamAfterUnobservedClockHealth) {
+  using namespace std::chrono_literals;
+
+  holoscan::TopicOptions options;
+  options.clock_health = holoscan::ClockHealthOptions{
+      .capability = holoscan::ClockHealthCapability::kStatusReports,
+      .requirement = holoscan::ClockHealthRequirement::kFreshHealthyReport,
+      .max_report_age = 5s,
+  };
+  const std::string endpoint_name = unique_endpoint_name();
+  auto catalog =
+      build_catalog<std::uint32_t>(holoscan::TopicDirection::kImport, endpoint_name, options);
+  ASSERT_TRUE(catalog) << holoscan::runtime_error_message(catalog.error());
+  auto endpoint = catalog->endpoint(endpoint_name);
+  ASSERT_TRUE(endpoint);
+
+  auto external_runtime = holoscan::ChannelRuntime::create();
+  auto graph_runtime = holoscan::ChannelRuntime::create();
+  ASSERT_TRUE(external_runtime);
+  ASSERT_TRUE(graph_runtime);
+  auto first_receiver =
+      CatalogChannelBindingAccess::create_subscriber<std::uint32_t>(*graph_runtime, *endpoint);
+  auto publisher = external_runtime->create_publisher<std::uint32_t>(*endpoint);
+  ASSERT_TRUE(first_receiver) << holoscan::runtime_error_message(first_receiver.error());
+  ASSERT_TRUE(publisher) << holoscan::runtime_error_message(publisher.error());
+  ASSERT_TRUE(wait_for_catalog_subscribers(*publisher, **first_receiver, 2s));
+
+  ASSERT_TRUE(publisher->report_clock_health(holoscan::ClockHealthReport::healthy()));
+  first_receiver->reset();
+  auto replacement =
+      CatalogChannelBindingAccess::create_subscriber<std::uint32_t>(*graph_runtime, *endpoint);
+  ASSERT_TRUE(replacement) << holoscan::runtime_error_message(replacement.error());
+  ASSERT_TRUE(wait_for_catalog_subscribers(*publisher, **replacement, 2s));
+  ASSERT_TRUE(publisher->close());
+
+  std::array<std::byte, sizeof(std::uint32_t)> payload{};
+  auto end_of_stream = CatalogChannelBindingAccess::receive_next(**replacement, payload);
+  ASSERT_TRUE(end_of_stream) << holoscan::runtime_error_message(end_of_stream.error());
+  EXPECT_EQ(end_of_stream->kind,
+            holoscan::channel_internal::CatalogReceivedOperationKind::kEndOfStream);
+  EXPECT_EQ(end_of_stream->metadata.sequence, 2U);
+
+  auto health = CatalogChannelBindingAccess::clock_health_state(**replacement);
+  ASSERT_TRUE(health);
+  EXPECT_FALSE(health->has_report);
+  EXPECT_EQ(health->report_sequence, 1U);
 }
 
 // REQ: CHAN-087

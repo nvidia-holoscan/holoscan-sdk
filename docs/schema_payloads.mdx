@@ -7,7 +7,7 @@ another, wire them with `add_flow()`, and the runtime does the rest. The codec i
 automatically at `compile()` time, and exactly the same code works whether the connection
 stays in-process or crosses a process boundary over an interprocess topic.
 
-Each type carries its own pinned identity, verifier, and serialized-size bound. Use an
+Each type carries its own stable schema-family identity, verifier, and serialized-size bound. Use an
 application-owned FlatBuffers schema when the SDK's message shapes do not fit; the same
 generated owning-type experience extends to your `.fbs` definition. The
 [experimental raw-POD path](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads)
@@ -20,7 +20,7 @@ generated code.
   - Which schema types the SDK provides and what each one carries
   - How to emit and receive a schema value with zero declarations
   - Why the same code works in-process and across processes
-  - What schema identity pinning means: name + version + content hash, matched exactly
+  - How schema-family identity and compatibility admission work
   - How the bounded serialized-size cap fails, and how to size for it
   - Where to define and generate your own application-owned FlatBuffer schema
 </Note>
@@ -33,6 +33,9 @@ generated code.
   `ChannelRuntime` inside an operator bypasses the compiled plan and its
   guarantees.
 </Warning>
+
+Test schema operators with owning metadata and Tensor snapshots using the
+[operator testing fixture](/holoscan/sdk-user-guide/debugging-and-testing/testing#tensor-and-schema-snapshots).
 
 ## The SDK schema types
 
@@ -151,43 +154,29 @@ for feeding a graph from a non-operator process.
   cap as part of your message design, not as an error to discover in the field.
 </Warning>
 
-## Schema identity pinning
+## Schema family identity and compatibility
 
-Every schema type carries a pinned identity with four components, all supplied by the SDK
-type itself:
-
-- a **canonical name** — globally scoped and dotted, e.g. `holoscan.schema.Time`;
-- a **version** — a monotonically bumped integer;
-- a **content hash** — the SHA-256 digest of the compiled schema artifact, so the
-  identity covers the schema's actual field layout, not just its name;
-- a **stable 128-bit schema id** — a compact fingerprint derived from the above.
-
-*Pinned* means matched **exactly**: a producer and a consumer agree on a schema payload
-only if all four components are equal. There is no negotiation protocol, no
-field-evolution policy, and no "close enough". At a process boundary the agreement is
-checked twice. Attaching an endpoint compares the complete four-component tuple and
-refuses a mismatch with a typed `kIncompatible` error, so a wrong peer never reaches
-steady state. Every received frame then revalidates the identity its envelope carries
-and fails with a typed `kProtocolError` before a single payload byte is exposed.
+Every generated schema supplies its stable family name, compatibility epoch, derived 128-bit family
+id, and independent four-byte FlatBuffers file identifier. Runtime admission combines those facts
+with the envelope, endpoint generation, capacity, and—where applicable—descriptor-Tensor carriage
+contracts. Attach mismatches fail with `kIncompatible`; a received frame that violates the attached
+contract fails with `kProtocolError` before typed payload exposure.
 
 Inside one process the C++ type system already enforces most of this: `add_flow()` only
-connects an `Output<T>` to an `Input<T>` of the same `T`. Identity pinning earns its keep
-at process boundaries, where the type system cannot reach. Because the content hash is in
-the identity, two builds that disagree about what `holoscan.schema.Imu` looks like —
-say, one side was compiled against an older SDK whose IMU schema had different fields —
-cannot silently exchange misinterpreted bytes: the hash differs, the frame is refused,
-and you get a diagnosable error instead of corrupted sensor data.
-
-For SDK schema types this is entirely automatic — the identity ships inside the SDK, so
-both sides of a connection built against the same SDK release agree by construction. You
-never write, register, or compare an identity yourself.
+connects an `Output<T>` to an `Input<T>` of the same `T`. Family admission earns its keep
+at process boundaries, where the type system cannot reach. SDK users do not write or register these
+identities, and application authors do not pin generated BFBS hashes or revision counters. See
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+for the canonical identity model, compatible-edit rules, optional provenance, intentional-break,
+and conformance-baseline workflows. Early access does not yet promise cross-release N/N+1 endpoint
+compatibility.
 
 ## Generate an application-owned schema
 
 When the SDK shapes do not fit, define the message in an application-owned `.fbs` file and use the
 installed `holoscan_add_flatbuffer_schema()` CMake function. It runs the matching schema compiler
-and generates the FlatBuffers headers, owning object-API type, exact schema identity, bounded codec,
-package evidence, native traits, and Runtime type operations.
+and generates the FlatBuffers headers, owning object-API type, stable schema-family identity,
+bounded codec, native traits, and Runtime type operations.
 
 Application Operators use the generated owning type directly:
 
@@ -216,8 +205,8 @@ Do not use raw POD as the ordinary alternative to an SDK schema type.
   `schema::ImuT`) are the zero-declaration payload path: use them directly as
   `Output<T>`/`Input<T>` types. The sensor payloads among them, `schema::ImageT` and
   `schema::ImuT`, are owned by `holoscan::sensor_io` rather than by Core, so carrying
-  either one means linking that library and installing the `holoscan-sensor-io`
-  component. The type names are unchanged: a FlatBuffers namespace is part of the wire
+  either one means linking that library (the `holoscan-sensor-io` install
+  component, required alongside `holoscan-core`). The type names are unchanged: a FlatBuffers namespace is part of the wire
   identity, so these stayed `holoscan::schema::*` when their ownership moved.
 - The codec is selected automatically at `compile()`; the same operator code works
   in-process and across processes.
@@ -225,10 +214,8 @@ Do not use raw POD as the ordinary alternative to an SDK schema type.
   fields populated.
 - Serialized size is bounded by `generated_schema_max_serialized_size_v<T>`; overflow is
   a typed `kResourceExhausted`, never unbounded allocation.
-- Identity is pinned — canonical name + version + content hash (+ stable 128-bit id) —
-  and matched exactly; a peer whose tuple differs is refused at attach with
-  `kIncompatible`, and a frame whose envelope identity differs fails with
-  `kProtocolError` before delivery.
+- Schema admission matches the stable family name, compatibility epoch, derived family id, and file
+  identifier, plus exact envelope and endpoint constraints; incompatible peers fail before delivery.
 - Application-owned `.fbs` files generate owning port types and package traits — see
   [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas).
 

@@ -1,0 +1,63 @@
+# Borrowed Image CUDA lifetime qualification
+
+`test_borrowed_descriptor_cuda.cpp` exercises public `selected_sample()` inside real SDK compute
+callbacks. A CUDA kernel reads the borrowed input Tensor and writes a separate output Tensor loan
+on `ExecutionContext::cuda_stream()`. A bounded host-callback gate holds that stream until the test
+releases it, while CPU compute is allowed to return. The kernel is loaded during cold test setup:
+CUDA lazy module loading can synchronize a context, so putting the first launch behind the gate
+would test a cold-load deadlock rather than Runtime retirement. No synchronization was added to
+the production borrow, compute callbacks, or per-message path.
+
+The source continually probes its unchanged compiler-admitted pool. Its first published slot
+cannot retire or be handed out again while the delayed read is pending; it must become reusable
+after completion. A fanout case runs a second consumer on a distinct admitted stream and checks
+its pixel result independently before releasing the delayed reader. Other cases submit work then
+fail the writer callback, reject publication, cancel the output loan, stop, restart, or request
+whole-run completion. Each checks the GPU result and eventual destruction of Runtime CUDA events
+and streams. Borrowed descriptors are never retained between callbacks.
+
+## Recorded configuration
+
+- 2026-09-19, NVIDIA RTX A6000, driver 595.71.05, CUDA 13 SDK development container.
+- Shared Release (`build-x86_64`) and Debug/static (`build-borrowed-debug-static`), GCC 13.3.0.
+- All new GPU cases executed; none were skipped. Release stress ran both tests ten times.
+- CUDA Compute Sanitizer 2026.1.1.0 from the host CUDA 13.2 installation was mounted read-only
+  into the same SDK container; the development image itself does not include that tool.
+- Memcheck with full leak checking: zero errors and zero leaked bytes/allocations.
+- Racecheck: zero displayed hazards, errors, or warnings. Racecheck's shared-memory coverage is
+  not a proof against arbitrary cross-stream global-memory races; the deterministic pool/event
+  assertions supply the specific buffer-reuse evidence here.
+
+The deliberate callback/publication failure cases log expected failed RunSession diagnostics.
+Their GTest results and sanitizer exit codes must still succeed.
+
+## Reproduce
+
+Use the top-level SDK build, with a matching development image and a CUDA-capable host:
+
+```bash
+HOLOSCAN_CUDA_MAJOR_VERSION=13 ./public/run launch --standalone build-x86_64 \
+  --run-cmd "cmake --build . --target runtime_test -j 4 && \\
+    ctest -R '^RUNTIME.BorrowedDescriptorCuda' --repeat until-fail:10 \\
+      --output-on-failure --timeout 120"
+```
+
+For the recorded sanitizer installation:
+
+```bash
+HOLOSCAN_CUDA_MAJOR_VERSION=13 ./public/run launch --standalone build-x86_64 \
+  --mount type=bind,src=/usr/local/cuda-13.2/compute-sanitizer,dst=/opt/borrowed-compute-sanitizer,readonly \
+  --run-cmd "/opt/borrowed-compute-sanitizer/compute-sanitizer \\
+    --tool memcheck --error-exitcode 86 --leak-check full \\
+    tests/runtime/runtime_test --gtest_filter=BorrowedDescriptorCuda.* && \\
+    /opt/borrowed-compute-sanitizer/compute-sanitizer \\
+    --tool racecheck --error-exitcode 87 \\
+    tests/runtime/runtime_test --gtest_filter=BorrowedDescriptorCuda.*"
+```
+
+Replace the mount source if the local toolkit is installed elsewhere. A missing device or tool
+must be reported explicitly; a skipped GPU test does not establish this qualification.
+
+This supports the existing Runtime-admitted stream path only. It does not authorize unregistered
+side streams, mutable borrowed metadata, escaped host descriptor pointers, or use after session
+destruction. It also does not establish allocation behavior of CV-CUDA/NVCV wrappers.

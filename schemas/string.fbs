@@ -10,3 +10,4 @@ table String {
 }
 
 root_type String;
+file_identifier "HSST";

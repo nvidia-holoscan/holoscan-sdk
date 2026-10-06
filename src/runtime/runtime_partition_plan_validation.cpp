@@ -15,6 +15,8 @@
 #include "../compiler/execution_plan_lookup.hpp"
 #include "../compiler/execution_plan_state.hpp"
 #include "../compiler/partition_authority_validation.hpp"
+#include "../compiler/partition_runner_plan.hpp"
+#include "../compiler/support_thread_affinity_contracts.hpp"
 #include "../threading/thread_placement_contracts.hpp"
 #include "runtime_work_inventory.hpp"
 
@@ -189,6 +191,12 @@ bool partition_records_supported(const ExecutionPlanState& plan) {
 
   const bool zero_work = !has_structural_runtime_topology(plan);
   if (!scheduler_plan_supported(plan, zero_work)) {
+    return false;
+  }
+  if (!support_thread_affinity_records_valid(plan.support_thread_affinities, true)) {
+    return false;
+  }
+  if (find_inline_partition_controller_affinity_conflict(plan)) {
     return false;
   }
   if (zero_work) {

@@ -60,6 +60,14 @@ The following scenarios reflect the main security concerns for this codebase, in
 
 7. **GPU / native code faults affecting isolation:** Bugs in CUDA operators, Vulkan presentation paths, or Python/C++ boundary code could corrupt memory or affect process stability; impact is generally bounded by the host OS process unless the platform provides stronger isolation.
 
+8. **Local Tensor Sidecar Descriptor Forgery**: Process-local Tensor and Tensor-field channels realized through HoloMQ carry a same-process sidecar descriptor in an iceoryx2 shared-memory payload. The sidecar token identifies a record slot and its
+generation is sequential; these values are not secret or authenticated. A hostile same-host process that can join the same iceoryx2 service as a compatible publisher, or modify the relevant shared-memory resources, can forge or replay a descriptor delivered to an application's legitimate subscriber.
+
+Successful exploitation can associate a transport notification with the wrong live Tensor, consume another sample's unread claim, lose or reorder samples, retain or exhaust sidecar slots, and cause denial of service. Existing reader and generation checks make a straightforward use-after-free unlikely. This is a local integrity and availability issue, not a remote execution
+issue.
+
+Cross-process and external-topic Tensor endpoints use HoloMQ `BufferHandle` descriptors rather than same-process sidecar tokens, so an ordinary external-topic peer cannot directly exercise this issue through the supported API. Exposure depends on local IPC permissions. Deploy applications under a dedicated OS identity or container with an isolated IPC namespace, restrict access to iceoryx2 shared-memory resources and internal execution-plan artifacts, and do not colocate untrusted processes inside that boundary.
+
 ### Critical Security Assumptions
 
 - **Trusted operators and application code:** The SDK does not sandbox user-written operators or Python code; it assumes the application author and runtime operator are trusted, or that the deployer enforces isolation (e.g., separate containers or machines).

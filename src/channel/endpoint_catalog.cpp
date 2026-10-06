@@ -50,6 +50,7 @@
 
 #include "core/canonical_text_encoding.hpp"
 #include "core/domain/tensor_layout_validation.hpp"
+#include "core/memory_kind_validation.hpp"
 #include "endpoint_catalog_state.hpp"
 
 namespace holoscan {
@@ -792,18 +793,6 @@ void append_hex_bytes(std::string& output, std::span<const Byte> bytes, bool sha
   return {};
 }
 
-[[nodiscard]] bool valid_memory_kind(MemoryKind kind) noexcept {
-  switch (kind) {
-    case MemoryKind::kUnknown:
-    case MemoryKind::kHost:
-    case MemoryKind::kPinnedHost:
-    case MemoryKind::kCudaDevice:
-    case MemoryKind::kCudaManaged:
-      return true;
-  }
-  return false;
-}
-
 template <typename T>
 void append_optional_unsigned(std::string& output, const std::optional<T>& value) {
   if (value) {
@@ -846,11 +835,13 @@ void append_pod_identity(std::string& output, const detail::PodCatalogIdentityRe
 void append_schema_identity(std::string& output, const SchemaIdentityRecord& schema) {
   output += "{\"canonical_name\":";
   append_json_string(output, schema.canonical_name);
-  output += ",\"version\":" + std::to_string(schema.version);
-  output += ",\"schema_sha256\":";
-  append_hex_bytes(output, std::span<const std::byte>{schema.schema_sha256}, true);
-  output += ",\"id\":";
-  append_hex_bytes(output, std::span<const std::byte>{schema.id.value}, false);
+  output += ",\"compatibility_epoch\":" + std::to_string(schema.compatibility_epoch);
+  output += ",\"family_id\":";
+  append_hex_bytes(output, std::span<const std::byte>{schema.family_id.value}, false);
+  output += ",\"file_identifier\":";
+  append_json_string(
+      output,
+      std::string_view{schema.file_identifier.value.data(), schema.file_identifier.value.size()});
   output.push_back('}');
 }
 
@@ -925,7 +916,7 @@ void append_payload(std::string& output, const PayloadIdentityRecord& payload_id
                     std::span<const DescriptorTensorTopicFieldRecord> tensor_fields,
                     const std::optional<SchemaIdentityRecord>& schema_identity,
                     const std::optional<detail::PodCatalogIdentityRecord>& pod_identity,
-                    const std::uint64_t serialized_payload_capacity_bytes) {
+                    const std::uint64_t schema_writer_max_serialized_bytes) {
   output += "{\"family\":";
   switch (payload_identity.kind) {
     case PayloadIdentityKind::kScalar:
@@ -947,7 +938,31 @@ void append_payload(std::string& output, const PayloadIdentityRecord& payload_id
       break;
     case PayloadIdentityKind::kSchema:
       append_json_string(output, "schema");
-      output += ",\"max_serialized_size\":" + std::to_string(serialized_payload_capacity_bytes);
+      output +=
+          ",\"transport_profile_tag\":" + std::to_string(payload_identity.transport_profile_tag);
+      output +=
+          ",\"writer_max_serialized_bytes\":" + std::to_string(schema_writer_max_serialized_bytes);
+      if (payload_identity.payload_kind == PayloadKind::kSerializedBytes) {
+        const auto capacity = channel_internal::catalog_inline_payload_contract(
+            payload_identity, schema_writer_max_serialized_bytes);
+        output += ",\"required_frame_bytes\":" +
+                  std::to_string(capacity ? capacity->required_frame_bytes : 0U);
+        output += ",\"selected_inline_bucket_bytes\":" +
+                  std::to_string(capacity ? capacity->selected_bucket_bytes : 0U);
+        output += ",\"bucket_usable_serialized_bytes\":" +
+                  std::to_string(capacity ? capacity->bucket_usable_native_payload_bytes : 0U);
+      } else {
+        const auto selected_bucket =
+            schema_writer_max_serialized_bytes <= std::numeric_limits<std::size_t>::max()
+                ? channel_internal::inline_payload_bucket_size(
+                      static_cast<std::size_t>(schema_writer_max_serialized_bytes))
+                : std::nullopt;
+        output += ",\"required_frame_bytes\":" + std::to_string(schema_writer_max_serialized_bytes);
+        output +=
+            ",\"selected_inline_bucket_bytes\":" + std::to_string(selected_bucket.value_or(0U));
+        output +=
+            ",\"bucket_usable_serialized_bytes\":" + std::to_string(selected_bucket.value_or(0U));
+      }
       output += ",\"schema_identity\":";
       if (schema_identity) {
         append_schema_identity(output, *schema_identity);
@@ -989,7 +1004,7 @@ void append_payload(std::string& output, const ChannelEndpointRecord& endpoint) 
                  endpoint.tensor_fields,
                  endpoint.schema_identity,
                  endpoint.pod_identity,
-                 endpoint.serialized_payload_capacity_bytes);
+                 endpoint.schema_writer_max_serialized_bytes);
 }
 
 void append_payload(std::string& output, const detail::ResolvedServiceStaticRequirements& service) {
@@ -999,7 +1014,7 @@ void append_payload(std::string& output, const detail::ResolvedServiceStaticRequ
                  service.tensor_fields,
                  service.schema_identity,
                  service.pod_identity,
-                 service.serialized_payload_capacity_bytes);
+                 service.schema_writer_max_serialized_bytes);
 }
 
 [[nodiscard]] std::string service_binding(
@@ -1262,21 +1277,8 @@ void append_conversion(std::string& output, const CatalogClockConversionRecord& 
   return {};
 }
 
-[[nodiscard]] SchemaId derive_schema_id(const SchemaIdentityRecord& identity) noexcept {
-  // Catalog records own their canonical name while the public identity view borrows it. Reuse the
-  // canonical byte-exact derivation so the embedded NUL in its domain separator cannot be lost by
-  // an implicit string-literal-to-string_view conversion.
-  return ::holoscan::derive_schema_id(SchemaIdentity{
-      .canonical_name = identity.canonical_name,
-      .version = identity.version,
-      .schema_sha256 = identity.schema_sha256,
-      .id = identity.id,
-  });
-}
-
 [[nodiscard]] bool complete_schema_identity_valid(const SchemaIdentityRecord& identity) noexcept {
-  return portable_identity_name_valid(identity.canonical_name) && identity.version != 0U &&
-         derive_schema_id(identity) == identity.id;
+  return valid_schema_identity(identity);
 }
 
 [[nodiscard]] bool complete_pod_identity_valid(const PodIdentityRecord& identity) {
@@ -1286,7 +1288,7 @@ void append_conversion(std::string& output, const CatalogClockConversionRecord& 
 [[nodiscard]] bool valid_catalog_tensor_contract(
     const TensorBoundaryContractRecord& tensor) noexcept {
   const bool bounds_valid =
-      tensor.memory_kind && valid_memory_kind(*tensor.memory_kind) &&
+      tensor.memory_kind && detail::valid_memory_kind_value(*tensor.memory_kind) &&
       (!tensor.dtype || detail::valid_tensor_dtype(*tensor.dtype)) && tensor.max_rank &&
       *tensor.max_rank > 0U && tensor.max_byte_span && *tensor.max_byte_span > 0U &&
       (!tensor.rank || *tensor.rank <= *tensor.max_rank) && tensor.axes.size() <= *tensor.max_rank;
@@ -1337,10 +1339,29 @@ void finalize_payload_identity(ChannelEndpointRecord& endpoint) {
 }
 
 void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
+  const auto inline_contract = channel_internal::catalog_inline_payload_contract(
+      endpoint.payload_identity, endpoint.schema_writer_max_serialized_bytes);
+  const bool descriptor_schema =
+      endpoint.payload_identity.kind == PayloadIdentityKind::kSchema &&
+      endpoint.payload_identity.payload_kind == PayloadKind::kDescriptorBacked;
+  const auto descriptor_bucket =
+      descriptor_schema &&
+              endpoint.schema_writer_max_serialized_bytes <= std::numeric_limits<std::size_t>::max()
+          ? channel_internal::inline_payload_bucket_size(
+                static_cast<std::size_t>(endpoint.schema_writer_max_serialized_bytes))
+          : std::nullopt;
   endpoint.service_static = detail::ResolvedServiceStaticRequirements{
       .id = endpoint.service,
       .payload_identity = endpoint.payload_identity,
-      .serialized_payload_capacity_bytes = endpoint.serialized_payload_capacity_bytes,
+      .schema_writer_max_serialized_bytes = endpoint.schema_writer_max_serialized_bytes,
+      .required_data_frame_bytes =
+          inline_contract ? inline_contract->required_frame_bytes
+                          : (descriptor_schema ? endpoint.schema_writer_max_serialized_bytes : 0U),
+      .selected_inline_bucket_bytes =
+          inline_contract ? inline_contract->selected_bucket_bytes : descriptor_bucket.value_or(0U),
+      .bucket_usable_serialized_bytes = inline_contract
+                                            ? inline_contract->bucket_usable_native_payload_bytes
+                                            : descriptor_bucket.value_or(0U),
       .pod_identity = endpoint.pod_identity,
       .schema_identity = endpoint.schema_identity,
       .tensor = endpoint.tensor,
@@ -1473,7 +1494,7 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
   using PodAuthorityKey = std::tuple<std::string_view, std::uint32_t>;
   std::map<PodAuthorityKey, const detail::PodCatalogIdentityRecord*> pods_by_authority;
   std::map<std::array<std::uint8_t, 16>, const detail::PodCatalogIdentityRecord*> pods_by_key;
-  std::map<std::array<std::byte, 16>, const SchemaIdentityRecord*> schemas_by_id;
+  std::map<std::array<std::byte, 16>, const SchemaIdentityRecord*> schemas_by_family_id;
   for (std::size_t index = 0U; index < endpoints.size(); ++index) {
     auto& endpoint = endpoints[index];
     if (endpoint.payload_identity.pod &&
@@ -1608,15 +1629,16 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
           catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
     }
     if (endpoint.payload_identity.kind == PayloadIdentityKind::kScalar) {
-      if (endpoint.tensor || !endpoint.payload_identity.scalar ||
-          endpoint.payload_identity.schema || endpoint.payload_identity.pod ||
-          !endpoint.tensor_fields.empty() ||
+      if (endpoint.payload_identity.transport_profile_tag != 0U || endpoint.tensor ||
+          !endpoint.payload_identity.scalar || endpoint.payload_identity.schema ||
+          endpoint.payload_identity.pod || !endpoint.tensor_fields.empty() ||
           endpoint.payload_identity.scalar->kind == ScalarIdentityKind::kLocalEnum) {
         return make_unexpected(
             catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
       }
     } else if (endpoint.payload_identity.kind == PayloadIdentityKind::kTensor) {
-      if (endpoint.payload_identity.scalar || endpoint.payload_identity.schema ||
+      if (endpoint.payload_identity.transport_profile_tag != 0U ||
+          endpoint.payload_identity.scalar || endpoint.payload_identity.schema ||
           endpoint.payload_identity.pod || !endpoint.tensor_fields.empty()) {
         return make_unexpected(
             catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
@@ -1628,24 +1650,33 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
     } else if (endpoint.payload_identity.kind == PayloadIdentityKind::kSchema) {
       if (endpoint.tensor || endpoint.payload_identity.scalar ||
           !endpoint.payload_identity.schema || endpoint.payload_identity.pod ||
-          endpoint.serialized_payload_capacity_bytes == 0U ||
-          endpoint.serialized_payload_capacity_bytes > std::numeric_limits<std::uint32_t>::max() ||
+          endpoint.schema_writer_max_serialized_bytes == 0U ||
+          endpoint.schema_writer_max_serialized_bytes > std::numeric_limits<std::uint32_t>::max() ||
           !complete_schema_identity_valid(*endpoint.payload_identity.schema) ||
           (endpoint.schema_identity &&
            (endpoint.schema_identity->canonical_name !=
                 endpoint.payload_identity.schema->canonical_name ||
-            endpoint.schema_identity->version != endpoint.payload_identity.schema->version ||
-            endpoint.schema_identity->schema_sha256 !=
-                endpoint.payload_identity.schema->schema_sha256 ||
-            endpoint.schema_identity->id != endpoint.payload_identity.schema->id))) {
+            endpoint.schema_identity->compatibility_epoch !=
+                endpoint.payload_identity.schema->compatibility_epoch ||
+            endpoint.schema_identity->family_id != endpoint.payload_identity.schema->family_id ||
+            endpoint.schema_identity->file_identifier !=
+                endpoint.payload_identity.schema->file_identifier))) {
         return make_unexpected(
             catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
       }
       const bool descriptor_schema =
           endpoint.payload_identity.payload_kind == PayloadKind::kDescriptorBacked;
-      if (descriptor_schema != !endpoint.tensor_fields.empty()) {
+      if (descriptor_schema != !endpoint.tensor_fields.empty() ||
+          descriptor_schema != (endpoint.payload_identity.transport_profile_tag != 0U)) {
         return make_unexpected(
             catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_TENSOR_POLICY_INVALID"));
+      }
+      if (descriptor_schema &&
+          (endpoint.schema_writer_max_serialized_bytes > std::numeric_limits<std::size_t>::max() ||
+           !channel_internal::inline_payload_bucket_size(
+               static_cast<std::size_t>(endpoint.schema_writer_max_serialized_bytes)))) {
+        return make_unexpected(
+            catalog_error(ErrorCode::kResourceExhausted, "ENDPOINT_PAYLOAD_CAPACITY_EXCEEDED"));
       }
       for (std::size_t field_index = 0U; field_index < endpoint.tensor_fields.size();
            ++field_index) {
@@ -1658,7 +1689,8 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
         }
       }
     } else if (endpoint.payload_identity.kind == PayloadIdentityKind::kPod) {
-      if (endpoint.tensor || endpoint.payload_identity.scalar || endpoint.payload_identity.schema ||
+      if (endpoint.payload_identity.transport_profile_tag != 0U || endpoint.tensor ||
+          endpoint.payload_identity.scalar || endpoint.payload_identity.schema ||
           !endpoint.payload_identity.pod || !endpoint.tensor_fields.empty() ||
           !complete_pod_identity_valid(*endpoint.payload_identity.pod)) {
         return make_unexpected(
@@ -1666,12 +1698,12 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
       }
     }
     if (endpoint.payload_identity.kind != PayloadIdentityKind::kSchema &&
-        endpoint.serialized_payload_capacity_bytes != 0U) {
+        endpoint.schema_writer_max_serialized_bytes != 0U) {
       return make_unexpected(
           catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
     }
     const auto inline_contract = channel_internal::catalog_inline_payload_contract(
-        endpoint.payload_identity, endpoint.serialized_payload_capacity_bytes);
+        endpoint.payload_identity, endpoint.schema_writer_max_serialized_bytes);
     const bool ordinary_inline_payload =
         endpoint.payload_identity.kind == PayloadIdentityKind::kScalar ||
         endpoint.payload_identity.kind == PayloadIdentityKind::kPod ||
@@ -1681,7 +1713,7 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
       return make_unexpected(
           catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
     }
-    if (inline_contract && !inline_contract->frame_fits_inline_transport) {
+    if (inline_contract && inline_contract->selected_bucket_bytes == 0U) {
       return make_unexpected(catalog_inline_capacity_error(index, endpoint.name, *inline_contract));
     }
     finalize_payload_identity(endpoint);
@@ -1704,15 +1736,15 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
     }
     if (endpoint.schema_identity) {
       const auto& current = *endpoint.schema_identity;
-      const auto found = schemas_by_id.find(current.id.value);
-      if (found != schemas_by_id.end() &&
+      const auto found = schemas_by_family_id.find(current.family_id.value);
+      if (found != schemas_by_family_id.end() &&
           (current.canonical_name != found->second->canonical_name ||
-           current.version != found->second->version ||
-           current.schema_sha256 != found->second->schema_sha256)) {
+           current.compatibility_epoch != found->second->compatibility_epoch ||
+           current.file_identifier != found->second->file_identifier)) {
         return make_unexpected(
             catalog_error(ErrorCode::kIncompatible, "ENDPOINT_SCHEMA_IDENTITY_COLLISION"));
       }
-      schemas_by_id.try_emplace(current.id.value, &current);
+      schemas_by_family_id.try_emplace(current.family_id.value, &current);
     }
     const bool ordinary_health =
         endpoint.clock_health.capability == ClockHealthCapability::kUnavailable &&
@@ -1858,29 +1890,32 @@ void materialize_normalized_ownership(ChannelEndpointRecord& endpoint) {
 
 [[nodiscard]] expected<SchemaIdentityRecord, Error> parse_schema_identity(const JsonValue& value) {
   constexpr std::array<std::string_view, 4> kFields{
-      "canonical_name", "version", "schema_sha256", "id"};
+      "canonical_name", "compatibility_epoch", "family_id", "file_identifier"};
   if (!allowed_fields(value, kFields)) {
     return make_unexpected(
         catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
   }
   const JsonValue* name = json_field(value, "canonical_name");
-  const JsonValue* version = json_field(value, "version");
-  const JsonValue* digest = json_field(value, "schema_sha256");
-  const JsonValue* id = json_field(value, "id");
-  std::uint64_t parsed_version{};
+  const JsonValue* compatibility_epoch = json_field(value, "compatibility_epoch");
+  const JsonValue* family_id = json_field(value, "family_id");
+  const JsonValue* file_identifier = json_field(value, "file_identifier");
+  std::uint64_t parsed_compatibility_epoch{};
   SchemaIdentityRecord result;
-  if (name == nullptr || name->kind != JsonValue::Kind::kString || version == nullptr ||
-      !json_unsigned(*version, parsed_version) ||
-      parsed_version > std::numeric_limits<std::uint32_t>::max() || digest == nullptr ||
-      digest->kind != JsonValue::Kind::kString || id == nullptr ||
-      id->kind != JsonValue::Kind::kString ||
-      !parse_hex_bytes(digest->string, result.schema_sha256, true) ||
-      !parse_hex_bytes(id->string, result.id.value, false)) {
+  if (name == nullptr || name->kind != JsonValue::Kind::kString || compatibility_epoch == nullptr ||
+      !json_unsigned(*compatibility_epoch, parsed_compatibility_epoch) ||
+      parsed_compatibility_epoch > std::numeric_limits<std::uint32_t>::max() ||
+      family_id == nullptr || family_id->kind != JsonValue::Kind::kString ||
+      file_identifier == nullptr || file_identifier->kind != JsonValue::Kind::kString ||
+      file_identifier->string.size() != result.file_identifier.value.size() ||
+      !parse_hex_bytes(family_id->string, result.family_id.value, false)) {
     return make_unexpected(
         catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
   }
   result.canonical_name = name->string;
-  result.version = static_cast<std::uint32_t>(parsed_version);
+  result.compatibility_epoch = static_cast<std::uint32_t>(parsed_compatibility_epoch);
+  std::copy(file_identifier->string.begin(),
+            file_identifier->string.end(),
+            result.file_identifier.value.begin());
   return result;
 }
 
@@ -2004,8 +2039,13 @@ struct ParsedPayload {
   std::optional<TensorBoundaryContractRecord> tensor;
   std::vector<DescriptorTensorTopicFieldRecord> tensor_fields;
   std::uint64_t serialized_payload_capacity_bytes{};
+  std::uint64_t required_frame_bytes{};
+  std::uint64_t selected_inline_bucket_bytes{};
+  std::uint64_t bucket_usable_serialized_bytes{};
 };
 
+// Parsing keeps field validation and normalized-record construction in one auditable transaction.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<TensorBoundaryContractRecord, Error> parse_tensor_contract(
     const JsonValue& tensor, const bool require_memory_conversion) {
   constexpr std::array<std::string_view, 5> kTensorFieldsWithConversion{
@@ -2198,13 +2238,17 @@ struct ParsedPayload {
 // Keep the closed payload grammar in one parser so bounds and allowed fields stay synchronized.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<ParsedPayload, Error> parse_payload(const JsonValue& value) {
-  constexpr std::array<std::string_view, 7> kFields{"family",
-                                                    "scalar",
-                                                    "tensor",
-                                                    "schema_identity",
-                                                    "pod_identity",
-                                                    "max_serialized_size",
-                                                    "descriptor_tensor_fields"};
+  constexpr std::array<std::string_view, 11> kFields{"family",
+                                                     "scalar",
+                                                     "tensor",
+                                                     "schema_identity",
+                                                     "pod_identity",
+                                                     "transport_profile_tag",
+                                                     "writer_max_serialized_bytes",
+                                                     "required_frame_bytes",
+                                                     "selected_inline_bucket_bytes",
+                                                     "bucket_usable_serialized_bytes",
+                                                     "descriptor_tensor_fields"};
   if (!allowed_fields(value, kFields)) {
     return make_unexpected(
         catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_PAYLOAD_IDENTITY_INVALID"));
@@ -2248,13 +2292,29 @@ struct ParsedPayload {
     result.tensor = std::move(parsed_tensor).value();
   } else if (family->string == "schema") {
     const JsonValue* schema = json_field(value, "schema_identity");
-    const JsonValue* maximum = json_field(value, "max_serialized_size");
+    const JsonValue* profile_tag = json_field(value, "transport_profile_tag");
+    const JsonValue* maximum = json_field(value, "writer_max_serialized_bytes");
+    const JsonValue* required_frame = json_field(value, "required_frame_bytes");
+    const JsonValue* selected_bucket = json_field(value, "selected_inline_bucket_bytes");
+    const JsonValue* usable_serialized = json_field(value, "bucket_usable_serialized_bytes");
     const JsonValue* descriptor_fields = json_field(value, "descriptor_tensor_fields");
     std::uint64_t parsed_maximum{};
+    std::uint64_t parsed_profile_tag{};
     const bool descriptor_schema = descriptor_fields != nullptr;
-    if (value.object.size() != (descriptor_schema ? 4U : 3U) || schema == nullptr ||
-        maximum == nullptr || !json_unsigned(*maximum, parsed_maximum) || parsed_maximum == 0U ||
-        parsed_maximum > std::numeric_limits<std::uint32_t>::max() ||
+    std::uint64_t parsed_required_frame{};
+    std::uint64_t parsed_selected_bucket{};
+    std::uint64_t parsed_usable_serialized{};
+    if (value.object.size() != (descriptor_schema ? 8U : 7U) || schema == nullptr ||
+        profile_tag == nullptr || !json_unsigned(*profile_tag, parsed_profile_tag) ||
+        parsed_profile_tag > std::numeric_limits<std::uint32_t>::max() ||
+        descriptor_schema != (parsed_profile_tag != 0U) || maximum == nullptr ||
+        !json_unsigned(*maximum, parsed_maximum) || parsed_maximum == 0U ||
+        parsed_maximum > std::numeric_limits<std::uint32_t>::max() || required_frame == nullptr ||
+        !json_unsigned(*required_frame, parsed_required_frame) || parsed_required_frame == 0U ||
+        selected_bucket == nullptr || !json_unsigned(*selected_bucket, parsed_selected_bucket) ||
+        parsed_selected_bucket == 0U || usable_serialized == nullptr ||
+        !json_unsigned(*usable_serialized, parsed_usable_serialized) ||
+        parsed_usable_serialized == 0U ||
         (descriptor_schema && (descriptor_fields->kind != JsonValue::Kind::kArray ||
                                descriptor_fields->array.empty()))) {
       return make_unexpected(
@@ -2267,8 +2327,12 @@ struct ParsedPayload {
     result.identity.kind = PayloadIdentityKind::kSchema;
     result.identity.payload_kind =
         descriptor_schema ? PayloadKind::kDescriptorBacked : PayloadKind::kSerializedBytes;
+    result.identity.transport_profile_tag = static_cast<std::uint32_t>(parsed_profile_tag);
     result.identity.schema = std::move(parsed_schema).value();
     result.serialized_payload_capacity_bytes = parsed_maximum;
+    result.required_frame_bytes = parsed_required_frame;
+    result.selected_inline_bucket_bytes = parsed_selected_bucket;
+    result.bucket_usable_serialized_bytes = parsed_usable_serialized;
     if (descriptor_schema) {
       result.tensor_fields.reserve(descriptor_fields->array.size());
       for (const JsonValue& field : descriptor_fields->array) {
@@ -2732,7 +2796,7 @@ struct ParsedService {
       .service_max_subscriber_depth = service_record->max_subscriber_depth,
       .service_max_subscriber_borrowed = service_record->max_subscriber_borrowed,
       .payload_identity = service_record->payload.identity,
-      .serialized_payload_capacity_bytes =
+      .schema_writer_max_serialized_bytes =
           service_record->payload.serialized_payload_capacity_bytes,
       .memory_conversion = parsed_conversion,
       .capture_time_clock = std::move(capture_clock),
@@ -2752,7 +2816,16 @@ struct ParsedService {
       (bounds.subscriber->queue_depth && bounds.subscriber->max_borrowed_samples &&
        *bounds.subscriber->queue_depth <= service_record->max_subscriber_depth &&
        *bounds.subscriber->max_borrowed_samples <= service_record->max_subscriber_borrowed);
-  if (!subscriber_bounds_valid || service_record->binding != service_binding(result)) {
+  const bool capacity_geometry_valid =
+      result.payload_identity.kind != PayloadIdentityKind::kSchema ||
+      (service_record->payload.required_frame_bytes ==
+           result.service_static.required_data_frame_bytes &&
+       service_record->payload.selected_inline_bucket_bytes ==
+           result.service_static.selected_inline_bucket_bytes &&
+       service_record->payload.bucket_usable_serialized_bytes ==
+           result.service_static.bucket_usable_serialized_bytes);
+  if (!subscriber_bounds_valid || !capacity_geometry_valid ||
+      service_record->binding != service_binding(result)) {
     return make_unexpected(catalog_error(ErrorCode::kInvalidArgument, "ENDPOINT_SERVICE_INVALID"));
   }
   return result;
@@ -3843,18 +3916,16 @@ std::string_view SchemaIdentityView::canonical_name() const noexcept {
   return record_ == nullptr ? std::string_view{} : std::string_view{record_->canonical_name};
 }
 
-std::uint32_t SchemaIdentityView::version() const noexcept {
-  return record_ == nullptr ? 0U : record_->version;
+std::uint32_t SchemaIdentityView::compatibility_epoch() const noexcept {
+  return record_ == nullptr ? 0U : record_->compatibility_epoch;
 }
 
-std::span<const std::byte, 32> SchemaIdentityView::schema_sha256() const noexcept {
-  static constexpr std::array<std::byte, 32> kEmpty{};
-  return record_ == nullptr ? std::span<const std::byte, 32>{kEmpty}
-                            : std::span<const std::byte, 32>{record_->schema_sha256};
+SchemaId SchemaIdentityView::family_id() const noexcept {
+  return record_ == nullptr ? SchemaId{} : record_->family_id;
 }
 
-SchemaId SchemaIdentityView::id() const noexcept {
-  return record_ == nullptr ? SchemaId{} : record_->id;
+FlatBufferFileIdentifier SchemaIdentityView::file_identifier() const noexcept {
+  return record_ == nullptr ? FlatBufferFileIdentifier{} : record_->file_identifier;
 }
 
 const ClockKey& RequireCaptureTimeView::clock() const noexcept {
@@ -3974,6 +4045,15 @@ GeneratedNameInfoView ChannelEndpointCatalog::EndpointView::generated_name() con
   };
 }
 
+std::optional<ScalarIdentityKind> ChannelEndpointCatalog::EndpointView::scalar_identity()
+    const noexcept {
+  if (!*this) {
+    return std::nullopt;
+  }
+  const auto& scalar = state_->endpoints[index_].service_static.payload_identity.scalar;
+  return scalar ? std::optional{scalar->kind} : std::nullopt;
+}
+
 std::optional<PodTypeIdentityView> ChannelEndpointCatalog::EndpointView::pod_type_identity()
     const noexcept {
   if (!*this) {
@@ -3998,17 +4078,62 @@ std::optional<SchemaIdentityView> ChannelEndpointCatalog::EndpointView::schema_i
   return detail::ChannelEndpointCatalogAccess::schema_view(&schema.value());
 }
 
-std::optional<std::uint64_t> ChannelEndpointCatalog::EndpointView::schema_max_serialized_size()
-    const noexcept {
+std::optional<std::uint64_t>
+ChannelEndpointCatalog::EndpointView::schema_writer_max_serialized_bytes() const noexcept {
   if (!*this) {
     return std::nullopt;
   }
   const auto& service = state_->endpoints[index_].service_static;
   if (service.payload_identity.kind != PayloadIdentityKind::kSchema ||
-      service.serialized_payload_capacity_bytes == 0U) {
+      service.schema_writer_max_serialized_bytes == 0U) {
     return std::nullopt;
   }
-  return service.serialized_payload_capacity_bytes;
+  return service.schema_writer_max_serialized_bytes;
+}
+
+std::optional<std::uint64_t> ChannelEndpointCatalog::EndpointView::schema_required_frame_bytes()
+    const noexcept {
+  if (!*this) {
+    return std::nullopt;
+  }
+  const auto& service = state_->endpoints[index_].service_static;
+  return service.payload_identity.kind == PayloadIdentityKind::kSchema &&
+                 service.required_data_frame_bytes != 0U
+             ? std::optional{service.required_data_frame_bytes}
+             : std::nullopt;
+}
+
+std::optional<std::uint64_t>
+ChannelEndpointCatalog::EndpointView::schema_selected_inline_bucket_bytes() const noexcept {
+  if (!*this) {
+    return std::nullopt;
+  }
+  const auto& service = state_->endpoints[index_].service_static;
+  return service.payload_identity.kind == PayloadIdentityKind::kSchema &&
+                 service.selected_inline_bucket_bytes != 0U
+             ? std::optional{service.selected_inline_bucket_bytes}
+             : std::nullopt;
+}
+
+std::optional<std::uint64_t>
+ChannelEndpointCatalog::EndpointView::schema_bucket_usable_serialized_bytes() const noexcept {
+  if (!*this) {
+    return std::nullopt;
+  }
+  const auto& service = state_->endpoints[index_].service_static;
+  return service.payload_identity.kind == PayloadIdentityKind::kSchema &&
+                 service.bucket_usable_serialized_bytes != 0U
+             ? std::optional{service.bucket_usable_serialized_bytes}
+             : std::nullopt;
+}
+
+std::optional<std::uint32_t> ChannelEndpointCatalog::EndpointView::schema_transport_profile_tag()
+    const noexcept {
+  const auto& payload = state_->endpoints[index_].service_static.payload_identity;
+  if (payload.kind != PayloadIdentityKind::kSchema) {
+    return std::nullopt;
+  }
+  return payload.transport_profile_tag;
 }
 
 std::optional<RequireCaptureTimeView> ChannelEndpointCatalog::EndpointView::capture_time()

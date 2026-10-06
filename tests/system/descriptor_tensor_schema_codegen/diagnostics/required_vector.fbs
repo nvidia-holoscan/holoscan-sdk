@@ -11,3 +11,4 @@ table RequiredVectorDescriptor {
 }
 
 root_type RequiredVectorDescriptor;
+file_identifier "DRV1";

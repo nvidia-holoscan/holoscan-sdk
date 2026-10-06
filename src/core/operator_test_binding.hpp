@@ -44,6 +44,10 @@ struct SyntheticInputState {
   bool omit_scalar_read_claim{};
   bool return_partial_scalar_read_claim{};
   bool return_unexpected_scalar_read_claim{};
+  bool omit_scalar_sample{};
+  bool omit_scalar_view_generation{};
+  bool zero_scalar_view_generation{};
+  bool mismatch_scalar_view_generation{};
   ErrorCode backend_error{ErrorCode::kSuccess};
 };
 
@@ -520,8 +524,20 @@ class SyntheticOperatorBinding {
           return make_unexpected(std::move(acquired).error());
         }
         claim = *acquired;
+        if (slot.state.return_partial_scalar_read_claim) {
+          claim.retain = nullptr;
+        }
       }
-      return ScalarReadBinding<T>{.sample = &*slot.scalar, .claim = claim};
+      return ScalarReadBinding<T>{
+          .sample = slot.state.omit_scalar_sample ? nullptr : &*slot.scalar,
+          .claim = claim,
+          .view_generation =
+              slot.state.omit_scalar_view_generation ? nullptr : &slot.view_generation,
+          .expected_view_generation =
+              slot.state.zero_scalar_view_generation
+                  ? 0
+                  : slot.view_generation + (slot.state.mismatch_scalar_view_generation ? 1 : 0),
+      };
     }
 
     static expected<SelectedBatchBinding<T>, Error> batch_value(const void* opaque,
@@ -543,7 +559,10 @@ class SyntheticOperatorBinding {
       };
     }
 
-    void invalidate() noexcept override { ++active_generation; }
+    void invalidate() noexcept override {
+      ++view_generation;
+      ++active_generation;
+    }
 
     void unbind_if_owned() noexcept override {
       auto& port = *static_cast<Input<T>*>(const_cast<void*>(this->declaration));
@@ -557,6 +576,7 @@ class SyntheticOperatorBinding {
     std::vector<Sample<T>> owned_batch;
     std::vector<const Sample<T>*> batch;
     std::uint64_t active_generation{1};
+    std::uint64_t view_generation{1};
     ReadClaimPool* claim_pool{};
 
     static inline const InputBindingOps<T> kOps{

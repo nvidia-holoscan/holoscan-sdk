@@ -8,10 +8,28 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <string_view>
 
 #include <holoscan/core/execution_plan.hpp>
 
 namespace holoscan::detail {
+
+/// Return the stable enumerator name for a Tensor memory kind.
+[[nodiscard]] inline constexpr std::string_view memory_kind_name(MemoryKind memory) noexcept {
+  switch (memory) {
+    case MemoryKind::kUnknown:
+      return "kUnknown";
+    case MemoryKind::kHost:
+      return "kHost";
+    case MemoryKind::kPinnedHost:
+      return "kPinnedHost";
+    case MemoryKind::kCudaDevice:
+      return "kCudaDevice";
+    case MemoryKind::kCudaManaged:
+      return "kCudaManaged";
+  }
+  return "invalid";
+}
 
 /// Return whether two DLPack data types have identical code, width, and lane count.
 [[nodiscard]] inline bool dl_data_type_exactly_equal(DLDataType left, DLDataType right) noexcept {
@@ -28,8 +46,7 @@ namespace holoscan::detail {
 /// Return whether two schema identities contain the same complete stable identity.
 [[nodiscard]] inline bool schema_identity_exactly_equal(
     const SchemaIdentityRecord& left, const SchemaIdentityRecord& right) noexcept {
-  return left.canonical_name == right.canonical_name && left.version == right.version &&
-         left.schema_sha256 == right.schema_sha256 && left.id == right.id;
+  return schema_identity_equal(left, right);
 }
 
 /// Return whether two optional schema identities are both absent or exactly equal.
@@ -62,12 +79,14 @@ namespace holoscan::detail {
 [[nodiscard]] inline bool payload_identity_exactly_equal(
     const PayloadIdentityRecord& left, const PayloadIdentityRecord& right) noexcept {
   if (left.kind != right.kind || left.payload_kind != right.payload_kind ||
+      left.transport_profile_tag != right.transport_profile_tag ||
       left.scalar.has_value() != right.scalar.has_value() ||
       left.schema.has_value() != right.schema.has_value() ||
       left.pod.has_value() != right.pod.has_value()) {
     return false;
   }
-  return (!left.scalar || left.scalar->kind == right.scalar->kind) &&
+  return (!left.scalar || (left.scalar->kind == right.scalar->kind &&
+                           left.scalar->native_object_size == right.scalar->native_object_size)) &&
          (!left.schema || schema_identity_exactly_equal(*left.schema, *right.schema)) &&
          (!left.pod || pod_identity_exactly_equal(*left.pod, *right.pod));
 }
@@ -80,6 +99,29 @@ namespace holoscan::detail {
          (!left || (left->memory_kind == right->memory_kind && left->rank == right->rank &&
                     left->strides == right->strides &&
                     dl_data_type_exactly_equal(left->dtype, right->dtype)));
+}
+
+/// Return whether an allocation satisfies every Tensor property declared by an input port.
+[[nodiscard]] inline bool tensor_allocation_satisfies_input(
+    const TensorAllocationPlanRecord& allocation,
+    const std::optional<TensorRepresentation>& input_layout) noexcept {
+  if (!input_layout) {
+    return true;
+  }
+  if (input_layout->memory_kind && *input_layout->memory_kind != allocation.memory_kind) {
+    return false;
+  }
+  if (input_layout->dtype &&
+      (!allocation.layout || !allocation.layout->dtype ||
+       !dl_data_type_exactly_equal(*input_layout->dtype, *allocation.layout->dtype))) {
+    return false;
+  }
+  if (input_layout->strides &&
+      (!allocation.layout || allocation.layout->strides != input_layout->strides)) {
+    return false;
+  }
+  return !input_layout->rank || (allocation.layout && allocation.layout->rank &&
+                                 *input_layout->rank == *allocation.layout->rank);
 }
 
 /// Return whether two logical Tensor requirements contain the same complete ordered value.

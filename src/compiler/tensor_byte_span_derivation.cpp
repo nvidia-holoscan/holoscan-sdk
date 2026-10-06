@@ -14,6 +14,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -22,6 +23,8 @@
 
 #include "../core/operator_spec_compiler_access.hpp"
 #include "../core/tensor_contract_resolution_internal.hpp"
+#include "derivation_replay.hpp"
+#include "diagnostic_detail.hpp"
 #include "snapshot_lookup.hpp"
 
 namespace holoscan::detail {
@@ -37,6 +40,7 @@ constexpr std::string_view kInputUnbounded = "PHYSICAL_TENSOR_BYTE_SPAN_INPUT_UN
 constexpr std::string_view kDependencyInvalid = "PHYSICAL_TENSOR_BYTE_SPAN_DEPENDENCY_INVALID";
 constexpr std::string_view kOverflow = "PHYSICAL_TENSOR_BYTE_SPAN_OVERFLOW";
 constexpr std::string_view kContractConflict = "PHYSICAL_TENSOR_BYTE_SPAN_CONTRACT_CONFLICT";
+constexpr std::string_view kProjectionFailed = "PHYSICAL_TENSOR_BYTE_SPAN_PROJECTION_FAILED";
 
 struct Candidate {
   VertexId owner{};
@@ -50,6 +54,7 @@ struct Candidate {
   std::optional<TensorByteSpanExpression> owned_authored_expression;
   const void* initial_parameters{};
   const void* parameter_type_token{};
+  const ParamSchemaDescriptor* parameter_schema{};
   bool input_source_eligible{};
 };
 
@@ -70,10 +75,27 @@ struct CandidateKey {
   return candidate_key_tuple(left) < candidate_key_tuple(right);
 }
 
-struct ReplayStorage {
-  std::unique_ptr<OperatorBase> instance;
-  std::unique_ptr<OperatorSpec> spec;
-};
+[[nodiscard]] bool parameter_schema_stable_equal(const ParamSchemaDescriptor* left,
+                                                 const ParamSchemaDescriptor* right) noexcept {
+  return left != nullptr && right != nullptr && left->stable_id == right->stable_id &&
+         left->version == right->version && left->structural_hash == right->structural_hash &&
+         left->contract_hash == right->contract_hash;
+}
+
+[[nodiscard]] bool parameter_type_exactly_equal(const void* authored_token,
+                                                const ParamSchemaDescriptor* authored_schema,
+                                                const Candidate& candidate) noexcept {
+  if (authored_token == candidate.parameter_type_token) {
+    return true;
+  }
+  const ParamTypeDescriptor* const authored_type =
+      authored_schema == nullptr ? nullptr : authored_schema->local_type;
+  const ParamTypeDescriptor* const candidate_type =
+      candidate.parameter_schema == nullptr ? nullptr : candidate.parameter_schema->local_type;
+  return authored_type != nullptr && candidate_type != nullptr &&
+         authored_type->local_type_info != nullptr && candidate_type->local_type_info != nullptr &&
+         *authored_type->local_type_info == *candidate_type->local_type_info;
+}
 
 enum class VisitState : std::uint8_t { kUnvisited, kVisiting, kComplete, kFailed };
 
@@ -94,9 +116,10 @@ enum class VisitState : std::uint8_t { kUnvisited, kVisiting, kComplete, kFailed
   return pointer;
 }
 
-void reject(TensorByteSpanDerivationLowering& result, std::string_view token,
-            const Candidate& candidate, std::optional<std::size_t> node_index = std::nullopt,
-            std::string required = {}, std::string provided = {}) {
+DiagnosticDetail& reject(TensorByteSpanDerivationLowering& result, std::string_view token,
+                         const Candidate& candidate,
+                         std::optional<std::size_t> node_index = std::nullopt,
+                         std::string required = {}, std::string provided = {}) {
   result.diagnostics.push_back(PlanLoweringDiagnostic{
       .token = std::string{token},
       .source = source_for(candidate),
@@ -104,6 +127,20 @@ void reject(TensorByteSpanDerivationLowering& result, std::string_view token,
       .required = std::move(required),
       .provided = std::move(provided),
   });
+  return result.diagnostics.back().detail.emplace(DiagnosticDetail{
+      .operation = DiagnosticOperation::kCompile, .error = Error{ErrorCode::kSuccess}});
+}
+
+// Called only after projector dependencies are admitted; private projector messages stay excluded.
+void attach_projection_diagnostic_detail(
+    DiagnosticDetail& detail, ErrorCode code,
+    const TensorByteSpanExpressionNodeRecord& normalized) noexcept {
+  detail.error.code = code;
+  append_derivation_context(detail, "projector_id", normalized.projection_id);
+  append_derivation_context(detail, "parameter_schema", normalized.parameter_schema_id);
+  for (const auto& dependency : normalized.projection_dependencies) {
+    append_derivation_context(detail, "dependency_path", dependency.parameter_path);
+  }
 }
 
 [[nodiscard]] std::string node_evidence(const TensorByteSpanExpressionNodeRecord& node) {
@@ -113,6 +150,9 @@ void reject(TensorByteSpanDerivationLowering& result, std::string_view token,
   }
   if (!node.input_name.empty()) {
     evidence += ",input=" + node.input_name;
+  }
+  if (!node.projection_id.empty()) {
+    evidence += ",projection=" + node.projection_id;
   }
   return evidence;
 }
@@ -163,6 +203,32 @@ void reject(TensorByteSpanDerivationLowering& result, std::string_view token,
            field.full_id == node.parameter_full_id && field.canonical_name == node.parameter_path;
   });
   return found == fields.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] const ParameterFieldPlanRecord* find_projection_parameter_owner_field(
+    std::span<const ParameterFieldPlanRecord> fields, OperatorInstanceId owner,
+    const ParamFieldDescriptor& root) noexcept {
+  const auto found = std::find_if(fields.begin(), fields.end(), [&](const auto& field) {
+    return field.owner.id == owner && field.field == root.id && field.full_id == root.full_id &&
+           field.canonical_name == root.canonical_name && field.logical_type == root.logical_type;
+  });
+  return found == fields.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] bool projection_dependency_less(
+    const TensorByteSpanProjectionDependencyRecord& left,
+    const TensorByteSpanProjectionDependencyRecord& right) noexcept {
+  if (left.parameter_member_full_ids != right.parameter_member_full_ids) {
+    return std::lexicographical_compare(left.parameter_member_full_ids.begin(),
+                                        left.parameter_member_full_ids.end(),
+                                        right.parameter_member_full_ids.begin(),
+                                        right.parameter_member_full_ids.end(),
+                                        [](ParamSchemaHash left_id, ParamSchemaHash right_id) {
+                                          return left_id.value < right_id.value;
+                                        });
+  }
+  return std::tuple{left.parameter_field, left.parameter_full_id.value, left.parameter_path} <
+         std::tuple{right.parameter_field, right.parameter_full_id.value, right.parameter_path};
 }
 
 template <typename T>
@@ -234,6 +300,28 @@ class Evaluator {
     for (std::size_t index = 0U; index < candidates_.size(); ++index) {
       if (candidates_[index].input_source_eligible) {
         candidate_by_output_.emplace(candidates_[index].output.value(), index);
+      }
+      // Presence selects the owned expression; otherwise the external authored view is used.
+      // NOLINTBEGIN(bugprone-unchecked-optional-access)
+      const TensorByteSpanExpression* expression =
+          candidates_[index].owned_authored_expression
+              ? &*candidates_[index].owned_authored_expression
+              : candidates_[index].authored_expression;
+      // NOLINTEND(bugprone-unchecked-optional-access)
+      if (expression == nullptr) {
+        continue;
+      }
+      for (const auto& node :
+           OperatorSpecCompilerAccess::tensor_byte_span_expression_nodes(*expression)) {
+        if (node.operation != TensorByteSpanOperation::kParameterProjection) {
+          continue;
+        }
+        const auto [found, inserted] = projector_implementations_.emplace(
+            node.projection.stable_id, node.projection.implementation);
+        if (!inserted &&
+            !same_tensor_byte_span_projector(found->second, node.projection.implementation)) {
+          colliding_projector_ids_.insert(node.projection.stable_id);
+        }
       }
     }
   }
@@ -361,10 +449,13 @@ class Evaluator {
       const TensorByteSpanAuthoringNode& authored,
       const TensorByteSpanExpressionNodeRecord& normalized, std::size_t node_index,
       TensorByteSpanDerivationPlanRecord& record) {
+    const ParamSchemaDescriptor* const schema =
+        authored.parameter ? authored.parameter.schema() : nullptr;
     const ParameterFieldPlanRecord* field =
         find_parameter_field(fields_, candidate.operator_id, normalized);
     if (field == nullptr || !authored.parameter ||
-        authored.parameter.root_type_token != candidate.parameter_type_token) {
+        !parameter_type_exactly_equal(authored.parameter.root_type_token, schema, candidate) ||
+        !parameter_schema_stable_equal(schema, candidate.parameter_schema)) {
       reject_node(kDependencyInvalid,
                   candidate,
                   node_index,
@@ -404,8 +495,7 @@ class Evaluator {
     }
 
     TensorByteSpanParameterValue parameter_value;
-    const auto status =
-        authored.parameter.read_initial(candidate.initial_parameters, parameter_value);
+    const auto status = authored.parameter.read(candidate.initial_parameters, parameter_value);
     if (status == TensorByteSpanParameterReadStatus::kTypeInvalid) {
       reject_node(kParameterTypeInvalid,
                   candidate,
@@ -462,6 +552,134 @@ class Evaluator {
     return value;
   }
 
+  // Projection identity, schema, dependency, and evaluated-capacity checks are inseparable here.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+  [[nodiscard]] std::optional<std::uint64_t> projection_capacity(
+      const Candidate& candidate, const TensorByteSpanAuthoringNode& authored,
+      const TensorByteSpanExpressionNodeRecord& normalized, std::size_t node_index,
+      TensorByteSpanDerivationPlanRecord& record) {
+    const ParamSchemaDescriptor* const schema =
+        authored.projection ? authored.projection.root_schema() : nullptr;
+    if (!authored.projection ||
+        !parameter_type_exactly_equal(authored.projection.root_type_token, schema, candidate) ||
+        !parameter_schema_stable_equal(schema, candidate.parameter_schema) ||
+        authored.projection.stable_id != normalized.projection_id ||
+        normalized.projection_dependencies.empty()) {
+      reject_node(kDependencyInvalid,
+                  candidate,
+                  node_index,
+                  "one replayed named Parameter projector",
+                  normalized);
+      return std::nullopt;
+    }
+    if (colliding_projector_ids_.contains(authored.projection.stable_id)) {
+      reject_node(kDependencyInvalid,
+                  candidate,
+                  node_index,
+                  "one semantic implementation per stable projector identity",
+                  normalized);
+      return std::nullopt;
+    }
+    if (schema == nullptr || schema->stable_id != normalized.parameter_schema_id ||
+        schema->version != normalized.parameter_schema_version) {
+      reject_node(kDependencyInvalid,
+                  candidate,
+                  node_index,
+                  "exact owning projector Params schema",
+                  normalized);
+      return std::nullopt;
+    }
+
+    std::vector<TensorByteSpanProjectionDependencyRecord> dependencies;
+    dependencies.reserve(authored.projection.dependencies.size());
+    for (const auto& dependency : authored.projection.dependencies) {
+      if (!dependency || dependency.root_type_token != authored.projection.root_type_token) {
+        reject_node(kDependencyInvalid,
+                    candidate,
+                    node_index,
+                    "declared dependencies from the exact Params root",
+                    normalized);
+        return std::nullopt;
+      }
+      const ParamSchemaDescriptor* dependency_schema = dependency.root_schema();
+      const ParamFieldDescriptor* root = dependency.root_field();
+      const ParamFieldDescriptor* field = dependency.final_field();
+      std::vector<ParamSchemaHash> member_full_ids = dependency.member_full_ids();
+      const std::string path = dependency.canonical_path();
+      if (dependency_schema == nullptr || root == nullptr || root->id == 0U || field == nullptr ||
+          field->id == 0U || member_full_ids.empty() || member_full_ids.back() != field->full_id ||
+          path.empty() || dependency_schema->stable_id != schema->stable_id ||
+          dependency_schema->version != schema->version) {
+        reject_node(kDependencyInvalid,
+                    candidate,
+                    node_index,
+                    "declared dependencies from the exact Params schema",
+                    normalized);
+        return std::nullopt;
+      }
+      const TensorByteSpanProjectionDependencyRecord normalized_dependency{
+          .parameter_field = field->id,
+          .parameter_full_id = field->full_id,
+          .parameter_member_full_ids = std::move(member_full_ids),
+          .parameter_path = path,
+      };
+      if (find_projection_parameter_owner_field(fields_, candidate.operator_id, *root) == nullptr) {
+        reject_node(kDependencyInvalid,
+                    candidate,
+                    node_index,
+                    "generation-zero ownership for every declared dependency",
+                    normalized);
+        return std::nullopt;
+      }
+      if (field->mutability != ParamMutability::kCompileTime &&
+          field->mutability != ParamMutability::kRecompile) {
+        reject_node(kParameterMutabilityInvalid,
+                    candidate,
+                    node_index,
+                    "compile-time or recompile-required dependencies",
+                    normalized);
+        return std::nullopt;
+      }
+      if (dependency.has_sensitive_member()) {
+        reject_node(kDependencyInvalid,
+                    candidate,
+                    node_index,
+                    "non-sensitive projector dependencies",
+                    normalized);
+        return std::nullopt;
+      }
+      if (field->mutability == ParamMutability::kRecompile) {
+        record.update_disposition = TensorByteSpanDerivationUpdateDisposition::kRecompileRequired;
+      }
+      dependencies.push_back(normalized_dependency);
+    }
+    std::sort(dependencies.begin(), dependencies.end(), projection_dependency_less);
+    if (dependencies != normalized.projection_dependencies) {
+      reject_node(kDependencyInvalid,
+                  candidate,
+                  node_index,
+                  "exact canonical projector dependency set",
+                  normalized);
+      return std::nullopt;
+    }
+
+    auto projected = authored.projection.evaluate(candidate.initial_parameters);
+    if (!projected) {
+      const Error& error = projected.error();
+      const std::string_view token =
+          error.code == ErrorCode::kArithmeticOverflow ? kOverflow : kProjectionFailed;
+      auto& detail = reject(result_,
+                            token,
+                            candidate,
+                            node_index,
+                            "successful deterministic Parameter byte-span projection",
+                            std::string{error_code_name(error.code)});
+      attach_projection_diagnostic_detail(detail, error.code, normalized);
+      return std::nullopt;
+    }
+    return *projected;
+  }
+
   [[nodiscard]] std::optional<NodeEvaluation> evaluate_node(
       const Candidate& candidate, const TensorContractRecord& contract,
       const TensorByteSpanAuthoringNode& authored,
@@ -490,6 +708,14 @@ class Evaluator {
                                           plan_generation,
                                           evaluated.input,
                                           record.update_disposition);
+        if (!value) {
+          return std::nullopt;
+        }
+        evaluated.value = *value;
+        break;
+      }
+      case TensorByteSpanOperation::kParameterProjection: {
+        const auto value = projection_capacity(candidate, authored, normalized, node_index, record);
         if (!value) {
           return std::nullopt;
         }
@@ -617,6 +843,10 @@ class Evaluator {
           .parameter_field = normalized.parameter_field,
           .input = evaluated->input,
           .resolved_value = evaluated->value,
+          .projection_id = normalized.projection_id,
+          .parameter_schema_id = normalized.parameter_schema_id,
+          .parameter_schema_version = normalized.parameter_schema_version,
+          .projection_dependencies = normalized.projection_dependencies,
       });
     }
     record.resolved_max_byte_span = values.back();
@@ -638,6 +868,8 @@ class Evaluator {
   std::vector<Candidate> candidates_;
   TensorByteSpanDerivationLowering& result_;
   std::unordered_map<std::uint64_t, std::size_t> candidate_by_output_;
+  std::unordered_map<std::string, TensorByteSpanProjectorIdentity> projector_implementations_;
+  std::unordered_set<std::string> colliding_projector_ids_;
   std::vector<VisitState> states_;
   std::vector<std::optional<std::uint64_t>> resolved_;
   std::vector<TensorByteSpanDerivationUpdateDisposition> dispositions_;
@@ -658,7 +890,7 @@ class Evaluator {
 enum class ReplayDisposition : std::uint8_t { kSkip, kReady, kFatal };
 
 [[nodiscard]] ReplayDisposition replay_derivation_operator(
-    const ExecutableOperatorFactoryRecord& entry, ReplayStorage& replay,
+    const ExecutableOperatorFactoryRecord& entry, DerivationReplay& replay,
     TensorByteSpanDerivationLowering& result) {
   if (!entry.factory || entry.operator_id == 0U || !entry.vertex) {
     result.diagnostics.push_back(PlanLoweringDiagnostic{
@@ -667,41 +899,31 @@ enum class ReplayDisposition : std::uint8_t { kSkip, kReady, kFatal };
     });
     return ReplayDisposition::kSkip;
   }
-  auto created = entry.factory->create();
-  if (!created || !created.value()) {
-    result.diagnostics.push_back(PlanLoweringDiagnostic{
-        .token = std::string{kDerivationInvalid},
-        .source = DiagnosticSource{.vertex = entry.vertex},
-    });
-    return ReplayDisposition::kSkip;
-  }
-  replay = ReplayStorage{
-      .instance = std::move(created.value()),
-      .spec = std::make_unique<OperatorSpec>(),
-  };
-  try {
-    replay.instance->setup(*replay.spec);
-  } catch (...) {
-    result.diagnostics.push_back(PlanLoweringDiagnostic{
-        .token = std::string{kDerivationInvalid},
-        .source = DiagnosticSource{.vertex = entry.vertex},
-        .required = "successful Operator setup replay",
-        .provided = "setup threw",
-    });
-    return ReplayDisposition::kFatal;
-  }
-  const Error& declaration_error = OperatorSpecCompilerAccess::declaration_error(*replay.spec);
-  if (declaration_error.code == ErrorCode::kSuccess) {
+  DiagnosticCapture capture;
+  const auto outcome = replay_derivation(*entry.factory, replay, capture);
+  if (outcome == DerivationReplayOutcome::kReady) {
     return ReplayDisposition::kReady;
   }
+  if (outcome == DerivationReplayOutcome::kConstructionFailed) {
+    result.diagnostics.push_back(PlanLoweringDiagnostic{
+        .token = std::string{kDerivationInvalid},
+        .source = DiagnosticSource{.vertex = entry.vertex},
+    });
+    attach_diagnostic_capture(
+        result.diagnostics.back().detail, capture, DiagnosticOperation::kConstruct);
+    return ReplayDisposition::kSkip;
+  }
+  const Error& declaration_error = OperatorSpecCompilerAccess::declaration_error(*replay.spec);
   result.diagnostics.push_back(PlanLoweringDiagnostic{
       .token = std::string{kDerivationInvalid},
       .source = DiagnosticSource{.vertex = entry.vertex},
       .required = "successful Operator setup replay",
-      .provided = declaration_error.message.empty()
+      .provided = outcome == DerivationReplayOutcome::kSetupThrew ? "setup threw"
+                  : declaration_error.message.empty()
                       ? std::to_string(static_cast<std::uint32_t>(declaration_error.code))
                       : declaration_error.message,
   });
+  attach_diagnostic_capture(result.diagnostics.back().detail, capture, DiagnosticOperation::kSetup);
   return ReplayDisposition::kFatal;
 }
 
@@ -732,6 +954,7 @@ void append_port_derivation_candidate(const ExecutableOperatorFactoryRecord& ent
       .authored_expression = metadata.authored_tensor_byte_span_expression,
       .initial_parameters = entry.factory->initial_parameter_value(),
       .parameter_type_token = entry.factory->parameter_type().local_type_token,
+      .parameter_schema = entry.factory->parameter_schema(),
       .input_source_eligible = true,
   });
 }
@@ -788,6 +1011,7 @@ void append_field_derivation_candidates(const ExecutableOperatorFactoryRecord& e
         .owned_authored_expression = authored_field.tensor_byte_span_expression,
         .initial_parameters = entry.factory->initial_parameter_value(),
         .parameter_type_token = entry.factory->parameter_type().local_type_token,
+        .parameter_schema = entry.factory->parameter_schema(),
         .input_source_eligible = metadata.descriptor_tensor_field_count == 1U,
     });
   }
@@ -822,14 +1046,14 @@ TensorByteSpanDerivationLowering lower_tensor_byte_span_derivations(
     const ExecutableFactoryInventory& factories, const GraphSnapshotData& snapshot,
     PlanGenerationId plan_generation, std::span<const ParameterFieldPlanRecord> parameter_fields) {
   TensorByteSpanDerivationLowering result;
-  std::vector<ReplayStorage> replay_storage;
+  std::vector<DerivationReplay> replay_storage;
   std::vector<Candidate> candidates;
   replay_storage.reserve(factories.operators.size());
   for (const auto& entry : factories.operators) {
     if (!owner_has_byte_span_derivation(snapshot, entry.vertex)) {
       continue;
     }
-    ReplayStorage replay;
+    DerivationReplay replay;
     const ReplayDisposition disposition = replay_derivation_operator(entry, replay, result);
     if (disposition == ReplayDisposition::kSkip) {
       continue;

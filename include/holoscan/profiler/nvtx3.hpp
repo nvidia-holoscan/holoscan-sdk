@@ -26,6 +26,9 @@ inline nvtxDomainHandle_t operator_profile_domain() noexcept {
   return nvtx3::domain::get<holoscan_operator_domain>();
 }
 
+/// A `<port>:emit` mark means the runtime accepted the output or delivery may already have
+/// started. A rejected attempt produces no mark. Match emit and receive marks by this payload,
+/// because a concurrent receiver can record its mark first.
 struct EmitReceiveNVTXPayload {
   nvtxStringHandle_t source_identity{};
   std::uint64_t sequence{};

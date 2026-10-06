@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -12,9 +13,12 @@
 
 #include <holoscan/core/payload_options.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
+#include <holoscan/sensor_io/image_descriptor_scratch.hpp>
+#include <holoscan/sensor_io/provenance.hpp>
 #include <holoscan/vision/convert_to_op.hpp>
 
 #include "detail/cvcuda_tensor.hpp"
+#include "detail/image_payload.hpp"
 
 namespace holoscan::vision {
 namespace {
@@ -22,6 +26,24 @@ namespace {
 constexpr TensorRepresentation kCudaTensorRepresentation{
     .memory_kind = MemoryKind::kCudaDevice,
 };
+
+[[nodiscard]] expected<std::uint64_t, Error> convert_output_element_size(
+    const ConvertToOpParams& params) noexcept {
+  switch (params.output_type) {
+    case VisionElementType::kU8:
+    case VisionElementType::kS8:
+      return sizeof(std::uint8_t);
+    case VisionElementType::kU16:
+    case VisionElementType::kS16:
+      return sizeof(std::uint16_t);
+    case VisionElementType::kS32:
+    case VisionElementType::kF32:
+      return sizeof(std::uint32_t);
+    case VisionElementType::kF64:
+      return sizeof(std::uint64_t);
+  }
+  return make_unexpected(Error{ErrorCode::kInvalidArgument});
+}
 
 [[nodiscard]] auto failure(ErrorCode code, std::string message) {
   return make_unexpected(Error{code, std::move(message)});
@@ -61,38 +83,38 @@ constexpr TensorRepresentation kCudaTensorRepresentation{
 
 class ConvertToOp::Impl {
  public:
+  std::optional<sensor_io::ImageDescriptorScratch> image_metadata;
   std::unique_ptr<cvcuda::ConvertTo> operation;
 };
 
-ConvertToOp::ConvertToOp(VisionImageCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+ConvertToOp::ConvertToOp() : impl_(std::make_unique<Impl>()) {}
 
 ConvertToOp::~ConvertToOp() = default;
 
 void ConvertToOp::setup(OperatorSpec& spec) {
-  auto byte_span = detail::maximum_output_byte_span(
-      capacity_.max_width, capacity_.max_height, capacity_.max_batch_size, sizeof(double));
-  if (!byte_span) {
-    throw RuntimeError(byte_span.error());
-  }
+  const auto output_element_size = parameter_projected_byte_span<&convert_output_element_size>(
+      "holoscan.vision.ConvertToOp.output-element-size.v1",
+      param_ref<&ConvertToOpParams::output_type>());
 
   spec.input(input, "input")
       .queue_depth(1U)
+      .tensor_field(schema::ImageTensorFields::data)
       .expects_tensor(TensorInputSpec{
           .representation = kCudaTensorRepresentation,
           .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
       });
   spec.output(output, "output")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = detail::ImageTensorView::kMaxRank,
-                  .max_byte_span = *byte_span,
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .tensor_field(schema::ImageTensorFields::data)
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          // The producer bound is measured in bytes. Multiplying by output element size is a safe
+          // dtype ratio because every admitted input element occupies at least one byte.
+          input_max_byte_span(input).multiplied_by(output_element_size));
 }
 
 Contract ConvertToOp::contract() const {
@@ -102,8 +124,19 @@ Contract ConvertToOp::contract() const {
 }
 
 void ConvertToOp::start() {
+  if (!impl_->image_metadata) {
+    auto created = sensor_io::ImageDescriptorScratch::create();
+    if (!created) {
+      throw RuntimeError(created.error());
+    }
+    impl_->image_metadata.emplace(std::move(*created));
+  }
   if (impl_->operation) {
     return;
+  }
+  auto prepared = detail::prepare_nvcv_tensor_handles(2);
+  if (!prepared) {
+    throw RuntimeError(prepared.error().code, "ConvertToOp failed to prepare NVCV Tensor handles");
   }
   try {
     impl_->operation = std::make_unique<cvcuda::ConvertTo>();
@@ -120,27 +153,28 @@ void ConvertToOp::stop() {
 
 expected<void, Error> ConvertToOp::compute(ExecutionContext& context) {
   const ConvertToOpParams& configuration = context.params<ConvertToOpParams>();
-  if (!impl_->operation) {
-    return failure(ErrorCode::kNotReady, "ConvertToOp CV-CUDA resource is not initialized");
+  if (!impl_->operation || !impl_->image_metadata) {
+    return failure(ErrorCode::kNotReady, "ConvertToOp resources are not initialized");
   }
   const cudaStream_t stream = context.cuda_stream().get();
   if (stream == nullptr) {
     return failure(ErrorCode::kNotSupported, "ConvertToOp requires a runtime CUDA stream");
   }
 
-  auto sample = input.receive();
+  auto sample = input.selected_sample();
   if (!sample) {
     return make_unexpected(std::move(sample).error());
   }
-  auto input_view = detail::describe_image_tensor(
-      sample->data, detail::TensorOperation::kConvertTo, capacity_.max_batch_size);
+  auto input_view = detail::describe_image_payload(
+      sample->data(), detail::TensorOperation::kConvertTo, kMaximumBatchSize);
   if (!input_view) {
     return make_unexpected(std::move(input_view).error());
   }
-  if (input_view->width > capacity_.max_width || input_view->height > capacity_.max_height) {
-    return failure(ErrorCode::kInvalidArgument,
-                   "ConvertToOp output exceeds the authored output-pool capacity");
+  auto metadata_copied = impl_->image_metadata->copy_metadata_from(sample->data());
+  if (!metadata_copied) {
+    return make_unexpected(std::move(metadata_copied).error());
   }
+  auto& image = impl_->image_metadata->image();
 
   const DLDataType output_dtype = to_dl_data_type(configuration.output_type);
   const std::span<const std::int64_t> shape{input_view->shape.data(), input_view->rank};
@@ -172,10 +206,21 @@ expected<void, Error> ConvertToOp::compute(ExecutionContext& context) {
                                                    output_dtype,
                                                    DLDevice{kDLCUDA, loan->device_id().value},
                                                    detail::TensorOperation::kConvertTo,
-                                                   capacity_.max_batch_size);
+                                                   kMaximumBatchSize);
   if (!output_view) {
     return make_unexpected(std::move(output_view).error());
   }
+  auto metadata_updated = detail::update_image_metadata(
+      image,
+      *input_view,
+      *output_view,
+      detail::ImageMetadataTransform{
+          .geometry = detail::ImageGeometryChange::kPreserve,
+          .values_changed = configuration.alpha != 1.0 || configuration.beta != 0.0});
+  if (!metadata_updated) {
+    return make_unexpected(std::move(metadata_updated).error());
+  }
+
   auto nvcv_input = detail::wrap_nvcv_tensor(*input_view);
   if (!nvcv_input) {
     return make_unexpected(std::move(nvcv_input).error());
@@ -201,7 +246,7 @@ expected<void, Error> ConvertToOp::compute(ExecutionContext& context) {
   if (!committed) {
     return make_unexpected(std::move(committed).error());
   }
-  return output.emit(std::move(*loan), detail::forward_metadata(sample->metadata));
+  return output.emit_tensor(std::move(*loan), image, sensor_io::derive_from(sample->metadata()));
 }
 
 }  // namespace holoscan::vision

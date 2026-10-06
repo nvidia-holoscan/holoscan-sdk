@@ -10,13 +10,15 @@ include(CTest)
 find_package(holoscan REQUIRED CONFIG
     PATHS
         "/workspace/holoscan-sdk/install"
-        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
 )
 
 add_executable(plan_artifacts plan_artifacts.cpp)
 target_link_libraries(plan_artifacts PRIVATE holoscan::core)
 
 if(BUILD_TESTING)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../../common/ctest_workspace.cmake")
+    holoscan_configure_example_test_workspace(plan_artifacts)
     # REQ: SYSTEM-015
     add_test(NAME EXAMPLE_CPP_PLAN_ARTIFACTS_TEST COMMAND plan_artifacts)
     set_tests_properties(EXAMPLE_CPP_PLAN_ARTIFACTS_TEST
@@ -27,6 +29,7 @@ if(BUILD_TESTING)
             TIMEOUT 30)
 
     add_executable(plan_artifacts_workspace_test plan_artifacts_workspace_test.cpp)
+    holoscan_configure_example_test_workspace(plan_artifacts_workspace_test)
     add_test(
         NAME EXAMPLE_CPP_PLAN_ARTIFACTS_WORKSPACE_COLLISION_TEST
         COMMAND plan_artifacts_workspace_test)

@@ -200,10 +200,13 @@ no-fence device latency.
 | Throughput geometry | 50,000 measured POD samples; 10,000 pinned-host or 5,000 device bulk samples; 500 warmup; no pacing |
 | Payload and topology | Intraprocess and interprocess 1:1; 64-byte POD or 1 MiB external buffer; timed payload validation disabled |
 
-The exact command was:
+The following command uses the current build-directory conventions to run the
+same preset from the SDK source root on native x86_64 hardware. It is an updated
+reproduction recipe; the measurements above retain their recorded revision and
+provenance. `launch` starts in the target's build directory:
 
 ```bash
-HOLOSCAN_CUDA_MAJOR_VERSION=13 ./public/run launch build-cu13-x86_64 \
+./run launch --arch x86_64 \
   --run-cmd "python3 ../benchmark/run_transport_benchmark_suite.py \
     --build-dir . \
     --output-dir transport-suite-userguide-balanced-20260724 \

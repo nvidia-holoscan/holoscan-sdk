@@ -371,6 +371,8 @@ TEST(LifecycleSurface, BoundsTransactionsAndExcludesForbiddenRuntimeAuthority) {
 }
 
 // REQ: LIFECYCLE-009
+// REQ: LIFECYCLE-013
+// REQ: LIFECYCLE-014
 TEST(LifecycleSurface, LoggingSinkPreservesStructuralEvidenceAndCannotAffectControlFlow) {
   LifecycleLogProbe probe;
   const std::array records{

@@ -16,8 +16,8 @@
 
 #include <GLFW/glfw3.h>
 
-#include <holoviz/rhi.hpp>
-#include <holoviz/text/imgui_ui.hpp>
+#include <holoviz/holoviz.hpp>
+#include <holoviz/imgui/ui.hpp>
 
 #include "image_compare_test_util.hpp"
 
@@ -25,17 +25,15 @@
 
 #include "holoviz_test_skip.hpp"
 
-namespace holoviz::text {
+namespace holoviz::imgui {
 namespace {
-
-namespace rhi = holoviz::rhi;
 
 using test_util::try_create_device;
 
 class ImGuiInputTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    auto window = rhi::create_window({.title = "imgui input test", .size = {160, 120}});
+    auto window = create_window({.title = "imgui input test", .size = {160, 120}});
     if (!window) {
       HOLOVIZ_ENV_SKIP() << "no window system available: " << window.error().message;
     }
@@ -68,18 +66,18 @@ class ImGuiInputTest : public ::testing::Test {
     }
   }
 
-  rhi::Window window_;
-  rhi::Device device_;
+  Window window_;
+  Device device_;
   CUstream stream_ = nullptr;
 };
 
 TEST_F(ImGuiInputTest, UnmappedKeysAreDroppedAndMappedKeysRegister) {
-  auto backend_result = create_imgui_backend(device_, {.stream = stream_, .frames_in_flight = 2});
+  auto backend_result = create_renderer(device_, {.stream = stream_, .frames_in_flight = 2});
   ASSERT_TRUE(backend_result.has_value()) << backend_result.error().message;
-  ImGuiBackend backend = std::move(*backend_result);
+  Renderer backend = std::move(*backend_result);
   ASSERT_TRUE(backend.install_input_callbacks(window_).has_value());
 
-  const auto native = window_.native_object(rhi::NativeObjectType::kGLFWwindow);
+  const auto native = window_.native_object(NativeObjectType::kGLFWwindow);
   ASSERT_TRUE(native.has_value()) << native.error().message;
   auto* glfw_window = reinterpret_cast<GLFWwindow*>(native->value);
   ASSERT_NE(glfw_window, nullptr);
@@ -151,4 +149,4 @@ TEST_F(ImGuiInputTest, UnmappedKeysAreDroppedAndMappedKeysRegister) {
 }
 
 }  // namespace
-}  // namespace holoviz::text
+}  // namespace holoviz::imgui

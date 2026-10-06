@@ -143,6 +143,9 @@ template <typename T>
 concept HasBindProcessRoleMember = requires { &T::bind_process_role; };
 
 template <typename T>
+concept HasBindSupportThreadAffinityMember = requires { &T::bind_support_thread_affinity; };
+
+template <typename T>
 concept HasProcessRolesMember = requires(const T& value) { value.process_roles(); };
 
 template <typename T>
@@ -158,6 +161,8 @@ static_assert(!HasRunMember<InstalledRuntimeOperator>);
 static_assert(!HasRunOnceMember<InstalledRuntimeOperator>);
 // REQ: COMPILE-061
 static_assert(!HasBindProcessRoleMember<holoscan::DeploymentBinding>);
+// REQ: COMPILE-096
+static_assert(HasBindSupportThreadAffinityMember<holoscan::DeploymentBinding>);
 static_assert(!HasProcessRolesMember<holoscan::ExecutionPlan>);
 static_assert(!HasProcessSelectorsMember<holoscan::ExecutionPlan>);
 static_assert(!HasVertexProcessPlacementsMember<holoscan::ExecutionPlan>);
@@ -261,6 +266,17 @@ int main() {
   }
 #endif
 
+  // Exercise the installed support-thread authoring ABI without asking this package smoke test to
+  // assume that any particular CPU is available on its compile host.
+  holoscan::DeploymentBinding support_thread_binding;
+  support_thread_binding.bind_support_thread_affinity(holoscan::SupportThreadRole::kController,
+                                                      holoscan::CPUAffinity{{0U}});
+  if (support_thread_binding.support_thread_affinities().size() != 1U ||
+      support_thread_binding.support_thread_affinities().front().role !=
+          holoscan::SupportThreadRole::kController) {
+    return 11;
+  }
+
   holoscan::Graph graph{"installed-runtime-consumer"};
   const auto runtime_operator = graph.op<InstalledRuntimeOperator>("operator");
   graph.partition("installed-runtime-worker").add(runtime_operator);
@@ -273,6 +289,9 @@ int main() {
   const holoscan::ExecutionPlan plan = holoscan::compile(graph, options);
   if (!plan.ok()) {
     return 2;
+  }
+  if (!plan.support_thread_affinities().empty()) {
+    return 12;
   }
 
   holoscan::RunSession session = holoscan::run_async(plan);

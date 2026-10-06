@@ -140,9 +140,17 @@ logs, `holoscan::runtime_error_message(error)` renders
 
 ```cpp
 if (auto r = out.emit(x); !r && r.error().code == holoscan::ErrorCode::kBackpressured) {
-  // retry later; the channel is momentarily full
+  // choose explicit loss, or preserve work for an independently scheduled retry
 }
 ```
+
+Inside an operator, “retryable” describes the pre-submit publication outcome,
+not automatic replay of `compute()`. Propagating that error fails the run;
+returning success without preserving work can discard the selected input.
+Borrowed views cannot escape the callback, and consuming emit APIs do not
+restore their arguments. See
+[backpressure policy and sizing](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures#size-capacity-and-choose-the-pressure-policy-explicitly)
+before implementing an operator-side retry.
 
 In `camera_imu_control`, the bounded Channel client treats a successful
 publication result as delivered. It retries only pre-submit `kNotReady` or

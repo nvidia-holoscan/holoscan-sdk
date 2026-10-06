@@ -79,3 +79,4 @@ table Imu {
 }
 
 root_type Imu;
+file_identifier "HSIM";

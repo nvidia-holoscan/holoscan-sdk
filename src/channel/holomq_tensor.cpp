@@ -304,6 +304,10 @@ class HoloMQBufferTensorMemoryReference final : public HoloMQExportableTensorMem
     return buffer_.enqueue_ready_set(stream);
   }
 
+  [[nodiscard]] bool tracks_deallocation_stream() const noexcept override {
+    return static_cast<bool>(buffer_);
+  }
+
   bool set_readiness_stream(cudaStream_t stream) override {
     if (!buffer_) {
       return false;
@@ -364,6 +368,10 @@ class HoloMQConstBufferTensorMemoryReference final : public HoloMQExportableTens
       return true;
     }
     return buffer_.enqueue_ready_wait(stream);
+  }
+
+  [[nodiscard]] bool tracks_deallocation_stream() const noexcept override {
+    return static_cast<bool>(buffer_);
   }
 
   bool set_readiness_stream(cudaStream_t stream) override {

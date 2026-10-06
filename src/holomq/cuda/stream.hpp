@@ -19,7 +19,7 @@ class Stream {
   Stream() noexcept = default;
 
   /// Calls \c cuStreamCreate with \p flags. On failure the object remains invalid.
-  explicit Stream(const unsigned int flags) noexcept;
+  explicit Stream(unsigned int flags) noexcept;
 
   Stream(const Stream&) = delete;
   Stream& operator=(const Stream&) = delete;

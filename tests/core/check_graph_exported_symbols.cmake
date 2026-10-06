@@ -42,11 +42,21 @@ if(NOT symbol_result EQUAL 0)
     message(FATAL_ERROR "Unable to inspect exported Core symbols: ${symbol_error}")
 endif()
 
+set(defined_symbols "${exported_symbols}")
+
 # A static archive can contain global symbols with hidden ELF visibility. Those
 # implementation symbols are not exported by a shared Core and are not part of
 # the public package boundary. Keep only defined GLOBAL/WEAK DEFAULT entries;
 # unlike nm --extern-only this preserves the visibility distinction.
 if(filter_static_visibility)
+    # Private inter-library hooks still need definitions in a static archive,
+    # even when STATIC_DEFINE leaves their ELF visibility hidden. Undefined
+    # references cannot satisfy that requirement.
+    string(REGEX MATCHALL
+        "[^\n]*[ \t](GLOBAL|WEAK)[ \t]+(DEFAULT|INTERNAL|HIDDEN|PROTECTED)[ \t]+(ABS|COM|[0-9]+)[ \t]+[^\n]+"
+        defined_symbols
+        "${exported_symbols}"
+    )
     string(REGEX MATCHALL
         "[^\n]*[ \t](GLOBAL|WEAK)[ \t]+DEFAULT[ \t]+(ABS|COM|[0-9]+)[ \t]+[^\n]+"
         exported_symbols
@@ -71,3 +81,14 @@ string(REGEX MATCH
 if(forbidden_partition_symbol)
     message(FATAL_ERROR "Forbidden public partition-selection symbol exported by Core")
 endif()
+
+# REQ: OPERATOR-064
+# Deliberate private ABI used by the separately packaged Testing library. These
+# names remain uninstalled implementation hooks and require the same SDK build.
+# Keep this inventory explicit; adding a bridge requires a reviewed entry here.
+foreach(private_testing_bridge IN ITEMS start_operator_test_run runtime_tensor_backing_matches)
+    string(FIND "${defined_symbols}" "${private_testing_bridge}" bridge_offset)
+    if(bridge_offset EQUAL -1)
+        message(FATAL_ERROR "Missing intentional private Testing/Core bridge: ${private_testing_bridge}")
+    endif()
+endforeach()

@@ -14,6 +14,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -31,9 +32,43 @@
 #include "runtime_diagnostic_sink.hpp"
 #include "runtime_direct_composite.hpp"
 #include "runtime_phase_counters.hpp"
+#include "runtime_support_thread_control.hpp"
 #include "runtime_tensor_resources.hpp"
 
 namespace holoscan::detail {
+
+/// Mutate one accepted support-thread affinity after its first successful private observation.
+class RuntimeSupportThreadAffinityMutationControl final : public RuntimeSupportThreadControl {
+ public:
+  RuntimeSupportThreadAffinityMutationControl(std::weak_ptr<ExecutionPlanState> state,
+                                              SupportThreadRole role,
+                                              std::uint32_t replacement_core)
+      : state_(std::move(state)), role_(role), replacement_core_(replacement_core) {}
+
+  [[nodiscard]] expected<void, Error> enter(SupportThreadRole role) override {
+    if (role != role_ || entered_.exchange(true, std::memory_order_acq_rel)) {
+      return {};
+    }
+    const auto state = state_.lock();
+    if (!state) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    const auto found = std::ranges::find(
+        state->support_thread_affinities, role_, &SupportThreadAffinityPlanRecord::role);
+    if (found == state->support_thread_affinities.end() || !found->accepted) {
+      return make_unexpected(Error{ErrorCode::kInvalidArgument});
+    }
+    found->requested.affinity = CPUAffinity{replacement_core_};
+    found->accepted->affinity = CPUAffinity{replacement_core_};
+    return {};
+  }
+
+ private:
+  std::weak_ptr<ExecutionPlanState> state_;
+  SupportThreadRole role_;
+  std::uint32_t replacement_core_{};
+  std::atomic_bool entered_{};
+};
 
 /// @brief Coordinate the physical join owner and peer waiters in source-tree tests.
 class RuntimeWaitTestControl final {
@@ -47,6 +82,12 @@ class RuntimeWaitTestControl final {
     std::unique_lock lock(mutex_);
     return cv_.wait_for(
         lock, std::chrono::seconds{5}, [this, count] { return peer_waiters_ >= count; });
+  }
+
+  [[nodiscard]] bool wait_for_bounded_waiters(std::size_t count) {
+    std::unique_lock lock(mutex_);
+    return cv_.wait_for(
+        lock, std::chrono::seconds{5}, [this, count] { return bounded_waiters_ >= count; });
   }
 
   void release_join_owner() {
@@ -73,11 +114,18 @@ class RuntimeWaitTestControl final {
     cv_.notify_all();
   }
 
+  void bounded_waiter_entered() {
+    const std::lock_guard lock(mutex_);
+    ++bounded_waiters_;
+    cv_.notify_all();
+  }
+
  private:
   mutable std::mutex mutex_;
   std::condition_variable cv_;
   std::size_t join_owners_{};
   std::size_t peer_waiters_{};
+  std::size_t bounded_waiters_{};
   bool released_{};
 };
 
@@ -172,9 +220,10 @@ class RuntimePreDispatchTestControl final {
 
   ~RuntimePreDispatchTestControl() { release(); }
 
-  [[nodiscard]] bool wait_until_paused() {
+  [[nodiscard]] bool wait_until_paused(
+      std::chrono::steady_clock::duration timeout = std::chrono::seconds{5}) {
     std::unique_lock lock(mutex_);
-    return cv_.wait_for(lock, std::chrono::seconds{5}, [this] { return paused_; });
+    return cv_.wait_for(lock, timeout, [this] { return paused_; });
   }
 
   [[nodiscard]] OperatorInstanceId blocked_operator() const noexcept { return blocked_operator_; }
@@ -849,6 +898,44 @@ class RuntimeTestPlanAccess {
     }
     auto state = std::make_shared<ExecutionPlanState>(*source);
     state->executable_factories.support_thread_control = std::move(control);
+    return ExecutionPlanAccess::make(std::move(state));
+  }
+
+  /// @brief Copy one accepted plan and replace one support-thread affinity for failure testing.
+  [[nodiscard]] static ExecutionPlan with_support_thread_affinity_core_for_test(
+      const ExecutionPlan& plan, SupportThreadRole role, std::uint32_t core) {
+    const auto source = ExecutionPlanAccess::retain(plan);
+    if (!source) {
+      return {};
+    }
+    auto state = std::make_shared<ExecutionPlanState>(*source);
+    const auto found = std::find_if(state->support_thread_affinities.begin(),
+                                    state->support_thread_affinities.end(),
+                                    [role](const auto& record) { return record.role == role; });
+    if (found == state->support_thread_affinities.end() || !found->accepted) {
+      return {};
+    }
+    found->requested.affinity = CPUAffinity{core};
+    found->accepted->affinity = CPUAffinity{core};
+    return ExecutionPlanAccess::make(std::move(state));
+  }
+
+  /// @brief Replace one accepted affinity after its first role thread entered successfully.
+  [[nodiscard]] static ExecutionPlan with_support_thread_affinity_core_after_first_entry_for_test(
+      const ExecutionPlan& plan, SupportThreadRole role, std::uint32_t replacement_core) {
+    const auto source = ExecutionPlanAccess::retain(plan);
+    if (!source) {
+      return {};
+    }
+    auto state = std::make_shared<ExecutionPlanState>(*source);
+    const auto found = std::ranges::find(
+        state->support_thread_affinities, role, &SupportThreadAffinityPlanRecord::role);
+    if (found == state->support_thread_affinities.end() || !found->accepted) {
+      return {};
+    }
+    state->executable_factories.support_thread_control =
+        std::make_shared<RuntimeSupportThreadAffinityMutationControl>(
+            std::weak_ptr<ExecutionPlanState>{state}, role, replacement_core);
     return ExecutionPlanAccess::make(std::move(state));
   }
 

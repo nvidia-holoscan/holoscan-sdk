@@ -13,3 +13,4 @@ table Time {
 }
 
 root_type Time;
+file_identifier "HSTM";

@@ -6,7 +6,8 @@ include "tensor.fbs";
 namespace holoscan.schema;
 
 table SchemaToolingTensorProbe {
-  tensor: holoscan.schema.Tensor;
+  tensor: holoscan.schema.Tensor (id: 0);
 }
 
 root_type SchemaToolingTensorProbe;
+file_identifier "3PTP";

@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "../channel/channel_common.hpp"
 #include "../channel/pod_codec.hpp"
 #include "../compiler/execution_plan_lookup.hpp"
 #include "../core/tensor_allocation_record_validation.hpp"
@@ -110,8 +111,12 @@ expected<void, Error> validate_import_generation_capacities(
 
 expected<ChannelOptions, Error> process_local_service_options(
     const ProcessLocalChannelServicePlanRecord& service) noexcept {
+  const auto expected_bucket =
+      channel_internal::inline_payload_bucket_size(service.payload_size_bytes);
   if (!service.source || service.service_id.empty() ||
       (!service.tensor_payload && service.payload_size_bytes == 0U) ||
+      (!service.tensor_payload && !expected_bucket) ||
+      service.selected_inline_bucket_bytes != expected_bucket.value_or(0U) ||
       service.max_subscribers == 0U || service.max_subscriber_queue_depth == 0U ||
       service.max_subscriber_borrowed_samples == 0U || service.publisher_history_depth != 0U ||
       (service.cross_process_transport && !service.event_wake) ||
@@ -471,27 +476,28 @@ find_inline_descriptor_tensor_contract(
                                               const PortPlanRecord& port,
                                               std::uint64_t service_payload_capacity,
                                               const bool process_local_schema_envelope) noexcept {
-  if (ops == nullptr || ops->wire_capacity == 0U ||
+  if (ops == nullptr ||
+      (ops->wire_capacity == 0U &&
+       ops->codec_family != RuntimePayloadCodecFamily::kProcessLocalObject) ||
       ops->wire_capacity > std::numeric_limits<std::uint32_t>::max()) {
     return false;
   }
-  const std::uint64_t expected_service_capacity =
+  const std::uint64_t exact_local_service_capacity =
       ops->codec_family == RuntimePayloadCodecFamily::kGeneratedSchema &&
               process_local_schema_envelope
           ? ops->wire_capacity + kSchemaEnvelopeHeaderSize
           : ops->wire_capacity;
-  if (expected_service_capacity != service_payload_capacity) {
-    return false;
-  }
   switch (ops->codec_family) {
     case RuntimePayloadCodecFamily::kInlinePod:
-      return ops->inline_pod && ops->payload_kind == PayloadKind::kInlineTyped &&
-             ops->encode_payload == nullptr && ops->wire_capacity == ops->payload_size &&
+      return exact_local_service_capacity == service_payload_capacity && ops->inline_pod &&
+             ops->payload_kind == PayloadKind::kInlineTyped && ops->encode_payload == nullptr &&
+             ops->wire_capacity == ops->payload_size &&
              port.payload_identity.kind == PayloadIdentityKind::kScalar &&
              port.serialized_payload_capacity_bytes == 0U;
     case RuntimePayloadCodecFamily::kCustomPod:
-      return ops->inline_pod && ops->payload_kind == PayloadKind::kInlineTyped &&
-             ops->encode_payload == nullptr && ops->wire_capacity == ops->payload_size &&
+      return exact_local_service_capacity == service_payload_capacity && ops->inline_pod &&
+             ops->payload_kind == PayloadKind::kInlineTyped && ops->encode_payload == nullptr &&
+             ops->wire_capacity == ops->payload_size &&
              port.payload_identity.kind == PayloadIdentityKind::kPod &&
              port.payload_identity.pod.has_value() &&
              channel_internal::PodFieldwiseCodec::validate(*port.payload_identity.pod)
@@ -501,7 +507,23 @@ find_inline_descriptor_tensor_contract(
       return !ops->inline_pod && ops->payload_kind == PayloadKind::kSerializedBytes &&
              ops->encode_payload != nullptr &&
              port.payload_identity.kind == PayloadIdentityKind::kSchema &&
-             port.serialized_payload_capacity_bytes == ops->wire_capacity;
+             ops->transport_profile_tag == port.payload_identity.transport_profile_tag &&
+             port.serialized_payload_capacity_bytes == ops->wire_capacity &&
+             (port.direction == PortDirection::kOutput
+                  ? exact_local_service_capacity == service_payload_capacity
+                  : service_payload_capacity >=
+                            (process_local_schema_envelope ? kSchemaEnvelopeHeaderSize : 0U) &&
+                        ops->wire_capacity >=
+                            service_payload_capacity -
+                                (process_local_schema_envelope ? kSchemaEnvelopeHeaderSize : 0U));
+    case RuntimePayloadCodecFamily::kProcessLocalObject:
+      return process_local_schema_envelope && service_payload_capacity == 0U &&
+             ops->wire_capacity == 0U && !ops->inline_pod &&
+             ops->payload_kind == PayloadKind::kInlineTyped && ops->encode_payload == nullptr &&
+             ops->construct_sample == nullptr && ops->construct_sample_from_value != nullptr &&
+             ops->retain_sample_payload_for_deferred_release != nullptr &&
+             port.serialized_payload_capacity_bytes == 0U &&
+             is_py_object_payload_identity(port.payload_identity);
     case RuntimePayloadCodecFamily::kDescriptorTensorSchema:
     case RuntimePayloadCodecFamily::kUnsupported:
       return false;
@@ -563,6 +585,7 @@ namespace {
   const std::uint32_t tensor_count = ops.descriptor_tensor_static_count;
   return descriptor_service_storage_matches_plan(service, tensor_count) &&
          service.payload_size_bytes == ops.wire_capacity && ops.wire_capacity != 0U &&
+         ops.transport_profile_tag == port.payload_identity.transport_profile_tag &&
          ops.wire_capacity == port.serialized_payload_capacity_bytes &&
          ops.codec_family == RuntimePayloadCodecFamily::kDescriptorTensorSchema &&
          ops.payload_kind == PayloadKind::kDescriptorBacked && ops.persistent_sample_storage &&
@@ -604,14 +627,33 @@ namespace {
          port.serialized_payload_capacity_bytes == 0U;
 }
 
+// A projected subscriber takes one Tensor member of the producer's schema sample, so it pairs a
+// Tensor port with the producer's own descriptor-schema service rather than a Tensor service. The
+// service's descriptor invariants are already matched against the producer in publisher
+// materialization, so only the consumer side and the schema-service shape have to hold here.
+[[nodiscard]] bool runtime_projected_tensor_matches_plan(
+    const RuntimePortTypeOps& ops, const PortPlanRecord& port,
+    const ProcessLocalChannelServicePlanRecord& service) noexcept {
+  return service.payload_size_bytes != 0U && &ops == runtime_port_type_ops<Tensor>() &&
+         ops.codec_family == RuntimePayloadCodecFamily::kUnsupported &&
+         ops.sample_size == sizeof(Sample<Tensor>) &&
+         ops.sample_alignment == alignof(Sample<Tensor>) &&
+         port.payload_identity.kind == PayloadIdentityKind::kTensor &&
+         port.serialized_payload_capacity_bytes == 0U;
+}
+
 }  // namespace
 
 // Runtime materialization conservatively matches every payload-family and Tensor plan invariant.
-[[nodiscard]] bool runtime_tensor_matches_plan(
-    const RuntimePortTypeOps* ops, const PortPlanRecord& port,
-    const ProcessLocalChannelServicePlanRecord& service) noexcept {
+[[nodiscard]] bool runtime_tensor_matches_plan(const RuntimePortTypeOps* ops,
+                                               const PortPlanRecord& port,
+                                               const ProcessLocalChannelServicePlanRecord& service,
+                                               const bool projected) noexcept {
   if (ops == nullptr || !service.tensor_payload) {
     return false;
+  }
+  if (projected) {
+    return runtime_projected_tensor_matches_plan(*ops, port, service);
   }
   const bool descriptor_schema =
       port.payload_identity.kind == PayloadIdentityKind::kSchema &&
@@ -660,6 +702,7 @@ namespace {
                                           service.tensor_fields) &&
            ops->codec_family == RuntimePayloadCodecFamily::kDescriptorTensorSchema &&
            ops->payload_kind == PayloadKind::kDescriptorBacked &&
+           ops->transport_profile_tag == service.payload_identity.transport_profile_tag &&
            ops->descriptor_tensor_static_count == service.tensor_fields.size() &&
            ops->persistent_sample_storage &&
            ops->descriptor_tensor_static_count <=
@@ -669,7 +712,7 @@ namespace {
                    sizeof(PayloadDescriptor) <=
                ops->wire_capacity - ops->descriptor_offset &&
            ops->wire_capacity == port.serialized_payload_capacity_bytes &&
-           ops->wire_capacity == endpoint.serialized_payload_capacity_bytes &&
+           ops->wire_capacity == endpoint.schema_writer_max_serialized_bytes &&
            port.payload_identity.kind == PayloadIdentityKind::kSchema &&
            port.payload_identity.payload_kind == PayloadKind::kDescriptorBacked &&
            descriptor_tensor_identity_equal(port.payload_identity, service.payload_identity) &&

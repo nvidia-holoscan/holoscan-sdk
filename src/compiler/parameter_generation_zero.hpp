@@ -10,18 +10,18 @@
 
 #include <holoscan/core/operator_ref.hpp>
 #include <holoscan/core/parameter_catalog.hpp>
-#include <holoscan/core/parameter_override_set.hpp>
+#include <holoscan/core/parameter_provenance.hpp>
 #include <holoscan/core/parameter_schema.hpp>
 
 namespace holoscan::detail {
 
 /// @brief Preserve exact privileged generation-zero value provenance.
 enum class ParameterGenerationZeroOrigin : std::uint8_t {
-  kDefault = 0,            ///< Value came from `ParamsT{}`.
-  kTypedBaseline = 1,      ///< `OperatorHandle::set_params()` supplied the aggregate.
-  kOverrideCaptured = 2,   ///< Canonical explicit field input supplied the value.
-  kOverrideAlias = 3,      ///< A declared alias supplied the explicit field value.
-  kOverrideMigration = 4,  ///< A qualified migration produced the explicit field value.
+  kDefault = 0,         ///< Value came from `ParamsT{}`.
+  kTypedBaseline = 1,   ///< `OperatorHandle::set_params()` supplied the aggregate.
+  kInputCaptured = 2,   ///< Canonical explicit field input supplied the value.
+  kInputAlias = 3,      ///< A declared alias supplied the explicit field value.
+  kInputMigration = 4,  ///< A qualified migration produced the explicit field value.
 };
 
 /// @brief Explain whether a protected canonical value digest exists.
@@ -50,8 +50,8 @@ struct ParameterProtectedValueDigest {
 /// @brief Retain privileged generation-zero facts for one Operator aggregate.
 struct ParameterGenerationZeroOperatorRecord {
   OperatorRef owner{};  ///< Plan-bound Operator identity.
-  ParameterGenerationZeroOrigin baseline_origin{
-      ParameterGenerationZeroOrigin::kDefault};  ///< Defaults versus typed authoring baseline.
+  /// Authored starting point before a complete transaction may replace fields with type defaults.
+  ParameterGenerationZeroOrigin baseline_origin{ParameterGenerationZeroOrigin::kDefault};
   ParameterProtectedValueDigest value_digest{};  ///< Final resolved semantic digest outcome.
 };
 
@@ -62,6 +62,7 @@ struct ParameterGenerationZeroFieldRecord {
   ParamSchemaHash full_id{};   ///< Complete schema field identity.
   ParameterGenerationZeroOrigin origin{
       ParameterGenerationZeroOrigin::kDefault};  ///< Exact accepted contribution provenance.
+  bool transaction_contributed{};  ///< Whether an advanced transaction supplied this field.
   ParameterProtectedValueDigest value_digest{};  ///< Protected per-field semantic digest.
   std::optional<ParamConfigFieldProvenance>
       config_source;  ///< Exact document source for an explicit config contribution.

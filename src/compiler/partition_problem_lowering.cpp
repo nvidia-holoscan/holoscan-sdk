@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "authored_partition_membership.hpp"
 #include "runtime_package_capabilities.hpp"
 #include "snapshot_lookup.hpp"
 
@@ -187,18 +188,15 @@ normalized_device_obligations_by_vertex(  // NOLINT(readability-function-cogniti
     if (partition == partitions_by_name.end()) {
       continue;
     }
-    if (partition->second->include_all) {
-      for (const auto& vertex : snapshot.vertices) {
-        if (partition_executable(vertex.kind)) {
-          assign(vertex.id, binding.placement.device);
-        }
-      }
-    } else {
-      for (const VertexId member : partition->second->members) {
-        assign(member, binding.placement.device);
-      }
+    const auto members = resolve_authored_partition_members(snapshot, *partition->second);
+    // Membership errors are reported by cover/anchor validation before any plan is accepted.
+    if (!members)
+      continue;
+    for (const VertexId member : *members) {
+      assign(member, binding.placement.device);
     }
   }
+
   for (auto& obligations : devices) {
     std::sort(obligations.begin(), obligations.end());
     obligations.erase(std::unique(obligations.begin(), obligations.end()), obligations.end());
@@ -220,18 +218,30 @@ void populate_vertex_views(const GraphSnapshotData& snapshot,
                            std::span<const std::uint32_t> process_group_by_vertex,
                            const ExecutionPlanState& plan, PartitionProblemStorage& storage) {
   using DomainKey = std::pair<std::uint32_t, std::uint64_t>;
-  std::map<DomainKey, std::uint64_t> domains;
+  using SerializationKey = std::pair<std::uint32_t, std::string_view>;
+  std::map<DomainKey, std::uint64_t> execution_domains;
+  std::map<SerializationKey, std::uint64_t> serialization_domains;
   for (const auto& vertex : snapshot.vertices) {
     if (!partition_executable(vertex.kind)) {
       continue;
     }
     const bool external = vertex.kind != VertexKind::kOperator;
     const std::uint64_t isolated_vertex = external ? vertex.id.value : 0U;
-    domains.try_emplace(DomainKey{
-        process_group_by_vertex[static_cast<std::size_t>(vertex.id.value - 1U)], isolated_vertex});
+    const std::uint32_t process_group =
+        process_group_by_vertex[static_cast<std::size_t>(vertex.id.value - 1U)];
+    execution_domains.try_emplace(DomainKey{process_group, isolated_vertex});
+    if (!vertex.serialization_domain.empty()) {
+      serialization_domains.try_emplace(
+          SerializationKey{process_group, vertex.serialization_domain});
+    }
   }
   std::uint64_t next_domain = 1U;
-  for (auto& [unused, domain] : domains) {
+  for (auto& [unused, domain] : execution_domains) {
+    (void)unused;
+    domain = next_domain++;
+  }
+  next_domain = 1U;
+  for (auto& [unused, domain] : serialization_domains) {
     (void)unused;
     domain = next_domain++;
   }
@@ -251,9 +261,14 @@ void populate_vertex_views(const GraphSnapshotData& snapshot,
       boundary_before.add(PartitionBoundary::kReadiness);
     }
     const std::uint64_t isolated_vertex = external ? vertex.id.value : 0U;
-    const DomainKey domain_key{
-        process_group_by_vertex[static_cast<std::size_t>(vertex.id.value - 1U)], isolated_vertex};
-    const std::uint64_t execution_domain = domains.at(domain_key);
+    const std::uint32_t process_group =
+        process_group_by_vertex[static_cast<std::size_t>(vertex.id.value - 1U)];
+    const DomainKey domain_key{process_group, isolated_vertex};
+    const std::uint64_t execution_domain = execution_domains.at(domain_key);
+    const std::uint64_t serialization_domain =
+        vertex.serialization_domain.empty() ? 0U
+                                            : serialization_domains.at(SerializationKey{
+                                                  process_group, vertex.serialization_domain});
     storage.vertices[index] = PartitionVertexView{
         vertex.id,
         index,
@@ -261,6 +276,7 @@ void populate_vertex_views(const GraphSnapshotData& snapshot,
         storage.outgoing[index],
         storage.incoming[index].empty() || independent_temporal_source,
         ExecutionDomainKey{execution_domain},
+        partitioning::SerializationDomainKey{serialization_domain},
         storage.device_obligations[static_cast<std::size_t>(vertex.id.value - 1U)],
         boundary_before,
         storage.source_regions[index],
@@ -314,16 +330,17 @@ expected<void, Error> append_authored_partition_constraints(const GraphSnapshotD
   }
   storage.authored_constraint_members.reserve(snapshot.partitions.size());
   for (const auto& partition : snapshot.partitions) {
-    if (partition.graph != root->id || partition.include_all || partition.members.empty()) {
+    if (partition.include_all) {
       return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
     }
+    auto resolved = resolve_authored_partition_members(snapshot, partition);
+    if (!resolved)
+      return make_unexpected(std::move(resolved.error()));
     std::vector<VertexIndex> members;
-    members.reserve(partition.members.size());
-    for (const VertexId member : partition.members) {
-      const VertexRecord* const vertex = find_vertex(snapshot, member);
+    members.reserve(resolved->size());
+    for (const VertexId member : *resolved) {
       const auto found = storage.executable_index.find(member.value);
-      if (vertex == nullptr || vertex->kind != VertexKind::kOperator || vertex->graph != root->id ||
-          found == storage.executable_index.end()) {
+      if (found == storage.executable_index.end()) {
         return partition_lowering_error(ErrorCode::kInvalidArgument, "PARTITION_COVER_INVALID");
       }
       members.push_back(found->second);

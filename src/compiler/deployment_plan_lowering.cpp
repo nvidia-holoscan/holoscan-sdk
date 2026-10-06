@@ -12,7 +12,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -23,37 +22,10 @@
 #include "detail/canonical_utils.hpp"
 #include "execution_plan_contracts.hpp"
 #include "snapshot_lookup.hpp"
+#include "support_thread_affinity_contracts.hpp"
 
 namespace holoscan::detail {
 namespace {
-
-[[nodiscard]] bool placement_less(const ThreadPlacement& lhs, const ThreadPlacement& rhs) {
-  const std::vector<std::uint32_t> empty;
-  const auto& lhs_cores = lhs.affinity ? lhs.affinity->cores : empty;
-  const auto& rhs_cores = rhs.affinity ? rhs.affinity->cores : empty;
-  return std::tuple{lhs.affinity.has_value(),
-                    lhs_cores,
-                    lhs.scheduling.policy,
-                    lhs.scheduling.priority,
-                    lhs.scheduling.deadline.has_value(),
-                    lhs.scheduling.deadline ? lhs.scheduling.deadline->runtime_ns : 0U,
-                    lhs.scheduling.deadline ? lhs.scheduling.deadline->deadline_ns : 0U,
-                    lhs.scheduling.deadline ? lhs.scheduling.deadline->period_ns : 0U,
-                    lhs.wake_mode,
-                    lhs.irq_isolation,
-                    lhs.probe_failure_policy} <
-         std::tuple{rhs.affinity.has_value(),
-                    rhs_cores,
-                    rhs.scheduling.policy,
-                    rhs.scheduling.priority,
-                    rhs.scheduling.deadline.has_value(),
-                    rhs.scheduling.deadline ? rhs.scheduling.deadline->runtime_ns : 0U,
-                    rhs.scheduling.deadline ? rhs.scheduling.deadline->deadline_ns : 0U,
-                    rhs.scheduling.deadline ? rhs.scheduling.deadline->period_ns : 0U,
-                    rhs.wake_mode,
-                    rhs.irq_isolation,
-                    rhs.probe_failure_policy};
-}
 
 void append_probe(std::vector<PlacementProbePlanRecord>& probes, ExecutionPartitionId partition,
                   std::string probe_id, PlacementProbeStatus status, std::string evidence_id = {},
@@ -106,6 +78,7 @@ class SystemPlacementPlatformProbe final : public PlacementPlatformProbe {
       return PlacementPlatformProbeResult{
           .disposition = PlacementPlatformProbeDisposition::kFailed,
           .evidence_id = "holoscan.compile.thread_placement.probe_failed/v1",
+          .error = std::move(observation).error(),
       };
     }
     const bool available =
@@ -118,6 +91,7 @@ class SystemPlacementPlatformProbe final : public PlacementPlatformProbe {
         .irq_isolation_proven = false,
         .evidence_id = available ? "holoscan.platform.linux.thread_placement/v1"
                                  : "holoscan.platform.linux.thread_placement.unavailable/v1",
+        .effective_affinity = observation->effective_affinity,
     };
   }
 };
@@ -127,12 +101,64 @@ class SystemPlacementPlatformProbe final : public PlacementPlatformProbe {
   return probe;
 }
 
+void append_error(DeploymentPlanLowering& result, std::string_view token,
+                  std::optional<DiagnosticDetail> detail = std::nullopt,
+                  std::string json_pointer = {}) {
+  result.errors.push_back(PlanLoweringDiagnostic{
+      .token = std::string(token),
+      .json_pointer = std::move(json_pointer),
+      .detail = std::move(detail),
+  });
+}
+
+[[nodiscard]] std::string support_thread_diagnostic_pointer(SupportThreadRole role) {
+  std::string pointer{"/deployment/support_thread_affinities/"};
+  if (valid_support_thread_role(role)) {
+    pointer += support_thread_role_name(role);
+  } else {
+    pointer += "unknown-" + std::to_string(static_cast<std::uint8_t>(role));
+  }
+  return pointer;
+}
+
+[[nodiscard]] std::string support_thread_request_summary(SupportThreadRole role,
+                                                         const ThreadPlacement& requested) {
+  return "role=" + std::string(support_thread_role_name(role)) + ",requested=" +
+         (requested.affinity ? support_thread_affinity_summary(*requested.affinity) : "<absent>");
+}
+
+[[nodiscard]] DiagnosticDetail support_thread_failure_detail(SupportThreadRole role, Error error,
+                                                             std::string field,
+                                                             std::string provided,
+                                                             std::string required) {
+  DiagnosticDetail detail{
+      .operation = DiagnosticOperation::kCompile,
+      .error = std::move(error),
+      .operator_path = "support-thread/" + std::string(support_thread_role_name(role)),
+  };
+  detail.mismatches.push_back(DiagnosticMismatch{
+      .field = std::move(field),
+      .provided = std::move(provided),
+      .required = std::move(required),
+  });
+  return detail;
+}
+
 void reject_placement(PartitionPlacementPlanRecord& placement, DiagnosticId reason,
                       DeploymentPlanLowering& result, std::string_view token) {
   placement.accepted.reset();
   placement.disposition = PlanDisposition::kRejected;
   placement.reason = reason;
-  result.error_tokens.emplace_back(token);
+  append_error(result, token);
+}
+
+void reject_support_thread_affinity(SupportThreadAffinityPlanRecord& placement, DiagnosticId reason,
+                                    DeploymentPlanLowering& result, std::string_view token,
+                                    DiagnosticDetail detail) {
+  placement.accepted.reset();
+  placement.disposition = PlanDisposition::kRejected;
+  placement.reason = reason;
+  append_error(result, token, std::move(detail), support_thread_diagnostic_pointer(placement.role));
 }
 
 }  // namespace
@@ -160,21 +186,139 @@ DeploymentPlanLowering lower_deployment_plan(
     std::span<const std::optional<Profile>> effective_profiles,
     std::span<ExecutionPartitionRecord> partitions, const PlacementPlatformProbe& platform_probe) {
   constexpr std::string_view kUnknownOrDuplicate = "PARTITION_PLACEMENT_UNKNOWN_OR_DUPLICATE";
+  constexpr std::string_view kSupportUnknownOrDuplicate =
+      "SUPPORT_THREAD_PLACEMENT_UNKNOWN_OR_DUPLICATE";
   constexpr std::string_view kRejected = "THREAD_PLACEMENT_REJECTED";
 
   DeploymentPlanLowering result;
+  result.support_thread_affinities.reserve(deployment.support_thread_affinities().size());
+  for (const auto& authored : deployment.support_thread_affinities()) {
+    SupportThreadAffinityPlanRecord record{
+        .role = authored.role,
+        .requested = authored.placement,
+    };
+    if (record.requested.affinity) {
+      record.requested.affinity->normalize();
+    }
+    if (!valid_support_thread_role(record.role)) {
+      record.reason = diagnostic_id(kSupportUnknownOrDuplicate);
+    } else if (!affinity_only_support_placement(record.requested) || !record.requested.validate()) {
+      record.reason = diagnostic_id(kRejected);
+    }
+    result.support_thread_affinities.push_back(std::move(record));
+  }
+  std::sort(result.support_thread_affinities.begin(),
+            result.support_thread_affinities.end(),
+            [](const auto& lhs, const auto& rhs) {
+              return lhs.role != rhs.role
+                         ? static_cast<std::uint8_t>(lhs.role) < static_cast<std::uint8_t>(rhs.role)
+                         : thread_placement_less(lhs.requested, rhs.requested);
+            });
+  for (std::size_t index = 0U; index < result.support_thread_affinities.size();) {
+    std::size_t end = index + 1U;
+    while (end < result.support_thread_affinities.size() &&
+           result.support_thread_affinities[end].role ==
+               result.support_thread_affinities[index].role) {
+      ++end;
+    }
+    if (end - index > 1U) {
+      for (std::size_t duplicate = index; duplicate < end; ++duplicate) {
+        auto& record = result.support_thread_affinities[duplicate];
+        record.accepted.reset();
+        record.disposition = PlanDisposition::kRejected;
+        record.reason = diagnostic_id(kSupportUnknownOrDuplicate);
+      }
+      const auto role = result.support_thread_affinities[index].role;
+      append_error(
+          result,
+          kSupportUnknownOrDuplicate,
+          support_thread_failure_detail(
+              role,
+              Error{ErrorCode::kInvalidArgument, "duplicate Runtime support-thread affinity role"},
+              "support_thread_role",
+              "role=" + std::string(support_thread_role_name(role)) +
+                  ",bindings=" + std::to_string(end - index),
+              "at most one affinity binding per support-thread role"),
+          support_thread_diagnostic_pointer(role));
+    } else if (result.support_thread_affinities[index].reason ==
+               diagnostic_id(kSupportUnknownOrDuplicate)) {
+      const auto& record = result.support_thread_affinities[index];
+      append_error(
+          result,
+          kSupportUnknownOrDuplicate,
+          support_thread_failure_detail(
+              record.role,
+              Error{ErrorCode::kInvalidArgument, "unknown Runtime support-thread affinity role"},
+              "support_thread_role",
+              "value=" + std::to_string(static_cast<std::uint8_t>(record.role)),
+              "controller or channel_pump"),
+          support_thread_diagnostic_pointer(record.role));
+    } else if (result.support_thread_affinities[index].reason == diagnostic_id(kRejected)) {
+      const auto& record = result.support_thread_affinities[index];
+      const auto validated = record.requested.validate();
+      append_error(
+          result,
+          kRejected,
+          support_thread_failure_detail(
+              record.role,
+              validated ? Error{ErrorCode::kInvalidArgument,
+                                "Runtime support-thread placement must contain affinity only"}
+                        : validated.error(),
+              "support_thread_affinity",
+              support_thread_request_summary(record.role, record.requested),
+              "a nonempty affinity-only placement"),
+          support_thread_diagnostic_pointer(record.role));
+    }
+    index = end;
+  }
+  for (auto& placement : result.support_thread_affinities) {
+    if (placement.reason) {
+      continue;
+    }
+    PlacementPlatformProbeResult observation = platform_probe.inspect(placement.requested);
+    if (observation.evidence_id.empty()) {
+      observation.disposition = PlacementPlatformProbeDisposition::kFailed;
+    }
+    if (observation.disposition != PlacementPlatformProbeDisposition::kPassed) {
+      std::string provided = support_thread_request_summary(placement.role, placement.requested);
+      if (!observation.effective_affinity.cores.empty()) {
+        provided += ",effective=" + support_thread_affinity_summary(observation.effective_affinity);
+      }
+      if (!observation.evidence_id.empty()) {
+        provided += ",probe=" + observation.evidence_id;
+      }
+      reject_support_thread_affinity(
+          placement,
+          diagnostic_id(kRejected),
+          result,
+          kRejected,
+          support_thread_failure_detail(
+              placement.role,
+              observation.error.value_or(
+                  Error{ErrorCode::kIncompatible,
+                        "requested affinity is unavailable to the compiling thread"}),
+              "support_thread_affinity",
+              std::move(provided),
+              "requested CPUs must be in the compiling thread's effective affinity"));
+      continue;
+    }
+    placement.accepted = placement.requested;
+    placement.disposition = PlanDisposition::kAccepted;
+    placement.reason = {};
+  }
+
   result.lane_by_vertex.resize(snapshot.vertices.size(), 0U);
   result.lanes.reserve(partitions.size());
   for (std::size_t partition_index = 0U; partition_index < partitions.size(); ++partition_index) {
     auto& partition = partitions[partition_index];
     partition.execution_lane = static_cast<std::uint32_t>(partition_index);
     if (!partition.id) {
-      result.error_tokens.emplace_back(kUnknownOrDuplicate);
+      append_error(result, kUnknownOrDuplicate);
       continue;
     }
     for (const VertexId owner : partition.members) {
       if (!owner || owner.value > result.lane_by_vertex.size()) {
-        result.error_tokens.emplace_back(kUnknownOrDuplicate);
+        append_error(result, kUnknownOrDuplicate);
         continue;
       }
       result.lane_by_vertex[static_cast<std::size_t>(owner.value - 1U)] = partition.execution_lane;
@@ -210,7 +354,7 @@ DeploymentPlanLowering lower_deployment_plan(
     } else if (!record.requested.validate()) {
       record.disposition = PlanDisposition::kRejected;
       record.reason = diagnostic_id(kRejected);
-      result.error_tokens.emplace_back(kRejected);
+      append_error(result, kRejected);
     }
     result.placements.push_back(std::move(record));
   }
@@ -218,7 +362,7 @@ DeploymentPlanLowering lower_deployment_plan(
       result.placements.begin(), result.placements.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.authored_name != rhs.authored_name
                    ? lhs.authored_name < rhs.authored_name
-                   : placement_less(lhs.requested, rhs.requested);
+                   : thread_placement_less(lhs.requested, rhs.requested);
       });
   for (std::size_t index = 0U; index < result.placements.size();) {
     std::size_t end = index + 1U;
@@ -232,9 +376,9 @@ DeploymentPlanLowering lower_deployment_plan(
         result.placements[duplicate].disposition = PlanDisposition::kRejected;
         result.placements[duplicate].reason = diagnostic_id(kUnknownOrDuplicate);
       }
-      result.error_tokens.emplace_back(kUnknownOrDuplicate);
+      append_error(result, kUnknownOrDuplicate);
     } else if (result.placements[index].reason == diagnostic_id(kUnknownOrDuplicate)) {
-      result.error_tokens.emplace_back(kUnknownOrDuplicate);
+      append_error(result, kUnknownOrDuplicate);
     }
     index = end;
   }
@@ -360,7 +504,7 @@ DeploymentPlanLowering lower_deployment_plan(
     return std::tie(lhs.execution_lane, lhs.partition.value) <
            std::tie(rhs.execution_lane, rhs.partition.value);
   });
-  canonicalize_tokens(result.error_tokens);
+  canonicalize_plan_lowering_diagnostics(result.errors);
   canonicalize_tokens(result.warning_tokens);
   return result;
 }

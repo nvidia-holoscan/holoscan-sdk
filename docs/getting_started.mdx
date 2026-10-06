@@ -5,6 +5,17 @@ Each chapter adds exactly one capability, and every chapter's code builds on
 the previous one, so by the end you have written — not just read about — a
 complete application that composes, compiles, and runs.
 
+Application graphs can be authored in C++ or Python. Operator implementation
+and the deep reference chapters remain C++ topics; Python applications compose
+registered C++ operators through discoverable proxies. The lifecycle and graph
+chapters show both spellings where the supported surfaces are equivalent.
+
+<Note title="You will learn">
+  - How the compose → compile → run model applies in both C++ and Python
+  - Which chapters define C++ operators and which also apply to Python applications
+  - Where to find runnable examples and language-specific guidance
+</Note>
+
 <svg viewBox="0 0 760 300" role="img" aria-labelledby="gs-fusion-topology-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
   <title id="gs-fusion-topology-title">Running example: camera and IMU sources fused into a control output, driven by one clock</title>
   <defs>
@@ -52,13 +63,24 @@ those two vocabularies up front and the rest of the track reads naturally.
 
 ## Prerequisites
 
-- **Linux** (x86_64 or aarch64).
-- A **C++20 toolchain** and CMake.
-- A **CUDA-capable NVIDIA GPU** — optional until the final chapter
-  (Tensors 101); everything before it runs on the CPU.
-- The SDK installed — follow
-  [SDK installation](/holoscan/sdk-user-guide/setup/sdk-installation) first
-  if you have not.
+<Tabs>
+  <Tab title="C++">
+    - **Linux** (x86_64 or aarch64).
+    - A **C++20 toolchain** and CMake.
+    - A **CUDA-capable NVIDIA GPU** — optional until the final chapter
+      (Tensors 101); everything before it runs on the CPU.
+    - The SDK installed — follow
+      [SDK installation](/holoscan/sdk-user-guide/setup/sdk-installation) first
+      if you have not.
+  </Tab>
+  <Tab title="Python">
+    - **Linux** (x86_64 or aarch64) and Python 3.12 or newer.
+    - An SDK build or installation that includes the `holoscan` Python package.
+      See [Python installation](/holoscan/sdk-user-guide/python/installation).
+    - A **CUDA-capable NVIDIA GPU** only when the application uses GPU-backed
+      operators or tensors; the minimal graph-authoring example runs on the CPU.
+  </Tab>
+</Tabs>
 
 ## The chapter sequence
 
@@ -108,3 +130,27 @@ and the full worked applications in
 [Holoscan by example](/holoscan/sdk-user-guide/examples/holoscan-by-example),
 including the `camera_imu_control` and `slow_fast_fusion` example
 apps that ship with the SDK.
+
+## Start with the minimal application
+
+The shipped [`first_pipeline` C++ example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/first_pipeline/cpp)
+demonstrates the complete lifecycle. Build and run it from its `cpp/` directory:
+
+```bash
+cmake -B build -S .
+cmake --build build
+./build/first_pipeline
+```
+
+For the corresponding Python authoring shape, start with the
+[Python overview](/holoscan/sdk-user-guide/python). Its snippets use an
+explicitly installed Operator provider; this source tree does not yet ship a
+standalone Python sibling for `first_pipeline`.
+
+## Recap
+
+- C++ and Python applications use the same compose → compile → run lifecycle.
+- C++ defines operators and their typed contracts; Python composes registered
+  operators through registry proxies.
+- Start with the language tabs on the graph, compile, and run chapters, then use
+  the Python section for installation and language-specific behavior.

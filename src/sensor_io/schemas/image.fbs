@@ -106,6 +106,14 @@ enum ImageEncoding : byte {
   BAYER_BGGR = 21,
   BAYER_GRBG = 22,
   BAYER_GBRG = 23,
+
+  // Specifies a three-component, 48-bit unsigned integer format with interleaved 16-bit
+  // R, G, B components in that order.
+  RGB16 = 24,
+
+  // Specifies a four-component, 64-bit unsigned integer format with interleaved 16-bit
+  // R, G, B, A components in that order.
+  RGBA16 = 25,
 }
 
 // Color primaries and transfer function the samples are encoded against. Identical bytes decode
@@ -205,12 +213,15 @@ table Image {
   // Color primaries and transfer function for the samples in data.
   color_space: ColorSpace (id: 5);
 
-  // Bits of real precision per component, or zero when it equals the container width. A 10-bit
+  // Bits of real precision per component, zero when it equals the container width, or 255 when
+  // unknown. Unknown makes no precision claim and is not subject to the bounds below. A 10-bit
   // sensor packed into 16-bit words reports 10 here while the Tensor element type reports 16, so
   // black level, normalization, and display mapping have the value they need.
+  // This field alone does not specify a pixel code range or valid-bit alignment. In particular,
+  // an unscaled widening cast can retain source precision without rescaling white or shifting bits.
   //
   // Bounded by the container the encoding gives a component, since precision within a container
-  // cannot exceed it: 8 for the 8-bit encodings, 16 for MONO16 and for P010's 16-bit words, 32 for
+  // cannot exceed it: 8 for the 8-bit encodings, 16 for MONO16, RGB16, RGBA16 and P010's words, 32 for
   // the 32-bit ones, and 10 for RGBA1010102, whose widest colour component is 10 bits of the 32-bit
   // word. The bound is the encoding's container and not the Tensor element type, so P010 carried as
   // a byte buffer still admits the 10 bits it is defined to hold. A Bayer encoding takes the bound
@@ -276,3 +287,4 @@ table Image {
 }
 
 root_type Image;
+file_identifier "HSIG";

@@ -91,6 +91,7 @@ void add_replay_time_point(StableHashBuilder& hash,
   hash.add("holoscan.runtime.operator-replay.observed/v2");
   hash.add(category);
   hash.add(OperatorSpecCompilerAccess::declaration_error(replay).code);
+  hash.add(OperatorSpecCompilerAccess::cuda_graph_capture_eligible(replay));
 
   hash.add_canonical_size(OperatorSpecCompilerAccess::port_count(replay));
   for (std::size_t index = 0U; index < OperatorSpecCompilerAccess::port_count(replay); ++index) {
@@ -98,6 +99,7 @@ void add_replay_time_point(StableHashBuilder& hash,
     hash.add(port.direction);
     hash.add(port.name);
     hash.add(port.tensor);
+    hash.add(port.optional);
     hash.add(port.payload_identity.kind);
     hash.add(port.payload_identity.payload_kind);
     hash.add(port.serialized_payload_capacity_bytes);
@@ -338,14 +340,27 @@ void add_replay_time_point(StableHashBuilder& hash,
              metadata.payload_identity.payload_kind == PayloadKind::kDescriptorBacked &&
              !metadata.payload_identity.scalar && !metadata.payload_identity.pod &&
              !metadata.payload_identity.schema && metadata.serialized_payload_capacity_bytes == 0U;
+    case RuntimePayloadCodecFamily::kProcessLocalObject:
+      return ops->wire_capacity == 0U && ops->payload_kind == PayloadKind::kInlineTyped &&
+             !ops->inline_pod && ops->encode_payload == nullptr &&
+             ops->construct_sample == nullptr && ops->construct_sample_from_value != nullptr &&
+             ops->retain_sample_payload_for_deferred_release != nullptr &&
+             ops->destroy_sample != nullptr && ops->sample_payload != nullptr &&
+             ops->sample_metadata != nullptr && ops->bind_input != nullptr &&
+             ops->unbind_input != nullptr && ops->bind_output != nullptr &&
+             ops->unbind_output != nullptr &&
+             is_py_object_payload_identity(metadata.payload_identity) &&
+             metadata.serialized_payload_capacity_bytes == 0U;
   }
   return false;
 }
 
 // Compare the complete authored port inventory without weakening exact replay admission.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] bool replayed_ports_match(const ExecutionPlanState& plan, VertexId owner,
+[[nodiscard]] bool replayed_ports_match(const ExecutionPlanState& plan,
+                                        const ExecutableOperatorFactoryRecord& record,
                                         const OperatorSpec& replay) {
+  const VertexId owner = record.vertex;
   const auto planned_ports = plan.graph.ports();
   std::vector<bool> matched(planned_ports.size(), false);
   for (std::size_t index = 0U; index < OperatorSpecCompilerAccess::port_count(replay); ++index) {
@@ -360,9 +375,25 @@ void add_replay_time_point(StableHashBuilder& hash,
     if (planned_index == planned_ports.size() || metadata.declaration == nullptr ||
         metadata.local_type_token == nullptr || metadata.runtime_type_ops == nullptr ||
         !replay_runtime_codec_valid(metadata) ||
+        planned_ports[planned_index].optional != metadata.optional ||
         !payload_identity_exactly_equal(planned_ports[planned_index].payload_identity,
                                         metadata.payload_identity)) {
       return false;
+    }
+    if (metadata.payload_identity.scalar &&
+        metadata.payload_identity.scalar->kind == ScalarIdentityKind::kLocalEnum) {
+      const ExecutableLocalEnumPortRecord* expected = nullptr;
+      for (const auto& candidate : record.local_enum_ports) {
+        if (candidate.direction == metadata.direction && candidate.name == metadata.name) {
+          if (expected != nullptr) {
+            return false;
+          }
+          expected = &candidate;
+        }
+      }
+      if (expected == nullptr || expected->local_type_token != metadata.local_type_token) {
+        return false;
+      }
     }
     std::optional<GraphPortId> follows_input;
     if (metadata.follows_input_declaration != nullptr) {
@@ -636,7 +667,7 @@ void add_replay_time_point(StableHashBuilder& hash,
          left.element_or_rep_bit_width == right.element_or_rep_bit_width &&
          left.duration_period_numerator == right.duration_period_numerator &&
          left.duration_period_denominator == right.duration_period_denominator &&
-         left.has_stable_shape == right.has_stable_shape;
+         left.optional == right.optional && left.has_stable_shape == right.has_stable_shape;
 }
 
 [[nodiscard]] bool parameter_schema_matches_plan(const ExecutionPlanState& plan,
@@ -648,7 +679,7 @@ void add_replay_time_point(StableHashBuilder& hash,
       });
   if (schema == nullptr) {
     return planned.schema_availability == ParamSchemaAvailability::kOpaqueLocal &&
-           planned_fields == 0U;
+           planned_fields == 0;
   }
   if (planned.schema_availability != ParamSchemaAvailability::kDeclared ||
       planned.schema_id != schema->stable_id || planned.schema_version != schema->version ||
@@ -656,7 +687,7 @@ void add_replay_time_point(StableHashBuilder& hash,
       planned.contract_hash != schema->contract_hash ||
       planned.metadata_hash != schema->metadata_hash ||
       planned.schema_coverage != schema->coverage || planned.schema_proof != schema->proof ||
-      planned_fields != schema->fields.size()) {
+      std::cmp_not_equal(planned_fields, schema->fields.size())) {
     return false;
   }
   for (const ParamFieldDescriptor& descriptor : schema->fields) {
@@ -747,9 +778,9 @@ void add_replay_time_point(StableHashBuilder& hash,
       !descriptor_tensor_fields_equal(endpoint.service_static.tensor_fields, topic_tensor_fields) ||
       !descriptor_tensor_fields_equal(service_tensor_fields, topic_tensor_fields) ||
       descriptor_schema != !topic_tensor_fields.empty() ||
-      endpoint.serialized_payload_capacity_bytes !=
-          endpoint.service_static.serialized_payload_capacity_bytes ||
-      (schema != (endpoint.serialized_payload_capacity_bytes != 0U))) {
+      endpoint.schema_writer_max_serialized_bytes !=
+          endpoint.service_static.schema_writer_max_serialized_bytes ||
+      (schema != (endpoint.schema_writer_max_serialized_bytes != 0U))) {
     return false;
   }
   if (pod) {
@@ -818,7 +849,7 @@ void add_replay_time_point(StableHashBuilder& hash,
            same_supported_external_payload(endpoint.payload_identity, static_payload) &&
            same_supported_external_payload(endpoint.payload_identity, topic->payload_identity) &&
            same_supported_external_payload(endpoint.payload_identity, service->payload_identity) &&
-           endpoint.serialized_payload_capacity_bytes == topic->serialized_payload_capacity_bytes;
+           endpoint.schema_writer_max_serialized_bytes == topic->serialized_payload_capacity_bytes;
   });
 }
 
@@ -1481,9 +1512,21 @@ void add_replay_time_point(StableHashBuilder& hash,
   return true;
 }
 
+void capture_replay_error(RuntimeDiagnosticDetail* detail, VertexId vertex,
+                          DiagnosticOperation operation, const Error& error) noexcept {
+  if (detail == nullptr || detail->present) {
+    return;
+  }
+  detail->present = true;
+  detail->vertex = vertex;
+  detail->operation = operation;
+  detail->capture.emplace();
+  detail->capture->append(error.code, error.message);
+}
+
 [[nodiscard]] expected<void, Error> bind_and_validate_direct_contract(
     const ExecutionPlanState& plan, const ExecutableOperatorFactoryRecord& record, OperatorBase& op,
-    const OperatorSpec& replay) {
+    const OperatorSpec& replay, RuntimeDiagnosticDetail* failure_detail) {
   const TemporalTriggerPlanRecord* const trigger =
       find_temporal_trigger_by_owner(plan, record.operator_id);
   const ReadinessPlanRecord* const source = find_readiness_by_owner(plan, record.vertex);
@@ -1563,33 +1606,28 @@ void add_replay_time_point(StableHashBuilder& hash,
     }
   }
 
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
-  try {
-#endif
-    const std::size_t connected_input_count = replay_connected_input_count(plan, record.vertex);
-    auto normalized = ContractTestAccess::normalize(op.contract(), connected_input_count);
-    const auto normalized_deadline = normalized
-                                         ? normalized->deadline.value_or(std::chrono::nanoseconds{})
-                                         : std::chrono::nanoseconds{};
-    const std::int64_t planned_deadline = trigger->deadline_ns.value_or(0);
-    if (!normalized || replay_trigger_kind(normalized->trigger.kind) != trigger->kind ||
-        normalized->trigger.source_id != source->source_id ||
-        normalized->connected_input_count != connected_input_count ||
-        !replayed_completion_rule_matches(plan, record.operator_id, *normalized) ||
-        !replayed_temporal_contract_matches(plan, record, op, *normalized) ||
-        (normalized->deadline.has_value() != trigger->deadline_ns.has_value() &&
-         !replayed_deadline_dependency_matches(plan, record, op, *normalized, *trigger)) ||
-        (normalized->deadline && normalized_deadline.count() != planned_deadline) ||
-        normalized->violation != trigger->violation || normalized->synthesized_default) {
-      return make_unexpected(
-          operator_reconstruction_error(ErrorCode::kFailure, "RUNTIME_OPERATOR_REPLAY_MISMATCH"));
-    }
-#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
-  } catch (...) {
+  const std::size_t connected_input_count = replay_connected_input_count(plan, record.vertex);
+  auto normalized = ContractTestAccess::normalize(op.contract(), connected_input_count);
+  if (!normalized) {
+    capture_replay_error(
+        failure_detail, record.vertex, DiagnosticOperation::kContract, normalized.error());
+  }
+  const auto normalized_deadline = normalized
+                                       ? normalized->deadline.value_or(std::chrono::nanoseconds{})
+                                       : std::chrono::nanoseconds{};
+  const std::int64_t planned_deadline = trigger->deadline_ns.value_or(0);
+  if (!normalized || replay_trigger_kind(normalized->trigger.kind) != trigger->kind ||
+      normalized->trigger.source_id != source->source_id ||
+      normalized->connected_input_count != connected_input_count ||
+      !replayed_completion_rule_matches(plan, record.operator_id, *normalized) ||
+      !replayed_temporal_contract_matches(plan, record, op, *normalized) ||
+      (normalized->deadline.has_value() != trigger->deadline_ns.has_value() &&
+       !replayed_deadline_dependency_matches(plan, record, op, *normalized, *trigger)) ||
+      (normalized->deadline && normalized_deadline.count() != planned_deadline) ||
+      normalized->violation != trigger->violation || normalized->synthesized_default) {
     return make_unexpected(
         operator_reconstruction_error(ErrorCode::kFailure, "RUNTIME_OPERATOR_REPLAY_MISMATCH"));
   }
-#endif
   return {};
 }
 
@@ -1599,7 +1637,7 @@ void add_replay_time_point(StableHashBuilder& hash,
 [[nodiscard]] expected<void, Error> validate_replayed_operator_impl(
     const ExecutionPlanState& plan, const ExecutableOperatorFactoryRecord& record, OperatorBase& op,
     const OperatorSpec& replay, std::uint32_t factory_slot,
-    RuntimeReplayMismatchDetail* replay_mismatch) {
+    RuntimeReplayMismatchDetail* replay_mismatch, RuntimeDiagnosticDetail* failure_detail) {
   const auto mismatch = [&](RuntimeReplayMismatchCategory category,
                             ErrorCode code = ErrorCode::kFailure,
                             const char* token = "RUNTIME_OPERATOR_REPLAY_MISMATCH",
@@ -1608,7 +1646,14 @@ void add_replay_time_point(StableHashBuilder& hash,
     return make_unexpected(replay_mismatch_error(
         code, token, plan, record, factory_slot, category, replay, replay_mismatch, temporal));
   };
-  if (OperatorSpecCompilerAccess::declaration_error(replay).code != ErrorCode::kSuccess) {
+  const auto& declaration_error = OperatorSpecCompilerAccess::declaration_error(replay);
+  if (declaration_error.code != ErrorCode::kSuccess) {
+    capture_replay_error(
+        failure_detail, record.vertex, DiagnosticOperation::kSetup, declaration_error);
+    return mismatch(RuntimeReplayMismatchCategory::kDeclaration);
+  }
+  if (OperatorSpecCompilerAccess::cuda_graph_capture_eligible(replay) !=
+      record.cuda_graph_capture_eligible) {
     return mismatch(RuntimeReplayMismatchCategory::kDeclaration);
   }
 
@@ -1616,7 +1661,7 @@ void add_replay_time_point(StableHashBuilder& hash,
   if (replay_ports != planned_port_count(plan, record.vertex)) {
     return mismatch(RuntimeReplayMismatchCategory::kPorts);
   }
-  if (!replayed_ports_match(plan, record.vertex, replay)) {
+  if (!replayed_ports_match(plan, record, replay)) {
     // The process-local function table is verified against the complete
     // pointer-free payload identity before any lifecycle callback.
     return mismatch(RuntimeReplayMismatchCategory::kPorts,
@@ -1727,23 +1772,30 @@ void add_replay_time_point(StableHashBuilder& hash,
   if (clock_source || input_source) {
     const std::size_t connected_input_count = replay_connected_input_count(plan, record.vertex);
     auto normalized = ContractTestAccess::normalize(op.contract(), connected_input_count);
+    if (!normalized) {
+      capture_replay_error(
+          failure_detail, record.vertex, DiagnosticOperation::kContract, normalized.error());
+      return mismatch(RuntimeReplayMismatchCategory::kTemporalContract,
+                      normalized.error().code,
+                      "RUNTIME_OPERATOR_REPLAY_MISMATCH");
+    }
     const bool clock_schedule_matched =
         !clock_source ||
         (trigger->kind == TemporalRecordTriggerKind::kClock
-             ? (normalized && replayed_clock_contract_matches(plan, record, *normalized))
-             : (normalized &&
-                replayed_clock_predicate_contract_matches(plan, record, *normalized)));
-    const bool matched = normalized && clock_schedule_matched &&
+             ? replayed_clock_contract_matches(plan, record, *normalized)
+             : replayed_clock_predicate_contract_matches(plan, record, *normalized));
+    const bool matched = clock_schedule_matched &&
                          replayed_completion_rule_matches(plan, record.operator_id, *normalized) &&
                          replayed_temporal_contract_matches(plan, record, op, *normalized);
     if (!matched) {
       return mismatch(RuntimeReplayMismatchCategory::kTemporalContract,
                       ErrorCode::kFailure,
                       "RUNTIME_OPERATOR_REPLAY_MISMATCH",
-                      normalized ? &*normalized : nullptr);
+                      &*normalized);
     }
   } else {
-    if (auto contract = bind_and_validate_direct_contract(plan, record, op, replay); !contract) {
+    if (auto contract = bind_and_validate_direct_contract(plan, record, op, replay, failure_detail);
+        !contract) {
       return mismatch(RuntimeReplayMismatchCategory::kTemporalContract,
                       contract.error().code,
                       "RUNTIME_OPERATOR_REPLAY_MISMATCH");
@@ -1769,8 +1821,10 @@ expected<void, Error> validate_replayed_operator(const ExecutionPlanState& plan,
                                                  const ExecutableOperatorFactoryRecord& record,
                                                  OperatorBase& op, const OperatorSpec& replay,
                                                  std::uint32_t factory_slot,
-                                                 RuntimeReplayMismatchDetail* replay_mismatch) {
-  return validate_replayed_operator_impl(plan, record, op, replay, factory_slot, replay_mismatch);
+                                                 RuntimeReplayMismatchDetail* replay_mismatch,
+                                                 RuntimeDiagnosticDetail* failure_detail) {
+  return validate_replayed_operator_impl(
+      plan, record, op, replay, factory_slot, replay_mismatch, failure_detail);
 }
 
 }  // namespace holoscan::detail

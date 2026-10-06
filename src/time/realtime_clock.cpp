@@ -14,6 +14,7 @@
 #include <holoscan/logger/logger.hpp>
 
 #include "clock_internal.hpp"
+#include "core/diagnostic_reporting.hpp"
 
 namespace holoscan {
 
@@ -62,8 +63,8 @@ RealtimeClock::RealtimeClock(Config config) {
 
   time_scale_ = config.initial_time_scale;
   if (!std::isfinite(time_scale_) || time_scale_ <= 0.0) {
-    HOLOSCAN_LOG_ERROR("Initial time scale must be finite and > 0 (got {}); falling back to 1.0",
-                       time_scale_);
+    HOLOSCAN_LOG_AUTOMATIC_ERROR(
+        "Initial time scale must be finite and > 0 (got {}); falling back to 1.0", time_scale_);
     time_scale_ = 1.0;
   }
 }
@@ -90,7 +91,8 @@ double RealtimeClock::time() const {
 expected<void, Error> RealtimeClock::sleep_for(int64_t duration_ns) {
   // The clock cannot go backwards.
   if (duration_ns < 0) {
-    HOLOSCAN_LOG_ERROR("Duration is negative: {}. Clock cannot go backwards.", duration_ns);
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Duration is negative: {}. Clock cannot go backwards.",
+                                 duration_ns);
     return make_unexpected(
         Error{ErrorCode::kInvalidArgument, "Sleep duration must be non-negative"});
   }

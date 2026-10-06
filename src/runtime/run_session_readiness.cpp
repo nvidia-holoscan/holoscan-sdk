@@ -9,28 +9,12 @@
 
 #include "run_session_internal.hpp"
 
+#include "core/diagnostic_reporting.hpp"
 #include "runtime_test_access.hpp"
 
 namespace holoscan::detail {
 
 // Temporal ingestion, eligibility, and frozen-candidate construction.
-
-namespace {
-
-[[nodiscard]] constexpr std::string_view channel_terminal_token(
-    const std::optional<StructuralDiagnosticId> diagnostic) noexcept {
-  if (!diagnostic) {
-    return "RUNTIME_READINESS_BINDING_UNAVAILABLE";
-  }
-  if (const auto* descriptor = find_structural_diagnostic(*diagnostic); descriptor != nullptr) {
-    return descriptor->token;
-  }
-  // A new Channel producer must register its typed structural identity instead of silently
-  // degrading to a generic readiness failure.
-  return "COMPILER_DIAGNOSTIC_TOKEN_UNREGISTERED";
-}
-
-}  // namespace
 
 [[nodiscard]] bool RunSessionState::witness_reference_floor(
     ReadyRunState& state, std::optional<TimePoint>& floor) noexcept {
@@ -85,7 +69,7 @@ namespace {
     // A committed replacement remains fenced until its exact prerequisite event is published,
     // ingested, and retired. Do not start another reconcile transaction for the same selector
     // while a deferred recovery poll still owns that obligation.
-    if (slot.reuse_replacement_prerequisite_reference) {
+    if (slot.freshness_refill_prerequisite) {
       continue;
     }
     // A release that lost the producer lock leaves its exact successor fenced. Recover it before
@@ -131,17 +115,35 @@ namespace {
       count_phase(RuntimePhaseCounter::kTemporalReuseLastRetainedRecordQueries);
       return slot.selector.reuse_retained_record();
     };
-    if (const auto reuse_retained = reuse_retained_record(); reuse_retained) {
+    const auto relevant_witness = [&]() -> std::optional<TimePoint> {
+      auto witness =
+          selector_witness_reference(state, slot.owner, slot.witness_source, slot.witness_port);
+      if (witness) {
+        return witness;
+      }
+      if (!slot.upcoming_clock_freshness || slot.receiver_index >= state.clock_bindings.size()) {
+        return std::nullopt;
+      }
+      // Between periodic firings the authored next wake is an exact future witness. The pending
+      // lookup above wins while the current firing is still observable.
+      const ClockTriggerPortBinding* const clock = state.clock_bindings[slot.receiver_index];
+      return clock == nullptr || clock->source() != slot.witness_source ? std::nullopt
+                                                                        : clock->next_wake();
+    };
+    const auto reuse_retained = reuse_retained_record();
+    std::optional<TimePoint> reuse_cache_witness;
+    if (reuse_retained && !slot.upcoming_clock_freshness &&
+        (selector != InputSelectorKind::kLatestWithin ||
+         slot.selector.plan().cache_capacity != 1U || slot.selector.retained_count() == 0U)) {
       auto staged = state.channels->staged_reuse_replacement_candidate(slot.input, *reuse_retained);
       if (!staged) {
         append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
         return false;
       }
       if (staged->has_value()) {
-        const std::optional<TimePoint> relevant_witness =
-            selector_witness_reference(state, slot.owner, slot.witness_source, slot.witness_port);
+        const std::optional<TimePoint> witness_reference = relevant_witness();
         bool trigger_terminal = false;
-        if (!relevant_witness && slot.witness_port) {
+        if (!witness_reference && slot.witness_port) {
           auto observed = state.channels->input_terminal_observed(slot.witness_port);
           if (!observed) {
             append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
@@ -150,7 +152,7 @@ namespace {
           trigger_terminal = *observed;
         }
         const bool terminal_unobservable =
-            !relevant_witness && trigger_terminal && state.dispatcher != nullptr &&
+            !witness_reference && trigger_terminal && state.dispatcher != nullptr &&
             state.dispatcher->active_count() == 0U && state.selection.frozen_candidates.empty() &&
             state.coordinator != nullptr &&
             state.coordinator->no_pending_trigger_witness(slot.owner, slot.witness_port);
@@ -159,14 +161,14 @@ namespace {
         // admits it at age zero, so this is selector eligibility rather than an absent-witness
         // guess. Independent clock/notification/driver triggers do not satisfy this proof.
         const bool self_trigger_successor =
-            !relevant_witness && slot.input == slot.witness_port &&
+            !witness_reference && slot.input == slot.witness_port &&
             slot.readiness_source == slot.witness_source && state.dispatcher != nullptr &&
             state.dispatcher->active_count() == 0U && state.selection.frozen_candidates.empty() &&
             state.coordinator != nullptr &&
             state.coordinator->no_pending_trigger_witness(slot.owner, slot.witness_port);
         if (!terminal_unobservable && !self_trigger_successor &&
-            (!relevant_witness ||
-             !slot.selector.staged_reuse_eligible(**staged, *relevant_witness))) {
+            (!witness_reference || !slot.selector.staged_reuse_eligible(
+                                       (**staged).successor_reference, *witness_reference))) {
           count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedAboveFloor);
           continue;
         }
@@ -186,7 +188,7 @@ namespace {
           count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedEvictionRefused);
           continue;
         }
-        auto replaced = state.channels->replace_staged_reuse(slot.input, *reuse_retained);
+        auto replaced = state.channels->replace_staged_reuse(slot.input, *reuse_retained, **staged);
         if (!replaced) {
           if (replaced.error().code == ErrorCode::kBackpressured ||
               replaced.error().code == ErrorCode::kNotReady) {
@@ -198,9 +200,13 @@ namespace {
         }
         selector_reservation->commit();
         slot.freshness_promoted_this_round = true;
-        slot.freshness_promoted_capture_ns = (*staged)->timestamp_ns;
-        if (replacement_input_is_nontrigger_prerequisite(slot)) {
-          slot.reuse_replacement_prerequisite_reference = **staged;
+        slot.freshness_promoted_capture_ns = (**staged).successor_reference.timestamp_ns;
+        if (slot.nontrigger_prerequisite) {
+          TemporalSampleRecord prerequisite = *replaced;
+          prerequisite.capture_time = (**staged).successor_reference;
+          slot.freshness_refill_prerequisite = prerequisite;
+          slot.freshness_refill_target = prerequisite;
+          state.freshness_evicted_this_round = true;
         }
         slot.channel_payload_claims.erase(prior);
         // The Channel receive and selector retirement are now irreversible and both ledgers
@@ -225,10 +231,9 @@ namespace {
         return false;
       }
       if (*refill_candidate) {
-        const std::optional<TimePoint> relevant_witness =
-            selector_witness_reference(state, slot.owner, slot.witness_source, slot.witness_port);
+        const std::optional<TimePoint> witness_reference = relevant_witness();
         bool trigger_terminal = false;
-        if (!relevant_witness && slot.witness_port) {
+        if (!witness_reference && slot.witness_port) {
           auto observed = state.channels->input_terminal_observed(slot.witness_port);
           if (!observed) {
             append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
@@ -237,26 +242,34 @@ namespace {
           trigger_terminal = *observed;
         }
         const bool terminal_trigger_unobservable =
-            !relevant_witness && trigger_terminal && state.dispatcher != nullptr &&
+            !witness_reference && trigger_terminal && state.dispatcher != nullptr &&
             state.dispatcher->active_count() == 0U && state.selection.frozen_candidates.empty() &&
             state.coordinator != nullptr &&
             state.coordinator->no_pending_trigger_witness(slot.owner, slot.witness_port);
         const bool self_trigger_successor =
-            !relevant_witness && slot.input == slot.witness_port &&
+            !witness_reference && slot.input == slot.witness_port &&
             slot.readiness_source == slot.witness_source && state.dispatcher != nullptr &&
             state.dispatcher->active_count() == 0U && state.selection.frozen_candidates.empty() &&
             state.coordinator != nullptr &&
             state.coordinator->no_pending_trigger_witness(slot.owner, slot.witness_port);
         const bool no_witness_eligible = terminal_trigger_unobservable || self_trigger_successor;
-        if (!relevant_witness && !no_witness_eligible) {
+        if (!witness_reference && !no_witness_eligible) {
           count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedAboveFloor);
           continue;
         }
         // The successor is reserved only through the coordinate of the immutable trigger that
         // can observe this selector. A global coordinator floor can contain unrelated data or
         // another operator's event; neither is a consumer of this ReuseLast record.
-        auto reservation =
-            state.channels->reserve_freshness_refill(slot.input, *reuse_retained, relevant_witness);
+        const bool nontrigger_prerequisite = slot.nontrigger_prerequisite;
+        RuntimeChannelFreshnessSelectionMode selection_mode =
+            RuntimeChannelFreshnessSelectionMode::kNewest;
+        if (nontrigger_prerequisite && selector == InputSelectorKind::kLatestWithin) {
+          selection_mode = RuntimeChannelFreshnessSelectionMode::kNewestWithArrivalPrefix;
+        } else if (nontrigger_prerequisite && selector == InputSelectorKind::kExact) {
+          selection_mode = RuntimeChannelFreshnessSelectionMode::kOldestProducerSuccessor;
+        }
+        auto reservation = state.channels->reserve_freshness_refill(
+            slot.input, *reuse_retained, witness_reference, selection_mode);
         if (!reservation) {
           append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
           return false;
@@ -265,9 +278,16 @@ namespace {
           count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedAboveFloor);
           continue;
         }
+        // A non-trigger LatestWithin input qualifies the fenced newest target. Its earlier
+        // producer-order prefix need not individually satisfy the current age window. Single
+        // successor modes qualify the exact record they will admit.
+        const TimePoint eligible_reference =
+            selection_mode == RuntimeChannelFreshnessSelectionMode::kNewestWithArrivalPrefix
+                ? (**reservation).target_reference
+                : (**reservation).successor_reference;
         if (!no_witness_eligible &&
-            (!relevant_witness || !slot.selector.staged_reuse_eligible(
-                                      (**reservation).successor_reference, *relevant_witness))) {
+            (!witness_reference ||
+             !slot.selector.staged_reuse_eligible(eligible_reference, *witness_reference))) {
           state.channels->release_freshness_reservation(**reservation);
           count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedAboveFloor);
           continue;
@@ -292,8 +312,14 @@ namespace {
         selector_reservation->commit();
         slot.freshness_promoted_this_round = true;
         slot.freshness_promoted_capture_ns = promoted_capture_ns;
-        if (replacement_input_is_nontrigger_prerequisite(slot)) {
-          slot.reuse_replacement_prerequisite_reference = (**reservation).successor_reference;
+        if (nontrigger_prerequisite) {
+          TemporalSampleRecord prerequisite = (**reservation).successor;
+          prerequisite.capture_time = (**reservation).successor_reference;
+          slot.freshness_refill_prerequisite = prerequisite;
+          TemporalSampleRecord target = (**reservation).target;
+          target.capture_time = (**reservation).target_reference;
+          slot.freshness_refill_target = target;
+          state.freshness_evicted_this_round = true;
         }
         // Both ownership ledgers now agree that the old ReuseLast payload is gone. Only after
         // that irreversible two-party commit may an auxiliary process-local retry fail the run;
@@ -337,6 +363,62 @@ namespace {
       continue;
     }
     const TemporalSampleRecord retained = *retained_entry;
+    if (reuse_retained && slot.upcoming_clock_freshness &&
+        slot.selector.plan().cache_capacity == 1U) {
+      auto staged = state.channels->staged_reuse_replacement_candidate(slot.input, retained);
+      if (!staged) {
+        append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
+        return false;
+      }
+      if (staged->has_value()) {
+        const std::optional<TimePoint> witness_reference = relevant_witness();
+        if (!witness_reference || !slot.selector.staged_reuse_eligible(
+                                      (**staged).successor_reference, *witness_reference)) {
+          count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedAboveFloor);
+          continue;
+        }
+        const auto prior = std::find(
+            slot.channel_payload_claims.begin(), slot.channel_payload_claims.end(), retained);
+        if (prior == slot.channel_payload_claims.end()) {
+          append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
+          return false;
+        }
+        auto selector_reservation = slot.selector.reserve_cache_replacement(retained);
+        if (!selector_reservation) {
+          count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedEvictionRefused);
+          continue;
+        }
+        auto replaced = state.channels->replace_staged_reuse(slot.input, retained, **staged);
+        if (!replaced) {
+          if (replaced.error().code == ErrorCode::kBackpressured ||
+              replaced.error().code == ErrorCode::kNotReady) {
+            count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedEvictionRefused);
+            continue;
+          }
+          append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
+          return false;
+        }
+        selector_reservation->commit();
+        slot.freshness_promoted_this_round = true;
+        slot.freshness_promoted_capture_ns = (**staged).successor_reference.timestamp_ns;
+        if (slot.nontrigger_prerequisite) {
+          TemporalSampleRecord prerequisite = *replaced;
+          prerequisite.capture_time = (**staged).successor_reference;
+          slot.freshness_refill_prerequisite = prerequisite;
+          slot.freshness_refill_target = prerequisite;
+          state.freshness_evicted_this_round = true;
+        }
+        slot.channel_payload_claims.erase(prior);
+        if (auto retried = state.channels->retry_after_freshness_handoff(); !retried) {
+          append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
+          return false;
+        }
+        --refill_credit;
+        ++recovered_count;
+        count_phase(RuntimePhaseCounter::kTemporalRetentionEvictions);
+        continue;
+      }
+    }
     auto refill_candidate = state.channels->has_freshness_refill_candidate(slot.input, retained);
     if (!refill_candidate) {
       append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
@@ -346,10 +428,18 @@ namespace {
       count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedNotSuperseded);
       continue;
     }
+    if (reuse_retained && selector == InputSelectorKind::kLatestWithin &&
+        slot.selector.plan().cache_capacity == 1U && slot.selector.retained_count() != 0U) {
+      reuse_cache_witness = relevant_witness();
+      if (!reuse_cache_witness) {
+        count_phase(RuntimePhaseCounter::kTemporalRetentionDeclinedAboveFloor);
+        continue;
+      }
+    }
     // Computed at most once per round, and only for a selector that has already earned an
     // possible eviction. Hoisting it above the loop would read every clock on every dispatch
     // iteration even when no selector retains a payload, which is the common case.
-    if (!floor_known) {
+    if (!reuse_cache_witness && !floor_known) {
       if (!witness_reference_floor(state, floor)) {
         slot.freshness_gate_inert_this_round = false;
         // A clock that cannot be read leaves the round's witnesses unbounded. Declining costs a
@@ -361,10 +451,11 @@ namespace {
       count_phase(floor ? RuntimePhaseCounter::kTemporalRetentionFloorResolved
                         : RuntimePhaseCounter::kTemporalRetentionFloorAbsent);
     }
-    // No floor means no witness is possible this round *as seen from here*, so the gate does not
-    // apply at all and the eviction proceeds unguarded. peek_scheduled reports only a tick that
-    // is due at this instant, and in steady state 46 of every 47 rounds have none.
-    slot.freshness_gate_inert_this_round = !floor.has_value();
+    const std::optional<TimePoint>& eviction_floor =
+        reuse_cache_witness ? reuse_cache_witness : floor;
+    // No floor means no witness is possible this round as seen from here, so the gate does not
+    // apply. A selector with a reuse fallback instead uses its exact relevant witness above.
+    slot.freshness_gate_inert_this_round = !eviction_floor.has_value();
     // Reserve the record this eviction will admit, before releasing anything. Qualifying here
     // and admitting whatever staging holds by the time the promotion runs is unsound however
     // sound the qualification was: at a fast producer the qualified record is replaced in
@@ -374,7 +465,12 @@ namespace {
     // The reservation subsumes the floor comparison that used to stand here. Coordinates from
     // different clock domains are not comparable, so an unnormalized capture declines inside it
     // rather than being compared by raw nanoseconds.
-    auto reservation = state.channels->reserve_freshness_refill(slot.input, retained, floor);
+    const bool nontrigger_prerequisite = slot.nontrigger_prerequisite;
+    const RuntimeChannelFreshnessSelectionMode selection_mode =
+        nontrigger_prerequisite ? RuntimeChannelFreshnessSelectionMode::kNewestWithArrivalPrefix
+                                : RuntimeChannelFreshnessSelectionMode::kNewest;
+    auto reservation = state.channels->reserve_freshness_refill(
+        slot.input, retained, eviction_floor, selection_mode);
     if (!reservation) {
       append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
       return false;
@@ -399,7 +495,7 @@ namespace {
     slot.freshness_evicted_this_round = true;
     state.freshness_evicted_this_round = true;
     slot.freshness_successor_capture_ns = (*reservation)->successor.capture_time.timestamp_ns;
-    slot.freshness_floor_ns = floor ? floor->timestamp_ns : 0;
+    slot.freshness_floor_ns = eviction_floor ? eviction_floor->timestamp_ns : 0;
     // Ordering is mandatory: until the eviction above, the cached record named a live claim.
     // Retiring it now is no longer optional either, because the selector has already given it
     // up -- claim synchronization is what hands it back and frees the slot for promotion.
@@ -419,6 +515,14 @@ namespace {
     if (promoted != 1U) {
       append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", slot.owner);
       return false;
+    }
+    if (nontrigger_prerequisite) {
+      TemporalSampleRecord prerequisite = (**reservation).successor;
+      prerequisite.capture_time = (**reservation).successor_reference;
+      slot.freshness_refill_prerequisite = prerequisite;
+      TemporalSampleRecord target = (**reservation).target;
+      target.capture_time = (**reservation).target_reference;
+      slot.freshness_refill_target = target;
     }
     // Channel and selector ownership now agree on the promoted successor. Only after that
     // irreversible commit may the auxiliary process-local retry propagate an error.
@@ -649,7 +753,8 @@ namespace {
 // predicate state, and payload claims for one frozen witness.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] bool RunSessionState::ingest_channel_candidate(
-    GraphExec& exec, ReadyRunState& state, const FrozenRuntimeCandidate& candidate) {
+    GraphExec& exec, ReadyRunState& state, const FrozenRuntimeCandidate& candidate,
+    const TemporalSampleRecord* pre_resolved_sample) {
   if (candidate.witness.kind == RuntimeEventKind::kInputEndOfStream) {
     if (!candidate.witness.port || !candidate.witness.reference_time.valid() ||
         candidate.candidate.receiver_index >= exec.operators().size()) {
@@ -751,16 +856,20 @@ namespace {
     append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH");
     return false;
   }
-  auto sample =
-      state.channels->temporal_sample(candidate.witness.port, candidate.witness.source_sequence);
-  if (!sample) {
+  expected<TemporalSampleRecord, Error> resolved_sample =
+      pre_resolved_sample != nullptr
+          ? expected<TemporalSampleRecord, Error>{*pre_resolved_sample}
+          : state.channels->temporal_sample(candidate.witness.port,
+                                            candidate.witness.source_sequence);
+  if (!resolved_sample) {
     append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH");
     return false;
   }
+  const TemporalSampleRecord& sample = *resolved_sample;
   bool consumed = false;
   for (auto& selector : state.input_selectors) {
     if (selector.input == candidate.witness.port) {
-      if (selector.arrival_watermark != 0U && selector.producer_epoch != sample->producer_epoch) {
+      if (selector.arrival_watermark != 0U && selector.producer_epoch != sample.producer_epoch) {
         if (selector.aligned_member) {
           const auto aligned =
               std::find_if(state.aligned_selectors.begin(),
@@ -775,7 +884,8 @@ namespace {
               member.arrival_watermark = 0U;
               member.end_of_stream_received = false;
               member.end_of_stream_decision_pending = false;
-              member.reuse_replacement_prerequisite_reference.reset();
+              member.freshness_refill_prerequisite.reset();
+              member.freshness_refill_target.reset();
             }
           }
         } else if (!selector.selector.reset()) {
@@ -784,7 +894,8 @@ namespace {
         } else {
           selector.end_of_stream_received = false;
           selector.end_of_stream_decision_pending = false;
-          selector.reuse_replacement_prerequisite_reference.reset();
+          selector.freshness_refill_prerequisite.reset();
+          selector.freshness_refill_target.reset();
         }
         RuntimeOperatorInstance* const instance = exec.operator_by_vertex(selector.owner);
         const auto receiver = exec.receiver_index(selector.owner);
@@ -797,9 +908,38 @@ namespace {
                                              instance->tags->generation());
         }
       }
+      const auto& selection = selector.selector.plan();
+      if (!selector.aligned_member && selector.freshness_reconcile &&
+          selection.selector == InputSelectorKind::kLatestWithin &&
+          selection.missing == TemporalRecordMissingKind::kReuseLast &&
+          selection.cache_capacity == 1U && selector.selector.retained_count() == 1U &&
+          !sample.capture_time.valid()) {
+        // LatestWithin can never select a capture-less arrival. Leave the causal cache row in
+        // place and release this arrival through the ordinary unretained-payload path below.
+        consumed = true;
+        continue;
+      }
       const auto pushed = [&]() -> expected<void, Error> {
         if (!selector.aligned_member) {
-          return selector.selector.push(*sample);
+          if (selector.freshness_reconcile &&
+              selection.selector == InputSelectorKind::kLatestWithin &&
+              selection.missing == TemporalRecordMissingKind::kReuseLast &&
+              selection.cache_capacity == 1U && selector.selector.retained_count() == 1U) {
+            auto claims =
+                selector.selector.copy_payload_claims(selector.channel_payload_claim_scratch);
+            if (!claims || *claims == 0U) {
+              return make_unexpected(claims ? Error{ErrorCode::kProtocolError}
+                                            : std::move(claims).error());
+            }
+            auto evicted = selector.selector.evict_retained(
+                selector.channel_payload_claim_scratch.front().arrival_sequence);
+            if (!evicted) {
+              // Ingestion owns no active selector transaction; push() below enforces the same
+              // invariant. A refusal here therefore denotes inconsistent frozen-candidate state.
+              return evicted;
+            }
+          }
+          return selector.selector.push(sample);
         }
         const auto aligned = std::find_if(
             state.aligned_selectors.begin(), state.aligned_selectors.end(), [&](const auto& slot) {
@@ -807,18 +947,26 @@ namespace {
             });
         return aligned == state.aligned_selectors.end()
                    ? expected<void, Error>{make_unexpected(Error{ErrorCode::kInvalidArgument})}
-                   : aligned->selector.push(selector.input, *sample);
+                   : aligned->selector.push(selector.input, sample);
       }();
       if (!pushed) {
-        append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", selector.owner);
+        append_callback_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE",
+                                   selector.owner,
+                                   {},
+                                   pushed.error(),
+                                   RuntimeCallbackIdentity{
+                                       .source = candidate.witness.source,
+                                       .source_sequence = candidate.witness.source_sequence,
+                                       .reference_time = candidate.witness.reference_time,
+                                   });
         return false;
       }
       // The last link of the refill: a record reaching the cache for this selector in this
       // round. Recording it here closes the chain the eviction started, so a loss can name the
       // step that did not happen instead of the step that was assumed not to.
       selector.freshness_ingested_this_round = true;
-      selector.arrival_watermark = sample->arrival_sequence;
-      selector.producer_epoch = sample->producer_epoch;
+      selector.arrival_watermark = sample.arrival_sequence;
+      selector.producer_epoch = sample.producer_epoch;
       consumed = true;
       if (!synchronize_temporal_payload_claims(state, selector.owner)) {
         append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", selector.owner);
@@ -834,7 +982,7 @@ namespace {
       // EOS terminates this bracketed input generation. Later anchors remain valid for their
       // own selectors, but must not create windows that have no remaining EOS event to close.
       if (!selector.end_of_stream_received) {
-        auto advanced = selector.selector.push_anchor(*sample);
+        auto advanced = selector.selector.push_anchor(sample);
         if (!advanced) {
           append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE", selector.owner);
           return false;
@@ -855,18 +1003,22 @@ namespace {
         return selector.input == candidate.witness.port &&
                std::find(selector.channel_payload_claims.begin(),
                          selector.channel_payload_claims.end(),
-                         *sample) != selector.channel_payload_claims.end();
+                         sample) != selector.channel_payload_claims.end();
       });
   if (!payload_retained) {
     // Anchor-only arrivals and direct OnEach/OnAny trigger pins retain only metadata in the
     // selector layer. Release their temporal claim now; the unretired readiness witness keeps
     // direct-pin storage alive through prepare/compute, then permits bounded reclamation.
-    const std::array unretained{*sample};
+    const std::array unretained{sample};
     auto released = state.channels->retire_samples(candidate.witness.port, unretained);
     if (!released) {
       append_diagnostic("RUNTIME_PORT_BINDING_UNAVAILABLE");
       return false;
     }
+  }
+  if (fixture_observation_ != nullptr) {
+    observe_input_ingestion(
+        exec.operators()[candidate.candidate.receiver_index].vertex, candidate, sample);
   }
   return true;
 }
@@ -886,20 +1038,6 @@ namespace {
     return trigger->kind == TemporalRecordTriggerKind::kWindow &&
            candidate.witness.port == trigger->trigger_input;
   }
-  const auto input_witness_can_activate = [&]() noexcept {
-    if (trigger->kind == TemporalRecordTriggerKind::kEach) {
-      return candidate.witness.port == trigger->trigger_input;
-    }
-    if (trigger->kind == TemporalRecordTriggerKind::kPredicate) {
-      const PredicateTriggerPlanRecord* const predicate = instance.predicate_trigger;
-      return predicate != nullptr &&
-             predicate->source == PredicateEvaluationSourceKind::kInputUpdate &&
-             candidate.witness.port == predicate->driver;
-    }
-    return trigger->kind == TemporalRecordTriggerKind::kAnyInput ||
-           trigger->kind == TemporalRecordTriggerKind::kAligned ||
-           trigger->kind == TemporalRecordTriggerKind::kWindow;
-  };
   if (candidate.witness.kind == RuntimeEventKind::kInputEndOfStream) {
     const bool witness_matches = std::any_of(
         state.input_selectors.begin(), state.input_selectors.end(), [&](const auto& selector) {
@@ -907,7 +1045,8 @@ namespace {
         });
     const bool every_input_closed = std::all_of(
         state.input_selectors.begin(), state.input_selectors.end(), [&](const auto& selector) {
-          return selector.owner != instance.vertex || selector.end_of_stream_received;
+          return selector.owner != instance.vertex || !selector.connected ||
+                 selector.end_of_stream_received;
         });
     if (!witness_matches || !every_input_closed) {
       return false;
@@ -931,7 +1070,7 @@ namespace {
   // Clock and readiness-driven Operators still ingest side-input state and retire its readiness
   // credit here, but the independent source remains their sole activation authority. Window
   // successors remain eligible because an input witness can close the frozen bracket.
-  return input_witness_can_activate();
+  return input_arrival_can_activate(*trigger, instance.predicate_trigger, candidate.witness.port);
 }
 
 // Form the bounded activation snapshot, health disposition, and retirement obligations in one
@@ -964,11 +1103,11 @@ namespace {
   if (state.channels != nullptr) {
     auto channel_status = state.channels->status();
     if (!channel_status) {
-      const RuntimeDiagnosticDetail detail{.present = true, .error = channel_status.error()};
-      append_diagnostic(channel_terminal_token(state.channels->terminal_diagnostic()),
-                        state.channels->terminal_owner(),
-                        {},
-                        &detail);
+      append_callback_diagnostic(channel_terminal_token(state.channels->terminal_diagnostic()),
+                                 state.channels->terminal_owner(),
+                                 {},
+                                 channel_status.error(),
+                                 {});
       return false;
     }
   }
@@ -1055,29 +1194,49 @@ namespace {
       struct PollInvocation {
         PortBinding* binding{};
         TimePoint observed_at{};
+        bool after_contention{};
       } invocation{.binding = binding.get(), .observed_at = *observed_at};
-      if (!current_execution_lane) {
-        count_phase(RuntimePhaseCounter::kReadinessPollDispatches);
+      if (current_execution_lane && *current_execution_lane != target->execution_lane) {
+        append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH");
+        static_cast<void>(cancel_ready_sources(state));
+        return false;
       }
-      expected<void, Error> polled;
-      if (current_execution_lane) {
-        if (*current_execution_lane != target->execution_lane) {
-          append_diagnostic("RUNTIME_OPERATOR_REPLAY_MISMATCH");
-          static_cast<void>(cancel_ready_sources(state));
-          return false;
+      const auto invoke_poll = [&]() noexcept -> expected<void, Error> {
+        if (current_execution_lane) {
+          return invocation.after_contention ? binding->poll_after_contention(*observed_at)
+                                             : binding->poll(*observed_at);
         }
-        polled = binding->poll(*observed_at);
-      } else {
-        polled =
-            state.lanes->dispatch(target->execution_lane,
-                                  ExecutionLaneTask{
-                                      .context = &invocation,
-                                      .invoke = [](void* state) noexcept -> expected<void, Error> {
-                                        auto& task = *static_cast<PollInvocation*>(state);
-                                        return task.binding->poll(task.observed_at);
-                                      },
-                                      .callback_context = RuntimeCallbackContext::kDispatcher,
-                                  });
+        count_phase(RuntimePhaseCounter::kReadinessPollDispatches);
+        return state.lanes->dispatch(
+            target->execution_lane,
+            ExecutionLaneTask{
+                .context = &invocation,
+                .invoke = [](void* state) noexcept -> expected<void, Error> {
+                  auto& task = *static_cast<PollInvocation*>(state);
+                  return task.after_contention
+                             ? task.binding->poll_after_contention(task.observed_at)
+                             : task.binding->poll(task.observed_at);
+                },
+                .callback_context = RuntimeCallbackContext::kDispatcher,
+            });
+      };
+      const bool contention_retry_eligible =
+          !state.contention_retry_eligible_by_binding.empty() &&
+          state.contention_retry_eligible_by_binding[binding_index] != 0U;
+      expected<void, Error> polled = invoke_poll();
+      if (polled && contention_retry_eligible && binding->last_poll_lock_contended()) {
+        // The nonblocking poll lost the input cache lock to another bounded holder: the channel
+        // pump reserving a typed slot, or a sibling owner's post-compute cut probing this input.
+        // The published revision stays unobserved, but the wake token that announced it was
+        // consumed before this scan and no holder signals again when it releases the lock, so
+        // parking now would wait out the whole bounded fallback with a retained sample pending.
+        // Measured on graph_intraprocess_docs_pod_1to2_per_sink_latency, that was the residual
+        // ~1.06 ms p999 tail. Retry once, waiting out that short critical section under a bounded
+        // budget instead; an expired budget or a still-incomplete retry keeps the dirty revision
+        // for the next round exactly as before.
+        count_phase(RuntimePhaseCounter::kReadinessPollContentionRetries);
+        invocation.after_contention = true;
+        polled = invoke_poll();
       }
       if (!polled) {
         const auto terminal_diagnostic =
@@ -1091,12 +1250,14 @@ namespace {
                        ? exec.operators()[*receiver].vertex
                        : VertexId{};
         }
-        const RuntimeDiagnosticDetail detail{
-            .present = true, .error = polled.error(), .source = binding->source()};
         const std::string_view fallback = channel_terminal_token(terminal_diagnostic);
         const std::string_view token =
             terminal_diagnostic ? fallback : registered_token_or(polled.error().message, fallback);
-        append_diagnostic(token, vertex, {}, &detail);
+        append_callback_diagnostic(token,
+                                   vertex,
+                                   {},
+                                   polled.error(),
+                                   RuntimeCallbackIdentity{.source = binding->source()});
         static_cast<void>(cancel_ready_sources(state));
         return false;
       }
@@ -1105,6 +1266,10 @@ namespace {
         freshness_poll_complete = !freshness->ordinary_poll_incomplete_this_round;
         state.poll_incomplete_this_round =
             state.poll_incomplete_this_round || !freshness_poll_complete;
+      } else if (contention_retry_eligible && binding->last_poll_incomplete()) {
+        // An ordinary binding that stayed incomplete after the contention retry still owns a
+        // dirty revision; record the round so a missed selection is classified as unpolled.
+        state.poll_incomplete_this_round = true;
       }
       if (!current_execution_lane) {
         trace_phase(RuntimePhaseTracePoint::kReadinessPollReturned,
@@ -1238,12 +1403,11 @@ namespace {
                      ? exec.operators()[*receiver].vertex
                      : VertexId{};
       }
-      const RuntimeDiagnosticDetail detail{
-          .present = true, .error = polled.error(), .source = binding.source()};
       const std::string_view fallback = channel_terminal_token(terminal_diagnostic);
       const std::string_view token =
           terminal_diagnostic ? fallback : registered_token_or(polled.error().message, fallback);
-      append_diagnostic(token, vertex, {}, &detail);
+      append_callback_diagnostic(
+          token, vertex, {}, polled.error(), RuntimeCallbackIdentity{.source = binding.source()});
       static_cast<void>(cancel_ready_sources(state));
       return false;
     }
@@ -1276,74 +1440,135 @@ namespace {
     }
     ingested_count += *ingested;
   }
-  // A promoted successor is a data prerequisite for the trigger whose coordinate authorized
-  // the ReuseLast handoff. It may have received a later readiness sequence than an already
-  // pending equal-time trigger, so ingest that exact input event first. This changes no
-  // activation ordering: the prerequisite is retired as a non-trigger arrival after populating
-  // the selector, and the ordinary coordinator still freezes every activation witness.
-  bool reuse_prerequisite_unpublished = false;
-  for (auto& slot : state.input_selectors) {
-    if (!slot.reuse_replacement_prerequisite_reference ||
-        slot.selector.plan().missing != TemporalRecordMissingKind::kReuseLast ||
-        !replacement_input_is_nontrigger_prerequisite(slot)) {
-      continue;
-    }
-    auto prerequisite = state.coordinator->freeze_input_prerequisite(
-        slot.owner, slot.input, *slot.reuse_replacement_prerequisite_reference);
-    if (!prerequisite) {
-      if (prerequisite.error().code == ErrorCode::kNotReady) {
-        reuse_prerequisite_unpublished = true;
-        state.poll_incomplete_this_round = true;
-        continue;
-      }
-      append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE", slot.owner);
-      static_cast<void>(cancel_ready_sources(state));
-      return false;
-    }
-    if (!ingest_channel_candidate(exec, state, *prerequisite) ||
-        channel_candidate_is_eligible(exec, state, *prerequisite)) {
-      append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE", slot.owner);
-      static_cast<void>(cancel_ready_sources(state));
-      return false;
-    }
-    auto retired = retire_frozen_source(state, *prerequisite);
-    if (!retired) {
-      append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE", slot.owner);
-      static_cast<void>(cancel_ready_sources(state));
-      return false;
-    }
-    slot.reuse_replacement_prerequisite_reference.reset();
-  }
   state.round_ingested_count = static_cast<std::uint32_t>(ingested_count);
-  if (reuse_prerequisite_unpublished || independent_reuse_witness_waits_for_poll) {
-    // The exact promoted identity is committed but not yet visible to the coordinator. Defer all
-    // trigger freezing for this bounded round so no witness can observe selector state before
-    // the prerequisite is published on the next successful poll. The independent-witness case
-    // has not promoted yet, but follows the same ordering rule after an exact poll declines.
+  if (independent_reuse_witness_waits_for_poll) {
+    // This pre-existing one-round gate protects a ReuseLast handoff whose own source could not be
+    // observed. No prefix candidate has been frozen yet, so every coordinator witness remains
+    // available for the retry.
     return true;
   }
+
+  // A non-trigger side input may have promoted the oldest member of a source-sequence prefix
+  // while keeping its newest causal member reserved as the final refill target. Fence only that
+  // owning receiver, expose one oldest candidate per fenced input, and leave unrelated owners in
+  // the ordinary global ordering. The vector was sized at startup, so rebuilding it never grows
+  // storage in the dispatch hot path.
+  const auto rebuild_freshness_input_fences = [&]() noexcept {
+    state.freshness_input_fences.clear();
+    for (const auto& slot : state.input_selectors) {
+      if (!slot.freshness_refill_target || !slot.nontrigger_prerequisite) {
+        continue;
+      }
+      state.freshness_input_fences.push_back(
+          RuntimeCandidateInputFence{slot.owner, slot.readiness_source, slot.input});
+      state.poll_incomplete_this_round = true;
+    }
+  };
+  if (state.freshness_evicted_this_round || !state.freshness_input_fences.empty()) {
+    rebuild_freshness_input_fences();
+  }
   bool freeze_failed = false;
+  // Candidate retirement, freshness fencing, and diagnostics share this ordered activation loop.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   const auto freeze_one_eligible = [&]() -> bool {
     while (state.coordinator->pending_count() != 0U) {
-      auto candidate = state.coordinator->freeze_next();
+      const bool constrained = !state.freshness_input_fences.empty();
+      auto candidate =
+          constrained ? state.coordinator->freeze_next_constrained(state.freshness_input_fences)
+                      : state.coordinator->freeze_next();
       if (!candidate) {
-        HOLOSCAN_LOG_ERROR("Runtime candidate freeze failed with {}: pending={} outstanding={}",
-                           error_code_name(candidate.error().code),
-                           state.coordinator->pending_count(),
-                           state.coordinator->outstanding_count());
-        const RuntimeDiagnosticDetail detail{.present = true, .error = candidate.error()};
-        append_diagnostic(candidate.error().code == ErrorCode::kResourceExhausted
-                              ? std::string_view{"RUNTIME_TAG_CAPACITY_EXHAUSTED"}
-                              : std::string_view{"RUNTIME_READINESS_BINDING_UNAVAILABLE"},
-                          {},
-                          "candidate_freeze",
-                          &detail);
+        // An ordinary EOS can also wait behind an accepted, still-frozen predecessor.
+        if (candidate.error().code == ErrorCode::kNotReady) {
+          return false;
+        }
+        HOLOSCAN_LOG_AUTOMATIC_ERROR(
+            "Runtime candidate freeze failed with {}: pending={} outstanding={}",
+            error_code_name(candidate.error().code),
+            state.coordinator->pending_count(),
+            state.coordinator->outstanding_count());
+        append_callback_diagnostic(candidate.error().code == ErrorCode::kResourceExhausted
+                                       ? std::string_view{"RUNTIME_TAG_CAPACITY_EXHAUSTED"}
+                                       : std::string_view{"RUNTIME_READINESS_BINDING_UNAVAILABLE"},
+                                   {},
+                                   "candidate_freeze",
+                                   candidate.error(),
+                                   {});
         freeze_failed = true;
         return false;
       }
-      if (!ingest_channel_candidate(exec, state, *candidate)) {
-        freeze_failed = true;
-        return false;
+      if (!constrained) {
+        if (!ingest_channel_candidate(exec, state, *candidate)) {
+          freeze_failed = true;
+          return false;
+        }
+      } else {
+        ReadyRunState::InputSelectorSlot* fenced_slot = nullptr;
+        std::optional<TemporalSampleRecord> fenced_sample;
+        bool reached_prerequisite = false;
+        bool reached_final_target = false;
+        if (candidate->witness.kind == RuntimeEventKind::kInputArrival &&
+            candidate->candidate.receiver_index < exec.operators().size()) {
+          const VertexId owner = exec.operators()[candidate->candidate.receiver_index].vertex;
+          const auto found = std::find_if(
+              state.input_selectors.begin(),
+              state.input_selectors.end(),
+              [&](const ReadyRunState::InputSelectorSlot& slot) {
+                return slot.owner == owner && slot.readiness_source == candidate->witness.source &&
+                       slot.input == candidate->witness.port && slot.freshness_refill_target &&
+                       slot.nontrigger_prerequisite;
+              });
+          if (found != state.input_selectors.end()) {
+            const TemporalSampleRecord final_target = *found->freshness_refill_target;
+            const std::optional<TemporalSampleRecord> expected_prerequisite =
+                found->freshness_refill_prerequisite;
+            auto sample = state.channels->temporal_sample(candidate->witness.port,
+                                                          candidate->witness.source_sequence);
+            const auto same_identity = [](const TemporalSampleRecord& left,
+                                          const TemporalSampleRecord& right) noexcept {
+              return left.producer_epoch == right.producer_epoch &&
+                     left.source_sequence == right.source_sequence &&
+                     left.arrival_sequence == right.arrival_sequence;
+            };
+            const bool newer_epoch = sample && sample->producer_epoch > final_target.producer_epoch;
+            const bool at_or_before_final_target =
+                sample && sample->producer_epoch == final_target.producer_epoch &&
+                (same_identity(*sample, final_target) ||
+                 is_strictly_newer_sample(final_target, *sample));
+            const bool at_or_before_expected =
+                !expected_prerequisite ||
+                (sample && sample->producer_epoch == expected_prerequisite->producer_epoch &&
+                 (same_identity(*sample, *expected_prerequisite) ||
+                  is_strictly_newer_sample(*expected_prerequisite, *sample)));
+            if (!sample ||
+                (!newer_epoch && (!at_or_before_final_target || !at_or_before_expected))) {
+              append_diagnostic("RUNTIME_READINESS_BINDING_UNAVAILABLE", found->owner);
+              freeze_failed = true;
+              return false;
+            }
+            fenced_sample = *sample;
+            fenced_slot = &*found;
+            reached_prerequisite =
+                expected_prerequisite && same_identity(*sample, *expected_prerequisite);
+            reached_final_target = same_identity(*sample, final_target);
+          }
+        }
+        if (!ingest_channel_candidate(
+                exec, state, *candidate, fenced_sample ? &*fenced_sample : nullptr)) {
+          freeze_failed = true;
+          return false;
+        }
+        if (fenced_slot != nullptr) {
+          // A producer-epoch reset clears both markers inside ingest_channel_candidate(). For the
+          // same epoch, advance them only after the exact prerequisite has entered the cache.
+          if (reached_prerequisite) {
+            fenced_slot->freshness_refill_prerequisite.reset();
+          }
+          if (reached_final_target) {
+            fenced_slot->freshness_refill_prerequisite.reset();
+            fenced_slot->freshness_refill_target.reset();
+          }
+          rebuild_freshness_input_fences();
+        }
       }
       if (!channel_candidate_is_eligible(exec, state, *candidate)) {
         auto retired = retire_frozen_source(state, *candidate);
@@ -1405,7 +1630,7 @@ namespace {
               state.input_selectors.begin(), state.input_selectors.end(), [&](const auto& slot) {
                 return slot.freshness_reconcile &&
                        slot.selector.plan().missing == TemporalRecordMissingKind::kReuseLast &&
-                       replacement_input_is_nontrigger_prerequisite(slot) &&
+                       slot.nontrigger_prerequisite &&
                        selector_witness_reference(
                            state, slot.owner, slot.witness_source, slot.witness_port)
                            .has_value();
@@ -1528,11 +1753,11 @@ namespace {
   }
   auto channel_status = state.channels->status();
   if (!channel_status) {
-    const RuntimeDiagnosticDetail detail{.present = true, .error = channel_status.error()};
-    append_diagnostic(channel_terminal_token(state.channels->terminal_diagnostic()),
-                      state.channels->terminal_owner(),
-                      {},
-                      &detail);
+    append_callback_diagnostic(channel_terminal_token(state.channels->terminal_diagnostic()),
+                               state.channels->terminal_owner(),
+                               {},
+                               channel_status.error(),
+                               {});
     return CausalFrontierDisposition::kFailed;
   }
   const auto source_credit = state.coordinator->source_credit_remaining(receipt.readiness_source);
@@ -1565,13 +1790,13 @@ namespace {
   auto candidate = state.coordinator->freeze_causal_next(
       force_causal_freeze_failure ? SourceId{} : receipt.readiness_source, parent_tag_time);
   if (!candidate) {
-    const RuntimeDiagnosticDetail detail{.present = true, .error = candidate.error()};
-    append_diagnostic(candidate.error().code == ErrorCode::kResourceExhausted
-                          ? std::string_view{"RUNTIME_TAG_CAPACITY_EXHAUSTED"}
-                          : std::string_view{"RUNTIME_READINESS_BINDING_UNAVAILABLE"},
-                      exec.operators()[successor_receiver].vertex,
-                      "partition_causal_frontier_freeze",
-                      &detail);
+    append_callback_diagnostic(candidate.error().code == ErrorCode::kResourceExhausted
+                                   ? std::string_view{"RUNTIME_TAG_CAPACITY_EXHAUSTED"}
+                                   : std::string_view{"RUNTIME_READINESS_BINDING_UNAVAILABLE"},
+                               exec.operators()[successor_receiver].vertex,
+                               "partition_causal_frontier_freeze",
+                               candidate.error(),
+                               {});
     const std::size_t pending_before_cancel = state.coordinator->pending_count();
     const std::size_t outstanding_before_cancel = state.coordinator->outstanding_count();
     const bool retired_all = cancel_ready_sources(state);
@@ -1809,13 +2034,20 @@ template <bool HandlesTerminal>
              : std::nullopt;
 }
 
-[[nodiscard]] bool RunSessionState::replacement_input_is_nontrigger_prerequisite(
-    const ReadyRunState::InputSelectorSlot& slot) noexcept {
-  // Input-backed triggers identify their independent driver by a concrete port even when the
-  // owner multiplexes every arrival through one Channel source. Clock/readiness triggers have
-  // no witness port, so their distinct source is the physical-independence discriminator.
-  return slot.input != slot.witness_port &&
-         (slot.witness_port || slot.readiness_source != slot.witness_source);
+[[nodiscard]] bool RunSessionState::input_arrival_can_activate(
+    const TemporalTriggerPlanRecord& trigger, const PredicateTriggerPlanRecord* const predicate,
+    const PortId input) noexcept {
+  if (trigger.kind == TemporalRecordTriggerKind::kEach) {
+    return input == trigger.trigger_input;
+  }
+  if (trigger.kind == TemporalRecordTriggerKind::kPredicate) {
+    return predicate != nullptr &&
+           predicate->source == PredicateEvaluationSourceKind::kInputUpdate &&
+           input == predicate->driver;
+  }
+  return trigger.kind == TemporalRecordTriggerKind::kAnyInput ||
+         trigger.kind == TemporalRecordTriggerKind::kAligned ||
+         trigger.kind == TemporalRecordTriggerKind::kWindow;
 }
 
 [[nodiscard]] bool RunSessionState::terminal_successor_ready(const ReadyRunState& state,

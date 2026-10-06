@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+include("${holoscan_SOURCE_DIR}/tests/cmake/consumer_test.cmake")
+
 if(NOT TARGET GTest::gtest_main)
   find_package(GTest CONFIG QUIET)
 endif()
@@ -78,26 +80,49 @@ gtest_discover_tests(HOLOINFER_TEST
   DISCOVERY_MODE PRE_TEST
   PROPERTIES ENVIRONMENT
     "LD_LIBRARY_PATH=${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/lib:$ENV{LD_LIBRARY_PATH}"
+    LABELS "inference"
 )
 
-add_test(NAME INFERENCE.installed_package_consumer
-  COMMAND ${CMAKE_COMMAND}
-    "-DHOLOSCAN_BUILD_DIR=${holoscan_BINARY_DIR}"
-    "-DHOLOSCAN_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/installed_consumer"
-    "-DHOLOSCAN_CONSUMER_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed_consumer"
-    "-DHOLOSCAN_BUILD_CONFIG=$<CONFIG>"
-    "-DHOLOSCAN_GENERATOR=${CMAKE_GENERATOR}"
-    "-DHOLOSCAN_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
-    "-DHOLOSCAN_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
-    "-DHOLOSCAN_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
-    "-DHOLOSCAN_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
-    "-DHOLOSCAN_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
-    "-DHOLOSCAN_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}"
-    -P ${CMAKE_CURRENT_SOURCE_DIR}/run_installed_consumer.cmake
+# ##################################################################################################
+# * tensor_preprocessor tests (CPU-only YAML/params validation; no GPU dependency)
+add_executable(TENSOR_PREPROCESSOR_TEST
+  tensor_preprocessor/test_yaml_config.cpp
+  tensor_preprocessor/test_runtime.cpp
+  tensor_preprocessor/test_runtime_image.cpp
 )
-set_tests_properties(INFERENCE.installed_package_consumer
+inference_configure_test_clang_tidy(TENSOR_PREPROCESSOR_TEST)
+
+set_target_properties(TENSOR_PREPROCESSOR_TEST
   PROPERTIES
-    RUN_SERIAL TRUE
-    LABELS "installed-package;inference;package-boundary"
+    RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/gtests>"
+)
+
+target_link_libraries(TENSOR_PREPROCESSOR_TEST
+  PRIVATE
+    GTest::gmock_main
+    GTest::gtest_main
+    holoscan::core
+    holoscan::op_tensor_preprocessor
+    yaml-cpp::yaml-cpp
+    CUDA::cudart
+)
+
+gtest_discover_tests(TENSOR_PREPROCESSOR_TEST
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  DISCOVERY_MODE PRE_TEST
+  PROPERTIES ENVIRONMENT
+    "LD_LIBRARY_PATH=${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/lib:$ENV{LD_LIBRARY_PATH}"
+    LABELS "inference;tensor_preprocessor"
+)
+
+holoscan_add_installed_consumer_test(
+    INFERENCE.installed_package_consumer
+    SOURCE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/installed_consumer"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/installed_consumer"
+    RUNNER "${CMAKE_CURRENT_SOURCE_DIR}/run_installed_consumer.cmake"
+    LABELS inference package-boundary
     TIMEOUT 600
+    CMAKE_ARGS
+        "-DHOLOSCAN_BUILD_EXAMPLES=${HOLOSCAN_BUILD_EXAMPLES}"
+        "-DHOLOSCAN_MODULE_PACKAGE_DIR=${CMAKE_INSTALL_LIBDIR}/cmake/${HOLOSCAN_PACKAGE_NAME}"
 )

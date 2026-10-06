@@ -73,7 +73,7 @@ class CameraSource final : public holoscan::Operator<> {
     auto fill = [this](const holoscan::TensorOutputWriteGuard& writer)
         -> holoscan::expected<void, holoscan::Error> {
       auto* bytes = writer.data_as<std::uint8_t>();
-      if (bytes == nullptr || writer.byte_size() != kFrameShape.front()) {
+      if (bytes == nullptr || std::cmp_not_equal(writer.byte_size(), kFrameShape.front())) {
         return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kInvalidArgument});
       }
       std::fill_n(bytes, writer.byte_size(), static_cast<std::uint8_t>(sequence_++));
@@ -321,8 +321,11 @@ wait_for_integrated_control(holoscan::ChannelSubscriber<std::uint32_t>& subscrib
   }
   const std::uint32_t value = sample->data;
   const int stopped = stop(0);
+  const auto control_closed = control->close();
+  const auto control_after_close = control->receive_sample();
   if (stopped != 0 || session.termination() != holoscan::RunTermination::kStopped ||
-      !session.diagnostics().empty()) {
+      !session.diagnostics().empty() || !control_closed || control_after_close ||
+      control_after_close.error().code != holoscan::ErrorCode::kClosed) {
     return 11;
   }
   std::cout << "control=" << value << " sequence=" << sample->metadata.sequence << '\n';
@@ -332,12 +335,17 @@ wait_for_integrated_control(holoscan::ChannelSubscriber<std::uint32_t>& subscrib
 
 struct Arguments {
   bool emit_artifacts{};
+  bool plan_json{};
   std::filesystem::path artifact_root;
   std::string deployment_id{"default"};
 };
 
 [[nodiscard]] bool parse_arguments(int argc, char** argv, Arguments& result) {
   if (argc == 1) {
+    return true;
+  }
+  if (argc == 2 && std::string_view(argv[1]) == "--plan-json") {
+    result.plan_json = true;
     return true;
   }
   for (int index = 1; index < argc; ++index) {
@@ -364,8 +372,8 @@ struct Arguments {
 int main(int argc, char** argv) {
   Arguments arguments;
   if (!parse_arguments(argc, argv, arguments)) {
-    std::cerr << "usage: camera_imu_control --emit-artifacts "
-                 "[--artifact-root <path>] [--deployment-id <id>]\n";
+    std::cerr << "usage: camera_imu_control [--plan-json | --emit-artifacts "
+                 "[--artifact-root <path>] [--deployment-id <id>]]\n";
     return 2;
   }
 
@@ -374,6 +382,10 @@ int main(int argc, char** argv) {
   if (!plan.ok()) {
     std::cerr << plan.json() << '\n';
     return 3;
+  }
+  if (arguments.plan_json) {
+    std::cout << plan.json() << '\n';
+    return 0;
   }
   if (arguments.emit_artifacts) {
     auto emitted = holoscan::emit_artifacts(

@@ -10,12 +10,11 @@ include(CTest)
 find_package(holoscan REQUIRED CONFIG
     PATHS
         "/workspace/holoscan-sdk/install"
-        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+        "/workspace/holoscan-sdk/install-${CMAKE_SYSTEM_PROCESSOR}"
 )
 
 # holoscan::experimental_params_web_tuner is exported only when the SDK was
-# built with -DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=ON (the default;
-# requires HOLOSCAN_BUILD_PARAMS=ON).
+# built with -DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=ON (the default).
 if(TARGET holoscan::experimental_params_web_tuner)
     add_executable(web_tuner web_tuner.cpp)
     target_link_libraries(web_tuner

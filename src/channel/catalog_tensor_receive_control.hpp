@@ -15,7 +15,7 @@
 
 namespace holomq {
 class Context;
-}
+}  // namespace holomq
 
 namespace holoscan {
 
@@ -60,8 +60,11 @@ class CatalogTensorReceiveControl {
   std::shared_ptr<void> runtime_lifetime_;
   holomq::Context* context_{};
   std::unique_ptr<class BufferImportArray> imports_;
+  // Runtime catalog capacities require dynamically sized contiguous arrays.
+  // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays)
   std::unique_ptr<Slot[]> slots_;
   std::unique_ptr<std::atomic<std::uint64_t>[]> free_words_;
+  // NOLINTEND(cppcoreguidelines-avoid-c-arrays)
   std::size_t slot_count_{};
   std::size_t free_word_count_{};
   std::atomic<std::uint32_t> references_{1U};

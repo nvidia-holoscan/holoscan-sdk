@@ -10,6 +10,9 @@ generated/
 # Temporary local Fern project without generated API navigation
 .fern-tokenless-*/
 
+# Transient Python sources projected from the public facade stubs
+.python-api-reference/
+
 # SDK local preview output (`fern generate --preview`)
 .preview/
 

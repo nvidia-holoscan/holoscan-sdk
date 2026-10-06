@@ -8,18 +8,24 @@
 #include <cstddef>
 #include <optional>
 #include <string_view>
+#include <typeinfo>
 
 #include <holoscan/core/operator_spec.hpp>
 
 namespace holoscan::detail {
 
-/// @brief Expose immutable OperatorSpec records to source-tree conformance tests only.
+/// @brief Expose OperatorSpec records to source-tree conformance tests only.
 ///
 /// This header is neither installed nor included by a public header. The accessor prevents tests
-/// from weakening `OperatorSpec` encapsulation with preprocessor tricks while verifying that cold
-/// compilation metadata survives the typed builder boundary.
+/// from weakening `OperatorSpec` encapsulation with preprocessor tricks. One narrowly scoped
+/// fault injector exercises rejection of inconsistent cold replay metadata.
 class OperatorSpecTestAccess {
  public:
+  /// @brief Return whether `compute()` was declared eligible for CUDA Graph capture.
+  [[nodiscard]] static bool cuda_graph_capture_eligible(const OperatorSpec& spec) noexcept {
+    return spec.cuda_graph_capture_eligible_;
+  }
+
   /// @brief Identify which stable builder collection owns one source record.
   enum class SourceBuilderFamily : std::uint8_t {
     kSingleWitness,
@@ -74,6 +80,13 @@ class OperatorSpecTestAccess {
     return spec.ports_.size();
   }
 
+  /// @brief Inject a mismatched native witness without changing a port's semantic identity.
+  /// @note Source-tree tests only; public typed builders always bind their own witness.
+  static void replace_port_type_info_for_test(OperatorSpec& spec, std::size_t index,
+                                              const std::type_info* type_info) {
+    spec.ports_.at(index).local_type_info = type_info;
+  }
+
   /// @brief Return one immutable port record by declaration order.
   [[nodiscard]] static PortMetadata port(const OperatorSpec& spec, std::size_t index) {
     const OperatorSpec::PortRecord& record = spec.ports_[index];
@@ -82,9 +95,9 @@ class OperatorSpecTestAccess {
       const SchemaIdentityRecord& owned = *record.payload_identity.schema;
       schema_identity = SchemaIdentity{
           .canonical_name = owned.canonical_name,
-          .version = owned.version,
-          .schema_sha256 = owned.schema_sha256,
-          .id = owned.id,
+          .compatibility_epoch = owned.compatibility_epoch,
+          .family_id = owned.family_id,
+          .file_identifier = owned.file_identifier,
       };
     }
     return PortMetadata{

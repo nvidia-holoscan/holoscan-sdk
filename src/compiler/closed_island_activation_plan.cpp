@@ -438,6 +438,15 @@ std::vector<ClosedIslandActivationPlanRecord> derive_closed_island_activation_pl
   std::vector<ClosedIslandActivationPlanRecord> result;
   result.reserve(state.payload_edges.size());
   for (const auto& edge : state.payload_edges) {
+    const auto* source = dense_port(state, edge.source);
+    const auto* target = dense_port(state, edge.target);
+    // Fused-region boundaries are activated by CUDAGraphRegionOperator. Do not derive an ordinary
+    // two-operator fast path for an edge touching a captured member.
+    if (source == nullptr || target == nullptr ||
+        find_unique_cuda_graph_execution_region_by_member(state, source->owner) != nullptr ||
+        find_unique_cuda_graph_execution_region_by_member(state, target->owner) != nullptr) {
+      continue;
+    }
     if (auto record = derive_edge(state, edge)) {
       result.push_back(std::move(*record));
     }

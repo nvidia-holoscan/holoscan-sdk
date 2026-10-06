@@ -15,3 +15,4 @@ table NestedTensorDescriptor {
 }
 
 root_type NestedTensorDescriptor;
+file_identifier "DNT1";

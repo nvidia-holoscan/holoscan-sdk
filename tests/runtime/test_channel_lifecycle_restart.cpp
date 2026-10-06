@@ -684,21 +684,25 @@ struct ClockPredicateInputProbeState {
     });
   }
 
-  [[nodiscard]] static bool wait_for_source_block() {
+  [[nodiscard]] static bool wait_for_source_block(
+      std::chrono::steady_clock::duration timeout = 5s) {
     std::unique_lock lock{mutex};
     return cv.wait_for(
-        lock, 5s, [] { return source_block_entered.load(std::memory_order_acquire); });
+        lock, timeout, [] { return source_block_entered.load(std::memory_order_acquire); });
   }
 
   static void block_source_until_released() {
+    std::unique_lock lock{mutex};
     source_block_entered.store(true, std::memory_order_release);
     cv.notify_all();
-    std::unique_lock lock{mutex};
     cv.wait(lock, [] { return release_source.load(std::memory_order_acquire); });
   }
 
   static void release_source_block() noexcept {
-    release_source.store(true, std::memory_order_release);
+    {
+      const std::lock_guard lock{mutex};
+      release_source.store(true, std::memory_order_release);
+    }
     cv.notify_all();
   }
 
@@ -1823,6 +1827,7 @@ void expect_clock_input_plan_replays(const ExecutionPlan& plan, bool expect_pred
 // REQ: RUNTIME-034
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024
+// REQ: RUNTIME-052
 TEST(ChannelLifecycleRestart, PublishedRestartDiscardsOldIngressAndRearmsAfterStart) {
   ChannelRestartProbeState::reset(false);
   const ExecutionPlan plan = make_channel_restart_plan();
@@ -1871,7 +1876,7 @@ TEST(ChannelLifecycleRestart, PublishedRestartDiscardsOldIngressAndRearmsAfterSt
   // discards that bounded old-generation prefix; only the post-restart value is observable.
   // Key assertion: old-gen prefix [1-4] purged by restart; only post-restart value 5 arrives.
   EXPECT_EQ(ChannelRestartProbeState::values(), (std::vector<std::uint32_t>{5U}));
-  EXPECT_EQ(ChannelRestartProbeState::sequences(), (std::vector<std::uint64_t>{1U}));
+  EXPECT_EQ(ChannelRestartProbeState::sequences(), (std::vector<std::uint64_t>{5U}));
   EXPECT_EQ(
       ChannelRestartProbeState::observed_source_tags(),
       (std::vector<Tag>{{.sequence = 1U, .generation = 1U}, {.sequence = 1U, .generation = 2U}}));
@@ -2060,6 +2065,8 @@ TEST(ChannelLifecycleRestart, ClockPredicateWithInputExecutesAndRestartsAcrossLo
 // REQ: RUNTIME-016
 // REQ: RUNTIME-028
 TEST(ChannelLifecycleRestart, ClockInputStopFenceSuppressesSelectionPredicateAndDeadlineGate) {
+  // This bounds test-only worker coordination under a fully loaded parallel CI executor.
+  constexpr auto kSynchronizationTimeout = 30s;
   for (const ClockInputTriggerRoute route :
        {ClockInputTriggerRoute::kOnClock, ClockInputTriggerRoute::kOnPredicate}) {
     SCOPED_TRACE(static_cast<unsigned>(route));
@@ -2087,8 +2094,8 @@ TEST(ChannelLifecycleRestart, ClockInputStopFenceSuppressesSelectionPredicateAnd
     // On assertion unwind, unblock both workers before RunSession joins them.
     const ClockInputPreDispatchReleaseGuard invocation_release{invocation_control};
     const ClockInputSourceReleaseGuard release_guard;
-    ASSERT_TRUE(ClockPredicateInputProbeState::wait_for_source_block());
-    ASSERT_TRUE(invocation_control->wait_until_paused());
+    ASSERT_TRUE(ClockPredicateInputProbeState::wait_for_source_block(kSynchronizationTimeout));
+    ASSERT_TRUE(invocation_control->wait_until_paused(kSynchronizationTimeout));
     const auto phase_count = [&](detail::RuntimePhaseCounter phase) {
       return phase_counters->snapshot()[detail::RuntimePhaseCounters::index(phase)];
     };
@@ -2097,13 +2104,13 @@ TEST(ChannelLifecycleRestart, ClockInputStopFenceSuppressesSelectionPredicateAnd
     session.request_stop();
     ClockPredicateInputProbeState::release_source_block();
     // Keep the sink frozen until source retirement flushes the emitted sample's Channel cut.
-    const auto activation_cut_deadline = std::chrono::steady_clock::now() + 5s;
+    const auto activation_cut_deadline = std::chrono::steady_clock::now() + kSynchronizationTimeout;
     const auto completed_activation_count = [&] {
       return phase_count(detail::RuntimePhaseCounter::kActivationsCompleted);
     };
     while (completed_activation_count() == 0U &&
            std::chrono::steady_clock::now() < activation_cut_deadline) {
-      std::this_thread::yield();
+      std::this_thread::sleep_for(1ms);
     }
     ASSERT_GE(completed_activation_count(), 1U);
     invocation_control->release();
@@ -2145,9 +2152,15 @@ TEST(ChannelLifecycleRestart, RolledBackRestartPreservesOldIngressAndPublishedGe
 
   EXPECT_TRUE(observed);
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
-  EXPECT_TRUE(session.diagnostics().empty())
-      << (session.diagnostics().empty() ? "" : session.diagnostics().front().token) << " vertex="
-      << (session.diagnostics().empty() ? 0U : session.diagnostics().front().source.vertex.value);
+  ASSERT_EQ(session.diagnostics().size(), 1U);
+  EXPECT_EQ(session.diagnostics().front().severity, DiagnosticSeverity::kWarning);
+  const auto& failure_detail = session.diagnostics().front().detail;
+  if (!failure_detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  EXPECT_EQ(failure_detail->stage, LifecycleStage::kStart);
+  EXPECT_EQ(failure_detail->phase, LifecycleTransitionPhase::kRestartForward);
+  EXPECT_NE(failure_detail->transaction_id, 0U);
   EXPECT_TRUE(ChannelRestartProbeState::restart_accepted.load(std::memory_order_acquire));
   EXPECT_EQ(ChannelRestartProbeState::restart_error.load(std::memory_order_relaxed),
             ErrorCode::kSuccess);
@@ -2229,6 +2242,7 @@ TEST(ChannelLifecycleRestart, MultiMemberClosureFencesNonTargetChannelInput) {
 // REQ: RUNTIME-008
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024
+// REQ: RUNTIME-052
 TEST(ChannelLifecycleRestart, PendingWindowReprimesAcrossPublishedRestart) {
   ChannelWindowRestartProbeState::reset();
   const ExecutionPlan plan = make_channel_window_restart_plan();
@@ -2252,7 +2266,7 @@ TEST(ChannelLifecycleRestart, PendingWindowReprimesAcrossPublishedRestart) {
   EXPECT_EQ(ChannelWindowRestartProbeState::observed_values(),
             (std::vector<std::uint32_t>{105U, 110U, 115U, 120U, 125U}));
   EXPECT_EQ(ChannelWindowRestartProbeState::observed_sequences(),
-            (std::vector<std::uint64_t>{1U, 2U, 3U, 4U, 5U}));
+            (std::vector<std::uint64_t>{3U, 4U, 5U, 6U, 7U}));
 }
 // REQ: RUNTIME-020
 // REQ: RUNTIME-024

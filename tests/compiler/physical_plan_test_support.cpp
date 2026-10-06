@@ -209,7 +209,7 @@ namespace holoscan::detail::physical_plan_test {
         .boundary_port = PortId{topic.graph_port.value},
         .service = "catalog-service-" + std::to_string(topic.id.value),
         .payload_identity = topic.payload_identity,
-        .serialized_payload_capacity_bytes = topic.serialized_payload_capacity_bytes,
+        .schema_writer_max_serialized_bytes = topic.serialized_payload_capacity_bytes,
         .attach = topic.attach,
         .tensor = topic.tensor,
         .tensor_fields = topic.tensor_fields,
@@ -253,7 +253,8 @@ namespace holoscan::detail::physical_plan_test {
                              options.force_holomq_process_local_event_wake,
                              {},
                              options.resolved_queue_sizings,
-                             options.queue_sizing_recipes);
+                             options.queue_sizing_recipes,
+                             options.cuda_compute_stream_policy);
 }
 
 [[nodiscard]] ExecutionPlanState published_physical_plan_state(
@@ -262,6 +263,9 @@ namespace holoscan::detail::physical_plan_test {
     const RatePlanLoweringResult* exact_rate_plan) {
   ExecutionPlanState state;
   state.plan_generation = plan_generation;
+  // lower_for_test() deliberately preserves the original shared-stream fixture default. Publish
+  // that explicit test policy instead of relying on ExecutionPlanState's production default.
+  state.cuda_compute_stream_policy = CudaComputeStreamPolicy::kSharedProcessDevice;
   state.vertex_process_placements.assign(placements.begin(), placements.end());
   detail::publish_physical_plan_records(std::move(result), state);
 
@@ -428,8 +432,12 @@ namespace holoscan::detail::physical_plan_test {
       TensorDeviceBindingRecord{.port = PortId{2U}, .device = DeviceId{0}},
       TensorDeviceBindingRecord{.port = PortId{4U}, .device = DeviceId{0}},
   };
-  auto physical = lower_for_test(snapshot, 71U, profiles, {}, {}, {}, nullptr, device_bindings);
-  auto state = published_physical_plan_state(std::move(physical), 71U);
+  const auto placements = default_process_placements(snapshot);
+  const auto partitions = default_execution_partitions(snapshot);
+  auto physical =
+      lower_for_test(snapshot, 71U, profiles, {}, {}, {}, nullptr, device_bindings, partitions);
+  auto state = published_physical_plan_state(std::move(physical), 71U, placements);
+  state.execution_partitions = partitions;
   const OperatorRef owner{.id = 1U, .plan_generation = 71U, .run_generation = 0U};
   state.aligned_triggers.push_back(AlignedTriggerPlanRecord{
       .owner = owner,

@@ -30,12 +30,14 @@ add_executable(compile_test
     test_compile.cpp
     test_compile_completeness.cpp
     test_compile_deployment.cpp
+    test_compile_derivation_diagnostics.cpp
     test_compile_green_context_authoring.cpp
     test_endpoint_catalog.cpp
     test_compile_lifecycle.cpp
     test_compile_lowering.cpp
     test_compile_parameters.cpp
     test_compile_partition_authoring.cpp
+    test_compile_partition_instances.cpp
     artifact_test_support.cpp
     physical_plan_test_support.cpp
     test_compile_physical_plan.cpp
@@ -45,10 +47,16 @@ add_executable(compile_test
     test_compile_process_placement.cpp
     test_compile_rate.cpp
     test_compile_temporal.cpp
+    test_cuda_graph_region_lowering.cpp
+    test_cuda_graph_execution_lowering.cpp
     test_compile_tensor_byte_span_derivation.cpp
+    test_compile_tensor_byte_span_projection.cpp
+    test_compile_tensor_memory_kind_derivation.cpp
+    test_compile_memory_kind_boolean_diagnostics.cpp
     test_execution_plan_contracts.cpp
     test_execution_plan_identity.cpp
     test_execution_plan_lookup.cpp
+    test_foreign_operator_compile.cpp
     test_plan_lowering_diagnostic.cpp
     test_plan_record_contracts.cpp
     test_interprocess_partition_boundary.cpp
@@ -72,18 +80,23 @@ set(compiler_artifact_golden_dir
     "${CMAKE_CURRENT_BINARY_DIR}/testdata")
 file(MAKE_DIRECTORY "${compiler_artifact_golden_dir}")
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/zero_binding_tensor_graph.v4.normalized.json"
-    "${compiler_artifact_golden_dir}/zero_binding_tensor_graph.v4.normalized.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/zero_binding_tensor_graph.v8.normalized.json"
+    "${compiler_artifact_golden_dir}/zero_binding_tensor_graph.v8.normalized.json"
     COPYONLY
 )
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/green_context_partitions.v4.normalized.json"
-    "${compiler_artifact_golden_dir}/green_context_partitions.v4.normalized.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/green_context_partitions.v8.normalized.json"
+    "${compiler_artifact_golden_dir}/green_context_partitions.v8.normalized.json"
     COPYONLY
 )
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/lifecycle_on_each_inverse_rate_horizons.v4.normalized.json"
-    "${compiler_artifact_golden_dir}/lifecycle_on_each_inverse_rate_horizons.v4.normalized.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cuda_graph_declaration.v8.normalized.json"
+    "${compiler_artifact_golden_dir}/cuda_graph_declaration.v8.normalized.json"
+    COPYONLY
+)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/lifecycle_on_each_inverse_rate_horizons.v8.normalized.json"
+    "${compiler_artifact_golden_dir}/lifecycle_on_each_inverse_rate_horizons.v8.normalized.json"
     COPYONLY
 )
 configure_file(
@@ -110,6 +123,19 @@ gtest_discover_tests(compile_test
     TEST_PREFIX COMPILE.
     WORKING_DIRECTORY ${holoscan_BINARY_DIR}
 )
+
+# The accepted-plan warning must remain visible with an inherited logger override.
+foreach(logger_environment IN ITEMS OFF ERROR CRITICAL)
+    add_test(NAME COMPILE.diagnostic_logger_fixture_isolation_${logger_environment}
+        COMMAND ${CMAKE_COMMAND} -E env
+            "HOLOSCAN_LOG_LEVEL=${logger_environment}"
+            "HOLOSCAN_LOG_FORMAT=inherited: %v"
+            $<TARGET_FILE:compile_test>
+            "--gtest_filter=CompilePredicatePlan.RecordsExactResultAndOwnedTypeErasureAdmissionFacts"
+            --gtest_shuffle --gtest_repeat=10
+        WORKING_DIRECTORY ${holoscan_BINARY_DIR}
+    )
+endforeach()
 
 # Exercise the removed-selector contract in genuinely fresh processes. The
 # probe deliberately does not mutate its own environment; the CMake driver
@@ -145,6 +171,21 @@ set_tests_properties(COMPILE.PartitionEnvironmentFreshProcessTest.ExactSelectorC
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # REQ: RUNTIME-057
+    add_test(NAME COMPILE.PublicationCoordinateTest.CrossProcessDefaultClockIsWithdrawn
+        COMMAND $<TARGET_FILE:partition_environment_process_probe> worker-publication-coordinate
+    )
+    add_test(NAME COMPILE.PublicationCoordinateTest.ProcessLocalDefaultClockIsRetained
+        COMMAND $<TARGET_FILE:partition_environment_process_probe> local-publication-coordinate
+    )
+    set_tests_properties(
+        COMPILE.PublicationCoordinateTest.CrossProcessDefaultClockIsWithdrawn
+        COMPILE.PublicationCoordinateTest.ProcessLocalDefaultClockIsRetained
+        PROPERTIES
+            LABELS "compile;runtime;clock;interprocess"
+            TIMEOUT 30
+    )
+
     # REQ: COMPILE-068
     add_test(NAME COMPILE.PartitionEnvironmentFreshProcessTest.WorkerRuntimePoison
         COMMAND $<TARGET_FILE:partition_environment_process_probe> worker-default

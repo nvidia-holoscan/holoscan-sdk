@@ -17,6 +17,7 @@
 
 #include <holoscan/core/payload_options.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
+#include <holoscan/sensor_io/provenance.hpp>
 #include <holoscan/vision/non_maximum_suppression_op.hpp>
 
 #include "detail/cvcuda_tensor.hpp"
@@ -29,6 +30,23 @@ constexpr DLDataType kF32{kDLFloat, 32U, 1U};
 constexpr DLDataType kU8{kDLUInt, 8U, 1U};
 constexpr std::int64_t kMaxCvCudaByteSpan = std::numeric_limits<std::int32_t>::max();
 constexpr std::uint64_t kBoxBytesPerDetection = 4U * sizeof(std::int16_t);
+
+[[nodiscard]] expected<std::uint64_t, Error> nms_output_byte_span(
+    const NonMaximumSuppressionOpParams& params) noexcept {
+  if (params.max_boxes <= 0 || params.max_batch_size == 0U ||
+      params.max_batch_size > kMaximumBatchSize) {
+    return make_unexpected(Error{ErrorCode::kInvalidArgument});
+  }
+  const auto boxes = static_cast<std::uint64_t>(params.max_boxes);
+  if (boxes > std::numeric_limits<std::uint64_t>::max() / params.max_batch_size) {
+    return make_unexpected(Error{ErrorCode::kArithmeticOverflow});
+  }
+  const std::uint64_t mask_byte_span = boxes * params.max_batch_size;
+  if (mask_byte_span > static_cast<std::uint64_t>(kMaxCvCudaByteSpan) / kBoxBytesPerDetection) {
+    return make_unexpected(Error{ErrorCode::kNotSupported});
+  }
+  return mask_byte_span;
+}
 
 [[nodiscard]] auto failure(ErrorCode code, std::string message) {
   return make_unexpected(Error{code, std::move(message)});
@@ -141,23 +159,20 @@ class NonMaximumSuppressionOp::Impl {
   std::unique_ptr<cvcuda::NonMaximumSuppression> operation;
 };
 
-NonMaximumSuppressionOp::NonMaximumSuppressionOp(NMSCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+NonMaximumSuppressionOp::NonMaximumSuppressionOp() : impl_(std::make_unique<Impl>()) {}
 
 NonMaximumSuppressionOp::~NonMaximumSuppressionOp() = default;
 
 void NonMaximumSuppressionOp::setup(OperatorSpec& spec) {
-  if (capacity_.max_boxes <= 0 || capacity_.max_batch_size == 0U ||
-      capacity_.max_batch_size > kMaximumBatchSize) {
-    throw RuntimeError(ErrorCode::kInvalidArgument,
-                       "NonMaximumSuppressionOp tensor capacity is invalid");
+  const auto projected_capacity = nms_output_byte_span(params());
+  if (!projected_capacity) {
+    throw RuntimeError(projected_capacity.error().code,
+                       "NonMaximumSuppressionOp capacity exceeds CV-CUDA's 32-bit tensor limit");
   }
-  const std::uint64_t mask_byte_span =
-      static_cast<std::uint64_t>(capacity_.max_boxes) * capacity_.max_batch_size;
-  if (mask_byte_span > static_cast<std::uint64_t>(kMaxCvCudaByteSpan) / kBoxBytesPerDetection) {
-    throw RuntimeError(ErrorCode::kInvalidArgument,
-                       "NonMaximumSuppressionOp tensor capacity is invalid");
-  }
+  const auto capacity = parameter_projected_byte_span<&nms_output_byte_span>(
+      "holoscan.vision.NonMaximumSuppressionOp.mask-max-byte-span.v1",
+      param_ref<&NonMaximumSuppressionOpParams::max_boxes>(),
+      param_ref<&NonMaximumSuppressionOpParams::max_batch_size>());
 
   spec.input(boxes, "boxes")
       .queue_depth(1U)
@@ -170,18 +185,16 @@ void NonMaximumSuppressionOp::setup(OperatorSpec& spec) {
           .representation = {.memory_kind = MemoryKind::kCudaDevice, .dtype = kF32, .rank = 2U},
       });
   spec.output(mask, "mask")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .dtype = kU8,
-                             .rank = 2U,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = 2U,
-                  .max_byte_span = static_cast<std::size_t>(mask_byte_span),
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .dtype = kU8,
+                                 .rank = 2U,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = 2U},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          capacity);
 }
 
 Contract NonMaximumSuppressionOp::contract() const {
@@ -196,6 +209,11 @@ Contract NonMaximumSuppressionOp::contract() const {
 void NonMaximumSuppressionOp::start() {
   if (impl_->operation) {
     return;
+  }
+  auto prepared = detail::prepare_nvcv_tensor_handles(3);
+  if (!prepared) {
+    throw RuntimeError(prepared.error().code,
+                       "NonMaximumSuppressionOp failed to prepare NVCV Tensor handles");
   }
   try {
     impl_->operation = std::make_unique<cvcuda::NonMaximumSuppression>();
@@ -231,8 +249,15 @@ expected<void, Error> NonMaximumSuppressionOp::compute(ExecutionContext& context
   if (!scores_sample) {
     return make_unexpected(std::move(scores_sample).error());
   }
+  sensor_io::ProvenanceAccumulator provenance;
+  provenance.observe(*boxes_sample);
+  provenance.observe(*scores_sample);
+  auto emit_options = provenance.emit_options(sensor_io::CaptureTimePolicy::kEarliest);
+  if (!emit_options) {
+    return make_unexpected(std::move(emit_options).error());
+  }
   auto boxes_strides =
-      validate_boxes(boxes_sample->data, capacity_.max_boxes, capacity_.max_batch_size);
+      validate_boxes(boxes_sample->data, configuration.max_boxes, configuration.max_batch_size);
   if (!boxes_strides) {
     return make_unexpected(std::move(boxes_strides).error());
   }
@@ -308,7 +333,7 @@ expected<void, Error> NonMaximumSuppressionOp::compute(ExecutionContext& context
   if (!committed) {
     return make_unexpected(std::move(committed).error());
   }
-  return mask.emit(std::move(*loan), detail::forward_metadata(boxes_sample->metadata));
+  return mask.emit(std::move(*loan), *emit_options);
 }
 
 }  // namespace holoscan::vision

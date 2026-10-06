@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
-
-#include <gtest/gtest.h>
 
 #include "compiler/execution_plan_lookup.hpp"
 #include "compiler/snapshot_lookup.hpp"
@@ -18,14 +18,23 @@ namespace holoscan::detail {
 namespace {
 
 // Shared lookups use typed absence and do not fabricate placeholder records for an empty plan.
+// REQ: COMPILE-082
+// REQ: COMPILE-085
 TEST(ExecutionPlanLookup, EmptyPlanReturnsNullForEveryRelation) {
   const ExecutionPlanState plan;
 
   // Key setup: query every supported relation on one empty final-plan state.
   // Key assertion: every lookup reports absence as nullptr without allocation or diagnostics.
   EXPECT_EQ(find_execution_partition_by_member(plan, VertexId{1U}), nullptr);
+  EXPECT_EQ(find_unique_execution_partition_by_member(plan, VertexId{1U}), nullptr);
+  EXPECT_EQ(find_unique_cuda_graph_capture_plan_by_region(plan, GraphId{1U}, RegionId{1U}),
+            nullptr);
+  EXPECT_FALSE(cuda_graph_uses_fixed_output_address(plan, ProcessGroupId{1U}, PortId{1U}));
+  EXPECT_FALSE(cuda_graph_fixed_output_device(plan, ProcessGroupId{1U}, PortId{1U}).valid());
+  EXPECT_EQ(find_unique_cuda_graph_execution_region_by_member(plan, VertexId{1U}), nullptr);
   EXPECT_EQ(find_execution_partition_by_id(plan, ExecutionPartitionId{1U}), nullptr);
   EXPECT_EQ(find_vertex_process_placement_by_vertex(plan, VertexId{1U}), nullptr);
+  EXPECT_EQ(find_unique_vertex_process_placement_by_vertex(plan, VertexId{1U}), nullptr);
   EXPECT_EQ(find_vertex_by_id(plan, VertexId{}), nullptr);
   EXPECT_EQ(find_vertex_by_id(plan, VertexId{1U}), nullptr);
   EXPECT_EQ(find_port_by_id(plan, PortId{1U}), nullptr);
@@ -64,6 +73,7 @@ TEST(ExecutionPlanLookup, EmptyPlanReturnsNullForEveryRelation) {
 }
 
 // The shared seam preserves each existing relation's exact key and insertion-order pointer.
+// REQ: COMPILE-082
 TEST(ExecutionPlanLookup, FindsExactKeysIndependentOfRecordPosition) {
   constexpr VertexId kFirstVertex{11U};
   constexpr VertexId kSecondVertex{22U};
@@ -185,9 +195,13 @@ TEST(ExecutionPlanLookup, FindsExactKeysIndependentOfRecordPosition) {
   // Key assertion: each lookup uses its documented dense or explicit key contract and rejects the
   // default-initialized conversion identity before scanning records.
   EXPECT_EQ(find_execution_partition_by_member(plan, kFirstVertex), &plan.execution_partitions[0]);
+  EXPECT_EQ(find_unique_execution_partition_by_member(plan, kFirstVertex),
+            &plan.execution_partitions[0]);
   EXPECT_EQ(find_execution_partition_by_id(plan, ExecutionPartitionId{1U}),
             &plan.execution_partitions[0]);
   EXPECT_EQ(find_vertex_process_placement_by_vertex(plan, kFirstVertex),
+            &plan.vertex_process_placements[1]);
+  EXPECT_EQ(find_unique_vertex_process_placement_by_vertex(plan, kFirstVertex),
             &plan.vertex_process_placements[1]);
   EXPECT_EQ(find_vertex_by_id(plan, kFirstVertex), &plan.graph.vertices()[1]);
   EXPECT_EQ(find_port_by_id(plan, PortId{1U}), &plan.ports[1]);
@@ -422,6 +436,131 @@ TEST(ExecutionPlanLookup, PopulatedPlanReturnsNullForMissingKeys) {
   EXPECT_EQ(find_clock_trigger_by_owner(plan, OperatorRef{4U, 6U, 0U}), nullptr);
   EXPECT_EQ(find_predicate_trigger_by_owner(plan, OperatorRef{4U, 6U, 0U}), nullptr);
   EXPECT_EQ(find_predicate_callable_by_id(plan, "unknown"), nullptr);
+}
+
+// REQ: COMPILE-082
+TEST(ExecutionPlanLookup, UniqueMembershipLookupsRejectDuplicateRecords) {
+  constexpr VertexId kMember{7U};
+  ExecutionPlanState plan;
+  plan.execution_partitions = {
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{1U}, .members = {kMember}},
+      ExecutionPartitionRecord{.id = ExecutionPartitionId{2U}, .members = {kMember}},
+  };
+  plan.vertex_process_placements = {
+      VertexProcessPlacementPlanRecord{.vertex = kMember, .process_group = ProcessGroupId{1U}},
+      VertexProcessPlacementPlanRecord{.vertex = kMember, .process_group = ProcessGroupId{2U}},
+  };
+
+  // General lookups preserve their first-match behavior. Admission checks use the unique variants
+  // so malformed retained records cannot silently choose one partition or process placement.
+  EXPECT_EQ(find_execution_partition_by_member(plan, kMember), &plan.execution_partitions[0]);
+  EXPECT_EQ(find_unique_execution_partition_by_member(plan, kMember), nullptr);
+  EXPECT_EQ(find_vertex_process_placement_by_vertex(plan, kMember),
+            &plan.vertex_process_placements[0]);
+  EXPECT_EQ(find_unique_vertex_process_placement_by_vertex(plan, kMember), nullptr);
+}
+
+// REQ: COMPILE-085
+TEST(ExecutionPlanLookup, CUDAGraphLookupsRequireUniqueRegionRelations) {
+  constexpr GraphId kGraph{1U};
+  constexpr RegionId kRegion{2U};
+  constexpr VertexId kMember{3U};
+  ExecutionPlanState plan;
+  plan.cuda_graph_capture_plans = {
+      CUDAGraphCapturePlanRecord{
+          .graph = kGraph,
+          .region = kRegion,
+          .members = {CUDAGraphCaptureMemberRecord{.vertex = kMember}},
+      },
+  };
+  plan.cuda_graph_execution_regions = {
+      CUDAGraphExecutionRegionPlanRecord{
+          .graph = kGraph,
+          .region = kRegion,
+          .fused_operator = kMember,
+      },
+  };
+
+  EXPECT_EQ(find_unique_cuda_graph_capture_plan_by_region(plan, kGraph, kRegion),
+            &plan.cuda_graph_capture_plans.front());
+  EXPECT_EQ(find_unique_cuda_graph_execution_region_by_member(plan, kMember),
+            &plan.cuda_graph_execution_regions.front());
+  EXPECT_EQ(find_unique_cuda_graph_capture_plan_by_region(plan, kGraph, RegionId{3U}), nullptr);
+  EXPECT_EQ(find_unique_cuda_graph_execution_region_by_member(plan, VertexId{4U}), nullptr);
+
+  // Duplicate capture plans make the execution-region membership relation ambiguous as well.
+  plan.cuda_graph_capture_plans.push_back(plan.cuda_graph_capture_plans.front());
+  EXPECT_EQ(find_unique_cuda_graph_capture_plan_by_region(plan, kGraph, kRegion), nullptr);
+  EXPECT_EQ(find_unique_cuda_graph_execution_region_by_member(plan, kMember), nullptr);
+
+  plan.cuda_graph_capture_plans.pop_back();
+  plan.cuda_graph_execution_regions.push_back(plan.cuda_graph_execution_regions.front());
+  EXPECT_EQ(find_unique_cuda_graph_execution_region_by_member(plan, kMember), nullptr);
+}
+
+// REQ: COMPILE-088
+TEST(ExecutionPlanLookup, CUDAGraphFixedOutputLookupsAreScopedToOneProcessGroup) {
+  constexpr PortId kOutput{7U};
+  constexpr ProcessGroupId kFirstGroup{1U};
+  constexpr ProcessGroupId kSecondGroup{2U};
+  constexpr ProcessGroupId kMissingGroup{3U};
+  ExecutionPlanState plan;
+  plan.cuda_graph_execution_regions = {
+      CUDAGraphExecutionRegionPlanRecord{
+          .process_group = kFirstGroup,
+          .device = DeviceId{0},
+          .buffers = {CUDAGraphCaptureBufferPlanRecord{.source_port = kOutput}},
+      },
+      CUDAGraphExecutionRegionPlanRecord{
+          .process_group = kSecondGroup,
+          .device = DeviceId{1},
+          .buffers = {CUDAGraphCaptureBufferPlanRecord{.source_port = kOutput}},
+      },
+  };
+
+  EXPECT_TRUE(cuda_graph_uses_fixed_output_address(plan, kFirstGroup, kOutput));
+  EXPECT_TRUE(cuda_graph_uses_fixed_output_address(plan, kSecondGroup, kOutput));
+  EXPECT_FALSE(cuda_graph_uses_fixed_output_address(plan, kMissingGroup, kOutput));
+  EXPECT_EQ(cuda_graph_fixed_output_device(plan, kFirstGroup, kOutput), DeviceId{0});
+  EXPECT_EQ(cuda_graph_fixed_output_device(plan, kSecondGroup, kOutput), DeviceId{1});
+  EXPECT_FALSE(cuda_graph_fixed_output_device(plan, kMissingGroup, kOutput).valid());
+}
+
+// REQ: COMPILE-084
+TEST(ExecutionPlanLookup, IdentifiesOnlyEdgesInternalToAdmittedCUDAGraphRegions) {
+  constexpr GraphId kGraph{1U};
+  constexpr RegionId kRegion{2U};
+  constexpr EdgeId kInternalEdge{3U};
+  constexpr EdgeId kBoundaryEdge{4U};
+  ExecutionPlanState plan;
+  plan.cuda_graph_capture_plans = {
+      CUDAGraphCapturePlanRecord{
+          .graph = kGraph,
+          .region = kRegion,
+          .internal_edges = {CUDAGraphCaptureEdgeRecord{.edge = kInternalEdge}},
+      },
+  };
+  plan.cuda_graph_execution_regions = {
+      CUDAGraphExecutionRegionPlanRecord{.graph = kGraph, .region = kRegion},
+  };
+
+  EXPECT_TRUE(is_cuda_graph_internal_execution_edge(plan, kInternalEdge));
+  EXPECT_FALSE(is_cuda_graph_internal_execution_edge(plan, kBoundaryEdge));
+
+  // Duplicate capture plans make the execution-region relation ambiguous.
+  plan.cuda_graph_capture_plans.push_back(plan.cuda_graph_capture_plans.front());
+  EXPECT_FALSE(is_cuda_graph_internal_execution_edge(plan, kInternalEdge));
+
+  // Two otherwise valid regions cannot both own the same internal edge.
+  plan.cuda_graph_capture_plans.pop_back();
+  plan.cuda_graph_capture_plans.push_back(CUDAGraphCapturePlanRecord{
+      .graph = GraphId{5U},
+      .region = RegionId{6U},
+      .internal_edges = {CUDAGraphCaptureEdgeRecord{.edge = kInternalEdge}},
+  });
+  plan.cuda_graph_execution_regions.push_back(
+      CUDAGraphExecutionRegionPlanRecord{.graph = GraphId{5U}, .region = RegionId{6U}});
+  EXPECT_FALSE(is_cuda_graph_internal_execution_edge(plan, kInternalEdge));
 }
 
 TEST(SnapshotLookup, DenseRecordsAndProfilesFailClosedForInvalidIdentity) {

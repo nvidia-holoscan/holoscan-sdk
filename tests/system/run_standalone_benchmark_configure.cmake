@@ -21,7 +21,7 @@ set(install_prefix "${HOLOSCAN_BENCHMARK_WORK_DIR}/install")
 set(benchmark_build_dir "${HOLOSCAN_BENCHMARK_WORK_DIR}/build")
 file(REMOVE_RECURSE "${install_prefix}" "${benchmark_build_dir}")
 
-set(sdk_build_targets core holoscan_schema sensor_io)
+set(sdk_build_targets core holoscan_schema sensor_io config config_io params params_io)
 if(DEFINED HOLOSCAN_BUILD_SHARED_LIBS AND NOT HOLOSCAN_BUILD_SHARED_LIBS)
     list(APPEND sdk_build_targets spdlog)
 endif()
@@ -30,8 +30,8 @@ set(sdk_build_command
     --target ${sdk_build_targets}
     --parallel 4
 )
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND sdk_build_command --config "${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND sdk_build_command --config "${CMAKE_BUILD_TYPE}")
 endif()
 execute_process(
     COMMAND ${sdk_build_command}
@@ -47,16 +47,18 @@ foreach(component IN ITEMS
         holoscan-dependencies
         iceoryx2-lib
         dev
-        holomq
+        holoscan-holomq
         holoscan-core
-        holoscan-sensor-io)
+        holoscan-sensor-io
+        holoscan-config
+        holoscan-config-io)
     set(install_command
         "${CMAKE_COMMAND}" --install "${HOLOSCAN_BUILD_DIR}"
         --prefix "${install_prefix}"
         --component "${component}"
     )
-    if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-        list(APPEND install_command --config "${HOLOSCAN_BUILD_CONFIG}")
+    if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+        list(APPEND install_command --config "${CMAKE_BUILD_TYPE}")
     endif()
     execute_process(
         COMMAND ${install_command}
@@ -118,8 +120,8 @@ if(DEFINED HOLOSCAN_MSVC_RUNTIME_LIBRARY AND NOT HOLOSCAN_MSVC_RUNTIME_LIBRARY S
         "-DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=${HOLOSCAN_MSVC_RUNTIME_LIBRARY}"
     )
 endif()
-if(DEFINED HOLOSCAN_BUILD_CONFIG AND NOT HOLOSCAN_BUILD_CONFIG STREQUAL "")
-    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${HOLOSCAN_BUILD_CONFIG}")
+if(DEFINED CMAKE_BUILD_TYPE AND NOT CMAKE_BUILD_TYPE STREQUAL "")
+    list(APPEND configure_command "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}")
 endif()
 
 execute_process(

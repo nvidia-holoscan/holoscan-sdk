@@ -46,13 +46,11 @@ struct ParameterPlanLowering {
 /// @brief Lower local factory metadata into immutable Parameter plan records.
 /// @param snapshot Canonical pointer-free graph identity and path inventory.
 /// @param factories Canonical process-local executable factory inventory, updated atomically with
-/// isolated resolved clones when an accepted override set is present.
+/// isolated resolved clones when an accepted graph-owned parameter input is present.
 /// @param effective_vertex_profiles Profile indexed by canonical VertexId minus one.
 /// @param plan_generation Nonzero identity for every produced OperatorRef.
 /// @param options Owned Parameter compile policy and finite capacity request.
 /// @param lifecycle_options Active transaction options, or empty when lifecycle mutation is off.
-/// @param admission_context_digest Canonical profile/deployment/package/migration context identity.
-/// @param parameter_overrides Optional complete owning explicit override set.
 /// @return Total records and stable bounded diagnostics.
 /// @note The lowerer copies no aggregate value, operation pointer, or type token into public plan
 /// state. Typed generation zero remains solely in the private factory inventory.
@@ -60,9 +58,7 @@ struct ParameterPlanLowering {
     const GraphSnapshotData& snapshot, ExecutableFactoryInventory& factories,
     std::span<const std::optional<Profile>> effective_vertex_profiles,
     PlanGenerationId plan_generation, const ParameterCompileOptions& options,
-    const std::optional<LifecycleTransactionOptions>& lifecycle_options,
-    ParamSchemaHash admission_context_digest,
-    const std::optional<ParamOverrideSet>& parameter_overrides);
+    const std::optional<LifecycleTransactionOptions>& lifecycle_options);
 
 /// @brief Rebind one immutable Parameter catalog to the final plan generation.
 /// @param catalog Catalog produced while canonical plan identity was being derived.

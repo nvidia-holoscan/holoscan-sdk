@@ -114,11 +114,6 @@ struct ResourceTotals {
          checked_add(totals.quarantines, quarantines, totals.quarantines);
 }
 
-struct OperatorStreamSelection {
-  cudaStream_t stream{};
-  DeviceId device{};
-};
-
 [[nodiscard]] bool valid_fused_linear_edges(const ExecutionPlanState& plan,
                                             const CudaComputeStreamPlanRecord& stream) noexcept {
   if (std::adjacent_find(stream.fused_linear_edges.begin(),
@@ -323,16 +318,6 @@ template <typename PoolRecord, typename LoanCapacity>
   return {};
 }
 
-[[nodiscard]] cudaStream_t resource_stream(const RuntimeCudaExecutionResources& cuda_resources,
-                                           ProcessGroupId group, DeviceId device,
-                                           ExecutionPartitionId partition) noexcept {
-  if (cudaStream_t stream = cuda_resources.partition_stream(group, device, partition);
-      stream != nullptr) {
-    return stream;
-  }
-  return cuda_resources.ordinary_stream(group, device);
-}
-
 [[nodiscard]] bool can_elide_native_readiness(const ExecutionPlanState& plan,
                                               const RuntimeCudaExecutionResources& cuda_resources,
                                               const TensorAllocationPlanRecord& allocation,
@@ -351,13 +336,8 @@ template <typename PoolRecord, typename LoanCapacity>
     if (fused_stream == nullptr) {
       return false;
     }
-    cudaStream_t planned_stream =
-        fused_stream->partition
-            ? cuda_resources.partition_stream(
-                  fused_stream->process_group, fused_stream->device, *fused_stream->partition)
-        : fused_stream->green_context_id
-            ? nullptr
-            : cuda_resources.ordinary_stream(fused_stream->process_group, fused_stream->device);
+    const cudaStream_t planned_stream = cuda_resources.compute_stream(
+        fused_stream->process_group, fused_stream->device, fused_stream->stream_id);
     if (planned_stream != producer_stream) {
       return false;
     }
@@ -370,147 +350,41 @@ template <typename PoolRecord, typename LoanCapacity>
       return false;
     }
     const ProcessGroupId target_group = process_group_for(plan, target.owner);
-    const auto* target_partition = find_execution_partition_by_member(plan, target.owner);
-    if (!target_group || target_partition == nullptr ||
-        resource_stream(cuda_resources, target_group, allocation.device, target_partition->id) !=
-            producer_stream) {
+    const auto target_binding =
+        std::find_if(plan.operator_cuda_stream_bindings.begin(),
+                     plan.operator_cuda_stream_bindings.end(),
+                     [&](const auto& row) { return row.operator_vertex == target.owner; });
+    if (!target_group || target_binding == plan.operator_cuda_stream_bindings.end() ||
+        target_binding->process_group != target_group ||
+        target_binding->device != allocation.device ||
+        cuda_resources.compute_stream(target_binding->process_group,
+                                      target_binding->device,
+                                      target_binding->stream_id) != producer_stream) {
       return false;
     }
   }
   return found_edge;
 }
 
-[[nodiscard]] bool interface_pool_belongs_to_vertex(const ExecutionPlanState& plan,
-                                                    const TensorInterfacePoolPlanRecord& pool,
-                                                    VertexId vertex) noexcept {
-  PortId resolved = pool.graph_port;
-  for (std::size_t depth = 0U; depth <= plan.interface_port_bindings.size(); ++depth) {
-    const auto* port = find_port_by_id(plan, resolved);
-    if (port != nullptr && port->owner == vertex) {
-      return true;
-    }
-    const auto alias = std::find_if(plan.interface_port_bindings.begin(),
-                                    plan.interface_port_bindings.end(),
-                                    [&](const auto& row) { return row.public_port == resolved; });
-    if (alias == plan.interface_port_bindings.end()) {
-      return false;
-    }
-    resolved = alias->internal_port;
-  }
-  return false;
-}
-
-// Select a stream by joining the plan's exact process, device, and interface obligations.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] expected<OperatorStreamSelection, Error> select_operator_stream(
-    const ExecutionPlanState& plan, const RuntimeCudaExecutionResources& cuda_resources,
-    const RuntimeOperatorInstance& instance) {
-  const ProcessGroupId group = process_group_for(plan, instance.vertex);
-  if (!group) {
-    return make_unexpected(tensor_resource_error(
-        "operator process placement missing", "operator", instance.operator_id));
-  }
-  cudaStream_t selected_stream = instance.compute_stream;
-  DeviceId selected_device = instance.compute_device;
-  const auto admit_device = [&](DeviceId device) noexcept -> bool {
-    if (!device.valid()) {
-      return true;
-    }
-    cudaStream_t candidate = resource_stream(cuda_resources, group, device, instance.partition);
-    if (candidate == nullptr || (selected_stream != nullptr && selected_stream != candidate)) {
-      return false;
-    }
-    selected_stream = candidate;
-    selected_device = device;
-    return true;
-  };
-  const auto admit_service_devices = [&](const auto& service) noexcept -> bool {
-    const auto view = tensor_service_contract_view(service);
-    bool admitted = true;
-    const auto admit_if_required = [&](MemoryKind memory_kind, DeviceId device) noexcept {
-      return !tensor_service_storage_requires_operator_cuda_stream(view, memory_kind) ||
-             admit_device(device);
-    };
-    for_each_tensor_service_storage(view, [&](TensorServiceStorageView storage) {
-      admitted = admitted && admit_if_required(storage.memory_kind, storage.device);
-    });
-    return admitted;
-  };
-
-  for (const auto& allocation : plan.tensor_allocations) {
-    const auto* port = find_port_by_id(plan, allocation.output);
-    if (port != nullptr && port->owner == instance.vertex && !admit_device(allocation.device)) {
-      return make_unexpected(tensor_resource_error(
-          "output device resource mismatch", "output", allocation.output.value()));
-    }
-  }
-  for (const auto& allocation : plan.tensor_field_allocations) {
-    const auto* port = find_port_by_id(plan, allocation.output);
-    if (port != nullptr && port->owner == instance.vertex && !admit_device(allocation.device)) {
-      return make_unexpected(tensor_resource_error(
-          "field output device resource mismatch", "output", allocation.output.value()));
-    }
-  }
-  for (const auto& subscriber : plan.process_local_channel_subscribers) {
-    const auto* port = find_port_by_id(plan, subscriber.target);
-    if (port == nullptr || port->owner != instance.vertex) {
-      continue;
-    }
-    const auto* service = find_process_local_channel_service_by_id(plan, subscriber.service_id);
-    if (service == nullptr || service->source != subscriber.source) {
-      return make_unexpected(tensor_resource_error(
-          "subscriber device resource mismatch", "output", subscriber.source.value()));
-    }
-    if (service->tensor_payload && !admit_service_devices(*service)) {
-      return make_unexpected(tensor_resource_error(
-          "subscriber device resource mismatch", "output", subscriber.source.value()));
-    }
-  }
-  for (const auto& subscriber : plan.cross_process_channel_subscribers) {
-    const auto* port = find_port_by_id(plan, subscriber.target);
-    if (port == nullptr || port->owner != instance.vertex) {
-      continue;
-    }
-    const auto* service = find_cross_process_channel_service_by_id(plan, subscriber.service_id);
-    if (service == nullptr || service->source != subscriber.source ||
-        (service->tensor_payload && !admit_service_devices(*service))) {
-      return make_unexpected(
-          tensor_resource_error("cross-process subscriber device resource mismatch",
-                                "output",
-                                subscriber.source.value()));
-    }
-  }
-  for (const auto& service : plan.cross_process_channel_services) {
-    const auto* port = find_port_by_id(plan, service.source);
-    if (descriptor_tensor_schema_service(service) && port != nullptr &&
-        port->owner == instance.vertex && !admit_service_devices(service)) {
-      return make_unexpected(
-          tensor_resource_error("descriptor-schema publisher device resource mismatch",
-                                "output",
-                                service.source.value()));
-    }
-  }
-  for (const auto& pool : plan.tensor_interface_pools) {
-    if (pool.imported && pool.device.valid() &&
-        interface_pool_belongs_to_vertex(plan, pool, instance.vertex) &&
-        !admit_device(pool.device)) {
-      return make_unexpected(
-          tensor_resource_error("interface device resource mismatch", "pool", pool.pool_id));
-    }
-  }
-  return OperatorStreamSelection{.stream = selected_stream, .device = selected_device};
-}
-
 [[nodiscard]] expected<void, Error> bind_operator_streams(
     const ExecutionPlanState& plan, std::span<RuntimeOperatorInstance> operators,
     const RuntimeCudaExecutionResources& cuda_resources) {
-  for (auto& instance : operators) {
-    auto stream = select_operator_stream(plan, cuda_resources, instance);
-    if (!stream) {
-      return make_unexpected(std::move(stream.error()));
+  for (const auto& instance : operators) {
+    const auto binding =
+        std::find_if(plan.operator_cuda_stream_bindings.begin(),
+                     plan.operator_cuda_stream_bindings.end(),
+                     [&](const auto& row) { return row.operator_vertex == instance.vertex; });
+    if ((binding == plan.operator_cuda_stream_bindings.end() &&
+         (instance.compute_stream != nullptr || instance.compute_device.valid())) ||
+        (binding != plan.operator_cuda_stream_bindings.end() &&
+         (instance.compute_stream != cuda_resources.compute_stream(binding->process_group,
+                                                                   binding->device,
+                                                                   binding->stream_id) ||
+          instance.compute_stream == nullptr || instance.compute_device != binding->device ||
+          instance.partition != binding->partition))) {
+      return make_unexpected(tensor_resource_error(
+          "operator CUDA stream binding mismatch", "operator", instance.operator_id));
     }
-    instance.compute_stream = stream->stream;
-    instance.compute_device = stream->device;
   }
   return {};
 }
@@ -535,13 +409,24 @@ template <typename PoolRecord, typename LoanCapacity>
     return make_unexpected(
         tensor_resource_error("output stream owner missing", "output", allocation.output.value()));
   }
-  const auto* partition = find_execution_partition_by_member(plan, port->owner);
-  if (partition == nullptr) {
+  const auto binding =
+      std::find_if(plan.operator_cuda_stream_bindings.begin(),
+                   plan.operator_cuda_stream_bindings.end(),
+                   [&](const auto& row) { return row.operator_vertex == port->owner; });
+  if (binding == plan.operator_cuda_stream_bindings.end()) {
     return make_unexpected(tensor_resource_error(
-        "output stream partition missing", "output", allocation.output.value()));
+        "output stream binding missing", "output", allocation.output.value()));
   }
-  cudaStream_t stream = resource_stream(
-      cuda_resources, allocation.allocator_process_group, allocation.device, partition->id);
+  const auto stream_plan = std::find_if(
+      plan.cuda_compute_streams.begin(), plan.cuda_compute_streams.end(), [&](const auto& row) {
+        return row.stream_id == binding->stream_id;
+      });
+  if (stream_plan == plan.cuda_compute_streams.end()) {
+    return make_unexpected(
+        tensor_resource_error("output stream plan missing", "output", allocation.output.value()));
+  }
+  const cudaStream_t stream =
+      cuda_resources.compute_stream(binding->process_group, binding->device, binding->stream_id);
   if (stream == nullptr) {
     return make_unexpected(tensor_resource_error(
         "output stream materialization missing", "output", allocation.output.value()));

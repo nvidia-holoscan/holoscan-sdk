@@ -5,17 +5,18 @@
 
 #include "dl_converter.hpp"
 
-#include "core/domain/tensor_access.hpp"
-
 #include <cuda_runtime.h>
 
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -26,6 +27,8 @@
 #include <holoscan/core/domain/dlpack_utils.hpp>
 #include <holoscan/core/domain/tensor.hpp>
 #include <holoscan/core/errors.hpp>
+
+#include "integer_tuple.hpp"
 
 namespace holoscan {
 
@@ -38,6 +41,13 @@ struct DLPackConsumerStream {
 
 constexpr const char* dlpack_c_exchange_api_attr_name{"__dlpack_c_exchange_api__"};
 constexpr const char* dlpack_exchange_api_capsule_name{"dlpack_exchange_api"};
+
+std::shared_ptr<Tensor> adopt_read_only_tensor(std::shared_ptr<DLManagedTensorContext> context) {
+  if (context != nullptr) {
+    context->tensor.flags |= DLPACK_FLAG_BITMASK_READ_ONLY;
+  }
+  return std::make_shared<Tensor>(std::move(context));
+}
 
 bool is_cuda_dlpack_device(DLDeviceType device_type) {
   return device_type == kDLCUDA || device_type == kDLCUDAManaged || device_type == kDLCUDAHost;
@@ -302,8 +312,7 @@ std::shared_ptr<Tensor> tensor_from_array_interface(const nb::object& obj, bool 
   context->memory_reference = std::make_shared<ArrayInterfaceMemoryReference>(obj);
   copy_dl_tensor_with_owned_metadata(*context, local);
 
-  auto tensor = std::make_shared<Tensor>(
-      detail::TensorAccess::from_context(std::move(context), detail::TensorAuthority::kReadOnly));
+  auto tensor = adopt_read_only_tensor(std::move(context));
 
   if (cuda) {
     // The CUDA array interface's optional `stream` is the producer's ready stream; record it so a
@@ -355,25 +364,13 @@ struct DLPackManagedExport {
   return negotiated;
 }
 
-[[nodiscard]] std::optional<DLDevice> validate_dlpack_device_request(
-    const Tensor& tensor, const std::optional<std::tuple<int, int>>& requested_device) {
+[[nodiscard]] std::optional<DLDevice> parse_dlpack_device_request(
+    const std::optional<std::tuple<int, int>>& requested_device) {
   if (!requested_device.has_value()) {
     return std::nullopt;
   }
   const auto [device_type, device_id] = *requested_device;
-  const DLDevice tensor_device = tensor.device();
-  if (device_type != static_cast<int>(tensor_device.device_type) ||
-      device_id != tensor_device.device_id) {
-    throw nb::buffer_error(
-        "use of dl_device to copy to a different device is not currently supported");
-  }
   return DLDevice{static_cast<DLDeviceType>(device_type), device_id};
-}
-
-void validate_dlpack_copy_request(const std::optional<bool>& copy) {
-  if (copy.value_or(false)) {
-    throw nb::buffer_error("copy=True is not implemented");
-  }
 }
 
 void synchronize_dlpack_export(const Tensor& tensor, const DLPackConsumerStream consumer_stream) {
@@ -454,14 +451,41 @@ nb::capsule py_dlpack(Tensor* tensor, const nb::object& stream,
   // inserts any needed dependency before producing the capsule.
   const auto consumer_stream = parse_dlpack_stream(stream);
   const DLPackExportVersion version = negotiate_dlpack_export_version(max_version);
-  const std::optional<DLDevice> requested_device =
-      validate_dlpack_device_request(*tensor, dl_device);
-  validate_dlpack_copy_request(copy);
-  synchronize_dlpack_export(*tensor, consumer_stream);
+  const std::optional<DLDevice> requested_device = parse_dlpack_device_request(dl_device);
+  const DLDevice source_device = tensor->device();
+  const bool device_copy =
+      requested_device && (requested_device->device_type != source_device.device_type ||
+                           requested_device->device_id != source_device.device_id);
+  if (device_copy && copy.has_value() && !*copy) {
+    throw nb::buffer_error("copy=False cannot satisfy a different dl_device request");
+  }
+
+  std::optional<Tensor> copied;
+  Tensor* exported_tensor = tensor;
+  if (copy.value_or(false) || device_copy) {
+    const DLDevice target_device = requested_device.value_or(source_device);
+    const bool asynchronous_copy =
+        source_device.device_type == kDLCUDA || source_device.device_type == kDLCUDAManaged ||
+        target_device.device_type == kDLCUDA || target_device.device_type == kDLCUDAManaged;
+    if (asynchronous_copy && !consumer_stream.synchronize) {
+      throw nb::buffer_error("stream=-1 cannot order an explicit Tensor copy");
+    }
+    expected<Tensor, Error> result;
+    {
+      const nb::gil_scoped_release release;
+      result = tensor->copy_to(target_device, consumer_stream.stream);
+    }
+    if (!result) {
+      throw_dlpack_export_error(result.error());
+    }
+    copied.emplace(std::move(*result));
+    exported_tensor = &*copied;
+  }
+  synchronize_dlpack_export(*exported_tensor, consumer_stream);
 
   const DLPackManagedExport exported =
-      version.versioned ? export_versioned_dlpack(*tensor, version, requested_device)
-                        : export_unversioned_dlpack(*tensor, requested_device);
+      version.versioned ? export_versioned_dlpack(*exported_tensor, version, requested_device)
+                        : export_unversioned_dlpack(*exported_tensor, requested_device);
   return make_dlpack_capsule(exported);
 }
 
@@ -516,8 +540,7 @@ std::shared_ptr<Tensor> tensor_from_dlpack(const nb::object& obj) {
     throw std::runtime_error("__dlpack__ did not return a valid DLPack capsule");
   }
 
-  auto tensor = std::make_shared<Tensor>(
-      detail::TensorAccess::from_context(std::move(context), detail::TensorAuthority::kReadOnly));
+  auto tensor = adopt_read_only_tensor(std::move(context));
   if (producer_is_cuda) {
     // The producer ordered its work onto the legacy default stream (passed to __dlpack__ above);
     // record that as the readiness stream. nullptr here is the default/legacy-default stream value
@@ -546,37 +569,51 @@ bool is_tensor_like(const nb::object& obj) {
          nb::hasattr(obj, "__cuda_array_interface__") || nb::hasattr(obj, "__array_interface__");
 }
 
+nb::tuple tensor_shape_tuple(const Tensor& tensor) {
+  return python::detail::scaled_integer_tuple(tensor.shape_span());
+}
+
+nb::tuple tensor_strides_tuple(const Tensor& tensor) {
+  const int64_t item_size = static_cast<int64_t>(tensor.itemsize());
+  const std::span<const int64_t> explicit_strides = tensor.dlpack_strides_span();
+  if (!explicit_strides.empty()) {
+    return python::detail::scaled_integer_tuple(explicit_strides, item_size);
+  }
+
+  const std::span<const int64_t> shape = tensor.shape_span();
+  // Keep this implicit row-major rule aligned with calc_strides() in dlpack_utils.cpp. Building
+  // each tuple entry directly avoids allocating a temporary C++ strides vector.
+  return python::detail::integer_tuple(shape.size(), [&shape, item_size](std::size_t index) {
+    int64_t stride = item_size;
+    for (std::size_t trailing = index + 1; trailing < shape.size(); ++trailing) {
+      stride *= shape[trailing];
+    }
+    return stride;
+  });
+}
+
 namespace {
 
 // Build the common array-interface dict (shared by the host and CUDA variants). `cuda` adds the
 // `mask`/`stream` keys required by __cuda_array_interface__.
-nb::dict build_array_interface(const Tensor& tensor, bool cuda) {
-  const DLTensor& dl = detail::TensorAccess::context(tensor)->tensor.dl_tensor;
-
-  auto maybe_typestr = numpy_dtype(dl.dtype);
+nb::dict build_array_interface(const Tensor& tensor, const void* data_pointer, bool cuda) {
+  auto maybe_typestr = numpy_dtype(tensor.dtype());
   if (!maybe_typestr) {
     throw std::runtime_error(runtime_error_message(maybe_typestr.error()));
   }
   const char* typestr = maybe_typestr.value();
 
-  nb::list shape_list;
-  for (int32_t i = 0; i < dl.ndim; ++i) {
-    shape_list.append(dl.shape[i]);
-  }
-  nb::tuple shape = nb::steal<nb::tuple>(PyList_AsTuple(shape_list.ptr()));
+  nb::tuple shape = tensor_shape_tuple(tensor);
 
   // data is (address, read_only).
-  nb::tuple data = nb::make_tuple(reinterpret_cast<uintptr_t>(dl.data), tensor.is_read_only());
+  nb::tuple data = nb::make_tuple(reinterpret_cast<uintptr_t>(data_pointer), tensor.is_read_only());
 
   // The array interface uses byte strides; DLPack stores element strides (or nullptr = contiguous).
   nb::object strides = nb::none();
-  if (dl.strides != nullptr) {
-    const int64_t elem_size = dl.dtype.bits / 8;
-    nb::list strides_list;
-    for (int32_t i = 0; i < dl.ndim; ++i) {
-      strides_list.append(dl.strides[i] * elem_size);
-    }
-    strides = nb::steal<nb::tuple>(PyList_AsTuple(strides_list.ptr()));
+  const std::span<const int64_t> explicit_strides = tensor.dlpack_strides_span();
+  if (!explicit_strides.empty()) {
+    strides = python::detail::scaled_integer_tuple(explicit_strides,
+                                                   static_cast<int64_t>(tensor.itemsize()));
   }
 
   nb::list descr;
@@ -599,18 +636,24 @@ nb::dict build_array_interface(const Tensor& tensor, bool cuda) {
 }  // namespace
 
 nb::dict array_interface(const Tensor& tensor) {
-  const auto& dl = detail::TensorAccess::context(tensor)->tensor.dl_tensor;
-  const DLDeviceType device_type = dl.device.device_type;
-  if ((device_type != kDLCPU && device_type != kDLCUDAHost) || dl.data == nullptr) {
+  const void* const data_pointer = tensor.data();
+  if (data_pointer == nullptr) {
     throw nb::attribute_error("__array_interface__");
   }
-  return build_array_interface(tensor, /*cuda=*/false);
+  const DLDeviceType device_type = tensor.device().device_type;
+  if (device_type != kDLCPU && device_type != kDLCUDAHost) {
+    throw nb::attribute_error("__array_interface__");
+  }
+  return build_array_interface(tensor, data_pointer, /*cuda=*/false);
 }
 
 nb::dict cuda_array_interface(const Tensor& tensor) {
-  const auto& dl = detail::TensorAccess::context(tensor)->tensor.dl_tensor;
-  const DLDeviceType device_type = dl.device.device_type;
-  if ((device_type != kDLCUDA && device_type != kDLCUDAManaged) || dl.data == nullptr) {
+  const void* const data_pointer = tensor.data();
+  if (data_pointer == nullptr) {
+    throw nb::attribute_error("__cuda_array_interface__");
+  }
+  const DLDeviceType device_type = tensor.device().device_type;
+  if (device_type != kDLCUDA && device_type != kDLCUDAManaged) {
     throw nb::attribute_error("__cuda_array_interface__");
   }
   if (tensor.has_readiness_stream_contract()) {
@@ -623,7 +666,7 @@ nb::dict cuda_array_interface(const Tensor& tensor) {
       throw std::runtime_error(runtime_error_message(sync_result.error()));
     }
   }
-  return build_array_interface(tensor, /*cuda=*/true);
+  return build_array_interface(tensor, data_pointer, /*cuda=*/true);
 }
 
 std::shared_ptr<Tensor> as_tensor(const nb::object& obj) {
@@ -676,8 +719,7 @@ std::shared_ptr<Tensor> wrap_versioned_owning(DLManagedTensorVersioned* managed)
   auto context = std::make_shared<DLManagedTensorContext>();
   context->memory_reference = std::move(memory_reference);
   copy_dl_tensor_with_owned_metadata(*context, *managed);
-  return std::make_shared<Tensor>(
-      detail::TensorAccess::from_context(std::move(context), detail::TensorAuthority::kReadOnly));
+  return adopt_read_only_tensor(std::move(context));
 }
 
 std::shared_ptr<Tensor> try_tensor_from_dlpack_c_exchange(const nb::object& obj) {
@@ -791,7 +833,7 @@ int holoscan_dlpack_managed_tensor_from_py_object_no_sync(void* py_object,
   try {
     std::shared_ptr<Tensor> tensor;
     if (!nb::try_cast(nb::handle(static_cast<PyObject*>(py_object)), tensor) || !tensor) {
-      PyErr_SetString(PyExc_TypeError, "expected a holoscan.core.Tensor object");
+      PyErr_SetString(PyExc_TypeError, "expected a holoscan.Tensor object");
       return -1;
     }
     auto sync_result = prepare_tensor_for_dlpack_c_exchange_export(*tensor);
@@ -850,7 +892,7 @@ int holoscan_dlpack_dltensor_from_py_object_no_sync(void* py_object, DLTensor* o
   try {
     std::shared_ptr<Tensor> tensor;
     if (!nb::try_cast(nb::handle(static_cast<PyObject*>(py_object)), tensor) || !tensor) {
-      PyErr_SetString(PyExc_TypeError, "expected a holoscan.core.Tensor object");
+      PyErr_SetString(PyExc_TypeError, "expected a holoscan.Tensor object");
       return -1;
     }
     auto sync_result = prepare_tensor_for_unversioned_dlpack_c_exchange_export(*tensor);
@@ -858,7 +900,21 @@ int holoscan_dlpack_dltensor_from_py_object_no_sync(void* py_object, DLTensor* o
       set_dlpack_c_exchange_export_error(sync_result.error());
       return -1;
     }
-    *out = detail::TensorAccess::context(*tensor)->tensor.dl_tensor;
+    const auto shape = tensor->shape_span();
+    const auto strides = tensor->dlpack_strides_span();
+    const auto byte_offset = tensor->byte_offset();
+    const auto logical_address = reinterpret_cast<uintptr_t>(tensor->data());
+    if (logical_address < byte_offset) {
+      PyErr_SetString(PyExc_BufferError, "cannot export invalid Holoscan Tensor data");
+      return -1;
+    }
+    out->data = reinterpret_cast<void*>(logical_address - byte_offset);
+    out->device = tensor->device();
+    out->ndim = tensor->ndim();
+    out->dtype = tensor->dtype();
+    out->shape = shape.empty() ? nullptr : const_cast<int64_t*>(shape.data());
+    out->strides = strides.empty() ? nullptr : const_cast<int64_t*>(strides.data());
+    out->byte_offset = byte_offset;
     return 0;
   } catch (nb::python_error& error) {
     error.restore();
@@ -896,17 +952,52 @@ nb::object dlpack_array_to_tuple_or_none(const int64_t* array, int32_t ndim) {
   if (array == nullptr) {
     return nb::none();
   }
-  nb::list list;
-  for (int32_t i = 0; i < ndim; ++i) {
-    list.append(array[i]);
-  }
-  return nb::steal<nb::tuple>(PyList_AsTuple(list.ptr()));
+  const std::size_t size = ndim > 0 ? static_cast<std::size_t>(ndim) : 0U;
+  return python::detail::scaled_integer_tuple(std::span<const int64_t>{array, size});
 }
 
 }  // namespace
 
 nb::capsule dlpack_c_exchange_api_capsule() {
   return nb::capsule(holoscan_dlpack_exchange_api(), dlpack_exchange_api_capsule_name);
+}
+
+nb::dict test_tensor_metadata_projection(const Tensor& backing, const nb::object& shape,
+                                         const nb::object& strides, DLDataType dtype,
+                                         std::uint64_t byte_offset) {
+  auto context = std::make_shared<DLManagedTensorContext>();
+  context->dl_shape = cast_int64_sequence(shape, "test Tensor shape must be a sequence");
+  if (context->dl_shape.size() >
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+    throw nb::value_error("test Tensor shape rank exceeds the DLPack limit");
+  }
+
+  if (!strides.is_none()) {
+    context->dl_strides =
+        cast_int64_sequence(strides, "test Tensor strides must be a sequence or None");
+    if (context->dl_strides.size() != context->dl_shape.size()) {
+      throw nb::value_error("test Tensor strides length must match shape rank");
+    }
+  }
+
+  DLTensor& tensor = context->tensor.dl_tensor;
+  tensor.data = const_cast<void*>(backing.data());
+  tensor.device = backing.device();
+  tensor.ndim = static_cast<std::int32_t>(context->dl_shape.size());
+  tensor.dtype = dtype;
+  tensor.shape = context->dl_shape.empty() ? nullptr : context->dl_shape.data();
+  tensor.strides = context->dl_strides.empty() ? nullptr : context->dl_strides.data();
+  tensor.byte_offset = byte_offset;
+  context->tensor.flags |= DLPACK_FLAG_BITMASK_READ_ONLY;
+
+  const Tensor projection{std::move(context)};
+  nb::dict result;
+  result["shape"] = tensor_shape_tuple(projection);
+  result["strides"] = tensor_strides_tuple(projection);
+  result["itemsize"] = projection.itemsize();
+  result["data"] = reinterpret_cast<uintptr_t>(projection.data());
+  result["array_interface"] = array_interface(projection);
+  return result;
 }
 
 nb::dict test_dlpack_c_exchange_api(const nb::object& tensor_obj) {

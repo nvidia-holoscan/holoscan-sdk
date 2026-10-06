@@ -133,6 +133,13 @@ class HOLOSCAN_CORE_EXPORT TensorOutputWriteGuard {
   /// @return Producer stream for a device write, or no value for a host write or moved-from guard.
   [[nodiscard]] std::optional<::cuda::stream_ref> stream() const noexcept;
 
+  /// @brief Return a writable Tensor view over this active write phase.
+  /// @return A Tensor sharing the provider-owned allocation, or an invalid Tensor for a moved-from
+  /// guard or a backend that cannot expose a view.
+  /// @note The view may keep the backing slot retained after commit and publication. Writes must
+  /// still finish on the guard's declared stream before the guard is committed.
+  [[nodiscard]] Tensor tensor() const;
+
   /// @brief Commit the write phase back to its unpublished tensor loan.
   /// @return Success when the written storage is ready for a later explicit publication attempt.
   /// @retval ErrorCode::kInvalidArgument This guard is moved from or invalid.

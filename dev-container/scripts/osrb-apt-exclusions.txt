@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Nsight Systems is proprietary software distributed under the NVIDIA EULA. Its
+# Debian package name includes the product version; update this entry when
+# NSYS_VERSION changes in public/Dockerfile.dev.
+nsight-systems-cli-2026.4.1
+
+# The matching official upstream archive and provenance are embedded separately
+# under /opt/sources/nvshmem/ because the CUDA APT repository has no deb-src.
+libnvshmem3-cuda-13
+libnvshmem3-dev-cuda-13
+
+# NVPL is proprietary software distributed under the NVIDIA Software License
+# Agreement. The CUDA repository publishes these redistributable binaries but
+# no deb-src metadata, so they must not enter the open-source source fetch.
+libnvpl-blas-dev
+libnvpl-blas0
+libnvpl-lapack-dev
+libnvpl-lapack0
+nvpl-blas
+nvpl-lapack

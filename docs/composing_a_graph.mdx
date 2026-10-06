@@ -6,13 +6,15 @@ separate `Application`, `Fragment`, or `Pipeline` class to learn.
 
 Composition is the first phase of the three-phase model — **compose →
 compile → run** — and it is deliberately *cold*: a `Graph` describes a
-pipeline but never executes one. Everything on this page happens in ordinary
-C++ before any scheduler exists, and every mistake surfaces either as a C++
-compile error or as an exception thrown at the exact line that authored the
-invalid request.
+pipeline but never executes one. Everything on this page happens before any
+scheduler exists. C++ catches payload and direction mismatches at compile
+time; both languages throw at the exact authoring call for invalid dynamic
+requests.
 
 **Complete C++ examples:** [`examples/first_pipeline/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/first_pipeline/cpp)
-and [`examples/slow_fast_fusion/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/slow_fast_fusion/cpp)
+and [`examples/slow_fast_fusion/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/slow_fast_fusion/cpp).
+The Python tabs below demonstrate the equivalent authoring surface with an
+installed Operator provider; standalone Python siblings are not yet shipped.
 
 <Note title="You will learn">
   - How to construct a named `Graph` and add operators with `op<Op>()`
@@ -24,32 +26,70 @@ and [`examples/slow_fast_fusion/cpp`](https://github.com/nvidia-holoscan/holosca
 
 ## Construct a Graph and add operators
 
-A `Graph` takes a name at construction. You then add each operator with
-`op<Op>("name", args...)`, which registers the operator under a unique name
-and returns a typed `OperatorHandle<Op>`:
+A `Graph` takes a name at construction. Adding an operator registers it under
+a unique instance name and returns an operator handle:
 
-```cpp
-#include <holoscan/holoscan.hpp>
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    #include <holoscan/holoscan.hpp>
 
-holoscan::Graph graph{"sensor-pipeline"};
+    holoscan::Graph graph{"sensor-pipeline"};
 
-auto camera = graph.op<CameraSource>("camera");   // OperatorHandle<CameraSource>
-auto fusion = graph.op<WindowFusion>("fusion");
-auto sink   = graph.op<BoundedSink>("sink");
-```
+    auto camera = graph.op<CameraSource>("camera");
+    auto fusion = graph.op<WindowFusion>("fusion");
+    auto sink = graph.op<BoundedSink>("sink");
+    ```
+  </Tab>
+  <Tab title="Python">
+    Python calls an importable registry proxy with the graph, instance name,
+    and parameter keywords. It does not instantiate the C++ operator class
+    directly. This tab uses an illustrative independently installed provider.
+
+    ```python
+    import holoscan as hs
+    from custom_holoscan.operators import BoundedSink, CameraSource, WindowFusion
+
+    graph = hs.Graph("sensor-pipeline")
+    camera = CameraSource(graph, "camera")
+    fusion = WindowFusion(graph, "fusion")
+    sink = BoundedSink(graph, "sink")
+    ```
+  </Tab>
+</Tabs>
 
 Two things are worth internalizing early:
 
-- **The handle is typed.** `camera->frame` refers to the real
+- **The C++ handle is typed.** `camera->frame` refers to the real
   `Output<Frame>` member you declared in the operator's `setup()`
   (see [Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator)).
   There are no string-keyed port lookups, so a misspelled port name is a
   C++ compile error, not a runtime surprise.
-- **Extra arguments are copied, not borrowed.** Anything you pass after the
+- **The Python proxy is typed and reflected.** `camera.frame` and `fusion.camera`
+  resolve declared registry ports. Unknown ports and invalid parameter keywords
+  fail at authoring time and are reported by supported static type checkers.
+  Port names that are Python keywords gain a trailing underscore; indexing such
+  as `operator["non-identifier-name"]` remains available for dynamic code.
+- **Extra C++ arguments use ordinary copy semantics.** Anything you pass after the
   name (`graph.op<BoundedSink>("sink", SinkConfig{...})`) is copied into a
   replayable factory: the runtime constructs fresh operator instances from it
-  later. Pass plainly owning values — configuration structs, numbers,
-  strings — never pointers or references to your local state.
+  later. Values, strings, containers, copyable callables, and smart pointers
+  behave as they normally do in C++. In particular, `std::shared_ptr<T>` keeps
+  its process-local object alive in copies of the retained factory and in
+  operators reconstructed from it, including across sessions that reuse those
+  factories. `std::weak_ptr<T>` does not extend the object's lifetime.
+
+  Shared captures do not provide interprocess sharing. Independently composing
+  a graph in another process constructs that process's own captures. Partition
+  placement does not turn a C++ pointer into an interprocess connection or
+  guarantee a private pointee. Applications must synchronize shared mutation.
+
+  HSDK rejects obvious top-level borrows such as object pointers,
+  `std::reference_wrapper`, `std::span`, and range views. This is a guardrail,
+  not an ownership proof: C++ cannot inspect pointer elements inside a container,
+  fields inside your type, or a lambda's captures. Those lifetimes remain your
+  responsibility. Use a value for independent state and `std::shared_ptr` when
+  shared identity is intentional; no HSDK ownership wrapper is required.
 
 <Warning>
   **Handles are weak.** An `OperatorHandle` does not keep the `Graph` alive,
@@ -59,13 +99,23 @@ Two things are worth internalizing early:
 
 ## Wire ports with add_flow
 
-`add_flow(source->output_port, destination->input_port)` declares one typed
-edge from an `Output<T>` to an `Input<T>`:
+`add_flow(source_port, destination_port)` declares one edge from an output to
+an input:
 
-```cpp
-graph.add_flow(camera->frame, fusion->camera);
-graph.add_flow(fusion->control, sink->input);
-```
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    graph.add_flow(camera->frame, fusion->camera);
+    graph.add_flow(fusion->control, sink->input);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    graph.add_flow(camera.frame, fusion.camera, queue_depth=4)
+    graph.add_flow(fusion.control, sink.input, queue_depth=4)
+    ```
+  </Tab>
+</Tabs>
 
 Because both endpoints are typed, the wiring is **compile-checked**: the
 payload types must match, and the direction is fixed — the first argument
@@ -158,9 +208,18 @@ time is it?" at run time.
 
 The standard incantation is two calls, usually fused into one line:
 
-```cpp
-graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
-```
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    graph.set_default_clock(graph.add_clock(hs.RealtimeClock, "runtime-clock"))
+    ```
+  </Tab>
+</Tabs>
 
 `add_clock<RealtimeClock>("runtime-clock")` declares a named, graph-owned
 clock and returns a `ClockKey`; `set_default_clock(key)` selects it as the
@@ -213,28 +272,48 @@ scheduler or device in sight.
 
 A complete composition, ready to hand to the compiler:
 
-```cpp
-#include <holoscan/holoscan.hpp>
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    #include <holoscan/holoscan.hpp>
 
-holoscan::Graph graph{"camera-imu"};
-graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
+    holoscan::Graph graph{"camera-imu"};
+    graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
 
-auto camera = graph.op<CameraSource>("camera");
-auto imu    = graph.op<ImuSource>("imu");
-auto fusion = graph.op<WindowFusion>("fusion");
-auto sink   = graph.op<BoundedSink>("sink");
+    auto camera = graph.op<CameraSource>("camera");
+    auto imu = graph.op<ImuSource>("imu");
+    auto fusion = graph.op<WindowFusion>("fusion");
+    auto sink = graph.op<BoundedSink>("sink");
 
-(void)graph.add_flow(camera->frame, fusion->camera,
-                     holoscan::ConnectionOptions{.queue_depth = 4U});
-(void)graph.add_flow(imu->sample, fusion->imu,
-                     holoscan::ConnectionOptions{
-                         .queue_policy = holoscan::QueuePolicy::kDropOldest,
-                         .queue_depth  = 1U,
-                     });
-(void)graph.add_flow(fusion->control, sink->input);
+    (void)graph.add_flow(camera->frame, fusion->camera,
+                         holoscan::ConnectionOptions{.queue_depth = 4U});
+    (void)graph.add_flow(imu->sample, fusion->imu,
+                         holoscan::ConnectionOptions{
+                             .queue_policy = holoscan::QueuePolicy::kDropOldest,
+                             .queue_depth = 1U,
+                         });
+    (void)graph.add_flow(fusion->control, sink->input);
 
-// Next: compile the graph into an executable plan.
-```
+    // Next: compile the graph into an executable plan.
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import holoscan as hs
+    from custom_holoscan.operators import BoundedSink, CameraSource, WindowFusion
+
+    graph = hs.Graph("camera-imu")
+    camera = CameraSource(graph, "camera")
+    fusion = WindowFusion(graph, "fusion")
+    sink = BoundedSink(graph, "sink")
+    graph.add_flow(camera.frame, fusion.camera, queue_depth=4)
+    graph.add_flow(fusion.control, sink.input, queue_depth=4)
+    graph.set_default_clock(graph.add_clock(hs.RealtimeClock, "runtime-clock"))
+
+    # Next: compile the graph into an executable plan.
+    ```
+  </Tab>
+</Tabs>
 
 This page covers direct, imperative composition — the everyday case. `Graph`
 can also be subclassed to package a subgraph as a reusable component with

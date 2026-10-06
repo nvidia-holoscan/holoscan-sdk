@@ -3,18 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <array>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "run_session_internal.hpp"
 
 #include "../core/canonical_text_encoding.hpp"
+#include "core/diagnostic_reporting.hpp"
+#include "runtime_cuda_graph_diagnostics.hpp"
+#include "runtime_cuda_graph_region_resources.hpp"
+#include "runtime_support_thread_placement.hpp"
 #include "runtime_work_inventory.hpp"
 
 namespace holoscan::detail {
 
 // Partition-owner execution and terminal run cleanup.
+
+static_assert(std::is_nothrow_move_constructible_v<Error>,
+              "quiesce failure cleanup requires allocation-free Error transfer");
 
 namespace {
 
@@ -48,6 +57,42 @@ class RunOwnedThreadScope final {
     // with kClosed; there is no terminal coordinator state to preserve.
     retire_parameter_control();
   }
+  if (cuda_graph_quiesce_failure_) {
+    if (plan_ != nullptr && plan_->executable_factories.test_cuda_execution_control != nullptr) {
+      plan_->executable_factories.test_cuda_execution_control->notify_failure_observer(
+          RuntimeCudaExecutionObserverPoint::kQuiesceFailureRelease);
+    }
+    // This cleanup runs outside worker_main()'s catch boundary. Move the owning message through
+    // the result path so host allocation failure cannot bypass quarantine or terminal publication.
+    Error failure = std::move(*cuda_graph_quiesce_failure_);
+    cuda_graph_quiesce_failure_.reset();
+    if (cuda_execution_resources_ != nullptr) {
+      cuda_execution_resources_->quarantine_after_external_failure();
+    }
+    quarantine_run_execution_owners(std::move(graph_exec_),
+                                    std::move(tensor_resources_),
+                                    std::move(channel_session_),
+                                    std::move(cuda_graph_region_resources_),
+                                    std::move(cuda_execution_resources_));
+    if (plan_ != nullptr && plan_->executable_factories.test_cuda_execution_control != nullptr) {
+      plan_->executable_factories.test_cuda_execution_control->notify_failure_observer(
+          RuntimeCudaExecutionObserverPoint::kQuiesceFailureReturn);
+    }
+    return make_unexpected(std::move(failure));
+  }
+  if (cuda_graph_region_resources_ != nullptr) {
+    if (auto synchronized = cuda_graph_region_resources_->quiesce(cuda_diagnostic); !synchronized) {
+      if (cuda_execution_resources_ != nullptr) {
+        cuda_execution_resources_->quarantine_after_external_failure();
+      }
+      quarantine_run_execution_owners(std::move(graph_exec_),
+                                      std::move(tensor_resources_),
+                                      std::move(channel_session_),
+                                      std::move(cuda_graph_region_resources_),
+                                      std::move(cuda_execution_resources_));
+      return synchronized;
+    }
+  }
   // Quiesce while reconstructed Operators, unpublished loans, Tensor backing, fixed CUDA events,
   // and Channel-owned imported-VMM mappings remain alive. A failed barrier makes their native
   // dependencies uncertain, so retain the complete owner closure and require process restart
@@ -57,14 +102,32 @@ class RunOwnedThreadScope final {
       quarantine_run_execution_owners(std::move(graph_exec_),
                                       std::move(tensor_resources_),
                                       std::move(channel_session_),
+                                      std::move(cuda_graph_region_resources_),
                                       std::move(cuda_execution_resources_));
       return synchronized;
     }
+  }
+  if (cuda_graph_region_resources_ != nullptr) {
+    if (auto shutdown = cuda_graph_region_resources_->shutdown(cuda_diagnostic); !shutdown) {
+      if (cuda_execution_resources_ != nullptr) {
+        cuda_execution_resources_->quarantine_after_external_failure();
+      }
+      quarantine_run_execution_owners(std::move(graph_exec_),
+                                      std::move(tensor_resources_),
+                                      std::move(channel_session_),
+                                      std::move(cuda_graph_region_resources_),
+                                      std::move(cuda_execution_resources_));
+      return shutdown;
+    }
+  }
+  if (cuda_graph_region_resources_ != nullptr) {
+    cuda_graph_region_resources_->detach_session_state();
   }
   // Channel bindings borrow reconstructed Operator ports, while Operators can retain unpublished
   // Tensor loans. After stream quiescence, detach and destroy the Channel session before its
   // borrowed ports, then destroy Operators before Tensor pools and native CUDA resources.
   channel_session_.reset();
+  cuda_graph_region_resources_.reset();
   graph_exec_.reset();
   tensor_resources_.reset();
   expected<void, Error> shutdown;
@@ -92,11 +155,14 @@ void RunSessionState::worker_main() noexcept {
   terminalize_parameter_updates_at_run_end();
   RuntimeCudaExecutionDiagnostic cuda_diagnostic;
   if (auto released = release_execution_resources(&cuda_diagnostic); !released) {
-    const RuntimeDiagnosticDetail detail{
+    RuntimeDiagnosticDetail detail{
         .present = true,
-        .error = released.error(),
         .cuda_execution = std::move(cuda_diagnostic),
+        .operation = DiagnosticOperation::kRuntime,
+        .role = DiagnosticFailureRole::kTeardown,
     };
+    detail.capture.emplace();
+    detail.capture->append(released.error().code, released.error().message);
     append_diagnostic(
         registered_token_or(released.error().message, "CUDA_GREEN_CONTEXT_MATERIALIZATION_FAILED"),
         {},
@@ -190,6 +256,8 @@ template <bool TracksTerminalWork>
 }
 
 // The owner loop serializes lifecycle, readiness, activation, and termination transitions.
+// The private observation entry point admits exactly one partition, which runs through the shared
+// owner below. These multi-partition owners therefore call the unobserved dispatch specialization.
 template <bool TracksTerminalWork>
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] RunTermination RunSessionState::run_partition_owner(
@@ -215,7 +283,7 @@ template <bool TracksTerminalWork>
       }
     }
     if (ready.dispatcher->active_count() != 0U) {
-      const RunTermination dispatched = dispatch_ready(exec, ready);
+      const RunTermination dispatched = dispatch_ready_impl<false>(exec, ready);
       if (dispatched != RunTermination::kCompleted) {
         if (dispatched == RunTermination::kFailed) {
           context.group->failed.store(true, std::memory_order_release);
@@ -245,7 +313,7 @@ template <bool TracksTerminalWork>
       return RunTermination::kCompleted;
     }
     if (ready.dispatcher->active_count() != 0U) {
-      const RunTermination dispatched = dispatch_ready(exec, ready);
+      const RunTermination dispatched = dispatch_ready_impl<false>(exec, ready);
       if (dispatched != RunTermination::kCompleted) {
         if (dispatched == RunTermination::kFailed) {
           context.group->failed.store(true, std::memory_order_release);
@@ -288,10 +356,9 @@ template <bool TracksTerminalWork>
         Error{ErrorCode::kInvalidArgument, "RUNTIME_PARTITION_RUNNER_CONTEXT_INVALID"});
   }
   context.outcome = context.session->run_partition_owner<TracksTerminalWork>(context);
-  return context.outcome == RunTermination::kFailed
-             ? expected<void, Error>{make_unexpected(
-                   Error{ErrorCode::kFailure, "RUNTIME_PARTITION_RUNNER_FAILED"})}
-             : expected<void, Error>{};
+  // Execution failures already set group.failed and retain their runtime diagnostics. The lane
+  // task itself completed correctly; reserve its Error channel for invalid runner context.
+  return {};
 }
 
 RunSessionState::PendingStartupRateCandidate::~PendingStartupRateCandidate() {
@@ -333,8 +400,8 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
   auto tensor_resources = RuntimeTensorResources::create(
       *plan_, exec.operators(), run_generation_, exec.process_group(), cuda);
   if (!tensor_resources) {
-    HOLOSCAN_LOG_ERROR("Runtime Tensor resource materialization failed: {}",
-                       runtime_error_message(tensor_resources.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Runtime Tensor resource materialization failed: {}",
+                                 runtime_error_message(tensor_resources.error()));
     append_diagnostic("PROFILE_MATERIALIZATION_FAILED");
     return false;
   }
@@ -352,8 +419,8 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
       },
       false);
   if (!provider_evidence) {
-    HOLOSCAN_LOG_ERROR("Runtime Tensor provider evidence failed: {}",
-                       runtime_error_message(provider_evidence.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Runtime Tensor provider evidence failed: {}",
+                                 runtime_error_message(provider_evidence.error()));
     append_diagnostic(
         registered_token_or(provider_evidence.error().message, "PROFILE_MATERIALIZATION_FAILED"));
     pending_rate_candidate.set_failure(provider_evidence.error());
@@ -393,10 +460,94 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
   if (stop_requested_.load(std::memory_order_acquire)) {
     outcome = RunTermination::kStopped;
   } else if (!exec.lifecycle_startup()) {
-    append_diagnostic(exec.lifecycle_failure_token());
+    append_lifecycle_diagnostics(exec);
     pending_rate_candidate.set_failure(
         Error{ErrorCode::kLifecycleStageFailed, std::string{exec.lifecycle_failure_token()}});
     outcome = RunTermination::kFailed;
+  }
+  if (outcome == RunTermination::kCompleted && !plan_->cuda_graph_execution_regions.empty()) {
+    CUDAGraphRuntimeRegionIdentity failure_region;
+    auto resources = RuntimeCUDAGraphRegionResources::create(
+        *plan_,
+        exec.operators(),
+        RuntimeCUDAGraphTensorPoolBinding{
+            .state = tensor_resources_.get(),
+            .fixed_output_address =
+                [](void* state, const PortId output) noexcept {
+                  return static_cast<RuntimeTensorResources*>(state)->fixed_output_address(output);
+                },
+            .fixed_output_available =
+                [](void* state, const PortId output) noexcept {
+                  return static_cast<RuntimeTensorResources*>(state)->fixed_output_available(
+                      output);
+                },
+            .restore_output_binding =
+                [](void* state, const PortId output) noexcept {
+                  return static_cast<RuntimeTensorResources*>(state)->restore_output_binding(
+                      output);
+                },
+        },
+        exec.process_group(),
+        RuntimeCUDAGraphChannelBindings{
+            .state = channel_session_.get(),
+            .restore_input =
+                [](void* state, const PortId input) noexcept {
+                  return static_cast<RuntimeChannelSession*>(state)->restore_input_binding(input);
+                },
+            .restore_output =
+                [](void* state, const PortId output) noexcept {
+                  return static_cast<RuntimeChannelSession*>(state)->restore_output_binding(output);
+                },
+            .require_fixed_tensor =
+                [](void* state,
+                   const PortId input,
+                   const void* address,
+                   std::span<const std::uint64_t>
+                       shape) noexcept {
+                  return static_cast<RuntimeChannelSession*>(state)->require_fixed_tensor(
+                      input, address, shape);
+                },
+            .clear_fixed_tensor =
+                [](void* state, const PortId input, const void* address) noexcept {
+                  return static_cast<RuntimeChannelSession*>(state)->clear_fixed_tensor_requirement(
+                      input, address);
+                },
+        },
+        &failure_region,
+        plan_->executable_factories.test_cuda_execution_control);
+    if (!resources) {
+      append_diagnostic(
+          registered_token_or(resources.error().message, kCUDAGraphRuntimeInitializationFailed),
+          failure_region.fused_operator,
+          "cuda_graph_region_construction",
+          nullptr,
+          {},
+          cuda_graph_region_failure_evidence(failure_region, resources.error()),
+          ::holoscan::DiagnosticSeverity::kError,
+          failure_region.graph);
+      outcome = RunTermination::kFailed;
+    } else {
+      cuda_graph_region_resources_ = std::move(*resources);
+      auto captured = cuda_graph_region_resources_->capture_all(
+          this, &RunSessionState::invoke_cuda_graph_capture_member, &failure_region);
+      if (!captured) {
+        if (captured.error().code == ErrorCode::kInterrupted &&
+            stop_requested_.load(std::memory_order_acquire)) {
+          outcome = RunTermination::kStopped;
+        } else {
+          append_diagnostic(
+              registered_token_or(captured.error().message, kCUDAGraphRuntimeInitializationFailed),
+              failure_region.fused_operator,
+              "cuda_graph_capture",
+              nullptr,
+              {},
+              cuda_graph_region_failure_evidence(failure_region, captured.error()),
+              ::holoscan::DiagnosticSeverity::kError,
+              failure_region.graph);
+          outcome = RunTermination::kFailed;
+        }
+      }
+    }
   }
   bool rate_candidate_ready = false;
   if (outcome == RunTermination::kCompleted) {
@@ -438,6 +589,14 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
           !refresh_and_arm_channels(shared.channels.get())) {
         outcome = RunTermination::kFailed;
       }
+    }
+  }
+  if (outcome == RunTermination::kCompleted && cuda_graph_region_resources_ != nullptr) {
+    auto validated = cuda_graph_region_resources_->validate_output_readiness_bindings();
+    if (!validated) {
+      append_diagnostic(
+          registered_token_or(validated.error().message, "RUNTIME_READINESS_BINDING_UNAVAILABLE"));
+      outcome = RunTermination::kFailed;
     }
   }
   if (outcome == RunTermination::kCompleted) {
@@ -485,34 +644,108 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
 // shutdown ordering remain visible at the call site.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] RunTermination RunSessionState::worker_main_impl() {
+  RuntimeSupportThreadPlacementFailure placement_failure;
+  auto placement = apply_support_thread_affinity(plan_->support_thread_affinities,
+                                                 SupportThreadRole::kController,
+                                                 &placement_failure,
+                                                 &pre_controller_affinity_);
+  if (!placement) {
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Runtime controller thread placement failed with {}: {}",
+                                 error_code_name(placement.error().code),
+                                 placement.error().message);
+    const RuntimeDiagnosticDetail detail{
+        .present = true,
+        .error = placement.error(),
+        .operation = DiagnosticOperation::kRuntime,
+        .component_path = "support-thread/controller",
+    };
+    append_diagnostic("RUNTIME_STARTUP_FAILED",
+                      {},
+                      {},
+                      &detail,
+                      runtime_support_thread_placement_required(placement_failure),
+                      runtime_support_thread_placement_provided(placement_failure));
+    return RunTermination::kFailed;
+  }
   if (plan_->executable_factories.support_thread_control != nullptr) {
-    auto entered = plan_->executable_factories.support_thread_control->enter(
-        RuntimeSupportThreadRole::kController);
+    auto entered =
+        plan_->executable_factories.support_thread_control->enter(SupportThreadRole::kController);
     if (!entered) {
-      HOLOSCAN_LOG_ERROR("Runtime controller thread setup failed with {}: {}",
-                         error_code_name(entered.error().code),
-                         entered.error().message);
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Runtime controller thread setup failed with {}: {}",
+                                   error_code_name(entered.error().code),
+                                   entered.error().message);
       append_diagnostic("RUNTIME_STARTUP_FAILED");
       return RunTermination::kFailed;
     }
   }
   RuntimeReplayMismatchDetail replay_mismatch;
-  auto reconstructed =
-      GraphExec::reconstruct(plan_, run_generation_, process_group_, &replay_mismatch);
+  RuntimeDiagnosticDetail reconstruction_failure;
+  auto reconstructed = [&]() -> expected<std::unique_ptr<GraphExec>, Error> {
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    try {
+#endif
+      return GraphExec::reconstruct(
+          plan_, run_generation_, process_group_, &replay_mismatch, &reconstruction_failure);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    } catch (...) {
+      if (!reconstruction_failure.capture || reconstruction_failure.capture->count == 0U) {
+        reconstruction_failure.capture.emplace();
+        reconstruction_failure.capture->capture_exception();
+        if (reconstruction_failure.operation == DiagnosticOperation::kUnknown) {
+          reconstruction_failure.operation = DiagnosticOperation::kRuntime;
+        }
+      } else {
+        reconstruction_failure.capture->truncated = true;
+        reconstruction_failure.component_path.clear();
+      }
+      reconstruction_failure.present = true;
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+#endif
+  }();
   if (!reconstructed) {
-    const std::string_view token =
-        registered_token_or(reconstructed.error().message, "RUNTIME_STARTUP_FAILED");
+    if (!reconstruction_failure.present && !replay_mismatch.present) {
+      reconstruction_failure.present = true;
+      reconstruction_failure.operation = DiagnosticOperation::kRuntime;
+      reconstruction_failure.capture.emplace();
+      reconstruction_failure.capture->append(reconstructed.error().code,
+                                             reconstructed.error().message);
+    }
+    const std::string_view fallback =
+        reconstruction_failure.operation == DiagnosticOperation::kSetup
+            ? "RUNTIME_OPERATOR_SETUP_FAILED"
+        : reconstruction_failure.operation == DiagnosticOperation::kContract
+            ? "RUNTIME_OPERATOR_CALLBACK_FAILED"
+        : reconstruction_failure.operation == DiagnosticOperation::kConstruct &&
+                reconstruction_failure.vertex
+            ? "RUNTIME_OPERATOR_RECONSTRUCTION_FAILED"
+        : reconstruction_failure.operation == DiagnosticOperation::kConstruct &&
+                reconstruction_failure.component_graph
+            ? "RUNTIME_CLOCK_RECONSTRUCTION_FAILED"
+            : "RUNTIME_STARTUP_FAILED";
+    const std::string_view token = registered_token_or(reconstructed.error().message, fallback);
     if (replay_mismatch.present) {
-      const std::string expected =
-          lowercase_hex_text(replay_mismatch.expected.value, HexPrefix::kSha256);
-      const std::string observed =
-          lowercase_hex_text(replay_mismatch.observed.value, HexPrefix::kSha256);
-      const RuntimeDiagnosticDetail detail{
-          .present = true,
-          .error = reconstructed.error(),
-          .operator_id = replay_mismatch.operator_id,
-          .replay_mismatch = replay_mismatch,
-      };
+      auto detail = std::move(reconstruction_failure);
+      detail.present = true;
+      detail.error = std::move(reconstructed.error());
+      detail.operator_id = replay_mismatch.operator_id;
+      detail.replay_mismatch = replay_mismatch;
+      std::string expected;
+      std::string observed;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+      try {
+#endif
+        expected = lowercase_hex_text(replay_mismatch.expected.value, HexPrefix::kSha256);
+        observed = lowercase_hex_text(replay_mismatch.observed.value, HexPrefix::kSha256);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+      } catch (...) {
+        if (!detail.capture) {
+          detail.capture.emplace();
+          detail.capture->append(detail.error.code, detail.error.message);
+        }
+        detail.capture->truncated = true;
+      }
+#endif
       append_diagnostic("RUNTIME_OPERATOR_REPLAY_FINGERPRINT_MISMATCH",
                         replay_mismatch.vertex,
                         {},
@@ -520,7 +753,10 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
                         expected,
                         observed);
     } else {
-      append_diagnostic(token);
+      append_diagnostic(token,
+                        reconstruction_failure.vertex,
+                        {},
+                        reconstruction_failure.present ? &reconstruction_failure : nullptr);
     }
     return RunTermination::kFailed;
   }
@@ -561,7 +797,8 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
                                         plan_->scheduler_plan.execution_lane_count,
                                         exec.process_group());
   if (!rates) {
-    HOLOSCAN_LOG_ERROR("Runtime rate-state construction failed with {}", rates.error().message);
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Runtime rate-state construction failed with {}",
+                                 rates.error().message);
     append_diagnostic(registered_token_or(rates.error().message, "RUNTIME_LIFECYCLE_PLAN_INVALID"));
     return RunTermination::kFailed;
   }
@@ -594,8 +831,8 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
                                             plan_->executable_factories.test_cuda_execution_control,
                                             &cuda_diagnostic);
   if (!cuda_resources) {
-    HOLOSCAN_LOG_ERROR("Runtime CUDA execution resource materialization failed: {}",
-                       runtime_error_message(cuda_resources.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Runtime CUDA execution resource materialization failed: {}",
+                                 runtime_error_message(cuda_resources.error()));
     const RuntimeDiagnosticDetail detail{
         .present = true,
         .error = cuda_resources.error(),
@@ -636,8 +873,15 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
     ReadyRunState& ready = shared_ready;
     const bool tracks_terminal_work =
         !ready.completion_receivers.empty() || !ready.input_terminal_receivers.empty();
-    outcome = tracks_terminal_work ? run_shared_owner<true>(exec, ready)
-                                   : run_shared_owner<false>(exec, ready);
+    // Observation ownership is fixed before start(). Select the entire shared-owner loop once,
+    // preserving direct calls at every dispatch batch for both observed and ordinary execution.
+    if (fixture_observation_ == nullptr) {
+      outcome = tracks_terminal_work ? run_shared_owner<true, false>(exec, ready)
+                                     : run_shared_owner<false, false>(exec, ready);
+    } else {
+      outcome = tracks_terminal_work ? run_shared_owner<true, true>(exec, ready)
+                                     : run_shared_owner<false, true>(exec, ready);
+    }
   } else if (outcome == RunTermination::kCompleted) {
     PartitionOwnerGroup group;
     std::vector<PartitionOwnerContext> contexts;
@@ -690,7 +934,7 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
       }
       count_phase(RuntimePhaseCounter::kPartitionControlBarriers);
       if (!process_pending_restarts(exec, ready_states)) {
-        append_diagnostic(exec.lifecycle_failure_token());
+        append_lifecycle_diagnostics(exec);
         outcome = RunTermination::kFailed;
         break;
       }
@@ -708,15 +952,35 @@ void RunSessionState::PendingStartupRateCandidate::cancel() noexcept {
   if (ready_states.size() > 1U && shared_ready_resources.notifications != nullptr) {
     shared_ready_resources.notifications->close();
   }
-  if (!stop_channels(shared_ready_resources.channels.get())) {
+  RuntimeCudaExecutionDiagnostic cuda_graph_diagnostic;
+  expected<void, Error> graph_quiesced =
+      cuda_graph_region_resources_ == nullptr
+          ? expected<void, Error>{}
+          : cuda_graph_region_resources_->quiesce(&cuda_graph_diagnostic);
+  if (!graph_quiesced) {
+    if (plan_->executable_factories.test_cuda_execution_control != nullptr) {
+      plan_->executable_factories.test_cuda_execution_control->notify_failure_observer(
+          RuntimeCudaExecutionObserverPoint::kQuiesceFailureRetention);
+    }
+    // Retain the one owning error without recopying its message on this failure-cleanup path.
+    cuda_graph_quiesce_failure_.emplace(std::move(graph_quiesced).error());
+    if (cuda_execution_resources_ != nullptr) {
+      cuda_execution_resources_->quarantine_after_external_failure();
+    }
+    append_cuda_graph_quiesce_failure(*cuda_graph_quiesce_failure_,
+                                      std::move(cuda_graph_diagnostic));
     outcome = RunTermination::kFailed;
-  }
-  if (tensor_resources_ != nullptr) {
-    tensor_resources_->close();
-  }
-  if (!exec.lifecycle_shutdown()) {
-    append_diagnostic(exec.lifecycle_failure_token());
-    outcome = RunTermination::kFailed;
+  } else {
+    if (!stop_channels(shared_ready_resources.channels.get())) {
+      outcome = RunTermination::kFailed;
+    }
+    if (tensor_resources_ != nullptr) {
+      tensor_resources_->close();
+    }
+    if (!exec.lifecycle_shutdown()) {
+      append_lifecycle_diagnostics(exec);
+      outcome = RunTermination::kFailed;
+    }
   }
   if (!stop_lanes(shared_ready_resources.lanes.get())) {
     outcome = RunTermination::kFailed;
@@ -739,6 +1003,154 @@ void RunSessionState::finish(RunTermination outcome) noexcept {
     outcome = RunTermination::kFailed;
   }
   finish_after_terminal_participant(outcome);
+}
+
+// Callback identity stays compact on the activation path. Construct optional owning evidence only
+// here so the reserved cause capacity cannot introduce stack-page probes into successful dispatch.
+void RunSessionState::append_callback_diagnostic(std::string_view token, VertexId vertex,
+                                                 std::string_view service, const Error& error,
+                                                 const RuntimeCallbackIdentity& identity,
+                                                 std::string_view predicate_id,
+                                                 const RuntimeDeadlineMissDiagnostic* deadline,
+                                                 ::holoscan::DiagnosticSeverity severity) noexcept {
+  RuntimeDiagnosticDetail detail{
+      .present = true,
+      .error = Error{error.code},
+      .operator_id = identity.operator_id,
+      .source = identity.source,
+      .source_sequence = identity.source_sequence,
+      .tag = identity.tag,
+      .tag_time = identity.tag_time,
+      .reference_time = identity.reference_time,
+      .state_generation = identity.state_generation,
+  };
+  if (error.code != ErrorCode::kSuccess || !error.message.empty()) {
+    detail.capture.emplace();
+    detail.capture->append(error.code, error.message);
+  }
+  if (deadline != nullptr) {
+    detail.deadline_miss = *deadline;
+  }
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  try {
+#endif
+    detail.predicate_id.assign(predicate_id);
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  } catch (...) {
+    if (detail.capture) {
+      detail.capture->truncated = true;
+    }
+  }
+#endif
+  append_diagnostic(token, vertex, service, &detail, {}, {}, severity);
+}
+
+// Keep the large owning failure snapshots off recurring dispatch stack frames. This translation
+// unit contains terminal publication; successful callbacks never call this function.
+void RunSessionState::append_compute_diagnostics(const RuntimeOperatorInstance& instance,
+                                                 const ComputeLaneInvocation& invocation,
+                                                 const Error& error,
+                                                 const RuntimeCallbackIdentity& identity) noexcept {
+  if (!invocation.callback_failed && !invocation.cuda_device_restore_failed) {
+    DiagnosticCapture dispatch_failure;
+    dispatch_failure.append(error.code, error.message);
+    const RuntimeDiagnosticDetail detail{
+        .present = true,
+        .error = Error{error.code},
+        .operator_id = instance.operator_id,
+        .capture = dispatch_failure,
+        .operation = DiagnosticOperation::kRuntime,
+    };
+    append_diagnostic("RUNTIME_COMPUTE_DISPATCH_FAILED", instance.vertex, {}, &detail);
+  }
+  if (invocation.callback_failed) {
+    const RuntimeDiagnosticDetail detail{
+        .present = true,
+        .error = Error{error.code},
+        .operator_id = instance.operator_id,
+        .source = identity.source,
+        .source_sequence = identity.source_sequence,
+        .tag = identity.tag,
+        .tag_time = identity.tag_time,
+        .reference_time = identity.reference_time,
+        .state_generation = identity.state_generation,
+        .capture = instance.failure_capture,
+        .tensor_failure = instance.tensor_failure,
+        .operation = DiagnosticOperation::kCompute,
+    };
+    append_compute_failure_diagnostic(instance, detail, error);
+  }
+  if (invocation.cuda_device_restore_failed) {
+    const RuntimeDiagnosticDetail detail{
+        .present = true,
+        .error = Error{ErrorCode::kNotSupported},
+        .operator_id = instance.operator_id,
+        .operation = DiagnosticOperation::kRuntime,
+        .role = invocation.callback_failed ? DiagnosticFailureRole::kTeardown
+                                           : DiagnosticFailureRole::kPrimary,
+        .follows_compute_failure = invocation.callback_failed,
+    };
+    append_diagnostic("RUNTIME_COMPUTE_CUDA_DEVICE_RESTORE_FAILED", instance.vertex, {}, &detail);
+  }
+}
+
+void RunSessionState::append_lifecycle_diagnostics(
+    const GraphExec& exec, ::holoscan::DiagnosticSeverity severity) noexcept {
+  const auto failures = exec.lifecycle_failures();
+  if (failures.empty()) {
+    if (severity != ::holoscan::DiagnosticSeverity::kError) {
+      return;
+    }
+    const auto* result = exec.lifecycle_result();
+    if (result == nullptr || result->disposition == LifecycleExecutionDisposition::kCompleted) {
+      append_diagnostic(exec.lifecycle_failure_token());
+      return;
+    }
+    constexpr std::array reasons{"completed",
+                                 "lifecycle transition was rolled back",
+                                 "invalid lifecycle state",
+                                 "invalid lifecycle restart stage",
+                                 "invalid lifecycle callback binding",
+                                 "lifecycle stage failed",
+                                 "lifecycle rollback failed",
+                                 "lifecycle capacity exhausted"};
+    const auto index = static_cast<std::size_t>(result->disposition);
+    RuntimeDiagnosticDetail detail{.present = true, .operation = DiagnosticOperation::kLifecycle};
+    detail.capture.emplace();
+    detail.capture->append(result->disposition == LifecycleExecutionDisposition::kCapacityExceeded
+                               ? ErrorCode::kResourceExhausted
+                               : ErrorCode::kLifecycleStageFailed,
+                           index < reasons.size() ? reasons[index] : "unknown lifecycle failure");
+    if (result->primary_failure.present) {
+      detail.stage = result->primary_failure.stage;
+      detail.phase = result->primary_failure.phase;
+      if (const auto* owner = exec.operator_by_id(result->primary_failure.node_id)) {
+        detail.vertex = owner->vertex;
+      }
+    }
+    append_diagnostic(exec.lifecycle_failure_token(), detail.vertex, "lifecycle", &detail);
+    return;
+  }
+  for (const auto& failure : failures) {
+    RuntimeDiagnosticDetail detail{
+        .present = true,
+        .capture = failure.capture,
+        .operation = DiagnosticOperation::kLifecycle,
+        .stage = failure.failure.stage,
+        .phase = failure.failure.phase,
+        .transaction_id = failure.transaction_id,
+    };
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    try {
+#endif
+      detail.component_path = failure.component_path;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+    } catch (...) {
+      detail.capture->truncated = true;
+    }
+#endif
+    append_diagnostic(failure.token, failure.vertex, "lifecycle", &detail, {}, {}, severity);
+  }
 }
 
 void RunSessionState::finish_staged_start_failure() noexcept {
@@ -767,6 +1179,10 @@ void RunSessionState::finish_after_terminal_participant(RunTermination outcome) 
       outcome = RunTermination::kRequestedCompleted;
     }
   }
+  {
+    const std::lock_guard diagnostic_lock(diagnostic_mutex_);
+    diagnostic_buffer_.finalize();
+  }
   if (plan_ != nullptr && plan_->runtime_diagnostic_sink != nullptr) {
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
     try {
@@ -784,7 +1200,11 @@ void RunSessionState::finish_after_terminal_participant(RunTermination outcome) 
     }
 #endif
   }
-  termination_.store(outcome, std::memory_order_release);
+  {
+    const std::lock_guard lock(join_mutex_);
+    termination_.store(outcome, std::memory_order_release);
+  }
+  join_cv_.notify_all();
   rate_snapshot_cv_.notify_all();
   if (terminal_participant_ != nullptr) {
     terminal_participant_->after_terminal_freeze();
@@ -797,7 +1217,7 @@ void RunSessionState::finish_after_terminal_participant(RunTermination outcome) 
   }
 }
 
-template <bool TracksTerminalWork>
+template <bool TracksTerminalWork, bool Observed>
 // The shared owner preserves the serialized lifecycle/readiness transaction used by partitions.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] RunTermination RunSessionState::run_shared_owner(GraphExec& exec,
@@ -808,7 +1228,7 @@ template <bool TracksTerminalWork>
       return RunTermination::kStopped;
     }
     if (!process_pending_restarts(exec, ready)) {
-      append_diagnostic(exec.lifecycle_failure_token());
+      append_lifecycle_diagnostics(exec);
       return RunTermination::kFailed;
     }
     if constexpr (TracksTerminalWork) {
@@ -830,7 +1250,7 @@ template <bool TracksTerminalWork>
       return RunTermination::kFailed;
     }
     if (ready.dispatcher->active_count() != 0U) {
-      outcome = dispatch_ready(exec, ready);
+      outcome = dispatch_ready_impl<Observed>(exec, ready);
       if (outcome != RunTermination::kCompleted) {
         return outcome;
       }

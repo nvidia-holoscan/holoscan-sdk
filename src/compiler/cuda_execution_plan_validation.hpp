@@ -47,8 +47,24 @@ struct ExecutionPlanState;
 
 [[nodiscard]] inline bool canonical_cuda_compute_stream_order(
     const CudaComputeStreamPlanRecord& left, const CudaComputeStreamPlanRecord& right) noexcept {
-  return std::tie(left.process_group.value, left.device.value, left.owner_id) <
-         std::tie(right.process_group.value, right.device.value, right.owner_id);
+  // Partition owner IDs are human-readable strings, so lexical comparison would put
+  // "partition.10" before "partition.2". Keep partition streams numerically ordered and place
+  // residual/process-device streams after them.
+  const auto left_key = std::tuple{left.process_group.value,
+                                   left.device.value,
+                                   !left.partition.has_value(),
+                                   left.partition ? left.partition->value : 0U};
+  const auto right_key = std::tuple{right.process_group.value,
+                                    right.device.value,
+                                    !right.partition.has_value(),
+                                    right.partition ? right.partition->value : 0U};
+  return left_key != right_key ? left_key < right_key : left.owner_id < right.owner_id;
+}
+
+[[nodiscard]] inline bool canonical_operator_cuda_stream_binding_order(
+    const OperatorCudaStreamBindingPlanRecord& left,
+    const OperatorCudaStreamBindingPlanRecord& right) noexcept {
+  return left.operator_vertex.value < right.operator_vertex.value;
 }
 
 [[nodiscard]] inline bool canonical_tensor_device_resource_order(

@@ -43,6 +43,7 @@ struct PartitionProblemStorage {
           outgoing[index],
           false,
           detail::partitioning::ExecutionDomainKey{1U},
+          {},
           device_obligations[index],
           {},
           source_regions[index],

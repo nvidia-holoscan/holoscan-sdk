@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -151,6 +153,93 @@ void run_channel_pubsub_polling(benchmark::State& state, const holoscan::Channel
   state.counters["payload_bytes"] = static_cast<double>(sizeof(BenchmarkPOD64));
 }
 
+template <bool WaitAndReceive>
+// Keep endpoint setup, queue priming, and the measured receive loop together in this benchmark.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+void run_channel_queued_receive(benchmark::State& state, const char* const channel_suffix) {
+  auto runtime = holoscan::ChannelRuntime::create();
+  if (!runtime) {
+    const std::string message =
+        "failed to create ChannelRuntime: " + holoscan::runtime_error_message(runtime.error());
+    state.SkipWithError(message.c_str());
+    return;
+  }
+
+  const std::string channel_name =
+      make_unique_channel_benchmark_name("holoscan_channel_benchmark_", channel_suffix);
+  auto options = make_channel_benchmark_options(holoscan::ChannelQueuePolicy::kBlocking);
+  options.enable_event_wake = true;
+  auto publisher = runtime->create_publisher<BenchmarkPOD64>(channel_name, options);
+  auto subscriber = runtime->create_subscriber<BenchmarkPOD64>(channel_name, options);
+  if (!publisher || !subscriber) {
+    state.SkipWithError("failed to create queued-receive benchmark endpoints");
+    return;
+  }
+  std::vector<holoscan::ChannelSubscriber<BenchmarkPOD64>> subscribers;
+  subscribers.emplace_back(std::move(*subscriber));
+  if (!wait_for_subscriber_count(publisher.value(), subscribers, 1U)) {
+    state.SkipWithError("timed out waiting for queued-receive benchmark subscriber");
+    return;
+  }
+
+  std::uint32_t sequence = 0U;
+  std::uint64_t checksum = 0U;
+  auto& receiver = subscribers.front();
+  for (auto _ : state) {
+    state.PauseTiming();
+    auto emitted = publisher->emit(make_payload(++sequence));
+    if (!emitted || *emitted != 1U) {
+      state.ResumeTiming();
+      state.SkipWithError("failed to queue benchmark sample");
+      break;
+    }
+
+    bool queued = false;
+    const auto queue_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+    while (std::chrono::steady_clock::now() < queue_deadline) {
+      auto ready = receiver.has_samples();
+      if (!ready) {
+        break;
+      }
+      if (*ready) {
+        queued = true;
+        break;
+      }
+      std::this_thread::yield();
+    }
+    state.ResumeTiming();
+    if (!queued) {
+      state.SkipWithError("sample did not become queued before benchmark receive");
+      break;
+    }
+
+    if constexpr (WaitAndReceive) {
+      auto received =
+          receiver.wait_and_receive_sample(std::chrono::steady_clock::time_point::max());
+      if (!received) {
+        const std::string message = "queued wait_and_receive_sample failed: " +
+                                    holoscan::runtime_error_message(received.error());
+        state.SkipWithError(message.c_str());
+        break;
+      }
+      checksum ^= checksum_payload(received->data);
+    } else {
+      auto received = receiver.receive_sample();
+      if (!received) {
+        const std::string message =
+            "queued receive_sample failed: " + holoscan::runtime_error_message(received.error());
+        state.SkipWithError(message.c_str());
+        break;
+      }
+      checksum ^= checksum_payload(received->data);
+    }
+  }
+
+  benchmark::DoNotOptimize(checksum);
+  state.SetItemsProcessed(state.iterations());
+  state.counters["payload_bytes"] = static_cast<double>(sizeof(BenchmarkPOD64));
+}
+
 // REQ: SYSTEM-005
 void BM_ChannelPOD_OneToOne_Blocking(benchmark::State& state) {
   run_channel_pubsub_polling<1>(
@@ -165,6 +254,14 @@ void BM_ChannelPOD_OneToOne_DropOldestDepthOne(benchmark::State& state) {
 void BM_ChannelPOD_OneToOne_DropOldestDepth64(benchmark::State& state) {
   run_channel_pubsub_polling<1>(
       state, holoscan::ChannelQueuePolicy::kDropOldest, "pod_1to1_drop_oldest_depth_64");
+}
+
+void BM_ChannelPOD_QueuedReceiveSample(benchmark::State& state) {
+  run_channel_queued_receive<false>(state, "pod_queued_receive_sample");
+}
+
+void BM_ChannelPOD_QueuedWaitAndReceiveSample(benchmark::State& state) {
+  run_channel_queued_receive<true>(state, "pod_queued_wait_and_receive_sample");
 }
 
 template <std::size_t SubscriberCount>
@@ -182,6 +279,8 @@ void BM_ChannelPOD_Fanout_DropOldestDepthOne(benchmark::State& state) {
 BENCHMARK(BM_ChannelPOD_OneToOne_Blocking)->UseRealTime();
 BENCHMARK(BM_ChannelPOD_OneToOne_DropOldestDepthOne)->UseRealTime();
 BENCHMARK(BM_ChannelPOD_OneToOne_DropOldestDepth64)->UseRealTime();
+BENCHMARK(BM_ChannelPOD_QueuedReceiveSample);
+BENCHMARK(BM_ChannelPOD_QueuedWaitAndReceiveSample);
 BENCHMARK_TEMPLATE(BM_ChannelPOD_Fanout_Blocking, 2)->UseRealTime();
 BENCHMARK_TEMPLATE(BM_ChannelPOD_Fanout_Blocking, 4)->UseRealTime();
 BENCHMARK_TEMPLATE(BM_ChannelPOD_Fanout_Blocking, 8)->UseRealTime();

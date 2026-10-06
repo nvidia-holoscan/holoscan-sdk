@@ -1,8 +1,10 @@
 # Holoscan Vision sample pipeline
 
 This example composes every Holoscan Vision operator into one compiled CUDA
-graph. A single source emits image, remap, bounding-box, and score tensors with
-aligned capture times and frame IDs across three deterministic frames. The
+graph. A single source emits `schema::ImageT` images and Tensor remap maps, bounding
+boxes, and scores with aligned capture times and frame IDs across three
+deterministic frames. Each image carries its CUDA Tensor in `ImageT::data`
+alongside dimensions, encoding, and sensor metadata. The
 static remap map is published with the first frame and reused by `RemapOp`'s
 `kLatest` map input for the remaining frames. The graph processes the streams
 through independent image and detection branches, then verifies every image,
@@ -37,7 +39,7 @@ flowchart LR
         nms --> mask_sink
     end
 
-    source -- "image stream: U8 HWC [4, 4, 3]" --> resize
+    source -- "ImageT stream: RGB8 HWC [4, 4, 3]" --> resize
     source -- "map once: F32 HWC [2, 2, 2]<br/>then kLatest reuse" --> remap
     source -- "boxes and scores streams: frame-aligned" --> nms
 ```
@@ -53,12 +55,21 @@ flowchart LR
 - Reusing one causal map across the image stream at `RemapOp`, while joining
   each frame's boxes and scores at `NonMaximumSuppressionOp` by matching
   capture time and frame ID.
-- Declaring finite runtime tensor pools and binding every tensor-producing
-  output to CUDA device 0 during compilation.
+- Declaring the image tensor field with
+  `.tensor_field(schema::ImageTensorFields::data)`, allocating it from a finite
+  runtime tensor pool, and publishing it with `output.emit_tensor(loan, descriptor,
+  metadata)`. Every tensor-producing output is bound to CUDA device 0 during
+  compilation.
 - Converting interleaved U8 image data to normalized planar F32 data while a
   parallel detection branch produces an NMS mask.
 - Copying only the final tensors to the host to verify every frame's image
   values, detection mask, capture timestamp, source clock domain, and frame ID.
+- Checking that image dimensions, encoding, precision, color space, ROI, and
+  plane layouts describe the resulting pixels. The final planar F32 image has
+  `CUSTOM` encoding, unspecified color space, unknown significant bits (255),
+  zero ROI offsets, and three rebuilt plane layouts; its sensor header,
+  exposure, and gain are preserved. Remap maps and NMS boxes, scores, and
+  masks remain Tensor payloads.
 
 ## Build and test
 

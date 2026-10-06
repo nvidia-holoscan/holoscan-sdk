@@ -56,11 +56,13 @@ inline constexpr std::size_t kMaximumCatalogDataFrameBytes = kMaximumInlinePaylo
 
 /// Carry one ordinary catalog endpoint's bounded application, framing, and bucket geometry.
 struct CatalogInlinePayloadContract {
-  std::uint64_t native_payload_capacity_bytes{};  ///< Application materialization bound.
+  std::uint64_t native_payload_capacity_bytes{};  ///< Endpoint-local writer or reader bound.
   std::uint64_t wire_payload_capacity_bytes{};    ///< Encoded payload including schema envelope.
   std::uint64_t framing_overhead_bytes{};         ///< Attribution plus optional schema envelope.
-  std::uint64_t required_frame_bytes{};           ///< Complete catalog data-frame bound.
-  bool frame_fits_inline_transport{};  ///< Whether a fixed-inline HoloMQ bucket admits the frame.
+  std::uint64_t required_frame_bytes{};           ///< Complete catalog data-frame requirement.
+  std::uint64_t selected_bucket_bytes{};          ///< Exact service-owned HoloMQ bucket.
+  /// Maximum application bytes admitted by the selected bucket after framing.
+  std::uint64_t bucket_usable_native_payload_bytes{};
 };
 
 /// Derive one ordinary scalar, POD, or serialized-schema catalog frame contract.
@@ -96,16 +98,19 @@ struct CatalogInlinePayloadContract {
   }
   const std::uint64_t required_frame_bytes =
       wire_payload_capacity_bytes + kCatalogDataAttributionBytes;
-  const bool frame_fits_inline_transport =
+  const auto selected_bucket =
       required_frame_bytes <= std::numeric_limits<std::size_t>::max()
-          ? inline_payload_bucket_size(static_cast<std::size_t>(required_frame_bytes)).has_value()
-          : false;
+          ? inline_payload_bucket_size(static_cast<std::size_t>(required_frame_bytes))
+          : std::nullopt;
+  const std::uint64_t selected_bucket_bytes = selected_bucket.value_or(0U);
   return CatalogInlinePayloadContract{
       .native_payload_capacity_bytes = native_payload_capacity_bytes,
       .wire_payload_capacity_bytes = wire_payload_capacity_bytes,
       .framing_overhead_bytes = framing_overhead_bytes,
       .required_frame_bytes = required_frame_bytes,
-      .frame_fits_inline_transport = frame_fits_inline_transport,
+      .selected_bucket_bytes = selected_bucket_bytes,
+      .bucket_usable_native_payload_bytes =
+          selected_bucket_bytes == 0U ? 0U : selected_bucket_bytes - framing_overhead_bytes,
   };
 }
 

@@ -61,6 +61,8 @@ constexpr std::size_t kDropGoal = 2U;     // kResourceExhausted refusals to demo
 constexpr std::size_t kMaxHeldLoans = 64U;
 constexpr int kNoCudaDeviceReturnCode = 77;
 
+struct InspectionResources;
+
 // Operators record what happened here; main() prints the summary only after the
 // session has fully stopped. graph.op<> takes no pointers, so shared observation
 // state is static by design (same pattern as tensors_101 / slow_fast_fusion).
@@ -119,6 +121,8 @@ struct Observation {
     });
   }
 
+  // Published before run_async and cleared after the session has joined.
+  static inline InspectionResources* inspection_resources{};
   static inline std::mutex mutex;
   static inline std::condition_variable ready;
   static inline std::size_t device_frames{};
@@ -130,6 +134,32 @@ struct Observation {
   static inline std::atomic<std::uintptr_t> producer_stream{};
   static inline std::atomic<std::uintptr_t> device_consumer_stream{};
   static inline std::atomic<std::uintptr_t> inspector_private_stream{};
+};
+
+// Release-stream registration borrows the stream; it does not transfer ownership.
+// Keep both the stream and asynchronous-copy destinations alive until session
+// cleanup has released Tensor handles and enqueued their deferred deallocation.
+struct InspectionResources {
+  InspectionResources() = default;
+  InspectionResources(const InspectionResources&) = delete;
+  InspectionResources& operator=(const InspectionResources&) = delete;
+  InspectionResources(InspectionResources&&) = delete;
+  InspectionResources& operator=(InspectionResources&&) = delete;
+
+  ~InspectionResources() {
+    Observation::inspection_resources = nullptr;
+    if (private_stream != nullptr) {
+      // Early termination may precede the inspector's final copy/synchronization.
+      if (!synchronization_completed) {
+        static_cast<void>(cudaStreamSynchronize(private_stream));
+      }
+      static_cast<void>(cudaStreamDestroy(private_stream));
+    }
+  }
+
+  cudaStream_t private_stream{};
+  std::array<std::array<std::uint8_t, kFrameBytes>, kInspectGoal> staging{};
+  bool synchronization_completed{};
 };
 
 [[nodiscard]] holoscan::expected<void, holoscan::Error> fail(
@@ -184,13 +214,16 @@ class PatternSource final : public holoscan::Operator<> {
  private:
   [[nodiscard]] holoscan::expected<void, holoscan::Error> emit_one_frame(
       holoscan::ExecutionContext& context, cudaStream_t stream) {
-    const std::uint32_t frame_id = ++frame_id_;
+    const std::uint32_t frame_id = frame_id_ + 1U;
     const int fill_byte = 1 + static_cast<int>((frame_id - 1U) % 255U);  // never zero
 
     // Step 1: borrow one preallocated device slot. Never blocks, never mallocs.
     auto loan = frame.allocate_tensor(
         holoscan::TensorLoanRequest{.shape = kFrameShape, .dtype = kByteDtype});
     if (!loan) {
+      if (loan.error().code == holoscan::ErrorCode::kResourceExhausted) {
+        return {};  // retry this logical frame after earlier slots finish retiring
+      }
       return holoscan::make_unexpected(std::move(loan).error());
     }
 
@@ -213,8 +246,18 @@ class PatternSource final : public holoscan::Operator<> {
     }
 
     // Step 4: publication stays explicit and separate from commit.
-    return frame.emit(std::move(*loan),
-                      holoscan::EmitOptions{.capture_time = context.activation_time()});
+    auto published = frame.emit(std::move(*loan),
+                                holoscan::EmitOptions{.capture_time = context.activation_time()});
+    if (!published) {
+      if (published.error().code == holoscan::ErrorCode::kBackpressured) {
+        // A blocking edge refuses immediately when full. This terminal attempt
+        // consumed the loan; retry the logical frame with a fresh loan next tick.
+        return {};
+      }
+      return holoscan::make_unexpected(std::move(published).error());
+    }
+    frame_id_ = frame_id;
+    return {};
   }
 
   [[nodiscard]] holoscan::expected<void, holoscan::Error> exhaust_pool_once() {
@@ -273,8 +316,11 @@ class DeviceConsumer final : public holoscan::Operator<> {
     if (stream == nullptr) {
       return fail(holoscan::ErrorCode::kNotSupported);
     }
-    // One stream per process group and device: this must be the same handle the
-    // producer wrote on. main() verifies the recorded identities after the run.
+    // One stream per active execution partition and device. The automatic
+    // planner puts each fanout leg in its own partition, so this is a different
+    // handle from the one the producer wrote on, and the runtime keeps the
+    // received Tensor ordered with an event fence instead of stream sharing.
+    // main() verifies the recorded identities after the run.
     Observation::device_consumer_stream.store(reinterpret_cast<std::uintptr_t>(stream),
                                               std::memory_order_release);
 
@@ -316,16 +362,10 @@ class DeviceConsumer final : public holoscan::Operator<> {
 
 // EdgeInspector: the one place host access is allowed. It stages asynchronous
 // device-to-host copies on its own non-blocking stream, registers that stream
-// for release tracking, and performs the program's single cudaStreamSynchronize
-// after the LAST staged copy — one final sync at the edge, never per frame.
+// for release tracking, and synchronizes after the LAST staged copy — one final
+// sync on the normal path, never per frame. Resources outlive session cleanup.
 class EdgeInspector final : public holoscan::Operator<> {
  public:
-  ~EdgeInspector() override {
-    if (private_stream_ != nullptr) {
-      static_cast<void>(cudaStreamDestroy(private_stream_));
-    }
-  }
-
   void setup(holoscan::OperatorSpec& spec) override {
     spec.input(frame, "frame")
         .queue_depth(1U)
@@ -354,16 +394,18 @@ class EdgeInspector final : public holoscan::Operator<> {
       return {};  // inspection finished; keep draining the freshest-only edge quietly
     }
 
+    auto& resources = *Observation::inspection_resources;
     cudaStream_t runtime_stream = context.cuda_stream().get();
-    if (private_stream_ == nullptr &&
-        cudaStreamCreateWithFlags(&private_stream_, cudaStreamNonBlocking) != cudaSuccess) {
+    if (resources.private_stream == nullptr &&
+        cudaStreamCreateWithFlags(&resources.private_stream, cudaStreamNonBlocking) !=
+            cudaSuccess) {
       return fail(holoscan::ErrorCode::kNotSupported);
     }
-    if (private_stream_ == runtime_stream) {
+    if (resources.private_stream == runtime_stream) {
       return fail(holoscan::ErrorCode::kNotSupported);
     }
-    Observation::inspector_private_stream.store(reinterpret_cast<std::uintptr_t>(private_stream_),
-                                                std::memory_order_release);
+    Observation::inspector_private_stream.store(
+        reinterpret_cast<std::uintptr_t>(resources.private_stream), std::memory_order_release);
 
     holoscan::Tensor& tensor = sample->data;
     if (tensor.device().device_type != kDLCUDA ||
@@ -373,29 +415,30 @@ class EdgeInspector final : public holoscan::Operator<> {
 
     // Enqueue: copy_to_host_async first makes the private stream wait on the
     // tensor's readiness event, then enqueues the D2H copy. No host block.
-    auto& slot = staging_[staged_];
-    auto copied = tensor.copy_to_host_async(slot.data(), slot.size(), private_stream_);
+    auto& slot = resources.staging[staged_];
+    auto copied = tensor.copy_to_host_async(slot.data(), slot.size(), resources.private_stream);
     if (!copied) {
       return holoscan::make_unexpected(std::move(copied).error());
     }
     // Release-stream registration: the pool may recycle this slot only after
     // work on the registered stream — including our pending copy — completes.
-    release_registered_ =
-        tensor.set_deallocation_stream(private_stream_) && (staged_ == 0U || release_registered_);
+    release_registered_ = tensor.set_deallocation_stream(resources.private_stream) &&
+                          (staged_ == 0U || release_registered_);
     ++staged_;
 
     if (staged_ < kInspectGoal) {
       return {};
     }
 
-    // The ONLY synchronization call in this program: one blocking wait on the
+    // The normal path has one synchronization: one blocking wait on the
     // private stream, after the last staged copy, off the steady-state path.
-    if (cudaStreamSynchronize(private_stream_) != cudaSuccess) {
+    if (cudaStreamSynchronize(resources.private_stream) != cudaSuccess) {
       return fail();
     }
+    resources.synchronization_completed = true;
     std::vector<std::uint8_t> values;
     values.reserve(kInspectGoal);
-    for (const auto& buffer : staging_) {
+    for (const auto& buffer : resources.staging) {
       const std::uint8_t first = buffer.front();
       for (const std::uint8_t byte : buffer) {
         if (byte != first) {
@@ -414,10 +457,8 @@ class EdgeInspector final : public holoscan::Operator<> {
   holoscan::Input<holoscan::Tensor> frame;
 
  private:
-  cudaStream_t private_stream_{};
   std::size_t staged_{};
   bool release_registered_{};
-  std::array<std::array<std::uint8_t, kFrameBytes>, kInspectGoal> staging_{};
 };
 
 }  // namespace
@@ -443,13 +484,15 @@ int main() {
   }
 
   Observation::reset();
+  InspectionResources inspection_resources;
+  Observation::inspection_resources = &inspection_resources;
 
   holoscan::Graph graph{"tensors-in-depth"};
   const auto source = graph.op<PatternSource>("source");
   const auto device_consumer = graph.op<DeviceConsumer>("device_consumer");
   const auto inspector = graph.op<EdgeInspector>("inspector");
   // Fanout: one emitted tensor, two consumers, one release stream per consumer.
-  // The device path keeps every frame (kBlocking, deep queue); the observational
+  // The device path keeps every accepted frame (kBlocking, deep queue); the observational
   // inspection edge keeps only the newest sample (kDropOldest, depth 1) so the
   // slower host-staging tap can never backpressure the device pipeline.
   graph.add_flow(
@@ -495,13 +538,16 @@ int main() {
       Observation::device_consumer_stream.load(std::memory_order_acquire);
   const std::uintptr_t private_stream =
       Observation::inspector_private_stream.load(std::memory_order_acquire);
-  if (producer == 0U || producer != consumer || private_stream == 0U ||
-      private_stream == producer) {
+  // The fanout divides the producer and device-consumer chains into distinct execution
+  // partitions. Each receives a real runtime stream, and the inspector's private stream is
+  // distinct from both.
+  if (producer == 0U || consumer == 0U || private_stream == 0U || producer == consumer ||
+      private_stream == producer || private_stream == consumer) {
     std::cerr << "tensors_in_depth: stream identity check failed\n";
     return 3;
   }
-  std::cout << "shared runtime stream: producer == device consumer (one per process group + "
-               "device)\n";
+  std::cout << "runtime streams: producer != device consumer (separate execution partitions), "
+               "one per active partition and device\n";
   if (!Observation::readiness_ok || Observation::device_frames < kFrameGoal) {
     std::cerr << "tensors_in_depth: device consumer verification failed\n";
     return 3;

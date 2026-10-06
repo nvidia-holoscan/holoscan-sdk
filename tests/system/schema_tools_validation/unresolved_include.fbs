@@ -6,7 +6,8 @@ include "missing.fbs";
 namespace schema_tools;
 
 table UnresolvedIncludeRoot {
-  value: uint;
+  value: uint (id: 0);
 }
 
 root_type UnresolvedIncludeRoot;
+file_identifier "UNRS";

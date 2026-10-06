@@ -49,7 +49,7 @@ get_target_property(
     LIBRARY_OUTPUT_DIRECTORY
 )
 set(holoscan_expected_python_library_output_directory
-    "${CMAKE_CURRENT_BINARY_DIR}/holoscan-sdk/python/lib/holoscan/core"
+    "${CMAKE_CURRENT_BINARY_DIR}/holoscan-sdk/python/lib/holoscan"
 )
 if(NOT holoscan_python_library_output_directory
         STREQUAL holoscan_expected_python_library_output_directory)

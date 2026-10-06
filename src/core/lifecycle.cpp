@@ -5,9 +5,19 @@
 
 #include <holoscan/core/lifecycle.hpp>
 
+#include <utility>
+
+#include "diagnostic_context.hpp"
 #include "lifecycle_context_internal.hpp"
 
 namespace holoscan {
+
+void LifecycleContext::report_error(ErrorCode code, std::string_view message) noexcept {
+  if (state_ != nullptr && state_->diagnostic_capture != nullptr &&
+      state_->diagnostic_capture->count == 0U) {
+    state_->diagnostic_capture->append(code, message);
+  }
+}
 
 CancellationView LifecycleContext::cancellation() const noexcept {
   if (state_ == nullptr) {
@@ -61,6 +71,12 @@ expected<OperatorRef, Error> LifecycleContext::restart_target(
     return make_unexpected(Error{ErrorCode::kLifecycleInvalidCallingContext});
   }
   return state_->restart_path(state_->service_state, path);
+}
+
+void LifecycleContext::record_callback_failure(Error error) noexcept {
+  if (state_ != nullptr && state_->report_failure != nullptr) {
+    state_->report_failure(state_->service_state, std::move(error));
+  }
 }
 
 expected<void, Error> LifecycleContext::bind_nominal_rate_port(const void* output,

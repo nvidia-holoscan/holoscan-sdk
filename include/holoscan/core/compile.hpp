@@ -20,7 +20,6 @@
 #include <holoscan/core/errors.hpp>
 #include <holoscan/core/execution_plan.hpp>
 #include <holoscan/core/expected.hpp>
-#include <holoscan/core/parameter_override_set.hpp>
 #include <holoscan/core/rate.hpp>
 #include <holoscan/threading/thread_placement.hpp>
 
@@ -45,6 +44,12 @@ struct GeneratedEndpointNamePin {
 struct PartitionThreadPlacementBinding {
   std::string partition_name;   ///< Exact authored partition name.
   ThreadPlacement placement{};  ///< Requested affinity and scheduling policy.
+};
+
+/// @brief Own one CPU-affinity request for a Runtime support-thread role.
+struct SupportThreadAffinityBinding {
+  SupportThreadRole role{SupportThreadRole::kController};  ///< Exact closed Runtime role.
+  ThreadPlacement placement{};  ///< Canonical internal affinity-only placement request.
 };
 
 /// @brief Deep-own one manual-partition Green Context placement request.
@@ -129,6 +134,18 @@ class HOLOSCAN_CORE_EXPORT DeploymentBinding {
   DeploymentBinding& bind_thread_placement(std::string_view partition_name,
                                            ThreadPlacement placement);
 
+  /// @brief Bind one Runtime-owned support-thread role to an allowed CPU set.
+  /// @param role Controller or optional process-local Channel pump.
+  /// @param affinity Nonempty CPU set copied before return.
+  /// @return This binding for fluent cold-path authoring.
+  /// @throws std::bad_alloc if owned storage allocation fails.
+  /// @note Compilation rejects unknown or duplicate roles and affinity requests that cannot be
+  /// proven against the compiling thread's effective CPU set. This method never changes affinity.
+  /// A controller binding also constrains inline Operator callbacks hosted by that controller;
+  /// separately worker-backed execution lanes without explicit partition affinity retain the
+  /// controller thread's pre-binding allowed CPU set.
+  DeploymentBinding& bind_support_thread_affinity(SupportThreadRole role, CPUAffinity affinity);
+
   /// @brief Bind one manual execution partition to an exact CUDA Green Context placement.
   /// @param partition_name Exact authored manual partition name copied before return.
   /// @param placement Explicit target device and positive exact structured SM count.
@@ -164,6 +181,13 @@ class HOLOSCAN_CORE_EXPORT DeploymentBinding {
     return thread_placements_;
   }
 
+  /// @brief Return owned support-thread affinity bindings in insertion order.
+  /// @return Immutable bindings valid until this value is mutated or destroyed.
+  [[nodiscard]] std::span<const SupportThreadAffinityBinding> support_thread_affinities()
+      const noexcept {
+    return support_thread_affinities_;
+  }
+
   /// @brief Return owned manual-partition Green Context placements in insertion order.
   /// @return Immutable bindings valid until this value is mutated or destroyed.
   [[nodiscard]] std::span<const PartitionCudaGreenContextBinding> cuda_green_contexts()
@@ -187,6 +211,7 @@ class HOLOSCAN_CORE_EXPORT DeploymentBinding {
 
  private:
   std::vector<PartitionThreadPlacementBinding> thread_placements_;
+  std::vector<SupportThreadAffinityBinding> support_thread_affinities_;
   std::vector<PartitionCudaGreenContextBinding> cuda_green_contexts_;
   std::vector<GeneratedEndpointNamePinRecord> generated_endpoint_names_;
   std::vector<TensorOutputDevicePlacementRecord> tensor_output_devices_;
@@ -246,6 +271,20 @@ struct AutomaticQueueSizingOptions {
   RateRatio headroom_ratio{2U, 1U};  ///< Exact multiplier, required to be at least one.
 };
 
+/// @brief Configure immutable CUDA execution-resource lowering.
+struct CudaExecutionCompileOptions {
+  /// Ordinary compute-stream sharing policy. By default, each active execution partition gets a
+  /// device-local stream; select kSharedProcessDevice to minimize the number of ordinary streams.
+  CudaComputeStreamPolicy compute_stream_policy{CudaComputeStreamPolicy::kPerExecutionPartition};
+};
+
+/// @brief Select compile admission for process-local opaque object payload edges.
+enum class OpaqueObjectPayloadPolicy : std::uint8_t {
+  kAllow = 0,   ///< Admit opaque object edges without a diagnostic.
+  kWarn = 1,    ///< Admit opaque object edges with one advisory per edge.
+  kReject = 2,  ///< Reject opaque object edges with one error per edge.
+};
+
 /// @brief Own all caller-supplied inputs to one Graph compilation.
 ///
 /// Compilation snapshots this value and the Graph. No field supplies a live
@@ -256,10 +295,12 @@ struct CompileOptions {
   Profile profile{Profile::kStandard};  ///< Closed requested root profile.
   bool auto_insert_converters{true};    ///< False rejects until converter lowering is available.
   std::optional<ChannelEndpointCatalog> endpoint_catalog;  ///< Optional immutable authority.
-  std::optional<ParamOverrideSet> parameter_overrides;     ///< Optional target-bound overrides.
   ParameterCompileOptions parameters;                      ///< Parameter storage/update policy.
   std::optional<LifecycleTransactionOptions> lifecycle_transactions;  ///< Active restart opt-in.
   AutomaticQueueSizingOptions automatic_queue_sizing;  ///< Advisory rate-derived depth policy.
+  CudaExecutionCompileOptions cuda_execution;          ///< CUDA compute-stream policy.
+  /// Admission policy for the fixed process-local Python object payload identity.
+  OpaqueObjectPayloadPolicy opaque_object_payloads{OpaqueObjectPayloadPolicy::kAllow};
 };
 
 /// @brief Select the deployment artifact destination for explicit publication.

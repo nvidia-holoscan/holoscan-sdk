@@ -40,7 +40,7 @@ function(holoscan_add_pytest_tests)
 
     set_tests_properties(${_test_name} PROPERTIES
       ENVIRONMENT "${_env}"
-      FAIL_REGULAR_EXPRESSION "Fatal Python error"
+      FAIL_REGULAR_EXPRESSION "Fatal Python error;nanobind: leaked"
     )
 
     if(ARG_TIMEOUT)

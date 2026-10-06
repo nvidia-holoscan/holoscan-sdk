@@ -318,7 +318,7 @@ def docs_intraprocess_required_cpus(
     if scenario == "sample_forward":
         return 4 + notification_driver
     if fanout > 1 and fanout_operator_lanes == "shared":
-        return 2 + notification_driver
+        return 1 + notification_driver
     if fanout > 1:
         return fanout + 3 + notification_driver
     return 3 + notification_driver
@@ -822,22 +822,20 @@ def graph_intraprocess_command(
             and scenario != "sample_forward"
         )
         if shared_fanout:
-            controller_cpu_index = 1
-        elif fanout > 1:
-            controller_cpu_index = fanout + 1
+            command.extend(["--controller-cpu", str(cpu(args, 0))])
         else:
-            controller_cpu_index = 2 if compact_docs_1to1 else 3
-        command.extend(
-            [
-                "--source-cpu",
-                str(cpu(args, 0)),
-                "--controller-cpu",
-                str(cpu(args, controller_cpu_index)),
-            ]
-        )
+            controller_cpu_index = fanout + 1 if fanout > 1 else (2 if compact_docs_1to1 else 3)
+            command.extend(
+                [
+                    "--source-cpu",
+                    str(cpu(args, 0)),
+                    "--controller-cpu",
+                    str(cpu(args, controller_cpu_index)),
+                ]
+            )
         if workload == "throughput":
             if shared_fanout:
-                notification_driver_cpu_index = 2
+                notification_driver_cpu_index = 1
             elif fanout > 1:
                 notification_driver_cpu_index = fanout + 3
             else:

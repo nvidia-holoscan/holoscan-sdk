@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -14,9 +15,12 @@
 
 #include <holoscan/core/payload_options.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
+#include <holoscan/sensor_io/image_descriptor_scratch.hpp>
+#include <holoscan/sensor_io/provenance.hpp>
 #include <holoscan/vision/reformat_op.hpp>
 
 #include "detail/cvcuda_tensor.hpp"
+#include "detail/image_payload.hpp"
 
 namespace holoscan::vision {
 namespace {
@@ -33,38 +37,32 @@ constexpr TensorRepresentation kCudaTensorRepresentation{
 
 class ReformatOp::Impl {
  public:
+  std::optional<sensor_io::ImageDescriptorScratch> image_metadata;
   std::unique_ptr<cvcuda::Reformat> operation;
 };
 
-ReformatOp::ReformatOp(VisionImageCapacity capacity)
-    : impl_(std::make_unique<Impl>()), capacity_(capacity) {}
+ReformatOp::ReformatOp() : impl_(std::make_unique<Impl>()) {}
 
 ReformatOp::~ReformatOp() = default;
 
 void ReformatOp::setup(OperatorSpec& spec) {
-  auto byte_span = detail::maximum_output_byte_span(
-      capacity_.max_width, capacity_.max_height, capacity_.max_batch_size, sizeof(double));
-  if (!byte_span) {
-    throw RuntimeError(byte_span.error());
-  }
-
   spec.input(input, "input")
       .queue_depth(1U)
+      .tensor_field(schema::ImageTensorFields::data)
       .expects_tensor(TensorInputSpec{
           .representation = kCudaTensorRepresentation,
           .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
       });
   spec.output(output, "output")
-      .produces_tensor(TensorOutputSpec{
-          .representation = {.memory_kind = MemoryKind::kCudaDevice,
-                             .strides = TensorStridePolicy::kContiguousOnly},
-          .bounds =
-              TensorBounds{
-                  .max_rank = detail::ImageTensorView::kMaxRank,
-                  .max_byte_span = *byte_span,
-              },
-          .storage = TensorOutputStorage::kRuntimePool,
-      });
+      .tensor_field(schema::ImageTensorFields::data)
+      .produces_tensor(
+          TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .strides = TensorStridePolicy::kContiguousOnly},
+              .bounds = TensorBounds{.max_rank = detail::ImageTensorView::kMaxRank},
+              .storage = TensorOutputStorage::kRuntimePool,
+          },
+          input_max_byte_span(input));
 }
 
 Contract ReformatOp::contract() const {
@@ -74,8 +72,19 @@ Contract ReformatOp::contract() const {
 }
 
 void ReformatOp::start() {
+  if (!impl_->image_metadata) {
+    auto created = sensor_io::ImageDescriptorScratch::create();
+    if (!created) {
+      throw RuntimeError(created.error());
+    }
+    impl_->image_metadata.emplace(std::move(*created));
+  }
   if (impl_->operation) {
     return;
+  }
+  auto prepared = detail::prepare_nvcv_tensor_handles(2);
+  if (!prepared) {
+    throw RuntimeError(prepared.error().code, "ReformatOp failed to prepare NVCV Tensor handles");
   }
   try {
     impl_->operation = std::make_unique<cvcuda::Reformat>();
@@ -92,15 +101,15 @@ void ReformatOp::stop() {
 
 expected<void, Error> ReformatOp::compute(ExecutionContext& context) {
   const ReformatOpParams& configuration = context.params<ReformatOpParams>();
-  if (!impl_->operation) {
-    return failure(ErrorCode::kNotReady, "ReformatOp CV-CUDA resource is not initialized");
+  if (!impl_->operation || !impl_->image_metadata) {
+    return failure(ErrorCode::kNotReady, "ReformatOp resources are not initialized");
   }
   const cudaStream_t stream = context.cuda_stream().get();
   if (stream == nullptr) {
     return failure(ErrorCode::kNotSupported, "ReformatOp requires a runtime CUDA stream");
   }
 
-  auto sample = input.receive();
+  auto sample = input.selected_sample();
   if (!sample) {
     return make_unexpected(std::move(sample).error());
   }
@@ -111,15 +120,16 @@ expected<void, Error> ReformatOp::compute(ExecutionContext& context) {
   const detail::ImageTensorLayout output_layout = interleaved_to_planar
                                                       ? detail::ImageTensorLayout::kPlanar
                                                       : detail::ImageTensorLayout::kInterleaved;
-  auto input_view = detail::describe_image_tensor(
-      sample->data, detail::TensorOperation::kReformat, capacity_.max_batch_size, input_layout);
+  auto input_view = detail::describe_image_payload(
+      sample->data(), detail::TensorOperation::kReformat, kMaximumBatchSize, input_layout);
   if (!input_view) {
     return make_unexpected(std::move(input_view).error());
   }
-  if (input_view->width > capacity_.max_width || input_view->height > capacity_.max_height) {
-    return failure(ErrorCode::kInvalidArgument,
-                   "ReformatOp output exceeds the authored output-pool capacity");
+  auto metadata_copied = impl_->image_metadata->copy_metadata_from(sample->data());
+  if (!metadata_copied) {
+    return make_unexpected(std::move(metadata_copied).error());
   }
+  auto& image = impl_->image_metadata->image();
 
   std::array<std::int64_t, detail::ImageTensorView::kMaxRank> output_shape{};
   if (input_view->rank == 3U) {
@@ -170,11 +180,20 @@ expected<void, Error> ReformatOp::compute(ExecutionContext& context) {
                                                    input_view->dtype,
                                                    DLDevice{kDLCUDA, loan->device_id().value},
                                                    detail::TensorOperation::kReformat,
-                                                   capacity_.max_batch_size,
+                                                   kMaximumBatchSize,
                                                    output_layout);
   if (!output_view) {
     return make_unexpected(std::move(output_view).error());
   }
+  auto metadata_updated = detail::update_image_metadata(
+      image,
+      *input_view,
+      *output_view,
+      detail::ImageMetadataTransform{.geometry = detail::ImageGeometryChange::kPreserve});
+  if (!metadata_updated) {
+    return make_unexpected(std::move(metadata_updated).error());
+  }
+
   auto nvcv_input = detail::wrap_nvcv_tensor(*input_view);
   if (!nvcv_input) {
     return make_unexpected(std::move(nvcv_input).error());
@@ -195,7 +214,7 @@ expected<void, Error> ReformatOp::compute(ExecutionContext& context) {
   if (!committed) {
     return make_unexpected(std::move(committed).error());
   }
-  return output.emit(std::move(*loan), detail::forward_metadata(sample->metadata));
+  return output.emit_tensor(std::move(*loan), image, sensor_io::derive_from(sample->metadata()));
 }
 
 }  // namespace holoscan::vision

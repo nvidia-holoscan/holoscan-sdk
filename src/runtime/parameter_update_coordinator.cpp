@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -25,6 +27,7 @@
 #include <holoscan/logger/logger.hpp>
 
 #include "parameter_catalog_projection.hpp"
+#include "runtime/runtime_termination.hpp"
 
 namespace holoscan::detail {
 namespace {
@@ -107,9 +110,10 @@ class FixedEventLedger {
   [[nodiscard]] bool replace_accepted_transition_reservation(
       std::uint32_t released_count) noexcept {
     if (released_count > reserved_sequences_) {
-      HOLOSCAN_LOG_ERROR(
-          "Parameter event reservation replacement exceeded the retained reservation count");
-      std::terminate();
+      runtime_log_and_terminate_noexcept([] {
+        HOLOSCAN_LOG_ERROR(
+            "Parameter event reservation replacement exceeded the retained reservation count");
+      });
     }
     const ParamEventSequence available =
         std::numeric_limits<ParamEventSequence>::max() - next_sequence_;
@@ -125,9 +129,10 @@ class FixedEventLedger {
 
   void release_accepted_transitions(std::uint32_t count) noexcept {
     if (count > reserved_sequences_) {
-      HOLOSCAN_LOG_ERROR(
-          "Parameter event reservation release exceeded the retained reservation count");
-      std::terminate();
+      runtime_log_and_terminate_noexcept([] {
+        HOLOSCAN_LOG_ERROR(
+            "Parameter event reservation release exceeded the retained reservation count");
+      });
     }
     reserved_sequences_ -= count;
   }
@@ -454,7 +459,9 @@ template <typename Entry>
 }
 
 [[nodiscard]] bool has_portable_scalar_route(const ParamFieldDescriptor& field) noexcept {
-  if (field.local_operations.read_member_as_scalar == nullptr) {
+  if (field.type_shape.optional || !field.type_shape.has_stable_shape ||
+      (field.local_operations.read_member_as_scalar == nullptr &&
+       field.local_operations.read_hosted_member_as_scalar == nullptr)) {
     return false;
   }
   switch (field.logical_type) {
@@ -462,8 +469,12 @@ template <typename Entry>
     case ParamLogicalType::kSignedInteger:
     case ParamLogicalType::kUnsignedInteger:
     case ParamLogicalType::kFloatingPoint:
-    case ParamLogicalType::kDuration:
       return true;
+    case ParamLogicalType::kDuration:
+      return (field.type_shape.element_or_rep_type == ParamLogicalType::kSignedInteger ||
+              field.type_shape.element_or_rep_type == ParamLogicalType::kUnsignedInteger) &&
+             field.type_shape.element_or_rep_bit_width > 0U &&
+             field.type_shape.element_or_rep_bit_width <= 64U;
     case ParamLogicalType::kString:
     case ParamLogicalType::kSequence:
     case ParamLogicalType::kFilesystemPath:
@@ -510,6 +521,317 @@ template <typename Entry>
     default:
       return ParamUpdateStatus::kRejected;
   }
+}
+
+[[nodiscard]] std::optional<ParamScalarValue> enum_label_value(const ParamFieldDescriptor& field,
+                                                               std::string_view label) noexcept {
+  for (std::size_t index = 0U; index < field.enum_choices.count; ++index) {
+    if (field.enum_choices.values[index].name == label) {
+      return field.enum_choices.values[index].value;
+    }
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] bool valid_integer_width(std::uint16_t width) noexcept {
+  return width == 8U || width == 16U || width == 32U || width == 64U;
+}
+
+[[nodiscard]] bool decode_signed(ParamScalarValue value, std::int64_t& result) noexcept {
+  if (value.kind != ParamScalarKind::kSignedInteger || !valid_integer_width(value.bit_width)) {
+    return false;
+  }
+  if (value.bit_width == 64U) {
+    result = std::bit_cast<std::int64_t>(value.raw_bits);
+    return true;
+  }
+  const std::uint64_t mask = (std::uint64_t{1} << value.bit_width) - 1U;
+  if ((value.raw_bits & ~mask) != 0U) {
+    return false;
+  }
+  const std::uint64_t sign = std::uint64_t{1} << (value.bit_width - 1U);
+  result = std::bit_cast<std::int64_t>((value.raw_bits & sign) != 0U ? value.raw_bits | ~mask
+                                                                     : value.raw_bits);
+  return true;
+}
+
+[[nodiscard]] bool decode_unsigned(ParamScalarValue value, std::uint64_t& result) noexcept {
+  if (value.kind != ParamScalarKind::kUnsignedInteger || !valid_integer_width(value.bit_width) ||
+      (value.bit_width != 64U && value.raw_bits >= (std::uint64_t{1} << value.bit_width))) {
+    return false;
+  }
+  result = value.raw_bits;
+  return true;
+}
+
+[[nodiscard]] ParamScalarValue signed_value(std::int64_t value, std::uint16_t width) noexcept {
+  const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+  const std::uint64_t mask =
+      width == 64U ? std::numeric_limits<std::uint64_t>::max() : (std::uint64_t{1} << width) - 1U;
+  return ParamScalarValue{.kind = ParamScalarKind::kSignedInteger,
+                          .bit_width = static_cast<std::uint8_t>(width),
+                          .raw_bits = bits & mask};
+}
+
+// Interpret Python-style wide numeric carriers against the exact declared scalar width.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] bool coerce_patch_scalar(ParamScalarValue input, ParamLogicalType type,
+                                       std::uint16_t width, ParamScalarValue& output) noexcept {
+  if (type == ParamLogicalType::kBool) {
+    if (input.kind == ParamScalarKind::kBool && input.bit_width == 1U && input.raw_bits <= 1U) {
+      output = input;
+      return true;
+    }
+    return false;
+  }
+  if (type == ParamLogicalType::kDuration) {
+    if (input.kind == ParamScalarKind::kDurationNanoseconds && input.bit_width == 64U) {
+      output = input;
+      return true;
+    }
+    return false;
+  }
+  if (type == ParamLogicalType::kSignedInteger || type == ParamLogicalType::kUnsignedInteger) {
+    if (!valid_integer_width(width)) {
+      return false;
+    }
+    std::int64_t signed_input{};
+    std::uint64_t unsigned_input{};
+    if (type == ParamLogicalType::kSignedInteger) {
+      if (decode_signed(input, signed_input)) {
+        const bool fits = width == 64U || (signed_input >= -(std::int64_t{1} << (width - 1U)) &&
+                                           signed_input < (std::int64_t{1} << (width - 1U)));
+        if (fits) {
+          output = signed_value(signed_input, width);
+          return true;
+        }
+      }
+      if (decode_unsigned(input, unsigned_input) &&
+          unsigned_input <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        const auto converted = static_cast<std::int64_t>(unsigned_input);
+        const bool fits = width == 64U || converted < (std::int64_t{1} << (width - 1U));
+        if (fits) {
+          output = signed_value(converted, width);
+          return true;
+        }
+      }
+      return false;
+    }
+    if (decode_signed(input, signed_input) && signed_input >= 0) {
+      unsigned_input = static_cast<std::uint64_t>(signed_input);
+    } else if (!decode_unsigned(input, unsigned_input)) {
+      return false;
+    }
+    if (width != 64U && unsigned_input >= (std::uint64_t{1} << width)) {
+      return false;
+    }
+    output = ParamScalarValue{.kind = ParamScalarKind::kUnsignedInteger,
+                              .bit_width = static_cast<std::uint8_t>(width),
+                              .raw_bits = unsigned_input};
+    return true;
+  }
+  if (type != ParamLogicalType::kFloatingPoint) {
+    return false;
+  }
+  double decoded{};
+  if (input.kind == ParamScalarKind::kFloatingPoint && input.bit_width == 64U) {
+    decoded = std::bit_cast<double>(input.raw_bits);
+  } else if (input.kind == ParamScalarKind::kFloatingPoint && input.bit_width == 32U &&
+             input.raw_bits <= std::numeric_limits<std::uint32_t>::max()) {
+    decoded = std::bit_cast<float>(static_cast<std::uint32_t>(input.raw_bits));
+  } else {
+    std::int64_t signed_input{};
+    std::uint64_t unsigned_input{};
+    if (decode_signed(input, signed_input)) {
+      decoded = static_cast<double>(signed_input);
+    } else if (decode_unsigned(input, unsigned_input)) {
+      decoded = static_cast<double>(unsigned_input);
+    } else {
+      return false;
+    }
+  }
+  if (width == 32U) {
+    const float narrowed = static_cast<float>(decoded);
+    if (std::isfinite(decoded) && !std::isfinite(narrowed)) {
+      return false;
+    }
+    output = ParamScalarValue::from(narrowed);
+    return true;
+  }
+  if (width == 64U) {
+    output = ParamScalarValue::from(decoded);
+    return true;
+  }
+  return false;
+}
+
+[[nodiscard]] bool exact_patch_scalar(ParamScalarValue input, ParamLogicalType type,
+                                      std::uint16_t width) noexcept {
+  switch (type) {
+    case ParamLogicalType::kBool:
+      return input.kind == ParamScalarKind::kBool && input.bit_width == 1U && input.raw_bits <= 1U;
+    case ParamLogicalType::kSignedInteger:
+      return input.kind == ParamScalarKind::kSignedInteger && input.bit_width == width;
+    case ParamLogicalType::kUnsignedInteger:
+      return input.kind == ParamScalarKind::kUnsignedInteger && input.bit_width == width;
+    case ParamLogicalType::kFloatingPoint:
+      return input.kind == ParamScalarKind::kFloatingPoint && input.bit_width == width;
+    case ParamLogicalType::kDuration:
+      return input.kind == ParamScalarKind::kDurationNanoseconds && input.bit_width == 64U;
+    case ParamLogicalType::kString:
+    case ParamLogicalType::kSequence:
+    case ParamLogicalType::kFilesystemPath:
+    case ParamLogicalType::kObject:
+      return false;
+  }
+  return false;
+}
+
+[[nodiscard]] std::optional<ParamScalarValue> patch_scalar_value(
+    const ParamFieldDescriptor& field, const ParamPatchValue& value,
+    bool sequence_element = false) noexcept {
+  ParamScalarValue input{};
+  if (value.kind() == ParamPatchValueKind::kScalar) {
+    input = value.scalar();
+  } else if (value.kind() == ParamPatchValueKind::kString && field.enum_choices.count != 0U) {
+    const auto choice = enum_label_value(field, value.string());
+    if (!choice) {
+      return std::nullopt;
+    }
+    input = *choice;
+  } else {
+    return std::nullopt;
+  }
+  const ParamLogicalType type =
+      sequence_element ? field.type_shape.element_or_rep_type : field.logical_type;
+  const std::uint16_t width =
+      sequence_element ? field.type_shape.element_or_rep_bit_width : field.type_shape.bit_width;
+  if (!detail::ParamPatchValueAccess::permits_numeric_conversion(value)) {
+    return exact_patch_scalar(input, type, width) ? std::optional{input} : std::nullopt;
+  }
+  ParamScalarValue converted{};
+  return coerce_patch_scalar(input, type, width, converted) ? std::optional{converted}
+                                                            : std::nullopt;
+}
+
+[[nodiscard]] const ParamFieldDescriptor* find_nested_field(const ParamSchemaDescriptor& schema,
+                                                            std::string_view name) noexcept {
+  const auto found = std::find_if(schema.fields.begin(),
+                                  schema.fields.end(),
+                                  [&](const auto& item) { return item.canonical_name == name; });
+  return found == schema.fields.end() ? nullptr : &*found;
+}
+
+// Decode the owning control-plane carrier directly into one cloned aggregate. A failure can leave
+// that private candidate changed; the caller discards it before any publication is possible.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] ParamUpdateStatus replace_patch_value(void* aggregate,
+                                                    const ParamFieldDescriptor& field,
+                                                    const ParamPatchValue& value,
+                                                    std::uint32_t depth = 0U) {
+  if (value.kind() == ParamPatchValueKind::kUnset) {
+    return ParamUpdateStatus::kTypeMismatch;
+  }
+  if (value.kind() == ParamPatchValueKind::kNone) {
+    if (!field.type_shape.optional || field.local_operations.clear_optional_member == nullptr) {
+      return ParamUpdateStatus::kTypeMismatch;
+    }
+    field.local_operations.clear_optional_member(aggregate);
+    return ParamUpdateStatus::kAccepted;
+  }
+  if (const auto scalar = patch_scalar_value(field, value)) {
+    return field.local_operations.replace_member_from_scalar != nullptr &&
+                   field.local_operations.replace_member_from_scalar(aggregate, *scalar)
+               ? ParamUpdateStatus::kAccepted
+               : ParamUpdateStatus::kTypeMismatch;
+  }
+  if (value.kind() == ParamPatchValueKind::kString) {
+    if (field.logical_type != ParamLogicalType::kString ||
+        field.local_operations.replace_member_from_string == nullptr) {
+      return ParamUpdateStatus::kTypeMismatch;
+    }
+    if (field.constraints.max_utf8_bytes != 0U &&
+        value.string().size() > field.constraints.max_utf8_bytes) {
+      return ParamUpdateStatus::kOutOfBounds;
+    }
+    field.local_operations.replace_member_from_string(aggregate, value.string());
+    return ParamUpdateStatus::kAccepted;
+  }
+  if (value.kind() == ParamPatchValueKind::kSequence) {
+    const auto elements = value.sequence();
+    if (field.logical_type != ParamLogicalType::kSequence ||
+        (field.constraints.max_elements != 0U &&
+         elements.size() > field.constraints.max_elements)) {
+      return field.logical_type == ParamLogicalType::kSequence ? ParamUpdateStatus::kOutOfBounds
+                                                               : ParamUpdateStatus::kTypeMismatch;
+    }
+    if (field.type_shape.element_or_rep_type == ParamLogicalType::kString) {
+      if (field.local_operations.replace_member_from_string_sequence == nullptr) {
+        return ParamUpdateStatus::kTypeMismatch;
+      }
+      std::vector<std::string_view> strings;
+      strings.reserve(elements.size());
+      for (const ParamPatchValue& element : elements) {
+        if (element.kind() != ParamPatchValueKind::kString ||
+            (field.constraints.max_element_utf8_bytes != 0U &&
+             element.string().size() > field.constraints.max_element_utf8_bytes)) {
+          return element.kind() == ParamPatchValueKind::kString ? ParamUpdateStatus::kOutOfBounds
+                                                                : ParamUpdateStatus::kTypeMismatch;
+        }
+        strings.push_back(element.string());
+      }
+      field.local_operations.replace_member_from_string_sequence(aggregate, strings);
+      return ParamUpdateStatus::kAccepted;
+    }
+    if (field.local_operations.replace_member_from_scalar_sequence == nullptr) {
+      return ParamUpdateStatus::kTypeMismatch;
+    }
+    std::vector<ParamScalarValue> scalars;
+    scalars.reserve(elements.size());
+    for (const ParamPatchValue& element : elements) {
+      const auto scalar = patch_scalar_value(field, element, true);
+      if (!scalar) {
+        return ParamUpdateStatus::kTypeMismatch;
+      }
+      scalars.push_back(*scalar);
+    }
+    return field.local_operations.replace_member_from_scalar_sequence(aggregate, scalars)
+               ? ParamUpdateStatus::kAccepted
+               : ParamUpdateStatus::kTypeMismatch;
+  }
+  if (value.kind() != ParamPatchValueKind::kObject ||
+      field.logical_type != ParamLogicalType::kObject || !field.nested || depth >= 32U ||
+      field.local_operations.mutable_nested_member == nullptr ||
+      field.local_operations.nested_schema == nullptr) {
+    return ParamUpdateStatus::kTypeMismatch;
+  }
+  const ParamSchemaDescriptor* const schema = field.local_operations.nested_schema();
+  if (schema == nullptr || schema->coverage != ParamSchemaCoverage::kComplete) {
+    return ParamUpdateStatus::kTypeMismatch;
+  }
+  void* const nested = field.local_operations.mutable_nested_member(aggregate);
+  if (nested == nullptr) {
+    return ParamUpdateStatus::kTypeMismatch;
+  }
+  const auto assignments = value.object();
+  for (std::size_t index = 0U; index < assignments.size(); ++index) {
+    if (assignments[index].name.empty() ||
+        std::any_of(assignments.begin(),
+                    assignments.begin() + static_cast<std::ptrdiff_t>(index),
+                    [&](const auto& prior) { return prior.name == assignments[index].name; })) {
+      return ParamUpdateStatus::kRejected;
+    }
+    const ParamFieldDescriptor* const child = find_nested_field(*schema, assignments[index].name);
+    if (child == nullptr) {
+      return ParamUpdateStatus::kUnknownParameter;
+    }
+    const ParamUpdateStatus status =
+        replace_patch_value(nested, *child, assignments[index].value, depth + 1U);
+    if (status != ParamUpdateStatus::kAccepted) {
+      return status;
+    }
+  }
+  return ParamUpdateStatus::kAccepted;
 }
 
 // The nested switches deliberately enumerate the admitted scalar kind/width pairs. Keeping this
@@ -643,6 +965,55 @@ template <typename T>
   return false;
 }
 
+[[nodiscard]] bool field_semantically_equal(const ParamFieldDescriptor& field, const void* left,
+                                            const void* right) noexcept {
+  ParamScalarValue left_scalar{};
+  ParamScalarValue right_scalar{};
+  const bool left_has_scalar = read_param_field_scalar(field, left, left_scalar);
+  const bool right_has_scalar = read_param_field_scalar(field, right, right_scalar);
+  if (left_has_scalar || right_has_scalar) {
+    return left_has_scalar && right_has_scalar &&
+           scalar_semantically_equal(left_scalar, right_scalar);
+  }
+
+  const ParamFieldLocalOperations& operations = field.local_operations;
+  if (operations.read_hosted_member_as_scalar_sequence != nullptr) {
+    const std::span<const ParamScalarValue> left_values =
+        read_param_field_scalar_sequence(field, left);
+    const std::span<const ParamScalarValue> right_values =
+        read_param_field_scalar_sequence(field, right);
+    return left_values.size() == right_values.size() && std::equal(left_values.begin(),
+                                                                   left_values.end(),
+                                                                   right_values.begin(),
+                                                                   scalar_semantically_equal);
+  }
+  if (operations.nested_member != nullptr && operations.nested_schema != nullptr) {
+    const void* const left_nested = operations.nested_member(left);
+    const void* const right_nested = operations.nested_member(right);
+    if (left_nested == nullptr || right_nested == nullptr) {
+      return left_nested == right_nested;
+    }
+    const ParamSchemaDescriptor* const nested_schema = operations.nested_schema();
+    if (nested_schema == nullptr) {
+      return false;
+    }
+    return std::all_of(nested_schema->fields.begin(),
+                       nested_schema->fields.end(),
+                       [left_nested, right_nested](const ParamFieldDescriptor& nested_field) {
+                         return field_semantically_equal(nested_field, left_nested, right_nested);
+                       });
+  }
+
+  if (operations.semantic_equal_members == nullptr) {
+    return false;
+  }
+  try {
+    return operations.semantic_equal_members(left, right);
+  } catch (...) {
+    return false;
+  }
+}
+
 [[nodiscard]] bool valid_audit(ParamAudit audit) noexcept {
   return audit == ParamAudit::kProfileDefault || audit == ParamAudit::kMinimal ||
          audit == ParamAudit::kDetailed;
@@ -767,8 +1138,9 @@ class ParameterGenerationStore {
       return initialize_derived_term_storage(1U);
     }
     if (capacity.generation_slots_per_operator == 0U || type_->copy_construct == nullptr ||
-        !plan_->fixed_scalar_generation_strategy || !type_->copy_construct_is_nothrow ||
-        !type_->trivially_copyable || !type_->destroy_is_nothrow ||
+        (plan_->materialization != ParameterMaterializationStrategy::kFixedObject &&
+         plan_->materialization != ParameterMaterializationStrategy::kColdOwnedTyped) ||
+        !type_->destroy_is_nothrow ||
         (plan_->runtime_updates_enabled &&
          (capacity.resolved_update_policy != ParamRuntimeUpdatePolicy::kEnabledIfAdmitted ||
           !capacity.runtime_updates_enabled || capacity.max_pending_updates_per_operator == 0U)) ||
@@ -940,7 +1312,13 @@ class ParameterGenerationStore {
       return make_unexpected(Error{ErrorCode::kResourceExhausted});
     }
     GenerationSlot& slot = slots_[selected];
-    type_->copy_construct(const_cast<void*>(slot.header.value), latest_value());
+    try {
+      type_->copy_construct(const_cast<void*>(slot.header.value), latest_value());
+    } catch (const std::bad_alloc&) {
+      return make_unexpected(Error{ErrorCode::kResourceExhausted});
+    } catch (...) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
     if (derived_term_count_ != 0U) {
       std::copy_n(derived_terms_for_slot(latest_slot_),
                   derived_term_count_,
@@ -968,12 +1346,10 @@ class ParameterGenerationStore {
     return validation_status(type_->validate_aggregate(slots_[slot_index].header.value));
   }
 
-  [[nodiscard]] bool replace_candidate_scalar(std::uint32_t slot_index,
-                                              const ParamFieldDescriptor& field,
-                                              ParamScalarValue value) noexcept {
-    return field.local_operations.replace_member_from_scalar != nullptr &&
-           field.local_operations.replace_member_from_scalar(
-               const_cast<void*>(slots_[slot_index].header.value), value);
+  [[nodiscard]] ParamUpdateStatus replace_candidate_value(std::uint32_t slot_index,
+                                                          const ParamFieldDescriptor& field,
+                                                          const ParamPatchValue& value) {
+    return replace_patch_value(const_cast<void*>(slots_[slot_index].header.value), field, value);
   }
 
   [[nodiscard]] ParamUpdateStatus validate_derived_term_patch(
@@ -1023,19 +1399,22 @@ class ParameterGenerationStore {
     }
     const void* const candidate = slots_[slot_index].header.value;
     for (const ParameterFieldPlanRecord& planned : fields_) {
-      const ParamFieldDescriptor* const field = find_field(planned.field);
-      if (field == nullptr || field->local_operations.read_member_as_scalar == nullptr) {
-        return false;
+      if (planned.update_disposition != ParameterFieldUpdateDisposition::kAdmitted) {
+        continue;
       }
-      ParamScalarValue candidate_value{};
-      ParamScalarValue published_value{};
-      if (!field->local_operations.read_member_as_scalar(candidate, candidate_value) ||
-          !field->local_operations.read_member_as_scalar(current->value, published_value) ||
-          !scalar_semantically_equal(candidate_value, published_value)) {
+      const ParamFieldDescriptor* const field = find_field(planned.field);
+      if (field == nullptr || !field_semantically_equal(*field, candidate, current->value)) {
         return false;
       }
     }
     return true;
+  }
+
+  [[nodiscard]] bool candidate_field_equivalent_to_latest(std::uint32_t slot_index,
+                                                          ParamFieldId field_id) const noexcept {
+    const ParamFieldDescriptor* const field = find_field(field_id);
+    return field != nullptr &&
+           field_semantically_equal(*field, slots_[slot_index].header.value, latest_value());
   }
 
   void commit_candidate(std::uint32_t slot_index, ParamUpdateSequence sequence,
@@ -1527,10 +1906,33 @@ class ParameterGenerationStore {
           local->storage.inline_bytes != planned.storage.inline_bytes) {
         return make_unexpected(Error{ErrorCode::kIncompatible});
       }
-      if (planned.update_disposition == ParameterFieldUpdateDisposition::kAdmitted &&
-          (local->local_operations.replace_member_from_scalar == nullptr ||
-           local->local_operations.read_member_as_scalar == nullptr)) {
-        return make_unexpected(Error{ErrorCode::kIncompatible});
+      if (planned.update_disposition == ParameterFieldUpdateDisposition::kAdmitted) {
+        const bool optional_supported =
+            !local->type_shape.optional || local->local_operations.clear_optional_member != nullptr;
+        const bool value_supported = [&]() {
+          switch (local->logical_type) {
+            case ParamLogicalType::kBool:
+            case ParamLogicalType::kSignedInteger:
+            case ParamLogicalType::kUnsignedInteger:
+            case ParamLogicalType::kFloatingPoint:
+            case ParamLogicalType::kDuration:
+              return local->local_operations.replace_member_from_scalar != nullptr;
+            case ParamLogicalType::kString:
+              return local->local_operations.replace_member_from_string != nullptr;
+            case ParamLogicalType::kSequence:
+              return local->local_operations.replace_member_from_scalar_sequence != nullptr ||
+                     local->local_operations.replace_member_from_string_sequence != nullptr;
+            case ParamLogicalType::kObject:
+              return local->nested && local->local_operations.mutable_nested_member != nullptr &&
+                     local->local_operations.nested_schema != nullptr;
+            case ParamLogicalType::kFilesystemPath:
+              return false;
+          }
+          return false;
+        }();
+        if (!optional_supported || !value_supported) {
+          return make_unexpected(Error{ErrorCode::kIncompatible});
+        }
       }
     }
     return {};
@@ -1666,7 +2068,7 @@ class ParameterGenerationStore {
 struct ParameterUpdateCoordinator::State {
   struct PatchView {
     ParamAddress target{};
-    ParamScalarValue value{};
+    ParamPatchValue value{};
     ParamGeneration expected_generation{};
     bool has_expected_generation{};
   };
@@ -1883,8 +2285,9 @@ struct ParameterUpdateCoordinator::State {
     }
     ResultLedgerEntry* const evidence = find_result(result.update_sequence);
     if (evidence == nullptr || evidence->event_reservations == 0U) {
-      HOLOSCAN_LOG_ERROR("Parameter transition lost its preaccepted result/event reservation");
-      std::terminate();
+      runtime_log_and_terminate_noexcept([] {
+        HOLOSCAN_LOG_ERROR("Parameter transition lost its preaccepted result/event reservation");
+      });
     }
     const bool recorded = events.append(
         ParamEvent{
@@ -1901,8 +2304,9 @@ struct ParameterUpdateCoordinator::State {
         true,
         [this](const auto& policy, const auto& event) { return event_visible(policy, event); });
     if (!recorded) {
-      HOLOSCAN_LOG_ERROR("Parameter transition exhausted a preaccepted event reservation");
-      std::terminate();
+      runtime_log_and_terminate_noexcept([] {
+        HOLOSCAN_LOG_ERROR("Parameter transition exhausted a preaccepted event reservation");
+      });
     }
     --evidence->event_reservations;
     if (final_evidence_state(result.state)) {
@@ -2043,6 +2447,7 @@ struct ParameterUpdateCoordinator::State {
 
     const ParamGeneration latest_generation = store->latest_generation();
     bool no_change = true;
+    bool requires_candidate_comparison = false;
     bool lifecycle_update = false;
     bool runtime_update = false;
     LifecycleStage earliest_lifecycle_stage = LifecycleStage::kStart;
@@ -2089,27 +2494,38 @@ struct ParameterUpdateCoordinator::State {
       } else if (planned->mutability == ParamMutability::kRuntime) {
         runtime_update = true;
       }
-      ParamScalarValue current{};
-      if (!local->local_operations.read_member_as_scalar(store->latest_value(), current) ||
-          patch.value.kind == ParamScalarKind::kNone) {
-        outcome.status = ParamUpdateStatus::kTypeMismatch;
-        outcome.failed_patch = static_cast<std::uint32_t>(index);
-        return outcome;
-      }
       requires_internal = requires_internal || local->visibility == ParamVisibility::kInternal;
       requires_sensitive = requires_sensitive || local->sensitivity == ParamSensitivity::kSensitive;
       external_tuning_visible =
           external_tuning_visible && local->external_access == ParamExternalAccess::kTuning;
-      if (!scalar_semantically_equal(current, patch.value)) {
+      const auto scalar = patch_scalar_value(*local, patch.value);
+      if (scalar) {
+        ParamScalarValue current{};
+        if (!local->local_operations.read_member_as_scalar(store->latest_value(), current)) {
+          if (!local->type_shape.optional) {
+            outcome.status = ParamUpdateStatus::kTypeMismatch;
+            outcome.failed_patch = static_cast<std::uint32_t>(index);
+            return outcome;
+          }
+        } else if (scalar_semantically_equal(current, *scalar)) {
+          continue;
+        }
         const ParamUpdateStatus derived_status =
-            store->validate_derived_term_patch(patch.target.field, patch.value);
+            store->validate_derived_term_patch(patch.target.field, *scalar);
         if (derived_status != ParamUpdateStatus::kAccepted) {
           outcome.status = derived_status;
           outcome.failed_patch = static_cast<std::uint32_t>(index);
           return outcome;
         }
-        no_change = false;
+      } else if (patch.value.kind() == ParamPatchValueKind::kUnset) {
+        outcome.status = ParamUpdateStatus::kTypeMismatch;
+        outcome.failed_patch = static_cast<std::uint32_t>(index);
+        return outcome;
+      } else {
+        requires_candidate_comparison = true;
+        continue;
       }
+      no_change = false;
     }
 
     if (lifecycle_update) {
@@ -2135,18 +2551,18 @@ struct ParameterUpdateCoordinator::State {
       return outcome;
     }
     const ParamUpdateSequence sequence = next_sequence + 1U;
-    if (no_change && !lifecycle_update) {
+    const auto accept_runtime_no_change = [&]() {
       ResultLedgerEntry* const evidence = reserve_result();
       if (evidence == nullptr) {
         outcome.status = ParamUpdateStatus::kQueueFull;
-        return outcome;
+        return;
       }
       if (auto retained = store->accept_latest_without_candidate(sequence); !retained) {
         abort_result(*evidence);
         outcome.status = retained.error().code == ErrorCode::kResourceExhausted
                              ? ParamUpdateStatus::kQueueFull
                              : ParamUpdateStatus::kRejected;
-        return outcome;
+        return;
       }
       const ParamUpdateResult result{
           .status = ParamUpdateStatus::kAcceptedNoChange,
@@ -2177,6 +2593,9 @@ struct ParameterUpdateCoordinator::State {
       outcome.update_sequence = sequence;
       outcome.target_generation = latest_generation;
       state_changed.notify_all();
+    };
+    if (no_change && !lifecycle_update && !requires_candidate_comparison) {
+      accept_runtime_no_change();
       return outcome;
     }
     if (latest_generation == std::numeric_limits<ParamGeneration>::max()) {
@@ -2193,14 +2612,23 @@ struct ParameterUpdateCoordinator::State {
     for (std::size_t index = 0U; index < patch_count; ++index) {
       const PatchView patch = patch_at(index);
       const ParamFieldDescriptor* const local = store->find_field(patch.target.field);
-      if (!store->replace_candidate_scalar(candidate_slot, *local, patch.value)) {
+      ParamUpdateStatus replacement_status{ParamUpdateStatus::kRejected};
+      try {
+        replacement_status = store->replace_candidate_value(candidate_slot, *local, patch.value);
+      } catch (const std::bad_alloc&) {
+        replacement_status = ParamUpdateStatus::kQueueFull;
+      } catch (...) {
+        replacement_status = ParamUpdateStatus::kRejected;
+      }
+      if (replacement_status != ParamUpdateStatus::kAccepted) {
         store->discard_candidate(candidate_slot);
-        outcome.status = ParamUpdateStatus::kTypeMismatch;
+        outcome.status = replacement_status;
         outcome.failed_patch = static_cast<std::uint32_t>(index);
         return outcome;
       }
-      if (!store->replace_candidate_derived_terms(
-              candidate_slot, patch.target.field, patch.value)) {
+      const auto scalar = patch_scalar_value(*local, patch.value);
+      if (scalar &&
+          !store->replace_candidate_derived_terms(candidate_slot, patch.target.field, *scalar)) {
         store->discard_candidate(candidate_slot);
         outcome.status = ParamUpdateStatus::kTypeMismatch;
         outcome.failed_patch = static_cast<std::uint32_t>(index);
@@ -2212,6 +2640,20 @@ struct ParameterUpdateCoordinator::State {
       store->discard_candidate(candidate_slot);
       outcome.status = validated;
       return outcome;
+    }
+    if (no_change && !lifecycle_update) {
+      for (std::size_t index = 0U; index < patch_count; ++index) {
+        if (!store->candidate_field_equivalent_to_latest(candidate_slot,
+                                                         patch_at(index).target.field)) {
+          no_change = false;
+          break;
+        }
+      }
+      if (no_change) {
+        store->discard_candidate(candidate_slot);
+        accept_runtime_no_change();
+        return outcome;
+      }
     }
 
     ResultLedgerEntry* const evidence = reserve_result();
@@ -2577,6 +3019,7 @@ expected<std::unique_ptr<ParameterUpdateCoordinator>, Error> ParameterUpdateCoor
             .alias = planned.alias,
             .validator_id = planned.validator_id,
             .constraints = planned.constraints,
+            .enum_choices = planned.enum_choices,
             .string_encoding = planned.string_encoding,
             .element_string_encoding = planned.element_string_encoding,
             .value_route = planned.value_route,
@@ -2597,7 +3040,7 @@ expected<std::unique_ptr<ParameterUpdateCoordinator>, Error> ParameterUpdateCoor
               return field.update_disposition == ParameterFieldUpdateDisposition::kAdmitted &&
                      field.mutability == ParamMutability::kRuntime;
             });
-        if (admitted_field_count > std::numeric_limits<std::uint32_t>::max()) {
+        if (std::cmp_greater(admitted_field_count, std::numeric_limits<std::uint32_t>::max())) {
           return make_unexpected(Error{ErrorCode::kIncompatible});
         }
         const auto admitted_fields = static_cast<std::uint32_t>(admitted_field_count);
@@ -2686,10 +3129,14 @@ ParamBatchUpdateResult ParameterUpdateCoordinator::submit(std::span<const ParamP
                            : 0U,
     };
   }
-  if (!patches.empty() && !state_->record_unaccepted_event(patches.front().target,
-                                                           ParamUpdateState::kSubmitted,
-                                                           ParamUpdateStatus::kSubmitted,
-                                                           options)) {
+  const ParamAddress event_target =
+      patches.empty() ? ParamAddress{}
+      : patches.size() == 1U
+          ? patches.front().target
+          : ParamAddress{.operator_instance = patches.front().target.operator_instance};
+  if (!patches.empty() &&
+      !state_->record_unaccepted_event(
+          event_target, ParamUpdateState::kSubmitted, ParamUpdateStatus::kSubmitted, options)) {
     return ParamBatchUpdateResult{.status = ParamUpdateStatus::kQueueFull, .committed = false};
   }
   ParamBatchUpdateResult result = state_->submit_locked(
@@ -2698,7 +3145,7 @@ ParamBatchUpdateResult ParameterUpdateCoordinator::submit(std::span<const ParamP
         const ParamPatch& patch = patches[index];
         return State::PatchView{
             .target = patch.target,
-            .value = patch.value.scalar(),
+            .value = patch.value,
             .expected_generation = patch.expected_generation.value_or(0U),
             .has_expected_generation = patch.expected_generation.has_value(),
         };
@@ -2706,7 +3153,7 @@ ParamBatchUpdateResult ParameterUpdateCoordinator::submit(std::span<const ParamP
       options);
   if (!result.committed && !patches.empty()) {
     static_cast<void>(state_->record_unaccepted_event(
-        patches.front().target, ParamUpdateState::kRejected, result.status, options));
+        event_target, ParamUpdateState::kRejected, result.status, options));
   }
   return result;
 }
@@ -2780,11 +3227,16 @@ std::size_t ParameterUpdateCoordinator::drain_compute_ingress() noexcept {
     const ParamInlinePatch* const patches =
         state_->compute_ingress_patches.get() +
         static_cast<std::size_t>(request_index) * state_->max_compute_patches_per_request;
+    const ParamAddress event_target =
+        request.patch_count == 0U ? ParamAddress{}
+        : request.patch_count == 1U
+            ? patches[0].target
+            : ParamAddress{.operator_instance = patches[0].target.operator_instance};
     const bool evidence_available =
         request.patch_count == 0U || state_->events.can_append_unreserved(2U);
     if (request.patch_count != 0U && evidence_available) {
       static_cast<void>(state_->record_unaccepted_event(
-          patches[0].target, ParamUpdateState::kSubmitted, ParamUpdateStatus::kSubmitted, {}));
+          event_target, ParamUpdateState::kSubmitted, ParamUpdateStatus::kSubmitted, {}));
     }
     const ParamBatchUpdateResult result =
         evidence_available
@@ -2793,7 +3245,7 @@ std::size_t ParameterUpdateCoordinator::drain_compute_ingress() noexcept {
                                       const ParamInlinePatch& patch = patches[index];
                                       return State::PatchView{
                                           .target = patch.target,
-                                          .value = patch.value.scalar(),
+                                          .value = patch.value,
                                           .expected_generation = patch.expected_generation,
                                           .has_expected_generation = patch.has_expected_generation,
                                       };
@@ -2806,7 +3258,7 @@ std::size_t ParameterUpdateCoordinator::drain_compute_ingress() noexcept {
               };
     if (!result.committed && request.patch_count != 0U) {
       static_cast<void>(state_->record_unaccepted_event(
-          patches[0].target, ParamUpdateState::kRejected, result.status, {}));
+          event_target, ParamUpdateState::kRejected, result.status, {}));
     }
     state_->compute_ingress_head =
         (state_->compute_ingress_head + 1U) % state_->compute_ingress_capacity;
@@ -2831,8 +3283,11 @@ expected<ParamReadResult, Error> ParameterUpdateCoordinator::read(ParamAddress a
     return make_unexpected(Error{ErrorCode::kStaleOperatorRef});
   }
   const ParamFieldDescriptor* const field = store->find_field(address.field);
-  if (field == nullptr || field->local_operations.read_member_as_scalar == nullptr) {
+  if (field == nullptr) {
     return make_unexpected(Error{ErrorCode::kNotFound});
+  }
+  if (field->local_operations.read_member_as_scalar == nullptr) {
+    return make_unexpected(Error{ErrorCode::kNotSupported});
   }
   const GenerationSlot* const slot = store->slot_for_view(view);
   if (view == ParamReadView::kPending && slot == nullptr) {
@@ -3319,8 +3774,9 @@ expected<void, Error> ParameterUpdateCoordinator::transition_lifecycle_candidate
     if (publication.retired_sequence != 0U && !publication.retired_was_observed) {
       ResultLedgerEntry* const retired = state_->find_result(publication.retired_sequence);
       if (retired == nullptr || retired->result.state != ParamUpdateState::kPublished) {
-        HOLOSCAN_LOG_ERROR("Unobserved parameter publication lost its retained result evidence");
-        std::terminate();
+        runtime_log_and_terminate_noexcept([] {
+          HOLOSCAN_LOG_ERROR("Unobserved parameter publication lost its retained result evidence");
+        });
       }
       ParamUpdateResult superseded = retired->result;
       superseded.state = ParamUpdateState::kSuperseded;
@@ -3461,6 +3917,36 @@ ParameterGenerationStore* ParameterUpdateCoordinator::find_store(OperatorRef own
 const ParameterGenerationStore* ParameterUpdateCoordinator::find_store(
     OperatorRef owner) const noexcept {
   return state_ == nullptr ? nullptr : state_->find_store(owner);
+}
+
+void ParameterUpdateCoordinatorTestAccess::replace_event_reservation(
+    ParameterUpdateCoordinator& coordinator, std::uint32_t released_count) noexcept {
+  const std::lock_guard lock{coordinator.state_->mutex};
+  static_cast<void>(
+      coordinator.state_->events.replace_accepted_transition_reservation(released_count));
+}
+
+void ParameterUpdateCoordinatorTestAccess::release_event_reservations(
+    ParameterUpdateCoordinator& coordinator, std::uint32_t count) noexcept {
+  const std::lock_guard lock{coordinator.state_->mutex};
+  coordinator.state_->events.release_accepted_transitions(count);
+}
+
+void ParameterUpdateCoordinatorTestAccess::set_result_event_reservations(
+    ParameterUpdateCoordinator& coordinator, ParamUpdateSequence sequence,
+    std::uint32_t count) noexcept {
+  const std::lock_guard lock{coordinator.state_->mutex};
+  if (auto* result = coordinator.state_->find_result(sequence)) {
+    result->event_reservations = count;
+  }
+}
+
+void ParameterUpdateCoordinatorTestAccess::invalidate_result(
+    ParameterUpdateCoordinator& coordinator, ParamUpdateSequence sequence) noexcept {
+  const std::lock_guard lock{coordinator.state_->mutex};
+  if (auto* result = coordinator.state_->find_result(sequence)) {
+    result->valid = false;
+  }
 }
 
 }  // namespace holoscan::detail

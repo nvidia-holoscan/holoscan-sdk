@@ -62,7 +62,9 @@ struct SerializeOptions {
 
 /// @brief Configure guarded sibling atomic replacement.
 struct SaveOptions {
-  /// Optional exact identity required of the current destination bytes.
+  /// Optional exact identity required of the current destination bytes; absence disables the check.
+  /// When saving an edited Document, pass `document.digest().base_source` to guard replacement of
+  /// the parsed file from which the Document was derived.
   std::optional<config::RawSourceDigest> expected_source_digest;
   /// Flush boundary required for success.
   Durability durability{Durability::kDataAndMetadata};
@@ -88,8 +90,18 @@ struct SaveResult {
 /// @param source Complete source bytes, borrowed only for this call.
 /// @param format Syntax selected by the caller; no filename or content inference occurs.
 /// @param options Preservation and resource-limit policy.
-/// @return The immutable Document with semantic and raw-source identity, or a structured failure.
-[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::ConfigResult<config::Document> parse(
+/// @return The immutable Document with semantic and raw-source identity.
+/// @throws config::ConfigException on validation or parse failure.
+[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::Document parse(std::string_view source,
+                                                               Format format,
+                                                               ParseOptions options = {});
+
+/// @brief Try to parse an explicitly selected JSON or admitted YAML source.
+/// @param source Complete source bytes, borrowed only for this call.
+/// @param format Syntax selected by the caller; no filename or content inference occurs.
+/// @param options Preservation and resource-limit policy.
+/// @return The immutable Document or a structured failure.
+[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::ConfigResult<config::Document> try_parse(
     std::string_view source, Format format, ParseOptions options = {});
 
 /// @brief Load and parse an explicitly selected configuration file.
@@ -100,8 +112,18 @@ struct SaveResult {
 /// @param path Existing regular-file path to read.
 /// @param format Explicit source syntax.
 /// @param options Preservation and resource-limit policy.
+/// @return The immutable Document.
+/// @throws config::ConfigException on validation, I/O, or parse failure.
+[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::Document load(const std::filesystem::path& path,
+                                                              Format format,
+                                                              ParseOptions options = {});
+
+/// @brief Try to load and parse an explicitly selected configuration file.
+/// @param path Existing regular-file path to read.
+/// @param format Explicit source syntax.
+/// @param options Preservation and resource-limit policy.
 /// @return The immutable Document or a structured validation, I/O, or parse failure.
-[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::ConfigResult<config::Document> load(
+[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::ConfigResult<config::Document> try_load(
     const std::filesystem::path& path, Format format, ParseOptions options = {});
 
 /// @brief Serialize one immutable document in an explicitly selected format.
@@ -114,8 +136,18 @@ struct SaveResult {
 /// @param document Immutable source document.
 /// @param format Explicit destination syntax.
 /// @param options Output resource bounds.
+/// @return Owning output bytes.
+/// @throws config::ConfigException on preservation, limit, or codec failure.
+[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT std::string serialize(const config::Document& document,
+                                                              Format format,
+                                                              SerializeOptions options = {});
+
+/// @brief Try to serialize one immutable document in an explicitly selected format.
+/// @param document Immutable source document.
+/// @param format Explicit destination syntax.
+/// @param options Output resource bounds.
 /// @return Owning output bytes or a structured preservation, limit, or codec failure.
-[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::ConfigResult<std::string> serialize(
+[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::ConfigResult<std::string> try_serialize(
     const config::Document& document, Format format, SerializeOptions options = {});
 
 /// @brief Persist one document with guarded same-directory atomic replacement.
@@ -132,9 +164,21 @@ struct SaveResult {
 /// @param path Destination path. Its parent must already exist.
 /// @param format Explicit destination syntax.
 /// @param options Compare-and-swap, durability, wait, and output-limit policy.
+/// @return Installed-byte evidence.
+/// @throws config::ConfigException on failure. A `kReplaced` failure means replacement completed
+/// but metadata flush failed.
+[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT SaveResult save(const config::Document& document,
+                                                        const std::filesystem::path& path,
+                                                        Format format, SaveOptions options = {});
+
+/// @brief Try to persist one document with guarded same-directory atomic replacement.
+/// @param document Immutable source document.
+/// @param path Destination path. Its parent must already exist.
+/// @param format Explicit destination syntax.
+/// @param options Compare-and-swap, durability, wait, and output-limit policy.
 /// @return Installed-byte evidence, or a structured failure carrying operation stage and
 /// destination state. A `kReplaced` failure means replacement completed but metadata flush failed.
-[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::ConfigResult<SaveResult> save(
+[[nodiscard]] HOLOSCAN_CONFIG_IO_EXPORT config::ConfigResult<SaveResult> try_save(
     const config::Document& document, const std::filesystem::path& path, Format format,
     SaveOptions options = {});
 

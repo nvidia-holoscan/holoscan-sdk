@@ -57,7 +57,20 @@ difference is that `set_default_clock()` is never called, so the ticker's
 - A Holoscan SDK 5.x install. No GPU is required; everything except the final
   three-tick run is cold compilation.
 
-## Build
+## Python run
+
+The Python variant defines its source and sink as native Python Operators. It
+demonstrates the same compile gate and deterministic canonical JSON while
+using an intentionally incomplete partition cover for its rejected plan:
+
+```bash
+PYTHONPATH=<build>/python/lib python3.12 python/compile_and_check.py
+```
+
+The C++-only predicate warning remains in the C++ example because Python does
+not yet expose a callable-predicate authoring surface.
+
+## C++ build
 
 From this `cpp/` folder:
 
@@ -72,7 +85,7 @@ If the SDK is not in a default location, point CMake at it:
 cmake -B build -S . -DCMAKE_PREFIX_PATH=<install-prefix>
 ```
 
-## Run
+## C++ run
 
 ```bash
 ./build/compile_and_check
@@ -80,6 +93,49 @@ cmake -B build -S . -DCMAKE_PREFIX_PATH=<install-prefix>
 
 The program is bounded (< 10 s; the only run waits for three 10 ms ticks) and
 exits nonzero if any admission verdict, token match, or digest comparison fails.
+
+The example writes its temporary JSON inside a per-run workspace and removes
+that workspace on exit. For a persistent artifact or a cross-process comparison,
+`./build/compile_and_check --print-plan-json` prints only the admitted plan JSON
+without running the other demonstrations; redirect it to a file you control.
+
+### Temporary artifacts
+
+On POSIX, the example creates a unique `0700` workspace under `$HOME` and removes it on
+normal exit. To keep these artifacts elsewhere, set `HOLOSCAN_EXAMPLE_WORKSPACE_ROOT`
+to an existing absolute directory owned by the effective user and not writable
+by group or others. An invalid override fails without falling back. `TMPDIR`,
+`TMP`, and `TEMP` do not control example workspaces; shared writable roots are
+rejected even when sticky. An interrupted process may leave its workspace for
+manual cleanup.
+
+Containers running with an arbitrary UID may not have a usable home directory;
+set the override to a suitable directory owned by that UID in this case.
+
+For both SDK and installed-example tests on POSIX, CTest uses a launcher that
+creates a unique `0700` root under `/tmp` with `mktemp`, sets the override for the
+test process, and removes the root afterward, including when the test fails.
+This avoids depending on a writable home or trusting group-writable build-tree
+ancestors. The example still validates the root and its complete ancestry;
+`/tmp` must have the standard trusted ownership and sticky-bit protection.
+An uncatchable termination may leave `/tmp/holoscan-example-ctest.*` for cleanup.
+Windows CTest runs retain the build-directory override and inherited-ACL limitation
+described below. Direct example invocations retain the defaults described above.
+
+The POSIX workspace implementation assumes enforced
+filesystem ownership and sticky bits. Every resolved ancestor must be
+owned by the effective user or root; shared writable ancestors require the
+sticky bit. The examples trust the same user and system administrator; ACLs or
+filesystems granting additional peer access outside the checked mode bits are
+outside this contract.
+
+On Windows, the helper defaults to `%USERPROFILE%` (or the same explicit root
+override) and uses `std::filesystem::create_directory()` with collision retries
+and normal-exit cleanup. This compatibility fallback inherits the parent's ACLs:
+it does **not** validate directory ownership or enforce owner-only access, and
+emits a compile-time warning about this limitation. Use a trusted user-controlled
+root, not a shared directory. Equivalent ACL-based protection remains future work;
+the Windows path has not yet been validated on a native Windows toolchain.
 
 ## Expected output
 

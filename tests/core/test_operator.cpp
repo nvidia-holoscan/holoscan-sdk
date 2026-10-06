@@ -7,6 +7,7 @@
 
 #include <concepts>
 #include <cstdint>
+#include <new>
 #include <type_traits>
 #include <utility>
 
@@ -14,6 +15,8 @@
 #include <holoscan/core/operator.hpp>
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/port.hpp>
+
+#include "../common/allocation_counter.hpp"
 
 namespace holoscan {
 namespace {
@@ -63,6 +66,7 @@ static_assert(!std::move_constructible<GainOperator>);
 static_assert(!std::is_copy_assignable_v<GainOperator>);
 static_assert(!std::is_move_assignable_v<GainOperator>);
 static_assert(std::has_virtual_destructor_v<OperatorBase>);
+static_assert(!std::is_nothrow_default_constructible_v<OperatorSpec>);
 
 // REQ: OPERATOR-013
 static_assert(!HasRun<GainOperator>);
@@ -94,6 +98,25 @@ TEST(Operator, ConcreteOperatorAndPortMembersHaveStableNonmovableAddresses) {
   EXPECT_EQ(&op, operator_address);
   EXPECT_EQ(&op.input_, input_address);
   EXPECT_EQ(&op.output_, output_address);
+}
+
+// REQ: OPERATOR-002
+TEST(OperatorSpec, PropagatesConstructorAllocationFailure) {
+  // Key setup: Fail the first allocation made by the cold declaration containers.
+  bool allocation_failed{};
+  {
+    const test::ScopedAllocationFailure failure{0U};
+    try {
+      const OperatorSpec spec;
+      (void)spec;
+    } catch (const std::bad_alloc&) {
+      allocation_failed = true;
+    }
+  }
+
+  // Key assertion: Construction reports resource exhaustion instead of terminating through an
+  // incorrect noexcept contract.
+  EXPECT_TRUE(allocation_failed);
 }
 
 }  // namespace

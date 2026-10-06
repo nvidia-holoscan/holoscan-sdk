@@ -18,6 +18,7 @@ This document aims to guide users with recommended and advanced workflows to bui
   - [(Advanced) Docker + CMake](#advanced-docker--cmake)
   - [(Advanced) Local environment + CMake](#advanced-local-environment--cmake)
   - [Build Variants and Configuration](#build-variants-and-configuration)
+- [Building the development-container artifact](#building-the-development-container-artifact)
 - [Utilities](#utilities)
   - [Testing](#testing)
     - [Test Types and Categories](#test-types-and-categories)
@@ -56,7 +57,31 @@ Call **`./run build`** within the repository to build the build container and th
 
 Call the **`./run launch`** command to start and enter the build container.
 
-- *You can run from the `install` or `build` tree by passing the working directory as an argument (ex: `./run launch install`)*
+The commands in this guide run from the SDK source root. `launch` starts in
+the default build directory, for example `build-x86_64`. To make directory
+selection explicit:
+
+```bash
+BUILD_DIR=$(./run get_build_dir)
+INSTALL_DIR=$(./run get_install_dir)
+
+# Enter the build tree; equivalent to ./run launch.
+./run launch "${BUILD_DIR}"
+
+# Or enter the install tree.
+./run launch "${INSTALL_DIR}"
+```
+
+These queries return directory names relative to the directory containing `run`.
+They honor `HOLOSCAN_BUILD_ARCH` and an explicit `--arch` argument, which takes
+precedence; otherwise the target defaults to the host architecture. Use the same
+target selection for building, querying paths, and launching. For example, set
+`export HOLOSCAN_BUILD_ARCH=aarch64` before the commands above to select ARM64.
+Selecting a target does not make its binaries executable on another architecture.
+
+The queries describe the standard directory layout. If you build with a custom
+`--buildpath` or `--installprefix`, pass that path explicitly instead.
+
 - *Execute `./run launch --help` for more information*
 - *Execute `./run launch --dryrun` to see the commands that will be executed*
 - *Execute `./run launch --run-cmd "..."` to execute a bash command directly in the container*
@@ -109,32 +134,64 @@ cmake --install $build_dir --prefix $install_dir
 
 The commands to run the [**examples**](./examples) are then the same as in the dockerized environment.
 
+## Building the development-container artifact
+
+The public [`Dockerfile.dev`](./Dockerfile.dev) produces the released development
+container: a CUDA 13 dGPU TensorRT/DLFW environment with the SDK installation,
+C++ toolchain, Python support, examples, and runtime dependencies already installed.
+The artifact has one supported public variant for amd64 and arm64; internal package
+qualification must not introduce a second public container or change its `/usr` layout.
+
+Build the artifact from the repository root. This builds and installs the SDK first, then
+constructs the development-container image:
+
+```sh
+./run build_dev_image
+```
+
+If the matching `install-x86_64` (or `install-aarch64-dgpu`) SDK installation already
+exists, skip the prerequisite build with:
+
+```sh
+./run build_dev_image --standalone
+```
+
+Use `./run launch_dev` to open the image locally, or `--run-cmd` for a non-interactive
+command:
+
+```sh
+./run launch_dev --run-cmd 'python3 -c "import holoscan"'
+```
+
+The image includes a build, debug, and profile baseline. Inspect the available
+tool inventory at any time with:
+
+```sh
+./run launch_dev --run-cmd 'holoscan-development-tools report'
+```
+
+The report is diagnostic: the container's blocking checks focus on C++ and
+Python build capabilities and installed SDK consumers rather than making every
+convenience-tool executable name a compatibility promise.
+
+Editors and application-specific stacks such as ROS and GStreamer are not part
+of this baseline; add them in a downstream image when needed.
+
+This artifact supports CUDA 13 dGPU on amd64 and arm64. It is for developing applications
+against the SDK installed under `/usr`; use `build` for SDK source development.
+
 ### Build Variants and Configuration
 
 The SDK can be built with different configurations to match various deployment targets:
 
-**CUDA Versions**: 13 (5.x supports CUDA 13 only)
+**CUDA Version**: 13 (pinned by the 5.x build image).
 
-```sh
-export CUDA_MAJOR=13
-./run build
-```
-
-**Architectures**: x86_64 (default), aarch64
+**Architectures**: x86_64, aarch64 (defaults to the host architecture)
 
 ```sh
 ./run build --arch aarch64
 # or
 export HOLOSCAN_BUILD_ARCH=aarch64
-./run build
-```
-
-**GPU Types**: dgpu (default), igpu (aarch64 only)
-
-```sh
-./run build --gpu igpu  # for aarch64 only
-# or
-export HOLOSCAN_BUILD_GPU_TYPE=igpu
 ./run build
 ```
 
@@ -147,8 +204,9 @@ export CMAKE_BUILD_TYPE=Debug
 ./run build
 ```
 
-Build directories follow the pattern: `build-cu<version>-<arch>[-<gpu>]`
-Install directories follow the pattern: `install-cu<version>-<arch>[-<gpu>]`
+The current directory layout is `build-<arch>` and `install-<arch>`, for example
+`build-x86_64` and `install-aarch64`. Use the queries above in commands that need
+a path so that they follow any future naming changes.
 
 ## Utilities
 
@@ -221,9 +279,8 @@ When a test fails (especially from CI), you can reproduce it locally:
 2. **Match the build configuration**:
 
    ```sh
-   export CUDA_MAJOR=13  # 5.x is CUDA 13 only
-   export ARCH=x86_64    # or aarch64, match CI
-   export GPU=dgpu       # or igpu, match CI
+   export HOLOSCAN_BUILD_ARCH=x86_64  # or aarch64, match CI
+   export CMAKE_BUILD_TYPE=Release   # match the build being tested
    ```
 
 3. **Run the specific test**:
@@ -239,9 +296,8 @@ When a test fails (especially from CI), you can reproduce it locally:
 4. **Debug in interactive container** (from build tree):
 
    ```sh
-   ./run launch build-cu13-x86_64
-   # Inside container:
-   cd build-cu13-x86_64
+   ./run launch
+   # Inside the container, already in the selected build directory:
    ctest -R <test_name> --verbose --output-on-failure
    ```
 
@@ -251,11 +307,12 @@ When a test fails (especially from CI), you can reproduce it locally:
 
    ```sh
    # Launch a container with the install tree mounted
-   ./run launch install-cu13-x86_64
-   # Inside the container, configure an example against the installed SDK and run
-   # it. Each example ships a CMakeLists.min.txt that uses find_package(holoscan).
+   INSTALL_DIR=$(./run get_install_dir)
+   ./run launch "${INSTALL_DIR}"
+   # Inside the container, configure an example against this install directory.
+   # Each example ships a CMakeLists.min.txt that uses find_package(holoscan).
    cmake -S <example_src_dir> -B <example_build_dir> \
-     -DHoloscan_ROOT=/workspace/holoscan-sdk/install-cu13-x86_64
+     -DCMAKE_PREFIX_PATH="${PWD}"
    cmake --build <example_build_dir> -j
    ctest --test-dir <example_build_dir> --output-on-failure
    ```
@@ -322,8 +379,21 @@ pre-commit run clang-format --all-files
 | Python | `ruff-check` (with `--fix`) and `ruff-format` — rules in [`.ruff.toml`](./.ruff.toml) |
 | Spelling | `codespell` — may rewrite files (`--write-changes`); settings in [`.codespell.toml`](./.codespell.toml) (`[tool.codespell]`); lines can be ignored with `// codespell-ignore` or `# codespell-ignore` |
 | C/C++/CUDA style | `cpplint` and `clang-format` (clang-format version pinned in the mirror repo; binary must be available for that hook) |
+| SDK and dependency includes | `check-include-style` requires angle brackets for `holoscan/`, `holomq/`, `fmt/`, and `iox2/` headers |
 | CMake | `cmakelint` |
 | Markdown | `markdownlint` — paths and config file are set in `.pre-commit-config.yaml` (alongside `.markdownlint.yaml` in this tree) |
+
+**`check-include-style`:** Use angle brackets for headers rooted at `holoscan/`,
+`holomq/`, `fmt/`, and `iox2/`, such as `#include <holoscan/holoscan.hpp>`
+and `#include <iox2/node.hpp>`. These are SDK or dependency include paths;
+angle brackets avoid lookup through private source directories.
+The checker enforces these established roots explicitly. Quoted local and relative
+private headers remain valid; other prefixes are outside this rule.
+It checks literal includes in all conditional branches, ignores comments and string
+literals, and excludes generated and vendor files. Macro-expanded header names are
+outside its scope. clang-format sorts includes but does not change their delimiters.
+Run `python3 scripts/check_include_style.py` from this tree to scan maintained sources,
+or pass specific source paths. The same hook runs in local lint and CI.
 
 **`check-copyright`:** Implemented by [`scripts/check_copyright.py`](./scripts/check_copyright.py). On `git commit`, pre-commit passes only **staged** paths. For `pre-commit run --all-files`, the script receives a wide file list and intersects it with changes since a default baseline (`origin/main` / `main` or `origin/release/latest` / `release/latest`, chosen from your current branch). Set **`HOLOSCAN_COPYRIGHT_BASE_REF`** or pass **`--intersect-since-ref REF`** to that script to pin the baseline. Run `python3 scripts/check_copyright.py --help` for all options.
 

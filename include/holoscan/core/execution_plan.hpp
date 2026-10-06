@@ -41,6 +41,15 @@
 
 namespace holoscan {
 
+/// @brief Select how ordinary Runtime-owned CUDA compute streams are shared.
+enum class CudaComputeStreamPolicy : std::uint8_t {
+  /// Materialize one stream for each active process-group, device, and execution-partition tuple.
+  /// Separate streams permit, but do not guarantee, overlapping CUDA execution.
+  kPerExecutionPartition = 0,
+  /// Materialize one stream for each active process-group and device tuple.
+  kSharedProcessDevice = 1,
+};
+
 namespace detail {
 struct ExecutionPlanState;
 class ExecutionPlanAccess;
@@ -186,13 +195,14 @@ struct ExecutionPartitionId {
 
 /// @brief Classify one compiler partition decision for a vertex.
 enum class PartitionDecisionKind : std::uint8_t {
-  kStart = 0,             ///< Start the first or independently rooted partition.
-  kJoin = 1,              ///< Join a preceding compatible partition.
-  kBoundarySplit = 2,     ///< Split at a mandatory execution-domain boundary.
-  kFanInSplit = 3,        ///< Split at a join of distinct predecessor partitions.
-  kFanOutLegSplit = 4,    ///< Split one distinct fan-out successor leg.
-  kCollapseRejected = 5,  ///< Split because a proposed collapse was illegal.
-  kAuthored = 6,          ///< Preserve an exact developer-authored partition anchor.
+  kStart = 0,                ///< Start the first or independently rooted partition.
+  kJoin = 1,                 ///< Join a preceding compatible partition.
+  kBoundarySplit = 2,        ///< Split at a mandatory execution-domain boundary.
+  kFanInSplit = 3,           ///< Split at a join of distinct predecessor partitions.
+  kFanOutLegSplit = 4,       ///< Split one distinct fan-out successor leg.
+  kCollapseRejected = 5,     ///< Split because a proposed collapse was illegal.
+  kAuthored = 6,             ///< Preserve an exact developer-authored partition anchor.
+  kSerializationDomain = 7,  ///< Assign an automatic serialization-domain partition.
 };
 
 /// @brief Explain one partition start, join, or rejected collapse.
@@ -213,6 +223,7 @@ enum class PartitionDecisionReason : std::uint8_t {
   kCollapseRejected = 11,         ///< Preserve a validator-rejected collapse boundary.
   kLinearChainJoin = 12,          ///< Join one compatible serial linear-chain successor.
   kAuthoredPartitionBoundary = 13,  ///< Preserve an exact authored-anchor boundary.
+  kSerializationDomain = 14,        ///< Honor a compatible compiler-visible serialization domain.
 };
 
 /// @brief Identify the authority that produced one accepted partition cover.
@@ -262,7 +273,8 @@ struct ExecutionPartitionRecord {
   /// Each decoded Graph/Operator UTF-8 segment is URI-percent-encoded bytewise with uppercase
   /// hexadecimal before slash joining. Keys use the no-leading-slash OperatorPath grammar.
   std::vector<std::string> operator_paths;
-  std::uint32_t execution_lane{};  ///< Dense serial lane index, starting at zero.
+  std::uint32_t execution_lane{};      ///< Dense serial lane index, starting at zero.
+  std::vector<GraphId> graph_members;  ///< Explicit selected roots in the canonical plan Graph.
 };
 
 /// @brief Retain immutable inspection of one accepted execution partition.
@@ -289,6 +301,10 @@ class HOLOSCAN_CORE_EXPORT ExecutionPartitionView {
   /// @note Reserved and non-ASCII bytes are percent-encoded per decoded path segment. Keys use the
   /// no-leading-slash OperatorPath grammar shared by Parameter records and Tensor placement.
   [[nodiscard]] std::span<const std::string> operator_paths() const noexcept;
+
+  /// @brief Return explicitly selected atomic instance roots in the canonical plan Graph.
+  /// @note Descendant Operators are resolved in \ref members and \ref operator_paths.
+  [[nodiscard]] std::span<const GraphId> graph_members() const noexcept;
 
   /// @brief Return the dense serial execution lane.
   [[nodiscard]] std::uint32_t execution_lane() const noexcept;
@@ -374,7 +390,8 @@ class HOLOSCAN_CORE_EXPORT ExecutionPartitionsView {
     if (!graph_state) {
       throw RuntimeError{ErrorCode::kInvalidArgument};
     }
-    auto locator = detail::graph_operator_locator(graph_state, op.index_);
+    auto locator =
+        detail::graph_operator_locator(graph_state, op.index_, op.handle_identity_.get());
     if (!locator) {
       throw RuntimeError{locator.error()};
     }
@@ -408,6 +425,7 @@ class HOLOSCAN_CORE_EXPORT ExecutionPartitionsView {
 
   std::shared_ptr<const detail::ExecutionPlanState> state_;
   friend class ExecutionPlan;
+  friend class authoring::OpaqueOperatorRef;
 };
 
 /// @brief Preserve one original graph edge that crosses accepted partitions.
@@ -474,6 +492,18 @@ struct PartitionPlacementPlanRecord {
   DiagnosticId reason{};                                    ///< Stable primary reason, or zero.
 };
 
+/// @brief Freeze requested and accepted affinity for one Runtime support-thread role.
+///
+/// Accepted records contain the exact affinity-only placement consumed by Runtime. Rejected
+/// records retain the normalized request and a stable diagnostic for inspection.
+struct SupportThreadAffinityPlanRecord {
+  SupportThreadRole role{SupportThreadRole::kController};   ///< Exact Runtime support role.
+  ThreadPlacement requested{};                              ///< Normalized affinity-only request.
+  std::optional<ThreadPlacement> accepted;                  ///< Frozen accepted placement.
+  PlanDisposition disposition{PlanDisposition::kRejected};  ///< Total admission result.
+  DiagnosticId reason{};                                    ///< Stable primary reason, or zero.
+};
+
 /// @brief Map one deterministic serial execution lane to optional placement evidence.
 struct ExecutionLanePlanRecord {
   std::uint32_t execution_lane{};        ///< Dense zero-based lane identity.
@@ -506,8 +536,9 @@ struct PortPlanRecord {
   VertexId owner{};                                    ///< Canonical owning logical vertex.
   PortOwnerKind owner_kind{PortOwnerKind::kOperator};  ///< Owning object family.
   PortDirection direction{PortDirection::kInput};      ///< Accepted data-flow direction.
-  std::string local_name;                              ///< Owned declaration-local port name.
-  PayloadIdentityRecord payload_identity;              ///< Complete pointer-free payload identity.
+  bool optional{};         ///< Authored permission for eligible Exact/SafeDefault input absence.
+  std::string local_name;  ///< Owned declaration-local port name.
+  PayloadIdentityRecord payload_identity;  ///< Complete pointer-free payload identity.
   /// Positive generated-package serialized bound; zero for every other payload family.
   std::uint64_t serialized_payload_capacity_bytes{};
   /// Whether compile admitted bounded direct generic-loan construction for this output.
@@ -551,6 +582,8 @@ struct PayloadEdgePlanRecord {
   ChannelLocalityKind locality{ChannelLocalityKind::kProcessLocal};  ///< Frozen locality.
   PlanDisposition disposition{PlanDisposition::kRejected};  ///< Total edge admission result.
   DiagnosticId reason{};                                    ///< Stable rejection reason, or zero.
+  /// Producer Tensor field delivered when this edge narrows a schema payload to a Tensor.
+  std::optional<TensorProjectionRecord> tensor_projection;
 };
 
 /// @brief Identify one immutable queue-sizing recipe.
@@ -918,12 +951,17 @@ enum class TensorByteSpanDerivationUpdateDisposition : std::uint8_t {
 /// @brief Preserve one evaluated node of a derived Tensor byte-span expression.
 struct TensorByteSpanDerivationNodePlanRecord {
   TensorByteSpanOperation operation{TensorByteSpanOperation::kPositiveConstant};  ///< Node kind.
-  std::uint32_t left{};            ///< Left child index for compound operations.
-  std::uint32_t right{};           ///< Right child index for binary operations.
-  std::uint64_t operand{};         ///< Literal or alignment operand, otherwise zero.
-  ParamFieldId parameter_field{};  ///< Parameter dependency, or zero.
-  PortId input{};                  ///< Input dependency, or zero.
-  std::uint64_t resolved_value{};  ///< Checked positive node result in bytes.
+  std::uint32_t left{};             ///< Left child index for compound operations.
+  std::uint32_t right{};            ///< Right child index for binary operations.
+  std::uint64_t operand{};          ///< Literal or alignment operand, otherwise zero.
+  ParamFieldId parameter_field{};   ///< Parameter dependency, or zero.
+  PortId input{};                   ///< Input dependency, or zero.
+  std::uint64_t resolved_value{};   ///< Checked positive node result in bytes.
+  std::string projection_id;        ///< Stable projector identity, or empty for closed nodes.
+  std::string parameter_schema_id;  ///< Owning Params schema for a Parameter or projection node.
+  ParamSchemaVersion parameter_schema_version{};  ///< Owning projector schema version, or zero.
+  /// Canonical explicit dependency identities for a Parameter projection node.
+  std::vector<TensorByteSpanProjectionDependencyRecord> projection_dependencies;
 };
 
 /// @brief Record compiler evidence for one derived Tensor output-pool slot capacity.
@@ -941,6 +979,41 @@ struct TensorByteSpanDerivationPlanRecord {
   TensorByteSpanDerivationUpdateDisposition update_disposition{
       TensorByteSpanDerivationUpdateDisposition::kFrozenCompileTime};  ///< Strongest dependency.
   std::vector<TensorByteSpanDerivationNodePlanRecord> nodes;  ///< Canonical evaluated postorder.
+};
+
+/// @brief Classify the update boundary of a Parameter-derived Tensor memory-kind dependency.
+enum class TensorMemoryKindDerivationUpdateDisposition : std::uint8_t {
+  kFrozenCompileTime = 0,  ///< The source Parameter is compile-time immutable.
+  kRecompileRequired = 1,  ///< A changed source value requires compiling a new plan.
+};
+
+/// @brief Record compiler evidence for one Parameter-derived Tensor output memory kind.
+///
+/// This pointer-free record preserves declaration identity and the resolved physical result. It
+/// deliberately excludes the accepted raw Parameter value and all process-local typed readers.
+struct TensorMemoryKindDerivationPlanRecord {
+  PortId output{};  ///< Owning runtime-pooled Tensor output.
+  /// Descriptor-schema field id, or no value for a raw Tensor output.
+  std::optional<std::uint16_t> field_id;
+  /// Dense descriptor-schema Tensor index, or no value for a raw Tensor output.
+  std::optional<std::uint16_t> tensor_index;
+  PlanGenerationId plan_generation{};             ///< Nonzero enclosing plan identity.
+  RunGenerationId run_generation{};               ///< Zero for this immutable plan-bound evidence.
+  std::string parameter_schema_id;                ///< Stable owning Params schema identity.
+  ParamSchemaVersion parameter_schema_version{};  ///< Owning Params schema version.
+  ParamFieldId parameter_field{};                 ///< Stable Parameter field identity.
+  ParamSchemaHash parameter_full_id{};            ///< Complete Parameter field identity.
+  /// Ordered complete identities for every member in the typed Parameter path.
+  std::vector<ParamSchemaHash> parameter_member_full_ids;
+  std::string parameter_path;  ///< Canonical display path.
+  TensorMemoryKindExpressionForm form{TensorMemoryKindExpressionForm::kDirect};  ///< Closed form.
+  std::vector<TensorMemoryKindMappingRecord> mapping;     ///< Canonical declaration mapping.
+  MemoryKind resolved_memory_kind{MemoryKind::kUnknown};  ///< Frozen concrete physical result.
+  TensorMemoryKindDerivationUpdateDisposition update_disposition{
+      TensorMemoryKindDerivationUpdateDisposition::kFrozenCompileTime};  ///< Source update
+                                                                         ///< boundary.
+  TensorContractValueOrigin origin{
+      TensorContractValueOrigin::kCompilerDerivedMemoryKind};  ///< Physical-fact provenance.
 };
 
 /// @brief Freeze one Tensor-backed output allocation capability and capacity.
@@ -963,6 +1036,7 @@ struct TensorAllocationPlanRecord {
   std::uint32_t control_capacity{};              ///< Pre-materialized slot-control records.
   std::uint32_t readiness_capacity{};            ///< One concrete reservation per successful draw.
   std::uint32_t release_capacity{};              ///< Consumer/CUDA release records.
+  std::uint32_t release_stream_capacity{};       ///< Distinct per-slot CUDA release-stream bound.
   std::uint32_t retirement_capacity{};           ///< Bounded recycler queue.
   std::uint32_t quarantine_capacity{};           ///< Bounded safety-hold records.
   LifecycleStage materialize_before{LifecycleStage::kArm};  ///< Latest materialization stage.
@@ -996,6 +1070,7 @@ struct TensorFieldAllocationPlanRecord {
   std::uint32_t control_capacity{};              ///< Pre-materialized slot controls.
   std::uint32_t readiness_capacity{};            ///< Readiness records for this field pool.
   std::uint32_t release_capacity{};              ///< Consumer/CUDA release records.
+  std::uint32_t release_stream_capacity{};       ///< Distinct per-slot CUDA release-stream bound.
   std::uint32_t retirement_capacity{};           ///< Bounded recycler queue.
   std::uint32_t quarantine_capacity{};           ///< Bounded safety-hold records.
   LifecycleStage materialize_before{LifecycleStage::kArm};  ///< Latest materialization stage.
@@ -1179,6 +1254,23 @@ struct CudaComputeStreamPlanRecord {
 
   friend bool operator==(const CudaComputeStreamPlanRecord&,
                          const CudaComputeStreamPlanRecord&) = default;
+};
+
+/// @brief Bind one CUDA-active Operator to its exact immutable compute-stream plan row.
+///
+/// Runtime publishes native stream handles only through these records. Compiler-owned service
+/// streams intentionally have no Operator binding.
+struct OperatorCudaStreamBindingPlanRecord {
+  PlanGenerationId plan_generation{};  ///< Nonzero enclosing plan identity.
+  RunGenerationId run_generation{};    ///< Zero for immutable plan-bound evidence.
+  VertexId operator_vertex{};          ///< Canonical CUDA-active Operator vertex.
+  ProcessGroupId process_group{};      ///< Owning runtime process.
+  ExecutionPartitionId partition{};    ///< Exact accepted execution partition.
+  DeviceId device{};                   ///< Process-local CUDA ordinal.
+  std::string stream_id;               ///< Exact matching compute-stream lineage.
+
+  friend bool operator==(const OperatorCudaStreamBindingPlanRecord&,
+                         const OperatorCudaStreamBindingPlanRecord&) = default;
 };
 
 /// @brief Freeze one process/device Tensor resource materialization contract.
@@ -1522,6 +1614,22 @@ class HOLOSCAN_CORE_EXPORT ClockCatalogView {
   ClockId root_default_clock{};             ///< Root Graph default, or invalid when absent.
   std::span<const ClockPlanRecord> clocks;  ///< Dense ClockId assignment order.
 
+  /// @brief Look up one retained clock record by its plan-local identity.
+  /// @param id Plan-local clock identity, typically taken from a resolved \c ClockRef or a
+  /// \c SampleMetadata clock-domain field.
+  /// @return Borrowed record owned by this view, or \c nullptr when \p id is invalid or names no
+  /// clock in this catalog. The result is valid for this view's lifetime.
+  /// @note Provenance queries are cold. This is a convenience over scanning \ref clocks and
+  /// exists so a caller holding only a \c ClockId need not reimplement the catalog's dense
+  /// identity order. The lookup is O(1) and allocation-free.
+  [[nodiscard]] const ClockPlanRecord* find(ClockId id) const noexcept {
+    if (!id.valid() || id.value > clocks.size()) {
+      return nullptr;
+    }
+    const ClockPlanRecord& clock = clocks[static_cast<std::size_t>(id.value - 1U)];
+    return clock.id == id ? &clock : nullptr;
+  }
+
  private:
   ClockCatalogView(PlanGenerationId generation, ClockId root_default,
                    std::span<const ClockPlanRecord> records,
@@ -1835,6 +1943,7 @@ struct ParameterFieldPlanRecord {
   std::string alias;               ///< Prior canonical input spelling; never output identity.
   std::string validator_id;        ///< Stable validator identity, or empty.
   ParamConstraints constraints{};  ///< Portable declared bounds and choices.
+  std::vector<ParamEnumChoiceRecord> enum_choices;  ///< Owned stable enum label/value domain.
   ParamStringEncoding string_encoding{ParamStringEncoding::kArbitraryBytes};
   ParamStringEncoding element_string_encoding{ParamStringEncoding::kArbitraryBytes};
   ParamValueRouteDisposition value_route{
@@ -1884,6 +1993,21 @@ struct ParameterDerivedTermPlanRecord {
   std::int64_t initial_value_ns{};  ///< Positive generation-zero canonical value.
   std::int64_t minimum_value_ns{};  ///< Positive inclusive admitted lower bound.
   std::int64_t maximum_value_ns{};  ///< Inclusive admitted upper bound.
+};
+
+/// @brief Describe the callback implementation boundary for one compiled Operator.
+///
+/// Every executable Operator contributes exactly one record. A nonempty serialization domain asks
+/// automatic partitioning to serialize compatible hosted Operators together; a manual partition
+/// may override that request and produces an advisory diagnostic. The domain neither creates a
+/// graph dependency nor imposes a callback order within the resulting partition.
+/// This is pointer-free plan evidence; executable callback factories remain private and
+/// process-local.
+struct OperatorHostPlanRecord {
+  OperatorRef owner{};  ///< Plan-bound Operator identity.
+  VertexId vertex{};    ///< Canonical logical vertex owning the Operator.
+  OperatorHostKind kind{OperatorHostKind::kNative};  ///< Native or foreign callback host.
+  std::string serialization_domain;  ///< Shared domain, or empty for no co-partition request.
 };
 
 /// @brief Describe one Operator's immutable generation-zero Parameter contract.
@@ -2038,6 +2162,11 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @return Plan-owned immutable records in canonical authored-name and request order.
   [[nodiscard]] std::span<const PartitionPlacementPlanRecord> partition_placements() const noexcept;
 
+  /// @brief Return requested and accepted affinity for Runtime support-thread roles.
+  /// @return Plan-owned immutable records in canonical role and request order.
+  [[nodiscard]] std::span<const SupportThreadAffinityPlanRecord> support_thread_affinities()
+      const noexcept;
+
   /// @brief Return every dense partition-local serial callback owner consumed by Runtime.
   /// @return Plan-owned records ordered by zero-based lane identity.
   [[nodiscard]] std::span<const ExecutionLanePlanRecord> execution_lanes() const noexcept;
@@ -2063,12 +2192,6 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @brief Return immutable logical queue-sizing recipes.
   /// @return Plan-owned records in canonical \ref EdgeId order.
   [[nodiscard]] std::span<const QueueSizingRecipePlanRecord> queue_sizing_recipes() const noexcept;
-
-  /// @brief Return deep-owned generated-package provenance used by this local plan.
-  /// @return Records ordered by SchemaId and complete evidence, or an empty span.
-  /// @note These diagnostic records are serialized in the public artifact but do not participate
-  /// in Graph identity, the execution-plan digest, or wire compatibility.
-  [[nodiscard]] std::span<const SchemaPackagePlanRecord> schema_packages() const noexcept;
 
   /// @brief Return reusable-Graph aliases projected into plan-local port identities.
   /// @return Plan-owned records in public/internal port order.
@@ -2122,6 +2245,23 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
       std::optional<std::uint16_t> field_id = std::nullopt,
       std::optional<std::uint16_t> tensor_index = std::nullopt) const noexcept;
 
+  /// @brief Return compile-time evidence for Parameter-derived Tensor memory kinds.
+  /// @return Immutable records in output PortId and descriptor-field order.
+  [[nodiscard]] std::span<const TensorMemoryKindDerivationPlanRecord>
+  tensor_memory_kind_derivations() const noexcept;
+
+  /// @brief Find derived Tensor memory-kind evidence by authored Operator and output names.
+  /// @param operator_path Canonical Operator path, such as `resize` or `child/resize`.
+  /// @param output_name Declaration-local output name.
+  /// @param field_id Optional descriptor-schema field identity.
+  /// @param tensor_index Optional descriptor-schema Tensor index paired with `field_id`.
+  /// @return A plan-owned record, or `nullptr` when the names are absent, the field selector is
+  /// incomplete, or an omitted field selector would be ambiguous for a multi-Tensor output.
+  [[nodiscard]] const TensorMemoryKindDerivationPlanRecord* find_tensor_memory_kind_derivation(
+      std::string_view operator_path, std::string_view output_name,
+      std::optional<std::uint16_t> field_id = std::nullopt,
+      std::optional<std::uint16_t> tensor_index = std::nullopt) const noexcept;
+
   /// @brief Return field-specific allocation records for multi-Tensor schema outputs.
   /// @return Immutable records in output then canonical field-id order.
   [[nodiscard]] std::span<const TensorFieldAllocationPlanRecord> tensor_field_allocations()
@@ -2160,6 +2300,16 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @brief Return generalized CUDA compute streams in canonical owner order.
   /// @return Plan-owned records ordered by process group, device, then stable owner identity.
   [[nodiscard]] std::span<const CudaComputeStreamPlanRecord> cuda_compute_streams() const noexcept;
+
+  /// @brief Return the frozen ordinary CUDA compute-stream sharing policy.
+  /// @return The requested value verbatim. A plan rejected with
+  /// `CUDA_STREAM_POLICY_VIOLATION` may retain an out-of-range enum value for inspection.
+  [[nodiscard]] CudaComputeStreamPolicy cuda_compute_stream_policy() const noexcept;
+
+  /// @brief Return exact CUDA-active Operator-to-stream bindings.
+  /// @return Plan-owned records in canonical Operator vertex order.
+  [[nodiscard]] std::span<const OperatorCudaStreamBindingPlanRecord> operator_cuda_stream_bindings()
+      const noexcept;
 
   /// @brief Return generated-provider inline Tensor record bucket contracts.
   /// @return Plan-owned records ordered by external topic identity.
@@ -2304,6 +2454,10 @@ class HOLOSCAN_CORE_EXPORT ExecutionPlan {
   /// @brief Return one generation-zero Parameter record per compiled Operator.
   /// @return Plan-owned records in dense Operator identity order, or an empty span.
   [[nodiscard]] std::span<const OperatorParameterPlanRecord> operator_parameters() const noexcept;
+
+  /// @brief Return callback-host facts for every compiled Operator.
+  /// @return Plan-owned records in dense Operator identity order, or an empty span.
+  [[nodiscard]] std::span<const OperatorHostPlanRecord> operator_hosts() const noexcept;
 
   /// @brief Return every declared Parameter field admission record.
   /// @return Plan-owned records ordered by Operator identity then \ref ParamFieldId.

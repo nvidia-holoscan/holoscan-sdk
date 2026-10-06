@@ -5,23 +5,35 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
+#include <forward_list>
 #include <limits>
+#include <list>
+#include <map>
+#include <memory>
 #include <new>
+#include <optional>
+#include <queue>
 #include <ratio>
+#include <set>
+#include <stack>
 #include <string>
+#include <tuple>
 #include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <holoscan/core/parameter.hpp>
-#include <holoscan/core/parameter_override_set.hpp>
 #include <holoscan/core/parameter_schema.hpp>
 
 #include "../../src/core/operator_parameter_binding.hpp"
-#include "../../src/core/parameter_override_set_internal.hpp"
 #include "../../src/core/parameter_schema_test_access.hpp"
 #include "operator_test_fixture.hpp"
 
@@ -115,6 +127,127 @@ HOLOSCAN_PARAM_SCHEMA(ThrowingEqualityParams,
                       holoscan::param_schema("nvidia.holoscan.test.ThrowingEqualityParams", 1),
                       holoscan::field<&ThrowingEqualityParams::value>("value"));
 
+// NonComparableField: copyable field element without equality. Standard pair and tuple equality
+// declarations must not cause a semantic-equality thunk to be instantiated for this type.
+struct NonComparableField {
+  std::string value;
+};
+
+struct NonComparableLess {
+  bool operator()(const NonComparableField& left, const NonComparableField& right) const noexcept {
+    return left.value < right.value;
+  }
+};
+
+struct NonComparableHash {
+  std::size_t operator()(const NonComparableField& value) const noexcept {
+    return std::hash<std::string>{}(value.value);
+  }
+};
+
+struct NonComparableKeyEqual {
+  bool operator()(const NonComparableField& left, const NonComparableField& right) const noexcept {
+    return left.value == right.value;
+  }
+};
+
+using ConstNonComparableVector = const std::vector<NonComparableField>;
+
+std::vector<NonComparableField> non_comparable_defaults;
+
+// ComposedEqualityParams: exercises direct and nested pair/tuple fields, reference-qualified
+// elements, and standard containers whose equality declarations do not constrain their bodies.
+struct ComposedEqualityParams {
+  std::pair<std::int32_t, NonComparableField> pair;
+  std::tuple<std::int32_t, NonComparableField> tuple;
+  std::vector<std::pair<std::int32_t, NonComparableField>> pairs;
+  std::tuple<ConstNonComparableVector> tuple_const_vector;
+  std::pair<ConstNonComparableVector, std::int32_t> pair_const_vector;
+  std::tuple<const std::vector<NonComparableField>&> tuple_const_vector_reference{
+      non_comparable_defaults};
+  std::pair<const std::vector<NonComparableField>&, std::int32_t> pair_const_vector_reference{
+      non_comparable_defaults, 0};
+  std::deque<NonComparableField> deque;
+  std::list<NonComparableField> list;
+  std::unordered_map<std::int32_t, NonComparableField> unordered_map;
+  std::forward_list<NonComparableField> forward_list;
+  std::multimap<std::int32_t, NonComparableField> multimap;
+  std::variant<std::int32_t, NonComparableField> variant;
+  std::unordered_multimap<std::int32_t, NonComparableField> unordered_multimap;
+  std::set<NonComparableField, NonComparableLess> set;
+  std::multiset<NonComparableField, NonComparableLess> multiset;
+  std::unordered_set<NonComparableField, NonComparableHash, NonComparableKeyEqual> unordered_set;
+  std::unordered_multiset<NonComparableField, NonComparableHash, NonComparableKeyEqual>
+      unordered_multiset;
+  std::queue<NonComparableField> queue;
+  std::stack<NonComparableField> stack;
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    ComposedEqualityParams,
+    holoscan::param_schema("nvidia.holoscan.test.ComposedEqualityParams", 1),
+    holoscan::field<&ComposedEqualityParams::pair>("pair"),
+    holoscan::field<&ComposedEqualityParams::tuple>("tuple"),
+    holoscan::field<&ComposedEqualityParams::pairs>("pairs"),
+    holoscan::field<&ComposedEqualityParams::tuple_const_vector>("tuple_const_vector"),
+    holoscan::field<&ComposedEqualityParams::pair_const_vector>("pair_const_vector"),
+    holoscan::field<&ComposedEqualityParams::tuple_const_vector_reference>(
+        "tuple_const_vector_reference"),
+    holoscan::field<&ComposedEqualityParams::pair_const_vector_reference>(
+        "pair_const_vector_reference"),
+    holoscan::field<&ComposedEqualityParams::deque>("deque"),
+    holoscan::field<&ComposedEqualityParams::list>("list"),
+    holoscan::field<&ComposedEqualityParams::unordered_map>("unordered_map"),
+    holoscan::field<&ComposedEqualityParams::forward_list>("forward_list"),
+    holoscan::field<&ComposedEqualityParams::multimap>("multimap"),
+    holoscan::field<&ComposedEqualityParams::variant>("variant"),
+    holoscan::field<&ComposedEqualityParams::unordered_multimap>("unordered_multimap"),
+    holoscan::field<&ComposedEqualityParams::set>("set"),
+    holoscan::field<&ComposedEqualityParams::multiset>("multiset"),
+    holoscan::field<&ComposedEqualityParams::unordered_set>("unordered_set"),
+    holoscan::field<&ComposedEqualityParams::unordered_multiset>("unordered_multiset"),
+    holoscan::field<&ComposedEqualityParams::queue>("queue"),
+    holoscan::field<&ComposedEqualityParams::stack>("stack"));
+
+static_assert(!detail::SemanticEquality<std::pair<std::int32_t, NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::tuple<std::int32_t, NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::vector<std::pair<std::int32_t, NonComparableField>>>);
+static_assert(!detail::SemanticEquality<std::tuple<ConstNonComparableVector>>);
+static_assert(!detail::SemanticEquality<std::pair<ConstNonComparableVector, std::int32_t>>);
+static_assert(!detail::SemanticEquality<std::tuple<const std::vector<NonComparableField>&>>);
+static_assert(
+    !detail::SemanticEquality<std::pair<const std::vector<NonComparableField>&, std::int32_t>>);
+static_assert(!detail::SemanticEquality<std::deque<NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::list<NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::unordered_map<std::int32_t, NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::forward_list<NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::multimap<std::int32_t, NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::variant<std::int32_t, NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::unordered_multimap<std::int32_t, NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::set<NonComparableField, NonComparableLess>>);
+static_assert(!detail::SemanticEquality<std::multiset<NonComparableField, NonComparableLess>>);
+static_assert(!detail::SemanticEquality<
+              std::unordered_set<NonComparableField, NonComparableHash, NonComparableKeyEqual>>);
+static_assert(
+    !detail::SemanticEquality<
+        std::unordered_multiset<NonComparableField, NonComparableHash, NonComparableKeyEqual>>);
+static_assert(!detail::SemanticEquality<std::queue<NonComparableField>>);
+static_assert(!detail::SemanticEquality<std::stack<NonComparableField>>);
+static_assert(detail::SemanticEquality<std::pair<std::int32_t, std::string>>);
+static_assert(detail::SemanticEquality<std::tuple<std::int32_t, std::string>>);
+static_assert(detail::SemanticEquality<std::vector<std::string>>);
+static_assert(detail::SemanticEquality<std::optional<std::string>>);
+static_assert(detail::SemanticEquality<std::forward_list<std::string>>);
+static_assert(detail::SemanticEquality<std::multimap<std::int32_t, std::string>>);
+static_assert(detail::SemanticEquality<std::variant<std::int32_t, std::string>>);
+static_assert(detail::SemanticEquality<std::unordered_multimap<std::int32_t, std::string>>);
+static_assert(detail::SemanticEquality<std::set<std::string>>);
+static_assert(detail::SemanticEquality<std::multiset<std::string>>);
+static_assert(detail::SemanticEquality<std::unordered_set<std::string>>);
+static_assert(detail::SemanticEquality<std::unordered_multiset<std::string>>);
+static_assert(detail::SemanticEquality<std::queue<std::string>>);
+static_assert(detail::SemanticEquality<std::stack<std::string>>);
+
 // SignedMode / UnsignedMode: enum types with signed vs unsigned underlying types; used in
 // EnumLogicalTypesFollowUnderlyingSignedness to verify kSignedInteger vs kUnsignedInteger.
 enum class SignedMode : std::int8_t {
@@ -133,8 +266,148 @@ struct EnumParams {
 };
 
 HOLOSCAN_PARAM_SCHEMA(EnumParams, holoscan::param_schema("nvidia.holoscan.test.EnumParams", 1),
-                      holoscan::field<&EnumParams::signed_mode>("signed_mode"),
-                      holoscan::field<&EnumParams::unsigned_mode>("unsigned_mode"));
+                      holoscan::field<&EnumParams::signed_mode>("signed_mode")
+                          .enum_values({param_enum_value("negative", SignedMode::kNegative)}),
+                      holoscan::field<&EnumParams::unsigned_mode>("unsigned_mode")
+                          .enum_values({param_enum_value("positive", UnsignedMode::kPositive)}));
+
+// NamedMode / NamedEnumParams: direct, optional, and sequence enum fields share one explicit
+// authored name/value domain without relying on compiler-derived C++ identifiers.
+enum class NamedMode : std::uint8_t {
+  kDisabled = 0,
+  kAutomatic = 2,
+  kManual = 7,
+};
+
+struct NamedEnumParams {
+  NamedMode mode{NamedMode::kAutomatic};
+  std::optional<NamedMode> fallback{};
+  std::vector<NamedMode> modes{NamedMode::kDisabled, NamedMode::kManual};
+};
+
+HOLOSCAN_PARAM_SCHEMA(NamedEnumParams,
+                      holoscan::param_schema("nvidia.holoscan.test.NamedEnumParams", 1),
+                      holoscan::field<&NamedEnumParams::mode>("mode").enum_values(
+                          {param_enum_value("disabled", NamedMode::kDisabled),
+                           param_enum_value("automatic", NamedMode::kAutomatic),
+                           param_enum_value("manual", NamedMode::kManual)}),
+                      holoscan::field<&NamedEnumParams::fallback>("fallback")
+                          .enum_values({param_enum_value("disabled", NamedMode::kDisabled),
+                                        param_enum_value("automatic", NamedMode::kAutomatic),
+                                        param_enum_value("manual", NamedMode::kManual)}),
+                      holoscan::field<&NamedEnumParams::modes>("modes")
+                          .enum_values({param_enum_value("disabled", NamedMode::kDisabled),
+                                        param_enum_value("automatic", NamedMode::kAutomatic),
+                                        param_enum_value("manual", NamedMode::kManual)})
+                          .max_elements(4));
+
+struct NamedEnumShapeA {
+  NamedMode mode{NamedMode::kAutomatic};
+};
+
+HOLOSCAN_PARAM_SCHEMA(NamedEnumShapeA,
+                      holoscan::param_schema("nvidia.holoscan.test.NamedEnumShape", 1),
+                      holoscan::field<&NamedEnumShapeA::mode>("mode").enum_values(
+                          {param_enum_value("disabled", NamedMode::kDisabled),
+                           param_enum_value("automatic", NamedMode::kAutomatic),
+                           param_enum_value("manual", NamedMode::kManual)}));
+
+struct NamedEnumShapeB {
+  NamedMode mode{NamedMode::kAutomatic};
+};
+
+HOLOSCAN_PARAM_SCHEMA(NamedEnumShapeB,
+                      holoscan::param_schema("nvidia.holoscan.test.NamedEnumShape", 1),
+                      holoscan::field<&NamedEnumShapeB::mode>("mode").enum_values(
+                          {param_enum_value("disabled", NamedMode::kDisabled),
+                           param_enum_value("auto", NamedMode::kAutomatic),
+                           param_enum_value("manual", NamedMode::kManual)}));
+
+struct UnnamedEnumParams {
+  NamedMode mode{NamedMode::kAutomatic};
+};
+
+HOLOSCAN_PARAM_SCHEMA(UnnamedEnumParams,
+                      holoscan::param_schema("nvidia.holoscan.test.UnnamedEnumParams", 1),
+                      holoscan::field<&UnnamedEnumParams::mode>("mode").allowed_values(
+                          {NamedMode::kDisabled, NamedMode::kAutomatic}));
+
+constexpr auto kUnnamedEnumDomain =
+    holoscan::field<&NamedEnumShapeA::mode>("mode").allowed_values({NamedMode::kAutomatic});
+static_assert(!kUnnamedEnumDomain.invalid());
+constexpr auto kEmptyNamedEnumDomain =
+    holoscan::field<&NamedEnumShapeA::mode>("mode").enum_values<NamedMode>({});
+static_assert(kEmptyNamedEnumDomain.invalid());
+constexpr auto kDuplicateEnumLabel = holoscan::field<&NamedEnumShapeA::mode>("mode").enum_values(
+    {param_enum_value("mode", NamedMode::kDisabled),
+     param_enum_value("mode", NamedMode::kAutomatic)});
+static_assert(kDuplicateEnumLabel.invalid());
+
+template <typename T, bool DefaultConstructible = false>
+class StatefulAllocator {
+ public:
+  using value_type = T;
+
+  template <typename U>
+  struct rebind {
+    using other = StatefulAllocator<U, DefaultConstructible>;
+  };
+
+  StatefulAllocator()
+    requires(DefaultConstructible)
+  = default;
+  StatefulAllocator()
+    requires(!DefaultConstructible)
+  = delete;
+  explicit StatefulAllocator(std::uint32_t identity) noexcept : identity_(identity) {}
+
+  template <typename U>
+  StatefulAllocator(const StatefulAllocator<U, DefaultConstructible>& other) noexcept
+      : identity_(other.identity()) {}
+
+  [[nodiscard]] T* allocate(std::size_t count) { return std::allocator<T>{}.allocate(count); }
+
+  void deallocate(T* pointer, std::size_t count) noexcept {
+    std::allocator<T>{}.deallocate(pointer, count);
+  }
+
+  [[nodiscard]] std::uint32_t identity() const noexcept { return identity_; }
+
+  template <typename U>
+  [[nodiscard]] bool operator==(
+      const StatefulAllocator<U, DefaultConstructible>& other) const noexcept {
+    return identity_ == other.identity();
+  }
+
+ private:
+  std::uint32_t identity_{};
+};
+
+using StatefulScalarSequence = std::vector<std::int32_t, StatefulAllocator<std::int32_t>>;
+using StatefulStringSequence = std::vector<std::string, StatefulAllocator<std::string>>;
+using DefaultableStatefulScalarSequence =
+    std::vector<std::int32_t, StatefulAllocator<std::int32_t, true>>;
+
+struct StatefulAllocatorParams {
+  StatefulScalarSequence scalars{StatefulAllocator<std::int32_t>{17U}};
+  StatefulStringSequence strings{StatefulAllocator<std::string>{23U}};
+  std::optional<StatefulScalarSequence> optional_scalars;
+  std::optional<StatefulStringSequence> optional_strings;
+  std::optional<DefaultableStatefulScalarSequence> defaultable_optional_scalars{
+      std::in_place, StatefulAllocator<std::int32_t, true>{29U}};
+};
+
+static_assert(ParameterAggregate<StatefulAllocatorParams>);
+
+HOLOSCAN_PARAM_SCHEMA(
+    StatefulAllocatorParams,
+    holoscan::param_schema("nvidia.holoscan.test.StatefulAllocatorParams", 1),
+    holoscan::field<&StatefulAllocatorParams::scalars>("scalars"),
+    holoscan::field<&StatefulAllocatorParams::strings>("strings"),
+    holoscan::field<&StatefulAllocatorParams::optional_scalars>("optional_scalars"),
+    holoscan::field<&StatefulAllocatorParams::optional_strings>("optional_strings"),
+    holoscan::field<&StatefulAllocatorParams::defaultable_optional_scalars>(
+        "defaultable_optional_scalars"));
 
 // PartialParams: schema with kDeclaredFieldsOnly coverage (.partial()); the single declared
 // field carries runtime_mutable, external_tuning, persisted, and a numeric range constraint.
@@ -277,6 +550,25 @@ HOLOSCAN_PARAM_SCHEMA(AllowedValueParams,
                       holoscan::param_schema("nvidia.holoscan.test.AllowedValueParams", 1),
                       holoscan::field<&AllowedValueParams::mode>("mode").allowed_values({1, 2, 4}));
 
+// OptionalParams: absent fields remain valid, while present values use the same scalar,
+// cardinality, and encoding constraints as their underlying types (REQ: PARAM-054).
+struct OptionalParams {
+  std::optional<std::int32_t> count{};
+  std::optional<std::string> label{};
+  std::optional<std::vector<std::string>> tags{};
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    OptionalParams, holoscan::param_schema("nvidia.holoscan.test.OptionalParams", 1),
+    holoscan::field<&OptionalParams::count>("count").range(1, 8).allowed_values({2, 4, 6}),
+    holoscan::field<&OptionalParams::label>("label")
+        .encoding(ParamStringEncoding::kUtf8)
+        .max_utf8_bytes(8),
+    holoscan::field<&OptionalParams::tags>("tags")
+        .element_encoding(ParamStringEncoding::kUtf8)
+        .max_element_utf8_bytes(4)
+        .max_elements(2));
+
 // PathParams: filesystem path field; logical type = kFilesystemPath, has_stable_shape = false,
 // has_portable_codec = false — but aggregate validation still passes.
 struct PathParams {
@@ -340,6 +632,16 @@ struct ShapeInt64Params {
 HOLOSCAN_PARAM_SCHEMA(ShapeInt64Params,
                       holoscan::param_schema("nvidia.holoscan.test.ShapeScalar", 1),
                       holoscan::field<&ShapeInt64Params::value>("value"));
+
+// ShapeOptionalInt32Params: same stable schema ID and underlying scalar shape as
+// ShapeInt32Params; explicit optionality must make its structural hash distinct.
+struct ShapeOptionalInt32Params {
+  std::optional<std::int32_t> value{};
+};
+
+HOLOSCAN_PARAM_SCHEMA(ShapeOptionalInt32Params,
+                      holoscan::param_schema("nvidia.holoscan.test.ShapeScalar", 1),
+                      holoscan::field<&ShapeOptionalInt32Params::value>("value"));
 
 // ShapeVectorIntParams: sequence of int32; verifies kSequence logical type with
 // element_or_rep_type = kSignedInteger and element_or_rep_bit_width = 32.
@@ -549,6 +851,17 @@ HOLOSCAN_PARAM_SCHEMA(ComposedParams,
                       holoscan::param_schema("nvidia.holoscan.test.ComposedParams", 1),
                       holoscan::field<&ComposedParams::nested>("nested").nested<NestedParams>());
 
+// OptionalComposedParams supplies a second nesting level whose mutable local traversal operation
+// engages an absent optional before continuing through ComposedParams to NestedParams.
+struct OptionalComposedParams {
+  std::optional<ComposedParams> composed{};
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    OptionalComposedParams,
+    holoscan::param_schema("nvidia.holoscan.test.OptionalComposedParams", 1),
+    holoscan::field<&OptionalComposedParams::composed>("composed").nested<ComposedParams>());
+
 // PartialNestedParent: parent schema nesting a PartialParams (partial-coverage schema);
 // the nested field must have has_stable_shape = false because the nested schema is partial.
 struct PartialNestedParent {
@@ -688,11 +1001,11 @@ static_assert(
     std::same_as<decltype(param_ref<&CompleteParams::gain>()), ParamRef<&CompleteParams::gain>>);
 static_assert(std::same_as<decltype(param_ref<&ComposedParams::nested, &NestedParams::count>()),
                            ParamRef<&ComposedParams::nested, &NestedParams::count>>);
-
-// REQ: PARAM-009
-static_assert(!std::default_initializable<ParamOverrideSet>);
-static_assert(std::copy_constructible<ParamOverrideSet>);
-static_assert(std::movable<ParamOverrideSet>);
+// REQ: PARAM-056
+static_assert(std::same_as<decltype(param_ref<&OptionalComposedParams::composed,
+                                              &ComposedParams::nested, &NestedParams::count>()),
+                           ParamRef<&OptionalComposedParams::composed, &ComposedParams::nested,
+                                    &NestedParams::count>>);
 
 // REQ: PARAM-008
 static_assert(!HasLocalFieldOperations<ParamFieldDocument>);
@@ -820,6 +1133,195 @@ TEST(ParameterSchema, ModesAndIndependentPoliciesArePreserved) {
   EXPECT_EQ(composed->fields[0].nested_contract_hash, nested->contract_hash);
 }
 
+// REQ: PARAM-056
+TEST(ParameterSchema, LocalNestedOperationsTraverseDirectAndOptionalMembersRecursively) {
+  const ParamSchemaDescriptor* root_schema = param_schema_descriptor<OptionalComposedParams>();
+  const ParamSchemaDescriptor* composed_schema = param_schema_descriptor<ComposedParams>();
+  const ParamSchemaDescriptor* nested_schema = param_schema_descriptor<NestedParams>();
+  ASSERT_NE(root_schema, nullptr);
+  ASSERT_NE(composed_schema, nullptr);
+  ASSERT_NE(nested_schema, nullptr);
+  ASSERT_EQ(root_schema->fields.size(), 1U);
+  ASSERT_EQ(composed_schema->fields.size(), 1U);
+  ASSERT_EQ(nested_schema->fields.size(), 1U);
+
+  const ParamFieldLocalOperations& optional_ops = root_schema->fields[0].local_operations;
+  ASSERT_NE(optional_ops.mutable_nested_member, nullptr);
+  ASSERT_NE(optional_ops.nested_member, nullptr);
+  ASSERT_NE(optional_ops.nested_schema, nullptr);
+  EXPECT_EQ(optional_ops.nested_schema(), composed_schema);
+
+  OptionalComposedParams params;
+  EXPECT_EQ((detail::param_path_value<&OptionalComposedParams::composed,
+                                      &ComposedParams::nested,
+                                      &NestedParams::count>(params)),
+            nullptr);
+  EXPECT_EQ(optional_ops.nested_member(&params), nullptr);
+  void* composed_value = optional_ops.mutable_nested_member(&params);
+  ASSERT_NE(composed_value, nullptr);
+  EXPECT_TRUE(params.composed.has_value());
+  EXPECT_EQ(optional_ops.nested_member(&params), composed_value);
+
+  const ParamFieldLocalOperations& direct_ops = composed_schema->fields[0].local_operations;
+  ASSERT_NE(direct_ops.mutable_nested_member, nullptr);
+  ASSERT_NE(direct_ops.nested_member, nullptr);
+  ASSERT_NE(direct_ops.nested_schema, nullptr);
+  EXPECT_EQ(direct_ops.nested_schema(), nested_schema);
+  void* nested_value = direct_ops.mutable_nested_member(composed_value);
+  ASSERT_NE(nested_value, nullptr);
+  EXPECT_EQ(direct_ops.nested_member(composed_value), nested_value);
+
+  const ParamFieldLocalOperations& count_ops = nested_schema->fields[0].local_operations;
+  ASSERT_NE(count_ops.replace_member_from_scalar, nullptr);
+  EXPECT_TRUE(count_ops.replace_member_from_scalar(nested_value, ParamScalarValue::from(3U)));
+  // ASSERT/EXPECT control flow is not understood by the optional-access analyzer.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(params.composed->nested.count, 3U);
+  const auto* nested_count = detail::param_path_value<&OptionalComposedParams::composed,
+                                                      &ComposedParams::nested,
+                                                      &NestedParams::count>(params);
+  ASSERT_NE(nested_count, nullptr);
+  EXPECT_EQ(*nested_count, 3U);
+  EXPECT_TRUE(validate_params(params).ok());
+
+  const ParamSchemaDescriptor* scalar_schema = param_schema_descriptor<CompleteParams>();
+  ASSERT_NE(scalar_schema, nullptr);
+  EXPECT_EQ(scalar_schema->fields[0].local_operations.mutable_nested_member, nullptr);
+  EXPECT_EQ(scalar_schema->fields[0].local_operations.nested_member, nullptr);
+  EXPECT_EQ(scalar_schema->fields[0].local_operations.nested_schema, nullptr);
+}
+
+// REQ: PARAM-057
+TEST(ParameterSchema, LocalAssignmentOperationsPreserveExactOptionalAndSequenceTypes) {
+  const ParamSchemaDescriptor* optional_schema = param_schema_descriptor<OptionalParams>();
+  const ParamSchemaDescriptor* enum_schema = param_schema_descriptor<NamedEnumParams>();
+  ASSERT_NE(optional_schema, nullptr);
+  ASSERT_NE(enum_schema, nullptr);
+  ASSERT_EQ(optional_schema->fields.size(), 3U);
+  ASSERT_EQ(enum_schema->fields.size(), 3U);
+
+  OptionalParams optional;
+  const ParamFieldLocalOperations& count = optional_schema->fields[0].local_operations;
+  ASSERT_NE(count.replace_member_from_scalar, nullptr);
+  ASSERT_NE(count.read_member_as_scalar, nullptr);
+  ASSERT_NE(count.clear_optional_member, nullptr);
+  EXPECT_TRUE(count.replace_member_from_scalar(&optional, ParamScalarValue::from(4)));
+  ASSERT_EQ(optional.count, 4);
+  ParamScalarValue observed_count;
+  EXPECT_TRUE(count.read_member_as_scalar(&optional, observed_count));
+  std::int32_t decoded_count{};
+  EXPECT_TRUE(observed_count.try_as(decoded_count));
+  EXPECT_EQ(decoded_count, 4);
+  count.clear_optional_member(&optional);
+  EXPECT_FALSE(optional.count.has_value());
+  EXPECT_FALSE(count.read_member_as_scalar(&optional, observed_count));
+
+  const ParamFieldLocalOperations& label = optional_schema->fields[1].local_operations;
+  ASSERT_NE(label.replace_member_from_string, nullptr);
+  ASSERT_NE(label.clear_optional_member, nullptr);
+  label.replace_member_from_string(&optional, "camera");
+  ASSERT_EQ(optional.label, "camera");
+  label.clear_optional_member(&optional);
+  EXPECT_FALSE(optional.label.has_value());
+
+  const ParamFieldLocalOperations& tags = optional_schema->fields[2].local_operations;
+  ASSERT_NE(tags.replace_member_from_string_sequence, nullptr);
+  ASSERT_NE(tags.clear_optional_member, nullptr);
+  const std::array<std::string_view, 2> tag_values{"rgb", "left"};
+  tags.replace_member_from_string_sequence(&optional, tag_values);
+  ASSERT_TRUE(optional.tags.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(*optional.tags, (std::vector<std::string>{"rgb", "left"}));
+  tags.clear_optional_member(&optional);
+  EXPECT_FALSE(optional.tags.has_value());
+
+  NamedEnumParams enums;
+  const ParamFieldLocalOperations& mode = enum_schema->fields[0].local_operations;
+  const ParamFieldLocalOperations& fallback = enum_schema->fields[1].local_operations;
+  const ParamFieldLocalOperations& modes = enum_schema->fields[2].local_operations;
+  EXPECT_EQ(mode.clear_optional_member, nullptr);
+  ASSERT_NE(mode.replace_member_from_scalar, nullptr);
+  ASSERT_NE(fallback.replace_member_from_scalar, nullptr);
+  ASSERT_NE(fallback.clear_optional_member, nullptr);
+  ASSERT_NE(modes.replace_member_from_scalar_sequence, nullptr);
+  EXPECT_TRUE(mode.replace_member_from_scalar(&enums, ParamScalarValue::from(NamedMode::kManual)));
+  EXPECT_TRUE(
+      fallback.replace_member_from_scalar(&enums, ParamScalarValue::from(NamedMode::kDisabled)));
+  const std::array enum_values{ParamScalarValue::from(NamedMode::kAutomatic),
+                               ParamScalarValue::from(NamedMode::kManual)};
+  EXPECT_TRUE(modes.replace_member_from_scalar_sequence(&enums, enum_values));
+  EXPECT_EQ(enums.mode, NamedMode::kManual);
+  ASSERT_EQ(enums.fallback, NamedMode::kDisabled);
+  EXPECT_EQ(enums.modes, (std::vector<NamedMode>{NamedMode::kAutomatic, NamedMode::kManual}));
+  fallback.clear_optional_member(&enums);
+  EXPECT_FALSE(enums.fallback.has_value());
+
+  const auto prior_modes = enums.modes;
+  const std::array wrong_kind{ParamScalarValue::from(std::int32_t{2})};
+  EXPECT_FALSE(modes.replace_member_from_scalar_sequence(&enums, wrong_kind));
+  EXPECT_EQ(enums.modes, prior_modes);
+}
+
+// REQ: PARAM-057
+TEST(ParameterSchema, LocalSequenceAssignmentPreservesStatefulAllocators) {
+  const ParamSchemaDescriptor* schema = param_schema_descriptor<StatefulAllocatorParams>();
+  ASSERT_NE(schema, nullptr);
+  ASSERT_EQ(schema->fields.size(), 5U);
+
+  StatefulAllocatorParams params;
+  params.scalars.push_back(41);
+  params.strings.emplace_back("prior");
+
+  const ParamFieldLocalOperations& scalars = schema->fields[0].local_operations;
+  ASSERT_NE(scalars.replace_member_from_scalar_sequence, nullptr);
+  const std::array scalar_values{ParamScalarValue::from(std::int32_t{2}),
+                                 ParamScalarValue::from(std::int32_t{5})};
+  EXPECT_TRUE(scalars.replace_member_from_scalar_sequence(&params, scalar_values));
+  ASSERT_EQ(params.scalars.size(), 2U);
+  EXPECT_EQ(params.scalars[0], 2);
+  EXPECT_EQ(params.scalars[1], 5);
+  EXPECT_EQ(params.scalars.get_allocator().identity(), 17U);
+
+  const StatefulScalarSequence prior_scalars = params.scalars;
+  const std::array wrong_kind{ParamScalarValue::from(std::uint32_t{8U})};
+  EXPECT_FALSE(scalars.replace_member_from_scalar_sequence(&params, wrong_kind));
+  EXPECT_EQ(params.scalars, prior_scalars);
+  EXPECT_EQ(params.scalars.get_allocator().identity(), 17U);
+
+  const ParamFieldLocalOperations& strings = schema->fields[1].local_operations;
+  ASSERT_NE(strings.replace_member_from_string_sequence, nullptr);
+  const std::array<std::string_view, 2> string_values{"left", "rgb"};
+  strings.replace_member_from_string_sequence(&params, string_values);
+  ASSERT_EQ(params.strings.size(), 2U);
+  EXPECT_EQ(params.strings[0], "left");
+  EXPECT_EQ(params.strings[1], "rgb");
+  EXPECT_EQ(params.strings.get_allocator().identity(), 23U);
+
+  const ParamFieldLocalOperations& optional_scalars = schema->fields[2].local_operations;
+  const ParamFieldLocalOperations& optional_strings = schema->fields[3].local_operations;
+  EXPECT_EQ(optional_scalars.replace_member_from_scalar_sequence, nullptr);
+  EXPECT_EQ(optional_strings.replace_member_from_string_sequence, nullptr);
+  EXPECT_NE(optional_scalars.clear_optional_member, nullptr);
+  EXPECT_NE(optional_strings.clear_optional_member, nullptr);
+
+  const ParamFieldLocalOperations& defaultable_optional_scalars =
+      schema->fields[4].local_operations;
+  ASSERT_NE(defaultable_optional_scalars.replace_member_from_scalar_sequence, nullptr);
+  ASSERT_NE(defaultable_optional_scalars.clear_optional_member, nullptr);
+  EXPECT_TRUE(
+      defaultable_optional_scalars.replace_member_from_scalar_sequence(&params, scalar_values));
+  ASSERT_TRUE(params.defaultable_optional_scalars.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(params.defaultable_optional_scalars->get_allocator().identity(), 29U);
+  defaultable_optional_scalars.clear_optional_member(&params);
+  EXPECT_FALSE(params.defaultable_optional_scalars.has_value());
+  EXPECT_TRUE(
+      defaultable_optional_scalars.replace_member_from_scalar_sequence(&params, scalar_values));
+  ASSERT_TRUE(params.defaultable_optional_scalars.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(params.defaultable_optional_scalars->get_allocator().identity(), 0U);
+}
+
 // REQ: PARAM-003
 TEST(ParameterSchema, IndependentFieldPoliciesReachLocalAndPortableViews) {
   const ParamSchemaDescriptor* descriptor = param_schema_descriptor<PolicyParams>();
@@ -930,6 +1432,82 @@ TEST(ParameterSchema, EnumLogicalTypesFollowUnderlyingSignedness) {
   EXPECT_EQ(descriptor->fields[1].logical_type, ParamLogicalType::kUnsignedInteger);
 }
 
+// REQ: PARAM-055
+TEST(ParameterSchema, NamedEnumChoicesPreserveAuthoredLabelsAndValidateEveryShape) {
+  const ParamSchemaDescriptor* schema = param_schema_descriptor<NamedEnumParams>();
+  const ParamSchemaDocument* document = param_schema_document<NamedEnumParams>();
+  ASSERT_NE(schema, nullptr);
+  ASSERT_NE(document, nullptr);
+  ASSERT_EQ(schema->fields.size(), 3U);
+  ASSERT_EQ(document->fields.size(), 3U);
+
+  for (std::size_t field_index = 0; field_index < schema->fields.size(); ++field_index) {
+    const ParamFieldDescriptor& field = schema->fields[field_index];
+    const ParamFieldDocument& portable = document->fields[field_index];
+    ASSERT_EQ(field.enum_choices.count, 3U);
+    ASSERT_EQ(portable.enum_choices.count, 3U);
+    EXPECT_EQ(field.constraints.allowed_value_count, field.enum_choices.count);
+    EXPECT_EQ(field.enum_choices.values[0].name, "disabled");
+    EXPECT_EQ(field.enum_choices.values[1].name, "automatic");
+    EXPECT_EQ(field.enum_choices.values[2].name, "manual");
+    EXPECT_EQ(portable.enum_choices.values[1].name, "automatic");
+    NamedMode decoded{};
+    EXPECT_TRUE(field.enum_choices.values[1].value.try_as(decoded));
+    EXPECT_EQ(decoded, NamedMode::kAutomatic);
+  }
+
+  NamedEnumParams params;
+  EXPECT_TRUE(validate_params(params).ok());
+
+  params.mode = static_cast<NamedMode>(1U);
+  ParamValidationResult result = validate_params(params);
+  EXPECT_EQ(result.code, ParamValidationCode::kNotAllowed);
+  EXPECT_EQ(result.field_name, "mode");
+  params.mode = NamedMode::kAutomatic;
+
+  params.fallback = static_cast<NamedMode>(1U);
+  result = validate_params(params);
+  EXPECT_EQ(result.code, ParamValidationCode::kNotAllowed);
+  EXPECT_EQ(result.field_name, "fallback");
+  params.fallback.reset();
+  EXPECT_TRUE(validate_params(params).ok());
+
+  params.modes.push_back(static_cast<NamedMode>(1U));
+  result = validate_params(params);
+  EXPECT_EQ(result.code, ParamValidationCode::kNotAllowed);
+  EXPECT_EQ(result.field_name, "modes");
+
+  const ParamSchemaDescriptor* first_shape = param_schema_descriptor<NamedEnumShapeA>();
+  const ParamSchemaDescriptor* renamed_shape = param_schema_descriptor<NamedEnumShapeB>();
+  ASSERT_NE(first_shape, nullptr);
+  ASSERT_NE(renamed_shape, nullptr);
+  EXPECT_NE(first_shape->structural_hash, renamed_shape->structural_hash);
+}
+
+// REQ: PARAM-055
+TEST(ParameterSchema, NamedEnumChoicesRemainOptInForExistingSchemas) {
+  const ParamSchemaDescriptor* schema = param_schema_descriptor<UnnamedEnumParams>();
+  const ParamSchemaDocument* document = param_schema_document<UnnamedEnumParams>();
+  ASSERT_NE(schema, nullptr);
+  ASSERT_NE(document, nullptr);
+  ASSERT_EQ(schema->fields.size(), 1U);
+  ASSERT_EQ(document->fields.size(), 1U);
+
+  const ParamFieldDescriptor& field = schema->fields.front();
+  const ParamFieldDocument& portable = document->fields.front();
+  EXPECT_EQ(field.enum_choices.count, 0U);
+  EXPECT_EQ(portable.enum_choices.count, 0U);
+  EXPECT_EQ(field.constraints.allowed_value_count, 2U);
+  EXPECT_EQ(portable.constraints.allowed_value_count, 2U);
+
+  UnnamedEnumParams params;
+  EXPECT_TRUE(validate_params(params).ok());
+  params.mode = NamedMode::kManual;
+  const ParamValidationResult result = validate_params(params);
+  EXPECT_EQ(result.code, ParamValidationCode::kNotAllowed);
+  EXPECT_EQ(result.field_name, "mode");
+}
+
 // REQ: PARAM-004
 TEST(ParameterSchema, StructuralContractAndMetadataHashesRemainSeparate) {
   const ParamSchemaDescriptor* asserted = param_schema_descriptor<ProofParamsA>();
@@ -947,6 +1525,7 @@ TEST(ParameterSchema, StructuralContractAndMetadataHashesRemainSeparate) {
 TEST(ParameterSchema, PortableTypeShapeSeparatesDecodingCompatibility) {
   const auto* scalar32 = param_schema_descriptor<ShapeInt32Params>();
   const auto* scalar64 = param_schema_descriptor<ShapeInt64Params>();
+  const auto* optional_scalar32 = param_schema_descriptor<ShapeOptionalInt32Params>();
   const auto* vector_int = param_schema_descriptor<ShapeVectorIntParams>();
   const auto* vector_float = param_schema_descriptor<ShapeVectorFloatParams>();
   const auto* vector_duration = param_schema_descriptor<ShapeVectorDurationParams>();
@@ -959,6 +1538,7 @@ TEST(ParameterSchema, PortableTypeShapeSeparatesDecodingCompatibility) {
   const auto* nested_parent64 = param_schema_descriptor<NestedParent64>();
   ASSERT_NE(scalar32, nullptr);
   ASSERT_NE(scalar64, nullptr);
+  ASSERT_NE(optional_scalar32, nullptr);
   ASSERT_NE(vector_int, nullptr);
   ASSERT_NE(vector_float, nullptr);
   ASSERT_NE(vector_duration, nullptr);
@@ -974,7 +1554,12 @@ TEST(ParameterSchema, PortableTypeShapeSeparatesDecodingCompatibility) {
   EXPECT_EQ(scalar32->fields[0].type_shape.bit_width, 32U);
   EXPECT_EQ(scalar64->fields[0].type_shape.bit_width, 64U);
   EXPECT_TRUE(scalar32->fields[0].type_shape.has_stable_shape);
+  EXPECT_FALSE(scalar32->fields[0].type_shape.optional);
+  EXPECT_TRUE(optional_scalar32->fields[0].type_shape.optional);
+  EXPECT_EQ(optional_scalar32->fields[0].logical_type, ParamLogicalType::kSignedInteger);
+  EXPECT_EQ(optional_scalar32->fields[0].type_shape.bit_width, 32U);
   EXPECT_NE(scalar32->structural_hash, scalar64->structural_hash);
+  EXPECT_NE(scalar32->structural_hash, optional_scalar32->structural_hash);
 
   EXPECT_EQ(vector_int->fields[0].type_shape.type, ParamLogicalType::kSequence);
   EXPECT_EQ(vector_int->fields[0].type_shape.element_or_rep_type, ParamLogicalType::kSignedInteger);
@@ -1001,6 +1586,47 @@ TEST(ParameterSchema, PortableTypeShapeSeparatesDecodingCompatibility) {
   ASSERT_NE(nested, nullptr);
   EXPECT_FALSE(restricted->fields[0].type_shape.has_stable_shape);
   EXPECT_TRUE(nested->fields[0].type_shape.has_stable_shape);
+}
+
+// REQ: PARAM-054
+TEST(ParameterSchema, OptionalFieldsPreserveAbsenceAndValidatePresentValues) {
+  const ParamSchemaDescriptor* schema = param_schema_descriptor<OptionalParams>();
+  const ParamSchemaDocument* document = param_schema_document<OptionalParams>();
+  ASSERT_NE(schema, nullptr);
+  ASSERT_NE(document, nullptr);
+  ASSERT_EQ(schema->fields.size(), 3U);
+  ASSERT_EQ(document->fields.size(), 3U);
+
+  EXPECT_TRUE(schema->fields[0].type_shape.optional);
+  EXPECT_EQ(schema->fields[0].logical_type, ParamLogicalType::kSignedInteger);
+  EXPECT_EQ(schema->fields[0].type_shape.bit_width, 32U);
+  EXPECT_TRUE(schema->fields[0].type_shape.has_stable_shape);
+  EXPECT_TRUE(document->fields[0].type_shape.optional);
+  EXPECT_TRUE(schema->fields[0].storage.fixed_object_extent);
+  EXPECT_TRUE(schema->fields[0].storage.supports_bounded_materialization);
+  EXPECT_EQ(schema->fields[0].storage.inline_bytes, sizeof(std::int32_t) + 1U);
+
+  OptionalParams params;
+  EXPECT_TRUE(validate_params(params).ok());
+
+  params.count = 4;
+  params.label = "camera";
+  params.tags = std::vector<std::string>{"left", "rgb"};
+  EXPECT_TRUE(validate_params(params).ok());
+
+  params.count = 3;
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kNotAllowed);
+  params.count.reset();
+  EXPECT_TRUE(validate_params(params).ok());
+
+  params.label = "too-long-label";
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kCardinalityExceeded);
+  params.label.reset();
+
+  params.tags = std::vector<std::string>{"one", "two", "three"};
+  EXPECT_EQ(validate_params(params).code, ParamValidationCode::kCardinalityExceeded);
+  params.tags.reset();
+  EXPECT_TRUE(validate_params(params).ok());
 }
 
 // REQ: PARAM-005
@@ -1304,16 +1930,19 @@ TEST(ParameterSchema, LocalFieldOperationsSupportStrongQualifiedStaging) {
   EXPECT_EQ(throwing_equality_operations.semantic_equal_to_staged, nullptr);
 }
 
-// REQ: PARAM-009
-TEST(ParameterOverrideSet, OpaqueValueOwnsImmutableStateWithoutPublicConstruction) {
-  const std::array<std::byte, 32> target_identity{std::byte{0xA5}, std::byte{0x5A}};
-  const ParamOverrideSet value = detail::ParamOverrideSetAccess::make(target_identity);
-  // Deliberately exercise the value type's shared immutable copy contract.
-  const ParamOverrideSet copy = value;  // NOLINT(performance-unnecessary-copy-initialization)
-  EXPECT_EQ(detail::ParamOverrideSetAccess::state(value).representation_version, 1U);
-  EXPECT_EQ(detail::ParamOverrideSetAccess::state(copy).target_identity, target_identity);
-  EXPECT_EQ(&detail::ParamOverrideSetAccess::state(value),
-            &detail::ParamOverrideSetAccess::state(copy));
+// REQ: PARAM-012
+TEST(ParameterSchema, ComposedFieldsOnlyInstallValidSemanticEqualityThunks) {
+  // Key setup: instantiate descriptors for pair, tuple, reference-qualified container, and
+  // declaration-only standard-container equality fields whose element has no equality operator.
+  const ParamSchemaDescriptor* descriptor = param_schema_descriptor<ComposedEqualityParams>();
+  ASSERT_NE(descriptor, nullptr);
+  ASSERT_EQ(descriptor->fields.size(), 20U);
+
+  // Key assertion: descriptor construction succeeds and leaves every invalid optional equality
+  // route absent instead of imposing an undeclared comparability requirement on the field.
+  for (const ParamFieldDescriptor& field : descriptor->fields) {
+    EXPECT_EQ(field.local_operations.semantic_equal_members, nullptr);
+  }
 }
 
 }  // namespace

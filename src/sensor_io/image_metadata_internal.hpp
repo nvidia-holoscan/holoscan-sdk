@@ -9,9 +9,9 @@
 #include <cstdint>
 #include <span>
 
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/errors.hpp"
-#include "holoscan/core/expected.hpp"
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/expected.hpp>
 
 #include "image_generated.h"
 

@@ -27,6 +27,9 @@ namespace {
 
 using namespace physical_plan_test;
 
+template <typename Enum>
+[[nodiscard]] Enum unknown_enum() noexcept;
+
 class DescriptorTensorArtifactSource final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -64,6 +67,53 @@ TEST(CompilePhysicalPlanArtifact, NormalizesEmptyLargeAndMalformedJsonWithoutOut
   constexpr std::string_view kUnmatchedClose{"},"};
   // Key assertion: malformed test input remains bounded instead of requesting SIZE_MAX padding.
   EXPECT_EQ(artifact_test::normalized_artifact_json(kUnmatchedClose), "},\n\n");
+}
+
+// REQ: COMPILE-096
+TEST(CompilePhysicalPlanArtifact, SupportThreadAffinityIsCanonicalAndFailsClosed) {
+  const ThreadPlacement affinity{
+      .affinity = CPUAffinity{3U, 7U},
+      .probe_failure_policy = ProbeFailurePolicy::kFailAdmission,
+  };
+  auto baseline = physical_artifact_state();
+  baseline.support_thread_affinities = {SupportThreadAffinityPlanRecord{
+      .role = SupportThreadRole::kController,
+      .requested = affinity,
+      .accepted = affinity,
+      .disposition = PlanDisposition::kAccepted,
+  }};
+  auto different_role = baseline;
+  different_role.support_thread_affinities.front().role = SupportThreadRole::kChannelPump;
+
+  const auto baseline_finalized = finalize_plan_artifact(baseline);
+  const auto different_role_finalized = finalize_plan_artifact(different_role);
+  ASSERT_TRUE(baseline_finalized) << baseline_finalized.error().message;
+  ASSERT_TRUE(different_role_finalized) << different_role_finalized.error().message;
+  EXPECT_NE(baseline.digest, different_role.digest);
+  EXPECT_NE(baseline.json.find("\"support_thread_affinities\":[{\"accepted\":"), std::string::npos);
+
+  const auto expect_rejection = [&](auto mutate) {
+    auto candidate = baseline;
+    mutate(candidate);
+    candidate.json.clear();
+    const auto finalized = finalize_plan_artifact(candidate);
+    ASSERT_FALSE(finalized);
+    EXPECT_EQ(finalized.error().code, ErrorCode::kInvalidArgument);
+    EXPECT_EQ(finalized.error().message, "SUPPORT_THREAD_AFFINITY_PLAN_INVALID");
+    EXPECT_TRUE(candidate.json.empty());
+  };
+  expect_rejection([](auto& state) {
+    state.support_thread_affinities.push_back(state.support_thread_affinities.front());
+  });
+  expect_rejection([](auto& state) {
+    state.support_thread_affinities.front().role = unknown_enum<SupportThreadRole>();
+  });
+  expect_rejection([](auto& state) {
+    state.support_thread_affinities.front().requested.affinity = CPUAffinity{};
+  });
+  expect_rejection([](auto& state) {
+    state.support_thread_affinities.front().accepted->affinity = CPUAffinity{9U};
+  });
 }
 
 template <typename Enum>
@@ -408,6 +458,7 @@ TEST(CompilePhysicalPlanArtifact, RejectsMalformedCompletionReadinessSourceBefor
 // layout or generated schema identity. Constructor-only POD publication remains admitted through
 // emit(T), but does not fabricate an allocate() capability or a generic-loan pool.
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-047
 // REQ: CHAN-074
 // REQ: CHAN-075
@@ -462,40 +513,9 @@ TEST(CompilePhysicalPlanArtifact, FreezesTypedGenericLoanEvidenceWithoutFunction
   EXPECT_NE(plan.json().find("\"trait_evidence\":2"), std::string::npos);
 }
 
-// Generated package evidence is deep-owned by the immutable plan and serialized in one canonical
-// provenance block. Repeated schema ports coalesce exact evidence without retaining package views
-// or callable addresses.
-//
-//   source(GenericLoanEvidenceOperator)   (isolated schema output; no edges)
-//
-// REQ: CHAN-121
-TEST(CompilePhysicalPlanArtifact, PublishesCanonicalSchemaPackageProvenance) {
-  Graph graph{"schema-package-provenance"};
-  (void)graph.op<GenericLoanEvidenceOperator>("source");
-
-  const ExecutionPlan plan = compile(graph);
-  ASSERT_TRUE(plan.ok()) << plan.json();
-  ASSERT_EQ(plan.schema_packages().size(), 1U);
-
-  const SchemaPackagePlanRecord expected =
-      schema_package_plan_record(schema_package<schema::StringT>());
-  EXPECT_EQ(plan.schema_packages().front(), expected);
-
-  // When the pinned FlatBuffers tool or schema inputs change, rebuild
-  // holoscan_flatbuffer_schemas_generated and update this exact golden from the failing plan JSON.
-  constexpr std::string_view kCanonicalGolden{
-      "\"schema_packages\":[{\"binary_schema_size\":304,\"flatc_build\":\"flatc "
-      "25.12.19\",\"generator_format_version\":1,\"include_closure_sha256\":\"e414ba3347e21d"
-      "c8490492ab2eba81b29b46f6384a0f8f8b7e3ba36066aedc6b\",\"ordered_flags\":[\"--bfbs-"
-      "gen-embed\",\"--cpp\",\"--cpp-ptr-type\",\"std::shared_ptr\",\"--gen-object-api\","
-      "\"--reflect-names\",\"--reflect-types\",\"--schema\",\"-o\",\"<generated-schema-dir>\","
-      "\"-I\",\"<schema-root-0>\",\"<ordered-root-schema-files>\"],\"package_format_version\":1,"
-      "\"runtime_abi\":{\"major\":25,\"minor\":12,\"revision\":19},\"schema_id\":\"d0a5cc971"
-      "394c0e0cf0c846cf1839203\"}]"};
-  EXPECT_NE(plan.json().find(kCanonicalGolden), std::string::npos) << plan.json();
-}
 // REQ: COMPILE-002
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 // REQ: COMPILE-048
 // REQ: COMPILE-064
@@ -720,6 +740,7 @@ TEST(CompilePhysicalPlanArtifact, SerializesEveryPublicPhysicalFamilyAndSemantic
 }
 
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 TEST(CompilePhysicalPlanArtifact, PreservesDescriptorTensorServiceFieldProvenance) {
   constexpr TensorFieldSelector<schema::ImageT> kImageData{4U, 0U};
@@ -774,37 +795,9 @@ TEST(CompilePhysicalPlanArtifact, PreservesDescriptorTensorServiceFieldProvenanc
             std::string::npos);
 }
 
-// Package provenance may honestly differ between processes that use the same pinned schema
-// identity. The public diagnostic artifact must show that difference while the semantic plan
-// digest remains stable.
-// REQ: CHAN-121
-TEST(CompilePhysicalPlanArtifact, SchemaPackageEvidenceDoesNotEnterSemanticDigest) {
-  auto first = physical_artifact_state();
-  auto second = physical_artifact_state();
-  SchemaPackagePlanRecord first_record =
-      schema_package_plan_record(schema_package<schema::StringT>());
-  SchemaPackagePlanRecord second_record = first_record;
-  second_record.flatc_build = "flatc independently-reconstructed";
-  second_record.ordered_flags.push_back("--diagnostic-provenance-only");
-  second_record.generator_format_version = 7U;
-  first.schema_packages.push_back(std::move(first_record));
-  second.schema_packages.push_back(std::move(second_record));
-
-  const auto first_finalized = finalize_plan_artifact(first);
-  const auto second_finalized = finalize_plan_artifact(second);
-
-  ASSERT_TRUE(first_finalized) << first_finalized.error().message;
-  ASSERT_TRUE(second_finalized) << second_finalized.error().message;
-  EXPECT_EQ(first.digest, second.digest);
-  EXPECT_NE(first.json, second.json);
-  EXPECT_NE(first.json.find("\"flatc_build\":\"flatc 25.12.19\""), std::string::npos);
-  EXPECT_NE(second.json.find("\"flatc_build\":\"flatc independently-reconstructed\""),
-            std::string::npos);
-}
-
 // Task041's immutable declaration, canonical horizon/trigger projection, hard-floor, and recipe
 // records are all semantic plan authorities. Each valid authority change must perturb the
-// private-v4 artifact identity.
+// private-v7 artifact identity.
 // REQ: COMPILE-069
 TEST(CompilePhysicalPlanArtifact, RateRecipeFamiliesPerturbSemanticIdentity) {
   auto baseline = physical_artifact_state();
@@ -931,7 +924,7 @@ TEST(CompilePhysicalPlanArtifact, RejectsMalformedRateRecipeRecordsBeforeSeriali
   EXPECT_TRUE(retained_drain_all.json.empty());
 }
 
-// A private-v4 horizon is accepted only when it is an exact projection of the destination
+// A private-v7 horizon is accepted only when it is an exact projection of the destination
 // operator's canonical clock, predicate clock, window, or OnEach trigger.
 // REQ: COMPILE-069
 TEST(CompilePhysicalPlanArtifact, AcceptsCanonicalRateHorizonTriggerProvenance) {
@@ -1079,7 +1072,7 @@ TEST(CompilePhysicalPlanArtifact, RejectsMismatchedInverseHorizonTriggerProvenan
 }
 
 // Task041 pool dependencies and provider recipes are semantic artifact identity, while malformed
-// source joins and provider ranges fail before entering the private-v4 digest preimage.
+// source joins and provider ranges fail before entering the private-v7 digest preimage.
 // REQ: COMPILE-069
 TEST(CompilePhysicalPlanArtifact, PoolCapacityFamiliesAreCanonicalAndFailClosed) {
   auto baseline = physical_artifact_state();
@@ -1177,6 +1170,7 @@ TEST(CompilePhysicalPlanArtifact, PredicateCallableProvenanceDoesNotEnterSemanti
 
 // REQ: COMPILE-002
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 // REQ: COMPILE-048
 // REQ: COMPILE-064
@@ -1219,7 +1213,15 @@ TEST(CompilePhysicalPlanArtifact, EveryPublicPhysicalFamilyPerturbsSemanticIdent
         TensorAxisBounds{.max_extent = 16U, .max_abs_stride_bytes = 256U});
   });
   expect_change([](auto& state) { ++state.tensor_device_resources.front().slot_capacity; });
-  expect_change([](auto& state) { state.cuda_compute_streams.front().stream_id += ".changed"; });
+  expect_change([](auto& state) {
+    const std::string original = state.cuda_compute_streams.front().stream_id;
+    state.cuda_compute_streams.front().stream_id += ".changed";
+    for (auto& binding : state.operator_cuda_stream_bindings) {
+      if (binding.stream_id == original) {
+        binding.stream_id = state.cuda_compute_streams.front().stream_id;
+      }
+    }
+  });
   expect_change([](auto& state) { ++*state.tensor_interface_pools.front().logical.max_byte_span; });
   expect_change([](auto& state) {
     state.tensor_interface_pools.front().logical.memory_conversion =
@@ -1290,10 +1292,25 @@ TEST(CompilePhysicalPlanArtifact, RejectsMalformedCudaExecutionRecordJoinsBefore
     state.cuda_compute_streams.front().green_context_id = "missing-green-context";
   });
   expect_rejection([](auto& state) { state.cuda_compute_streams.front().owner_id += ".wrong"; });
+  expect_rejection([](auto& state) {
+    state.cuda_compute_stream_policy = static_cast<CudaComputeStreamPolicy>(255U);
+  });
+  expect_rejection([](auto& state) { state.operator_cuda_stream_bindings.clear(); });
+  expect_rejection([](auto& state) {
+    state.operator_cuda_stream_bindings.push_back(state.operator_cuda_stream_bindings.front());
+  });
+  expect_rejection([](auto& state) {
+    state.operator_cuda_stream_bindings.front().stream_id = "tensor-stream.missing";
+  });
+  expect_rejection([](auto& state) {
+    state.operator_cuda_stream_bindings.front().partition = ExecutionPartitionId{999U};
+  });
+  expect_rejection([](auto& state) { ++state.tensor_allocations.front().release_stream_capacity; });
 }
 
 // REQ: COMPILE-002
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 // REQ: CHAN-065
 TEST(CompilePhysicalPlanArtifact, RejectsProcessLocalConstructionFactDrift) {
@@ -1533,6 +1550,7 @@ TEST(CompilePhysicalPlanArtifact, RebindsProcessLocalServiceIdentityAsOneJoinFam
   const std::string original_pool_id = state.provider_allocation_plans.front().pool_id;
   const std::string original_allocator_id = state.tensor_device_resources.front().allocator_root_id;
   const std::string original_stream_id = state.cuda_compute_streams.front().stream_id;
+  ASSERT_FALSE(state.operator_cuda_stream_bindings.empty());
   state.profile_manifest.derived_capacities.push_back(ProfileDerivedCapacityRecord{
       .object_id = original_allocator_id,
       .capacity_id = "slot_count",
@@ -1559,6 +1577,10 @@ TEST(CompilePhysicalPlanArtifact, RebindsProcessLocalServiceIdentityAsOneJoinFam
   EXPECT_EQ(state.process_local_channel_subscribers.front().service_id, service.service_id);
   EXPECT_NE(state.tensor_device_resources.front().allocator_root_id, original_allocator_id);
   EXPECT_NE(state.cuda_compute_streams.front().stream_id, original_stream_id);
+  EXPECT_EQ(state.operator_cuda_stream_bindings.front().plan_generation, 99U);
+  EXPECT_NE(state.operator_cuda_stream_bindings.front().stream_id, original_stream_id);
+  EXPECT_EQ(state.operator_cuda_stream_bindings.front().stream_id,
+            state.cuda_compute_streams.front().stream_id);
   EXPECT_NE(state.provider_allocation_plans.front().pool_id, original_pool_id);
   EXPECT_EQ(state.pool_capacity_dependencies.front().pool_id,
             state.provider_allocation_plans.front().pool_id);
@@ -1577,6 +1599,7 @@ TEST(CompilePhysicalPlanArtifact, RebindsProcessLocalServiceIdentityAsOneJoinFam
 }
 
 // REQ: COMPILE-009
+// REQ: COMPILE-095
 // REQ: COMPILE-040
 TEST(CompilePhysicalPlanManifest, PublishesFiniteUniqueCanonicalPhysicalRequirements) {
   Graph graph{"physical-manifest"};
@@ -1803,7 +1826,7 @@ TEST(CompilePhysicalPlanManifest, DeduplicatesSharedServiceCapacityProjection) {
   manifest.requested_profile = Profile::kStandard;
   manifest.effective_graph_profile = Profile::kStandard;
   manifest.profile_policy_id = profile_policy_id_v1();
-  manifest.plan_schema_version = "holoscan.execution_plan.private.v4";
+  manifest.plan_schema_version = "holoscan.execution_plan.private.v8";
   manifest.runtime_abi_version = "holoscan.runtime_abi.v1";
   manifest.target_triple = std::string(compile_target_triple());
 

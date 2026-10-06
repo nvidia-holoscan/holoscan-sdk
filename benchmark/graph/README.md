@@ -28,6 +28,18 @@ python3 public/benchmark/graph/run_partition_planning_benchmark.py \
   --output-dir /tmp/partition-planning
 ```
 
+The `linear` topology is also the structural-chain scaling probe for the source-chain planner and
+validator. When changing candidate join or partition-cover validation, compare at least 1,024 and
+2,048 Operators in one run so the retained summary makes superlinear growth visible without a
+workstation-specific pass/fail threshold:
+
+```sh
+python3 public/benchmark/graph/run_partition_planning_benchmark.py \
+  build/benchmark/graph/partition_planning_benchmark \
+  --topology linear --operators 1024 --operators 2048 --repetitions 5 \
+  --output-dir /tmp/partition-chain-scaling
+```
+
 Pass `--operators 0` in the same run to capture the same-binary instrumentation/process baseline.
 Hybrid probes require either zero Operators (the baseline) or at least four Operators so the
 benchmark can retain a nonempty exact anchor before requesting an automatic remainder; sizes 1–3

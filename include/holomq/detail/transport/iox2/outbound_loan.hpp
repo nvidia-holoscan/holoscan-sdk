@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "iox2/sample_mut_uninit.hpp"
-#include "iox2/service_type.hpp"
+#include <iox2/sample_mut_uninit.hpp>
+#include <iox2/service_type.hpp>
 
 #include <utility>
 

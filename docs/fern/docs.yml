@@ -17,13 +17,14 @@ libraries:
     output:
       path: ./generated/api-reference/cpp
     lang: cpp
- # holoscan-python:
- #   input:
- #     git: https://github.com/nvidia-holoscan/holoscan-sdk
- #     subpath: python/holoscan
- #   output:
- #     path: ./docs/generated/api-reference/python
- #   lang: python
+  holoscan-python:
+    # build_holoscan_docs.py projects the selected checkout's public facade
+    # stubs into this transient source tree. The private extension is excluded.
+    input:
+      path: ../.python-api-reference
+    output:
+      path: ./generated/api-reference/python
+    lang: python
 # holoscan-tokenless-library:end
 
 instances:

@@ -6,13 +6,13 @@
 #include "channel_inline_payload.hpp"
 
 #include <holomq/delivery_attribution.hpp>
-#include <holomq/detail/wait_set_runtime_access.hpp>
 #include <holomq/inbound_message.hpp>
 #include <holomq/outbound_message.hpp>
 #include <holomq/publisher.hpp>
 #include <holomq/subscriber.hpp>
 #include <holomq/wait_set.hpp>
 #include <holomq/wait_strategy.hpp>
+#include "channel_readiness_handle.hpp"
 
 #include <cstddef>
 #include <cstring>
@@ -24,6 +24,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace holoscan::channel_internal {
 namespace {
@@ -61,10 +62,20 @@ class PendingTerminalStorage<Size, true> {
     value_.emplace(std::forward<Value>(value));
   }
   void reset() noexcept { value_.reset(); }
-  [[nodiscard]] InlinePayloadBucket<Size>* operator->() noexcept { return &*value_; }
-  [[nodiscard]] const InlinePayloadBucket<Size>* operator->() const noexcept { return &*value_; }
-  [[nodiscard]] InlinePayloadBucket<Size>& operator*() noexcept { return *value_; }
-  [[nodiscard]] const InlinePayloadBucket<Size>& operator*() const noexcept { return *value_; }
+  // Callers use these storage-like operators only after has_value(); preserve optional's unchecked
+  // access semantics without adding exception machinery to the receive path.
+  [[nodiscard]] InlinePayloadBucket<Size>* operator->() noexcept {
+    return &*value_;  // NOLINT(bugprone-unchecked-optional-access)
+  }
+  [[nodiscard]] const InlinePayloadBucket<Size>* operator->() const noexcept {
+    return &*value_;  // NOLINT(bugprone-unchecked-optional-access)
+  }
+  [[nodiscard]] InlinePayloadBucket<Size>& operator*() noexcept {
+    return *value_;  // NOLINT(bugprone-unchecked-optional-access)
+  }
+  [[nodiscard]] const InlinePayloadBucket<Size>& operator*() const noexcept {
+    return *value_;  // NOLINT(bugprone-unchecked-optional-access)
+  }
 
  private:
   std::optional<InlinePayloadBucket<Size>> value_;
@@ -380,6 +391,50 @@ class InlinePayloadSubscriberImpl final : public InlinePayloadSubscriber,
   // from it, so this borrow stays valid for the subscriber's lifetime.
   [[nodiscard]] void* wait_context_runtime() noexcept override { return context_; }
 
+  [[nodiscard]] bool wait_set_attached() const noexcept override {
+    if constexpr (ProtectedTerminal) {
+      return subscriber_.has_wait_owner() || terminal_subscriber_.has_wait_owner();
+    }
+    return subscriber_.has_wait_owner();
+  }
+
+  [[nodiscard]] bool readiness_handle_attached() const noexcept override {
+    if constexpr (ProtectedTerminal) {
+      return subscriber_.has_readiness_owner() || terminal_subscriber_.has_readiness_owner();
+    }
+    return subscriber_.has_readiness_owner();
+  }
+
+  [[nodiscard]] expected<ChannelReadinessHandle, Error> readiness() override {
+    auto claim = claim_readiness_owner();
+    if (!claim) {
+      return make_unexpected(std::move(claim).error());
+    }
+    if (closed_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    auto ready = has_samples();
+    if (!ready) {
+      return make_unexpected(std::move(ready).error());
+    }
+
+    std::vector<holomq::ReadinessHandle> handles;
+    handles.reserve(ProtectedTerminal ? 2U : 1U);
+    auto data = subscriber_.readiness();
+    if (!data) {
+      return make_unexpected(from_holomq_error(std::move(data).error()));
+    }
+    handles.push_back(std::move(*data));
+    if constexpr (ProtectedTerminal) {
+      auto terminal = terminal_subscriber_.readiness();
+      if (!terminal) {
+        return make_unexpected(from_holomq_error(std::move(terminal).error()));
+      }
+      handles.push_back(std::move(*terminal));
+    }
+    return ChannelReadinessHandleAccess::create(std::move(handles), {}, *ready);
+  }
+
   [[nodiscard]] expected<bool, Error> has_samples() const override {
     if (closed_) {
       return false;
@@ -430,6 +485,9 @@ class InlinePayloadSubscriberImpl final : public InlinePayloadSubscriber,
     return receive_borrowed_if_data_accepted(true);
   }
 
+  // Data, protected-terminal, and incarnation arbitration must remain one ordered hot-path state
+  // machine; extracting branches would add indirection without simplifying its invariants.
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   [[nodiscard]] expected<InlinePayloadReceiveGuard, Error> receive_borrowed_if_data_accepted(
       const bool accept_data) override {
     if (payload_loan_active_ || borrowed_terminal_) {
@@ -628,10 +686,27 @@ class InlinePayloadWaitSetImpl final : public InlinePayloadWaitSet {
         .spin_duration = std::chrono::nanoseconds{0},
         .timeout = timeout,
     };
-    // The Runtime pump drains every attached endpoint to its finite capacity after each wait,
-    // including timeouts. A publication racing the next block posts a kernel notification, so the
-    // public WaitSet precheck would only repeat the pump's just-completed O(N) readiness scan.
-    auto waited = holomq::detail::WaitSetRuntimeAccess::wait_assuming_no_ready(wait_set_, strategy);
+    // Use the checked wait. The unchecked entry point assumed the pump's preceding drain left
+    // nothing ready, so the pre-block readiness scan would be redundant. That does not hold: an
+    // endpoint can become ready between the drain and the block, and the pump then commits to
+    // blocking on a sample it already owns, waiting for the next publisher notification to release
+    // it. Measured on graph_intraprocess_docs_pod_1to2_per_sink_latency, that cost 41 blocks per
+    // 60k samples in a 0.9-1.2 ms band -- every one of them ended in a notification, not a timeout
+    // -- and moved end-to-end p999 from ~35 us to ~1.07 ms.
+    //
+    // The scan is not a cost on this path: it retires roughly a quarter of the blocks outright
+    // (84.4k -> 63.3k per run) because it finds the sample already queued, so this trades a
+    // blocking syscall for an O(N) shared-memory probe. The median is unchanged or slightly better.
+    //
+    // Known cost: while a subscriber's typed slot is still occupied and its raw queue holds a
+    // further sample, the scan reports ready on every iteration, so the pump re-probes that
+    // subscriber (a failed reservation under its input cache mutex) instead of blocking until the
+    // slot frees. That window is bounded by the consumer's per-sample occupancy, not by the whole
+    // backpressure interval; measured at roughly 15-20 % more pump CPU on the paced, saturated, and
+    // slow-sink rows of the same benchmark, never a full core. Excluding a subscriber with a
+    // retained head from the pre-block scan is the follow-up; skipping the scan for the pump again
+    // is not, that was this defect.
+    auto waited = wait_set_.wait(strategy);
     if (!waited) {
       return make_unexpected(from_holomq_error(std::move(waited).error()));
     }

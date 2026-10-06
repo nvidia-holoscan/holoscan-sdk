@@ -28,6 +28,7 @@
 
 #include "../common/cuda_test_utils.hpp"
 #include "channel/channel_catalog_binding.hpp"
+#include "channel/schema_envelope_codec.hpp"
 #include "compiler/compile_internal.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "core/source_id_internal.hpp"
@@ -964,9 +965,10 @@ TEST(RuntimeChannelBinding, RejectsCorruptedDirectRetainedSchemaEnvelopeBeforeTy
   constexpr std::array kCorruptions{
       CatalogSchemaFrameCorruption::kMalformedEnvelope,
       CatalogSchemaFrameCorruption::kSchemaId,
-      CatalogSchemaFrameCorruption::kSchemaVersion,
+      CatalogSchemaFrameCorruption::kPayloadSize,
       CatalogSchemaFrameCorruption::kEndpointGeneration,
       CatalogSchemaFrameCorruption::kPayloadVerifier,
+      CatalogSchemaFrameCorruption::kEnvelopeAbi,
   };
 
   for (const auto corruption : kCorruptions) {
@@ -1015,6 +1017,58 @@ TEST(RuntimeChannelBinding, RejectsCorruptedDirectRetainedSchemaEnvelopeBeforeTy
   }
 }
 
+// A variable-length direct schema frame must be self-contained. Its declared payload cannot borrow
+// a suffix left in the capacity-sized subscriber scratch buffer by an earlier valid publication.
+// REQ: CHAN-117
+// REQ: CHAN-128
+TEST(RuntimeChannelBinding, RejectsTruncatedDirectSchemaEnvelopeBeforeReusingScratchSuffix) {
+  GeneratedSchemaSessionFixture fixture;
+  fixture.base.use_direct_retained_delivery();
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+
+  const RuntimePortTypeOps& ops = *fixture.replay.front().type_ops;
+  ASSERT_NE(ops.encode_payload, nullptr);
+  schema::StringT value;
+  value.data = "prime the complete direct schema scratch frame";
+  std::vector<std::byte> encoded(ops.wire_capacity);
+  auto encoded_size = ops.encode_payload(&value, encoded);
+  ASSERT_TRUE(encoded_size) << runtime_error_message(encoded_size.error());
+  encoded.resize(*encoded_size);
+  std::vector<std::byte> frame(kSchemaEnvelopeHeaderSize + encoded.size());
+  const auto identity = fixture.base.plan.ports.front().payload_identity.schema;
+  ASSERT_TRUE(identity.has_value());
+  ASSERT_TRUE(channel_internal::encode_schema_envelope(
+      std::span{frame}.first(kSchemaEnvelopeHeaderSize), *identity, encoded.size()));
+  std::copy(encoded.begin(), encoded.end(), frame.begin() + kSchemaEnvelopeHeaderSize);
+
+  // Key setup: prime the capacity-sized scratch buffer with one complete frame, then submit the
+  // same envelope one byte short while its header still declares the complete payload length.
+  const auto inject = [&](const std::span<const std::byte> payload, const std::uint64_t sequence) {
+    return RuntimeChannelSessionTestAccess::inject_direct_inline_payload(
+        **session,
+        PortId{2U},
+        payload,
+        SampleMetadata{
+            .sequence = sequence,
+            .byte_size = static_cast<std::uint32_t>(encoded.size()),
+            .payload_kind = PayloadKind::kSerializedBytes,
+        });
+  };
+  ASSERT_TRUE(inject(frame, 1U));
+  const auto rejected = inject(std::span<const std::byte>{frame}.first(frame.size() - 1U), 2U);
+  ASSERT_FALSE(rejected);
+  EXPECT_EQ(rejected.error().code, ErrorCode::kProtocolError);
+
+  // Key assertion: rejection occurs before stale scratch bytes can create a second retained sample
+  // or advance the accepted producer sequence.
+  const auto retained = RuntimeChannelSessionTestAccess::input_reset_state(**session, PortId{2U});
+  ASSERT_TRUE(retained) << runtime_error_message(retained.error());
+  EXPECT_EQ(retained->occupied_samples, 1U);
+  EXPECT_EQ(retained->pending_direct_ingress_samples, 0U);
+  EXPECT_EQ(retained->last_producer_sequence, 1U);
+}
+
 // Corrupt each process-local schema-envelope component below the trusted encoder. The production
 // transport and typed-retention path must fail closed before publishing a sample or readiness
 // witness, including when structurally valid String bytes carry the wrong semantic identity.
@@ -1026,9 +1080,10 @@ TEST(RuntimeChannelBinding, RejectsCorruptedProcessLocalSchemaEnvelopeBeforeType
   constexpr std::array kCorruptions{
       CatalogSchemaFrameCorruption::kMalformedEnvelope,
       CatalogSchemaFrameCorruption::kSchemaId,
-      CatalogSchemaFrameCorruption::kSchemaVersion,
+      CatalogSchemaFrameCorruption::kPayloadSize,
       CatalogSchemaFrameCorruption::kEndpointGeneration,
       CatalogSchemaFrameCorruption::kPayloadVerifier,
+      CatalogSchemaFrameCorruption::kEnvelopeAbi,
   };
 
   for (const auto corruption : kCorruptions) {

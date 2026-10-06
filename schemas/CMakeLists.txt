@@ -3,10 +3,6 @@
 
 set(HOLOSCAN_SCHEMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(HOLOSCAN_SCHEMA_GENERATED_DIR "${holoscan_BINARY_DIR}/generated/holoscan/schemas")
-# Transport primitives only. The sensor payload types, image.fbs and imu.fbs, belong to
-# holoscan::sensor_io and are built from src/sensor_io/schemas; see the rationale there. geometry.fbs
-# and header.fbs stay because neither names a sensor: a rotation and a message header are meaningful
-# to any payload, and image.fbs and imu.fbs include header.fbs from here.
 set(HOLOSCAN_SCHEMA_FILES
     "${HOLOSCAN_SCHEMA_DIR}/geometry.fbs"
     "${HOLOSCAN_SCHEMA_DIR}/header.fbs"
@@ -15,6 +11,33 @@ set(HOLOSCAN_SCHEMA_FILES
     "${HOLOSCAN_SCHEMA_DIR}/tensor_packet.fbs"
     "${HOLOSCAN_SCHEMA_DIR}/time.fbs"
 )
+set(_HOLOSCAN_SCHEMA_PYTHON_OUTPUT_DIR
+    "${HOLOSCAN_PYTHON_MODULE_ROOT}/holoscan/schema")
+set(_HOLOSCAN_GEOMETRY_PYTHON_ARGS)
+set(_HOLOSCAN_HEADER_PYTHON_ARGS)
+set(_HOLOSCAN_ROOTED_SCHEMA_PYTHON_ARGS)
+set(_HOLOSCAN_TENSOR_PACKET_PYTHON_ARGS)
+if(HOLOSCAN_BUILD_PYTHON)
+    set(_HOLOSCAN_CORE_SCHEMA_PYTHON_ARGS
+        PYTHON_INSTALL_COMPONENT holoscan-python_libs
+        PYTHON_OUTPUT_DIR "${_HOLOSCAN_SCHEMA_PYTHON_OUTPUT_DIR}")
+    list(APPEND _HOLOSCAN_GEOMETRY_PYTHON_ARGS
+        PYTHON_VALUES_ONLY
+        ${_HOLOSCAN_CORE_SCHEMA_PYTHON_ARGS})
+    list(APPEND _HOLOSCAN_HEADER_PYTHON_ARGS
+        PYTHON
+        PYTHON_CODEC_DEFERRED
+        ${_HOLOSCAN_CORE_SCHEMA_PYTHON_ARGS}
+        PYTHON_EXTERNAL_TYPES "holoscan.schema.Time=holoscan.schema.time")
+    list(APPEND _HOLOSCAN_ROOTED_SCHEMA_PYTHON_ARGS
+        PYTHON
+        PYTHON_CODEC_DEFERRED
+        ${_HOLOSCAN_CORE_SCHEMA_PYTHON_ARGS})
+    list(APPEND _HOLOSCAN_TENSOR_PACKET_PYTHON_ARGS
+        PYTHON
+        PYTHON_CODEC_DEFERRED
+        ${_HOLOSCAN_CORE_SCHEMA_PYTHON_ARGS})
+endif()
 
 add_library(holoscan_fbs_tools INTERFACE)
 add_library(${HOLOSCAN_PACKAGE_NAME}::fbs_tools ALIAS holoscan_fbs_tools)
@@ -25,34 +48,147 @@ set_target_properties(holoscan_fbs_tools PROPERTIES
         "${HOLOSCAN_SCHEMA_DIR}/flatbuffers/reflection.fbs"
 )
 
+# Every SDK-owned schema that generates a binding also embeds its reflection bytes, so a consumer
+# that must describe a payload to a reader compiled against no schema at all -- a recorder writing
+# a self-describing log, for instance -- can reach holoscan::binary_schema<T>() for any built-in
+# payload type rather than regenerating the .fbs itself and risking a second identity for the same
+# wire family. The bytes are diagnostic provenance only and never enter identity or the wire. They
+# live in an inline function, so a consumer that never calls the accessor pays nothing in its
+# binary. geometry.fbs and tensor.fbs are omitted because neither generates a binding to attach
+# them to: geometry contributes field types rather than a root, and Tensor's binding is written by
+# hand in flatbuffer_schema_package.hpp.
 holoscan_add_flatbuffer_schema(
-    TARGET holoscan_flatbuffer_schemas_generated
-    SCHEMAS ${HOLOSCAN_SCHEMA_FILES}
-    INCLUDE_DIRS "${HOLOSCAN_SCHEMA_DIR}"
+    TARGET holoscan_geometry_schema_generated
+    SCHEMA geometry.fbs
     OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
-    BFBS_EMBED
+    ${_HOLOSCAN_GEOMETRY_PYTHON_ARGS}
 )
-set(HOLOSCAN_SCHEMA_GENERATED_HEADERS
-    ${holoscan_flatbuffer_schemas_generated_GENERATED_HEADERS}
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_tensor_schema_generated
+    SCHEMA tensor.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+)
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_header_schema_generated
+    SCHEMA header.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+    MAX_SERIALIZED_SIZE 512
+    BFBS_EMBED
+    ${_HOLOSCAN_HEADER_PYTHON_ARGS}
+)
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_string_schema_generated
+    SCHEMA string.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+    MAX_SERIALIZED_SIZE 512
+    BFBS_EMBED
+    ${_HOLOSCAN_ROOTED_SCHEMA_PYTHON_ARGS}
+)
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_tensor_packet_schema_generated
+    SCHEMA tensor_packet.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+    MAX_SERIALIZED_SIZE 512
+    BFBS_EMBED
+    ${_HOLOSCAN_TENSOR_PACKET_PYTHON_ARGS}
+)
+holoscan_add_flatbuffer_schema(
+    TARGET holoscan_time_schema_generated
+    SCHEMA time.fbs
+    OUTPUT_DIR "${HOLOSCAN_SCHEMA_GENERATED_DIR}"
+    MAX_SERIALIZED_SIZE 512
+    BFBS_EMBED
+    ${_HOLOSCAN_ROOTED_SCHEMA_PYTHON_ARGS}
 )
 
-# The image metadata helper and its port type ops moved to holoscan_sensor_io along with image.fbs.
-# Their definitions left this library with them, so a binary linked against the 5.0.0.1
-# libholoscan_schema.so.5 no longer resolves build_image_metadata, parse_image_metadata,
-# image_tensor_metadata, or runtime_port_type_ops<schema::ImageT> here. The mangled names are
-# unchanged: all four keep their holoscan::schema and holoscan::detail enclosing scopes, so this
-# relocates symbols between two DSOs of the same package rather than renaming or dropping them.
-# libholoscan_sensor_io.so defines them now, and a consumer changes one include and links
-# holoscan::sensor_io. SOVERSION below stays at PROJECT_VERSION_MAJOR, matching every other SDK
-# library: 5.x publishes no binary-compatibility guarantee across packages before its general
-# availability, so consumers rebuild against matching headers and libraries, and the release notes
-# carry that requirement the way an earlier 5.x queue-policy change did.
+if(HOLOSCAN_BUILD_PYTHON)
+    file(RELATIVE_PATH _holoscan_schema_python_build_lib_relative
+        "${_HOLOSCAN_SCHEMA_PYTHON_OUTPUT_DIR}"
+        "${holoscan_BINARY_DIR}/lib")
+    set(_holoscan_schema_python_install_dir
+        "${CMAKE_INSTALL_LIBDIR}/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages/holoscan/schema")
+    file(RELATIVE_PATH _holoscan_schema_python_install_lib_relative
+        "/${_holoscan_schema_python_install_dir}"
+        "/${CMAKE_INSTALL_LIBDIR}")
+    get_property(_holoscan_schema_python_targets GLOBAL
+        PROPERTY HOLOSCAN_PYTHON_SCHEMA_INSTALL_TARGETS)
+    foreach(_holoscan_schema_target IN LISTS _holoscan_schema_python_targets)
+        get_target_property(_holoscan_schema_python_component
+            "${_holoscan_schema_target}" HOLOSCAN_FLATBUFFER_PYTHON_INSTALL_COMPONENT)
+        if(NOT _holoscan_schema_python_component STREQUAL "holoscan-python_libs")
+            continue()
+        endif()
+        get_target_property(_holoscan_schema_python_codec_target
+            "${_holoscan_schema_target}" HOLOSCAN_FLATBUFFER_PYTHON_CODEC_TARGET)
+        if(NOT _holoscan_schema_python_codec_target OR
+           _holoscan_schema_python_codec_target MATCHES "-NOTFOUND$")
+            continue()
+        endif()
+        set_target_properties("${_holoscan_schema_python_codec_target}" PROPERTIES
+            BUILD_RPATH "\$ORIGIN/${_holoscan_schema_python_build_lib_relative}"
+            INSTALL_RPATH "\$ORIGIN/${_holoscan_schema_python_install_lib_relative}")
+    endforeach()
+    unset(_holoscan_schema_python_build_lib_relative)
+    unset(_holoscan_schema_python_codec_target)
+    unset(_holoscan_schema_python_component)
+    unset(_holoscan_schema_python_install_dir)
+    unset(_holoscan_schema_python_install_lib_relative)
+    unset(_holoscan_schema_target)
+    unset(_holoscan_schema_python_targets)
+endif()
+unset(_HOLOSCAN_CORE_SCHEMA_PYTHON_ARGS)
+unset(_HOLOSCAN_GEOMETRY_PYTHON_ARGS)
+unset(_HOLOSCAN_HEADER_PYTHON_ARGS)
+unset(_HOLOSCAN_ROOTED_SCHEMA_PYTHON_ARGS)
+unset(_HOLOSCAN_SCHEMA_PYTHON_OUTPUT_DIR)
+unset(_HOLOSCAN_TENSOR_PACKET_PYTHON_ARGS)
+add_custom_target(holoscan_flatbuffer_schemas_generated)
+add_dependencies(holoscan_flatbuffer_schemas_generated
+    holoscan_geometry_schema_generated
+    holoscan_header_schema_generated
+    holoscan_string_schema_generated
+    holoscan_tensor_packet_schema_generated
+    holoscan_tensor_schema_generated
+    holoscan_time_schema_generated
+)
+set(HOLOSCAN_SCHEMA_GENERATED_HEADERS
+)
+foreach(schema_target IN ITEMS
+        holoscan_geometry_schema_generated
+        holoscan_header_schema_generated
+        holoscan_string_schema_generated
+        holoscan_tensor_packet_schema_generated
+        holoscan_tensor_schema_generated
+        holoscan_time_schema_generated)
+    get_target_property(schema_headers
+        "${schema_target}" HOLOSCAN_FLATBUFFER_GENERATED_HEADERS)
+    list(APPEND HOLOSCAN_SCHEMA_GENERATED_HEADERS ${schema_headers})
+endforeach()
+
 add_library(holoscan_schema
+    "${holoscan_SOURCE_DIR}/src/schema/authoring_registry.cpp"
+    "${holoscan_SOURCE_DIR}/src/schema/schema_package.cpp"
     "${holoscan_SOURCE_DIR}/src/schema/tensor_overrides.cpp"
-    "${holoscan_SOURCE_DIR}/src/schema/tensor_packet_port_type_ops.cpp"
 )
 add_library(${HOLOSCAN_PACKAGE_NAME}::schema ALIAS holoscan_schema)
 add_dependencies(holoscan_schema holoscan_flatbuffer_schemas_generated)
+if(HOLOSCAN_BUILD_PYTHON)
+    # These codecs are declared before holoscan_schema exists, so the schema helper cannot attach
+    # its normal link automatically.  Link every rooted Core codec once the library is available;
+    # values-only geometry and the hand-authored Tensor facade do not have codec targets.
+    foreach(_holoscan_schema_python_target IN ITEMS
+            holoscan_header_schema_generated
+            holoscan_string_schema_generated
+            holoscan_tensor_packet_schema_generated
+            holoscan_time_schema_generated)
+        get_target_property(_holoscan_schema_python_codec_target
+            "${_holoscan_schema_python_target}" HOLOSCAN_FLATBUFFER_PYTHON_CODEC_TARGET)
+        target_link_libraries("${_holoscan_schema_python_codec_target}"
+            PRIVATE holoscan_schema)
+    endforeach()
+    unset(_holoscan_schema_python_codec_target)
+    unset(_holoscan_schema_python_target)
+endif()
 holoscan_configure_cxx20_target(holoscan_schema PUBLIC)
 target_include_directories(holoscan_schema
     PRIVATE

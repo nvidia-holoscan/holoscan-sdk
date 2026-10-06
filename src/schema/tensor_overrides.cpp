@@ -19,11 +19,11 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/holoscan_schema_export.h>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/schema/tensor_materialization.hpp>
 #include "core/domain/tensor_access.hpp"
 #include "core/domain/tensor_layout_validation.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/holoscan_schema_export.h"
-#include "holoscan/schema/tensor_materialization.hpp"
 
 #include "tensor_generated.h"
 

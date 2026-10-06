@@ -3,8 +3,8 @@
 
 // Application-defined control message for the custom_schema example. This is
 // the worked schema from the user guide's "Custom FlatBuffer schemas" page.
-// A semantic schema change produces new generated package evidence. Update
-// the TRAITS_SCHEMA_VERSION policy in CMake as part of that change.
+// Compatible edits retain the root name, file identifier, epoch, and explicit field IDs and must
+// conform to the committed source baseline.
 namespace app;
 
 table CustomControl {
@@ -19,3 +19,4 @@ table CustomControl {
 }
 
 root_type CustomControl;
+file_identifier "ACCT";

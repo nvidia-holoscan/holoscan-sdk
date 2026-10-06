@@ -18,6 +18,8 @@ PUBLIC_HEADER_ROOTS = (
         "HOLOSCAN_EXPERIMENTAL_PARAMS_WEB_TUNER_EXPORT",
     ),
     ("include/holoscan/experimental/params", "HOLOSCAN_EXPERIMENTAL_PARAMS_WEB_TUNER_EXPORT"),
+    ("public/include/holoscan/testing", "HOLOSCAN_TESTING_EXPORT"),
+    ("include/holoscan/testing", "HOLOSCAN_TESTING_EXPORT"),
     ("public/include/holoscan/config", "HOLOSCAN_CONFIG_EXPORT"),
     ("include/holoscan/config", "HOLOSCAN_CONFIG_EXPORT"),
     ("public/include/holoscan/params", "HOLOSCAN_PARAMS_EXPORT"),
@@ -26,6 +28,13 @@ PUBLIC_HEADER_ROOTS = (
     ("include/holoscan/logger", "HOLOSCAN_LOGGER_EXPORT"),
     ("public/include/holoscan/schema", "HOLOSCAN_SCHEMA_EXPORT"),
     ("include/holoscan/schema", "HOLOSCAN_SCHEMA_EXPORT"),
+    ("public/include/holoscan/sensor_io", "HOLOSCAN_SENSOR_IO_EXPORT"),
+    ("include/holoscan/sensor_io", "HOLOSCAN_SENSOR_IO_EXPORT"),
+    (
+        "public/modules/inference/operators/include/holoscan/operators/inference",
+        "HOLOSCAN_OP_INFERENCE_EXPORT",
+    ),
+    ("include/holoscan/operators/inference", "HOLOSCAN_OP_INFERENCE_EXPORT"),
     ("public/include/holoscan", "HOLOSCAN_CORE_EXPORT"),
     ("include/holoscan", "HOLOSCAN_CORE_EXPORT"),
     ("public/include/holomq", "HOLOMQ_EXPORT"),
@@ -35,6 +44,9 @@ PUBLIC_HEADER_ROOTS = (
 )
 PUBLIC_HEADER_FILE_MACROS = {
     "holoscan/config/io.hpp": "HOLOSCAN_CONFIG_IO_EXPORT",
+    # This legacy Core include-root location declares a class implemented by the Inference DSO.
+    # Keep the file-level ownership explicit until the header moves to the module source root.
+    "holoscan/operators/inference/inference.hpp": "HOLOSCAN_OP_INFERENCE_EXPORT",
     "holoscan/params/persistence.hpp": "HOLOSCAN_PARAMS_IO_EXPORT",
 }
 ALLOWLIST_SECTIONS = {

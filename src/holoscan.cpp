@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "holoscan/holoscan.hpp"
+#include <holoscan/holoscan.hpp>
 
 #include <iostream>
 

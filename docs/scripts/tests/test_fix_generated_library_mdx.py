@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
+from unittest.mock import patch
 
 SCRIPT_DIR = Path(__file__).parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -13,11 +14,129 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from fix_generated_library_mdx import (  # noqa: E402
     collect_holoscan_api_targets,
     fix_file_content,
+    fix_python_routes,
+    normalize_python_layout,
     reconcile_codeblock_holoscan_links,
+)
+from fix_generated_library_mdx import (  # noqa: E402
+    main as postprocess,
 )
 
 
 class FixGeneratedLibraryMdxTestCase(TestCase):
+    def test_normalizes_python_layout_and_navigation(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            python_root = root / "api-reference/python"
+            package = python_root / "holoscan-python/holoscan"
+            (package / "payload").mkdir(parents=True)
+            body = (
+                "---\nslug: holoscan-python/holoscan\n---\n"
+                "[Payload](/holoscan-python/holoscan/payload)\n"
+                '<CodeBlock links={{"Schema": "/holoscan-python/holoscan/payload#Schema"}} />\n'
+            )
+            (package / "index.mdx").write_text(body, encoding="utf-8")
+            (package / "payload/index.mdx").write_text("Payload\n", encoding="utf-8")
+            navigation = python_root / "_navigation.yml"
+            original_navigation = (
+                "- type: page\n"
+                "  slug: holoscan-python/holoscan/payload\n"
+                "  pageId: holoscan-python/holoscan/payload/index.mdx\n"
+            )
+            navigation.write_text(original_navigation, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "needs post-processing"):  # noqa: PT027
+                normalize_python_layout(root, check=True)
+            assert (package / "index.mdx").read_text() == body
+            assert navigation.read_text() == original_navigation
+
+            normalize_python_layout(root)
+            assert not package.parent.exists()
+            assert (python_root / "holoscan/index.mdx").read_text() == body
+            assert (python_root / "holoscan/payload/index.mdx").read_text() == "Payload\n"
+            assert navigation.read_text() == fix_python_routes(original_navigation).replace(
+                "pageId: holoscan-python/", "pageId: "
+            )
+            normalize_python_layout(root)
+            normalize_python_layout(root, check=True)
+
+    def test_python_routes_in_reused_tree_are_checked_and_rewritten(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            page = root / "api-reference/python/holoscan/errors.mdx"
+            page.parent.mkdir(parents=True)
+            body = (
+                "---\nslug: holoscan-python/holoscan/errors\n---\n"
+                "[Root](/holoscan-python/holoscan)\n"
+                "[Error](/holoscan-python/holoscan/errors#Error)\n"
+                "[Prefixed](/holoscan/sdk-user-guide/holoscan-python/holoscan/errors)\n"
+                '<CodeBlock links={{"Error": "/holoscan-python/holoscan/errors#Error"}} />\n'
+                "[Local](#Error)\n"
+                "[Other](https://example.com/holoscan-python/holoscan/errors)\n"
+            )
+            page.write_text(body)
+            cpp = self._write_page(root, "api-reference/cpp/holoscan/Graph.mdx", "Graph")
+            cpp_before = cpp.read_bytes()
+            command = ["fix_generated_library_mdx.py", "--root", str(root)]
+            with patch.object(sys, "argv", [*command, "--check"]):
+                assert postprocess() == 1
+            assert page.read_text() == body
+            with patch.object(sys, "argv", command):
+                assert postprocess() == 0
+            expected = (
+                body.replace("slug: holoscan-python/", "slug: python/api-reference/")
+                .replace("](/holoscan-python/", "](/holoscan/sdk-user-guide/python/api-reference/")
+                .replace(
+                    '": "/holoscan-python/', '": "/holoscan/sdk-user-guide/python/api-reference/'
+                )
+                .replace(
+                    "](/holoscan/sdk-user-guide/holoscan-python/",
+                    "](/holoscan/sdk-user-guide/python/api-reference/",
+                )
+            )
+            assert page.read_text() == expected
+            with patch.object(sys, "argv", [*command, "--check"]):
+                assert postprocess() == 0
+            assert cpp.read_bytes() == cpp_before
+
+    def test_moves_previous_python_routes_in_reused_output(self) -> None:
+        text = (
+            "---\nslug: py-api-reference/holoscan/errors\n---\n"
+            "[Error](/holoscan/sdk-user-guide/py-api-reference/holoscan/errors#Error)\n"
+            '<CodeBlock links={{"Error": "/holoscan/sdk-user-guide/'
+            'py-api-reference/holoscan/errors#Error"}} />\n'
+        )
+        expected = text.replace("py-api-reference/", "python/api-reference/")
+        assert fix_python_routes(text) == expected
+        assert (
+            fix_python_routes(text.replace("py-api-reference/", "python-api-reference/"))
+            == expected
+        )
+        assert fix_python_routes(expected) == expected
+
+    def test_refuses_to_overwrite_python_output(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            python_root = root / "api-reference/python"
+            package = python_root / "holoscan-python/holoscan"
+            package.mkdir(parents=True)
+            existing = python_root / "holoscan/index.mdx"
+            existing.parent.mkdir()
+            existing.write_text("Existing output\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "refusing to overwrite"):  # noqa: PT027
+                normalize_python_layout(root)
+            assert existing.read_text() == "Existing output\n"
+            assert package.is_dir()
+
+    def test_leaves_cpp_only_output_unchanged(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            page = self._write_page(root, "api-reference/cpp/holoscan/Graph.mdx", "holoscan::Graph")
+            original = page.read_text()
+            normalize_python_layout(root)
+            normalize_python_layout(root, check=True)
+            assert page.read_text() == original
+
     @staticmethod
     def _write_page(root: Path, relative_path: str, title: str, body: str = "") -> Path:
         path = root / relative_path

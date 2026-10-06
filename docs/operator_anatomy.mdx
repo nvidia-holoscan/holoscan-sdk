@@ -16,8 +16,8 @@ sample flows.
 **Complete C++ example:** [`examples/operator_anatomy/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/operator_anatomy/cpp)
 
 <Note title="You will learn">
-  - The three ways to read an input — `receive()`, `receive_data()`, and the
-    batch views — and how to pick between them
+  - How to choose between owning scalar reads, `selected_sample()` borrows,
+    and batch views
   - What a `Sample<T>` owns, what `SampleMetadata` carries, and what a read
     claim costs
   - Every `emit()` overload, `EmitOptions`, and why
@@ -29,17 +29,20 @@ sample flows.
   - Which types are admitted across a port (`PublishedPayload`)
 </Note>
 
-## Reading inputs: three accessors, one frozen selection
+<Anchor id="reading-inputs-three-accessors-one-frozen-selection" />
+
+## Reading inputs: one frozen selection
 
 Before `compute()` runs, the runtime has already applied your temporal
 contract and frozen an **input selection** for this activation: which samples
 participate on each port. `compute()` only reads that frozen selection — it
-never pops a live queue. `Input<T>` gives you three ways in, plus inspectors:
+never pops a live queue. `Input<T>` offers owning reads, borrowed views, and inspectors:
 
 | Accessor | Returns | Reach for it when… |
 |---|---|---|
-| `in_.receive()` | `expected<Sample<T>, Error>` | You need the payload **and** its metadata (capture time, `frame_id`, …), or the sample must outlive the callback. Takes a read claim. |
-| `in_.receive_data()` | `expected<T, Error>` | You only need the value. Copies the payload, takes no claim — the lighter default. |
+| `in_.selected_sample()` | `expected<SelectedSampleView<T>, Error>` | You need read-only scalar data and/or metadata only during this callback. No payload copy, heap allocation, or read claim. |
+| `in_.receive()` | `expected<Sample<T>, Error>` | You need an owning payload and its metadata, including when the sample must outlive the callback. Copies the payload and takes a read claim. |
+| `in_.receive_data()` | `expected<T, Error>` | You need an independent payload value without its envelope. Copies the payload but takes no claim; descriptor copies can allocate. |
 | `in_.selected_batch()` | `expected<SelectedBatchView<T>, Error>` | The port is batch-shaped (e.g. a windowed high-rate input): a borrowed, immutable, activation-scoped view. An *empty* successful view is valid. |
 | `in_.for_each_selected(fn)` | `expected<void, Error>` | Run a fallible callable over the batch in order; stops at the first error. |
 | `in_.selection()` / `in_.is_missing()` / `in_.is_stale()` | `InputSelection` / `bool` | Inspect selection state without reading any value. |
@@ -49,6 +52,50 @@ The simplest path stays simple:
 ```cpp
 HOLOSCAN_TRY(auto value, in_.receive_data());   // just the value, copied out
 ```
+
+### `selected_sample()`: a callback-scoped scalar borrow
+
+Use a borrow when the selected scalar value is only needed inside `compute()`.
+This is especially useful for descriptors such as `ImageT`: copying their generated
+strings, vectors, and nested tables can allocate even though no pixels are copied.
+
+```cpp
+HOLOSCAN_TRY(auto view, in_.selected_sample());
+const auto& value = view.data();       // const T&, no owning payload copy
+const auto& metadata = view.metadata();
+const auto& sample = view.sample();   // const Sample<T>&, the same frozen selection
+```
+
+`*view` and `view->` also expose the selected `const Sample<T>&`. Repeated borrows
+refer to the same selection and do not consume the finite credits used by `receive()`.
+Missing, unbound, and batch-shaped inputs report errors through `expected`; this
+accessor neither waits for a sample nor converts a batch into a scalar.
+
+Borrowing does not introduce a new queue-pressure policy. Owning reads and
+borrowed reads both leave Runtime's selected input protected until callback
+retirement; releasing a local view is not a downstream-capacity acknowledgment.
+Depth-one queues can therefore reject the next publication during a short
+cross-partition overlap, even without sustained overload. See
+[backpressure and queue sizing](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures#backpressure-is-about-simultaneous-retention-not-just-average-rate)
+for lossless versus lossy handling and the limitations of retrying after a borrow
+or consuming Tensor-loan publication.
+
+<Warning>
+  **Keep the view and every reference obtained from it inside the callback.**
+  After selection retirement, a view accessor terminates in both checked and Release
+  builds while its Runtime-owned lifetime witness still exists. Raw references cannot
+  perform that check, and even a view cannot be used after its owning Runtime is
+  destroyed. Do not store either in a member or deferred host callback.
+
+  Const access does not make a generated `shared_ptr` pointee deeply const: treat the
+  selected descriptor, its nested tables, and its Tensor pixels as immutable.
+</Warning>
+
+GPU work submitted on `ExecutionContext::cuda_stream()` may finish after `compute()`
+returns: Runtime's existing Tensor read leases and stream events protect the backing
+storage. That does **not** extend the host descriptor's lifetime or authorize an
+unregistered side stream. For output metadata edits without owning descriptor copies,
+see [transforming sensor payloads](/holoscan/sdk-user-guide/data-and-payloads/sensor-payloads#transforming-images-without-owning-descriptor-copies).
 
 ### `receive()`: an owning `Sample<T>` with a read claim
 
@@ -97,8 +144,9 @@ everywhere else in the runtime.
   twice in one activation returns copies of the *same* frozen selection, not
   the next sample. And each owning `Sample<T>` you hold consumes one claim
   from a bounded pool: hoard too many across activations and `receive()`
-  starts returning `kResourceExhausted`. If you only need the value, use
-  `receive_data()` — it copies the payload and takes no claim at all.
+  starts returning `kResourceExhausted`. For callback-local read-only use, choose
+  `selected_sample()`. For an independent payload value without a claim, choose
+  `receive_data()`; that copy can still allocate.
 </Warning>
 
 ### Batch views: `selected_batch()` and `for_each_selected()`
@@ -273,6 +321,9 @@ wait — `compute()` cannot reach outside its activation.
   and never synchronize on the hot path.
 - **Tracing and status** — `ctx.trace()` / `ctx.trace_id()` for correlation,
   `ctx.activation()` for the activation and violation outcome.
+- **Identity**: `ctx.operator_path()` returns the canonical percent-encoded
+  authored path of this Operator, such as `a/b%2Fc`, for callback-time logs and
+  diagnostics. The borrowed view must not be retained after `compute()`.
 - **Cancellation** — `ctx.cancellation().stop_requested()` observes a
   cooperative stop. A long-running or looping `compute()` should poll it and
   wind down cleanly:
@@ -310,7 +361,9 @@ wait — `compute()` cannot reach outside its activation.
 Not every C++ type may travel between operators. A port admits only
 **`PublishedPayload`** types:
 
-- **Arithmetic types and enums** — plain scalar values.
+- **Arithmetic types and enums** — plain scalar values. Enums are limited to
+  same-process typed Graph edges; use their fixed-width underlying type across
+  process or external boundaries.
 - **Exactly `Tensor`** — the SDK's pooled, stream-ordered payload (not
   tensor-like wrappers).
 - **Schema-identified copyable values** — structs you have explicitly
@@ -325,6 +378,8 @@ are in [payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-t
 
 ## Recap
 
+- `selected_sample()` borrows scalar data and metadata without copying or taking a
+  claim; keep its view and references within the callback.
 - `receive()` returns an owning `Sample<T>` (payload in `.data`, provenance in
   `.metadata`) and takes a finite read claim; `receive_data()` copies just the
   value; `selected_batch()` / `for_each_selected()` read windowed inputs
@@ -337,9 +392,9 @@ are in [payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-t
   `max_emits_per_compute` (which sizes the output pool), and readiness
   sources for `contract()` to trigger on.
 - `ExecutionContext` is the callback-lifetime runtime surface inside
-  `compute()`: params, clock, tag, CUDA stream, cancellation, whole-run
-  termination requests, and restart requests. Its queries are O(1); termination
-  requests are bounded, non-blocking, and allocation-free.
+  `compute()`: Operator path, params, clock, tag, CUDA stream, cancellation,
+  whole-run termination requests, and restart requests. Its queries are O(1);
+  termination requests are bounded, non-blocking, and allocation-free.
 - Only `PublishedPayload` types cross ports: arithmetic/enums, exact `Tensor`,
   and schema-identified copyable values.
 

@@ -7,6 +7,7 @@
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 
 #include "sensor_io/image_metadata_internal.hpp"
+#include "sensor_io/image_metadata_storage.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -21,7 +22,7 @@ namespace holoscan::detail {
 namespace {
 
 using ImagePayload = schema::DescriptorFlatBufferPayload<
-    schema::Image, schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>;
+    schema::Image, schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>>;
 
 // plane_layouts arrives from the wire and lands in a std::vector, so its capacity is reserved
 // during prepare and the bound comes from schema::kMaximumImagePlanes rather than a second constant
@@ -35,10 +36,7 @@ using schema::kMaximumImagePlanes;
   }
   try {
     schema::ImageT image{};
-    image.header = std::make_shared<schema::HeaderT>();
-    image.header->stamp = std::make_shared<schema::TimeT>();
-    image.header->frame_id.reserve(ImagePayload::metadata_capacity);
-    image.plane_layouts.reserve(kMaximumImagePlanes);
+    sensor_io::detail::prepare_image_metadata(image);
     image.data = std::make_shared<Tensor>();
     std::construct_at(
         static_cast<Sample<schema::ImageT>*>(storage), std::move(image), SampleMetadata{});
@@ -191,7 +189,7 @@ const RuntimePortTypeOps* runtime_port_type_ops<schema::ImageT>() noexcept {
   static const RuntimePortTypeOps ops = schema::make_descriptor_tensor_port_type_ops<
       schema::ImageT,
       schema::Image,
-      schema::flatbuffer_default_descriptor_metadata_capacity_v<schema::Image>>(
+      schema::flatbuffer_descriptor_metadata_capacity_v<schema::Image>>(
       PrepareImageSampleCallback{},
       ResetImageSampleCallback{},
       EncodeImageMetadataCallback{},

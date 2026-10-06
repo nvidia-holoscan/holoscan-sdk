@@ -45,6 +45,8 @@
 #include <holoscan/core/temporal_contract.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
+#include "../../common/temporary_workspace.hpp"
+
 namespace {
 
 using namespace std::chrono_literals;
@@ -231,19 +233,35 @@ void print_diagnostics(std::string_view label, const holoscan::ExecutionPlan& pl
 }  // namespace
 
 // REQ: SYSTEM-014
-int main() {
+int main(int argc, char** argv) {
+  const bool print_plan_json = argc == 2 && std::string_view(argv[1]) == "--print-plan-json";
+  if (argc != 1 && !print_plan_json) {
+    std::cerr << "usage: compile_and_check [--print-plan-json]\n";
+    return 1;
+  }
   // --- 1. Admitted graph: compile, gate on ok(), persist plan.json(). -------
   holoscan::Graph graph{"compile-and-check"};
   build_pipeline(graph, 10ms, 4U, DefaultClock::kSet);
   const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+  holoscan::log_diagnostics(plan);
   if (!plan.ok()) {
     std::cerr << plan.json() << '\n';
     return 1;
   }
+  // Allow cross-process byte comparisons without leaving an artifact in a shared directory.
+  if (print_plan_json) {
+    std::cout << plan.json();
+    return std::cout ? 0 : 2;
+  }
   std::cout << "[admitted] plan ok: yes (diagnostics: " << plan.diagnostics().size() << ")\n";
 
-  const std::filesystem::path json_path =
-      std::filesystem::temp_directory_path() / "compile_and_check_plan.json";
+  const std::filesystem::path workspace = holoscan_examples::create_temporary_workspace();
+  if (workspace.empty()) {
+    std::cerr << "failed to create a private temporary workspace\n";
+    return 2;
+  }
+  const holoscan_examples::TemporaryWorkspaceCleanup workspace_cleanup{workspace};
+  const std::filesystem::path json_path = workspace / "compile_and_check_plan.json";
   {
     std::ofstream json_file(json_path, std::ios::binary | std::ios::trunc);
     json_file << plan.json();
@@ -262,6 +280,7 @@ int main() {
   holoscan::Graph broken{"compile-and-check"};
   build_pipeline(broken, 10ms, 4U, DefaultClock::kDeclaredOnly);
   const holoscan::ExecutionPlan rejected = holoscan::compile(broken);
+  holoscan::log_diagnostics(rejected);
   std::cout << "[broken] plan ok: " << (rejected.ok() ? "yes" : "no") << '\n';
   print_diagnostics("broken", rejected);
   const bool clock_error =
@@ -290,6 +309,7 @@ int main() {
   holoscan::Graph gated{"compile-and-check-gated"};
   build_gated_pipeline(gated);
   const holoscan::ExecutionPlan warned = holoscan::compile(gated);
+  holoscan::log_diagnostics(warned);
   std::cout << "[warned] plan ok: " << (warned.ok() ? "yes" : "no") << '\n';
   print_diagnostics("warned", warned);
   const bool warning_found = has_diagnostic(
@@ -307,6 +327,7 @@ int main() {
   holoscan::Graph second{"compile-and-check"};
   build_pipeline(second, 10ms, 4U, DefaultClock::kSet);
   const holoscan::ExecutionPlan second_plan = holoscan::compile(second);
+  holoscan::log_diagnostics(second_plan);
   if (!second_plan.ok()) {
     std::cerr << second_plan.json() << '\n';
     return 6;
@@ -326,6 +347,7 @@ int main() {
   holoscan::Graph edited{"compile-and-check"};
   build_pipeline(edited, 5ms, 8U, DefaultClock::kSet);
   const holoscan::ExecutionPlan edited_plan = holoscan::compile(edited);
+  holoscan::log_diagnostics(edited_plan);
   if (!edited_plan.ok()) {
     std::cerr << edited_plan.json() << '\n';
     return 7;

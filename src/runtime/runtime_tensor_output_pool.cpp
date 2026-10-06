@@ -7,6 +7,7 @@
 
 #include "runtime_tensor_output_plan.hpp"
 #include "runtime_tensor_output_pool.hpp"
+#include "runtime_tensor_provenance.hpp"
 #include "runtime_tensor_resource_materialization.hpp"
 
 #include <cuda.h>
@@ -777,6 +778,9 @@ class SlotMemoryReference final : public Base {
                       std::shared_ptr<SlotLifetime> lifetime) noexcept
       : control_(std::move(control)), slot_(slot), lifetime_(std::move(lifetime)) {}
 
+  [[nodiscard]] bool matches(PortId output, PlanGenerationId plan, RunGenerationId run,
+                             std::string_view pool_id) const noexcept;
+
   void retain_tensor_handle() noexcept override;
   void release_tensor_handle() noexcept override;
 
@@ -830,6 +834,9 @@ using ExportableSlotMemoryReference =
 
 using DeviceResource = RuntimeTensorDeviceResource;
 
+// Keep cross-process and external-topic backing admission together: both contribute to one
+// allocation decision and share the final exportable-placement check.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] expected<bool, Error> output_requires_holomq_backing(
     const ExecutionPlanState& plan, const TensorAllocationPlanRecord& allocation,
     const std::optional<std::uint32_t> tensor_index = std::nullopt) {
@@ -856,6 +863,34 @@ using DeviceResource = RuntimeTensorDeviceResource;
         (direct_tensor && view.tensor_pool_id != allocation.pool_id) || !storage_matches) {
       return make_unexpected(tensor_resource_error(
           "cross-process export contract mismatch", "output", allocation.output.value()));
+    }
+    required = true;
+  }
+  for (const auto& topic : plan.graph.external_topics()) {
+    if (topic.imported || !tensor_index ||
+        topic.payload_identity.kind != PayloadIdentityKind::kSchema ||
+        topic.payload_identity.payload_kind != PayloadKind::kDescriptorBacked) {
+      continue;
+    }
+    const bool adjacent = std::ranges::any_of(plan.graph.edges(), [&](const auto& edge) {
+      return edge.source.value == allocation.output.value() && edge.target == topic.graph_port;
+    });
+    if (!adjacent) {
+      continue;
+    }
+    const auto* service = find_external_channel_service_by_topic(plan, topic.id);
+    if (service == nullptr || !service->tensor_payload ||
+        *tensor_index >= service->tensor_fields.size()) {
+      return make_unexpected(tensor_resource_error(
+          "external output export contract mismatch", "output", allocation.output.value()));
+    }
+    const auto& tensor = service->tensor_fields[*tensor_index].tensor;
+    if (tensor.max_byte_span != allocation.bounds.max_byte_span ||
+        tensor.memory_kind != allocation.memory_kind ||
+        (tensor.memory_kind != MemoryKind::kHost && tensor.memory_kind != MemoryKind::kPinnedHost &&
+         tensor.memory_kind != MemoryKind::kCudaDevice)) {
+      return make_unexpected(tensor_resource_error(
+          "external output export contract mismatch", "output", allocation.output.value()));
     }
     required = true;
   }
@@ -1006,7 +1041,8 @@ class OutputPool final {
       std::optional<std::uint32_t> descriptor_tensor_index = std::nullopt,
       std::optional<std::uint32_t> active_slot_count = std::nullopt,
       RuntimeTensorPoolAllocationAction allocation_action =
-          RuntimeTensorPoolAllocationAction::kFresh) {
+          RuntimeTensorPoolAllocationAction::kFresh,
+      std::optional<DeviceId> release_device = std::nullopt) {
     const std::uint32_t selected_active_slot_count =
         active_slot_count.value_or(allocation.slot_count);
     if (!validate_tensor_allocation_record(allocation, plan.plan_generation) ||
@@ -1018,7 +1054,8 @@ class OutputPool final {
           allocation.memory_kind == MemoryKind::kCudaManaged) &&
          (!allocation.device.valid() || stream == nullptr)) ||
         (allocation.memory_kind == MemoryKind::kPinnedHost && allocation.device.valid() &&
-         stream == nullptr)) {
+         stream == nullptr) ||
+        (release_device && !release_device->valid())) {
       return make_unexpected(tensor_resource_error(
           "invalid output-pool contract", "output", allocation.output.value()));
     }
@@ -1092,9 +1129,10 @@ class OutputPool final {
       if (!backing) {
         return make_unexpected(std::move(backing.error()));
       }
+      const DeviceId lifetime_device = release_device.value_or(allocation.device);
       auto lifetime = SlotLifetime::create(std::move(*backing),
-                                           allocation.device,
-                                           stream != nullptr,
+                                           lifetime_device,
+                                           stream != nullptr || release_device.has_value(),
                                            elide_same_stream_readiness,
                                            *max_release_streams,
                                            allocation.pool_id,
@@ -1187,6 +1225,15 @@ class OutputPool final {
                   RuntimeTensorPoolAllocationAction::kReplaced);
   }
 
+  [[nodiscard]] bool backing_matches(std::size_t slot,
+                                     const std::shared_ptr<SlotLifetime>& lifetime, PortId output,
+                                     PlanGenerationId plan, RunGenerationId run,
+                                     std::string_view pool_id) const noexcept {
+    return plan_generation_ == plan && run_generation_ == run && run != 0U &&
+           plan_.output == output && plan_.pool_id == pool_id && slot < slots_.size() &&
+           slots_[slot]->lifetime == lifetime;
+  }
+
   [[nodiscard]] OperatorInstanceId owner() const noexcept { return owner_; }
   [[nodiscard]] PortId output() const noexcept { return plan_.output; }
   [[nodiscard]] const TensorAllocationPlanRecord& allocation() const noexcept { return plan_; }
@@ -1200,6 +1247,52 @@ class OutputPool final {
     return static_cast<std::uint32_t>(slots_.size());
   }
   [[nodiscard]] std::uint32_t active_slot_count() const noexcept { return active_slot_count_; }
+
+  void restore_binding() noexcept {
+    type_ops_->bind_tensor_output(declaration_,
+                                  TensorOutputBinding{
+                                      .state = this,
+                                      .ops = &kBindingOps,
+                                      .tensor_dtype = exact_bundle_dtype(),
+                                  });
+    bound_ = true;
+    ever_bound_ = true;
+  }
+
+  [[nodiscard]] RuntimeFixedTensorAddress fixed_address() const noexcept {
+    if (active_slot_count_ != 1U || slots_.empty() || slots_.front() == nullptr ||
+        slots_.front()->lifetime == nullptr) {
+      return {};
+    }
+    return RuntimeFixedTensorAddress{
+        .data = slots_.front()->lifetime->data(),
+        .capacity = static_cast<std::size_t>(plan_.bounds.max_byte_span),
+        .memory_kind = plan_.memory_kind,
+        .device = plan_.device,
+    };
+  }
+
+  [[nodiscard]] expected<bool, Error> allocation_available() noexcept {
+    if (!slots_.empty() && slots_.front() != nullptr &&
+        slots_.front()->tensor_handles.load(std::memory_order_acquire) != 0U) {
+      return false;
+    }
+    std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      return false;
+    }
+    reconcile_deferred_releases(lock);
+    if (closed_ || restart_fenced_ || lifecycle_transition_active_) {
+      return make_unexpected(Error{ErrorCode::kClosed});
+    }
+    reclaim_completed_retirements(lock);
+    if (std::ranges::any_of(
+            slots_, [](const auto& slot) { return slot->phase == SlotPhase::kQuarantined; })) {
+      return make_unexpected(tensor_resource_error(
+          "fixed output pool is quarantined", "output", plan_.output.value()));
+    }
+    return live_loans_ < plan_.max_outstanding_loans && !free_slots_.empty();
+  }
 
   [[nodiscard]] expected<void, Error> configure_startup_active_slots(
       const std::uint32_t active_slot_count) noexcept {
@@ -2280,7 +2373,7 @@ class OutputPool final {
     // write_host() completes before commit and exposes no asynchronous producer work. Recording
     // the pool stream in that case would manufacture a remote CUDA wait and defer transport
     // reference retirement for an otherwise ready host buffer.
-    const cudaStream_t readiness_stream = slot.writer_stream;
+    auto* const readiness_stream = slot.writer_stream;
     const bool readiness_required = slot.writer_cuda;
     const bool force_readiness_failure =
         !initially_invalid &&
@@ -2717,6 +2810,14 @@ class OutputPool final {
                : std::nullopt;
   }
 
+  static Tensor tensor_callback(const void* state) {
+    const auto& slot = *static_cast<const OutputSlot*>(state);
+    const OutputPoolCallbackClaim pool(slot);
+    return pool && slot.context != nullptr
+               ? TensorAccess::from_context(slot.context, TensorAuthority::kLocalWritable)
+               : Tensor{};
+  }
+
   static expected<void, Error> commit_callback(void* state) noexcept {
     auto& slot = *static_cast<OutputSlot*>(state);
     const OutputPoolCallbackClaim pool(slot);
@@ -2747,6 +2848,7 @@ class OutputPool final {
       .data = &data_callback,
       .byte_size = &bytes_callback,
       .stream = &stream_callback,
+      .tensor = &tensor_callback,
       .commit = &commit_callback,
   };
 
@@ -2792,6 +2894,17 @@ class OutputPool final {
   bool lifecycle_transition_active_{};
   bool materialization_recorded_{};
 };
+
+template <typename Base>
+bool SlotMemoryReference<Base>::matches(PortId output, PlanGenerationId plan, RunGenerationId run,
+                                        std::string_view pool_id) const noexcept {
+  auto* const pool = control_ != nullptr ? control_->acquire() : nullptr;
+  if (pool == nullptr)
+    return false;
+  const bool result = pool->backing_matches(slot_, lifetime_, output, plan, run, pool_id);
+  control_->release();
+  return result;
+}
 
 template <typename Base>
 void SlotMemoryReference<Base>::retain_tensor_handle() noexcept {
@@ -2858,6 +2971,7 @@ struct TensorBackedOutputDeclaration {
       .control_capacity = field.control_capacity,
       .readiness_capacity = field.readiness_capacity,
       .release_capacity = field.release_capacity,
+      .release_stream_capacity = field.release_stream_capacity,
       .retirement_capacity = field.retirement_capacity,
       .quarantine_capacity = field.quarantine_capacity,
       .materialize_before = field.materialize_before,
@@ -3367,13 +3481,41 @@ class TensorSchemaOutputPool final {
   bool bound_{};
 };
 
+[[nodiscard]] cudaStream_t cuda_graph_egress_stream(
+    const ExecutionPlanState& plan, const RuntimeCudaExecutionResources& cuda_resources,
+    PortId output) noexcept {
+  const CUDAGraphExecutionRegionPlanRecord* owner{};
+  for (const auto& region : plan.cuda_graph_execution_regions) {
+    const bool produces_egress = std::ranges::any_of(region.buffers, [&](const auto& buffer) {
+      return buffer.kind == CUDAGraphCaptureBufferKind::kEgress && buffer.source_port == output;
+    });
+    if (!produces_egress) {
+      continue;
+    }
+    if (owner != nullptr) {
+      return nullptr;
+    }
+    owner = &region;
+  }
+  if (owner == nullptr) {
+    return nullptr;
+  }
+  if (cudaStream_t stream =
+          cuda_resources.partition_stream(owner->process_group, owner->device, owner->partition);
+      stream != nullptr) {
+    return stream;
+  }
+  return cuda_resources.ordinary_stream(owner->process_group, owner->device);
+}
+
 [[nodiscard]] expected<std::unique_ptr<OutputPool>, Error> materialize_output_pool(
     const ExecutionPlanState& plan, std::span<RuntimeOperatorInstance> operators,
     const RuntimeCudaExecutionResources& cuda_resources, std::span<const DeviceResource> devices,
     std::span<const TensorAllocationPlanRecord> allocation_inventory,
     RuntimeRateMaterializationView materialization, const TensorAllocationPlanRecord& allocation,
     RunGenerationId run_generation, ProcessGroupId process_group,
-    const std::shared_ptr<RuntimeTensorOutputTestControl>& test_control, std::size_t pool_index) {
+    const std::shared_ptr<RuntimeTensorOutputTestControl>& test_control, std::size_t pool_index,
+    bool fixed_address) {
   if (std::count_if(allocation_inventory.begin(), allocation_inventory.end(), [&](const auto& row) {
         return row.output == allocation.output || row.pool_id == allocation.pool_id;
       }) != 1) {
@@ -3429,14 +3571,37 @@ class TensorSchemaOutputPool final {
     return make_unexpected(
         tensor_resource_error("output declaration mismatch", "output", allocation.output.value()));
   }
-  auto stream = tensor_output_stream(plan, cuda_resources, devices, allocation);
+  TensorAllocationPlanRecord runtime_allocation = allocation;
+  std::optional<DeviceId> release_device;
+  if (fixed_address) {
+    runtime_allocation.slot_count = 1U;
+    runtime_allocation.aggregate_byte_capacity = runtime_allocation.bounds.max_byte_span;
+    runtime_allocation.max_outstanding_loans = 1U;
+    runtime_allocation.control_capacity = 1U;
+    runtime_allocation.readiness_capacity = 1U;
+    runtime_allocation.release_capacity = 1U;
+    runtime_allocation.retirement_capacity = 1U;
+    runtime_allocation.quarantine_capacity = 1U;
+    if (runtime_allocation.memory_kind == MemoryKind::kPinnedHost) {
+      release_device =
+          cuda_graph_fixed_output_device(plan, process_group, runtime_allocation.output);
+    }
+  }
+  auto stream = tensor_output_stream(plan, cuda_resources, devices, runtime_allocation);
   if (!stream) {
     return make_unexpected(std::move(stream.error()));
   }
+  if (fixed_address && runtime_allocation.memory_kind == MemoryKind::kPinnedHost) {
+    if (const cudaStream_t replay_stream =
+            cuda_graph_egress_stream(plan, cuda_resources, runtime_allocation.output);
+        replay_stream != nullptr) {
+      *stream = replay_stream;
+    }
+  }
   const bool elide_same_stream_readiness =
-      tensor_can_elide_native_readiness(plan, cuda_resources, allocation, *stream);
+      tensor_can_elide_native_readiness(plan, cuda_resources, runtime_allocation, *stream);
   return OutputPool::create(plan,
-                            allocation,
+                            runtime_allocation,
                             std::move(*contract),
                             *instance,
                             declaration.declaration,
@@ -3445,7 +3610,14 @@ class TensorSchemaOutputPool final {
                             elide_same_stream_readiness,
                             run_generation,
                             test_control,
-                            pool_index);
+                            pool_index,
+                            true,
+                            1U,
+                            1U,
+                            std::nullopt,
+                            std::nullopt,
+                            RuntimeTensorPoolAllocationAction::kFresh,
+                            release_device);
 }
 
 [[nodiscard]] expected<void, Error> materialize_output_pools(
@@ -3458,6 +3630,8 @@ class TensorSchemaOutputPool final {
     std::vector<std::unique_ptr<OutputPool>>& outputs) {
   outputs.reserve(allocation_inventory.size());
   for (const auto& allocation : allocation_inventory) {
+    const bool fixed_address =
+        cuda_graph_uses_fixed_output_address(plan, process_group, allocation.output);
     auto pool = materialize_output_pool(plan,
                                         operators,
                                         cuda_resources,
@@ -3468,7 +3642,8 @@ class TensorSchemaOutputPool final {
                                         run_generation,
                                         process_group,
                                         test_control,
-                                        outputs.size());
+                                        outputs.size(),
+                                        fixed_address);
     if (!pool) {
       return make_unexpected(std::move(pool.error()));
     }
@@ -3806,7 +3981,11 @@ template <typename Pool>
     // NOLINTNEXTLINE(misc-const-correctness)
     std::uint32_t rate_provider_count{};
     bool rate_sensitive{};
+    bool preserve_allocation{};
     if constexpr (std::is_same_v<Pool, OutputPool>) {
+      // CUDA Graph capture retains this address for the full RunSession.
+      preserve_allocation = cuda_graph_uses_fixed_output_address(
+          plan, output->allocation().allocator_process_group, output->output());
       auto selected = rate_sensitive_tensor_provider(plan, *output, from_stage);
       if (!selected) {
         return make_unexpected(std::move(selected.error()));
@@ -3828,7 +4007,7 @@ template <typename Pool>
       return make_unexpected(std::move(fenced.error()));
     }
     std::unique_ptr<Pool> candidate;
-    if (recreate && !rate_sensitive) {
+    if (recreate && !rate_sensitive && !preserve_allocation) {
       auto* const instance = restart_operator(operators, output->owner());
       if (instance == nullptr) {
         static_cast<void>(output->reopen());
@@ -3958,12 +4137,68 @@ template <typename Pool>
 
 }  // namespace
 
+bool runtime_tensor_backing_matches(const Tensor& tensor, PortId output, PlanGenerationId plan,
+                                    RunGenerationId run, std::string_view pool_id) noexcept {
+  const auto& context = TensorAccess::context(tensor);
+  if (!context || !context->memory_reference)
+    return false;
+  const auto* reference = context->memory_reference.get();
+  if (const auto* native = dynamic_cast<const NativeSlotMemoryReference*>(reference))
+    return native->matches(output, plan, run, pool_id);
+  if (const auto* exported = dynamic_cast<const ExportableSlotMemoryReference*>(reference))
+    return exported->matches(output, plan, run, pool_id);
+  return false;
+}
+
 class RuntimeTensorOutputResources::Impl final {
  public:
+  static constexpr std::size_t kMissingOutputPoolIndex = std::numeric_limits<std::size_t>::max();
+
+  [[nodiscard]] expected<void, Error> index_output_pools() {
+    if (plan == nullptr) {
+      return make_unexpected(tensor_resource_error("output pool plan is unavailable"));
+    }
+    output_pool_index_by_port.assign(plan->ports.size(), kMissingOutputPoolIndex);
+    for (std::size_t pool_index = 0U; pool_index < outputs.size(); ++pool_index) {
+      if (outputs[pool_index] == nullptr) {
+        return make_unexpected(tensor_resource_error("output pool is unavailable"));
+      }
+      const PortId output = outputs[pool_index]->output();
+      if (!output || output.value() > output_pool_index_by_port.size()) {
+        return make_unexpected(tensor_resource_error(
+            "output pool port is outside the plan", "output", output.value()));
+      }
+      const std::size_t port_index = static_cast<std::size_t>(output.value() - 1U);
+      if (plan->ports[port_index].id != output ||
+          output_pool_index_by_port[port_index] != kMissingOutputPoolIndex) {
+        return make_unexpected(
+            tensor_resource_error("output pool index is inconsistent", "output", output.value()));
+      }
+      output_pool_index_by_port[port_index] = pool_index;
+    }
+    return {};
+  }
+
+  [[nodiscard]] OutputPool* output_pool(const PortId output) noexcept {
+    if (!output || output.value() > output_pool_index_by_port.size()) {
+      return nullptr;
+    }
+    const std::size_t pool_index =
+        output_pool_index_by_port[static_cast<std::size_t>(output.value() - 1U)];
+    if (pool_index == kMissingOutputPoolIndex || pool_index >= outputs.size()) {
+      return nullptr;
+    }
+    OutputPool* const pool = outputs[pool_index].get();
+    return pool != nullptr && pool->output() == output ? pool : nullptr;
+  }
+
   const ExecutionPlanState* plan{};
   std::span<RuntimeOperatorInstance> operators;
   RunGenerationId run_generation{};
   std::vector<std::unique_ptr<OutputPool>> outputs;
+  // Pool replacement preserves its vector position, so this cold-built index remains valid for the
+  // full RunSession without retaining a pointer to a retired pool.
+  std::vector<std::size_t> output_pool_index_by_port;
   std::vector<std::unique_ptr<TensorSchemaOutputPool>> tensor_schema_outputs;
   std::vector<std::unique_ptr<OutputPool>> retired_outputs;
   std::vector<std::unique_ptr<TensorSchemaOutputPool>> retired_tensor_schema_outputs;
@@ -4026,6 +4261,10 @@ expected<std::unique_ptr<RuntimeTensorOutputResources>, Error> RuntimeTensorOutp
                                              impl->tensor_schema_outputs);
   if (!tensor_schema_output_pools) {
     return make_unexpected(std::move(tensor_schema_output_pools.error()));
+  }
+  auto indexed_output_pools = impl->index_output_pools();
+  if (!indexed_output_pools) {
+    return make_unexpected(std::move(indexed_output_pools.error()));
   }
   return std::unique_ptr<RuntimeTensorOutputResources>{
       new RuntimeTensorOutputResources{std::move(impl)}};
@@ -4255,7 +4494,12 @@ expected<void, Error> RuntimeTensorOutputResources::prepare_rate_candidate_start
         }
         continue;
       }
-      if (capacity->required_entries > output->allocation().slot_count) {
+      const std::uint32_t active_entries =
+          cuda_graph_uses_fixed_output_address(
+              *impl_->plan, output->allocation().allocator_process_group, output->output())
+              ? 1U
+              : capacity->required_entries;
+      if (active_entries > output->allocation().slot_count) {
         return make_unexpected(
             tensor_resource_error("startup Tensor active-slot limit exceeds backing",
                                   "output",
@@ -4263,7 +4507,7 @@ expected<void, Error> RuntimeTensorOutputResources::prepare_rate_candidate_start
       }
       if (phase == StartupRatePhase::kPreflight) {
         if (*lifecycle_selected) {
-          auto preflight = output->preflight_startup_active_slots(capacity->required_entries);
+          auto preflight = output->preflight_startup_active_slots(active_entries);
           if (!preflight) {
             return make_unexpected(std::move(preflight.error()));
           }
@@ -4283,7 +4527,7 @@ expected<void, Error> RuntimeTensorOutputResources::prepare_rate_candidate_start
           return make_unexpected(std::move(reported.error()));
         }
       } else if (*lifecycle_selected) {
-        output->publish_startup_active_slots(capacity->required_entries);
+        output->publish_startup_active_slots(active_entries);
       }
     }
     return {};
@@ -4858,6 +5102,53 @@ expected<void, Error> RuntimeTensorOutputResources::rollback_restart() noexcept 
 
 std::size_t RuntimeTensorOutputResources::output_pool_count() const noexcept {
   return impl_ != nullptr ? impl_->outputs.size() : 0U;
+}
+
+expected<RuntimeFixedTensorAddress, Error> RuntimeTensorOutputResources::fixed_output_address(
+    const PortId output) noexcept {
+  if (impl_ == nullptr) {
+    return make_unexpected(tensor_resource_error("Tensor resources are unavailable"));
+  }
+  OutputPool* const pool = impl_->output_pool(output);
+  if (pool == nullptr) {
+    return make_unexpected(
+        tensor_resource_error("fixed output pool is unavailable", "output", output.value()));
+  }
+  const RuntimeFixedTensorAddress address = pool->fixed_address();
+  if (address.data == nullptr || address.capacity == 0U) {
+    return make_unexpected(
+        tensor_resource_error("output does not use one fixed slot", "output", output.value()));
+  }
+  return address;
+}
+
+expected<bool, Error> RuntimeTensorOutputResources::fixed_output_available(
+    const PortId output) noexcept {
+  if (impl_ == nullptr) {
+    return make_unexpected(tensor_resource_error("Tensor resources are unavailable"));
+  }
+  OutputPool* const pool = impl_->output_pool(output);
+  if (pool == nullptr) {
+    return make_unexpected(
+        tensor_resource_error("fixed output pool is unavailable", "output", output.value()));
+  }
+  if (pool->active_slot_count() != 1U) {
+    return make_unexpected(
+        tensor_resource_error("output does not use one fixed slot", "output", output.value()));
+  }
+  return pool->allocation_available();
+}
+
+bool RuntimeTensorOutputResources::restore_output_binding(const PortId output) noexcept {
+  if (impl_ == nullptr) {
+    return false;
+  }
+  OutputPool* const pool = impl_->output_pool(output);
+  if (pool == nullptr) {
+    return false;
+  }
+  pool->restore_binding();
+  return true;
 }
 
 }  // namespace holoscan::detail

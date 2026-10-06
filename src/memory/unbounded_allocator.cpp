@@ -12,6 +12,7 @@
 #include <new>
 
 #include <holoscan/logger/logger.hpp>
+#include "core/diagnostic_reporting.hpp"
 
 namespace holoscan {
 namespace {
@@ -50,7 +51,7 @@ expected<std::byte*, Error> UnboundedAllocator::allocate(uint64_t size,
     case MemoryStorageType::kHost: {
       const cudaError_t error = cudaMallocHost(&pointer, size);
       if (error != cudaSuccess) {
-        HOLOSCAN_LOG_ERROR("Failure in cudaMallocHost: {}", cudaGetErrorString(error));
+        HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaMallocHost: {}", cudaGetErrorString(error));
         return make_unexpected<Error>(cuda_runtime_error("cudaMallocHost failed", error));
       }
       const std::lock_guard<std::mutex> lock(mutex_);
@@ -60,7 +61,7 @@ expected<std::byte*, Error> UnboundedAllocator::allocate(uint64_t size,
     case MemoryStorageType::kDevice: {
       const cudaError_t error = cudaMalloc(&pointer, size);
       if (error != cudaSuccess) {
-        HOLOSCAN_LOG_ERROR("Failure in cudaMalloc: {}", cudaGetErrorString(error));
+        HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaMalloc: {}", cudaGetErrorString(error));
         return make_unexpected<Error>(cuda_runtime_error("cudaMalloc failed", error));
       }
       const std::lock_guard<std::mutex> lock(mutex_);
@@ -70,7 +71,7 @@ expected<std::byte*, Error> UnboundedAllocator::allocate(uint64_t size,
     case MemoryStorageType::kCudaManaged: {
       const cudaError_t error = cudaMallocManaged(&pointer, size, cudaMemAttachGlobal);
       if (error != cudaSuccess) {
-        HOLOSCAN_LOG_ERROR("Failure in cudaMallocManaged: {}", cudaGetErrorString(error));
+        HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaMallocManaged: {}", cudaGetErrorString(error));
         return make_unexpected<Error>(cuda_runtime_error("cudaMallocManaged failed", error));
       }
       const std::lock_guard<std::mutex> lock(mutex_);
@@ -102,7 +103,7 @@ expected<void, Error> UnboundedAllocator::free(std::byte* pointer) {
     cuda_blocks_.erase(cuda_block);
     const cudaError_t error = cudaFree(pointer);
     if (error != cudaSuccess) {
-      HOLOSCAN_LOG_ERROR("Failure in cudaFree: {}", cudaGetErrorString(error));
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaFree: {}", cudaGetErrorString(error));
       return make_unexpected<Error>(cuda_runtime_error("cudaFree failed", error));
     }
     return {};
@@ -120,13 +121,13 @@ expected<void, Error> UnboundedAllocator::free(std::byte* pointer) {
     cuda_host_blocks_.erase(cuda_host_block);
     const cudaError_t error = cudaFreeHost(pointer);
     if (error != cudaSuccess) {
-      HOLOSCAN_LOG_ERROR("Failure in cudaFreeHost: {}", cudaGetErrorString(error));
+      HOLOSCAN_LOG_AUTOMATIC_ERROR("Failure in cudaFreeHost: {}", cudaGetErrorString(error));
       return make_unexpected<Error>(cuda_runtime_error("cudaFreeHost failed", error));
     }
     return {};
   }
 
-  HOLOSCAN_LOG_ERROR("UnboundedAllocator cannot free unrecognized pointer");
+  HOLOSCAN_LOG_AUTOMATIC_ERROR("UnboundedAllocator cannot free unrecognized pointer");
   return make_unexpected(Error{ErrorCode::kInvalidArgument, "Unrecognized allocation pointer"});
 }
 

@@ -58,3 +58,4 @@ table Tensor (native_type: "holoscan::Tensor") {
 }
 
 root_type Tensor;
+file_identifier "HSTN";

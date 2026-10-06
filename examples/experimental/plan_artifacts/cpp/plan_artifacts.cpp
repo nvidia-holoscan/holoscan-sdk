@@ -18,7 +18,6 @@
 //   5. one DeploymentBinding::allow_generated_endpoint_name pin in
 //      CompileOptions, echoed back from the deep-owned pin record.
 
-#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -30,7 +29,7 @@
 #include <system_error>
 #include <vector>
 
-#include "plan_artifacts_workspace.hpp"
+#include <fmt/format.h>
 
 #include <holoscan/core/compile.hpp>
 #include <holoscan/core/connection_options.hpp>
@@ -43,6 +42,8 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/temporal_contract.hpp>
 #include <holoscan/time/realtime_clock.hpp>
+
+#include "../../../common/temporary_workspace.hpp"
 
 namespace {
 
@@ -178,19 +179,21 @@ void print_row(std::string_view accessor, const std::string& value) {
 
   print_row("execution_partitions().size()", std::to_string(partitions.size()));
   for (const holoscan::ExecutionPartitionRecord& partition : partitions) {
-    print_row("  partition " + std::to_string(partition.id.value),
-              "lane=" + std::to_string(partition.execution_lane) +
-                  " members=" + member_names(plan, partition.members));
+    print_row(
+        fmt::format("  partition {}", partition.id.value),
+        fmt::format(
+            "lane={} members={}", partition.execution_lane, member_names(plan, partition.members)));
   }
   print_row("scheduler_plan()",
-            "ready_policy=" + scheduler.ready_policy.id + " v" +
-                std::to_string(scheduler.ready_policy.version) +
-                " lanes=" + std::to_string(scheduler.execution_lane_count) +
-                " max_concurrent=" + std::to_string(scheduler.max_concurrent_activations) +
-                " workers=" + std::to_string(scheduler.worker_count));
+            fmt::format("ready_policy={} v{} lanes={} max_concurrent={} workers={}",
+                        scheduler.ready_policy.id,
+                        scheduler.ready_policy.version,
+                        scheduler.execution_lane_count,
+                        scheduler.max_concurrent_activations,
+                        scheduler.worker_count));
   {
-    std::string clock_text = "plan_generation=" + std::to_string(clocks.plan_generation) +
-                             " clocks=" + std::to_string(clocks.clocks.size());
+    std::string clock_text =
+        fmt::format("plan_generation={} clocks={}", clocks.plan_generation, clocks.clocks.size());
     if (!clocks.clocks.empty()) {
       clock_text += " default=" + std::string(clocks.clocks.front().key.name());
     }
@@ -206,25 +209,13 @@ void print_row(std::string_view accessor, const std::string& value) {
     print_row("temporal_triggers().size()", trigger_text);
   }
   print_row("tensor_allocations().size()",
-            std::to_string(tensor_pools.size()) + " (no tensor_allocation outputs here)");
-  print_row("json().size()", std::to_string(plan.json().size()) + " bytes");
+            fmt::format("{} (no tensor_allocation outputs here)", tensor_pools.size()));
+  print_row("json().size()", fmt::format("{} bytes", plan.json().size()));
 
   return !partitions.empty() && scheduler.execution_lane_count == plan.execution_lanes().size() &&
          clocks.plan_generation != 0U && clocks.clocks.size() == 1U &&
          clocks.clocks.front().is_default && clocks.clocks.front().key.name() == "app-clock" &&
          triggers.size() == 2U && tensor_pools.empty() && !plan.json().empty();
-}
-
-[[nodiscard]] std::filesystem::path create_temporary_workspace() {
-  static std::atomic<std::uint64_t> next_sequence{};
-  std::error_code temp_error;
-  const std::filesystem::path temporary_root = std::filesystem::temp_directory_path(temp_error);
-  if (temp_error) {
-    return {};
-  }
-  const std::string nonce =
-      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-  return plan_artifacts_detail::create_temporary_workspace(temporary_root, nonce, next_sequence);
 }
 
 }  // namespace
@@ -258,12 +249,12 @@ int main() {
     return 3;
   }
 
-  const std::filesystem::path workspace = create_temporary_workspace();
+  const std::filesystem::path workspace = holoscan_examples::create_temporary_workspace();
   if (workspace.empty()) {
     std::cerr << "failed to create a unique temporary workspace\n";
     return 4;
   }
-  const plan_artifacts_detail::TemporaryWorkspaceCleanup workspace_cleanup{workspace};
+  const holoscan_examples::TemporaryWorkspaceCleanup workspace_cleanup{workspace};
 
   // --- 3. plan.json(): canonical bytes, safe to archive and diff. -----------
   const std::filesystem::path json_path = workspace / "plan.json";

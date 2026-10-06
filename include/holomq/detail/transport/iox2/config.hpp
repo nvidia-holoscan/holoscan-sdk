@@ -7,6 +7,10 @@
 
 #include <holomq/limits.hpp>
 
+// MSVC may resolve iceoryx2's quoted "iox2/config.hpp" through a parent include directory
+// to this wrapper. Load the dependency through its include path before that can happen.
+#include <iox2/config.hpp>
+
 namespace holomq::detail::transport {
 
 using holomq::k_lossless_flow;

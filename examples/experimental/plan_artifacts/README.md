@@ -77,6 +77,9 @@ Or through CTest:
 ctest --test-dir build -R EXAMPLE_CPP_PLAN_ARTIFACTS_TEST
 ```
 
+For temporary artifact locations and cleanup, see the
+[artifact-storage policy](../../compile_and_check/README.md#temporary-artifacts).
+
 ## Expected output
 
 ```text

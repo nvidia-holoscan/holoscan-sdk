@@ -163,7 +163,7 @@ namespace {
       descriptor_tensor_payload_equal(source.payload_identity, edge.payload_identity) &&
       descriptor_tensor_payload_equal(target.payload_identity, edge.payload_identity) &&
       source.serialized_payload_capacity_bytes != 0U &&
-      source.serialized_payload_capacity_bytes == target.serialized_payload_capacity_bytes;
+      source.serialized_payload_capacity_bytes <= target.serialized_payload_capacity_bytes;
   return pod || schema || tensor || descriptor_tensor;
 }
 
@@ -360,28 +360,6 @@ struct RootReadinessFacts {
          state.cross_process_channel_publishers.empty() &&
          state.cross_process_channel_subscribers.empty() && state.tensor_interface_pools.empty() &&
          state.tensor_inline_records.empty() && state.tensor_transfer_plans.empty();
-}
-
-[[nodiscard]] bool tensor_allocation_satisfies_input(
-    const TensorAllocationPlanRecord& allocation,
-    const std::optional<TensorRepresentation>& input_layout) noexcept {
-  if (!input_layout) {
-    return true;
-  }
-  if (input_layout->memory_kind && *input_layout->memory_kind != allocation.memory_kind) {
-    return false;
-  }
-  if (input_layout->dtype &&
-      (!allocation.layout || !allocation.layout->dtype ||
-       !dl_data_type_exactly_equal(*input_layout->dtype, *allocation.layout->dtype))) {
-    return false;
-  }
-  if (input_layout->strides &&
-      (!allocation.layout || allocation.layout->strides != input_layout->strides)) {
-    return false;
-  }
-  return !input_layout->rank || (allocation.layout && allocation.layout->rank &&
-                                 *input_layout->rank == *allocation.layout->rank);
 }
 
 [[nodiscard]] const PayloadEdgePlanRecord* edge_record(const ExecutionPlanState& state,
@@ -914,7 +892,10 @@ template <typename Allocation>
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::optional<InlinePartitionExecutionPlanRecord> derive_inline_partition_execution_plan(
     const ExecutionPlanState& state) {
-  if (!state.admitted || state.execution_partitions.size() != 1U ||
+  // The inline fast path owns ordinary Operator callback sequencing. Fused CUDA Graph regions use
+  // the partition runner so Runtime can substitute CUDAGraphRegionOperator for captured members.
+  if (!state.cuda_graph_execution_regions.empty() || !state.admitted ||
+      state.execution_partitions.size() != 1U ||
       state.execution_partitions.front().execution_lane != 0U ||
       state.execution_partitions.front().members.size() < 3U || state.schedule_edges.size() != 0U ||
       !exact_single_default_lane(state) || !supported_runtime_contracts(state)) {

@@ -716,6 +716,8 @@ TEST(LifecycleExecutor, ExhaustedCompletionBoundEntersNoUserCallback) {
 }
 
 // REQ: LIFECYCLE-009
+// REQ: LIFECYCLE-013
+// REQ: LIFECYCLE-014
 TEST(LifecycleExecutor, LoggingEmitsTraceDebugAndOneFinalErrorWithoutControlFlowAuthority) {
   const auto input = one_node_execution_input();
   const auto graph = detail::build_lifecycle_stage_graph(input, capacity_for(input));

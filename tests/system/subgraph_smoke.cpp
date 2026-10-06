@@ -235,10 +235,6 @@ void print_stable_canonical_handoff(holoscan::Graph& graph) {
                 << static_cast<unsigned int>(constraint.kind()) << ':'
                 << constraint.latency().count() << '\n';
     }
-    for (const auto hint : record.hints) {
-      std::cout << "canonical-region-hint:" << record.id.value << ':'
-                << static_cast<unsigned int>(hint) << '\n';
-    }
   }
 }
 

@@ -12,6 +12,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 
 def benchmark_alias(test_name: str) -> str:
@@ -88,6 +90,75 @@ def run_ctest_benchmarks(regex: str, list_only: bool) -> int:
     return exit_code
 
 
+def argument_value(arguments: list[str], option: str) -> str | None:
+    """Return the final value supplied for a Google Benchmark option."""
+    value = None
+    for index, argument in enumerate(arguments):
+        if argument.startswith(f"{option}="):
+            value = argument.removeprefix(f"{option}=")
+        elif argument == option and index + 1 < len(arguments):
+            value = arguments[index + 1]
+    return value
+
+
+def benchmark_errors(output_path: Path) -> list[str] | None:
+    """Return failed benchmark names, or None when the JSON report is invalid."""
+    try:
+        report = json.loads(output_path.read_text(encoding="utf-8"))
+        benchmarks = report["benchmarks"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+
+    if not isinstance(benchmarks, list):
+        return None
+    return [
+        str(benchmark.get("name", "<unnamed benchmark>"))
+        for benchmark in benchmarks
+        if isinstance(benchmark, dict) and benchmark.get("error_occurred")
+    ]
+
+
+def run_benchmark(command: list[str], output_path: Path, caller_provided_output: bool) -> int:
+    """Run a benchmark and validate its newly produced JSON report."""
+    backup_directory = None
+    backup_path = None
+    if caller_provided_output and output_path.is_file():
+        backup_directory = tempfile.TemporaryDirectory(
+            prefix=".holoscan-benchmark-", dir=output_path.parent
+        )
+        backup_path = Path(backup_directory.name) / output_path.name
+        output_path.replace(backup_path)
+
+    def restore_backup() -> None:
+        if backup_path is not None:
+            backup_path.replace(output_path)
+
+    try:
+        result = subprocess.run(command, check=False)
+        if result.returncode != 0:
+            restore_backup()
+            return result.returncode
+
+        errors = benchmark_errors(output_path)
+        if errors is None:
+            restore_backup()
+            print(
+                f"error: benchmark did not produce a valid JSON report: {output_path}",
+                file=sys.stderr,
+            )
+            return 1
+        if errors:
+            print(
+                "error: Google Benchmark reported failed case(s): " + ", ".join(errors),
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+    finally:
+        if backup_directory is not None:
+            backup_directory.cleanup()
+
+
 def run_single_benchmark(argv: list[str]) -> int:
     if not argv:
         print("usage: run_benchmark.py <benchmark_executable> [default_args...]", file=sys.stderr)
@@ -97,13 +168,43 @@ def run_single_benchmark(argv: list[str]) -> int:
     args = argv[1:]
     extra_args = shlex.split(os.environ.get("HOLOSCAN_BENCHMARK_ARGS", ""))
     command = [executable, *args, *extra_args]
+
+    output_argument = argument_value(command[1:], "--benchmark_out")
+    if output_argument is None:
+        output_argument = os.environ.get("BENCHMARK_OUT") or None
+
+    output_format = argument_value(command[1:], "--benchmark_out_format")
+    if output_format is None:
+        output_format = os.environ.get("BENCHMARK_OUT_FORMAT") or None
+    if output_format not in (None, "json"):
+        print(
+            "error: benchmark runner requires --benchmark_out_format=json to validate results",
+            file=sys.stderr,
+        )
+        return 2
+
+    temporary_directory = None
+    caller_provided_output = output_argument is not None
+    if output_argument is None:
+        temporary_directory = tempfile.TemporaryDirectory(prefix="holoscan-benchmark-")
+        output_path = Path(temporary_directory.name) / "benchmark.json"
+        command.extend((f"--benchmark_out={output_path}", "--benchmark_out_format=json"))
+    else:
+        output_path = Path(output_argument)
+        if output_format is None:
+            command.append("--benchmark_out_format=json")
+
     if os.environ.get("HOLOSCAN_BENCHMARK_DISABLE_ASLR") == "1":
         arch = subprocess.run(["uname", "-m"], check=False, stdout=subprocess.PIPE, text=True)
         if arch.returncode == 0 and shutil.which("setarch"):
             command = ["setarch", arch.stdout.strip(), "-R", *command]
         else:
             print("warning: setarch is unavailable; ASLR may remain enabled", file=sys.stderr)
-    return subprocess.run(command, check=False).returncode
+    try:
+        return run_benchmark(command, output_path, caller_provided_output)
+    finally:
+        if temporary_directory is not None:
+            temporary_directory.cleanup()
 
 
 def main() -> int:

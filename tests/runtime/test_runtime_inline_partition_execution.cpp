@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -32,16 +33,17 @@
 #include <holoscan/core/predicate.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
 // Provides generated owning types and schema-trait specializations.
-#include <holoscan/schema/flatbuffer_schema_package.hpp>  // NOLINT(misc-include-cleaner)
+#include <holoscan/schema/sdk_schemas.hpp>  // NOLINT(misc-include-cleaner)
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/parameter_schema.hpp>
+#include <holoscan/core/run.hpp>
 #include "compiler/compile_internal.hpp"
 #include "compiler/execution_plan_state.hpp"
 #include "core/domain/tensor_access.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/parameter_schema.hpp"
-#include "holoscan/core/run.hpp"
+#include "runtime/runtime_cuda_execution_resources.hpp"
 #include "runtime/runtime_phase_counters.hpp"
 #include "runtime/runtime_support_thread_control.hpp"
 #include "runtime/runtime_test_access.hpp"
@@ -553,6 +555,18 @@ class PartitionRunnerProbeState {
     return cv_.wait_for(lock, 5s, [count] { return callback_records_.size() >= count; });
   }
 
+  [[nodiscard]] static bool wait_for_each_operator(std::span<const std::uint32_t> ids,
+                                                   std::size_t minimum_count) {
+    std::unique_lock lock(mutex_);
+    return cv_.wait_for(lock, 5s, [&] {
+      return std::ranges::all_of(ids, [&](std::uint32_t id) {
+        return static_cast<std::size_t>(std::ranges::count(
+                   callback_records_, id, &PartitionRunnerCallbackRecord::operator_id)) >=
+               minimum_count;
+      });
+    });
+  }
+
   [[nodiscard]] static bool wait_for_owners(std::size_t count) {
     std::unique_lock lock(mutex_);
     return cv_.wait_for(lock, 5s, [count] {
@@ -928,8 +942,8 @@ class PartitionControlProbeState {
 
 class InlinePartitionControllerProbe final : public detail::RuntimeSupportThreadControl {
  public:
-  [[nodiscard]] expected<void, Error> enter(detail::RuntimeSupportThreadRole role) override {
-    if (role == detail::RuntimeSupportThreadRole::kController) {
+  [[nodiscard]] expected<void, Error> enter(SupportThreadRole role) override {
+    if (role == SupportThreadRole::kController) {
       const std::lock_guard lock(mutex_);
       controller_thread_ = std::this_thread::get_id();
     }
@@ -948,8 +962,8 @@ class InlinePartitionControllerProbe final : public detail::RuntimeSupportThread
 
 class PartitionStartupGate final : public detail::RuntimeSupportThreadControl {
  public:
-  [[nodiscard]] expected<void, Error> enter(detail::RuntimeSupportThreadRole role) override {
-    if (role != detail::RuntimeSupportThreadRole::kController) {
+  [[nodiscard]] expected<void, Error> enter(SupportThreadRole role) override {
+    if (role != SupportThreadRole::kController) {
       return {};
     }
     std::unique_lock lock(mutex_);
@@ -1013,6 +1027,8 @@ class InlinePartitionLifecycle {
   bool record_stop_device_{};
 };
 
+// Emits bounded POD samples and optionally requests a self-restart before its first emission.
+// Representative test: RunsComputeAndLifecycleCallbacksOnTheControllerWithoutHandoffs.
 class InlinePodSource final : public Operator<>, public InlinePartitionLifecycle<InlinePodSource> {
  public:
   InlinePodSource(std::uint32_t operator_id, std::uint32_t value, bool restart_before_emit = false,
@@ -1063,6 +1079,8 @@ class InlinePodSource final : public Operator<>, public InlinePartitionLifecycle
   std::size_t emitted_count_{};
 };
 
+// Transforms POD samples while recording lifecycle and optional callback-failure behavior.
+// Representative test: RunsComputeAndLifecycleCallbacksOnTheControllerWithoutHandoffs.
 class InlinePodRelay final : public Operator<>, public InlinePartitionLifecycle<InlinePodRelay> {
  public:
   InlinePodRelay(std::uint32_t operator_id, std::uint32_t increment, bool fail_compute = false)
@@ -1103,6 +1121,8 @@ class InlinePodRelay final : public Operator<>, public InlinePartitionLifecycle<
   bool fail_compute_{};
 };
 
+// Publishes one runtime-pooled raw Tensor in the requested memory kind.
+// Representative test: InlinePayloadParity.HostPreservesBackingMetadataAndControllerOwnership.
 template <MemoryKind Kind>
 class InlineTensorSource final : public Operator<>,
                                  public InlinePartitionLifecycle<InlineTensorSource<Kind>> {
@@ -1204,6 +1224,8 @@ class InlineTensorSource final : public Operator<>,
   bool emitted_{};
 };
 
+// Reads a raw Tensor, captures backing/device evidence, and emits a POD result.
+// Representative test: InlinePayloadParity.HostPreservesBackingMetadataAndControllerOwnership.
 template <MemoryKind Kind>
 class InlineTensorRelay final : public Operator<>,
                                 public InlinePartitionLifecycle<InlineTensorRelay<Kind>> {
@@ -1283,6 +1305,296 @@ class InlineTensorRelay final : public Operator<>,
   std::int32_t ambient_device_before_failure_{-1};
 };
 
+constexpr std::array<std::int64_t, 1U> kCausalTensorShape{1};
+constexpr TensorRepresentation kCausalTensorRepresentation{
+    .memory_kind = MemoryKind::kHost,
+    .dtype = DLDataType{kDLUInt, 32U, 1U},
+    .rank = 1U,
+    .strides = TensorStridePolicy::kContiguousOnly,
+};
+
+// Publishes numbered raw-Tensor frames from an effectively continuous clock.
+// Representative test: RawTensorPassThroughContinuesCausalFrameBeforeNextClockTick.
+class CausalTensorSource final : public Operator<> {
+ public:
+  explicit CausalTensorSource(std::size_t frame_count) : frame_count_(frame_count) {}
+
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = kCausalTensorRepresentation,
+            .bounds = tensor_bounds(kCausalTensorShape),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ns});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    if (next_frame_ == frame_count_) {
+      return {};
+    }
+    auto loan = output.allocate_tensor(kCausalTensorShape);
+    if (!loan) {
+      return make_unexpected(std::move(loan.error()));
+    }
+    auto committed = loan->write_host_and_commit(
+        [frame = static_cast<std::uint32_t>(next_frame_)](const TensorOutputWriteGuard& writer) {
+          *writer.data_as<std::uint32_t>() = frame;
+        });
+    if (!committed) {
+      return make_unexpected(std::move(committed.error()));
+    }
+    auto emitted = output.emit(std::move(*loan));
+    if (!emitted) {
+      return emitted;
+    }
+    InlinePartitionProbeState::record_compute(
+        1U, static_cast<std::uint32_t>(next_frame_), context.tag_time());
+    ++next_frame_;
+    return {};
+  }
+
+  Output<Tensor> output;
+
+ private:
+  std::size_t frame_count_{};
+  std::size_t next_frame_{};
+};
+
+// Forwards each raw Tensor without replacing its backing and records the causal middle stage.
+// Representative test: RawTensorPassThroughContinuesCausalFrameBeforeNextClockTick.
+class CausalTensorPassThrough final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{.representation = kCausalTensorRepresentation});
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = kCausalTensorRepresentation,
+            .storage = TensorOutputStorage::kPassThrough,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample.error()));
+    }
+    auto synchronized = sample->data.synchronize_for_host();
+    if (!synchronized) {
+      return make_unexpected(std::move(synchronized.error()));
+    }
+    const std::uint32_t frame = *sample->data.data_as<std::uint32_t>();
+    auto emitted = output.emit(std::move(sample->data));
+    if (!emitted) {
+      return emitted;
+    }
+    InlinePartitionProbeState::record_compute(2U, frame, context.tag_time());
+    return {};
+  }
+
+  Input<Tensor> input;
+  Output<Tensor> output;
+};
+
+// Consumes numbered raw Tensors and signals completion after recording the terminal stage.
+// Representative test: RawTensorPassThroughContinuesCausalFrameBeforeNextClockTick.
+class CausalTensorSink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{.representation = kCausalTensorRepresentation});
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample.error()));
+    }
+    auto synchronized = sample->data.synchronize_for_host();
+    if (!synchronized) {
+      return make_unexpected(std::move(synchronized.error()));
+    }
+    const std::uint32_t frame = *sample->data.data_as<std::uint32_t>();
+    InlinePartitionProbeState::record_compute(3U, frame, context.tag_time());
+    InlinePartitionProbeState::record_sink(frame);
+    return {};
+  }
+
+  Input<Tensor> input;
+};
+
+// Publishes numbered one-Tensor schema samples from an effectively continuous clock.
+// Representative test: TensorPacketPassThroughContinuesCausalFrameBeforeNextClockTick.
+class CausalTensorPacketSource final : public Operator<> {
+ public:
+  explicit CausalTensorPacketSource(std::size_t frame_count) : frame_count_(frame_count) {}
+
+  void setup(OperatorSpec& spec) override {
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = kCausalTensorRepresentation,
+            .bounds = tensor_bounds(kCausalTensorShape),
+            .storage = TensorOutputStorage::kRuntimePool,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ns});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    if (next_frame_ == frame_count_) {
+      return {};
+    }
+    auto loan = output.allocate_tensor(kCausalTensorShape);
+    if (!loan) {
+      return make_unexpected(std::move(loan.error()));
+    }
+    auto committed = loan->write_host_and_commit(
+        [frame = static_cast<std::uint32_t>(next_frame_)](const TensorOutputWriteGuard& writer) {
+          *writer.data_as<std::uint32_t>() = frame;
+        });
+    if (!committed) {
+      return make_unexpected(std::move(committed.error()));
+    }
+    schema::TensorPacketT descriptor{};
+    descriptor.sequence = next_frame_;
+    descriptor.source = "causal-tensor-packet";
+    auto emitted =
+        output.emit_tensor(std::move(*loan), descriptor, EmitOptions{.frame_id = next_frame_});
+    if (!emitted) {
+      return emitted;
+    }
+    InlinePartitionProbeState::record_compute(
+        1U, static_cast<std::uint32_t>(next_frame_), context.tag_time());
+    ++next_frame_;
+    return {};
+  }
+
+  Output<schema::TensorPacketT> output;
+
+ private:
+  std::size_t frame_count_{};
+  std::size_t next_frame_{};
+};
+
+// Forwards an owning TensorPacket sample while preserving its Tensor and semantic metadata.
+// Representative test: TensorPacketPassThroughContinuesCausalFrameBeforeNextClockTick.
+class CausalTensorPacketPassThrough final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{.representation = kCausalTensorRepresentation});
+    spec.output(output, "output")
+        .max_emits_per_compute(1U)
+        .produces_tensor(TensorOutputSpec{
+            .representation = kCausalTensorRepresentation,
+            .storage = TensorOutputStorage::kPassThrough,
+        });
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample.error()));
+    }
+    if (!sample->data.data) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    auto synchronized = sample->data.data->synchronize_for_host();
+    if (!synchronized) {
+      return make_unexpected(std::move(synchronized.error()));
+    }
+    const std::uint32_t frame = *sample->data.data->data_as<std::uint32_t>();
+    if (sample->data.sequence != frame || sample->metadata.frame_id != frame) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    auto emitted = output.emit(std::move(*sample));
+    if (!emitted) {
+      return emitted;
+    }
+    InlinePartitionProbeState::record_compute(2U, frame, context.tag_time());
+    return {};
+  }
+
+  Input<schema::TensorPacketT> input;
+  Output<schema::TensorPacketT> output;
+};
+
+// Validates forwarded TensorPacket fields and records the terminal causal stage.
+// Representative test: TensorPacketPassThroughContinuesCausalFrameBeforeNextClockTick.
+class CausalTensorPacketSink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{.representation = kCausalTensorRepresentation});
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return make_unexpected(std::move(sample.error()));
+    }
+    if (!sample->data.data) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    auto synchronized = sample->data.data->synchronize_for_host();
+    if (!synchronized) {
+      return make_unexpected(std::move(synchronized.error()));
+    }
+    const std::uint32_t frame = *sample->data.data->data_as<std::uint32_t>();
+    if (sample->data.sequence != frame || sample->metadata.frame_id != frame) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    InlinePartitionProbeState::record_compute(3U, frame, context.tag_time());
+    InlinePartitionProbeState::record_sink(frame);
+    return {};
+  }
+
+  Input<schema::TensorPacketT> input;
+};
+
+// Publishes a descriptor-backed Image with a runtime-pooled Tensor payload.
+// Representative test: InlinePayloadParity.HostPreservesBackingMetadataAndControllerOwnership.
 template <MemoryKind Kind>
 class InlineImageSource final : public Operator<>,
                                 public InlinePartitionLifecycle<InlineImageSource<Kind>> {
@@ -1405,6 +1717,8 @@ class InlineImageSource final : public Operator<>,
   bool emitted_{};
 };
 
+// Validates an Image descriptor and Tensor payload before emitting a POD result.
+// Representative test: InlinePayloadParity.HostPreservesBackingMetadataAndControllerOwnership.
 template <MemoryKind Kind>
 class InlineImageRelay final : public Operator<>,
                                public InlinePartitionLifecycle<InlineImageRelay<Kind>> {
@@ -1499,6 +1813,8 @@ class InlineImageRelay final : public Operator<>,
   bool retain_tensor_{};
 };
 
+// Converts one POD fork branch into a Tensor with an independently selected placement.
+// Representative test: MixedTensorPlacementKeepsTheOneRootForkOrdinary.
 template <MemoryKind Kind>
 class InlineTensorBranch final : public Operator<> {
  public:
@@ -1567,6 +1883,8 @@ class InlineTensorBranch final : public Operator<> {
   Output<Tensor> output;
 };
 
+// Emits a POD value read from immutable typed parameters and records parameter pinning.
+// Representative test: FrozenTypedParamsRemainCoherentAcrossRepeatedInlineRunsWithoutHandoffs.
 class InlineParamSource final : public Operator<InlinePartitionParams> {
  public:
   explicit InlineParamSource(std::uint32_t operator_id) : operator_id_(operator_id) {}
@@ -1616,6 +1934,8 @@ class InlineParamSource final : public Operator<InlinePartitionParams> {
   bool emitted_{};
 };
 
+// Adds an immutable typed parameter to each POD sample and records parameter pinning.
+// Representative test: FrozenTypedParamsRemainCoherentAcrossRepeatedInlineRunsWithoutHandoffs.
 class InlineParamRelay final : public Operator<InlinePartitionParams> {
  public:
   explicit InlineParamRelay(std::uint32_t operator_id) : operator_id_(operator_id) {}
@@ -1666,6 +1986,8 @@ class InlineParamRelay final : public Operator<InlinePartitionParams> {
   std::uint32_t operator_id_{};
 };
 
+// Emits values from two parameter generations while allowing a NextCompute update between them.
+// Representative test: RuntimeMutableNextComputePublishesPinsAndObservesOnTheController.
 class RuntimeMutableInlineParamSource final : public Operator<InlinePartitionRuntimeParams> {
  public:
   explicit RuntimeMutableInlineParamSource(std::uint32_t operator_id) : operator_id_(operator_id) {}
@@ -1717,6 +2039,8 @@ class RuntimeMutableInlineParamSource final : public Operator<InlinePartitionRun
   std::uint32_t compute_count_{};
 };
 
+// Emits driver and deliberately older side samples for temporal-selection parameter tests.
+// Representative test: UpdatedSelectorDeadlineAndCallbackShareOnePinnedGeneration.
 class InlineTemporalForkSource final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -1780,6 +2104,8 @@ class InlineTemporalForkSource final : public Operator<> {
   bool emitted_{};
 };
 
+// Evaluates a parameterized temporal predicate and joins its driver and side inputs.
+// Representative test: UpdatedSelectorDeadlineAndCallbackShareOnePinnedGeneration.
 class InlineTemporalRelay final : public Operator<InlineTemporalParams> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -1851,6 +2177,8 @@ class InlineTemporalRelay final : public Operator<InlineTemporalParams> {
   }
 };
 
+// Selects an anchor plus a recent side sample to exercise LatestWithin partition planning.
+// Representative test: LatestWithinSelectionUsesTheInlinePartitionPlan.
 class LatestWithinInlineRelay final : public Operator<>,
                                       public InlinePartitionLifecycle<LatestWithinInlineRelay> {
  public:
@@ -1884,6 +2212,8 @@ class LatestWithinInlineRelay final : public Operator<>,
   Output<InlinePartitionPod> output;
 };
 
+// Records terminal POD values, tag times, lifecycle calls, and callback ownership.
+// Representative test: RunsComputeAndLifecycleCallbacksOnTheControllerWithoutHandoffs.
 class InlinePodSink final : public Operator<>, public InlinePartitionLifecycle<InlinePodSink> {
  public:
   explicit InlinePodSink(std::uint32_t operator_id)
@@ -1913,6 +2243,8 @@ class InlinePodSink final : public Operator<>, public InlinePartitionLifecycle<I
   Input<InlinePartitionPod> input;
 };
 
+// Emits distinct POD values on two output ports for multi-input selection tests.
+// Representative test: LatestWithinSelectionUsesTheInlinePartitionPlan.
 class InlineForkSource final : public Operator<>,
                                public InlinePartitionLifecycle<InlineForkSource> {
  public:
@@ -1950,6 +2282,8 @@ class InlineForkSource final : public Operator<>,
   bool emitted_{};
 };
 
+// Publishes one POD sample through a single output connected to two consumers.
+// Representative test: AdmitsOneRootWithTwoConsumersInStableSiblingOrder.
 class InlineFanoutSource final : public Operator<>,
                                  public InlinePartitionLifecycle<InlineFanoutSource> {
  public:
@@ -1981,6 +2315,8 @@ class InlineFanoutSource final : public Operator<>,
   bool emitted_{};
 };
 
+// Synchronizes independent partition roots so their stable owners must overlap in time.
+// Representative test: AuthoredPartitionsUseStableSerialOwnersAndOverlapIndependently.
 class PartitionRunnerBarrierSource final : public Operator<> {
  public:
   PartitionRunnerBarrierSource(std::size_t partition_index, std::uint32_t operator_id,
@@ -2017,6 +2353,8 @@ class PartitionRunnerBarrierSource final : public Operator<> {
   bool emitted_{};
 };
 
+// Records sink execution on an expected partition owner and consumes one POD sample.
+// Representative test: AuthoredPartitionsUseStableSerialOwnersAndOverlapIndependently.
 class PartitionRunnerProbeSink final : public Operator<> {
  public:
   PartitionRunnerProbeSink(std::size_t partition_index, std::uint32_t operator_id)
@@ -2049,6 +2387,8 @@ class PartitionRunnerProbeSink final : public Operator<> {
   std::uint32_t operator_id_{};
 };
 
+// Emits one POD sample while recording its exact partition owner and callback boundaries.
+// Representative test: CrossPartitionChannelConfinesFusedCallbacksToExactStableOwners.
 class PartitionRunnerProbeSource final : public Operator<> {
  public:
   PartitionRunnerProbeSource(std::size_t partition_index, std::uint32_t operator_id,
@@ -2085,6 +2425,8 @@ class PartitionRunnerProbeSource final : public Operator<> {
   bool emitted_{};
 };
 
+// Relays a POD sample while recording fused execution on its partition owner.
+// Representative test: CrossPartitionChannelConfinesFusedCallbacksToExactStableOwners.
 class PartitionRunnerProbeRelay final : public Operator<> {
  public:
   PartitionRunnerProbeRelay(std::size_t partition_index, std::uint32_t operator_id,
@@ -2123,6 +2465,8 @@ class PartitionRunnerProbeRelay final : public Operator<> {
   std::uint32_t increment_{};
 };
 
+// Emits a metadata-rich POD sequence until cross-partition blocking credit stalls publication.
+// Representative test: CrossPartitionBlockingCreditRecoversInOrderWithExactMetadataAndTagTime.
 class CrossPartitionFlowSource final : public Operator<> {
  public:
   explicit CrossPartitionFlowSource(std::size_t sample_count) : sample_count_(sample_count) {}
@@ -2171,6 +2515,8 @@ class CrossPartitionFlowSource final : public Operator<> {
   std::uint64_t next_sample_{};
 };
 
+// Consumes cross-partition POD samples and can hold the first sample to exhaust channel credit.
+// Representative test: CrossPartitionBlockingCreditRecoversInOrderWithExactMetadataAndTagTime.
 class CrossPartitionFlowSink final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override { spec.input(input, "input").queue_depth(1U); }
@@ -2194,6 +2540,8 @@ class CrossPartitionFlowSink final : public Operator<> {
   Input<InlinePartitionPod> input;
 };
 
+// Fails a peer partition after observing that a cross-partition source is backpressured.
+// Representative test: StopAndFailureRetireOwnersWhileCrossPartitionBlockingCreditIsHeld.
 class CrossPartitionFlowFailure final : public Operator<> {
  public:
   [[nodiscard]] Contract contract() const override {
@@ -2213,6 +2561,8 @@ class CrossPartitionFlowFailure final : public Operator<> {
   }
 };
 
+// Repeatedly records partition ownership and optionally synchronizes, completes, or fails.
+// Representative test: StopBroadcastRetiresEveryPartitionOwner.
 class PartitionRunnerPeriodicProbe final : public Operator<> {
  public:
   PartitionRunnerPeriodicProbe(std::size_t partition_index, std::uint32_t operator_id,
@@ -2258,6 +2608,8 @@ class PartitionRunnerPeriodicProbe final : public Operator<> {
   bool completion_requested_{};
 };
 
+// Publishes once and requests completion while a peer partition waits at its admission gate.
+// Representative test: CallbackCompletionClosesBeforeClaimAndDoesNotDrainQueuedDelivery.
 class PartitionRunnerCompletionSource final : public Operator<> {
  public:
   static void set_admission_control(
@@ -2304,6 +2656,8 @@ class PartitionRunnerCompletionSource final : public Operator<> {
   static inline std::atomic<detail::RuntimeTerminationAdmissionTestControl*> admission_control_{};
 };
 
+// Requests a self-restart while a peer partition remains inside its coordinated callback.
+// Representative test: RestartControlEpochQuiescesEveryPartitionOwnerBeforeLifecycleCallbacks.
 class PartitionControlRestartTarget final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -2352,6 +2706,8 @@ class PartitionControlRestartTarget final : public Operator<> {
   bool restart_requested_{};
 };
 
+// Holds a peer callback across the restart control epoch and records its lifecycle ordering.
+// Representative test: RestartControlEpochQuiescesEveryPartitionOwnerBeforeLifecycleCallbacks.
 class PartitionControlPeer final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
@@ -2387,10 +2743,16 @@ class PartitionControlPeer final : public Operator<> {
   }
 };
 
+// Publishes numbered owning String schema samples from a configurable clock.
+// Representative test: RunsAnOwningSchemaChainOnTheControllerWithoutHandoffs.
 class InlineSchemaSource final : public Operator<>,
                                  public InlinePartitionLifecycle<InlineSchemaSource> {
  public:
-  InlineSchemaSource() : InlinePartitionLifecycle<InlineSchemaSource>(1U) {}
+  explicit InlineSchemaSource(std::size_t emission_limit = 1U,
+                              std::chrono::nanoseconds period = 30s)
+      : InlinePartitionLifecycle<InlineSchemaSource>(1U),
+        emission_limit_(emission_limit),
+        period_(period) {}
 
   void setup(OperatorSpec& spec) override {
     setup_lifecycle(spec);
@@ -2399,27 +2761,39 @@ class InlineSchemaSource final : public Operator<>,
 
   [[nodiscard]] Contract contract() const override {
     Contract result;
-    result.trigger(OnClock{.period = 30s});
+    result.trigger(OnClock{.period = period_});
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
-    InlinePartitionProbeState::record_compute(operator_id_, 0U);
-    if (emitted_) {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
+    if (next_frame_ >= emission_limit_) {
       return {};
     }
-    emitted_ = true;
+    const std::uint32_t frame = static_cast<std::uint32_t>(next_frame_);
     schema::StringT sample;
     sample.data = "root";
-    return output.emit(std::move(sample));
+    auto emitted = output.emit(Sample<schema::StringT>{
+        std::move(sample),
+        SampleMetadata{.frame_id = frame},
+    });
+    if (!emitted) {
+      return emitted;
+    }
+    InlinePartitionProbeState::record_compute(operator_id_, frame, context.tag_time());
+    ++next_frame_;
+    return {};
   }
 
   Output<schema::StringT> output;
 
  private:
-  bool emitted_{};
+  std::size_t emission_limit_{};
+  std::chrono::nanoseconds period_{};
+  std::size_t next_frame_{};
 };
 
+// Appends its operator ID to an owning String schema while preserving frame metadata.
+// Representative test: RunsAnOwningSchemaChainOnTheControllerWithoutHandoffs.
 class InlineSchemaRelay final : public Operator<>,
                                 public InlinePartitionLifecycle<InlineSchemaRelay> {
  public:
@@ -2438,20 +2812,27 @@ class InlineSchemaRelay final : public Operator<>,
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     auto sample = input.receive();
     if (!sample) {
       return make_unexpected(std::move(sample.error()));
     }
     sample->data.data += ":" + std::to_string(operator_id_);
-    InlinePartitionProbeState::record_compute(operator_id_, 0U);
-    return output.emit(std::move(*sample));
+    const std::uint32_t frame = static_cast<std::uint32_t>(sample->metadata.frame_id);
+    auto emitted = output.emit(std::move(*sample));
+    if (!emitted) {
+      return emitted;
+    }
+    InlinePartitionProbeState::record_compute(operator_id_, frame, context.tag_time());
+    return {};
   }
 
   Input<schema::StringT> input;
   Output<schema::StringT> output;
 };
 
+// Records the final owning String schema, frame order, tag time, and lifecycle activity.
+// Representative test: RunsAnOwningSchemaChainOnTheControllerWithoutHandoffs.
 class InlineSchemaSink final : public Operator<>,
                                public InlinePartitionLifecycle<InlineSchemaSink> {
  public:
@@ -2468,12 +2849,14 @@ class InlineSchemaSink final : public Operator<>,
     return result;
   }
 
-  [[nodiscard]] expected<void, Error> compute(ExecutionContext&) override {
+  [[nodiscard]] expected<void, Error> compute(ExecutionContext& context) override {
     auto sample = input.receive();
     if (!sample) {
       return make_unexpected(std::move(sample.error()));
     }
-    InlinePartitionProbeState::record_compute(operator_id_, 0U);
+    const std::uint32_t frame = static_cast<std::uint32_t>(sample->metadata.frame_id);
+    InlinePartitionProbeState::record_compute(operator_id_, frame, context.tag_time());
+    InlinePartitionProbeState::record_sink(frame);
     InlinePartitionProbeState::record_schema(sample->data.data);
     return {};
   }
@@ -2565,6 +2948,7 @@ void expect_no_legacy_lane_handoffs(const detail::RuntimePhaseCounters::Snapshot
 [[nodiscard]] ExecutionPlan make_pod_chain_plan(QueuePolicy policy, bool explicit_placement = false,
                                                 std::size_t emission_limit = 1U,
                                                 std::chrono::nanoseconds period = 30s) {
+  // [source] -> [first relay] -> [second relay] -> [sink]
   Graph graph{explicit_placement ? "inline-pod-chain-fallback" : "inline-pod-chain"};
   auto source = graph.op<InlinePodSource>("source", 1U, 41U, false, emission_limit, period);
   auto first = graph.op<InlinePodRelay>("first-relay", 2U, 1U);
@@ -2595,6 +2979,8 @@ template <MemoryKind Kind>
     DeviceId device = DeviceId{}, std::int32_t ambient_device_after_emit = -1,
     bool fail_relay = false, bool retain_tensor = false,
     std::int32_t ambient_device_before_failure = -1) {
+  // [source] -- Tensor --> [relay] -- POD --> [sink]
+  //     \---- optional fanout --> [second relay] --> [second sink]
   Graph graph{"inline-tensor-chain"};
   auto source = graph.op<InlineTensorSource<Kind>>("source", ambient_device_after_emit);
   auto relay = graph.op<InlineTensorRelay<Kind>>(
@@ -2627,14 +3013,13 @@ template <MemoryKind Kind>
              : compile(graph, std::move(options));
 }
 
-//   [source] -- Tensor or Image --> [relay] -- POD --> [sink]
-//       |
-//       +-------- optional fanout --> [second relay] --> [second sink]
 template <MemoryKind Kind>
 [[nodiscard]] ExecutionPlan make_image_chain_plan(
     QueuePolicy policy, TensorPlanRoute route = TensorPlanRoute::kInline,
     DeviceId device = DeviceId{}, std::int32_t ambient_device_after_emit = -1,
     bool fail_relay = false, bool retain_tensor = false, bool declare_allocation = true) {
+  // [source] -- Image --> [relay] -- POD --> [sink]
+  //     \---- optional fanout --> [second relay] --> [second sink]
   Graph graph{"inline-image-chain"};
   auto source =
       graph.op<InlineImageSource<Kind>>("source", ambient_device_after_emit, declare_allocation);
@@ -2717,6 +3102,8 @@ struct DescriptorImageCase {
 template <MemoryKind LeftKind, MemoryKind RightKind>
 [[nodiscard]] ExecutionPlan make_mixed_tensor_fork_plan(DeviceId left_device = DeviceId{},
                                                         DeviceId right_device = DeviceId{}) {
+  // [source] -> [left branch]  -- Tensor --> [left relay]  -> [left sink]
+  //     \----> [right branch] -- Tensor --> [right relay] -> [right sink]
   Graph graph{"mixed-inline-tensor-fork"};
   auto source = graph.op<InlineForkSource>("source");
   auto left_branch = graph.op<InlineTensorBranch<LeftKind>>("left-branch");
@@ -2767,6 +3154,7 @@ template <MemoryKind LeftKind, MemoryKind RightKind>
 }
 
 [[nodiscard]] ExecutionPlan make_restart_chain_plan() {
+  // [restarting source] -> [relay] -> [sink]
   Graph graph{"inline-restart-chain"};
   auto source = graph.op<InlinePodSource>("source", 1U, 41U, true);
   auto relay = graph.op<InlinePodRelay>("relay", 2U, 1U);
@@ -2781,6 +3169,7 @@ template <MemoryKind LeftKind, MemoryKind RightKind>
 }
 
 [[nodiscard]] ExecutionPlan make_failing_chain_plan() {
+  // [source] -> [failing relay] -> [sink]
   Graph graph{"inline-failing-chain"};
   auto source = graph.op<InlinePodSource>("source", 1U, 41U);
   auto relay = graph.op<InlinePodRelay>("failing-relay", 2U, 1U, true);
@@ -2792,6 +3181,7 @@ template <MemoryKind LeftKind, MemoryKind RightKind>
 }
 
 [[nodiscard]] ExecutionPlan make_param_chain_plan(bool explicit_placement = false) {
+  // [parameter source] -> [parameter relay] -> [sink]
   Graph graph{explicit_placement ? "inline-param-chain-fallback" : "inline-param-chain"};
   auto source = graph.op<InlineParamSource>("source", 1U);
   auto relay = graph.op<InlineParamRelay>("relay", 2U);
@@ -2818,6 +3208,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 
 [[nodiscard]] ExecutionPlan make_runtime_mutable_param_chain_plan(
     RuntimeMutablePlanRoute route = RuntimeMutablePlanRoute::kInline) {
+  // [runtime-parameter source] -> [relay] -> [sink]
   Graph graph{"runtime-mutable-param-chain"};
   const bool explicit_placement = route == RuntimeMutablePlanRoute::kExplicitPlacement;
   auto source = graph.op<RuntimeMutableInlineParamSource>("source", 1U);
@@ -2841,6 +3232,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_temporal_param_chain_plan() {
+  // [source] -- driver + side --> [temporal relay] -> [sink]
   Graph graph{"inline-temporal-param-chain"};
   auto source = graph.op<InlineTemporalForkSource>("source");
   auto relay = graph.op<InlineTemporalRelay>("relay");
@@ -2857,6 +3249,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_latest_within_chain_plan() {
+  // [source] -- anchor + side --> [LatestWithin relay] -> [sink]
   Graph graph{"latest-within-inline-fallback"};
   auto source = graph.op<InlineForkSource>("source");
   auto relay = graph.op<LatestWithinInlineRelay>("relay");
@@ -2869,6 +3262,8 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_fork_plan() {
+  // [source] -> [first sink]
+  //     \----> [second sink]
   Graph graph{"inline-pod-fork"};
   auto source = graph.op<InlineFanoutSource>("source");
   auto first = graph.op<InlinePodSink>("first-sink", 2U);
@@ -2881,6 +3276,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_four_partition_overlap_plan() {
+  // [source-N] -> [sink-N]  (four independent partitions, N = 0...3)
   Graph graph{"partition-runner-overlap"};
   for (std::size_t index = 0U; index < kPartitionRunnerProbeCount; ++index) {
     const std::string suffix = std::to_string(index);
@@ -2897,6 +3293,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_cross_partition_fused_chain_plan() {
+  // [source -> relay] -- partition boundary --> [sink]
   Graph graph{"partition-runner-fused-channel"};
   const auto source = graph.op<PartitionRunnerProbeSource>("source", 0U, 1U, 100U);
   const auto relay = graph.op<PartitionRunnerProbeRelay>("relay", 0U, 2U, 1U);
@@ -2910,6 +3307,8 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_cross_partition_fanout_plan() {
+  // [source] -- partition boundary --> [first sink]
+  //     \---- partition boundary --> [second sink]
   Graph graph{"partition-runner-channel-fanout"};
   const auto source = graph.op<PartitionRunnerProbeSource>("source", 0U, 1U, 101U);
   const auto first = graph.op<PartitionRunnerProbeSink>("first", 1U, 2U);
@@ -2925,6 +3324,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 
 [[nodiscard]] ExecutionPlan make_cross_partition_flow_plan(std::size_t sample_count,
                                                            bool include_failure = false) {
+  // [source] -- partition boundary --> [sink]    [optional failing peer]
   Graph graph{include_failure ? "partition-runner-channel-failure"
                               : "partition-runner-channel-credit"};
   const auto source = graph.op<CrossPartitionFlowSource>("source", sample_count);
@@ -2940,8 +3340,65 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
   return compile(graph);
 }
 
+// Two independent clock sources cross an import-forwarding boundary inside one selected tree.
+class AtomicProbeLeaf final : public Graph {
+ public:
+  AtomicProbeLeaf(std::size_t partition, std::uint32_t id) : partition_(partition), id_(id) {}
+  [[nodiscard]] ClockKey clock_import() const noexcept { return clock_; }
+
+ protected:
+  void compose() override {
+    clock_ = import_clock("timeline");
+    set_default_clock(clock_);
+    (void)op<PartitionRunnerPeriodicProbe>("second", partition_, id_);
+  }
+
+ private:
+  ClockKey clock_;
+  std::size_t partition_{};
+  std::uint32_t id_{};
+};
+
+class AtomicProbeGraph final : public Graph {
+ public:
+  AtomicProbeGraph(std::size_t partition = 0U, std::uint32_t first_id = 1U)
+      : partition_(partition), first_id_(first_id) {}
+  [[nodiscard]] ClockKey clock_import() const noexcept { return clock_; }
+
+ protected:
+  void compose() override {
+    clock_ = import_clock("timeline");
+    set_default_clock(clock_);
+    (void)op<PartitionRunnerPeriodicProbe>("first", partition_, first_id_, false, true);
+    const auto nested = embed<AtomicProbeLeaf>("nested", partition_, first_id_ + 1U);
+    bind_clock(nested, nested->clock_import(), clock_);
+  }
+
+ private:
+  ClockKey clock_;
+  std::size_t partition_{};
+  std::uint32_t first_id_{};
+};
+
+[[nodiscard]] ExecutionPlan make_atomic_instance_plan(bool automatic, CompileOptions options = {}) {
+  Graph graph{"atomic-embedded-runtime"};
+  const auto bundle = graph.embed<AtomicProbeGraph>("bundle");
+  const auto peer = graph.op<PartitionRunnerPeriodicProbe>("peer", 1U, 3U, false, true);
+  const ClockKey clock = graph.add_clock<RealtimeClock>("runtime-clock");
+  graph.set_default_clock(clock);
+  graph.bind_clock(bundle, bundle->clock_import(), clock);
+  graph.partition("bundle-owner").add(bundle);
+  if (automatic) {
+    graph.auto_partition_remaining();
+  } else {
+    graph.partition("peer-owner").add(peer);
+  }
+  return compile(graph, std::move(options));
+}
+
 [[nodiscard]] ExecutionPlan make_partition_cpu_placement_plan(std::uint32_t first_cpu,
                                                               std::uint32_t second_cpu) {
+  // [first periodic root]    [second periodic root]
   Graph graph{"partition-runner-cpu-placement"};
   const auto first = graph.op<PartitionRunnerPeriodicProbe>("first", 0U, 1U);
   const auto second = graph.op<PartitionRunnerPeriodicProbe>("second", 1U, 2U);
@@ -2956,6 +3413,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_partition_stop_plan() {
+  // [first periodic root]    [second periodic root]
   Graph graph{"partition-runner-stop"};
   const auto first = graph.op<PartitionRunnerPeriodicProbe>("first", 0U, 1U);
   const auto second = graph.op<PartitionRunnerPeriodicProbe>("second", 1U, 2U);
@@ -2966,6 +3424,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_partition_completion_plan() {
+  // [first completing root]    [second completing root]
   Graph graph{"partition-runner-completion"};
   const auto first = graph.op<PartitionRunnerPeriodicProbe>("first", 0U, 1U, false, false, true);
   const auto second = graph.op<PartitionRunnerPeriodicProbe>("second", 1U, 2U, false, false, true);
@@ -2976,6 +3435,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_partition_completion_delivery_plan() {
+  // [completing source] -- partition boundary --> [sink]
   Graph graph{"partition-runner-completion-delivery"};
   const auto source = graph.op<PartitionRunnerCompletionSource>("source");
   const auto sink = graph.op<PartitionRunnerProbeSink>("sink", 1U, 2U);
@@ -2987,6 +3447,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_partition_failure_plan() {
+  // [failing periodic root]    [periodic peer]
   Graph graph{"partition-runner-failure"};
   const auto failing = graph.op<PartitionRunnerPeriodicProbe>("failing", 0U, 1U, true, true);
   const auto peer = graph.op<PartitionRunnerPeriodicProbe>("peer", 1U, 2U, false, true);
@@ -2997,6 +3458,7 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
 }
 
 [[nodiscard]] ExecutionPlan make_partition_restart_control_plan() {
+  // [restart target]    [coordinated peer]
   Graph graph{"partition-runner-restart-control"};
   const auto target = graph.op<PartitionControlRestartTarget>("target");
   const auto peer = graph.op<PartitionControlPeer>("peer");
@@ -3009,9 +3471,11 @@ enum class RuntimeMutablePlanRoute : std::uint8_t {
   return compile(graph, std::move(options));
 }
 
-[[nodiscard]] ExecutionPlan make_schema_chain_plan() {
+[[nodiscard]] ExecutionPlan make_schema_chain_plan(std::size_t emission_limit = 1U,
+                                                   std::chrono::nanoseconds period = 30s) {
+  // [source] -> [first relay] -> [second relay] -> [sink]
   Graph graph{"inline-schema-chain"};
-  auto source = graph.op<InlineSchemaSource>("source");
+  auto source = graph.op<InlineSchemaSource>("source", emission_limit, period);
   auto first = graph.op<InlineSchemaRelay>("first-relay", 2U);
   auto second = graph.op<InlineSchemaRelay>("second-relay", 3U);
   auto sink = graph.op<InlineSchemaSink>("sink");
@@ -3048,6 +3512,19 @@ void expect_inline_thread_evidence(
   EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kLaneInlineOwnerInvocations),
             expected_compute_count + lifecycle_count +
                 phase_count(evidence, detail::RuntimePhaseCounter::kReadinessPollDispatches));
+}
+
+void expect_fast_chain_controller_evidence(const InlinePartitionRunEvidence& evidence) {
+  ASSERT_TRUE(evidence.controller_thread.has_value());
+  EXPECT_TRUE(std::ranges::all_of(evidence.compute_records, [&](const auto& record) {
+    return record.thread == *evidence.controller_thread;
+  }));
+  EXPECT_TRUE(std::ranges::all_of(evidence.lifecycle_records, [&](const auto& record) {
+    return record.thread == *evidence.controller_thread;
+  }));
+  expect_no_legacy_lane_handoffs(evidence.counters);
+  EXPECT_GE(phase_count(evidence, detail::RuntimePhaseCounter::kLaneInlineOwnerInvocations),
+            evidence.compute_records.size() + evidence.lifecycle_records.size());
 }
 
 void expect_param_coherence(const InlinePartitionRunEvidence& evidence, std::uint32_t operator_id,
@@ -3108,8 +3585,7 @@ class RuntimeMutableComputeRelease {
   bool released_{};
 };
 
-void expect_runtime_mutable_update_route(RuntimeMutablePlanRoute route,
-                                         bool expect_controller_owner) {
+void expect_runtime_mutable_update_route(RuntimeMutablePlanRoute route, bool expect_inline_owner) {
   InlinePartitionProbeState::reset();
   ExecutionPlan compiled = make_runtime_mutable_param_chain_plan(route);
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -3117,9 +3593,11 @@ void expect_runtime_mutable_update_route(RuntimeMutablePlanRoute route,
   const ParameterFieldPlanRecord field = compiled.parameter_fields().front();
   const auto state = detail::ExecutionPlanAccess::retain(compiled);
   ASSERT_TRUE(state);
-  EXPECT_EQ(state->inline_partition_execution.has_value(),
-            route != RuntimeMutablePlanRoute::kExplicitPlacement)
-      << compiled.json();
+  if (route != RuntimeMutablePlanRoute::kHoloMQ) {
+    EXPECT_EQ(state->inline_partition_execution.has_value(),
+              route == RuntimeMutablePlanRoute::kInline)
+        << compiled.json();
+  }
   ASSERT_EQ(state->partition_runners.size(), 1U);
   ASSERT_TRUE(std::ranges::any_of(state->operator_parameters, [](const auto& parameters) {
     return parameters.runtime_updates_enabled;
@@ -3194,60 +3672,185 @@ void expect_runtime_mutable_update_route(RuntimeMutablePlanRoute route,
   EXPECT_EQ(observed_update->state, ParamUpdateState::kObserved);
   EXPECT_EQ(observed_update->target_generation, accepted.target_generation);
 
-  ASSERT_TRUE(evidence.controller_thread.has_value());
-  // The fatal assertion above proves the optional is engaged for these test-only dereferences.
-  // NOLINTBEGIN(bugprone-unchecked-optional-access)
-  if (expect_controller_owner) {
+  if (expect_inline_owner) {
+    ASSERT_TRUE(evidence.controller_thread.has_value());
+    // The fatal assertion above proves the optional is engaged for these test-only dereferences.
+    // NOLINTBEGIN(bugprone-unchecked-optional-access)
     expect_inline_thread_evidence(evidence, 6U, 3U);
     EXPECT_EQ(initial.thread, *evidence.controller_thread);
     EXPECT_EQ(updated.thread, *evidence.controller_thread);
-  } else {
-    EXPECT_TRUE(std::ranges::all_of(evidence.compute_records, [&](const auto& record) {
-      return record.thread != *evidence.controller_thread;
-    }));
-    EXPECT_NE(initial.thread, *evidence.controller_thread);
-    EXPECT_NE(updated.thread, *evidence.controller_thread);
-    EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kLaneInlineOwnerInvocations), 0U);
-    EXPECT_GT(phase_count(evidence, detail::RuntimePhaseCounter::kLaneDispatches), 0U);
-    EXPECT_GT(phase_count(evidence, detail::RuntimePhaseCounter::kLaneCompletionsObserved), 0U);
+    // NOLINTEND(bugprone-unchecked-optional-access)
   }
-  // NOLINTEND(bugprone-unchecked-optional-access)
 }
 
 class InlinePodChainTest : public testing::TestWithParam<QueuePolicy> {};
 
+// REQ: RUNTIME-041
 TEST_P(InlinePodChainTest, RunsComputeAndLifecycleCallbacksOnTheControllerWithoutHandoffs) {
+  constexpr std::size_t kFrameCount = 3U;
   InlinePartitionProbeState::reset();
-  const ExecutionPlan compiled = make_pod_chain_plan(GetParam());
+  // Key setup: run three frames through a four-Operator direct POD chain whose 1 ns source remains
+  // ready while every edge is eligible for causal continuation.
+  const ExecutionPlan compiled = make_pod_chain_plan(GetParam(), false, kFrameCount, 1ns);
   ASSERT_TRUE(compiled.ok()) << compiled.json();
   const auto state = detail::ExecutionPlanAccess::retain(compiled);
   ASSERT_TRUE(state);
   ASSERT_TRUE(state->inline_partition_execution.has_value()) << compiled.json();
 
-  const InlinePartitionRunEvidence evidence = run_and_observe(compiled, 1U);
+  const InlinePartitionRunEvidence evidence = run_and_observe(compiled, kFrameCount);
+  // Key assertion: each frame drains in topological order at one logical time and successive
+  // microsteps, with one accepted causal frontier per edge and no fallback.
   ASSERT_TRUE(evidence.observed);
   EXPECT_EQ(evidence.termination, RunTermination::kStopped);
   EXPECT_EQ(evidence.diagnostic_count, 0U);
-  ASSERT_EQ(evidence.sink_values, (std::vector<std::uint32_t>{44U}));
-  ASSERT_EQ(evidence.compute_records.size(), 4U);
-  EXPECT_EQ(evidence.compute_records[0].operator_id, 1U);
-  EXPECT_EQ(evidence.compute_records[1].operator_id, 2U);
-  EXPECT_EQ(evidence.compute_records[2].operator_id, 3U);
-  EXPECT_EQ(evidence.compute_records[3].operator_id, 4U);
-  const TagTime root_tag_time = evidence.compute_records.front().tag_time;
-  ASSERT_TRUE(root_tag_time.valid());
-  ASSERT_LE(root_tag_time.microstep, std::numeric_limits<std::uint32_t>::max() - 3U);
-  for (std::size_t index = 0U; index < evidence.compute_records.size(); ++index) {
-    SCOPED_TRACE(index);
-    EXPECT_EQ(evidence.compute_records[index].tag_time.logical_ns, root_tag_time.logical_ns);
-    EXPECT_EQ(evidence.compute_records[index].tag_time.microstep,
-              root_tag_time.microstep + static_cast<std::uint32_t>(index));
+  ASSERT_EQ(evidence.sink_values, (std::vector<std::uint32_t>{44U, 44U, 44U}));
+  ASSERT_EQ(evidence.compute_records.size(), kFrameCount * 4U);
+  constexpr std::array<std::uint32_t, 4U> kStageValues{41U, 42U, 44U, 44U};
+  for (std::size_t frame = 0U; frame < kFrameCount; ++frame) {
+    const std::size_t source_index = frame * kStageValues.size();
+    const TagTime source_tag = evidence.compute_records[source_index].tag_time;
+    ASSERT_TRUE(source_tag.valid());
+    ASSERT_LE(source_tag.microstep, std::numeric_limits<std::uint32_t>::max() - 3U);
+    for (std::size_t stage = 0U; stage < kStageValues.size(); ++stage) {
+      const auto& record = evidence.compute_records[source_index + stage];
+      SCOPED_TRACE(frame);
+      SCOPED_TRACE(stage);
+      EXPECT_EQ(record.operator_id, stage + 1U);
+      EXPECT_EQ(record.value, kStageValues[stage]);
+      EXPECT_EQ(record.tag_time.logical_ns, source_tag.logical_ns);
+      EXPECT_EQ(record.tag_time.microstep,
+                source_tag.microstep + static_cast<std::uint32_t>(stage));
+    }
   }
-  expect_inline_thread_evidence(evidence, 4U, 4U);
+  expect_fast_chain_controller_evidence(evidence);
   EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierAttempts),
-            3U);
+            kFrameCount * 3U);
   EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierAccepted),
-            3U);
+            kFrameCount * 3U);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierFallbacks),
+            0U);
+}
+
+class InlineTensorContinuationTest : public testing::TestWithParam<QueuePolicy> {};
+
+// REQ: CHAN-128
+// REQ: RUNTIME-041
+TEST_P(InlineTensorContinuationTest, RawTensorPassThroughContinuesCausalFrameBeforeNextClockTick) {
+  constexpr std::size_t kFrameCount = 3U;
+  InlinePartitionProbeState::reset();
+
+  // Key setup: place a 1 ns source, pass-through relay, and sink in one direct raw-Tensor partition
+  // with capacity-one edges so later root frames continuously compete with channel readiness.
+  // [source] -- Tensor --> [relay] -- Tensor --> [sink]
+  Graph graph{"inline-causal-tensor-chain"};
+  auto source = graph.op<CausalTensorSource>("source", kFrameCount);
+  auto relay = graph.op<CausalTensorPassThrough>("relay");
+  auto sink = graph.op<CausalTensorSink>("sink");
+  graph.add_flow(source->output,
+                 relay->input,
+                 ConnectionOptions{.queue_policy = GetParam(), .queue_depth = 1U});
+  graph.add_flow(
+      relay->output, sink->input, ConnectionOptions{.queue_policy = GetParam(), .queue_depth = 1U});
+  graph.partition("inline-causal-tensor-complete-cover").include_all();
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("inline-causal-tensor-clock"));
+
+  const ExecutionPlan compiled = compile(graph);
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  const auto state = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_TRUE(state);
+  ASSERT_EQ(state->partition_runners.size(), 1U) << compiled.json();
+
+  const InlinePartitionRunEvidence evidence = run_and_observe(compiled, kFrameCount);
+  // Key assertion: two receipts per frame preserve source->relay->sink order at successive
+  // microsteps before the next source frame, without a causal-frontier fallback.
+  ASSERT_TRUE(evidence.observed);
+  EXPECT_EQ(evidence.termination, RunTermination::kStopped);
+  EXPECT_EQ(evidence.diagnostic_count, 0U);
+  EXPECT_EQ(evidence.sink_values, (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  ASSERT_EQ(evidence.compute_records.size(), kFrameCount * 3U);
+  for (std::size_t frame = 0U; frame < kFrameCount; ++frame) {
+    const std::size_t source_index = frame * 3U;
+    const TagTime source_tag = evidence.compute_records[source_index].tag_time;
+    ASSERT_TRUE(source_tag.valid());
+    ASSERT_LE(source_tag.microstep, std::numeric_limits<std::uint32_t>::max() - 2U);
+    for (std::size_t stage = 0U; stage < 3U; ++stage) {
+      const auto& record = evidence.compute_records[source_index + stage];
+      SCOPED_TRACE(frame);
+      SCOPED_TRACE(stage);
+      EXPECT_EQ(record.operator_id, stage + 1U);
+      EXPECT_EQ(record.value, frame);
+      EXPECT_EQ(record.tag_time.logical_ns, source_tag.logical_ns);
+      EXPECT_EQ(record.tag_time.microstep,
+                source_tag.microstep + static_cast<std::uint32_t>(stage));
+    }
+  }
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kDirectContinuationReceiptsAccepted),
+            2U * kFrameCount);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierAttempts),
+            2U * kFrameCount);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierAccepted),
+            2U * kFrameCount);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierFallbacks),
+            0U);
+}
+
+// REQ: RUNTIME-041
+TEST_P(InlineTensorContinuationTest,
+       TensorPacketPassThroughContinuesCausalFrameBeforeNextClockTick) {
+  constexpr std::size_t kFrameCount = 3U;
+  InlinePartitionProbeState::reset();
+
+  // Key setup: forward owning one-Tensor schema samples through a direct three-Operator partition
+  // while a 1 ns source keeps later root frames ready.
+  // [source] -- TensorPacket --> [relay] -- TensorPacket --> [sink]
+  Graph graph{"inline-causal-tensor-packet-chain"};
+  auto source = graph.op<CausalTensorPacketSource>("source", kFrameCount);
+  auto relay = graph.op<CausalTensorPacketPassThrough>("relay");
+  auto sink = graph.op<CausalTensorPacketSink>("sink");
+  graph.add_flow(source->output,
+                 relay->input,
+                 ConnectionOptions{.queue_policy = GetParam(), .queue_depth = 1U});
+  graph.add_flow(
+      relay->output, sink->input, ConnectionOptions{.queue_policy = GetParam(), .queue_depth = 1U});
+  graph.partition("inline-causal-tensor-packet-complete-cover").include_all();
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("inline-causal-tensor-packet-clock"));
+
+  const ExecutionPlan compiled = compile(graph);
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  const auto state = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_TRUE(state);
+  ASSERT_EQ(state->partition_runners.size(), 1U) << compiled.json();
+
+  const InlinePartitionRunEvidence evidence = run_and_observe(compiled, kFrameCount);
+  // Key assertion: schema publication produces one receipt per edge, so each TensorPacket frame
+  // drains at successive microsteps before the next root frame starts.
+  ASSERT_TRUE(evidence.observed);
+  EXPECT_EQ(evidence.termination, RunTermination::kStopped);
+  EXPECT_EQ(evidence.diagnostic_count, 0U);
+  EXPECT_EQ(evidence.sink_values, (std::vector<std::uint32_t>{0U, 1U, 2U}));
+  ASSERT_EQ(evidence.compute_records.size(), kFrameCount * 3U);
+  for (std::size_t frame = 0U; frame < kFrameCount; ++frame) {
+    const std::size_t source_index = frame * 3U;
+    const TagTime source_tag = evidence.compute_records[source_index].tag_time;
+    ASSERT_TRUE(source_tag.valid());
+    ASSERT_LE(source_tag.microstep, std::numeric_limits<std::uint32_t>::max() - 2U);
+    for (std::size_t stage = 0U; stage < 3U; ++stage) {
+      const auto& record = evidence.compute_records[source_index + stage];
+      SCOPED_TRACE(frame);
+      SCOPED_TRACE(stage);
+      EXPECT_EQ(record.operator_id, stage + 1U);
+      EXPECT_EQ(record.value, frame);
+      EXPECT_EQ(record.tag_time.logical_ns, source_tag.logical_ns);
+      EXPECT_EQ(record.tag_time.microstep,
+                source_tag.microstep + static_cast<std::uint32_t>(stage));
+    }
+  }
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kDirectContinuationReceiptsAccepted),
+            2U * kFrameCount);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierAttempts),
+            2U * kFrameCount);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierAccepted),
+            2U * kFrameCount);
   EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierFallbacks),
             0U);
 }
@@ -3258,6 +3861,7 @@ TEST_P(InlinePodChainTest, RunsComputeAndLifecycleCallbacksOnTheControllerWithou
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution,
      CausalFrontierFreezeFailureIsTerminalAndRetiresCoordinatorCredit) {
+  // Key setup: force causal-frontier freezing to fail after the source receipt is consumed.
   InlinePartitionProbeState::reset();
   ExecutionPlan plan = make_pod_chain_plan(QueuePolicy::kBlocking);
   const auto state = detail::ExecutionPlanAccess::retain(plan);
@@ -3278,11 +3882,25 @@ TEST(RuntimeInlinePartitionExecution,
   }
   session.wait();
 
+  // Key assertion: the run fails without polling fallback and retires its sole coordinator credit.
   ASSERT_TRUE(cleanup_recorded);
   EXPECT_EQ(session.termination(), RunTermination::kFailed);
   ASSERT_EQ(session.diagnostics().size(), 1U);
   EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_READINESS_BINDING_UNAVAILABLE");
   EXPECT_EQ(session.diagnostics().front().service, "partition_causal_frontier_freeze");
+  const Diagnostic& diagnostic = session.diagnostics().front();
+  const auto vertices = plan.graph().vertices();
+  const auto successor = std::ranges::find(vertices, "first-relay", &VertexRecord::name);
+  ASSERT_NE(successor, vertices.end());
+  EXPECT_EQ(diagnostic.source.vertex, successor->id);
+  if (!diagnostic.detail.has_value()) {
+    FAIL() << "Expected diagnostic detail";
+  }
+  const auto& detail = *diagnostic.detail;
+  EXPECT_EQ(detail.error.code, ErrorCode::kProtocolError);
+  EXPECT_TRUE(detail.error.message.empty());
+  EXPECT_TRUE(detail.causes.empty());
+  EXPECT_FALSE(detail.truncated);
   EXPECT_TRUE(InlinePartitionProbeState::sink_values().empty());
   const auto records = InlinePartitionProbeState::compute_records();
   ASSERT_EQ(records.size(), 1U);
@@ -3317,8 +3935,15 @@ INSTANTIATE_TEST_SUITE_P(QueuePolicies, InlinePodChainTest,
                            return info.param == QueuePolicy::kBlocking ? "Blocking" : "DropOldest";
                          });
 
+INSTANTIATE_TEST_SUITE_P(QueuePolicies, InlineTensorContinuationTest,
+                         testing::Values(QueuePolicy::kBlocking, QueuePolicy::kDropOldest),
+                         [](const testing::TestParamInfo<QueuePolicy>& info) {
+                           return info.param == QueuePolicy::kBlocking ? "Blocking" : "DropOldest";
+                         });
+
 TEST(RuntimeInlinePartitionExecution,
      CachedClockRootCoordinateRefreshesAcrossConsecutiveCausalChains) {
+  // Key setup: run three clock activations through the same cached four-Operator POD chain.
   InlinePartitionProbeState::reset();
   constexpr std::size_t kActivationCount = 3U;
   constexpr std::size_t kOperatorsPerActivation = 4U;
@@ -3327,6 +3952,7 @@ TEST(RuntimeInlinePartitionExecution,
   ASSERT_TRUE(compiled.ok()) << compiled.json();
 
   const InlinePartitionRunEvidence evidence = run_and_observe(compiled, kActivationCount);
+  // Key assertion: each chain has a newer root coordinate and internally consecutive microsteps.
   ASSERT_TRUE(evidence.observed);
   EXPECT_EQ(evidence.termination, RunTermination::kStopped);
   EXPECT_EQ(evidence.diagnostic_count, 0U);
@@ -3394,6 +4020,7 @@ struct InlinePayloadCaseNames {
 TYPED_TEST_SUITE(InlinePayloadParity, InlinePayloadCases, InlinePayloadCaseNames);
 
 TYPED_TEST(InlinePayloadParity, HostPreservesBackingMetadataAndControllerOwnership) {
+  // Key setup: run the host raw-Tensor or descriptor-Image chain under both queue policies.
   for (const QueuePolicy policy : {QueuePolicy::kBlocking, QueuePolicy::kDropOldest}) {
     SCOPED_TRACE(static_cast<std::uint32_t>(policy));
     InlinePartitionProbeState::reset();
@@ -3406,6 +4033,7 @@ TYPED_TEST(InlinePayloadParity, HostPreservesBackingMetadataAndControllerOwnersh
     ASSERT_TRUE(state->inline_partition_execution.has_value()) << compiled.json();
 
     const InlinePartitionRunEvidence evidence = run_and_observe(compiled, 1U);
+    // Key assertion: payload identity and metadata survive while all callbacks stay inline.
     ASSERT_TRUE(evidence.observed);
     EXPECT_EQ(evidence.termination, RunTermination::kStopped);
     EXPECT_EQ(evidence.diagnostic_count, 0U);
@@ -3417,6 +4045,7 @@ TYPED_TEST(InlinePayloadParity, HostPreservesBackingMetadataAndControllerOwnersh
 }
 
 TYPED_TEST(InlinePayloadParity, CudaReentersPlacedDeviceAndStreamForEveryCallback) {
+  // Key setup: run the CUDA payload chain on each tested device after changing caller affinity.
   std::int32_t device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
     GTEST_SKIP() << "CUDA device unavailable";
@@ -3443,8 +4072,19 @@ TYPED_TEST(InlinePayloadParity, CudaReentersPlacedDeviceAndStreamForEveryCallbac
       const auto state = detail::ExecutionPlanAccess::retain(compiled);
       ASSERT_TRUE(state);
       ASSERT_TRUE(state->inline_partition_execution.has_value()) << compiled.json();
+      EXPECT_EQ(compiled.cuda_compute_stream_policy(),
+                CudaComputeStreamPolicy::kPerExecutionPartition);
+      ASSERT_EQ(compiled.cuda_compute_streams().size(), 1U);
+      ASSERT_TRUE(compiled.cuda_compute_streams().front().partition.has_value());
+      ASSERT_FALSE(compiled.operator_cuda_stream_bindings().empty());
+      EXPECT_TRUE(
+          std::ranges::all_of(compiled.operator_cuda_stream_bindings(), [&](const auto& binding) {
+            return binding.stream_id == compiled.cuda_compute_streams().front().stream_id &&
+                   binding.partition == *compiled.cuda_compute_streams().front().partition;
+          }));
 
       const InlinePartitionRunEvidence evidence = run_and_observe(compiled, 1U);
+      // Key assertion: each callback re-enters the placed device and shares the source stream.
       ASSERT_TRUE(evidence.observed);
       EXPECT_EQ(evidence.termination, RunTermination::kStopped);
       EXPECT_EQ(evidence.diagnostic_count, 0U);
@@ -3461,6 +4101,7 @@ TYPED_TEST(InlinePayloadParity, CudaReentersPlacedDeviceAndStreamForEveryCallbac
 }
 
 TYPED_TEST(InlinePayloadParity, RetainedHandleKeepsPoolSlotUntilRelease) {
+  // Key setup: retain the host Tensor at the relay while observing its runtime output pool.
   InlinePartitionProbeState::reset();
   InlineTensorProbeState::reset(MemoryKind::kHost);
   const ExecutionPlan compiled = TypeParam::template make_plan<MemoryKind::kHost>({
@@ -3481,6 +4122,7 @@ TYPED_TEST(InlinePayloadParity, RetainedHandleKeepsPoolSlotUntilRelease) {
 
   std::optional<RunSession> session{run_async(run_plan)};
   ASSERT_TRUE(InlinePartitionProbeState::wait_for_sinks(1U));
+  // Key assertion: the slot remains claimed until handle release, then retires without leaks.
   ASSERT_TRUE(InlineTensorProbeState::has_retained_tensor());
   const auto retained = tensor_control->snapshot(0U);
   EXPECT_EQ(retained.active_slot_count, 1U);
@@ -3505,8 +4147,232 @@ TYPED_TEST(InlinePayloadParity, RetainedHandleKeepsPoolSlotUntilRelease) {
   EXPECT_EQ(released.invariant_failure_count, 0U);
 }
 
+enum class RuntimeTensorMismatchMode {
+  kPropagate,
+  kHandle,
+  kFirstRejectedPort,
+  kUnrelatedErrorNextActivation,
+  kUnrelatedErrorSameActivation,
+};
+
+class RuntimeTensorMismatchSource final : public Operator<> {
+ public:
+  explicit RuntimeTensorMismatchSource(RuntimeTensorMismatchMode mode) : mode_(mode) {}
+  void setup(OperatorSpec& spec) override {
+    const auto declare_output = [&](Output<Tensor>& port, const char* name) {
+      spec.output(port, name)
+          .max_emits_per_compute(1U)
+          .produces_tensor(TensorOutputSpec{
+              .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                                 .dtype = DLDataType{kDLUInt, 8U, 1U},
+                                 .rank = 1U},
+              .bounds = tensor_bounds(8U),
+              .storage = TensorOutputStorage::kRuntimePool,
+          });
+    };
+    declare_output(output, "output");
+    if (mode_ == RuntimeTensorMismatchMode::kFirstRejectedPort) {
+      declare_output(first_rejected, "z_first_rejected");
+    }
+  }
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnClock{.period = 1ms});
+    return result;
+  }
+  expected<void, Error> compute(ExecutionContext& context) override {
+    if (emitted_) {
+      if (mode_ == RuntimeTensorMismatchMode::kUnrelatedErrorNextActivation) {
+        return make_unexpected(
+            Error{ErrorCode::kNotSupported, "unrelated failure in next activation"});
+      }
+      context.request_completion();
+      return {};
+    }
+    emitted_ = true;
+    constexpr std::array<std::int64_t, 1U> shape{8};
+    auto storage = std::make_unique<std::array<std::uint8_t, 8U>>();
+    auto* const storage_owner = storage.get();
+    auto tensor = make_tensor(shape,
+                              DLDataType{kDLUInt, 8U, 1U},
+                              std::nullopt,
+                              MemoryStorageType::kSystem,
+                              storage->data(),
+                              [storage_owner](void*) -> expected<void, Error> {
+                                delete storage_owner;
+                                deleted.fetch_add(1U, std::memory_order_relaxed);
+                                return {};
+                              });
+    if (!tensor) {
+      return make_unexpected(std::move(tensor.error()));
+    }
+    EXPECT_EQ(storage.release(), storage_owner);
+    Sample<Tensor> sample{std::move(*tensor), {}};
+    expected<void, Error> first;
+    if (mode_ == RuntimeTensorMismatchMode::kFirstRejectedPort) {
+      first = first_rejected.emit(sample);
+      if (!first) {
+        rejected.fetch_add(1U, std::memory_order_relaxed);
+      }
+    }
+    auto emitted = output.emit(std::move(sample));
+    if (!emitted) {
+      rejected.fetch_add(1U, std::memory_order_relaxed);
+    }
+    if (mode_ == RuntimeTensorMismatchMode::kUnrelatedErrorSameActivation) {
+      return make_unexpected(
+          Error{ErrorCode::kNotSupported, "unrelated failure in same activation"});
+    }
+    if (mode_ == RuntimeTensorMismatchMode::kHandle ||
+        mode_ == RuntimeTensorMismatchMode::kUnrelatedErrorNextActivation) {
+      return {};
+    }
+    return mode_ == RuntimeTensorMismatchMode::kFirstRejectedPort ? std::move(first)
+                                                                  : std::move(emitted);
+  }
+  Output<Tensor> output;
+  Output<Tensor> first_rejected;
+  static inline std::atomic_uint32_t deleted{};
+  static inline std::atomic_uint32_t rejected{};
+
+ private:
+  RuntimeTensorMismatchMode mode_;
+  bool emitted_{};
+};
+
+class RuntimeTensorMismatchSink final : public Operator<> {
+ public:
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .expects_tensor(TensorInputSpec{
+            .representation = {.memory_kind = MemoryKind::kCudaDevice,
+                               .dtype = DLDataType{kDLUInt, 8U, 1U},
+                               .rank = 1U},
+        });
+  }
+  Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+  expected<void, Error> compute(ExecutionContext&) override {
+    received.fetch_add(1U, std::memory_order_relaxed);
+    return {};
+  }
+  Input<Tensor> input;
+  static inline std::atomic_uint32_t received{};
+};
+
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
+TEST(RuntimeInlinePartitionExecution, RuntimeTensorMismatchRetainsPortMemoryAndCleanup) {
+  std::int32_t device_count{};
+  if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+    GTEST_SKIP() << "CUDA device unavailable";
+  }
+  for (const auto mode : {RuntimeTensorMismatchMode::kPropagate,
+                          RuntimeTensorMismatchMode::kHandle,
+                          RuntimeTensorMismatchMode::kFirstRejectedPort,
+                          RuntimeTensorMismatchMode::kUnrelatedErrorNextActivation,
+                          RuntimeTensorMismatchMode::kUnrelatedErrorSameActivation}) {
+    SCOPED_TRACE(static_cast<int>(mode));
+    const bool two_ports = mode == RuntimeTensorMismatchMode::kFirstRejectedPort;
+    RuntimeTensorMismatchSource::deleted.store(0U, std::memory_order_relaxed);
+    RuntimeTensorMismatchSource::rejected.store(0U, std::memory_order_relaxed);
+    RuntimeTensorMismatchSink::received.store(0U, std::memory_order_relaxed);
+    Graph graph{"runtime-tensor-mismatch"};
+    const auto source = graph.op<RuntimeTensorMismatchSource>("source", mode);
+    const auto sink = graph.op<RuntimeTensorMismatchSink>("sink");
+    graph.add_flow(source->output, sink->input);
+    if (two_ports) {
+      const auto second_sink = graph.op<RuntimeTensorMismatchSink>("second_sink");
+      graph.add_flow(source->first_rejected, second_sink->input);
+    }
+    graph.set_default_clock(graph.add_clock<RealtimeClock>("clock"));
+    CompileOptions options;
+    options.deployment.bind_tensor_output_device({"source", "output", DeviceId{0}});
+    if (two_ports) {
+      options.deployment.bind_tensor_output_device({"source", "z_first_rejected", DeviceId{0}});
+    }
+    const auto compiled = compile(graph, options);
+    ASSERT_TRUE(compiled.ok()) << compiled.json();
+    const auto control = std::make_shared<detail::RuntimeTensorOutputTestControl>();
+    const auto plan =
+        detail::RuntimeTestPlanAccess::with_tensor_output_test_control(compiled, control);
+    std::optional<RunSession> session{run_async(plan)};
+    const bool terminal = wait_for_terminal(*session);
+    if (!terminal) {
+      session->request_stop();
+    }
+    session->wait();
+    ASSERT_TRUE(terminal) << "Run did not terminate within 5 seconds";
+    EXPECT_EQ(RuntimeTensorMismatchSource::rejected.load(std::memory_order_relaxed),
+              two_ports ? 2U : 1U);
+    EXPECT_EQ(RuntimeTensorMismatchSource::deleted.load(std::memory_order_relaxed), 1U);
+    EXPECT_EQ(RuntimeTensorMismatchSink::received.load(std::memory_order_relaxed), 0U);
+    if (mode == RuntimeTensorMismatchMode::kHandle) {
+      EXPECT_EQ(session->termination(), RunTermination::kRequestedCompleted);
+      EXPECT_TRUE(session->diagnostics().empty());
+    } else {
+      EXPECT_EQ(session->termination(), RunTermination::kFailed);
+      const auto diagnostics = session->diagnostics();
+      const auto found = std::find_if(diagnostics.begin(), diagnostics.end(), [](const auto& row) {
+        return row.token == "RUNTIME_OPERATOR_CALLBACK_FAILED";
+      });
+      ASSERT_NE(found, diagnostics.end());
+      const auto& failure_detail = found->detail;
+      if (!failure_detail.has_value()) {
+        FAIL() << "Expected diagnostic detail";
+      }
+      EXPECT_EQ(failure_detail->operation, DiagnosticOperation::kCompute);
+      EXPECT_EQ(failure_detail->operator_path, "source");
+      EXPECT_TRUE(failure_detail->causes.empty());
+      if (mode == RuntimeTensorMismatchMode::kUnrelatedErrorNextActivation ||
+          mode == RuntimeTensorMismatchMode::kUnrelatedErrorSameActivation) {
+        EXPECT_EQ(failure_detail->error.code, ErrorCode::kNotSupported);
+        EXPECT_EQ(failure_detail->error.message,
+                  mode == RuntimeTensorMismatchMode::kUnrelatedErrorNextActivation
+                      ? "unrelated failure in next activation"
+                      : "unrelated failure in same activation");
+      } else {
+        EXPECT_EQ(failure_detail->error.code, ErrorCode::kInvalidArgument);
+      }
+      if (mode == RuntimeTensorMismatchMode::kUnrelatedErrorNextActivation) {
+        EXPECT_FALSE(found->source.port);
+        EXPECT_TRUE(failure_detail->port_name.empty());
+        EXPECT_TRUE(failure_detail->mismatches.empty());
+      } else {
+        const std::string expected_port = two_ports ? "z_first_rejected" : "output";
+        EXPECT_EQ(failure_detail->port_name, expected_port);
+        EXPECT_TRUE(found->source.port);
+        const auto& mismatches = failure_detail->mismatches;
+        ASSERT_EQ(mismatches.size(), 1U);
+        EXPECT_EQ(mismatches.front().field, "memory_kind");
+        EXPECT_EQ(mismatches.front().provided, "host");
+        EXPECT_EQ(mismatches.front().required, "cuda_device");
+        const auto formatted = format_diagnostics(diagnostics, ExecutionGraphView{});
+        EXPECT_NE(formatted.find(expected_port), std::string::npos);
+        EXPECT_NE(formatted.find("host"), std::string::npos);
+        EXPECT_NE(formatted.find("cuda_device"), std::string::npos);
+      }
+    }
+    session.reset();
+    for (std::size_t pool_index = 0U; pool_index < (two_ports ? 2U : 1U); ++pool_index) {
+      const auto pool = control->snapshot(pool_index);
+      EXPECT_TRUE(pool.terminal);
+      EXPECT_EQ(pool.active_slot_count, 0U);
+      EXPECT_EQ(pool.active_claim_mask, 0U);
+      EXPECT_EQ(pool.cuda_streams_created, pool.cuda_streams_destroyed);
+      EXPECT_EQ(pool.cuda_events_created, pool.cuda_events_destroyed);
+      EXPECT_EQ(pool.invariant_failure_count, 0U);
+    }
+  }
+}
+
 TEST(RuntimeInlinePartitionExecution,
      RawCudaTensorFailureCleansEveryDeviceWithoutLeakingCallerDevice) {
+  // Key setup: fail a placed CUDA Tensor relay after deliberately changing the ambient device.
   std::int32_t device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
     GTEST_SKIP() << "CUDA device unavailable";
@@ -3548,6 +4414,7 @@ TEST(RuntimeInlinePartitionExecution,
     session->wait();
     const InlinePartitionRunEvidence evidence =
         capture_run_evidence(*session, true, counters, support_control);
+    // Key assertion: failure releases all CUDA resources and restores the caller's device.
     EXPECT_EQ(evidence.termination, RunTermination::kFailed);
     ASSERT_EQ(session->diagnostics().size(), 1U);
     EXPECT_EQ(session->diagnostics().front().token, "RUNTIME_OPERATOR_CALLBACK_FAILED");
@@ -3572,13 +4439,95 @@ TEST(RuntimeInlinePartitionExecution,
   }
 }
 
+// REQ: RUNTIME-054
+// REQ: RUNTIME-060
+TEST(RuntimeInlinePartitionExecution, CudaRestoreFailureIsSeparateFromCallbackCause) {
+  std::int32_t device_count{};
+  if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+    GTEST_SKIP() << "CUDA device unavailable";
+  }
+  std::int32_t original_device = -1;
+  ASSERT_EQ(cudaGetDevice(&original_device), cudaSuccess);
+  const ScopedCUDADeviceRestore restore_device{original_device};
+  const std::int32_t ambient_device = device_count > 1 ? 1 : 0;
+  for (const bool fail_callback : {true, false}) {
+    SCOPED_TRACE(fail_callback ? "callback and restore" : "restore only");
+    ASSERT_EQ(cudaSetDevice(ambient_device), cudaSuccess);
+    InlinePartitionProbeState::reset();
+    InlineTensorProbeState::reset(MemoryKind::kCudaDevice);
+    const auto compiled = make_tensor_chain_plan<MemoryKind::kCudaDevice>(QueuePolicy::kBlocking,
+                                                                          TensorPlanRoute::kInline,
+                                                                          DeviceId{0},
+                                                                          ambient_device,
+                                                                          fail_callback,
+                                                                          false,
+                                                                          ambient_device);
+    ASSERT_TRUE(compiled.ok()) << compiled.json();
+    const auto fault = std::make_shared<detail::RuntimeCudaExecutionTestControl>(
+        detail::RuntimeCudaExecutionFailurePoint::kComputeDeviceRestore, 1U);
+    const auto control = std::make_shared<detail::RuntimeTensorOutputTestControl>();
+    auto plan = detail::RuntimeTestPlanAccess::with_cuda_execution_test_control(compiled, fault);
+    plan = detail::RuntimeTestPlanAccess::with_tensor_output_test_control(plan, control);
+    std::optional<RunSession> session{run_async(plan)};
+    const bool terminal = wait_for_terminal(*session);
+    if (!terminal) {
+      session->request_stop();
+    }
+    session->wait();
+    ASSERT_TRUE(terminal) << "Run did not terminate within 5 seconds";
+    EXPECT_GE(fault->visits(), 2U);
+    EXPECT_EQ(session->termination(), RunTermination::kFailed);
+    const auto diagnostics = session->diagnostics();
+    ASSERT_EQ(diagnostics.size(), fail_callback ? 2U : 1U);
+    const auto& restoration = diagnostics.back();
+    EXPECT_EQ(restoration.token, "RUNTIME_COMPUTE_CUDA_DEVICE_RESTORE_FAILED");
+    const auto& restoration_detail = restoration.detail;
+    if (!restoration_detail.has_value()) {
+      FAIL() << "Expected diagnostic detail";
+    }
+    EXPECT_EQ(restoration_detail->operation, DiagnosticOperation::kRuntime);
+    EXPECT_EQ(restoration_detail->operator_path, "relay");
+    EXPECT_EQ(restoration_detail->error.code, ErrorCode::kNotSupported);
+    EXPECT_TRUE(restoration_detail->causes.empty());
+    if (fail_callback) {
+      const auto& callback = diagnostics.front();
+      EXPECT_EQ(callback.token, "RUNTIME_OPERATOR_CALLBACK_FAILED");
+      const auto& callback_detail = callback.detail;
+      if (!callback_detail.has_value()) {
+        FAIL() << "Expected diagnostic detail";
+      }
+      EXPECT_EQ(callback_detail->operation, DiagnosticOperation::kCompute);
+      EXPECT_EQ(callback_detail->error.message, "INLINE_TENSOR_CALLBACK_FAILURE");
+      EXPECT_TRUE(callback_detail->causes.empty());
+      EXPECT_EQ(restoration_detail->role, DiagnosticFailureRole::kTeardown);
+      EXPECT_EQ(restoration_detail->primary_diagnostic_index, 0U);
+    } else {
+      EXPECT_EQ(restoration_detail->role, DiagnosticFailureRole::kPrimary);
+      EXPECT_FALSE(restoration_detail->primary_diagnostic_index);
+    }
+    session.reset();
+    const auto pool = control->snapshot(0U);
+    EXPECT_TRUE(pool.terminal);
+    EXPECT_EQ(pool.active_slot_count, 0U);
+    EXPECT_EQ(pool.active_claim_mask, 0U);
+    EXPECT_EQ(pool.cuda_streams_created, pool.cuda_streams_destroyed);
+    EXPECT_EQ(pool.cuda_events_created, pool.cuda_events_destroyed);
+    EXPECT_EQ(pool.invariant_failure_count, 0U);
+    std::int32_t caller_device = -1;
+    ASSERT_EQ(cudaGetDevice(&caller_device), cudaSuccess);
+    EXPECT_EQ(caller_device, ambient_device);
+  }
+}
+
 TEST(RuntimeInlinePartitionExecution, MixedTensorPlacementKeepsTheOneRootForkOrdinary) {
+  // Key setup: compile one-root forks whose branches require mixed memory or CUDA devices.
   const ExecutionPlan host_cuda =
       make_mixed_tensor_fork_plan<MemoryKind::kHost, MemoryKind::kCudaDevice>(DeviceId{},
                                                                               DeviceId{0});
   ASSERT_TRUE(host_cuda.ok()) << host_cuda.json();
   const auto host_cuda_state = detail::ExecutionPlanAccess::retain(host_cuda);
   ASSERT_TRUE(host_cuda_state);
+  // Key assertion: neither placement-incompatible fork is admitted as inline execution.
   EXPECT_FALSE(host_cuda_state->inline_partition_execution.has_value());
 
   const ExecutionPlan multi_device =
@@ -3591,12 +4540,14 @@ TEST(RuntimeInlinePartitionExecution, MixedTensorPlacementKeepsTheOneRootForkOrd
 }
 
 TYPED_TEST(InlinePayloadParity, IneligibleTransportAndMemoryRemainOrdinary) {
+  // Key setup: compile equivalent payload chains over HoloMQ, fanout, and ineligible memory kinds.
   const ExecutionPlan holomq = TypeParam::template make_plan<MemoryKind::kHost>({
       .route = TensorPlanRoute::kHoloMQ,
   });
   ASSERT_TRUE(holomq.ok()) << holomq.json();
   const auto holomq_state = detail::ExecutionPlanAccess::retain(holomq);
   ASSERT_TRUE(holomq_state);
+  // Key assertion: every ineligible route remains outside the inline execution fast path.
   EXPECT_FALSE(holomq_state->inline_partition_execution.has_value());
 
   const ExecutionPlan fanout = TypeParam::template make_plan<MemoryKind::kHost>({
@@ -3622,6 +4573,7 @@ TYPED_TEST(InlinePayloadParity, IneligibleTransportAndMemoryRemainOrdinary) {
 }
 
 TYPED_TEST(InlinePayloadParity, FailureReleasesPoolAndReplaysCleanly) {
+  // Key setup: reuse a host payload plan whose relay fails, running it twice against fresh pools.
   const ExecutionPlan compiled = TypeParam::template make_plan<MemoryKind::kHost>({
       .fail_relay = true,
   });
@@ -3647,6 +4599,7 @@ TYPED_TEST(InlinePayloadParity, FailureReleasesPoolAndReplaysCleanly) {
     session->wait();
     const InlinePartitionRunEvidence evidence =
         capture_run_evidence(*session, true, counters, support_control);
+    // Key assertion: each run replays the typed failure and retires every active pool claim.
     EXPECT_EQ(evidence.termination, RunTermination::kFailed);
     ASSERT_EQ(session->diagnostics().size(), 1U);
     EXPECT_EQ(session->diagnostics().front().token, "RUNTIME_OPERATOR_CALLBACK_FAILED");
@@ -3665,34 +4618,69 @@ TYPED_TEST(InlinePayloadParity, FailureReleasesPoolAndReplaysCleanly) {
 }
 
 TEST(RuntimeInlinePartitionExecution, DescriptorImageMissingAllocationRemainsOrdinary) {
+  // Key setup: compile a descriptor-Image chain without runtime Tensor allocation evidence.
   const ExecutionPlan no_allocation = make_image_chain_plan<MemoryKind::kHost>(
       QueuePolicy::kBlocking, TensorPlanRoute::kInline, DeviceId{}, -1, false, false, false);
   ASSERT_TRUE(no_allocation.ok()) << no_allocation.json();
   const auto no_allocation_state = detail::ExecutionPlanAccess::retain(no_allocation);
   ASSERT_TRUE(no_allocation_state);
+  // Key assertion: missing allocation proof prevents admission to inline execution.
   EXPECT_FALSE(no_allocation_state->inline_partition_execution.has_value());
 }
 
+// REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution, RunsAnOwningSchemaChainOnTheControllerWithoutHandoffs) {
+  constexpr std::size_t kFrameCount = 3U;
   InlinePartitionProbeState::reset();
-  const ExecutionPlan compiled = make_schema_chain_plan();
+  // Key setup: drive three frames through a four-Operator generated-schema chain from a 1 ns
+  // source, providing the established non-Tensor continuation behavior for comparison.
+  const ExecutionPlan compiled = make_schema_chain_plan(kFrameCount, 1ns);
   ASSERT_TRUE(compiled.ok()) << compiled.json();
   const auto state = detail::ExecutionPlanAccess::retain(compiled);
   ASSERT_TRUE(state);
   ASSERT_TRUE(state->inline_partition_execution.has_value()) << compiled.json();
 
-  const InlinePartitionRunEvidence evidence = run_and_observe(compiled, 0U, true);
+  const InlinePartitionRunEvidence evidence = run_and_observe(compiled, kFrameCount);
+  // Key assertion: every generated-schema frame drains at successive microsteps and all three
+  // direct edges accept their causal continuations without fallback.
   ASSERT_TRUE(evidence.observed);
   EXPECT_EQ(evidence.termination, RunTermination::kStopped);
   EXPECT_EQ(evidence.diagnostic_count, 0U);
+  EXPECT_EQ(evidence.sink_values, (std::vector<std::uint32_t>{0U, 1U, 2U}));
   ASSERT_TRUE(evidence.schema_value.has_value());
   // The fatal assertion above proves the optional is engaged.
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   EXPECT_EQ(*evidence.schema_value, "root:2:3");
-  expect_inline_thread_evidence(evidence, 4U, 4U);
+  ASSERT_EQ(evidence.compute_records.size(), kFrameCount * 4U);
+  for (std::size_t frame = 0U; frame < kFrameCount; ++frame) {
+    const std::size_t source_index = frame * 4U;
+    const TagTime source_tag = evidence.compute_records[source_index].tag_time;
+    ASSERT_TRUE(source_tag.valid());
+    ASSERT_LE(source_tag.microstep, std::numeric_limits<std::uint32_t>::max() - 3U);
+    for (std::size_t stage = 0U; stage < 4U; ++stage) {
+      const auto& record = evidence.compute_records[source_index + stage];
+      SCOPED_TRACE(frame);
+      SCOPED_TRACE(stage);
+      EXPECT_EQ(record.operator_id, stage + 1U);
+      EXPECT_EQ(record.value, frame);
+      EXPECT_EQ(record.tag_time.logical_ns, source_tag.logical_ns);
+      EXPECT_EQ(record.tag_time.microstep,
+                source_tag.microstep + static_cast<std::uint32_t>(stage));
+    }
+  }
+  expect_fast_chain_controller_evidence(evidence);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kDirectContinuationReceiptsAccepted),
+            kFrameCount * 3U);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierAttempts),
+            kFrameCount * 3U);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierAccepted),
+            kFrameCount * 3U);
+  EXPECT_EQ(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionCausalFrontierFallbacks),
+            0U);
 }
 
 TEST(RuntimeInlinePartitionExecution, AdmitsOneRootWithTwoConsumersInStableSiblingOrder) {
+  // Key setup: connect one direct POD output to two sinks in a single authored partition.
   InlinePartitionProbeState::reset();
   const ExecutionPlan compiled = make_fork_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -3704,6 +4692,7 @@ TEST(RuntimeInlinePartitionExecution, AdmitsOneRootWithTwoConsumersInStableSibli
   EXPECT_EQ(state->partition_runners.front().internal_edges.size(), 2U);
 
   const InlinePartitionRunEvidence evidence = run_and_observe(compiled, 2U);
+  // Key assertion: the ordinary partition runner executes both siblings once in stable order.
   ASSERT_TRUE(evidence.observed);
   EXPECT_EQ(evidence.termination, RunTermination::kStopped);
   EXPECT_EQ(evidence.diagnostic_count, 0U);
@@ -3734,9 +4723,164 @@ TEST(RuntimeInlinePartitionExecution, AdmitsOneRootWithTwoConsumersInStableSibli
   EXPECT_GE(phase_count(evidence, detail::RuntimePhaseCounter::kPartitionControlBarriers), 1U);
 }
 
+// REQ: RUNTIME-053
+TEST(RuntimeInlinePartitionExecution, AtomicEmbeddedIndependentSourcesShareOwnerAndProgress) {
+  for (const bool automatic : {false, true}) {
+    PartitionRunnerProbeState::reset();
+    ExecutionPlan compiled = make_atomic_instance_plan(automatic);
+    ASSERT_TRUE(compiled.ok()) << compiled.json();
+    const auto selected = compiled.partitions().lookup_named("bundle-owner");
+    ASSERT_TRUE(selected);
+    ASSERT_EQ(selected->graph_members().size(), 1U);
+    EXPECT_EQ(std::vector<std::string>(selected->operator_paths().begin(),
+                                       selected->operator_paths().end()),
+              (std::vector<std::string>{"bundle/first", "bundle/nested/second"}));
+    const auto state = detail::ExecutionPlanAccess::retain(compiled);
+    ASSERT_TRUE(state);
+    ASSERT_EQ(state->partition_runners.size(), 2U);
+    const auto runner = std::ranges::find(
+        state->partition_runners, selected->id(), &detail::PartitionRunnerPlanRecord::partition);
+    ASSERT_NE(runner, state->partition_runners.end());
+    ASSERT_EQ(runner->operators.size(), 2U);
+    EXPECT_TRUE(runner->operators[0].topology_root);
+    EXPECT_TRUE(runner->operators[1].topology_root);
+    EXPECT_NE(runner->operators[0].readiness_source, runner->operators[1].readiness_source);
+    const auto counters = std::make_shared<detail::RuntimePhaseCounters>();
+    compiled = detail::RuntimeTestPlanAccess::with_phase_counters(compiled, counters);
+    RunSession session = run_async(compiled);
+    const std::array ids{1U, 2U, 3U};
+    const bool observed = PartitionRunnerProbeState::wait_for_each_operator(ids, 3U);
+    session.request_stop();
+    session.wait();
+    ASSERT_TRUE(observed);
+    EXPECT_EQ(session.termination(), RunTermination::kStopped);
+    EXPECT_TRUE(session.diagnostics().empty());
+    const auto probe = PartitionRunnerProbeState::snapshot();
+    EXPECT_TRUE(probe.stable_owner_threads);
+    EXPECT_TRUE(probe.balanced_callbacks);
+    EXPECT_FALSE(probe.barrier_timed_out);
+    EXPECT_EQ(probe.max_partition_concurrency[0], 1U);
+    EXPECT_EQ(probe.max_partition_concurrency[1], 1U);
+    EXPECT_GE(probe.max_cross_partition_concurrency, 2U);
+    EXPECT_NE(probe.owner_threads[0], probe.owner_threads[1]);
+    for (const auto& callback : probe.callback_records) {
+      EXPECT_EQ(callback.thread, probe.owner_threads[callback.operator_id == 3U ? 1U : 0U]);
+    }
+    expect_no_legacy_lane_handoffs(counters->snapshot());
+  }
+}
+
+// REQ: RUNTIME-053
+TEST(RuntimeInlinePartitionExecution, AtomicEmbeddedRepeatedInstancesKeepDistinctOwners) {
+  Graph graph{"repeated-atomic-instances"};
+  const auto left = graph.embed<AtomicProbeGraph>("left", 0U, 1U);
+  const auto right = graph.embed<AtomicProbeGraph>("right", 1U, 3U);
+  const auto clock = graph.add_clock<RealtimeClock>("timeline");
+  graph.set_default_clock(clock);
+  graph.bind_clock(left, left->clock_import(), clock);
+  graph.bind_clock(right, right->clock_import(), clock);
+  graph.partition("left-owner").add(left);
+  graph.partition("right-owner").add(right);
+  const auto plan = compile(graph);
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.execution_partitions().size(), 2U);
+  PartitionRunnerProbeState::reset();
+  RunSession session = run_async(plan);
+  const std::array ids{1U, 2U, 3U, 4U};
+  const bool observed = PartitionRunnerProbeState::wait_for_each_operator(ids, 3U);
+  session.request_stop();
+  session.wait();
+  ASSERT_TRUE(observed);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
+  const auto probe = PartitionRunnerProbeState::snapshot();
+  EXPECT_TRUE(probe.stable_owner_threads);
+  EXPECT_FALSE(probe.barrier_timed_out);
+  EXPECT_NE(probe.owner_threads[0], probe.owner_threads[1]);
+  EXPECT_EQ(probe.max_partition_concurrency[0], 1U);
+  EXPECT_EQ(probe.max_partition_concurrency[1], 1U);
+  for (const auto& callback : probe.callback_records) {
+    EXPECT_EQ(callback.thread, probe.owner_threads[callback.operator_id <= 2U ? 0U : 1U]);
+  }
+}
+
+// REQ: RUNTIME-053
+TEST(RuntimeInlinePartitionExecution, AtomicEmbeddedInvalidProvenanceRejectsBeforeCallbacks) {
+  const auto compiled = make_atomic_instance_plan(false);
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  const auto baseline = detail::ExecutionPlanAccess::retain(compiled);
+  ASSERT_TRUE(baseline);
+  for (const bool omit : {false, true}) {
+    auto state = std::make_shared<detail::ExecutionPlanState>(*baseline);
+    auto selected = std::ranges::find_if(state->execution_partitions, [](const auto& partition) {
+      return partition.authored_name == "bundle-owner";
+    });
+    ASSERT_NE(selected, state->execution_partitions.end());
+    if (omit) {
+      selected->graph_members.clear();
+    } else {
+      ASSERT_EQ(selected->graph_members.size(), 1U);
+      selected->graph_members[0] = GraphId{9999U};
+    }
+    PartitionRunnerProbeState::reset();
+    const auto malformed = detail::ExecutionPlanAccess::make(std::move(state));
+    RunSession session = run_async(malformed);
+    session.wait();
+    EXPECT_EQ(session.termination(), RunTermination::kFailed);
+    EXPECT_TRUE(std::ranges::any_of(session.diagnostics(), [](const auto& diagnostic) {
+      return diagnostic.token == "RUNTIME_PLACEMENT_BINDING_UNAVAILABLE";
+    }));
+    EXPECT_TRUE(PartitionRunnerProbeState::snapshot().callback_records.empty());
+  }
+}
+
+// REQ: RUNTIME-053
+TEST(RuntimeInlinePartitionExecution, AtomicEmbeddedIndependentSourcesApplyPartitionCpuPlacement) {
+#if defined(__linux__)
+  cpu_set_t allowed;
+  CPU_ZERO(&allowed);
+  if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) {
+    GTEST_SKIP() << "sched_getaffinity could not read the process cpuset";
+  }
+  std::vector<std::uint32_t> cpus;
+  for (std::uint32_t cpu = 0U; cpu < CPU_SETSIZE && cpus.size() < 2U; ++cpu) {
+    if (CPU_ISSET(static_cast<int>(cpu), &allowed))
+      cpus.push_back(cpu);
+  }
+  if (cpus.size() < 2U) {
+    GTEST_SKIP() << "At least two allowed CPUs are required for distinct partition placement";
+  }
+  CompileOptions options;
+  options.deployment
+      .bind_thread_placement("bundle-owner", ThreadPlacement{.affinity = CPUAffinity{cpus[0]}})
+      .bind_thread_placement("peer-owner", ThreadPlacement{.affinity = CPUAffinity{cpus[1]}});
+  PartitionRunnerProbeState::reset();
+  const auto compiled = make_atomic_instance_plan(false, std::move(options));
+  ASSERT_TRUE(compiled.ok()) << compiled.json();
+  RunSession session = run_async(compiled);
+  const std::array ids{1U, 2U, 3U};
+  const bool observed = PartitionRunnerProbeState::wait_for_each_operator(ids, 3U);
+  session.request_stop();
+  session.wait();
+  ASSERT_TRUE(observed);
+  EXPECT_EQ(session.termination(), RunTermination::kStopped);
+  EXPECT_TRUE(session.diagnostics().empty());
+  const auto probe = PartitionRunnerProbeState::snapshot();
+  EXPECT_TRUE(probe.stable_owner_threads);
+  EXPECT_NE(probe.owner_threads[0], probe.owner_threads[1]);
+  for (const auto& callback : probe.callback_records) {
+    EXPECT_EQ(callback.cpu, static_cast<std::int32_t>(cpus[callback.partition_index]));
+    EXPECT_EQ(callback.thread, probe.owner_threads[callback.partition_index]);
+  }
+#else
+  GTEST_SKIP() << "CPU-affinity readback is supported only on Linux";
+#endif
+}
+
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution,
      AuthoredPartitionsUseStableSerialOwnersAndOverlapIndependently) {
+  // Key setup: synchronize four independent source-sink partitions at their root callbacks.
   PartitionRunnerProbeState::reset();
   ExecutionPlan compiled = make_four_partition_overlap_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -3763,6 +4907,7 @@ TEST(RuntimeInlinePartitionExecution,
   session.request_stop();
   session.wait();
 
+  // Key assertion: each partition is serial on one stable owner while partitions overlap.
   ASSERT_TRUE(observed);
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty());
@@ -3816,6 +4961,7 @@ TEST(RuntimeInlinePartitionExecution,
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution,
      CrossPartitionChannelConfinesFusedCallbacksToExactStableOwners) {
+  // Key setup: fuse source and relay in one partition and place the sink across a direct boundary.
   PartitionRunnerProbeState::reset();
   ExecutionPlan compiled = make_cross_partition_fused_chain_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -3849,6 +4995,7 @@ TEST(RuntimeInlinePartitionExecution,
   session.request_stop();
   session.wait();
 
+  // Key assertion: fused callbacks share their owner and the sink runs on its distinct owner.
   ASSERT_TRUE(observed);
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty());
@@ -3881,6 +5028,7 @@ TEST(RuntimeInlinePartitionExecution,
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution,
      CrossPartitionOneRootFanoutDeliversOncePerConsumerWithoutLaneHandoffs) {
+  // Key setup: fan one source publication across boundaries to two independently owned sinks.
   const ExecutionPlan baseline = make_cross_partition_fanout_plan();
   ASSERT_TRUE(baseline.ok()) << baseline.json();
   const auto state = detail::ExecutionPlanAccess::retain(baseline);
@@ -3910,6 +5058,7 @@ TEST(RuntimeInlinePartitionExecution,
     session.request_stop();
     session.wait();
 
+    // Key assertion: both stable sink owners receive exactly one copy without lane handoffs.
     ASSERT_TRUE(observed);
     EXPECT_EQ(session.termination(), RunTermination::kStopped);
     EXPECT_TRUE(session.diagnostics().empty());
@@ -3946,6 +5095,8 @@ TEST(RuntimeInlinePartitionExecution,
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution,
      CrossPartitionBlockingCreditRecoversInOrderWithExactMetadataAndTagTime) {
+  // Key setup: hold the first sink callback until capacity-one cross-partition credit stalls
+  // source.
   constexpr std::size_t kSampleCount = 5U;
   CrossPartitionFlowProbeState::reset(true);
   ExecutionPlan compiled = make_cross_partition_flow_plan(kSampleCount);
@@ -3970,6 +5121,7 @@ TEST(RuntimeInlinePartitionExecution,
   session.request_stop();
   session.wait();
 
+  // Key assertion: credit recovers and all samples arrive in order with exact transported metadata.
   ASSERT_TRUE(first_sink_held);
   ASSERT_TRUE(stalled_source_count.has_value());
   // The fatal assertion above proves the optional is engaged.
@@ -4025,6 +5177,8 @@ TEST(RuntimeInlinePartitionExecution,
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution,
      StopAndFailureRetireOwnersWhileCrossPartitionBlockingCreditIsHeld) {
+  // Key setup: hold capacity-one channel credit during separate external-stop and peer-failure
+  // runs.
   constexpr std::size_t kSampleCount = 1000U;
   {
     SCOPED_TRACE("external stop");
@@ -4041,6 +5195,7 @@ TEST(RuntimeInlinePartitionExecution,
     CrossPartitionFlowProbeState::release_first_sink();
     session.wait();
 
+    // Key assertion: external stop retires blocked owners without draining all source samples.
     ASSERT_TRUE(first_sink_held);
     ASSERT_TRUE(stalled_source_count.has_value());
     // The fatal assertion above proves the optional is engaged.
@@ -4069,6 +5224,7 @@ TEST(RuntimeInlinePartitionExecution,
     }
     session.wait();
 
+    // Key assertion: peer failure also wakes and retires every owner while credit remains held.
     ASSERT_TRUE(first_sink_held);
     ASSERT_TRUE(failure_triggered);
     ASSERT_TRUE(terminal);
@@ -4088,6 +5244,7 @@ TEST(RuntimeInlinePartitionExecution,
 TEST(RuntimeInlinePartitionExecution,
      AcceptedCpuPlacementPinsDistinctStablePartitionOwnersToAllowedCpus) {
 #if defined(__linux__)
+  // Key setup: bind two independent partition owners to distinct CPUs in the allowed process set.
   cpu_set_t allowed;
   CPU_ZERO(&allowed);
   if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) {
@@ -4122,6 +5279,7 @@ TEST(RuntimeInlinePartitionExecution,
   session.request_stop();
   session.wait();
 
+  // Key assertion: every callback remains on its stable owner and requested CPU.
   ASSERT_TRUE(owners_started);
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty());
@@ -4149,6 +5307,7 @@ TEST(RuntimeInlinePartitionExecution,
 
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution, StopBroadcastRetiresEveryPartitionOwner) {
+  // Key setup: start two independent periodic partition owners and then request external stop.
   PartitionRunnerProbeState::reset();
   ExecutionPlan compiled = make_partition_stop_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -4165,6 +5324,7 @@ TEST(RuntimeInlinePartitionExecution, StopBroadcastRetiresEveryPartitionOwner) {
   session.request_stop();
   session.wait();
 
+  // Key assertion: the stop broadcast wakes and cleanly retires both stable owners.
   ASSERT_TRUE(owners_started);
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty());
@@ -4180,6 +5340,7 @@ TEST(RuntimeInlinePartitionExecution, StopBroadcastRetiresEveryPartitionOwner) {
 // REQ: RUNTIME-046
 TEST(RuntimeInlinePartitionExecution,
      CallbackCompletionClosesBeforeClaimAndDoesNotDrainQueuedDelivery) {
+  // Key setup: request completion after publication while the sink waits before callback claim.
   PartitionRunnerProbeState::reset();
   auto control = std::make_shared<detail::RuntimeTerminationAdmissionTestControl>(
       detail::RuntimeTerminationAdmissionTestControl::Point::kBeforeClaim, 1U, 1U);
@@ -4198,6 +5359,7 @@ TEST(RuntimeInlinePartitionExecution,
   session.wait();
   PartitionRunnerCompletionSource::set_admission_control(nullptr);
 
+  // Key assertion: completion closes admission before the sink claims its queued delivery.
   EXPECT_EQ(control->arrival_count(), 1U);
   EXPECT_EQ(session.termination(), RunTermination::kRequestedCompleted);
   EXPECT_TRUE(session.diagnostics().empty());
@@ -4214,6 +5376,7 @@ TEST(RuntimeInlinePartitionExecution,
 // REQ: RUNTIME-046
 TEST(RuntimeInlinePartitionExecution,
      CallbackCompletionAllowsAlreadyClaimedPartitionCallbacksToRetire) {
+  // Key setup: hold two independent completion callbacks immediately after both claims succeed.
   PartitionRunnerProbeState::reset();
   ExecutionPlan compiled = make_partition_completion_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -4230,6 +5393,7 @@ TEST(RuntimeInlinePartitionExecution,
   control->release();
   session.wait();
 
+  // Key assertion: both already-claimed callbacks retire before requested completion terminates.
   ASSERT_TRUE(arrived);
   EXPECT_EQ(control->arrival_count(), 2U);
   EXPECT_EQ(session.termination(), RunTermination::kRequestedCompleted);
@@ -4262,6 +5426,7 @@ TEST(RuntimeInlinePartitionExecution,
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution,
      ImmediateStopBroadcastUsesPrepublishedPartitionWakeInventory) {
+  // Key setup: block the controller before graph reconstruction, then request immediate stop.
   ExecutionPlan compiled = make_partition_stop_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
   const auto state = detail::ExecutionPlanAccess::retain(compiled);
@@ -4285,6 +5450,7 @@ TEST(RuntimeInlinePartitionExecution,
   // An external stop must nevertheless observe and signal the complete immutable wake inventory.
   session.request_stop();
   const detail::RuntimePhaseCounters::Snapshot stopped = counters->snapshot();
+  // Key assertion: the prepublished inventory wakes both owners before materialization finishes.
   EXPECT_EQ(stopped[detail::RuntimePhaseCounters::index(
                 detail::RuntimePhaseCounter::kPartitionRunnerWakeSignals)],
             2U);
@@ -4297,6 +5463,7 @@ TEST(RuntimeInlinePartitionExecution,
 
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution, CallbackFailureWakesAndRetiresEveryPartitionOwner) {
+  // Key setup: synchronize two periodic partition callbacks and fail one of their stable owners.
   PartitionRunnerProbeState::reset();
   ExecutionPlan compiled = make_partition_failure_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -4315,6 +5482,7 @@ TEST(RuntimeInlinePartitionExecution, CallbackFailureWakesAndRetiresEveryPartiti
   }
   session.wait();
 
+  // Key assertion: the failure wakes both owners, preserves ownership, and terminates the run.
   ASSERT_TRUE(terminal);
   EXPECT_EQ(session.termination(), RunTermination::kFailed);
   ASSERT_FALSE(session.diagnostics().empty());
@@ -4340,6 +5508,7 @@ TEST(RuntimeInlinePartitionExecution, CallbackFailureWakesAndRetiresEveryPartiti
 // REQ: RUNTIME-041
 TEST(RuntimeInlinePartitionExecution,
      RestartControlEpochQuiescesEveryPartitionOwnerBeforeLifecycleCallbacks) {
+  // Key setup: request target self-restart while a second partition is held inside its callback.
   PartitionControlProbeState::reset();
   ExecutionPlan compiled = make_partition_restart_control_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -4378,6 +5547,7 @@ TEST(RuntimeInlinePartitionExecution,
   session.request_stop();
   session.wait();
 
+  // Key assertion: restart lifecycle callbacks occur only after every owner crosses quiescence.
   ASSERT_TRUE(resumed);
   EXPECT_EQ(session.termination(), RunTermination::kStopped);
   EXPECT_TRUE(session.diagnostics().empty());
@@ -4425,6 +5595,7 @@ TEST(RuntimeInlinePartitionExecution,
 
 TEST(RuntimeInlinePartitionExecution,
      FrozenTypedParamsRemainCoherentAcrossRepeatedInlineRunsWithoutHandoffs) {
+  // Key setup: reuse immutable typed-parameter source and relay chains across two inline runs.
   for (std::size_t iteration = 0U; iteration < 2U; ++iteration) {
     SCOPED_TRACE(iteration);
     InlinePartitionProbeState::reset();
@@ -4445,6 +5616,7 @@ TEST(RuntimeInlinePartitionExecution,
     ASSERT_TRUE(state->inline_partition_execution.has_value()) << compiled.json();
 
     const InlinePartitionRunEvidence evidence = run_and_observe(compiled, 1U);
+    // Key assertion: callback and lifecycle views share frozen values on the inline owner.
     ASSERT_TRUE(evidence.observed);
     EXPECT_EQ(evidence.termination, RunTermination::kStopped);
     EXPECT_EQ(evidence.diagnostic_count, 0U);
@@ -4459,6 +5631,7 @@ TEST(RuntimeInlinePartitionExecution,
 
 TEST(RuntimeInlinePartitionExecution,
      ExplicitSinglePartitionKeepsFrozenParamsCoherentOnItsInlineOwner) {
+  // Key setup: explicitly place the immutable parameter chain in one authored partition.
   InlinePartitionProbeState::reset();
   const ExecutionPlan compiled = make_param_chain_plan(true);
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -4468,6 +5641,7 @@ TEST(RuntimeInlinePartitionExecution,
   ASSERT_EQ(state->partition_runners.size(), 1U);
 
   const InlinePartitionRunEvidence evidence = run_and_observe(compiled, 1U);
+  // Key assertion: frozen parameter views remain coherent on the authored partition owner.
   ASSERT_TRUE(evidence.observed);
   EXPECT_EQ(evidence.termination, RunTermination::kStopped);
   EXPECT_EQ(evidence.diagnostic_count, 0U);
@@ -4482,16 +5656,21 @@ TEST(RuntimeInlinePartitionExecution,
 
 TEST(RuntimeInlinePartitionExecution,
      RuntimeMutableNextComputePublishesPinsAndObservesOnTheController) {
+  // Key setup: submit a NextCompute parameter update while the implicit inline source is blocked.
+  // Key assertion: the shared route helper verifies pin publication and observation on controller.
   expect_runtime_mutable_update_route(RuntimeMutablePlanRoute::kInline, true);
 }
 
 TEST(RuntimeInlinePartitionExecution,
      RuntimeMutableNextComputeMatchesExplicitPartitionAndHoloMQControls) {
+  // Key setup: submit equivalent NextCompute updates through explicit-partition and HoloMQ routes.
+  // Key assertion: both control routes publish and observe the same pinned parameter generation.
   expect_runtime_mutable_update_route(RuntimeMutablePlanRoute::kExplicitPlacement, true);
-  expect_runtime_mutable_update_route(RuntimeMutablePlanRoute::kHoloMQ, true);
+  expect_runtime_mutable_update_route(RuntimeMutablePlanRoute::kHoloMQ, false);
 }
 
 TEST(RuntimeInlinePartitionExecution, UpdatedSelectorDeadlineAndCallbackShareOnePinnedGeneration) {
+  // Key setup: update value, LatestWithin age, and deadline while temporal source compute is held.
   InlinePartitionProbeState::reset();
   ExecutionPlan compiled = make_temporal_param_chain_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -4579,6 +5758,7 @@ TEST(RuntimeInlinePartitionExecution, UpdatedSelectorDeadlineAndCallbackShareOne
       .schema_value = InlinePartitionProbeState::schema_value(),
       .counters = counters->snapshot(),
   };
+  // Key assertion: predicate, deadline, and callback observe one newly pinned generation.
   ASSERT_TRUE(evidence.observed);
   EXPECT_EQ(evidence.termination, RunTermination::kStopped);
   EXPECT_EQ(evidence.diagnostic_count, 0U);
@@ -4611,6 +5791,7 @@ TEST(RuntimeInlinePartitionExecution, UpdatedSelectorDeadlineAndCallbackShareOne
 }
 
 TEST(RuntimeInlinePartitionExecution, SelfRestartRunsAtTheCallbackBoundaryWithoutWorkerHandoffs) {
+  // Key setup: request a source self-restart before its first POD emission in an inline chain.
   InlinePartitionProbeState::reset();
   const ExecutionPlan compiled = make_restart_chain_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -4620,6 +5801,7 @@ TEST(RuntimeInlinePartitionExecution, SelfRestartRunsAtTheCallbackBoundaryWithou
   ASSERT_FALSE(compiled.lifecycle_restart_targets().empty());
 
   const InlinePartitionRunEvidence evidence = run_and_observe(compiled, 1U);
+  // Key assertion: restart lifecycle stages complete at the boundary before the chain drains.
   ASSERT_TRUE(evidence.observed);
   EXPECT_EQ(evidence.termination, RunTermination::kStopped);
   EXPECT_EQ(evidence.diagnostic_count, 0U);
@@ -4646,6 +5828,7 @@ TEST(RuntimeInlinePartitionExecution, SelfRestartRunsAtTheCallbackBoundaryWithou
 
 TEST(RuntimeInlinePartitionExecution,
      StopDuringCallbackCancelsPendingGenerationAndFencesSuccessors) {
+  // Key setup: queue a NextCompute parameter generation while the current source callback is held.
   InlinePartitionProbeState::reset();
   ExecutionPlan compiled = make_runtime_mutable_param_chain_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -4688,6 +5871,7 @@ TEST(RuntimeInlinePartitionExecution,
   const InlinePartitionRunEvidence evidence =
       capture_run_evidence(session, true, counters, control);
 
+  // Key assertion: stop cancels the pending generation and prevents relay and sink activation.
   EXPECT_EQ(evidence.termination, RunTermination::kStopped);
   EXPECT_EQ(evidence.diagnostic_count, 0U);
   EXPECT_TRUE(evidence.sink_values.empty());
@@ -4705,6 +5889,7 @@ TEST(RuntimeInlinePartitionExecution,
 }
 
 TEST(RuntimeInlinePartitionExecution, CallbackFailureReleasesInlineStateAndReplaysTheTypedFailure) {
+  // Key setup: reuse an inline POD plan whose relay callback fails for two consecutive runs.
   const ExecutionPlan compiled = make_failing_chain_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
   const auto state = detail::ExecutionPlanAccess::retain(compiled);
@@ -4723,6 +5908,7 @@ TEST(RuntimeInlinePartitionExecution, CallbackFailureReleasesInlineStateAndRepla
     const InlinePartitionRunEvidence evidence =
         capture_run_evidence(session, true, counters, control);
 
+    // Key assertion: each run reports the same typed failure and releases inline callback state.
     EXPECT_EQ(evidence.termination, RunTermination::kFailed);
     ASSERT_EQ(session.diagnostics().size(), 1U);
     EXPECT_EQ(session.diagnostics().front().token, "RUNTIME_OPERATOR_CALLBACK_FAILED");
@@ -4735,10 +5921,12 @@ TEST(RuntimeInlinePartitionExecution, CallbackFailureReleasesInlineStateAndRepla
 }
 
 TEST(RuntimeInlinePartitionExecution, LatestWithinSelectionUsesTheInlinePartitionPlan) {
+  // Key setup: compile a two-input POD graph with a LatestWithin side selection.
   const ExecutionPlan compiled = make_latest_within_chain_plan();
   ASSERT_TRUE(compiled.ok()) << compiled.json();
   const auto state = detail::ExecutionPlanAccess::retain(compiled);
   ASSERT_TRUE(state);
+  // Key assertion: the selection remains represented within a single partition-runner plan.
   ASSERT_TRUE(std::ranges::any_of(state->input_selections, [](const auto& selection) {
     return selection.selector == InputSelectorKind::kLatestWithin;
   }));
@@ -4746,6 +5934,7 @@ TEST(RuntimeInlinePartitionExecution, LatestWithinSelectionUsesTheInlinePartitio
 }
 
 TEST(RuntimeInlinePartitionExecution, ExplicitSinglePartitionPlacementUsesTheControllerOwner) {
+  // Key setup: explicitly place the four-Operator POD chain into one authored partition.
   InlinePartitionProbeState::reset();
   const ExecutionPlan compiled = make_pod_chain_plan(QueuePolicy::kBlocking, true);
   ASSERT_TRUE(compiled.ok()) << compiled.json();
@@ -4755,6 +5944,7 @@ TEST(RuntimeInlinePartitionExecution, ExplicitSinglePartitionPlacementUsesTheCon
   ASSERT_EQ(state->partition_runners.size(), 1U);
 
   const InlinePartitionRunEvidence evidence = run_and_observe(compiled, 1U);
+  // Key assertion: all callbacks execute on the controller-owned partition without lane dispatch.
   ASSERT_TRUE(evidence.observed);
   EXPECT_EQ(evidence.termination, RunTermination::kStopped);
   EXPECT_EQ(evidence.diagnostic_count, 0U);

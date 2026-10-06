@@ -39,8 +39,11 @@ See [Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-chann
 
 **compute stream**
 The CUDA stream the runtime assigns to an activation, available as
-`ctx.cuda_stream()` inside `compute()`. Received tensors are already ordered
-on this stream, so hot-path work needs no manual synchronization.
+`ctx.cuda_stream()` inside `compute()`. By default, CUDA-active operators share
+one stream within each process group, execution partition, and device; a
+compile option can instead share one ordinary stream across a process group and
+device. Received tensors are already ordered on the assigned stream, so hot-path
+work needs no manual synchronization.
 See [Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101).
 
 **contract**
@@ -129,6 +132,14 @@ The part of a temporal contract that says what happens when a required input
 is absent or stale at trigger time: `Skip` the activation, substitute a
 `SafeDefault`, or `ReuseLast` within a freshness bound.
 See [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+
+**module**
+A separately selectable library that extends `holoscan::core` with a
+domain-specific capability — operators, their backend, examples, and tests.
+*Core modules* (Inference, Vision, Visualization) are developed in the SDK
+repository and released on the SDK cadence as separate, optional Debian packages
+and Python wheels; *ecosystem modules* are published as separate project repositories.
+See [Holoscan Modules](/holoscan/sdk-user-guide/modules).
 
 ## O
 

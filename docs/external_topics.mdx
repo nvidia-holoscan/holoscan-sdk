@@ -14,7 +14,7 @@ During **run**, the graph side binds automatically — you never write transport
 code inside the graph. Everything an external process needs to know lives in
 the catalog, and nothing else crosses the boundary.
 
-**Complete C++ examples:** [`examples/camera_imu_control/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/camera_imu_control/cpp),
+**Complete graph examples:** [`examples/camera_imu_control/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/camera_imu_control/cpp),
 [`examples/external_clients/sensor_daemon/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/external_clients/sensor_daemon/cpp),
 [`examples/external_clients/recorder/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/external_clients/recorder/cpp),
 and [`examples/flatbuffer_schemas/descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
@@ -37,18 +37,56 @@ An external topic is declared on the `Graph` during composition, alongside your
 operators and flows. `import_topic<T>()` brings data **into** the graph from an
 external producer; `export_topic<T>()` sends data **out** to an external
 consumer. Both take an exact, nonempty `holomq://` URI that identifies the
-topic, plus an optional `TopicOptions` value:
+topic, plus boundary options:
 
-```cpp
-holoscan::Graph g{"sensor-pipeline"};
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    holoscan::Graph graph{"sensor-pipeline"};
 
-holoscan::TopicOptions imu_options;
-imu_options.endpoint_name = "imu";
-const auto imu = g.import_topic<std::uint32_t>("holomq://imu", imu_options);
+    holoscan::TopicOptions imu_options;
+    imu_options.endpoint_name = "imu";
+    const auto imu = graph.import_topic<std::uint32_t>("holomq://imu", imu_options);
 
-holoscan::TopicOptions control_options;
-control_options.endpoint_name = "control";
-const auto control = g.export_topic<std::uint32_t>("holomq://control", control_options);
+    holoscan::TopicOptions control_options;
+    control_options.endpoint_name = "control";
+    const auto control = graph.export_topic<std::uint32_t>(
+        "holomq://control", control_options);
+    ```
+  </Tab>
+  <Tab title="Python">
+    Python supplies a payload token in place of the C++ template argument and
+    accepts topic options as keywords:
+
+    ```python
+    import holoscan as hs
+
+    graph = hs.Graph("sensor-pipeline")
+    imu = graph.import_topic(
+        "holomq://imu", hs.payload.uint32, endpoint_name="imu"
+    )
+    control = graph.export_topic(
+        "holomq://control", hs.payload.uint32, endpoint_name="control"
+    )
+    ```
+  </Tab>
+</Tabs>
+
+Python supplies a registered payload token instead of a C++ template argument.
+Topic options may be passed as keywords or as an owned `hs.topics.TopicOptions`
+value:
+
+```python
+import holoscan as hs
+
+graph = hs.Graph("sensor-pipeline")
+imu = graph.import_topic(
+    "holomq://imu", hs.payload.uint32, endpoint_name="imu"
+)
+control_options = hs.topics.TopicOptions(endpoint_name="control")
+control = graph.export_topic(
+    "holomq://control", hs.payload.uint32, options=control_options
+)
 ```
 
 The returned handles are typed: `import_topic<T>` returns an
@@ -62,20 +100,36 @@ exposes exactly one graph-side port that you wire like any operator port:
   feed. Data *leaves* here, so from inside the graph it looks like a sink
   input.
 
-Wiring uses ordinary `add_flow()`, with the same type checking as any other
-edge:
+Wiring uses ordinary `add_flow()`, with the same validation as any other edge:
 
-```cpp
-auto fusion = g.op<WindowFusion>("fusion");
+<Tabs>
+  <Tab title="C++">
+    ```cpp
+    auto fusion = graph.op<WindowFusion>("fusion");
 
-add_flow(imu.output(), fusion->imu, holoscan::ConnectionOptions{.queue_depth = 32U});
-add_flow(fusion->control, control.input(), holoscan::ConnectionOptions{.queue_depth = 8U});
-```
+    add_flow(imu.output(), fusion->imu,
+             holoscan::ConnectionOptions{.queue_depth = 32U});
+    add_flow(fusion->control, control.input(),
+             holoscan::ConnectionOptions{.queue_depth = 8U});
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from custom_holoscan.operators import WindowFusion
+
+    fusion = WindowFusion(graph, "fusion")
+    graph.add_flow(imu.output, fusion.imu, queue_depth=32)
+    graph.add_flow(fusion.control, control.input, queue_depth=8)
+    ```
+  </Tab>
+</Tabs>
 
 Like the rest of the authoring surface, `import_topic` and `export_topic`
-**throw** `RuntimeError` when a declaration is invalid — a malformed URI, a bad
-option combination, or a payload type the boundary cannot carry. Authoring
-throws; `compile()` returns rejected plans; run fails closed.
+fail immediately when a declaration is invalid — a malformed URI, a bad option
+combination, or a payload type the boundary cannot carry. C++ throws
+`holoscan::RuntimeError`; Python raises the corresponding `hs.HoloscanError`
+subclass under `hs.errors`. Compilation returns rejected plans, and run fails
+closed.
 
 <Warning>
   **The URI is an identity, not a location.** The `holomq://` URI is an exact,
@@ -104,9 +158,26 @@ complete framed size exceeds 32,768 bytes. The transport rounds an admitted
 frame to its fixed 8-byte through 32-KiB bucket, while each message still
 records its actual serialized size.
 
+Python resolves SDK schemas from the provider-owned schema catalog. The same
+topic API records the schema identity in the compiled endpoint catalog:
+
+```python
+messages = graph.import_topic(
+    "holomq://messages",
+    hs.payload.schema.String,
+    endpoint_name="messages",
+)
+```
+
 Descriptor-backed Tensor schemas use a separate envelope path. Their Tensor
 data remains handle-backed and does not count toward this ordinary inline
 limit.
+
+<Note>
+  Python external-topic authoring supports scalar, inline-schema, raw Tensor,
+  and descriptor-backed Tensor payloads. Tensor topics require the matching
+  payload token and complete boundary contracts described below.
+</Note>
 
 ### Descriptor-backed schema topics
 
@@ -137,6 +208,46 @@ The
 [`descriptor_tensor_external_topic`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flatbuffer_schemas/descriptor_tensor_external_topic)
 example shows a two-Tensor schema entering and leaving a Graph, including the
 standalone catalog client for both directions.
+
+### Python Tensor topic authoring
+
+Python uses the same Core Tensor boundary contract as C++. The wrapper owns the
+shape and stride arrays, so temporary Python lists remain valid through compile.
+
+```python
+import holoscan as hs
+
+image_boundary = hs.tensor.TensorBoundaryContract(
+    representation=hs.tensor.TensorRepresentation(
+        memory_kind=hs.tensor.MemoryKind.HOST,
+        dtype=hs.tensor.DLDataType(hs.tensor.DLDataTypeCode.DLUINT, 8, 1),
+        rank=2,
+        strides=hs.tensor.TensorStridePolicy.CONTIGUOUS_ONLY,
+    ),
+    bounds=hs.tensor.TensorBounds(max_rank=2, max_shape=[1080, 1920]),
+)
+
+image = graph.import_topic(
+    "holomq://camera/image",
+    hs.payload.TensorType,
+    tensor=image_boundary,
+)
+```
+
+Descriptor-backed schemas take one contract per Tensor field. Field names come
+from the generated schema traits rather than a Python-side schema model.
+
+```python
+packet = graph.import_topic(
+    "holomq://camera/packet",
+    hs.payload.schema.TensorPacket,
+    tensor_fields={"data": image_boundary},
+)
+```
+
+The Graph-side operator port must use the exact descriptor schema. Missing or
+unknown field names are rejected during authoring, and an external peer whose
+Tensor transport profile differs from the catalog is rejected at attachment.
 
 ## Naming the endpoint with `TopicOptions`
 

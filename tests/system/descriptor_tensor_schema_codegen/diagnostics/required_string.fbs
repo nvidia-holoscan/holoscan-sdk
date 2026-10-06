@@ -11,3 +11,4 @@ table RequiredStringDescriptor {
 }
 
 root_type RequiredStringDescriptor;
+file_identifier "DRS1";

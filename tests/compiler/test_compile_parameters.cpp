@@ -27,18 +27,11 @@
 #include "compiler/profile_admission.hpp"
 #include "compiler/runtime_package_capabilities.hpp"
 #include "core/graph_compiler_access.hpp"
-#include "core/parameter_override_set_internal.hpp"
-#include "core/parameter_rebind_support.hpp"
 #include "core/parameter_schema_test_access.hpp"
 
 // GTest fatal assertions establish optional preconditions that clang-tidy does not model.
 // NOLINTBEGIN(bugprone-unchecked-optional-access)
 namespace holoscan {
-
-// Deployment canonicalization allocates; preserve bad_alloc for the compile/rebind policy.
-static_assert(!noexcept(detail::parameter_admission_context_digest(
-    std::declval<const ProfileManifest&>(), std::declval<const DeploymentBinding&>(),
-    std::declval<ParamSchemaHash>())));
 
 // Full-catalog params with diverse field policies: gain (proven, runtime-mutable,
 // ranged, external-tuning), secret (sensitive), internal_counter (internal).
@@ -116,6 +109,37 @@ HOLOSCAN_PARAM_SCHEMA(CompileVectorParams,
                           holoscan::param_schema("nvidia.holoscan.test.CompileVectorParams", 1)),
                       holoscan::field<&CompileVectorParams::values>("values").max_elements(8U));
 
+// Optional scalar field: its underlying integer shape remains discoverable, but absence makes
+// the baseline fixed-scalar control route inapplicable (REQ: PARAM-054).
+struct CompileOptionalParams {
+  std::optional<std::uint32_t> value{4U};
+};
+
+HOLOSCAN_PARAM_SCHEMA(CompileOptionalParams,
+                      holoscan::detail::ParamSchemaTestAccess::proven(
+                          holoscan::param_schema("nvidia.holoscan.test.CompileOptionalParams", 1)),
+                      holoscan::field<&CompileOptionalParams::value>("value").range(1U, 8U));
+
+// Explicitly named enum values remain user-facing metadata in the plan and catalog rather than
+// compiler-derived C++ identifiers (REQ: PARAM-055).
+enum class CompileMode : std::uint8_t {
+  kDisabled = 0,
+  kAutomatic = 2,
+  kManual = 7,
+};
+
+struct CompileNamedEnumParams {
+  CompileMode mode{CompileMode::kAutomatic};
+};
+
+HOLOSCAN_PARAM_SCHEMA(CompileNamedEnumParams,
+                      holoscan::detail::ParamSchemaTestAccess::proven(
+                          holoscan::param_schema("nvidia.holoscan.test.CompileNamedEnumParams", 1)),
+                      holoscan::field<&CompileNamedEnumParams::mode>("mode").enum_values(
+                          {param_enum_value("disabled", CompileMode::kDisabled),
+                           param_enum_value("automatic", CompileMode::kAutomatic),
+                           param_enum_value("manual", CompileMode::kManual)}));
+
 // std::filesystem::path field: always cold-owned regardless of storage mode.
 // Representative test: MakesDynamicStringVectorAndPathMaterializationExplicit.
 struct CompilePathParams {
@@ -170,35 +194,6 @@ HOLOSCAN_PARAM_SCHEMA(CompileExplicitRuntimeParams,
                           .external_access(ParamExternalAccess::kTuning)
                           .sensitivity(ParamSensitivity::kNormal));
 
-// Multi-field params for CompileReplayOperator: setup_shape controls the input port
-// name in setup(), contract_valid selects the contract trigger, gain is a tunable
-// field. Used in ReplaysResolved*, RejectsParameterDependent*, and
-// RejectsInvalidContract* tests.
-struct CompileReplayParams {
-  std::uint32_t setup_shape{1U};
-  bool contract_valid{true};
-  std::uint32_t gain{1U};
-  std::uint64_t nominal_rate_hz{60U};
-};
-
-HOLOSCAN_PARAM_SCHEMA(CompileReplayParams,
-                      holoscan::detail::ParamSchemaTestAccess::proven(
-                          holoscan::param_schema("nvidia.holoscan.test.CompileReplayParams", 1)),
-                      holoscan::field<&CompileReplayParams::setup_shape>("setup_shape"),
-                      holoscan::field<&CompileReplayParams::contract_valid>("contract_valid"),
-                      holoscan::field<&CompileReplayParams::gain>("gain"),
-                      holoscan::field<&CompileReplayParams::nominal_rate_hz>("nominal_rate_hz"));
-
-struct CompileTensorContractReplayParams {
-  std::uint64_t max_byte_span{1024U};
-};
-
-HOLOSCAN_PARAM_SCHEMA(
-    CompileTensorContractReplayParams,
-    holoscan::detail::ParamSchemaTestAccess::proven(
-        holoscan::param_schema("nvidia.holoscan.test.CompileTensorContractReplayParams", 1)),
-    holoscan::field<&CompileTensorContractReplayParams::max_byte_span>("max_byte_span"));
-
 // Single gain field admitted for lifecycle-stage mutation (kConfigure).
 // Representative test: LifecycleOptInAdmitsPrivateCandidateWithoutComputeIngress.
 struct CompileLifecycleParams {
@@ -221,48 +216,6 @@ template <typename ParamsT>
 class CompileParameterOperator final : public Operator<ParamsT> {
  public:
   expected<void, Error> compute(ExecutionContext&) override { return {}; }
-};
-
-// Operator whose port declaration and trigger contract both depend on runtime params:
-// setup() names the input port based on setup_shape; contract() triggers on 'input'
-// or the undeclared member based on contract_valid. Used in replay parameter tests.
-class CompileReplayOperator final : public Operator<CompileReplayParams> {
- public:
-  void setup(OperatorSpec& spec) override {
-    spec.input(input, params().setup_shape == 1U ? "input" : "changed-input").queue_depth(2U);
-    spec.output(output, "output").nominal_rate(Rate::hz(params().nominal_rate_hz));
-  }
-
-  [[nodiscard]] Contract contract() const override {
-    Contract result;
-    result.trigger(params().contract_valid ? OnEach{input} : OnEach{undeclared});
-    return result;
-  }
-
-  expected<void, Error> compute(ExecutionContext&) override { return {}; }
-
-  Input<std::uint32_t> input;
-  Input<std::uint32_t> undeclared;
-  Output<std::uint32_t> output;
-};
-
-// Authors a pass-through Tensor bound from generation-zero Parameter state.
-// Used by RejectsParameterDependentTensorContractDuringFactoryReplay.
-class CompileTensorContractReplayOperator final
-    : public Operator<CompileTensorContractReplayParams> {
- public:
-  void setup(OperatorSpec& spec) override {
-    spec.output(output, "output")
-        .produces_tensor(TensorOutputSpec{
-            .representation = {.memory_kind = MemoryKind::kHost, .rank = 1U},
-            .bounds = tensor_bounds(params().max_byte_span),
-            .storage = TensorOutputStorage::kPassThrough,
-        });
-  }
-
-  expected<void, Error> compute(ExecutionContext&) override { return {}; }
-
-  Output<Tensor> output;
 };
 
 template <typename T>
@@ -386,10 +339,7 @@ template <typename ParamsT>
   };
 }
 
-// Compiles a single CompileParameterOperator<ParamsT> named "operator"; graph_name
-// is used only for tracing and uniqueness in multi-case tests.
-// Graph topology:
-//   operator (isolated Parameter-bearing Operator)
+// Compiles a single CompileParameterOperator<ParamsT> named "operator".
 template <typename ParamsT>
 [[nodiscard]] ExecutionPlan compile_parameter_case(std::string_view graph_name,
                                                    CompileOptions options = {}) {
@@ -398,130 +348,6 @@ template <typename ParamsT>
   return compile(graph, std::move(options));
 }
 
-// Computes the admission context digest that ties an override to a specific
-// (profile × deployment × migration-catalog) tuple. Overrides presented under a
-// different context are rejected with PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH.
-[[nodiscard]] ParamSchemaHash parameter_admission_context(
-    Graph& graph, const CompileOptions& options,
-    ParamSchemaHash migration_catalog = detail::empty_parameter_migration_catalog_digest()) {
-  if (options.profile == Profile::kStandard && options.deployment.thread_placements().empty() &&
-      options.deployment.cuda_green_contexts().empty() &&
-      options.deployment.generated_endpoint_names().empty() &&
-      options.deployment.tensor_output_devices().empty() &&
-      migration_catalog == detail::empty_parameter_migration_catalog_digest()) {
-    const auto captured = detail::capture_parameter_rebind_graph(graph);
-    if (!captured) {
-      throw std::logic_error{"parameter admission-context fixture capture failed"};
-    }
-    return captured->admission_context_digest;
-  }
-  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
-  auto profile = detail::resolve_profile_admission(*snapshot, options.profile);
-  profile.manifest.runtime_abi_version = "holoscan.runtime_abi.v1";
-  profile.manifest.target_triple = std::string(detail::compile_target_triple());
-  profile.manifest.producer_build_id = "holoscan-core-5.0";
-  return detail::parameter_admission_context_digest(
-      profile.manifest, options.deployment, migration_catalog);
-}
-
-// Computes the parameter value digest for a typed instance; throws on failure,
-// which indicates a test-fixture misconfiguration rather than a product bug.
-template <typename ParamsT>
-[[nodiscard]] ParamSchemaHash required_value_digest(const ParamsT& value) {
-  const auto digest = detail::parameter_value_digest(
-      param_type_descriptor<ParamsT>(), param_schema_descriptor<ParamsT>(), &value, false);
-  if (!digest.available()) {
-    throw std::logic_error{"invalid parameter digest test fixture"};
-  }
-  return digest.digest;
-}
-
-// Builds a complete ParamOverrideSet with one captured field change on the "target"
-// operator; changed_field names the single contributed field for replay tests.
-[[nodiscard]] ParamOverrideSet replay_override(Graph& graph, const CompileOptions& options,
-                                               CompileReplayParams resolved,
-                                               std::string_view changed_field) {
-  const ParamSchemaDescriptor* const schema = param_schema_descriptor<CompileReplayParams>();
-  const ParamTypeDescriptor& type = param_type_descriptor<CompileReplayParams>();
-  const CompileReplayParams baseline{};
-  const auto baseline_digest = detail::parameter_value_digest(type, schema, &baseline, false);
-  const auto field =
-      std::find_if(schema->fields.begin(), schema->fields.end(), [&](const auto& item) {
-        return item.canonical_name == changed_field;
-      });
-  if (!baseline_digest.available() || field == schema->fields.end()) {
-    throw std::logic_error{"invalid replay override test fixture"};
-  }
-  const ParamSchemaHash resolved_digest = required_value_digest(resolved);
-  std::vector<detail::ParamOverrideOperatorState> operators;
-  operators.push_back(detail::ParamOverrideSetAccess::resolved_operator(
-      "target",
-      resolved,
-      baseline_digest.digest,
-      resolved_digest,
-      {{.field = field->id,
-        .full_id = field->full_id,
-        .origin = detail::ParamOverrideContributionOrigin::kCaptured}}));
-  return detail::ParamOverrideSetAccess::make_complete(
-      graph.view().identity(), std::move(operators), parameter_admission_context(graph, options));
-}
-
-[[nodiscard]] ParamOverrideSet tensor_contract_replay_override(
-    Graph& graph, const CompileOptions& options, CompileTensorContractReplayParams resolved) {
-  const CompileTensorContractReplayParams baseline{};
-  const ParamSchemaDescriptor* const schema =
-      param_schema_descriptor<CompileTensorContractReplayParams>();
-  if (schema == nullptr || schema->fields.size() != 1U) {
-    throw std::logic_error{"invalid Tensor contract replay fixture"};
-  }
-  const ParamFieldDescriptor& field = schema->fields.front();
-  std::vector<detail::ParamOverrideOperatorState> operators;
-  operators.push_back(detail::ParamOverrideSetAccess::resolved_operator(
-      "target",
-      resolved,
-      required_value_digest(baseline),
-      required_value_digest(resolved),
-      {{.field = field.id,
-        .full_id = field.full_id,
-        .origin = detail::ParamOverrideContributionOrigin::kCaptured}}));
-  return detail::ParamOverrideSetAccess::make_complete(
-      graph.view().identity(), std::move(operators), parameter_admission_context(graph, options));
-}
-
-// Builds a captured ParamOverrideOperatorState for the 'gain' field of
-// CompileCatalogParams; reused across override-validation and context-mismatch tests.
-[[nodiscard]] detail::ParamOverrideOperatorState catalog_gain_override_record(
-    std::uint32_t gain_value) {
-  const CompileCatalogParams baseline{};
-  CompileCatalogParams resolved = baseline;
-  resolved.gain = gain_value;
-  const ParamFieldDescriptor& gain = catalog_field("gain");
-  return detail::ParamOverrideSetAccess::resolved_operator(
-      "operator",
-      resolved,
-      required_value_digest(baseline),
-      required_value_digest(resolved),
-      {{.field = gain.id,
-        .full_id = gain.full_id,
-        .origin = detail::ParamOverrideContributionOrigin::kCaptured}});
-}
-
-// Wraps catalog_gain_override_record into a complete ParamOverrideSet bound to the
-// given graph identity, admission context, and optional migration catalog hash.
-[[nodiscard]] ParamOverrideSet catalog_gain_override(
-    Graph& graph, const CompileOptions& context_options, std::uint32_t gain_value,
-    ParamSchemaHash migration_catalog = detail::empty_parameter_migration_catalog_digest()) {
-  std::vector<detail::ParamOverrideOperatorState> operators;
-  operators.push_back(catalog_gain_override_record(gain_value));
-  return detail::ParamOverrideSetAccess::make_complete(
-      graph.view().identity(),
-      std::move(operators),
-      parameter_admission_context(graph, context_options, migration_catalog));
-}
-
-// REQ: COMPILE-019
-// REQ: PARAM-003
-// REQ: PARAM-009
 TEST(ParameterCompile, BuildsDeterministicPolicyFilteredCatalogAndFiniteCapacity) {
   // Graph topology:
   //   operator (isolated Parameter-bearing Operator)
@@ -601,6 +427,53 @@ TEST(ParameterCompile, BuildsDeterministicPolicyFilteredCatalogAndFiniteCapacity
   ASSERT_TRUE(by_instance);
   EXPECT_EQ(by_address.value()->full_id, by_instance.value()->full_id);
   EXPECT_EQ(by_address.value()->update_disposition, ParameterFieldUpdateDisposition::kAdmitted);
+}
+
+// REQ: PARAM-054
+TEST(ParameterCompile, PreservesOptionalShapeWithoutCollapsingAbsenceIntoScalarRouting) {
+  const ExecutionPlan plan = compile_parameter_case<CompileOptionalParams>("parameter-optional");
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.parameter_fields().size(), 1U);
+
+  const ParameterFieldPlanRecord& planned = plan.parameter_fields().front();
+  EXPECT_EQ(planned.logical_type, ParamLogicalType::kUnsignedInteger);
+  EXPECT_TRUE(planned.type_shape.optional);
+  EXPECT_EQ(planned.type_shape.bit_width, 32U);
+  EXPECT_TRUE(planned.type_shape.has_stable_shape);
+  EXPECT_EQ(planned.value_route, ParamValueRouteDisposition::kLocalTypedOnly);
+  EXPECT_EQ(planned.materialization, ParameterMaterializationStrategy::kColdOwnedTyped);
+
+  const ParameterCatalogView catalog = plan.parameter_catalog();
+  ASSERT_EQ(catalog.fields().size(), 1U);
+  EXPECT_TRUE(catalog.fields().front().type_shape.optional);
+  EXPECT_EQ(catalog.fields().front().value_route, ParamValueRouteDisposition::kLocalTypedOnly);
+  EXPECT_NE(plan.json().find("\"optional\":true"), std::string::npos);
+}
+
+// REQ: PARAM-055
+TEST(ParameterCompile, PreservesNamedEnumChoicesInPlanCatalogAndArtifact) {
+  const ExecutionPlan plan = compile_parameter_case<CompileNamedEnumParams>("parameter-named-enum");
+  ASSERT_TRUE(plan.ok()) << plan.json();
+  ASSERT_EQ(plan.parameter_fields().size(), 1U);
+
+  const ParameterFieldPlanRecord& planned = plan.parameter_fields().front();
+  ASSERT_EQ(planned.enum_choices.size(), 3U);
+  EXPECT_EQ(planned.enum_choices[0].name, "disabled");
+  EXPECT_EQ(planned.enum_choices[1].name, "automatic");
+  EXPECT_EQ(planned.enum_choices[2].name, "manual");
+  CompileMode decoded{};
+  EXPECT_TRUE(planned.enum_choices[1].value.try_as(decoded));
+  EXPECT_EQ(decoded, CompileMode::kAutomatic);
+  EXPECT_EQ(planned.value_route, ParamValueRouteDisposition::kPortableScalar);
+
+  const ParameterCatalogView catalog = plan.parameter_catalog();
+  ASSERT_EQ(catalog.fields().size(), 1U);
+  ASSERT_EQ(catalog.fields().front().enum_choices.size(), 3U);
+  EXPECT_EQ(catalog.fields().front().enum_choices[1].name, "automatic");
+
+  const std::string_view json = plan.json();
+  EXPECT_NE(json.find("\"enum_choices\":[{\"name\":\"disabled\""), std::string::npos);
+  EXPECT_NE(json.find("\"name\":\"automatic\""), std::string::npos);
 }
 
 // REQ: COMPILE-003
@@ -771,575 +644,6 @@ TEST(ParameterPlan, LifecycleCandidateCapacityRejectsBeforeParameterAuthority) {
 // REQ: COMPILE-019
 // REQ: PARAM-007
 // REQ: PARAM-009
-TEST(ParameterCompile, AppliesCompleteOverrideAtomicallyAndRetainsProtectedOrigin) {
-  // Graph topology:
-  //   operator (isolated Parameter override target)
-  Graph graph{"parameter-override"};
-  auto op = graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  const CompileCatalogParams baseline{.gain = 2U, .secret = 7U, .internal_counter = 9U};
-  op.set_params(baseline);
-
-  const ParamSchemaDescriptor* const schema = param_schema_descriptor<CompileCatalogParams>();
-  const ParamTypeDescriptor& type = param_type_descriptor<CompileCatalogParams>();
-  const auto baseline_digest = detail::parameter_value_digest(type, schema, &baseline, false);
-  ASSERT_TRUE(baseline_digest.available());
-  const ParamFieldDescriptor& gain = catalog_field("gain");
-
-  // Key setup: override changes only gain (2→5); secret and internal_counter are
-  // unchanged from baseline and must survive the atomic application.
-  CompileCatalogParams resolved = baseline;
-  resolved.gain = 5U;
-  const ParamSchemaHash resolved_digest = required_value_digest(resolved);
-  std::vector<detail::ParamOverrideOperatorState> operators;
-  operators.push_back(detail::ParamOverrideSetAccess::resolved_operator(
-      "operator",
-      resolved,
-      baseline_digest.digest,
-      resolved_digest,
-      {{.field = gain.id,
-        .full_id = gain.full_id,
-        .origin = detail::ParamOverrideContributionOrigin::kCaptured}}));
-  CompileOptions options;
-  const ParamSchemaHash context = parameter_admission_context(graph, options);
-  options.parameter_overrides = detail::ParamOverrideSetAccess::make_complete(
-      graph.view().identity(), std::move(operators), context);
-
-  const ExecutionPlan plan = compile(graph, options);
-  ASSERT_TRUE(plan.ok()) << plan.json();
-  const detail::ExecutionPlanState* const state = detail::ExecutionPlanAccess::state(plan);
-  ASSERT_NE(state, nullptr);
-  ASSERT_EQ(state->parameter_generation_zero_operators.size(), 1U);
-  ASSERT_EQ(state->parameter_generation_zero_fields.size(), 3U);
-  EXPECT_EQ(state->parameter_generation_zero_operators.front().baseline_origin,
-            detail::ParameterGenerationZeroOrigin::kTypedBaseline);
-  const auto overridden = std::find_if(state->parameter_generation_zero_fields.begin(),
-                                       state->parameter_generation_zero_fields.end(),
-                                       [&](const auto& field) { return field.field == gain.id; });
-  ASSERT_NE(overridden, state->parameter_generation_zero_fields.end());
-  EXPECT_EQ(overridden->origin, detail::ParameterGenerationZeroOrigin::kOverrideCaptured);
-
-  ASSERT_EQ(state->executable_factories.operators.size(), 1U);
-  const void* const final_value =
-      state->executable_factories.operators.front().factory->initial_parameter_value();
-  ASSERT_NE(final_value, nullptr);
-  // Key assertion: final value reflects the override (gain=5) while secret is retained.
-  EXPECT_EQ(static_cast<const CompileCatalogParams*>(final_value)->gain, 5U);
-  EXPECT_EQ(static_cast<const CompileCatalogParams*>(final_value)->secret, baseline.secret);
-}
-
-// REQ: COMPILE-019
-// REQ: PARAM-009
-TEST(ParameterCompile, RejectsDuplicateOverrideTargetsWithoutPartialFactoryReplacement) {
-  // Graph topology:
-  //   operator (isolated Parameter override target)
-  Graph graph{"parameter-override-atomicity"};
-  auto op = graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  const CompileCatalogParams baseline{.gain = 2U, .secret = 7U, .internal_counter = 9U};
-  op.set_params(baseline);
-
-  const ParamSchemaDescriptor* const schema = param_schema_descriptor<CompileCatalogParams>();
-  const ParamTypeDescriptor& type = param_type_descriptor<CompileCatalogParams>();
-  const auto baseline_digest = detail::parameter_value_digest(type, schema, &baseline, false);
-  ASSERT_TRUE(baseline_digest.available());
-  const ParamFieldDescriptor& gain = catalog_field("gain");
-  const std::vector<detail::ParamOverrideFieldOriginRecord> contribution{{
-      .field = gain.id,
-      .full_id = gain.full_id,
-      .origin = detail::ParamOverrideContributionOrigin::kCaptured,
-  }};
-
-  // Key setup: two resolved records for the same "operator" path, gain=3 and gain=4.
-  CompileCatalogParams first = baseline;
-  CompileCatalogParams second = baseline;
-  first.gain = 3U;
-  second.gain = 4U;
-  std::vector<detail::ParamOverrideOperatorState> operators;
-  operators.push_back(detail::ParamOverrideSetAccess::resolved_operator(
-      "operator", first, baseline_digest.digest, required_value_digest(first), contribution));
-  operators.push_back(detail::ParamOverrideSetAccess::resolved_operator(
-      "operator", second, baseline_digest.digest, required_value_digest(second), contribution));
-  CompileOptions options;
-  const ParamSchemaHash context = parameter_admission_context(graph, options);
-  options.parameter_overrides = detail::ParamOverrideSetAccess::make_complete(
-      graph.view().identity(), std::move(operators), context);
-
-  const ExecutionPlan plan = compile(graph, options);
-  // Key assertion: duplicate target rejected; factory retains original baseline value.
-  ASSERT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARAMETER_OVERRIDE_DUPLICATE_TARGET"));
-  const detail::ExecutionPlanState* const state = detail::ExecutionPlanAccess::state(plan);
-  ASSERT_NE(state, nullptr);
-  ASSERT_EQ(state->executable_factories.operators.size(), 1U);
-  const void* const final_value =
-      state->executable_factories.operators.front().factory->initial_parameter_value();
-  ASSERT_NE(final_value, nullptr);
-  EXPECT_EQ(static_cast<const CompileCatalogParams*>(final_value)->gain, baseline.gain);
-}
-
-// REQ: COMPILE-019
-// REQ: PARAM-007
-// REQ: PARAM-009
-TEST(ParameterCompile, RejectsMalformedUnknownAliasAndSchemaOverrideFactsDeterministically) {
-  // Graph topology:
-  //   operator (isolated Parameter override target)
-  Graph graph{"parameter-override-invalid-facts"};
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  const auto compile_record = [&](detail::ParamOverrideOperatorState record) {
-    CompileOptions options;
-    std::vector<detail::ParamOverrideOperatorState> operators;
-    operators.push_back(std::move(record));
-    options.parameter_overrides = detail::ParamOverrideSetAccess::make_complete(
-        graph.view().identity(), std::move(operators), parameter_admission_context(graph, options));
-    return compile(graph, std::move(options));
-  };
-
-  // Key setup: five malformed override variants, each exercising one rejection path.
-  auto malformed_path = catalog_gain_override_record(3U);
-  malformed_path.operator_path = "operator//invalid";
-  const ExecutionPlan malformed = compile_record(std::move(malformed_path));
-  EXPECT_FALSE(malformed.ok());
-  EXPECT_TRUE(test::has_diagnostic(malformed, "PARAMETER_OVERRIDE_TARGET_UNKNOWN"));
-
-  auto unknown_field = catalog_gain_override_record(3U);
-  unknown_field.contributions.front().field ^= 0x1U;
-  const ExecutionPlan unknown = compile_record(std::move(unknown_field));
-  EXPECT_FALSE(unknown.ok());
-  EXPECT_TRUE(test::has_diagnostic(unknown, "PARAMETER_OVERRIDE_FIELD_INVALID"));
-
-  auto invalid_alias = catalog_gain_override_record(3U);
-  invalid_alias.contributions.front().origin = detail::ParamOverrideContributionOrigin::kAlias;
-  const ExecutionPlan alias = compile_record(std::move(invalid_alias));
-  EXPECT_FALSE(alias.ok());
-  EXPECT_TRUE(test::has_diagnostic(alias, "PARAMETER_OVERRIDE_FIELD_INVALID"));
-
-  auto wrong_schema_version = catalog_gain_override_record(3U);
-  ++wrong_schema_version.schema_version;
-  const ExecutionPlan schema = compile_record(std::move(wrong_schema_version));
-  EXPECT_FALSE(schema.ok());
-  EXPECT_TRUE(test::has_diagnostic(schema, "PARAMETER_OVERRIDE_SCHEMA_MISMATCH"));
-
-  auto wrong_resolved_digest = catalog_gain_override_record(3U);
-  wrong_resolved_digest.resolved_value_digest = {};
-  const ExecutionPlan value = compile_record(std::move(wrong_resolved_digest));
-  EXPECT_FALSE(value.ok());
-  EXPECT_TRUE(test::has_diagnostic(value, "PARAMETER_OVERRIDE_VALUE_INVALID"));
-}
-
-// REQ: COMPILE-019
-// REQ: PARAM-007
-TEST(ParameterCompile, RejectsFieldPatchAgainstOpaqueTypedAggregate) {
-  // Graph topology:
-  //   operator (isolated opaque-Parameter override target)
-  Graph graph{"parameter-override-opaque"};
-  (void)graph.op<CompileParameterOperator<CompileOpaqueParams>>("operator");
-  const CompileOpaqueParams resolved{.local_only = 2U};
-  std::vector<detail::ParamOverrideOperatorState> operators;
-  operators.push_back(detail::ParamOverrideSetAccess::resolved_operator(
-      "operator",
-      resolved,
-      {},
-      {},
-      {{.field = 1U,
-        .full_id = {},
-        .origin = detail::ParamOverrideContributionOrigin::kCaptured}}));
-  CompileOptions options;
-  options.parameter_overrides = detail::ParamOverrideSetAccess::make_complete(
-      graph.view().identity(), std::move(operators), parameter_admission_context(graph, options));
-
-  // Key assertion: opaque type has no schema → field ID lookup fails with
-  // PARAMETER_OVERRIDE_SCHEMA_MISMATCH and the initial value (local_only=1) is retained.
-  const ExecutionPlan plan = compile(graph, std::move(options));
-  EXPECT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARAMETER_OVERRIDE_SCHEMA_MISMATCH"));
-  EXPECT_TRUE(plan.parameter_fields().empty());
-  EXPECT_TRUE(plan.parameter_catalog().fields().empty());
-  const detail::ExecutionPlanState* const state = detail::ExecutionPlanAccess::state(plan);
-  ASSERT_NE(state, nullptr);
-  ASSERT_EQ(state->executable_factories.operators.size(), 1U);
-  const void* const final_value =
-      state->executable_factories.operators.front().factory->initial_parameter_value();
-  ASSERT_NE(final_value, nullptr);
-  EXPECT_EQ(static_cast<const CompileOpaqueParams*>(final_value)->local_only, 1U);
-}
-
-// REQ: COMPILE-002
-// REQ: COMPILE-019
-// REQ: PARAM-009
-TEST(ParameterCompile, AdmissionContextIsIndependentOfDeploymentAuthoringOrder) {
-  // Graph topology:
-  //   operator (isolated Parameter-bearing Operator)
-  Graph graph{"parameter-admission-context-order"};
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  CompileOptions first;
-  first.deployment.bind_thread_placement("alpha", ThreadPlacement{});
-  first.deployment.bind_thread_placement("beta", ThreadPlacement{});
-  CompileOptions second;
-  second.deployment.bind_thread_placement("beta", ThreadPlacement{});
-  second.deployment.bind_thread_placement("alpha", ThreadPlacement{});
-
-  EXPECT_EQ(parameter_admission_context(graph, first), parameter_admission_context(graph, second));
-}
-
-// REQ: COMPILE-019
-// REQ: PARAM-009
-// REQ: THREAD-PLACE-002
-TEST(ParameterCompile, AdmissionContextCanonicalizesMutatedCPUAffinity) {
-  // Graph topology:
-  //   operator (isolated Parameter override target in one manual partition)
-  Graph graph{"parameter-admission-context-affinity"};
-  const auto op = graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  graph.partition("worker").add(op);
-
-  ThreadPlacement noncanonical_placement{.affinity = CPUAffinity{0U, 1U}};
-  noncanonical_placement.affinity->cores = {1U, 0U, 1U};
-  CompileOptions captured;
-  captured.deployment.bind_thread_placement("worker", noncanonical_placement);
-
-  CompileOptions equivalent;
-  equivalent.deployment.bind_thread_placement("worker",
-                                              ThreadPlacement{.affinity = CPUAffinity{0U, 1U}});
-
-  // Key assertion: legal post-construction mutation does not change the semantic context.
-  EXPECT_EQ(parameter_admission_context(graph, captured),
-            parameter_admission_context(graph, equivalent));
-
-  equivalent.parameter_overrides = catalog_gain_override(graph, captured, 3U);
-  const ExecutionPlan accepted = compile(graph, equivalent);
-  ASSERT_TRUE(accepted.ok()) << accepted.json();
-  EXPECT_FALSE(test::has_diagnostic(accepted, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
-  const detail::ExecutionPlanState* const state = detail::ExecutionPlanAccess::state(accepted);
-  ASSERT_NE(state, nullptr);
-  ASSERT_EQ(state->executable_factories.operators.size(), 1U);
-  const auto* const resolved = static_cast<const CompileCatalogParams*>(
-      state->executable_factories.operators.front().factory->initial_parameter_value());
-  ASSERT_NE(resolved, nullptr);
-  EXPECT_EQ(resolved->gain, 3U);
-
-  CompileOptions different;
-  different.deployment.bind_thread_placement("worker",
-                                             ThreadPlacement{.affinity = CPUAffinity{0U}});
-  EXPECT_NE(parameter_admission_context(graph, captured),
-            parameter_admission_context(graph, different));
-  different.parameter_overrides = catalog_gain_override(graph, captured, 3U);
-  const ExecutionPlan rejected = compile(graph, different);
-  ASSERT_FALSE(rejected.ok());
-  EXPECT_TRUE(test::has_diagnostic(rejected, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
-}
-
-// REQ: COMPILE-068
-// REQ: PARAM-009
-TEST(ParameterCompile, AdmissionContextIncludesGreenContextBindingsCanonically) {
-  Graph graph{"parameter-admission-context-green"};
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  const CompileOptions empty;
-  CompileOptions forward;
-  forward.deployment.bind_cuda_green_context(
-      "alpha", CudaGreenContextPlacement{.device = DeviceId{0}, .sm_count = 16U});
-  forward.deployment.bind_cuda_green_context(
-      "beta", CudaGreenContextPlacement{.device = DeviceId{1}, .sm_count = 24U});
-  CompileOptions reverse;
-  reverse.deployment.bind_cuda_green_context(
-      "beta", CudaGreenContextPlacement{.device = DeviceId{1}, .sm_count = 24U});
-  reverse.deployment.bind_cuda_green_context(
-      "alpha", CudaGreenContextPlacement{.device = DeviceId{0}, .sm_count = 16U});
-
-  const ParamSchemaHash baseline = parameter_admission_context(graph, empty);
-  const ParamSchemaHash first = parameter_admission_context(graph, forward);
-  EXPECT_NE(first, baseline);
-  EXPECT_EQ(first, parameter_admission_context(graph, reverse));
-}
-
-// REQ: COMPILE-068
-// REQ: PARAM-009
-TEST(ParameterCompile, RebindCaptureDoesNotRerunPartitionPlanning) {
-  Graph graph{"parameter-rebind-no-partition-planner"};
-  const auto first = graph.op<CompileParameterOperator<CompileCatalogParams>>("first");
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("second");
-  graph.partition("deliberately-incomplete").add(first);
-
-  const auto captured = detail::capture_parameter_rebind_graph(graph);
-  ASSERT_TRUE(captured) << captured.error().message;
-  EXPECT_NE(captured->admission_context_digest, ParamSchemaHash{});
-}
-
-// REQ: COMPILE-002
-// REQ: COMPILE-019
-// REQ: PARAM-009
-TEST(ParameterCompile, AdmissionContextExcludesDiagnosticProducerBuildIdentity) {
-  // Graph topology:
-  //   operator (isolated Parameter-bearing Operator)
-  Graph graph{"parameter-admission-context-build"};
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  const CompileOptions options;
-  const auto snapshot = detail::GraphCompilerAccess::canonical_snapshot(graph);
-  auto profile = detail::resolve_profile_admission(*snapshot, options.profile);
-  profile.manifest.runtime_abi_version = "holoscan.runtime_abi.v1";
-  profile.manifest.target_triple = std::string(detail::compile_target_triple());
-  profile.manifest.producer_build_id = "diagnostic-build-a";
-  const ParamSchemaHash first = detail::parameter_admission_context_digest(
-      profile.manifest, options.deployment, detail::empty_parameter_migration_catalog_digest());
-  profile.manifest.producer_build_id = "diagnostic-build-b";
-  const ParamSchemaHash second = detail::parameter_admission_context_digest(
-      profile.manifest, options.deployment, detail::empty_parameter_migration_catalog_digest());
-
-  EXPECT_EQ(first, second);
-}
-
-// REQ: COMPILE-002
-// REQ: COMPILE-019
-// REQ: PARAM-009
-TEST(ParameterCompile, OverrideSemanticDigestIsIndependentOfOperatorAuthoringOrder) {
-  // Graph topology:
-  //   a   b (two isolated Parameter override targets)
-  Graph graph{"parameter-override-semantic-order"};
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("a");
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("b");
-  const CompileCatalogParams baseline{};
-  const ParamFieldDescriptor& gain = catalog_field("gain");
-  const auto make_record = [&](std::string path, std::uint32_t value) {
-    CompileCatalogParams resolved = baseline;
-    resolved.gain = value;
-    return detail::ParamOverrideSetAccess::resolved_operator(
-        std::move(path),
-        resolved,
-        required_value_digest(baseline),
-        required_value_digest(resolved),
-        {{.field = gain.id,
-          .full_id = gain.full_id,
-          .origin = detail::ParamOverrideContributionOrigin::kCaptured}});
-  };
-  const ParamSchemaHash context = parameter_admission_context(graph, CompileOptions{});
-  // Key setup: identical overrides assembled in forward (a,b) and reverse (b,a) order.
-  std::vector<detail::ParamOverrideOperatorState> forward;
-  forward.push_back(make_record("a", 2U));
-  forward.push_back(make_record("b", 3U));
-  std::vector<detail::ParamOverrideOperatorState> reverse;
-  reverse.push_back(make_record("b", 3U));
-  reverse.push_back(make_record("a", 2U));
-
-  const ParamOverrideSet first = detail::ParamOverrideSetAccess::make_complete(
-      graph.view().identity(), std::move(forward), context);
-  const ParamOverrideSet second = detail::ParamOverrideSetAccess::make_complete(
-      graph.view().identity(), std::move(reverse), context);
-  // Key assertion: digest is order-independent and matches the recomputed digest.
-  EXPECT_EQ(detail::ParamOverrideSetAccess::semantic_digest(first),
-            detail::ParamOverrideSetAccess::semantic_digest(second));
-  EXPECT_EQ(detail::ParamOverrideSetAccess::semantic_digest(first),
-            detail::ParamOverrideSetAccess::recompute_semantic_digest(first));
-}
-
-// REQ: COMPILE-002
-// REQ: COMPILE-019
-// REQ: COMPILE-072
-// REQ: PARAM-009
-TEST(ParameterCompile, RejectsOverrideCapturedForDifferentProfileContext) {
-  // Graph topology:
-  //   operator (isolated Parameter override target)
-  Graph graph{"parameter-override-profile-context"};
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  CompileOptions captured;
-  captured.profile = Profile::kStandard;
-  CompileOptions changed;
-  changed.profile = Profile::kRobotics;
-  changed.parameter_overrides = catalog_gain_override(graph, captured, 3U);
-
-  const ExecutionPlan plan = compile(graph, changed);
-  ASSERT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
-}
-
-// REQ: COMPILE-002
-// REQ: COMPILE-019
-// REQ: COMPILE-072
-// REQ: PARAM-009
-TEST(ParameterCompile, RejectsOverrideCapturedForDifferentDeploymentContext) {
-  // Graph topology:
-  //   operator (isolated Parameter override target)
-  Graph graph{"parameter-override-deployment-context"};
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  const CompileOptions captured;
-  CompileOptions changed;
-  changed.deployment.bind_thread_placement("unused", ThreadPlacement{});
-  changed.parameter_overrides = catalog_gain_override(graph, captured, 3U);
-
-  const ExecutionPlan plan = compile(graph, changed);
-  ASSERT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
-}
-
-// REQ: COMPILE-002
-// REQ: COMPILE-019
-// REQ: COMPILE-072
-// REQ: PARAM-009
-TEST(ParameterCompile, RejectsOverrideCapturedForDifferentMigrationCatalogContext) {
-  // Graph topology:
-  //   operator (isolated Parameter override target)
-  Graph graph{"parameter-override-migration-context"};
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  CompileOptions options;
-  detail::StableHashBuilder migration;
-  migration.add("holoscan.test.nonempty_parameter_migration_catalog.v1");
-  migration.add_canonical_size(1U);
-  options.parameter_overrides = catalog_gain_override(graph, options, 3U, migration.finish());
-
-  const ExecutionPlan plan = compile(graph, options);
-  ASSERT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARAMETER_OVERRIDE_ADMISSION_CONTEXT_MISMATCH"));
-}
-
-// REQ: COMPILE-002
-// REQ: COMPILE-019
-// REQ: PARAM-009
-TEST(ParameterCompile, ResolvedOverrideValuesContributeToPlanGenerationIdentity) {
-  // Graph topology:
-  //   operator (isolated Parameter override target)
-  Graph graph{"parameter-override-plan-generation"};
-  (void)graph.op<CompileParameterOperator<CompileCatalogParams>>("operator");
-  const CompileOptions context;
-
-  CompileOptions first_options;
-  first_options.parameter_overrides = catalog_gain_override(graph, context, 3U);
-  CompileOptions second_options;
-  second_options.parameter_overrides = catalog_gain_override(graph, context, 4U);
-
-  const ExecutionPlan first = compile(graph, std::move(first_options));
-  const ExecutionPlan second = compile(graph, std::move(second_options));
-  ASSERT_TRUE(first.ok()) << first.json();
-  ASSERT_TRUE(second.ok()) << second.json();
-  const detail::ExecutionPlanState* const first_state = detail::ExecutionPlanAccess::state(first);
-  const detail::ExecutionPlanState* const second_state = detail::ExecutionPlanAccess::state(second);
-  ASSERT_NE(first_state, nullptr);
-  ASSERT_NE(second_state, nullptr);
-  EXPECT_NE(first_state->plan_generation, second_state->plan_generation);
-}
-
-// REQ: COMPILE-015
-// REQ: COMPILE-060
-// REQ: COMPILE-019
-// REQ: PARAM-007
-//
-//   source --[queue_depth=2]--> target (CompileReplayOperator, gain overridden to 4)
-//
-TEST(ParameterCompile, ReplaysResolvedSetupAndContractWithoutMutatingAuthoringGraph) {
-  Graph graph{"parameter-replay-positive"};
-  test::add_compile_test_default_clock(graph);
-  const auto source = graph.op<test::CompileTestOperator>("source");
-  const auto target = graph.op<CompileReplayOperator>("target");
-  graph.add_flow(source->output, target->input);
-  const GraphAuthoringIdentity identity = graph.view().identity();
-
-  CompileReplayParams resolved;
-  resolved.gain = 4U;
-  CompileOptions options;
-  options.parameter_overrides = replay_override(graph, options, resolved, "gain");
-  const ExecutionPlan plan = compile(graph, options);
-  ASSERT_TRUE(plan.ok()) << plan.json();
-  // Key assertion: authoring graph identity is unchanged after compilation with override.
-  EXPECT_EQ(graph.view().identity(), identity);
-}
-
-// REQ: COMPILE-019
-// REQ: PARAM-007
-//
-//   source --[queue_depth=2]--> target (CompileReplayOperator, setup_shape overridden to 2)
-//
-TEST(ParameterCompile, RejectsParameterDependentSetupShapeBeforeFactoryPublication) {
-  Graph graph{"parameter-replay-setup-negative"};
-  const auto source = graph.op<test::CompileTestOperator>("source");
-  const auto target = graph.op<CompileReplayOperator>("target");
-  graph.add_flow(source->output, target->input);
-
-  CompileReplayParams resolved;
-  resolved.setup_shape = 2U;
-  CompileOptions options;
-  options.parameter_overrides = replay_override(graph, options, resolved, "setup_shape");
-  const ExecutionPlan plan = compile(graph, options);
-  // Key assertion: port rename detected before factory publication → DECLARATION_MISMATCH;
-  // factory retains the original setup_shape=1 value.
-  ASSERT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARAMETER_OVERRIDE_DECLARATION_MISMATCH"));
-  const detail::ExecutionPlanState* const state = detail::ExecutionPlanAccess::state(plan);
-  ASSERT_NE(state, nullptr);
-  ASSERT_EQ(state->executable_factories.operators.size(), 2U);
-  const auto factory = std::find_if(state->executable_factories.operators.begin(),
-                                    state->executable_factories.operators.end(),
-                                    [](const auto& item) { return item.operator_id == 2U; });
-  ASSERT_NE(factory, state->executable_factories.operators.end());
-  EXPECT_EQ(static_cast<const CompileReplayParams*>(factory->factory->initial_parameter_value())
-                ->setup_shape,
-            1U);
-}
-
-// Rate declarations participate in queue-sizing identity just like port names and Tensor bounds.
-// A generation-zero override cannot change a replayed nominal rate after graph capture.
-// REQ: COMPILE-019
-// REQ: COMPILE-069
-// REQ: PARAM-007
-TEST(ParameterCompile, RejectsParameterDependentRateDuringFactoryReplay) {
-  Graph graph{"parameter-replay-rate-negative"};
-  test::add_compile_test_default_clock(graph);
-  const auto source = graph.op<test::CompileTestOperator>("source");
-  const auto target = graph.op<CompileReplayOperator>("target");
-  graph.add_flow(source->output, target->input);
-
-  CompileReplayParams resolved;
-  resolved.nominal_rate_hz = 61U;
-  CompileOptions options;
-  options.parameter_overrides = replay_override(graph, options, resolved, "nominal_rate_hz");
-  const ExecutionPlan plan = compile(graph, options);
-
-  ASSERT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARAMETER_OVERRIDE_DECLARATION_MISMATCH")) << plan.json();
-}
-
-// REQ: COMPILE-019
-// REQ: PARAM-007
-// REQ: COMPILE-067
-TEST(ParameterCompile, RejectsParameterDependentTensorContractDuringFactoryReplay) {
-  // Graph topology:
-  //   target (isolated Tensor-contract replay target)
-  Graph graph{"parameter-replay-tensor-contract-negative"};
-  (void)graph.op<CompileTensorContractReplayOperator>("target");
-
-  CompileTensorContractReplayParams resolved;
-  resolved.max_byte_span = 2048U;
-  CompileOptions options;
-  options.parameter_overrides = tensor_contract_replay_override(graph, options, resolved);
-  // Key setup: replay changes only a pass-through contract bound, not layout or allocation state.
-  const ExecutionPlan plan = compile(graph, options);
-
-  // Key assertion: full normalized Tensor-contract equality rejects the divergent declaration.
-  ASSERT_FALSE(plan.ok());
-  EXPECT_TRUE(test::has_diagnostic(plan, "PARAMETER_OVERRIDE_DECLARATION_MISMATCH"));
-}
-
-// REQ: COMPILE-015
-// REQ: COMPILE-019
-// REQ: TEMPORAL-CONTRACT-001
-//
-//   source --[queue_depth=2]--> target (CompileReplayOperator, contract_valid=false)
-//
-TEST(ParameterCompile, RejectsInvalidContractFromResolvedGenerationZero) {
-  Graph graph{"parameter-replay-contract-negative"};
-  const auto source = graph.op<test::CompileTestOperator>("source");
-  const auto target = graph.op<CompileReplayOperator>("target");
-  graph.add_flow(source->output, target->input);
-
-  CompileReplayParams resolved;
-  resolved.contract_valid = false;
-  CompileOptions options;
-  options.parameter_overrides = replay_override(graph, options, resolved, "contract_valid");
-  const ExecutionPlan plan = compile(graph, options);
-  ASSERT_FALSE(plan.ok());
-  // The override selects an undeclared Input member. Its PortRef has no
-  // declaration name, so normalization rejects the contract before canonical
-  // port-identity resolution is reached.
-  EXPECT_TRUE(test::has_diagnostic(plan, "TEMPORAL_CONTRACT_INVALID")) << plan.json();
-}
-
-// REQ: COMPILE-003
-// REQ: COMPILE-019
-// REQ: PARAM-003
 TEST(ParameterCompile, RequiresExplicitFieldPolicyEvidenceWhenRequestedOrRegulated) {
   // Key setup: strict mode (require_explicit_field_policies=true) and regulated profile
   // each independently require fully declared field policies.

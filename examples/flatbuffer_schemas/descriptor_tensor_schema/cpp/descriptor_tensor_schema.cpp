@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/channel/tensor_schema_endpoints.hpp>
 #include <holoscan/core/compile.hpp>
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/core/graph.hpp>
@@ -23,13 +24,20 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/run.hpp>
 #include <holoscan/core/temporal_contract.hpp>
+#include <holoscan/schema/descriptor_flatbuffer_payload.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
-#include "descriptor_frame_traits.hpp"
+#include "descriptor_frame_schema_traits.hpp"
 
 namespace {
 
 using namespace std::chrono_literals;
+
+using InstalledDescriptorPayload =
+    holoscan::schema::DescriptorFlatBufferPayloadFor<app3p::DescriptorFrame>;
+
+[[maybe_unused]] constexpr auto kInstalledDescriptorSubscriberClose =
+    &holoscan::ChannelTensorSchemaSubscriber<InstalledDescriptorPayload>::close;
 
 constexpr std::array<std::int64_t, 1U> kShape{8};
 constexpr std::array<std::uint8_t, 8U> kBytes{1U, 3U, 5U, 7U, 9U, 11U, 13U, 15U};

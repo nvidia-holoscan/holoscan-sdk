@@ -21,7 +21,7 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/run.hpp>
 #include <holoscan/core/temporal_contract.hpp>
-#include <holoscan/schema/flatbuffer_schema_package.hpp>
+#include <holoscan/schema/sdk_schemas.hpp>
 #include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
@@ -437,8 +437,8 @@ int main() {
 
   constexpr holoscan::SchemaIdentity identity =
       holoscan::schema_identity<holoscan::schema::StringT>();
-  std::cout << "schema_payloads: StringT identity=" << identity.canonical_name << " v"
-            << identity.version << " bound=" << kStringBound << " bytes\n";
+  std::cout << "schema_payloads: StringT identity=" << identity.canonical_name
+            << " epoch=" << identity.compatibility_epoch << " bound=" << kStringBound << " bytes\n";
   std::cout << "schema_payloads: oversize emit rejected: "
             << holoscan::runtime_error_message(SchemaObservation::oversize_error) << "\n";
   std::cout << "schema_payloads: strings=" << SchemaObservation::strings

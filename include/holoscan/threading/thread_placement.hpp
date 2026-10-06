@@ -17,6 +17,12 @@
 
 namespace holoscan {
 
+/// @brief Identify one Runtime-owned support thread that can receive CPU affinity.
+enum class SupportThreadRole : std::uint8_t {
+  kController = 0,   ///< Run-session controller and any inline Operator callbacks.
+  kChannelPump = 1,  ///< Optional process-local Channel ingress pump.
+};
+
 /**
  * @brief Inclusive CPU core range used when building a CPUAffinity.
  */

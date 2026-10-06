@@ -47,12 +47,11 @@ The measurements above were obtained using the following configuration:
 
 </Note>
 
-
 ### Practical Guidance
 
 - **Rule of thumb**: If your operator's computation takes less than ~20 µs, the scheduling and message-passing overhead may dominate the total execution time. Consider combining such operations into a single operator.
 - **Event-based scheduler latency tuning**: For latency-sensitive Linux workloads using `EventBasedScheduler`, you can isolate the scheduler's dispatcher thread with `GXF_EBS_DISPATCHER_CPU_CORE=<core-id>`. This is separate from the scheduler `pin_cores` parameter, which only affects worker threads, and can reduce jitter when the dispatcher competes with time-critical work.
-- **GPU-resident pipelines**: When using GPU-resident operators within a CUDA Graph, kernel transition latency is significantly lower (~0.5–2 µs), allowing for finer-grained operator decomposition.
+- **GPU-resident pipelines**: A [CUDA Graph region](/holoscan/sdk-user-guide/composing-applications/cuda-graph-regions) can fuse a supported linear GPU chain into one replay launch. Compare ordinary and fused execution on the target GPU; the result depends on kernel size, scheduling overhead, and downstream Tensor lifetime.
 - **Profiling is essential**: Use [NSight Systems traces](/holoscan/sdk-user-guide/performance/nsight-profiling) and data flow tracking
  to measure actual overhead in your specific application.
   Note: OS scheduling, CPU affinity (thread pinning), and Python version can materially impact these thresholds; validate on your target system.
@@ -89,7 +88,6 @@ Pinning Holoscan worker threads to specific cores via `pin_cores` (or the dispat
 For an end-to-end worked example of CPU core isolation on a real platform, see the Holohub high-performance networking tutorial, section 3.5 ["Isolate CPU Cores"](https://nvidia-holoscan.github.io/holohub/tutorials/high_performance_networking/#35-isolate-cpu-cores).
 
 </Note>
-
 
 The following kernel command-line parameters work together:
 
@@ -166,13 +164,11 @@ taskset -c -p <pid>
 
 </Warning>
 
-
 <Tip>
 
 `nohz_full` requires `CONFIG_NO_HZ_FULL=y` in the kernel, which is set on most stock distributions but not all. If isolation is configured but jitter persists, check `cat /sys/devices/system/cpu/nohz_full` — an empty result means the option was ignored.
 
 </Tip>
-
 
 ## See Also
 

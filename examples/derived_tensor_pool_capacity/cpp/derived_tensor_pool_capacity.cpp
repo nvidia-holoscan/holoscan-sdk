@@ -37,20 +37,38 @@ namespace {
 constexpr DLDataType kByteDtype{kDLUInt, 8U, 1U};
 constexpr std::uint64_t kCameraByteSpan = 3840U * 2160U * 4U;
 
+enum class OutputStorage : std::uint8_t {
+  kHost,
+  kPinned,
+};
+
+[[nodiscard]] constexpr holoscan::MemoryKind memory_kind(OutputStorage storage) noexcept {
+  return storage == OutputStorage::kHost ? holoscan::MemoryKind::kHost
+                                         : holoscan::MemoryKind::kPinnedHost;
+}
+
 struct Arguments {
+  bool plan_json{};
   std::vector<std::uint32_t> output_shape{1080U, 1920U, 4U};
+  OutputStorage output_storage{OutputStorage::kHost};
 };
 
 [[nodiscard]] bool parse_arguments(int argc, char** argv, Arguments& result) {
-  if (argc == 1) {
+  int first_argument = 1;
+  if (argc > 1 && std::string_view(argv[1]) == "--plan-json") {
+    result.plan_json = true;
+    first_argument = 2;
+  }
+  const int argument_count = argc - first_argument;
+  if (argument_count == 0) {
     return true;
   }
-  if (argc != 4) {
-    std::cerr << "usage: " << argv[0] << " [HEIGHT WIDTH CHANNELS]\n";
+  if (argument_count != 3 && argument_count != 4) {
+    std::cerr << "usage: " << argv[0] << " [--plan-json] [HEIGHT WIDTH CHANNELS [host|pinned]]\n";
     return false;
   }
   for (std::size_t index = 0U; index < result.output_shape.size(); ++index) {
-    const std::string_view text{argv[index + 1U]};
+    const std::string_view text{argv[static_cast<std::size_t>(first_argument) + index]};
     std::uint32_t value = 0U;
     const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
     if (error != std::errc() || end != text.data() + text.size() || value == 0U) {
@@ -63,12 +81,23 @@ struct Arguments {
     std::cerr << "CHANNELS must be 4 for the packed RGBA example\n";
     return false;
   }
+  if (argument_count == 4) {
+    const std::string_view storage{argv[first_argument + 3]};
+    if (storage == "host") {
+      result.output_storage = OutputStorage::kHost;
+    } else if (storage == "pinned") {
+      result.output_storage = OutputStorage::kPinned;
+    } else {
+      std::cerr << "memory kind must be host or pinned\n";
+      return false;
+    }
+  }
   return true;
 }
 
 [[nodiscard]] bool checked_multiply(std::uint64_t left, std::uint64_t right,
                                     std::uint64_t& result) noexcept {
-  if (left > std::numeric_limits<std::uint64_t>::max() / right) {
+  if (right != 0U && left > std::numeric_limits<std::uint64_t>::max() / right) {
     return false;
   }
   result = left * right;
@@ -79,6 +108,7 @@ struct ResizeParams {
   // A deployment controls the exact HWC output shape without changing setup() or rebuilding the
   // Operator. Because this value determines pool capacity, changing it requires a new plan.
   std::vector<std::uint32_t> output_shape{720U, 1280U, 4U};
+  OutputStorage output_storage{OutputStorage::kHost};
 };
 
 HOLOSCAN_PARAM_SCHEMA(
@@ -86,7 +116,29 @@ HOLOSCAN_PARAM_SCHEMA(
     holoscan::field<&ResizeParams::output_shape>("output_shape")
         .max_elements(3U)
         .recompile_required()
-        .description("Exact HWC output shape used to size the compiled Tensor pool."));
+        .description("Exact HWC output shape used to size the compiled Tensor pool."),
+    holoscan::field<&ResizeParams::output_storage>("output_storage")
+        .enum_values({holoscan::param_enum_value("host", OutputStorage::kHost),
+                      holoscan::param_enum_value("pinned", OutputStorage::kPinned)})
+        .recompile_required()
+        .description("Physical memory kind selected when the Tensor pool is compiled."));
+
+struct BatchProjectionParams {
+  std::uint32_t width{1280U};
+  std::uint32_t height{720U};
+  std::uint32_t max_batch_size{2U};
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    BatchProjectionParams,
+    holoscan::param_schema("com.nvidia.holoscan.examples.BatchProjectionParams", 1),
+    holoscan::field<&BatchProjectionParams::width>("width").range(1U, 16384U).recompile_required(),
+    holoscan::field<&BatchProjectionParams::height>("height")
+        .range(1U, 16384U)
+        .recompile_required(),
+    holoscan::field<&BatchProjectionParams::max_batch_size>("max_batch_size")
+        .range(1U, 64U)
+        .recompile_required());
 
 class CameraSource final : public holoscan::Operator<> {
  public:
@@ -124,15 +176,22 @@ class ConfiguredResize final : public holoscan::Operator<ResizeParams> {
         .follows(input, holoscan::RateRatio{1U, 4U})
         .produces_tensor(
             holoscan::TensorOutputSpec{
-                .representation = {.memory_kind = holoscan::MemoryKind::kHost,
-                                   .dtype = kByteDtype,
-                                   .rank = 3U},
+                .representation = {.dtype = kByteDtype, .rank = 3U},
                 .storage = holoscan::TensorOutputStorage::kRuntimePool,
             },
-            // Reduce the configured HWC shape and the output's exact dtype to one immutable byte
-            // capacity during compilation. Runtime receives only the resulting concrete pool plan.
-            holoscan::parameter_contiguous_byte_span(
-                holoscan::param_ref<&ResizeParams::output_shape>()));
+            holoscan::TensorOutputDerivations{
+                // Reduce the configured HWC shape and the output's exact dtype to one immutable
+                // byte capacity during compilation.
+                .max_byte_span = holoscan::parameter_contiguous_byte_span(
+                    holoscan::param_ref<&ResizeParams::output_shape>()),
+                // Resolve the module-specific enum through a closed mapping. Runtime receives
+                // only the resulting concrete capacity and memory kind in its pool plan.
+                .memory_kind = holoscan::parameter_memory_kind(
+                    holoscan::param_ref<&ResizeParams::output_storage>(),
+                    {holoscan::memory_kind_case(OutputStorage::kHost, holoscan::MemoryKind::kHost),
+                     holoscan::memory_kind_case(OutputStorage::kPinned,
+                                                holoscan::MemoryKind::kPinnedHost)}),
+            });
   }
 
   [[nodiscard]] holoscan::Contract contract() const override {
@@ -150,14 +209,88 @@ class ConfiguredResize final : public holoscan::Operator<ResizeParams> {
   holoscan::Output<holoscan::Tensor> output;
 };
 
-class PackedGrayscale final : public holoscan::Operator<> {
+class ProjectedBatchOutput final : public holoscan::Operator<BatchProjectionParams> {
+ public:
+  [[nodiscard]] static holoscan::expected<std::uint64_t, holoscan::Error> output_max_byte_span(
+      const BatchProjectionParams& params) noexcept {
+    constexpr std::uint64_t kRgbaChannels = 4U;
+    constexpr std::uint64_t kFloatBytes = sizeof(float);
+    std::uint64_t result = params.width;
+    for (const std::uint64_t factor : {static_cast<std::uint64_t>(params.height),
+                                       static_cast<std::uint64_t>(params.max_batch_size),
+                                       kRgbaChannels,
+                                       kFloatBytes}) {
+      std::uint64_t next = 0U;
+      if (!checked_multiply(result, factor, next)) {
+        return holoscan::make_unexpected(holoscan::Error{holoscan::ErrorCode::kArithmeticOverflow});
+      }
+      result = next;
+    }
+    return result;
+  }
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    // This dependency list is normative compiler input, not documentation: it must name every
+    // Params field that output_max_byte_span reads, because Core cannot inspect the function body.
+    const auto capacity =
+        holoscan::parameter_projected_byte_span<&ProjectedBatchOutput::output_max_byte_span>(
+            "com.nvidia.holoscan.examples.ProjectedBatchOutput.output-max-byte-span.v1",
+            holoscan::param_ref<&BatchProjectionParams::width>(),
+            holoscan::param_ref<&BatchProjectionParams::height>(),
+            holoscan::param_ref<&BatchProjectionParams::max_batch_size>());
+    spec.output(output, "output")
+        .produces_tensor(
+            holoscan::TensorOutputSpec{
+                .representation = {.memory_kind = holoscan::MemoryKind::kHost,
+                                   .dtype = DLDataType{kDLFloat, 32U, 1U},
+                                   .rank = 4U},
+                .storage = holoscan::TensorOutputStorage::kRuntimePool,
+            },
+            capacity);
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    return {};
+  }
+
+  holoscan::Output<holoscan::Tensor> output;
+};
+
+class ProjectedBatchSink final : public holoscan::Operator<> {
  public:
   void setup(holoscan::OperatorSpec& spec) override {
     spec.input(input, "input")
         .expects_tensor(holoscan::TensorInputSpec{
             .representation = {.memory_kind = holoscan::MemoryKind::kHost,
-                               .dtype = kByteDtype,
-                               .rank = 3U},
+                               .dtype = DLDataType{kDLFloat, 32U, 1U},
+                               .rank = 4U},
+        });
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    return {};
+  }
+
+  holoscan::Input<holoscan::Tensor> input;
+};
+
+class PackedGrayscale final : public holoscan::Operator<> {
+ public:
+  explicit PackedGrayscale(holoscan::MemoryKind input_memory_kind)
+      : input_memory_kind_(input_memory_kind) {}
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .expects_tensor(holoscan::TensorInputSpec{
+            .representation = {.memory_kind = input_memory_kind_, .dtype = kByteDtype, .rank = 3U},
         });
     spec.output(output, "output")
         .produces_tensor(
@@ -190,16 +323,20 @@ class PackedGrayscale final : public holoscan::Operator<> {
 
   holoscan::Input<holoscan::Tensor> input;
   holoscan::Output<holoscan::Tensor> output;
+
+ private:
+  holoscan::MemoryKind input_memory_kind_;
 };
 
 class ConservativeGrayscale final : public holoscan::Operator<> {
  public:
+  explicit ConservativeGrayscale(holoscan::MemoryKind input_memory_kind)
+      : input_memory_kind_(input_memory_kind) {}
+
   void setup(holoscan::OperatorSpec& spec) override {
     spec.input(input, "input")
         .expects_tensor(holoscan::TensorInputSpec{
-            .representation = {.memory_kind = holoscan::MemoryKind::kHost,
-                               .dtype = kByteDtype,
-                               .rank = 3U},
+            .representation = {.memory_kind = input_memory_kind_, .dtype = kByteDtype, .rank = 3U},
         });
     spec.output(output, "output")
         .produces_tensor(
@@ -227,6 +364,9 @@ class ConservativeGrayscale final : public holoscan::Operator<> {
 
   holoscan::Input<holoscan::Tensor> input;
   holoscan::Output<holoscan::Tensor> output;
+
+ private:
+  holoscan::MemoryKind input_memory_kind_;
 };
 
 // Example-test helper for inspecting compiler evidence. Ordinary application operators allocate
@@ -608,6 +748,9 @@ class LifecycleCameraSink final : public holoscan::Operator<> {
 
 }  // namespace
 
+// The example deliberately keeps its post-compile evidence checks linear so each failure remains
+// adjacent to the record it demonstrates in the printed walkthrough.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int main(int argc, char** argv) {
   Arguments arguments;
   if (!parse_arguments(argc, argv, arguments)) {
@@ -615,11 +758,16 @@ int main(int argc, char** argv) {
   }
 
   holoscan::Graph graph{"derived-tensor-pool-capacity"};
+  const auto selected_memory_kind = memory_kind(arguments.output_storage);
   const auto camera = graph.op<CameraSource>("camera");
   auto resize = graph.op<ConfiguredResize>("resize");
-  const auto packed_grayscale = graph.op<PackedGrayscale>("packed_grayscale");
-  const auto conservative_grayscale = graph.op<ConservativeGrayscale>("conservative_grayscale");
+  auto projected_batch = graph.op<ProjectedBatchOutput>("projected_batch");
+  const auto projected_batch_sink = graph.op<ProjectedBatchSink>("projected_batch_sink");
+  const auto packed_grayscale = graph.op<PackedGrayscale>("packed_grayscale", selected_memory_kind);
+  const auto conservative_grayscale =
+      graph.op<ConservativeGrayscale>("conservative_grayscale", selected_memory_kind);
   graph.add_flow(camera->output, resize->input);
+  graph.add_flow(projected_batch->output, projected_batch_sink->input);
   graph.add_flow(resize->output, packed_grayscale->input);
   graph.add_flow(resize->output,
                  conservative_grayscale->input,
@@ -627,7 +775,12 @@ int main(int argc, char** argv) {
   graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("app-clock"));
 
   // A deployment supplies this aggregate and recompiles a plan; setup() and the binary stay fixed.
-  resize.set_params(ResizeParams{.output_shape = arguments.output_shape});
+  resize.set_params(ResizeParams{.output_shape = arguments.output_shape,
+                                 .output_storage = arguments.output_storage});
+  constexpr std::uint32_t kExampleMaxBatchSize = 2U;
+  projected_batch.set_params(BatchProjectionParams{.width = arguments.output_shape[1],
+                                                   .height = arguments.output_shape[0],
+                                                   .max_batch_size = kExampleMaxBatchSize});
 
   // Timing compilation is example instrumentation used to illustrate the cold-path cost; normal
   // applications only need to compile the graph and retain the accepted plan.
@@ -638,22 +791,39 @@ int main(int argc, char** argv) {
     std::cerr << plan.json() << '\n';
     return 1;
   }
+  if (arguments.plan_json) {
+    std::cout << plan.json() << '\n';
+    return 0;
+  }
 
   // Everything below is example self-validation and explanatory reporting. It demonstrates where
   // the resolved memory facts appear, but typical applications pass the plan to run()/run_async()
   // without walking these compiler records or printing artifact statistics.
-  if (plan.tensor_byte_span_derivations().size() != 3U) {
-    std::cerr << "expected three derived output capacities\n";
+  if (plan.tensor_byte_span_derivations().size() != 4U) {
+    std::cerr << "expected four derived output capacities\n";
     return 2;
+  }
+  if (plan.tensor_memory_kind_derivations().size() != 1U) {
+    std::cerr << "expected one derived output memory kind\n";
+    return 3;
   }
   const auto* resize_derivation = plan.find_tensor_byte_span_derivation("resize", "output");
   const auto* packed_derivation =
       plan.find_tensor_byte_span_derivation("packed_grayscale", "output");
   const auto* conservative_derivation =
       plan.find_tensor_byte_span_derivation("conservative_grayscale", "output");
+  const auto* projected_batch_derivation =
+      plan.find_tensor_byte_span_derivation("projected_batch", "output");
   if (resize_derivation == nullptr || packed_derivation == nullptr ||
-      conservative_derivation == nullptr) {
-    std::cerr << "expected named resize and grayscale derivations\n";
+      conservative_derivation == nullptr || projected_batch_derivation == nullptr) {
+    std::cerr << "expected named resize, grayscale, and projected-batch derivations\n";
+    return 3;
+  }
+  const auto* resize_memory_derivation =
+      plan.find_tensor_memory_kind_derivation("resize", "output");
+  if (resize_memory_derivation == nullptr ||
+      resize_memory_derivation->resolved_memory_kind != selected_memory_kind) {
+    std::cerr << "configured output memory kind was not resolved\n";
     return 3;
   }
 
@@ -703,23 +873,31 @@ int main(int argc, char** argv) {
   };
   if (!report_capacity("resize.output", *resize_derivation) ||
       !report_capacity("packed_grayscale.output", *packed_derivation) ||
-      !report_capacity("conservative_grayscale.output", *conservative_derivation)) {
+      !report_capacity("conservative_grayscale.output", *conservative_derivation) ||
+      !report_capacity("projected_batch.output", *projected_batch_derivation)) {
     std::cerr << "derived output has no authoritative allocation\n";
     return 5;
   }
   const auto* resize_allocation = allocation_for(plan, resize_derivation->output);
   const auto* packed_allocation = allocation_for(plan, packed_derivation->output);
   const auto* conservative_allocation = allocation_for(plan, conservative_derivation->output);
+  const auto* projected_batch_allocation = allocation_for(plan, projected_batch_derivation->output);
   std::uint64_t configured_gray_byte_span = 0U;
   std::uint64_t configured_rgba_byte_span = 0U;
+  std::uint64_t projected_batch_byte_span = 0U;
   if (!checked_multiply(
           arguments.output_shape[0], arguments.output_shape[1], configured_gray_byte_span) ||
       !checked_multiply(configured_gray_byte_span, 4U, configured_rgba_byte_span) ||
+      !checked_multiply(configured_rgba_byte_span,
+                        kExampleMaxBatchSize * sizeof(float),
+                        projected_batch_byte_span) ||
       resize_allocation == nullptr || packed_allocation == nullptr ||
-      conservative_allocation == nullptr ||
+      conservative_allocation == nullptr || projected_batch_allocation == nullptr ||
+      resize_allocation->memory_kind != selected_memory_kind ||
       resize_allocation->bounds.max_byte_span != configured_rgba_byte_span ||
       packed_allocation->bounds.max_byte_span != configured_gray_byte_span ||
-      conservative_allocation->bounds.max_byte_span != configured_rgba_byte_span) {
+      conservative_allocation->bounds.max_byte_span != configured_rgba_byte_span ||
+      projected_batch_allocation->bounds.max_byte_span != projected_batch_byte_span) {
     std::cerr << "resolved capacities do not match configured and checked transform bounds\n";
     return 6;
   }
@@ -731,9 +909,15 @@ int main(int argc, char** argv) {
   const auto compile_microseconds =
       std::chrono::duration_cast<std::chrono::microseconds>(compile_elapsed).count();
   std::cout << "compile_us=" << compile_microseconds << " artifact_bytes=" << plan.json().size()
+            << " resize_memory="
+            << (selected_memory_kind == holoscan::MemoryKind::kHost ? "host" : "pinned")
             << " packed_grayscale_reserved_per_slot=" << packed_allocation->bounds.max_byte_span
             << " conservative_grayscale_reserved_per_slot="
             << conservative_allocation->bounds.max_byte_span << '\n';
+  std::cout << "projector=ProjectedBatchOutput.output-max-byte-span.v1 max_batch_size="
+            << kExampleMaxBatchSize
+            << " projected_per_slot_bytes=" << projected_batch_allocation->bounds.max_byte_span
+            << '\n';
   std::cout << "fixed_rate=60/1 follows_ratio=1/4 resolved_rate=15/1 automatic_depth=30"
                " explicit_depth=4\n";
   std::cout << "derived tensor pool capacity: configured and checked transform bounds verified\n";

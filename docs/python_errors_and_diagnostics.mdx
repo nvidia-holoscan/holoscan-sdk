@@ -1,0 +1,106 @@
+Python preserves the same stable Holoscan error categories and diagnostic tokens as C++, but
+expresses each lifecycle phase in the Python style most useful to callers. Authoring failures raise
+typed exceptions, compilation returns an inspectable plan, and runtime failures remain on the
+terminal session.
+
+Do not parse human-readable messages. Exceptions and diagnostics both carry stable fields intended
+for branching, tests, and automation.
+
+<Note title="You will learn">
+  - How `HoloscanError`, `ErrorCode`, and stable tokens relate
+  - Which failures raise and which remain on returned objects
+  - How to inspect structured detail on rejected plans and failed run sessions
+</Note>
+
+## Authoring failures raise typed exceptions
+
+All SDK exception categories derive from `holoscan.HoloscanError`. Each instance carries an
+`ErrorCode`, a stable token, and a human-readable message that is not a compatibility key:
+
+```python
+import holoscan as hs
+from custom_holoscan.operators import CounterSource
+
+graph = hs.Graph("bad-parameter")
+try:
+    CounterSource(graph, "source", limit=0)
+except hs.errors.InvalidArgumentError as error:
+    if error.token == "PARAM_VALIDATION_FAILED":
+        print("the limit violated its declared schema")
+    else:
+        raise
+```
+
+Common category subclasses under `hs.errors` include `InvalidArgumentError`,
+`NotFoundError`, `IncompatibleError`, `NotSupportedError`, and
+`ResourceExhaustedError`. Catch the root `hs.HoloscanError` at a broad
+application boundary; catch a category only when the recovery policy genuinely
+differs.
+
+An ordinary Python signature mismatch can still raise `TypeError`. SDK
+validation reached through a valid signature raises a `HoloscanError`
+subclass with `code` and `token`.
+
+## Compilation returns evidence
+
+Admission failure does not raise. `hs.compile(graph)` returns a rejected `Plan` whose truth value and
+`ok` property are false:
+
+```python
+plan = hs.compile(graph)
+if not plan:
+    for diagnostic in plan.errors:
+        print(diagnostic.token, diagnostic.source)
+        if diagnostic.detail is not None:
+            print(diagnostic.detail.operation, diagnostic.detail.error.code)
+    raise SystemExit(plan.summary())
+```
+
+`plan.diagnostics` contains errors and warnings in canonical order; `plan.errors` and
+`plan.warnings` provide filtered lists. Each `Diagnostic` has a stable token, severity, bounded
+source fields, and optional `DiagnosticDetail`. Supplemental detail retains typed operation, error,
+lifecycle, primary and related location, mismatch, nested-cause, causal-index, and truncation
+evidence without requiring message parsing.
+
+Use `plan.require_no_errors()` only at a boundary that cannot proceed without
+admission. It raises `hs.errors.CompileError` with token
+`EXECUTION_PLAN_REJECTED` for a rejected plan. Tooling should keep the plan and
+inspect its full diagnostics instead.
+
+## Runtime failure stays on the session
+
+Both execution entry points return a `RunSession`. After terminal failure, inspect its state:
+
+```python
+session = hs.run(plan)
+if session.termination is hs.RunTermination.FAILED:
+    for diagnostic in session.diagnostics:
+        print(diagnostic.token, diagnostic.detail)
+    print(session.summary())
+```
+
+`Plan.summary()` and `RunSession.summary()` delegate to Core's bounded whole-report formatter. The
+text renders errors before warnings, includes diagnostic indexes for causal references, and never
+exceeds Core's report bound. Use the structured values, not the rendered summary, for program logic.
+
+The runtime does not rethrow a worker failure through an unrelated waiting thread. Boundary misuse
+can still raise synchronously before a run begins, for example attempting to execute a rejected plan.
+
+## The three failure channels
+
+| Phase | Python result | Branch on |
+| --- | --- | --- |
+| Compose | `HoloscanError` subclass | `error.code`, `error.token` |
+| Compile | admitted or rejected `Plan` | `bool(plan)`, diagnostics |
+| Run | terminal `RunSession` | `session.termination`, diagnostics |
+
+This distinction keeps cold authoring mistakes local, preserves all compile diagnostics at once,
+and keeps runtime termination observable after cleanup.
+
+## Recap
+
+- Catch `HoloscanError` categories and branch on stable code or token, not message prose.
+- A rejected plan is a value; inspect its diagnostics before deciding whether to raise.
+- Structured diagnostic detail preserves bounded failure evidence without parsing rendered text.
+- A runtime failure remains on the terminal session and never becomes an asynchronous exception on
+  a different thread.

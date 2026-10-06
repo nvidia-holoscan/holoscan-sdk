@@ -135,42 +135,36 @@ struct InlineLikeSchemaPayload {
 
 template <>
 consteval SchemaIdentity schema_identity<ConstructorOnlySchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.ConstructorOnlySchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(
+      make_schema_family_identity("holoscan.test.ConstructorOnlySchemaPayload"),
+      make_flatbuffer_file_identifier("COSP"));
 }
 
 template <>
 consteval SchemaIdentity schema_identity<ThrowingMoveSchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.ThrowingMoveSchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(
+      make_schema_family_identity("holoscan.test.ThrowingMoveSchemaPayload"),
+      make_flatbuffer_file_identifier("TMSP"));
 }
 
 template <>
 consteval SchemaIdentity schema_identity<LateThrowingMoveSchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.LateThrowingMoveSchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(
+      make_schema_family_identity("holoscan.test.LateThrowingMoveSchemaPayload"),
+      make_flatbuffer_file_identifier("LTMP"));
 }
 
 template <>
 consteval SchemaIdentity schema_identity<ThrowingCopySchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.ThrowingCopySchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(
+      make_schema_family_identity("holoscan.test.ThrowingCopySchemaPayload"),
+      make_flatbuffer_file_identifier("TCSP"));
 }
 
 template <>
 consteval SchemaIdentity schema_identity<InlineLikeSchemaPayload>() {
-  return SchemaIdentity{
-      .canonical_name = "holoscan.test.InlineLikeSchemaPayload",
-      .version = 1,
-  };
+  return make_schema_identity(make_schema_family_identity("holoscan.test.InlineLikeSchemaPayload"),
+                              make_flatbuffer_file_identifier("ILSP"));
 }
 
 template <>
@@ -257,6 +251,8 @@ struct ErasedInputProbe {
                            .release = &RuntimeReadClaimProbe::release,
                        }
                      : detail::PublishedReadClaimBinding{},
+        .view_generation = &state.generation,
+        .expected_view_generation = state.generation,
     };
   }
 
@@ -733,6 +729,36 @@ class DataReadOperator final : public Operator<> {
   expected<void, Error> compute(ExecutionContext&) override {
     HOLOSCAN_TRY(first, input_.receive_data());
     HOLOSCAN_TRY(second, input_.receive_data());
+    return {};
+  }
+};
+
+class ScalarBorrowOperator final : public Operator<> {
+ public:
+  Input<std::uint32_t> input_{"input"};
+  std::optional<SelectedSampleView<std::uint32_t>> retained;
+  std::optional<Sample<std::uint32_t>> owning;
+
+  void setup(OperatorSpec& spec) override { spec.input(input_); }
+
+  expected<void, Error> compute(ExecutionContext&) override {
+    HOLOSCAN_TRY(auto first, input_.receive());
+    HOLOSCAN_TRY(auto second, input_.receive());
+    const auto exhausted = input_.receive();
+    if (exhausted || exhausted.error().code != ErrorCode::kResourceExhausted) {
+      return make_unexpected(Error{ErrorCode::kFailure});
+    }
+    HOLOSCAN_TRY(auto view, input_.selected_sample());
+    for (int index = 0; index < 100; ++index) {
+      HOLOSCAN_TRY(auto repeated, input_.selected_sample());
+      if (&view.sample() != &repeated.sample() || &view.data() != &view->data ||
+          &view.metadata() != &view->metadata || &*view != view.operator->() ||
+          view.data() != first.data) {
+        return make_unexpected(Error{ErrorCode::kFailure});
+      }
+    }
+    retained.emplace(view);
+    owning.emplace(std::move(first));
     return {};
   }
 };
@@ -1305,6 +1331,67 @@ TEST(OperatorBindingConformance, ReceiveDataCopiesTheSameFrozenScalarSelection) 
 
   EXPECT_EQ(op.first, 33);
   EXPECT_EQ(op.second, 33);
+}
+
+// REQ: OPERATOR-056
+TEST(OperatorBindingConformance, ScalarBorrowConsumesNoReadCreditsAndExpiresAtRetirement) {
+  ScalarBorrowOperator op;
+  test::SyntheticOperatorFixture fixture{op};
+  ASSERT_TRUE(fixture.declare_ports());
+  ASSERT_TRUE(fixture.bind_sample(op.input_,
+                                  Sample<std::uint32_t>{55, {.sequence = 9}},
+                                  {InputState::kSelected, SelectionReason::kNone}));
+  ASSERT_TRUE(fixture.invoke_once());
+  ASSERT_TRUE(op.owning);
+  EXPECT_EQ(op.owning->data, 55U);
+  EXPECT_EQ(op.owning->metadata.sequence, 9U);
+  ASSERT_TRUE(op.retained);
+#if GTEST_HAS_DEATH_TEST
+  const auto view = *op.retained;
+  EXPECT_DEATH((void)view.sample(), "");
+  EXPECT_DEATH((void)view.data(), "");
+  EXPECT_DEATH((void)view.metadata(), "");
+  EXPECT_DEATH((void)*view, "");
+  EXPECT_DEATH((void)view.operator->(), "");
+#endif
+}
+
+// REQ: OPERATOR-056
+TEST(OperatorBindingConformance, ScalarBorrowDoesNotInvokeSemanticCopy) {
+  ThrowingCopyReceiveOperator op;
+  test::SyntheticOperatorFixture fixture{op};
+  ASSERT_TRUE(fixture.declare_ports());
+  ASSERT_TRUE(fixture.bind_sample(
+      op.input_, Sample<ThrowingCopySchemaPayload>{ThrowingCopySchemaPayload{55, true}, {}}));
+  const auto borrowed = op.input_.selected_sample();
+  ASSERT_TRUE(borrowed);
+  EXPECT_EQ(borrowed->data().value, 55U);
+}
+
+// REQ: OPERATOR-056
+TEST(OperatorBindingConformance, ScalarBorrowRejectsMalformedEvidenceAndReleasesClaims) {
+  for (int fault = 0; fault < 6; ++fault) {
+    ScalarBorrowOperator op;
+    test::SyntheticOperatorFixture fixture{op};
+    ASSERT_TRUE(fixture.declare_ports());
+    detail::SyntheticInputState state{
+        .selection = {InputState::kSelected, SelectionReason::kNone},
+        .advertises_value = true,
+        .return_partial_scalar_read_claim = fault == 5,
+        .return_unexpected_scalar_read_claim = fault >= 4,
+        .omit_scalar_sample = fault == 0,
+        .omit_scalar_view_generation = fault == 1,
+        .zero_scalar_view_generation = fault == 2,
+        .mismatch_scalar_view_generation = fault == 3,
+    };
+    ASSERT_TRUE(fixture.bind_sample_state(op.input_, Sample<std::uint32_t>{55, {}}, state));
+    // More attempts than available claims proves complete and partial claims are released.
+    for (int attempt = 0; attempt < 4; ++attempt) {
+      const auto result = op.input_.selected_sample();
+      ASSERT_FALSE(result);
+      EXPECT_EQ(result.error().code, ErrorCode::kReceiveError);
+    }
+  }
 }
 
 // REQ: OPERATOR-015
@@ -2237,6 +2324,7 @@ TEST(OperatorBindingConformance, InputGuardsUseOneCanonicalPrecedence) {
 }
 
 // REQ: OPERATOR-020
+// REQ: OPERATOR-056
 TEST(OperatorBindingConformance, ReceiveAndReceiveDataShareClassificationPrecedence) {
   const auto check = [](detail::SyntheticInputState state, ErrorCode expected_code) {
     DataReadOperator op;
@@ -2245,20 +2333,26 @@ TEST(OperatorBindingConformance, ReceiveAndReceiveDataShareClassificationPrecede
     ASSERT_TRUE(fixture.bind_state(op.input_, state));
     const auto sample = op.input_.receive();
     const auto data = op.input_.receive_data();
+    const auto borrowed = op.input_.selected_sample();
     ASSERT_FALSE(sample);
     ASSERT_FALSE(data);
     EXPECT_EQ(sample.error().code, expected_code);
     EXPECT_EQ(data.error().code, expected_code);
+    ASSERT_FALSE(borrowed);
+    EXPECT_EQ(borrowed.error().code, expected_code);
   };
 
   {
     DataReadOperator op;
     const auto sample = op.input_.receive();
     const auto data = op.input_.receive_data();
+    const auto borrowed = op.input_.selected_sample();
     ASSERT_FALSE(sample);
     ASSERT_FALSE(data);
     EXPECT_EQ(sample.error().code, ErrorCode::kInputUndeclared);
     EXPECT_EQ(data.error().code, ErrorCode::kInputUndeclared);
+    ASSERT_FALSE(borrowed);
+    EXPECT_EQ(borrowed.error().code, ErrorCode::kInputUndeclared);
   }
 
   check(

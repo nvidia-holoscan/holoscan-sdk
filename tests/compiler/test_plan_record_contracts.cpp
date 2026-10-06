@@ -21,13 +21,12 @@ namespace holoscan::detail {
 namespace {
 
 [[nodiscard]] SchemaIdentityRecord schema_identity() {
-  SchemaIdentityRecord result{
+  return SchemaIdentityRecord{
       .canonical_name = "nvidia.holoscan.test.Schema",
-      .version = 3U,
+      .compatibility_epoch = 1U,
+      .family_id = derive_schema_family_id("nvidia.holoscan.test.Schema", 1U),
+      .file_identifier = make_flatbuffer_file_identifier("TPSC"),
   };
-  result.schema_sha256.front() = std::byte{0x31};
-  result.id.value.front() = std::byte{0x52};
-  return result;
 }
 
 [[nodiscard]] PayloadIdentityRecord pod_payload_identity() {
@@ -89,7 +88,7 @@ TEST(PlanRecordContracts, ComparesCompletePayloadIdentity) {
   };
   PayloadIdentityRecord same_schema = schema;
   PayloadIdentityRecord changed_schema = schema;
-  changed_schema.schema->version += 1U;
+  changed_schema.schema->compatibility_epoch += 1U;
   PayloadIdentityRecord pod = pod_payload_identity();
   PayloadIdentityRecord same_pod = pod;
   PayloadIdentityRecord changed_pod = pod;

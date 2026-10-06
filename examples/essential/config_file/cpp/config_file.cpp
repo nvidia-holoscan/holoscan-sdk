@@ -35,6 +35,8 @@
 #include <holoscan/params/rebind.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 
+#include "../../../common/temporary_workspace.hpp"
+
 namespace {
 
 using namespace std::chrono_literals;
@@ -44,13 +46,13 @@ constexpr std::size_t kSampleTarget = 6U;
 // A document that names BOTH the canonical field and its declared alias in one
 // object. Duplicate *keys* are a parse error (CONFIG_DUPLICATE_KEY); duplicate
 // *targets* -- two distinct keys resolving to the same schema field -- parse
-// fine and are rejected later by decode_overrides(), all-or-nothing.
+// fine and are rejected later by typed decoding, all-or-nothing.
 constexpr std::string_view kDuplicateTargetConfig =
     R"({"detector":{"threshold":9,"legacy_threshold":11}})";
 
 // The detector's typed parameters. Default member initializers are the
-// type-default baseline; set_params() below authors a graph-side baseline on
-// top; the config file then sparse-patches only the fields it names.
+// type-default baseline; try_decode() below uses an explicit application
+// baseline for fields absent from the file.
 struct DetectorParams {
   std::uint32_t threshold{4U};  // detection cutoff, patched by the config file
   float gain{1.0F};             // multiplier applied to every reading, patched by the file
@@ -220,7 +222,7 @@ struct ArchiveEvidence {
 };
 
 [[nodiscard]] std::optional<ArchiveEvidence> archive_and_restore_detector(
-    holoscan::Graph& graph, holoscan::RunSession& session) {
+    holoscan::RunSession& session) {
   // capture_params() needs the stopped frontier that wait() established.
   auto snapshot = session.capture_params();
   if (!snapshot) {
@@ -235,32 +237,24 @@ struct ArchiveEvidence {
     return std::nullopt;
   }
 
-  // Capture an explicit detector-only restore target before creating the
-  // archive. Archive source scope and destination authority are separate: a
-  // schema-less infrastructure operator outside this target is irrelevant,
-  // while an unknown or out-of-scope archive record still fails closed.
-  const auto admission = holoscan::params::ParamAdmissionContext::standard();
+  // Name the detector-only restore scope. Archive source scope and destination
+  // authority are separate: a schema-less infrastructure operator outside this
+  // scope is irrelevant, while an unknown archive record still fails closed.
   const auto detector_operator_path = holoscan::OperatorPath::parse("detector");
-  if (!admission || !detector_operator_path) {
+  if (!detector_operator_path) {
     std::cerr << "config_file: could not construct the detector restore scope\n";
     return std::nullopt;
   }
-  const auto restore_target = holoscan::params::make_param_rebind_target(
-      graph,
-      *admission,
-      holoscan::params::ParamRebindTargetScope::operator_(*detector_operator_path));
-  if (!restore_target) {
-    std::cerr << "config_file: target capture failed: " << restore_target.error().detail().token()
-              << '\n';
+  const auto restore_scope =
+      holoscan::params::ParamRebindTargetScope::operator_(*detector_operator_path);
+
+  const std::filesystem::path workspace = holoscan_examples::create_temporary_workspace();
+  if (workspace.empty()) {
+    std::cerr << "config_file: failed to create a private temporary workspace\n";
     return std::nullopt;
   }
-
-  const std::filesystem::path archive_path =
-      std::filesystem::temp_directory_path() /
-      ("config_file_snapshot_" +
-       std::to_string(static_cast<unsigned long long>(
-           std::chrono::steady_clock::now().time_since_epoch().count())) +
-       ".json");
+  const holoscan_examples::TemporaryWorkspaceCleanup workspace_cleanup{workspace};
+  const std::filesystem::path archive_path = workspace / "snapshot.json";
   const auto saved = holoscan::params::save(*detector_slice, archive_path);
   if (!saved) {
     std::cerr << "config_file: params::save failed: " << saved.error().detail().token() << '\n';
@@ -269,17 +263,25 @@ struct ArchiveEvidence {
   std::cout << "config_file: snapshot archived (" << saved->included_count
             << " persisted fields, strict JSON v1, atomic replace)\n";
 
-  // load_overrides() re-reads the archive and binds it to that immutable
-  // target -- the same ParamOverrideSet shape decode_overrides() produces.
-  const auto restored = holoscan::params::load_overrides(archive_path, *restore_target);
-  {
-    std::error_code ignored;
-    std::filesystem::remove(archive_path, ignored);
-    std::filesystem::remove(archive_path.string() + ".holoscan.tmp", ignored);
-  }
+  // Restore into a fresh graph because the original graph was already compiled and run.
+  holoscan::Graph restore_graph{"config-file-restore"};
+  auto restore_detector = restore_graph.op<Detector>("detector");
+  const auto restored =
+      holoscan::params::load_and_set_params(restore_graph, archive_path, restore_scope);
   if (!restored) {
-    std::cerr << "config_file: params::load_overrides failed: " << restored.error().detail().token()
-              << '\n';
+    std::cerr << "config_file: params::load_and_set_params failed: "
+              << restored.error().detail().token() << '\n';
+    return std::nullopt;
+  }
+
+  // Finish the graph after attachment to show that compilation uses the final graph.
+  const auto restore_source = restore_graph.op<SampleSource>("source");
+  restore_graph.add_flow(
+      restore_source->out, restore_detector->in, holoscan::ConnectionOptions{.queue_depth = 8U});
+  restore_graph.set_default_clock(restore_graph.add_clock<holoscan::RealtimeClock>("clock"));
+  const holoscan::ExecutionPlan restore_plan = holoscan::compile(restore_graph);
+  if (!restore_plan.ok()) {
+    std::cerr << "config_file: restored graph failed to compile: " << restore_plan.json() << '\n';
     return std::nullopt;
   }
 
@@ -287,23 +289,21 @@ struct ArchiveEvidence {
   // schema-less source is outside the explicit target and therefore has no
   // provenance entry; scope never follows the archive implicitly.
   ArchiveEvidence evidence{.saved = saved->included_count};
-  for (const auto& field : restored->provenance().fields) {
+  for (const auto& field : restored->fields) {
     if (field.disposition == holoscan::ParamFieldRebindDisposition::kContributed) {
       ++evidence.contributed;
     } else if (field.disposition == holoscan::ParamFieldRebindDisposition::kRetainedBaseline) {
       ++evidence.retained;
     }
   }
-  const bool restored_sparse =
-      restored->provenance().mode == holoscan::ParamRebindMode::kSparseContributions;
+  const bool restored_sparse = restored->mode == holoscan::ParamRebindMode::kSparseContributions;
   const bool detector_only =
-      restore_target->scope_kind() == holoscan::ParamRebindTargetScopeKind::kOperator &&
-      restore_target->scope_paths().size() == 1U &&
-      restore_target->scope_paths().front() == "detector";
+      restored->target_scope_kind == holoscan::ParamRebindTargetScopeKind::kOperator &&
+      restored->target_scope_paths.size() == 1U &&
+      restored->target_scope_paths.front() == "detector";
   std::cout << "config_file: detector-scoped overrides restored from archive ("
-            << restored->provenance().fields.size()
-            << " provenance fields: " << evidence.contributed << " archive-contributed, "
-            << evidence.retained
+            << restored->fields.size() << " provenance fields: " << evidence.contributed
+            << " archive-contributed, " << evidence.retained
             << " baseline-retained; mode=" << (restored_sparse ? "sparse" : "complete") << ")\n";
   if (!restored_sparse || !detector_only || evidence.contributed != 3U || evidence.retained != 0U) {
     std::cerr << "config_file: detector-scoped restore evidence did not match\n";
@@ -314,7 +314,7 @@ struct ArchiveEvidence {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv) try {
   DetectionObservation::reset();
 
   const std::optional<std::filesystem::path> config_dir = resolve_config_dir(argc, argv);
@@ -326,79 +326,51 @@ int main(int argc, char** argv) {
   // The loader never sniffs content or file extensions; you name the syntax.
   const auto json_doc =
       holoscan::config_io::load(*config_dir / "detector.json", holoscan::config_io::Format::kJson);
-  if (!json_doc) {
-    std::cerr << "config_file: detector.json failed to load: " << json_doc.error().token() << '\n';
-    return 1;
-  }
   const auto yaml_doc =
       holoscan::config_io::load(*config_dir / "detector.yaml", holoscan::config_io::Format::kYaml);
-  if (!yaml_doc) {
-    std::cerr << "config_file: detector.yaml failed to load: " << yaml_doc.error().token() << '\n';
-    return 1;
-  }
   // Same values, two syntaxes: the admitted YAML subset and strict JSON parse
   // to the same semantic tree, so their semantic digests are identical.
-  const bool digests_match =
-      json_doc->digest().semantic.sha256 == yaml_doc->digest().semantic.sha256;
+  const bool digests_match = json_doc.digest().semantic.sha256 == yaml_doc.digest().semantic.sha256;
   std::cout << "config_file: loaded detector.json and detector.yaml (semantic digests "
             << (digests_match ? "match" : "differ") << ")\n";
   if (!digests_match) {
     return 1;
   }
 
-  // ---- Compose: graph structure plus an authored baseline ----------------
+  // ---- Decode: configuration becomes one prepared typed value ------------
+  const DetectorParams detector_baseline{.threshold = 6U, .gain = 1.0F, .window = 8U};
+  auto detector_params =
+      holoscan::params::try_decode<DetectorParams>(json_doc, "/detector", detector_baseline);
+  if (!detector_params) {
+    std::cerr << "config_file: detector.json rejected: " << detector_params.error().token() << '\n';
+    return 1;
+  }
+
+  // ---- Compose: graph structure plus prepared parameters -----------------
   holoscan::Graph graph{"config-file"};
   const auto source = graph.op<SampleSource>("source");
   auto detector = graph.op<Detector>("detector");
+  detector.set_params(std::move(*detector_params));
   graph.add_flow(source->out, detector->in, holoscan::ConnectionOptions{.queue_depth = 8U});
   graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("clock"));
-  // Authored generation-0 baseline. The file below patches threshold and gain
-  // but never names window -- window must survive at 8.
-  detector.set_params(DetectorParams{.threshold = 6U, .gain = 1.0F, .window = 8U});
-
-  // ---- Bind + decode: document values become typed overrides -------------
-  // Two deliberately different grammars meet here: the operator target comes
-  // from the handle; the document path is an RFC 6901 JSON Pointer. Neither
-  // is ever inferred from the other, and dots are never separators.
-  auto detector_path = holoscan::config::Path::parse("/detector");
-  if (!detector_path) {
-    std::cerr << "config_file: /detector is not a valid JSON Pointer: "
-              << detector_path.error().token() << '\n';
-    return 1;
-  }
-  auto overrides = holoscan::params::decode_overrides(
-      *json_doc, {holoscan::params::bind(detector, std::move(*detector_path))});
-  if (!overrides) {
-    std::cerr << "config_file: decode_overrides rejected detector.json: "
-              << overrides.error().token() << '\n';
-    return 1;
-  }
-  std::cout << "config_file: decoded " << overrides->provenance().config_fields.size()
-            << " field contributions from /detector (sparse patch)\n";
+  std::cout << "config_file: decoded typed parameters from /detector\n";
 
   // ---- Duplicate-target rejection: all-or-nothing decoding ---------------
   // "threshold" and its alias "legacy_threshold" are distinct document keys
-  // but one schema field; decode_overrides rejects the whole transaction.
+  // but one schema field; typed decoding rejects the whole object.
   const auto duplicate_doc =
       holoscan::config_io::parse(kDuplicateTargetConfig, holoscan::config_io::Format::kJson);
-  if (!duplicate_doc) {
-    std::cerr << "config_file: duplicate-demo document failed to parse: "
-              << duplicate_doc.error().token() << '\n';
-    return 1;
-  }
-  const auto duplicate = holoscan::params::decode_overrides(
-      *duplicate_doc, {holoscan::params::bind(detector, "/detector")});
+  const auto duplicate =
+      holoscan::params::try_decode<DetectorParams>(duplicate_doc, "/detector", detector_baseline);
   if (duplicate.has_value()) {
     std::cerr << "config_file: expected the canonical+alias document to be rejected\n";
     return 1;
   }
   std::cout << "config_file: canonical+alias contribution rejected: " << duplicate.error().token()
-            << " (no partial override set)\n";
+            << " (no partial parameter input)\n";
 
-  // ---- Compile: overrides enter through CompileOptions -------------------
-  holoscan::CompileOptions options;
-  options.parameter_overrides = std::move(*overrides);
-  const holoscan::ExecutionPlan plan = holoscan::compile(graph, std::move(options));
+  // ---- Compile: validate the final graph and prepared parameters ----------
+  const holoscan::ExecutionPlan plan = holoscan::compile(graph);
   if (!plan.ok()) {
     std::cerr << plan.json() << '\n';
     return 1;
@@ -427,8 +399,8 @@ int main(int argc, char** argv) {
     effective = DetectionObservation::effective;
     detections = DetectionObservation::detections;
   }
-  // Sparse patch, proven from inside compute(): file values landed, and the
-  // un-named window kept its authored baseline.
+  // Typed decode, proven from inside compute(): file values landed, and the
+  // unnamed window kept its explicit decode baseline.
   if (effective.threshold != 9U || effective.gain != 2.5F || effective.window != 8U) {
     std::cerr << "config_file: unexpected effective params: threshold=" << effective.threshold
               << " gain=" << effective.gain << " window=" << effective.window << '\n';
@@ -436,10 +408,10 @@ int main(int argc, char** argv) {
   }
   std::cout << "config_file: effective params: threshold=" << effective.threshold
             << " gain=" << effective.gain << " window=" << effective.window
-            << " (window preserved from the authored baseline)\n";
+            << " (window preserved from the decode baseline)\n";
 
   // ---- Persist: snapshot the stopped run, archive it, restore it ---------
-  const auto archive = archive_and_restore_detector(graph, session);
+  const auto archive = archive_and_restore_detector(session);
   if (!archive) {
     return 2;
   }
@@ -450,4 +422,7 @@ int main(int argc, char** argv) {
             << " contributed=" << archive->contributed << " retained=" << archive->retained
             << ") detections=" << detections << "/" << kSampleTarget << " termination=stopped\n";
   return 0;
+} catch (const holoscan::config::ConfigException& exception) {
+  std::cerr << "config_file: " << exception.what() << '\n';
+  return 1;
 }

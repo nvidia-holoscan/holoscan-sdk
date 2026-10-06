@@ -352,7 +352,7 @@ bool TrtInfer::initialize_parameters() {
         nvinfer1::Dims in_dimensions;
         in_dimensions.nbDims = dims.nbDims;
 
-        for (size_t in = 0; in < dims.nbDims; in++) {
+        for (int in = 0; in < dims.nbDims; in++) {
           in_dimensions.d[in] = dims.d[in];
         }
 
@@ -363,7 +363,7 @@ bool TrtInfer::initialize_parameters() {
         }
 
         std::vector<int64_t> indim;
-        for (size_t in = 0; in < dims.nbDims; in++) {
+        for (int in = 0; in < dims.nbDims; in++) {
           indim.push_back(dims.d[in]);
         }
         input_dims_.push_back(std::move(indim));
@@ -373,7 +373,7 @@ bool TrtInfer::initialize_parameters() {
       } break;
       case nvinfer1::TensorIOMode::kOUTPUT: {
         std::vector<int64_t> outdim;
-        for (size_t in = 0; in < dims.nbDims; in++) {
+        for (int in = 0; in < dims.nbDims; in++) {
           outdim.push_back(dims.d[in]);
         }
 

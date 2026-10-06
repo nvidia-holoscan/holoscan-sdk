@@ -4,12 +4,15 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <concepts>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 
 #include <cuda_runtime_api.h>
@@ -30,6 +33,8 @@
 #include <holoscan/core/sample.hpp>
 #include <holoscan/core/temporal_contract.hpp>
 #include <holoscan/core/tensor_output_loan.hpp>
+#include <holoscan/sensor_io/image_metadata.hpp>
+#include <holoscan/sensor_io/sensor_schema_package.hpp>
 #include <holoscan/time/realtime_clock.hpp>
 #include <holoscan/vision/convert_to_op.hpp>
 #include <holoscan/vision/copy_make_border_op.hpp>
@@ -98,6 +103,7 @@ struct PipelineObservation {
     shape.fill(0);
     dtype = {};
     metadata = {};
+    image = {};
     failure.reset();
     complete = false;
   }
@@ -112,13 +118,15 @@ struct PipelineObservation {
 
   static void record(std::span<const std::uint8_t> result,
                      std::span<const std::int64_t, 3U> result_shape, DLDataType result_dtype,
-                     SampleMetadata result_metadata) {
+                     SampleMetadata result_metadata, const schema::ImageT& result_image) {
     {
       const std::lock_guard lock(mutex);
       std::ranges::copy(result, values.begin());
       std::ranges::copy(result_shape, shape.begin());
       dtype = result_dtype;
       metadata = result_metadata;
+      image = result_image;
+      image.data.reset();
       complete = true;
     }
     ready.notify_all();
@@ -135,6 +143,7 @@ struct PipelineObservation {
   static inline std::array<std::int64_t, 3U> shape{};
   static inline DLDataType dtype{};
   static inline SampleMetadata metadata{};
+  static inline schema::ImageT image{};
   static inline std::optional<ErrorCode> failure;
   static inline bool complete{};
 };
@@ -142,6 +151,33 @@ struct PipelineObservation {
 [[nodiscard]] expected<void, Error> pipeline_failure(ErrorCode code) {
   PipelineObservation::fail(code);
   return make_unexpected(Error{code});
+}
+
+[[nodiscard]] schema::ImageT image_descriptor(schema::ImageEncoding encoding) {
+  schema::ImageT descriptor;
+  descriptor.width = 4;
+  descriptor.height = 4;
+  descriptor.encoding = encoding;
+  descriptor.color_space = schema::ColorSpace_SRGB;
+  descriptor.significant_bits = 7;
+  descriptor.roi_offset_x = 10;
+  descriptor.roi_offset_y = 20;
+  descriptor.exposure_time_ns = 123;
+  descriptor.gain = 2.F;
+  descriptor.header = std::make_shared<schema::HeaderT>();
+  descriptor.header->capture_timestamp_ns = 321;
+  descriptor.header->device_sequence = 99;
+  descriptor.header->frame_id = "camera";
+  return descriptor;
+}
+
+void expect_source_metadata(const schema::ImageT& image) {
+  ASSERT_NE(image.header, nullptr);
+  EXPECT_EQ(image.header->capture_timestamp_ns, 321);
+  EXPECT_EQ(image.header->device_sequence, 99U);
+  EXPECT_EQ(image.header->frame_id, "camera");
+  EXPECT_EQ(image.exposure_time_ns, 123);
+  EXPECT_EQ(image.gain, 2.F);
 }
 
 class ImageSource final : public Operator<> {
@@ -152,6 +188,7 @@ class ImageSource final : public Operator<> {
     const std::size_t maximum_byte_span =
         fixture_ == ImageFixture::kTwoChannel ? kTwoChannelInputValues.size() : kInputValues.size();
     spec.output(output, "output")
+        .tensor_field(schema::ImageTensorFields::data)
         .produces_tensor(TensorOutputSpec{
             .representation = kInputTensorRepresentation,
             .bounds =
@@ -202,18 +239,22 @@ class ImageSource final : public Operator<> {
     if (!committed) {
       return pipeline_failure(committed.error().code);
     }
-    auto emitted = output.emit(std::move(*loan),
-                               EmitOptions{.capture_time = context.activation_time(),
-                                           .frame_id = kFrameId,
-                                           .trace = TraceContext::root(kTraceId),
-                                           .flags = SampleFlags::kDegraded});
+    const auto descriptor =
+        image_descriptor(fixture_ == ImageFixture::kTwoChannel ? schema::ImageEncoding_CUSTOM
+                                                               : schema::ImageEncoding_MONO8);
+    auto emitted = output.emit_tensor(std::move(*loan),
+                                      descriptor,
+                                      EmitOptions{.capture_time = context.activation_time(),
+                                                  .frame_id = kFrameId,
+                                                  .trace = TraceContext::root(kTraceId),
+                                                  .flags = SampleFlags::kDegraded});
     if (!emitted) {
       return pipeline_failure(emitted.error().code);
     }
     return {};
   }
 
-  Output<Tensor> output{"output"};
+  Output<schema::ImageT> output{"output"};
 
  private:
   ImageFixture fixture_;
@@ -227,6 +268,7 @@ class ImageSink final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.input(input, "input")
         .queue_depth(1U)
+        .tensor_field(schema::ImageTensorFields::data)
         .expects_tensor(TensorInputSpec{.representation = kCudaTensorRepresentation});
   }
 
@@ -241,17 +283,21 @@ class ImageSink final : public Operator<> {
     if (!sample) {
       return pipeline_failure(sample.error().code);
     }
-    const std::span<const std::int64_t> received_shape = sample->data.shape_span();
+    if (!sample->data.data) {
+      return pipeline_failure(ErrorCode::kInvalidArgument);
+    }
+    const std::span<const std::int64_t> received_shape = sample->data.data->shape_span();
     const std::int64_t expected_channels = fixture_ == ImageFixture::kTwoChannel ? 2 : 1;
     const std::size_t expected_byte_size = static_cast<std::size_t>(4 * expected_channels);
     if (received_shape.size() != 3U || received_shape[0] != 2 || received_shape[1] != 2 ||
-        received_shape[2] != expected_channels || sample->data.nbytes() != expected_byte_size ||
-        sample->data.device().device_type != kDLCUDA) {
+        received_shape[2] != expected_channels ||
+        sample->data.data->nbytes() != expected_byte_size ||
+        sample->data.data->device().device_type != kDLCUDA) {
       return pipeline_failure(ErrorCode::kInvalidArgument);
     }
 
     std::array<std::uint8_t, 8U> host{};
-    auto copied = sample->data.copy_to_host_async(
+    auto copied = sample->data.data->copy_to_host_async(
         host.data(), expected_byte_size, context.cuda_stream().get());
     if (!copied) {
       return pipeline_failure(copied.error().code);
@@ -262,18 +308,83 @@ class ImageSink final : public Operator<> {
     const std::span<const std::int64_t, 3U> fixed_shape{received_shape.data(), 3U};
     PipelineObservation::record(std::span<const std::uint8_t>{host}.first(expected_byte_size),
                                 fixed_shape,
-                                sample->data.dtype(),
-                                sample->metadata);
+                                sample->data.data->dtype(),
+                                sample->metadata,
+                                sample->data);
     return {};
   }
 
-  Input<Tensor> input{"input"};
+  Input<schema::ImageT> input{"input"};
 
  private:
   ImageFixture fixture_;
 };
 
-TEST(VisionPipeline, ResizeUsesPlanOwnedCudaTensorAndForwardsMetadata) {
+[[nodiscard]] std::optional<std::uint64_t> allocation_byte_span(const ExecutionPlan& plan,
+                                                                std::string_view operator_path) {
+  const auto vertex =
+      std::ranges::find(plan.graph().vertices(), operator_path, &VertexRecord::name);
+  if (vertex == plan.graph().vertices().end()) {
+    return std::nullopt;
+  }
+  const auto port = std::ranges::find_if(plan.ports(), [&](const PortPlanRecord& candidate) {
+    return candidate.owner == vertex->id && candidate.direction == PortDirection::kOutput &&
+           candidate.local_name == "output";
+  });
+  if (port == plan.ports().end()) {
+    return std::nullopt;
+  }
+  const auto allocation =
+      std::ranges::find(plan.tensor_allocations(), port->id, &TensorAllocationPlanRecord::output);
+  if (allocation == plan.tensor_allocations().end()) {
+    return std::nullopt;
+  }
+  return allocation->bounds.max_byte_span;
+}
+
+[[nodiscard]] ExecutionPlan compile_input_derived_pipeline(VisionElementType output_type) {
+  Graph graph{"vision-input-derived-capacity-test"};
+  const auto source = graph.op<ImageSource>("source");
+  const auto normalize = graph.op<NormalizeOp>("normalize");
+  const auto reformat = graph.op<ReformatOp>("reformat");
+  auto convert = graph.op<ConvertToOp>("convert");
+  convert.set_params(ConvertToOpParams{.output_type = output_type});
+  graph.add_flow(source->output, normalize->input);
+  graph.add_flow(normalize->output, reformat->input);
+  graph.add_flow(reformat->output, convert->input);
+  graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-clock"));
+
+  CompileOptions options;
+  for (const char* operator_path : {"source", "normalize", "reformat", "convert"}) {
+    options.deployment.bind_tensor_output_device(TensorOutputDevicePlacement{
+        .operator_path = operator_path, .output_port = "output", .device = DeviceId{0}});
+  }
+  return compile(graph, std::move(options));
+}
+
+// REQ: COMPILE-067
+// REQ: COMPILE-077
+// REQ: VISION-002
+TEST(VisionPipeline, ShapePreservingCapacityTracksInputAndConvertedElementSize) {
+  // Key setup: compile the same bounded graph with one- and eight-byte ConvertTo output types.
+  //
+  //   source(U8, 16 B) -> normalize -> reformat -> convert(U8 or F64)
+  const ExecutionPlan u8 = compile_input_derived_pipeline(VisionElementType::kU8);
+  const ExecutionPlan f64 = compile_input_derived_pipeline(VisionElementType::kF64);
+  ASSERT_TRUE(u8.ok()) << u8.json();
+  ASSERT_TRUE(f64.ok()) << f64.json();
+
+  // Key assertion: shape/dtype-preserving operators inherit 16 bytes, while ConvertTo multiplies
+  // the producer bound by the selected output element size rather than sizeof(double) always.
+  EXPECT_EQ(allocation_byte_span(u8, "normalize"), 16U);
+  EXPECT_EQ(allocation_byte_span(u8, "reformat"), 16U);
+  EXPECT_EQ(allocation_byte_span(u8, "convert"), 16U);
+  EXPECT_EQ(allocation_byte_span(f64, "normalize"), 16U);
+  EXPECT_EQ(allocation_byte_span(f64, "reformat"), 16U);
+  EXPECT_EQ(allocation_byte_span(f64, "convert"), 128U);
+}
+
+void check_resize_pipeline(std::optional<float> stddev_scale = std::nullopt) {
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0 ||
       cudaSetDevice(0) != cudaSuccess || cudaFree(nullptr) != cudaSuccess) {
@@ -284,12 +395,19 @@ TEST(VisionPipeline, ResizeUsesPlanOwnedCudaTensorAndForwardsMetadata) {
   PipelineObservation::reset();
   Graph graph{"vision-resize-test"};
   const auto source = graph.op<ImageSource>("source");
-  auto resize = graph.op<ResizeOp>(
-      "resize", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto resize = graph.op<ResizeOp>("resize");
   resize.set_params(
       ResizeOpParams{.width = 2, .height = 2, .interpolation = InterpolationMode::kNearest});
   const auto sink = graph.op<ImageSink>("sink");
-  graph.add_flow(source->output, resize->input);
+  if (stddev_scale) {
+    auto normalize = graph.op<NormalizeOp>("normalize");
+    normalize.set_params(NormalizeOpParams{
+        .base = {0.F}, .scale = {*stddev_scale}, .epsilon = 0.F, .scale_is_stddev = true});
+    graph.add_flow(source->output, normalize->input);
+    graph.add_flow(normalize->output, resize->input);
+  } else {
+    graph.add_flow(source->output, resize->input);
+  }
   graph.add_flow(resize->output, sink->input);
   graph.set_default_clock(graph.add_clock<RealtimeClock>("runtime-clock"));
 
@@ -299,9 +417,13 @@ TEST(VisionPipeline, ResizeUsesPlanOwnedCudaTensorAndForwardsMetadata) {
           .operator_path = "source", .output_port = "output", .device = DeviceId{0}})
       .bind_tensor_output_device(TensorOutputDevicePlacement{
           .operator_path = "resize", .output_port = "output", .device = DeviceId{0}});
+  if (stddev_scale) {
+    options.deployment.bind_tensor_output_device(TensorOutputDevicePlacement{
+        .operator_path = "normalize", .output_port = "output", .device = DeviceId{0}});
+  }
   const ExecutionPlan plan = compile(graph, std::move(options));
   ASSERT_TRUE(plan.ok()) << plan.json();
-  ASSERT_EQ(plan.tensor_allocations().size(), 2U);
+  ASSERT_EQ(plan.tensor_allocations().size(), stddev_scale ? 3U : 2U);
 
   RunSession session = run_async(plan);
   const bool observed = PipelineObservation::wait();
@@ -324,8 +446,29 @@ TEST(VisionPipeline, ResizeUsesPlanOwnedCudaTensorAndForwardsMetadata) {
   EXPECT_EQ(PipelineObservation::metadata.frame_id, kFrameId);
   EXPECT_EQ(PipelineObservation::metadata.trace_id, kTraceId);
   EXPECT_TRUE(PipelineObservation::metadata.degraded());
+  expect_source_metadata(PipelineObservation::image);
+  EXPECT_EQ(PipelineObservation::image.width, 2);
+  EXPECT_EQ(PipelineObservation::image.height, 2);
+  EXPECT_EQ(PipelineObservation::image.encoding, schema::ImageEncoding_MONO8);
+  EXPECT_EQ(PipelineObservation::image.color_space, schema::ColorSpace_SRGB);
+  EXPECT_EQ(PipelineObservation::image.significant_bits, 7U);
+  EXPECT_EQ(PipelineObservation::image.roi_offset_x, 0);
+  EXPECT_EQ(PipelineObservation::image.roi_offset_y, 0);
+  EXPECT_TRUE(PipelineObservation::image.plane_layouts.empty());
 }
 
+// REQ: VISION-007
+TEST(VisionPipeline, ResizeUsesPlanOwnedCudaTensorAndForwardsMetadata) {
+  check_resize_pipeline();
+}
+
+// REQ: VISION-007
+TEST(VisionPipeline, IdentityStandardDeviationNormalizationPreservesImageMetadata) {
+  check_resize_pipeline(1.F);
+  check_resize_pipeline(-1.F);
+}
+
+// REQ: VISION-005
 TEST(VisionPipeline, ChainsCubicResizeAndCustomCropWithoutStaging) {
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0 ||
@@ -337,12 +480,10 @@ TEST(VisionPipeline, ChainsCubicResizeAndCustomCropWithoutStaging) {
   PipelineObservation::reset();
   Graph graph{"vision-chain-test"};
   const auto source = graph.op<ImageSource>("source");
-  auto resize = graph.op<ResizeOp>(
-      "resize", VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
+  auto resize = graph.op<ResizeOp>("resize");
   resize.set_params(
       ResizeOpParams{.width = 4, .height = 4, .interpolation = InterpolationMode::kCubic});
-  auto crop = graph.op<CustomCropOp>(
-      "crop", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto crop = graph.op<CustomCropOp>("crop");
   crop.set_params(CustomCropOpParams{.x = 1, .y = 1, .width = 2, .height = 2});
   const auto sink = graph.op<ImageSink>("sink");
   graph.add_flow(source->output, resize->input);
@@ -383,8 +524,18 @@ TEST(VisionPipeline, ChainsCubicResizeAndCustomCropWithoutStaging) {
   EXPECT_EQ(PipelineObservation::metadata.frame_id, kFrameId);
   EXPECT_EQ(PipelineObservation::metadata.trace_id, kTraceId);
   EXPECT_TRUE(PipelineObservation::metadata.degraded());
+  expect_source_metadata(PipelineObservation::image);
+  EXPECT_EQ(PipelineObservation::image.width, 2);
+  EXPECT_EQ(PipelineObservation::image.height, 2);
+  EXPECT_EQ(PipelineObservation::image.encoding, schema::ImageEncoding_MONO8);
+  EXPECT_EQ(PipelineObservation::image.color_space, schema::ColorSpace_SRGB);
+  EXPECT_EQ(PipelineObservation::image.significant_bits, 7U);
+  EXPECT_EQ(PipelineObservation::image.roi_offset_x, 11);
+  EXPECT_EQ(PipelineObservation::image.roi_offset_y, 21);
+  EXPECT_TRUE(PipelineObservation::image.plane_layouts.empty());
 }
 
+// REQ: VISION-004
 TEST(VisionPipeline, CustomCropProcessesTwoChannelInput) {
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0 ||
@@ -396,8 +547,7 @@ TEST(VisionPipeline, CustomCropProcessesTwoChannelInput) {
   PipelineObservation::reset();
   Graph graph{"vision-two-channel-crop-test"};
   const auto source = graph.op<ImageSource>("source", ImageFixture::kTwoChannel);
-  auto crop = graph.op<CustomCropOp>(
-      "crop", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto crop = graph.op<CustomCropOp>("crop");
   crop.set_params(CustomCropOpParams{.x = 1, .y = 1, .width = 2, .height = 2});
   const auto sink = graph.op<ImageSink>("sink", ImageFixture::kTwoChannel);
   graph.add_flow(source->output, crop->input);
@@ -435,6 +585,15 @@ TEST(VisionPipeline, CustomCropProcessesTwoChannelInput) {
   EXPECT_EQ(PipelineObservation::metadata.frame_id, kFrameId);
   EXPECT_EQ(PipelineObservation::metadata.trace_id, kTraceId);
   EXPECT_TRUE(PipelineObservation::metadata.degraded());
+  expect_source_metadata(PipelineObservation::image);
+  EXPECT_EQ(PipelineObservation::image.width, 2);
+  EXPECT_EQ(PipelineObservation::image.height, 2);
+  EXPECT_EQ(PipelineObservation::image.encoding, schema::ImageEncoding_CUSTOM);
+  EXPECT_EQ(PipelineObservation::image.color_space, schema::ColorSpace_SRGB);
+  EXPECT_EQ(PipelineObservation::image.significant_bits, 7U);
+  EXPECT_EQ(PipelineObservation::image.roi_offset_x, 11);
+  EXPECT_EQ(PipelineObservation::image.roi_offset_y, 21);
+  EXPECT_TRUE(PipelineObservation::image.plane_layouts.empty());
 }
 
 constexpr DLDataType kS16{kDLInt, 16U, 1U};
@@ -489,6 +648,7 @@ struct FullPipelineObservation {
     mask_metadata = {};
     failure.reset();
     image_count = 0U;
+    rgb_layout_count = 0U;
     image_values_match = true;
     mask_complete = false;
   }
@@ -516,6 +676,14 @@ struct FullPipelineObservation {
     ready.notify_all();
   }
 
+  static void record_rgb_layout() {
+    {
+      const std::lock_guard lock(mutex);
+      ++rgb_layout_count;
+    }
+    ready.notify_all();
+  }
+
   static void record_mask(std::span<const std::uint8_t, 3U> values,
                           std::span<const std::int64_t, 2U> shape, DLDataType dtype,
                           SampleMetadata metadata) {
@@ -533,7 +701,9 @@ struct FullPipelineObservation {
   [[nodiscard]] static bool wait() {
     std::unique_lock lock(mutex);
     return ready.wait_for(lock, 5s, [] {
-      return (image_count == kStaticMapImageCount && mask_complete) || failure.has_value();
+      return (image_count == kStaticMapImageCount &&
+              rgb_layout_count == 2U * kStaticMapImageCount && mask_complete) ||
+             failure.has_value();
     });
   }
 
@@ -549,6 +719,7 @@ struct FullPipelineObservation {
   static inline SampleMetadata mask_metadata{};
   static inline std::optional<ErrorCode> failure;
   static inline std::size_t image_count{};
+  static inline std::size_t rgb_layout_count{};
   static inline bool image_values_match{true};
   static inline bool mask_complete{};
 };
@@ -558,10 +729,21 @@ struct FullPipelineObservation {
   return make_unexpected(Error{code});
 }
 
+struct PipelineProvenance {
+  SampleFlags image_flags{SampleFlags::kDegraded};
+  SampleFlags scores_flags{SampleFlags::kDegraded};
+  SampleFlags map_flags{SampleFlags::kDegraded};
+  std::uint64_t scores_frame{kFrameId};
+  std::uint64_t scores_trace{kTraceId};
+};
+
 class FullPipelineSource final : public Operator<> {
  public:
+  explicit FullPipelineSource(PipelineProvenance provenance = {}) : provenance_(provenance) {}
+
   void setup(OperatorSpec& spec) override {
     spec.output(image, "image")
+        .tensor_field(schema::ImageTensorFields::data)
         .produces_tensor(TensorOutputSpec{
             .representation = kColorImageTensorRepresentation,
             .bounds =
@@ -619,39 +801,64 @@ class FullPipelineSource final : public Operator<> {
       return full_pipeline_failure(ErrorCode::kNotSupported);
     }
     const auto capture_time = context.activation_time();
-    if (auto result = emit_tensor(
-            image, kColorImageShape, kColorImageValues, kU8, capture_time, context.cuda_stream());
+    if (auto result = emit_tensor(image,
+                                  kColorImageShape,
+                                  kColorImageValues,
+                                  kU8,
+                                  capture_time,
+                                  context.cuda_stream(),
+                                  provenance_.image_flags);
         !result) {
       return result;
     }
     if (activation_index != 0U) {
       return {};
     }
-    if (auto result =
-            emit_tensor(map, kMapShape, kMapValues, kF32, capture_time, context.cuda_stream());
+    if (auto result = emit_tensor(map,
+                                  kMapShape,
+                                  kMapValues,
+                                  kF32,
+                                  capture_time,
+                                  context.cuda_stream(),
+                                  provenance_.map_flags,
+                                  kFrameId + 1,
+                                  kTraceId + 1);
         !result) {
       return result;
     }
-    if (auto result = emit_tensor(
-            boxes, kBoxesShape, kBoxesValues, kS16, capture_time, context.cuda_stream());
+    if (auto result = emit_tensor(boxes,
+                                  kBoxesShape,
+                                  kBoxesValues,
+                                  kS16,
+                                  capture_time,
+                                  context.cuda_stream(),
+                                  provenance_.image_flags);
         !result) {
       return result;
     }
-    return emit_tensor(
-        scores, kScoresShape, kScoresValues, kF32, capture_time, context.cuda_stream());
+    return emit_tensor(scores,
+                       kScoresShape,
+                       kScoresValues,
+                       kF32,
+                       capture_time,
+                       context.cuda_stream(),
+                       provenance_.scores_flags,
+                       provenance_.scores_frame,
+                       provenance_.scores_trace);
   }
 
-  Output<Tensor> image{"image"};
+  Output<schema::ImageT> image{"image"};
   Output<Tensor> map{"map"};
   Output<Tensor> boxes{"boxes"};
   Output<Tensor> scores{"scores"};
 
  private:
-  template <typename T, std::size_t Rank, std::size_t Size>
+  template <typename Published, typename T, std::size_t Rank, std::size_t Size>
   [[nodiscard]] static expected<void, Error> emit_tensor(
-      Output<Tensor>& output, const std::array<std::int64_t, Rank>& shape,
+      Output<Published>& output, const std::array<std::int64_t, Rank>& shape,
       const std::array<T, Size>& values, DLDataType dtype, TimePoint capture_time,
-      ::cuda::stream_ref stream) {
+      ::cuda::stream_ref stream, SampleFlags flags, std::uint64_t frame_id = kFrameId,
+      std::uint64_t trace_id = kTraceId) {
     auto loan = output.allocate_tensor(TensorLoanRequest{.shape = shape, .dtype = dtype});
     if (!loan) {
       return full_pipeline_failure(loan.error().code);
@@ -670,11 +877,18 @@ class FullPipelineSource final : public Operator<> {
     if (!committed) {
       return full_pipeline_failure(committed.error().code);
     }
-    auto emitted = output.emit(std::move(*loan),
-                               EmitOptions{.capture_time = capture_time,
-                                           .frame_id = kFrameId,
-                                           .trace = TraceContext::root(kTraceId),
-                                           .flags = SampleFlags::kDegraded});
+    const EmitOptions metadata{.capture_time = capture_time,
+                               .frame_id = frame_id,
+                               .trace = TraceContext::root(trace_id),
+                               .flags = flags};
+    auto emitted = [&]() -> expected<void, Error> {
+      if constexpr (std::same_as<Published, Tensor>) {
+        return output.emit(std::move(*loan), metadata);
+      } else {
+        const auto descriptor = image_descriptor(schema::ImageEncoding_RGB8);
+        return output.emit_tensor(std::move(*loan), descriptor, metadata);
+      }
+    }();
     if (!emitted) {
       return full_pipeline_failure(emitted.error().code);
     }
@@ -682,21 +896,22 @@ class FullPipelineSource final : public Operator<> {
   }
 
   std::size_t activation_count_{};
+  PipelineProvenance provenance_;
 };
 
+// REQ: COMPILE-077
+// REQ: VISION-011
 TEST(RemapOp, ExactMapSynchronizationCompilesToAlignedExactSelections) {
-  constexpr std::int32_t kMaxOutputWidth = 3;
-  constexpr std::int32_t kMaxOutputHeight = 5;
+  constexpr std::int32_t kOutputWidth = 2;
+  constexpr std::int32_t kOutputHeight = 2;
   constexpr std::uint32_t kMaxBatchSize = 2U;
   Graph graph{"vision-remap-exact-contract-test"};
   const auto source = graph.op<FullPipelineSource>("source");
-  auto remap = graph.op<RemapOp>("remap",
-                                 VisionImageCapacity{.max_width = kMaxOutputWidth,
-                                                     .max_height = kMaxOutputHeight,
-                                                     .max_batch_size = kMaxBatchSize});
+  auto remap = graph.op<RemapOp>("remap");
   remap.set_params(RemapOpParams{
-      .width = 2,
-      .height = 2,
+      .width = kOutputWidth,
+      .height = kOutputHeight,
+      .max_batch_size = kMaxBatchSize,
       .input_interpolation = InterpolationMode::kNearest,
       .map_interpolation = InterpolationMode::kNearest,
       .map_value_mode = RemapMapValueMode::kAbsolute,
@@ -736,8 +951,8 @@ TEST(RemapOp, ExactMapSynchronizationCompilesToAlignedExactSelections) {
       plan.tensor_allocations(), remap_output->id, &TensorAllocationPlanRecord::output);
   ASSERT_NE(remap_allocation, plan.tensor_allocations().end());
   EXPECT_EQ(remap_allocation->bounds.max_byte_span,
-            4U * static_cast<std::size_t>(kMaxOutputWidth) *
-                static_cast<std::size_t>(kMaxOutputHeight) * kMaxBatchSize);
+            4U * static_cast<std::size_t>(kOutputWidth) * static_cast<std::size_t>(kOutputHeight) *
+                kMaxBatchSize);
   ASSERT_EQ(plan.aligned_triggers().size(), 1U);
   const AlignedTriggerPlanRecord& aligned = plan.aligned_triggers().front();
   EXPECT_EQ(aligned.inclusive_window_ns, 0);
@@ -803,6 +1018,7 @@ class RemapRefreshSource final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
     spec.output(image, "image")
+        .tensor_field(schema::ImageTensorFields::data)
         .produces_tensor(TensorOutputSpec{
             .representation = kColorImageTensorRepresentation,
             .bounds =
@@ -857,13 +1073,13 @@ class RemapRefreshSource final : public Operator<> {
         image, kColorImageShape, kColorImageValues, kU8, capture_time, context.cuda_stream());
   }
 
-  Output<Tensor> image{"image"};
+  Output<schema::ImageT> image{"image"};
   Output<Tensor> map{"map"};
 
  private:
-  template <typename T, std::size_t Rank, std::size_t Size>
+  template <typename Published, typename T, std::size_t Rank, std::size_t Size>
   [[nodiscard]] static expected<void, Error> emit_tensor(
-      Output<Tensor>& output, const std::array<std::int64_t, Rank>& shape,
+      Output<Published>& output, const std::array<std::int64_t, Rank>& shape,
       const std::array<T, Size>& values, DLDataType dtype, TimePoint capture_time,
       ::cuda::stream_ref stream) {
     auto loan = output.allocate_tensor(TensorLoanRequest{.shape = shape, .dtype = dtype});
@@ -884,7 +1100,15 @@ class RemapRefreshSource final : public Operator<> {
     if (!committed) {
       return remap_refresh_failure(committed.error().code);
     }
-    auto emitted = output.emit(std::move(*loan), EmitOptions{.capture_time = capture_time});
+    auto emitted = [&]() -> expected<void, Error> {
+      const EmitOptions metadata{.capture_time = capture_time};
+      if constexpr (std::same_as<Published, schema::ImageT>) {
+        return output.emit_tensor(
+            std::move(*loan), image_descriptor(schema::ImageEncoding_RGB8), metadata);
+      } else {
+        return output.emit(std::move(*loan), metadata);
+      }
+    }();
     if (!emitted) {
       return remap_refresh_failure(emitted.error().code);
     }
@@ -899,6 +1123,7 @@ class RemapRefreshSink final : public Operator<> {
   void setup(OperatorSpec& spec) override {
     spec.input(input, "input")
         .queue_depth(1U)
+        .tensor_field(schema::ImageTensorFields::data)
         .expects_tensor(TensorInputSpec{.representation = kCudaTensorRepresentation});
   }
 
@@ -913,15 +1138,18 @@ class RemapRefreshSink final : public Operator<> {
     if (!sample) {
       return remap_refresh_failure(sample.error().code);
     }
-    const auto shape = sample->data.shape_span();
+    if (!sample->data.data) {
+      return remap_refresh_failure(ErrorCode::kInvalidArgument);
+    }
+    const auto shape = sample->data.data->shape_span();
     if (shape.size() != 3U || shape[0] != 2 || shape[1] != 2 || shape[2] != 3 ||
-        sample->data.nbytes() != kInitialRemapValues.size() ||
-        sample->data.device().device_type != kDLCUDA) {
+        sample->data.data->nbytes() != kInitialRemapValues.size() ||
+        sample->data.data->device().device_type != kDLCUDA) {
       return remap_refresh_failure(ErrorCode::kInvalidArgument);
     }
     std::array<std::uint8_t, 12U> host{};
-    auto copied =
-        sample->data.copy_to_host_async(host.data(), host.size(), context.cuda_stream().get());
+    auto copied = sample->data.data->copy_to_host_async(
+        host.data(), host.size(), context.cuda_stream().get());
     if (!copied) {
       return remap_refresh_failure(copied.error().code);
     }
@@ -932,9 +1160,10 @@ class RemapRefreshSink final : public Operator<> {
     return {};
   }
 
-  Input<Tensor> input{"input"};
+  Input<schema::ImageT> input{"input"};
 };
 
+// REQ: VISION-007
 TEST(RemapOp, LatestModeAdmitsANewerMapWhileReusingThePreviousMap) {
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0 ||
@@ -946,8 +1175,7 @@ TEST(RemapOp, LatestModeAdmitsANewerMapWhileReusingThePreviousMap) {
   RemapRefreshObservation::reset();
   Graph graph{"vision-remap-refresh-test"};
   const auto source = graph.op<RemapRefreshSource>("source");
-  auto remap = graph.op<RemapOp>(
-      "remap", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto remap = graph.op<RemapOp>("remap");
   remap.set_params(RemapOpParams{
       .width = 2,
       .height = 2,
@@ -994,11 +1222,66 @@ TEST(RemapOp, LatestModeAdmitsANewerMapWhileReusingThePreviousMap) {
   EXPECT_TRUE(RemapRefreshObservation::outputs_valid);
 }
 
+class RGBLayoutSink final : public Operator<> {
+ public:
+  explicit RGBLayoutSink(bool planar) : planar_(planar) {}
+
+  void setup(OperatorSpec& spec) override {
+    spec.input(input, "input")
+        .queue_depth(1U)
+        .tensor_field(schema::ImageTensorFields::data)
+        .expects_tensor(TensorInputSpec{.representation = kCudaTensorRepresentation});
+  }
+
+  [[nodiscard]] Contract contract() const override {
+    Contract result;
+    result.trigger(OnEach{input});
+    return result;
+  }
+
+  [[nodiscard]] expected<void, Error> compute([[maybe_unused]] ExecutionContext& context) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return full_pipeline_failure(sample.error().code);
+    }
+    const auto& image = sample->data;
+    const auto encoding = planar_ ? schema::ImageEncoding_R8_G8_B8 : schema::ImageEncoding_RGB8;
+    if (!image.data || image.width != 4 || image.height != 4 || image.encoding != encoding ||
+        image.color_space != schema::ColorSpace_SRGB || image.significant_bits != 7 ||
+        image.roi_offset_x != 10 || image.roi_offset_y != 20 || image.exposure_time_ns != 123 ||
+        image.gain != 2.F || !image.header || image.header->frame_id != "camera" ||
+        image.header->capture_timestamp_ns != 321 || image.header->device_sequence != 99 ||
+        image.plane_layouts.size() != (planar_ ? 3U : 0U)) {
+      return full_pipeline_failure(ErrorCode::kInvalidArgument);
+    }
+    const std::array<std::int64_t, 3U> expected_shape =
+        planar_ ? std::array<std::int64_t, 3U>{3, 4, 4} : kColorImageShape;
+    if (!std::ranges::equal(image.data->shape_span(), expected_shape)) {
+      return full_pipeline_failure(ErrorCode::kInvalidArgument);
+    }
+    for (std::size_t i = 0; i < image.plane_layouts.size(); ++i) {
+      const auto& plane = image.plane_layouts[i];
+      if (plane.offset_bytes() != i * 16U || plane.row_stride_bytes() != 4U ||
+          plane.size_bytes() != 16U) {
+        return full_pipeline_failure(ErrorCode::kInvalidArgument);
+      }
+    }
+    FullPipelineObservation::record_rgb_layout();
+    return {};
+  }
+
+  Input<schema::ImageT> input{"input"};
+
+ private:
+  bool planar_;
+};
+
 class PlanarImageSink final : public Operator<> {
  public:
   void setup(OperatorSpec& spec) override {
     spec.input(input, "input")
         .queue_depth(1U)
+        .tensor_field(schema::ImageTensorFields::data)
         .expects_tensor(TensorInputSpec{.representation = kCudaTensorRepresentation});
   }
 
@@ -1013,15 +1296,33 @@ class PlanarImageSink final : public Operator<> {
     if (!sample) {
       return full_pipeline_failure(sample.error().code);
     }
-    const auto shape = sample->data.shape_span();
+    const auto& image = sample->data;
+    if (!image.data || image.width != 2 || image.height != 2 ||
+        image.encoding != schema::ImageEncoding_CUSTOM ||
+        image.color_space != schema::ColorSpace_UNSPECIFIED ||
+        image.significant_bits != schema::kUnknownImageSignificantBits || image.roi_offset_x != 0 ||
+        image.roi_offset_y != 0 || image.exposure_time_ns != 123 || image.gain != 2.F ||
+        !image.header || image.header->frame_id != "camera" ||
+        image.header->capture_timestamp_ns != 321 || image.header->device_sequence != 99 ||
+        image.plane_layouts.size() != 3U) {
+      return full_pipeline_failure(ErrorCode::kInvalidArgument);
+    }
+    for (std::size_t i = 0; i < 3U; ++i) {
+      const auto& plane = image.plane_layouts[i];
+      if (plane.offset_bytes() != i * 16U || plane.row_stride_bytes() != 8U ||
+          plane.size_bytes() != 16U) {
+        return full_pipeline_failure(ErrorCode::kInvalidArgument);
+      }
+    }
+    const Tensor& tensor = *image.data;
+    const auto shape = tensor.shape_span();
     if (shape.size() != 3U || shape[0] != 3 || shape[1] != 2 || shape[2] != 2 ||
-        sample->data.nbytes() != sizeof(kExpectedPlanarValues) ||
-        sample->data.device().device_type != kDLCUDA) {
+        tensor.nbytes() != sizeof(kExpectedPlanarValues) ||
+        tensor.device().device_type != kDLCUDA) {
       return full_pipeline_failure(ErrorCode::kInvalidArgument);
     }
     std::array<float, 12U> host{};
-    auto copied =
-        sample->data.copy_to_host_async(host.data(), sizeof(host), context.cuda_stream().get());
+    auto copied = tensor.copy_to_host_async(host.data(), sizeof(host), context.cuda_stream().get());
     if (!copied) {
       return full_pipeline_failure(copied.error().code);
     }
@@ -1030,12 +1331,12 @@ class PlanarImageSink final : public Operator<> {
     }
     FullPipelineObservation::record_image(host,
                                           std::span<const std::int64_t, 3U>{shape.data(), 3U},
-                                          sample->data.dtype(),
+                                          tensor.dtype(),
                                           sample->metadata);
     return {};
   }
 
-  Input<Tensor> input{"input"};
+  Input<schema::ImageT> input{"input"};
 };
 
 class MaskSink final : public Operator<> {
@@ -1082,7 +1383,11 @@ class MaskSink final : public Operator<> {
   Input<Tensor> input{"input"};
 };
 
-TEST(VisionPipeline, ComposesAllCvCudaOperatorsAcrossImageAndDetectionBranches) {
+class VisionPipelineProvenance : public ::testing::TestWithParam<PipelineProvenance> {};
+
+// REQ: VISION-003
+// REQ: VISION-007
+TEST_P(VisionPipelineProvenance, ImagePayloadComposesAllOperatorsWithMatchingPixelsAndMetadata) {
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0 ||
       cudaSetDevice(0) != cudaSuccess || cudaFree(nullptr) != cudaSuccess) {
@@ -1092,24 +1397,23 @@ TEST(VisionPipeline, ComposesAllCvCudaOperatorsAcrossImageAndDetectionBranches) 
 
   FullPipelineObservation::reset();
   Graph graph{"vision-full-pipeline-test"};
-  const auto source = graph.op<FullPipelineSource>("source");
-  auto resize = graph.op<ResizeOp>(
-      "resize", VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
+  const auto& provenance = GetParam();
+  const auto source = graph.op<FullPipelineSource>("source", provenance);
+  auto resize = graph.op<ResizeOp>("resize");
   resize.set_params(
       ResizeOpParams{.width = 4, .height = 4, .interpolation = InterpolationMode::kNearest});
-  auto crop = graph.op<CustomCropOp>(
-      "crop", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto crop = graph.op<CustomCropOp>("crop");
   crop.set_params(CustomCropOpParams{.x = 1, .y = 1, .width = 2, .height = 2});
-  auto border = graph.op<CopyMakeBorderOp>(
-      "border", VisionImageCapacity{.max_width = 4, .max_height = 4, .max_batch_size = 1U});
-  border.set_params(CopyMakeBorderOpParams{.top = 1,
+  auto border = graph.op<CopyMakeBorderOp>("border");
+  border.set_params(CopyMakeBorderOpParams{.max_width = 4,
+                                           .max_height = 4,
+                                           .top = 1,
                                            .bottom = 1,
                                            .left = 1,
                                            .right = 1,
                                            .border_mode = BorderMode::kConstant,
                                            .border_value = {0.F}});
-  auto remap = graph.op<RemapOp>(
-      "remap", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto remap = graph.op<RemapOp>("remap");
   remap.set_params(RemapOpParams{.width = 2,
                                  .height = 2,
                                  .input_interpolation = InterpolationMode::kNearest,
@@ -1119,30 +1423,36 @@ TEST(VisionPipeline, ComposesAllCvCudaOperatorsAcrossImageAndDetectionBranches) 
                                  .border_mode = BorderMode::kConstant,
                                  .border_value = {0.F},
                                  .map_max_age = 1s});
-  auto convert = graph.op<ConvertToOp>(
-      "convert", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto convert = graph.op<ConvertToOp>("convert");
   convert.set_params(ConvertToOpParams{.output_type = VisionElementType::kF32,
                                        .alpha = 1.0,
                                        .beta = 0.0,
                                        .rounding = RoundingMode::kNearest});
-  auto normalize = graph.op<NormalizeOp>(
-      "normalize", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto normalize = graph.op<NormalizeOp>("normalize");
   normalize.set_params(NormalizeOpParams{.base = {0.F, 10.F, 20.F},
                                          .scale = {1.F},
                                          .global_scale = 1.F,
                                          .shift = 0.F,
                                          .epsilon = 0.F,
                                          .scale_is_stddev = false});
-  auto reformat = graph.op<ReformatOp>(
-      "reformat", VisionImageCapacity{.max_width = 2, .max_height = 2, .max_batch_size = 1U});
+  auto reformat = graph.op<ReformatOp>("reformat");
   reformat.set_params(ReformatOpParams{.mode = ReformatMode::kInterleavedToPlanar});
-  auto nms =
-      graph.op<NonMaximumSuppressionOp>("nms", NMSCapacity{.max_boxes = 3, .max_batch_size = 1U});
-  nms.set_params(NonMaximumSuppressionOpParams{.score_threshold = 0.F, .iou_threshold = 0.5F});
+  auto nms = graph.op<NonMaximumSuppressionOp>("nms");
+  nms.set_params(
+      NonMaximumSuppressionOpParams{.max_boxes = 3, .score_threshold = 0.F, .iou_threshold = 0.5F});
   const auto image_sink = graph.op<PlanarImageSink>("image-sink");
   const auto mask_sink = graph.op<MaskSink>("mask-sink");
 
-  graph.add_flow(source->image, resize->input);
+  const auto to_planar = graph.op<ReformatOp>("to-planar");
+  auto to_interleaved = graph.op<ReformatOp>("to-interleaved");
+  to_interleaved.set_params(ReformatOpParams{.mode = ReformatMode::kPlanarToInterleaved});
+  const auto planar_check = graph.op<RGBLayoutSink>("planar-check", true);
+  const auto interleaved_check = graph.op<RGBLayoutSink>("interleaved-check", false);
+  graph.add_flow(to_planar->output, planar_check->input);
+  graph.add_flow(to_interleaved->output, interleaved_check->input);
+  graph.add_flow(source->image, to_planar->input);
+  graph.add_flow(to_planar->output, to_interleaved->input);
+  graph.add_flow(to_interleaved->output, resize->input);
   graph.add_flow(resize->output, crop->input);
   graph.add_flow(crop->output, border->input);
   graph.add_flow(border->output, remap->input);
@@ -1159,11 +1469,13 @@ TEST(VisionPipeline, ComposesAllCvCudaOperatorsAcrossImageAndDetectionBranches) 
 
   CompileOptions options;
   for (const auto& [operator_path, output_port] :
-       std::array<std::pair<const char*, const char*>, 12U>{{
+       std::array<std::pair<const char*, const char*>, 14U>{{
            {"source", "image"},
            {"source", "map"},
            {"source", "boxes"},
            {"source", "scores"},
+           {"to-planar", "output"},
+           {"to-interleaved", "output"},
            {"resize", "output"},
            {"crop", "output"},
            {"border", "output"},
@@ -1178,7 +1490,7 @@ TEST(VisionPipeline, ComposesAllCvCudaOperatorsAcrossImageAndDetectionBranches) 
   }
   const ExecutionPlan plan = compile(graph, std::move(options));
   ASSERT_TRUE(plan.ok()) << plan.json();
-  ASSERT_EQ(plan.tensor_allocations().size(), 12U);
+  ASSERT_EQ(plan.tensor_allocations().size(), 14U);
   ASSERT_EQ(plan.aligned_triggers().size(), 1U);
   const auto latest_map = std::find_if(
       plan.input_selections().begin(), plan.input_selections().end(), [](const auto& selection) {
@@ -1202,6 +1514,7 @@ TEST(VisionPipeline, ComposesAllCvCudaOperatorsAcrossImageAndDetectionBranches) 
   const std::lock_guard lock(FullPipelineObservation::mutex);
   EXPECT_FALSE(FullPipelineObservation::failure.has_value());
   EXPECT_EQ(FullPipelineObservation::image_count, kStaticMapImageCount);
+  EXPECT_EQ(FullPipelineObservation::rgb_layout_count, 2U * kStaticMapImageCount);
   EXPECT_TRUE(FullPipelineObservation::image_values_match);
   EXPECT_TRUE(FullPipelineObservation::mask_complete);
   EXPECT_EQ(FullPipelineObservation::image_shape, (std::array<std::int64_t, 3U>{3, 2, 2}));
@@ -1217,11 +1530,36 @@ TEST(VisionPipeline, ComposesAllCvCudaOperatorsAcrossImageAndDetectionBranches) 
   for (const SampleMetadata* metadata :
        {&FullPipelineObservation::image_metadata, &FullPipelineObservation::mask_metadata}) {
     EXPECT_TRUE(metadata->source_clock_id.valid());
-    EXPECT_EQ(metadata->frame_id, kFrameId);
-    EXPECT_EQ(metadata->trace_id, kTraceId);
-    EXPECT_TRUE(metadata->degraded());
   }
+  EXPECT_EQ(FullPipelineObservation::image_metadata.frame_id, kFrameId);
+  EXPECT_EQ(FullPipelineObservation::image_metadata.trace_id, kTraceId);
+  EXPECT_EQ(FullPipelineObservation::image_metadata.flags,
+            provenance.image_flags | provenance.map_flags);
+  EXPECT_EQ(FullPipelineObservation::mask_metadata.frame_id,
+            provenance.scores_frame == kFrameId ? kFrameId : 0U);
+  EXPECT_EQ(FullPipelineObservation::mask_metadata.trace_id,
+            provenance.scores_trace == kTraceId ? kTraceId : 0U);
+  EXPECT_EQ(FullPipelineObservation::mask_metadata.flags,
+            provenance.image_flags | provenance.scores_flags);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    Contributors, VisionPipelineProvenance,
+    ::testing::Values(PipelineProvenance{},
+                      PipelineProvenance{.image_flags = SampleFlags::kNone,
+                                         .scores_flags = SampleFlags::kInvalid,
+                                         .map_flags = SampleFlags::kNone},
+                      PipelineProvenance{.image_flags = SampleFlags::kNone,
+                                         .scores_flags = SampleFlags::kDegraded,
+                                         .map_flags = SampleFlags::kNone},
+                      PipelineProvenance{.scores_frame = kFrameId + 1},
+                      PipelineProvenance{.scores_trace = kTraceId + 1},
+                      PipelineProvenance{.image_flags = SampleFlags::kNone,
+                                         .scores_flags = SampleFlags::kNone,
+                                         .map_flags = SampleFlags::kInvalid},
+                      PipelineProvenance{.image_flags = SampleFlags::kNone,
+                                         .scores_flags = SampleFlags::kNone,
+                                         .map_flags = SampleFlags::kDegraded}));
 
 }  // namespace
 }  // namespace holoscan::vision

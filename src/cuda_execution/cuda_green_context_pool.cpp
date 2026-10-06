@@ -20,6 +20,7 @@
 
 #include <holoscan/logger/logger.hpp>
 
+#include "core/diagnostic_reporting.hpp"
 #include "cuda_green_context_driver.hpp"
 
 namespace holoscan {
@@ -38,8 +39,8 @@ CudaGreenContextPool::CudaGreenContextPool(Config config) : config_(std::move(co
 CudaGreenContextPool::~CudaGreenContextPool() {
   auto result = deinitialize_pool();
   if (!result) {
-    HOLOSCAN_LOG_ERROR("Failed to deinitialize CUDA green context pool: {}",
-                       runtime_error_message(result.error()));
+    HOLOSCAN_LOG_AUTOMATIC_ERROR("Failed to deinitialize CUDA green context pool: {}",
+                                 runtime_error_message(result.error()));
   }
 }
 
@@ -367,8 +368,9 @@ expected<void, Error> CudaGreenContextPool::initialize_pool() {
   if (auto reserved = reserve_green_contexts(); !reserved) {
     auto cleanup = destroy_green_contexts();
     if (!cleanup) {
-      HOLOSCAN_LOG_ERROR("Failed to clean up CUDA green contexts after reserve failure: {}",
-                         runtime_error_message(cleanup.error()));
+      HOLOSCAN_LOG_AUTOMATIC_ERROR(
+          "Failed to clean up CUDA green contexts after reserve failure: {}",
+          runtime_error_message(cleanup.error()));
     }
     return fail(forward_error(reserved));
   }
@@ -381,7 +383,7 @@ expected<void, Error> CudaGreenContextPool::destroy_green_contexts() {
   expected<void, Error> result;
   if (driver_ != nullptr && driver_->green_context_destroy != nullptr) {
     for (auto context = green_contexts_.rbegin(); context != green_contexts_.rend(); ++context) {
-      const CUgreenCtx ctx = *context;
+      auto* const ctx = *context;
       if (ctx != nullptr) {
         if (auto status = driver_->green_context_destroy(ctx); status != CUDA_SUCCESS && result) {
           result = make_unexpected(driver_error(*driver_, "cuGreenCtxDestroy failed", status));

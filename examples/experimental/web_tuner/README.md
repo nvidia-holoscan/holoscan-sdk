@@ -2,7 +2,7 @@
 
 > **Experimental — build-flag-gated.** This example builds only when the SDK
 > is configured with `-DHOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER=ON`
-> (the default, which itself requires `-DHOLOSCAN_BUILD_PARAMS=ON`). If a
+> (the default). If a
 > consumer configures the tuner flag `OFF`, this example degrades gracefully:
 > it is excluded with a configure-time
 > `message(STATUS ...)` notice, never a build error. The API lives in

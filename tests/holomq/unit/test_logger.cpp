@@ -11,12 +11,15 @@
 #if defined(HOLOMQ_TRANSPORT_IOX2)
 #include <holomq/context_builder.hpp>
 
-#include "iox2/log.hpp"
+#include <iox2/log.hpp>
 #endif
 
+#include <atomic>
+#include <barrier>
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -100,6 +103,37 @@ TEST_F(LoggerTest, LogLevelFiltersMessages) {
   ASSERT_EQ(g_entries.size(), 1U);
   EXPECT_EQ(g_entries[0].level, holomq::LogLevel::Warn);
   EXPECT_EQ(g_entries[0].message, "visible");
+}
+
+// Run under TSan to detect unsynchronized initialization-state reads in dispatch,
+// including after the level has already been initialized by the fixture.
+TEST_F(LoggerTest, ConcurrentLevelChangesAndDispatch) {
+  std::atomic<unsigned int> received{0};
+  holomq::set_log_handler(
+      [](holomq::LogLevel, const char*, int, const char*, const char*, void* user_data) noexcept {
+        static_cast<std::atomic<unsigned int>*>(user_data)->fetch_add(1, std::memory_order_relaxed);
+      },
+      &received);
+
+  constexpr unsigned int kIterations = 1000;
+  std::barrier start{2};
+  std::thread setter([&start] {
+    start.arrive_and_wait();
+    for (unsigned int i = 0; i < kIterations; ++i) {
+      holomq::set_log_level(i % 2 == 0 ? holomq::LogLevel::Info : holomq::LogLevel::Warn);
+    }
+  });
+  std::thread dispatcher([&start] {
+    start.arrive_and_wait();
+    for (unsigned int i = 0; i < kIterations; ++i) {
+      holomq::log_literal(holomq::LogLevel::Error, "concurrent message");
+    }
+  });
+  setter.join();
+  dispatcher.join();
+  holomq::reset_log_handler();
+
+  EXPECT_EQ(received.load(std::memory_order_relaxed), kIterations);
 }
 
 TEST_F(LoggerTest, ResetHandlerStopsCapture) {

@@ -4,5 +4,5 @@
 namespace schema_tools;
 
 table FalseLogicalDependency {
-  value:int;
+  value:int (id: 0);
 }

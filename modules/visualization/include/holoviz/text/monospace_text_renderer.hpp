@@ -7,16 +7,10 @@
 // writes — no CUDA stream, no frames-in-flight ring. Each string run is one
 // instanced draw — draw(6, char_count), or draw(3, char_count) in the
 // fill-rectangle mode (see MonospaceFillMode) — whose per-draw data is push
-// constants only. The block uses std140 layout (uint4 char words):
-//
-//   struct PushConstants {          // 256 bytes total
-//     float2 origin_px;             // top-left of the run, framebuffer pixels
-//     float2 clip_scale;            // 2/fb_width, 2/fb_height
-//     float  glyph_height_px;       // rendered height; advance scales with it
-//     uint32_t rgba;                // packed color, red in the lowest byte
-//     /* 8 pad bytes */
-//     uint4 packed_chars[14];       // 224 ASCII bytes, 4 per word
-//   };
+// constants only. The block (std140, uint4 char words) is defined once in
+// src/text/monospace_interface.hpp, the header both monospace.slang and the
+// renderer compile from: a 24-byte header (origin, clip scale, glyph height,
+// packed color), 8 pad bytes, then uint4[14] holding 224 ASCII bytes.
 //
 // 256 bytes is NVIDIA's push-constant budget (above the 128-byte Vulkan
 // minimum); creation validates the device limit and the Slang-reflected
@@ -50,8 +44,8 @@ inline constexpr uint32_t kMonospaceMaxCharsPerDraw = 224;
 /// How glyph quads are rasterized. kFillRectangle draws one triangle per glyph
 /// and lets VK_NV_fill_rectangle rasterize its axis-aligned bounding rectangle
 /// — half the vertex work, no diagonal seam. It requires
-/// rhi::CapabilityReport::fill_rectangle: creation fails without it, so gate
-/// the selection on rhi::Device::capabilities().
+/// CapabilityReport::fill_rectangle: creation fails without it, so gate
+/// the selection on Device::capabilities().
 enum class MonospaceFillMode : uint8_t {
   kTriangles,      ///< Two triangles per glyph (works everywhere).
   kFillRectangle,  ///< One triangle per glyph via VK_NV_fill_rectangle.
@@ -59,7 +53,7 @@ enum class MonospaceFillMode : uint8_t {
 
 struct MonospaceTextRendererDesc {
   /// Glyph rasterization mode; kFillRectangle requires
-  /// rhi::CapabilityReport::fill_rectangle (see MonospaceFillMode).
+  /// CapabilityReport::fill_rectangle (see MonospaceFillMode).
   MonospaceFillMode fill_mode = MonospaceFillMode::kTriangles;
   /// Monospace TTF to bake the ASCII atlas from; nullptr selects the built-in
   /// font (ImGui's ProggyClean, which bakes at 13 px — atlas_glyph_height_px
@@ -81,6 +75,6 @@ struct MonospaceTextRendererDesc {
 /// device with a 256-byte push-constant budget (NVIDIA hardware); creation fails with a
 /// clear error otherwise.
 [[nodiscard]] HOLOVIZ_EXPORT expected<TextRenderer> create_monospace_text_renderer(
-    rhi::Device& device, const MonospaceTextRendererDesc& desc);
+    Device& device, const MonospaceTextRendererDesc& desc);
 
 }  // namespace holoviz::text

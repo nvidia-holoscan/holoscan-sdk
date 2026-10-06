@@ -170,7 +170,7 @@ possible.
   caught.
 - Guide deep-dive: getting-started/typed-parameters, and the config chapter
   for loading these same aggregates from JSON/YAML documents
-  (`holoscan::config_io` + `holoscan::params::bind`, essential module).
+  (`holoscan::config_io` + `holoscan::params::try_decode`, essential module).
 
 ## Concepts at a glance
 

@@ -125,6 +125,22 @@ using ScalarInput = Input<std::uint32_t>;
 using ScalarOutput = Output<std::uint32_t>;
 using ScalarSample = Sample<std::uint32_t>;
 using ScalarBatch = SelectedBatchView<std::uint32_t>;
+using ScalarView = SelectedSampleView<std::uint32_t>;
+// REQ: OPERATOR-056
+// REQ: OPERATOR-054
+static_assert(std::is_trivially_copyable_v<ScalarView>);
+static_assert(!std::default_initializable<ScalarView>);
+static_assert(!std::convertible_to<ScalarView, ScalarSample>);
+static_assert(std::same_as<decltype(std::declval<const ScalarInput&>().selected_sample()),
+                           expected<ScalarView, Error>>);
+static_assert(noexcept(std::declval<const ScalarInput&>().selected_sample()));
+static_assert(std::same_as<decltype(std::declval<ScalarView&>().sample()), const ScalarSample&>);
+static_assert(std::same_as<decltype(std::declval<ScalarView&>().data()), const std::uint32_t&>);
+static_assert(
+    std::same_as<decltype(std::declval<ScalarView&>().metadata()), const SampleMetadata&>);
+static_assert(std::same_as<decltype(*std::declval<ScalarView&>()), const ScalarSample&>);
+static_assert(
+    std::same_as<decltype(std::declval<ScalarView&>().operator->()), const ScalarSample*>);
 using ScalarLoan = LoanedSample<std::uint32_t>;
 using ScalarValueEmit = expected<void, Error> (ScalarOutput::*)(std::uint32_t, EmitOptions);
 using ScalarSampleEmit = expected<void, Error> (ScalarOutput::*)(ScalarSample);

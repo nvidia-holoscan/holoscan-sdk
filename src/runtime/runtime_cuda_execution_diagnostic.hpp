@@ -23,6 +23,10 @@ struct RuntimeCudaExecutionDiagnostic {
   std::string pool_id;
   std::string green_context_id;
   std::string stream_id;
+  DiagnosticMismatch mismatch;
+  GraphId graph{};
+  RegionId region{};
+  VertexId fused_operator{};
   std::int32_t driver_result{-1};
 };
 

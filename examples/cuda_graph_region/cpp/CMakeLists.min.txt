@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_cuda_graph_region LANGUAGES CXX CUDA)
+
+include(CTest)
+
+find_package(CUDAToolkit REQUIRED)
+find_package(holoscan REQUIRED CONFIG
+    PATHS
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+)
+
+add_executable(cuda_graph_region cuda_graph_region.cu)
+target_compile_features(cuda_graph_region PRIVATE cxx_std_20 cuda_std_20)
+target_link_libraries(cuda_graph_region
+    PRIVATE
+        CUDA::cudart
+        holoscan::core
+)
+
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_CUDA_GRAPH_REGION_NORMAL_TEST
+        COMMAND cuda_graph_region --normal)
+    add_test(NAME EXAMPLE_CPP_CUDA_GRAPH_REGION_CAPTURED_TEST
+        COMMAND cuda_graph_region --cuda-graph)
+    set_tests_properties(EXAMPLE_CPP_CUDA_GRAPH_REGION_NORMAL_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "cuda_graph_region NORMAL PASS"
+            SKIP_RETURN_CODE 77
+            TIMEOUT 30
+    )
+    set_tests_properties(EXAMPLE_CPP_CUDA_GRAPH_REGION_CAPTURED_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "cuda_graph_region CUDA_GRAPH PASS"
+            SKIP_RETURN_CODE 77
+            TIMEOUT 30
+    )
+endif()

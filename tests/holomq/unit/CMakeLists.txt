@@ -27,6 +27,7 @@ set(holomq_core_unit_test_sources
     test_pubsub_capabilities.cpp
     test_pubsub_options.cpp
     test_publisher_sample_release_registry.cpp
+    test_readiness_portability.cpp
     test_scoped_file_descriptor.cpp
     test_shm_ref_count.cpp
     test_slot_region.cpp

@@ -26,6 +26,7 @@
 #include "runtime/runtime_channel_binding.hpp"
 #include "runtime/runtime_phase_counters.hpp"
 
+#include "common/allocation_counter.hpp"
 #include "runtime_channel_binding_schema_tensor_test_support.hpp"
 #include "runtime_channel_binding_test_support.hpp"
 
@@ -36,11 +37,116 @@ using namespace std::chrono_literals;
 using namespace runtime_channel_binding_test;
 using namespace runtime_channel_binding_schema_tensor_test;
 
-// Direct-retained raw Tensor delivery keeps the ordinary readiness path. Receipt bookkeeping does
-// not improve the production-sized path enough to justify touching Tensor publication.
+// REQ: RUNTIME-059
+TEST(ChannelBindingParityTest, RejectsTensorThatDoesNotMatchRequiredFixedAddress) {
+  TensorSessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  std::uint64_t fixed_storage{};
+  constexpr std::array<std::uint64_t, 1U> fixed_shape{1U};
+  ASSERT_TRUE((*session)->require_fixed_tensor(PortId{2U}, &fixed_storage, fixed_shape));
+  auto binding =
+      (*session)->create_readiness_binding(VertexId{2U},
+                                           RuntimePortBindingRequest{
+                                               .plan_generation = fixture.base.plan.plan_generation,
+                                               .run_generation = 1U,
+                                               .kind = RuntimeEventKind::kInputArrival,
+                                               .source = make_source_id(1U),
+                                               .source_clock = ClockId{1U},
+                                               .reference_clock = ClockId{1U},
+                                               .capacity = 1U,
+                                           });
+  ASSERT_TRUE(binding) << runtime_error_message(binding.error());
+  ASSERT_TRUE((*session)->refresh_connections());
+  ASSERT_TRUE((*session)->arm());
+
+  constexpr std::array<std::uint64_t, 1U> values{77U};
+  constexpr std::array<std::int64_t, 1U> capture_times{10};
+  auto script = publish_tensor_script(**session, **binding, fixture.source, values, capture_times);
+  ASSERT_TRUE(script) << runtime_error_message(script.error());
+  const std::array selection{RuntimeChannelActivationSelection{
+      .port = PortId{2U},
+      .selection = InputSelection{InputState::kSelected, SelectionReason::kNone},
+      .samples = std::span<const TemporalSampleRecord>{script->records.data(), 1U},
+      .destructive = true,
+  }};
+  ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, selection));
+
+  auto prepared = (*session)->prepare_tensor_access(VertexId{2U}, 1U, nullptr);
+  ASSERT_FALSE(prepared);
+  EXPECT_EQ(prepared.error().code, ErrorCode::kIncompatible);
+
+  std::uint64_t other_storage{};
+  EXPECT_FALSE((*session)->clear_fixed_tensor_requirement(PortId{2U}, &other_storage));
+  ASSERT_TRUE((*session)->clear_fixed_tensor_requirement(PortId{2U}, &fixed_storage));
+  EXPECT_TRUE((*session)->require_fixed_tensor(PortId{2U}, &other_storage, fixed_shape));
+  EXPECT_TRUE((*session)->clear_fixed_tensor_requirement(PortId{2U}, &other_storage));
+
+  // A rank-zero DLPack Tensor has one scalar value and an intentionally empty shape.
+  EXPECT_TRUE((*session)->require_fixed_tensor(PortId{2U}, &other_storage, {}));
+  EXPECT_TRUE((*session)->clear_fixed_tensor_requirement(PortId{2U}, &other_storage));
+
+  (*session)->cancel();
+  ASSERT_TRUE((*session)->join());
+}
+
+// REQ: RUNTIME-046
+// REQ: RUNTIME-059
+TEST(ChannelBindingParityTest, FixedTensorShapeAllocationFailureLeavesNoPartialRequirement) {
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  TensorSessionFixture fixture;
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  std::uint64_t rejected_storage{};
+  std::uint64_t accepted_storage{};
+  constexpr std::array<std::uint64_t, 1U> fixed_shape{1U};
+
+  {
+    const test::ScopedAllocationFailure fail_shape_copy{0U};
+    EXPECT_FALSE((*session)->require_fixed_tensor(PortId{2U}, &rejected_storage, fixed_shape));
+  }
+
+  EXPECT_TRUE((*session)->require_fixed_tensor(PortId{2U}, &accepted_storage, fixed_shape));
+  EXPECT_TRUE((*session)->clear_fixed_tensor_requirement(PortId{2U}, &accepted_storage));
+#else
+  GTEST_SKIP() << "allocation-failure containment requires language exception support";
+#endif
+}
+
+// REQ: RUNTIME-046
+// REQ: RUNTIME-059
+TEST(ChannelBindingParityTest, LaterFixedTensorShapeAllocationFailurePreservesEarlierIngress) {
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+  TensorSessionFixture fixture;
+  fixture.add_blocking_fanout();
+  auto session = RuntimeChannelSession::create(fixture.base.plan, fixture.replay);
+  ASSERT_TRUE(session) << runtime_error_message(session.error());
+  std::uint64_t first_storage{};
+  std::uint64_t rejected_storage{};
+  std::uint64_t accepted_storage{};
+  constexpr std::array<std::uint64_t, 1U> fixed_shape{1U};
+  ASSERT_TRUE((*session)->require_fixed_tensor(PortId{2U}, &first_storage, fixed_shape));
+
+  {
+    const test::ScopedAllocationFailure fail_shape_copy{0U};
+    EXPECT_FALSE((*session)->require_fixed_tensor(PortId{3U}, &rejected_storage, fixed_shape));
+  }
+
+  EXPECT_TRUE((*session)->clear_fixed_tensor_requirement(PortId{2U}, &first_storage));
+  EXPECT_TRUE((*session)->require_fixed_tensor(PortId{3U}, &accepted_storage, fixed_shape));
+  EXPECT_TRUE((*session)->clear_fixed_tensor_requirement(PortId{3U}, &accepted_storage));
+#else
+  GTEST_SKIP() << "allocation-failure containment requires language exception support";
+#endif
+}
+
+// Direct-retained raw Tensor delivery can arm causal continuation while preserving the ordinary
+// readiness record and the same retained Tensor lifetime authority.
 // REQ: CHAN-098
+// REQ: CHAN-128
 // REQ: RUNTIME-019
-TEST(ChannelBindingParityTest, DirectRawTensorUsesOrdinaryReadinessInsteadOfContinuation) {
+// REQ: RUNTIME-037
+TEST(ChannelBindingParityTest, DirectRawTensorArmsContinuationAndPreservesOrdinaryReadiness) {
   // Key setup: create an otherwise eligible exact shared-lane direct raw Tensor edge.
   TensorSessionFixture fixture;
   fixture.use_direct_retained_delivery();
@@ -62,7 +168,7 @@ TEST(ChannelBindingParityTest, DirectRawTensorUsesOrdinaryReadinessInsteadOfCont
   ASSERT_TRUE(binding) << runtime_error_message(binding.error());
   ASSERT_TRUE((*session)->refresh_connections());
   ASSERT_TRUE((*session)->arm());
-  EXPECT_FALSE((*session)->arm_direct_continuation(VertexId{1U}, 0U));
+  EXPECT_TRUE((*session)->arm_direct_continuation(VertexId{1U}, 0U));
 
   constexpr std::array<std::uint64_t, 1U> values{77U};
   constexpr std::array<std::int64_t, 1U> capture_times{10};
@@ -79,8 +185,8 @@ TEST(ChannelBindingParityTest, DirectRawTensorUsesOrdinaryReadinessInsteadOfCont
   ASSERT_TRUE((*session)->prepare_activation(VertexId{2U}, 1U, selection));
   ASSERT_TRUE((*session)->prepare_tensor_access(VertexId{2U}, 1U, nullptr));
 
-  // Key assertion: ordinary polling publishes one readiness record while the typed slot remains
-  // the sole backing-lifetime authority through Tensor access and retirement.
+  // Key assertion: continuation eligibility does not consume ordinary readiness or change the
+  // typed slot's sole backing-lifetime authority through Tensor access and retirement.
   {
     auto received = fixture.sink.input.receive();
     ASSERT_TRUE(received) << runtime_error_message(received.error());
@@ -283,6 +389,7 @@ TEST(ChannelBindingParityTest,
 // REQ: OPERATOR-035
 // REQ: RUNTIME-042
 // REQ: RUNTIME-044
+// REQ: OPERATOR-056
 TEST(ChannelBindingParityTest,
      DescriptorTensorImagePreservesMetadataIdentityPredicateAndReuseClaims) {
   ImageSessionFixture fixture;
@@ -361,6 +468,11 @@ TEST(ChannelBindingParityTest,
     ASSERT_TRUE(raw_view) << runtime_error_message(raw_view.error());
     const auto& predicate =
         *static_cast<const PredicateInputView<schema::ImageT>*>(raw_view.value());
+    auto borrowed = fixture.sink.input.selected_sample();
+    ASSERT_TRUE(borrowed);
+    EXPECT_EQ(&borrowed->sample(), &predicate.sample());
+    EXPECT_EQ(borrowed->data().data->data(), published->data);
+    EXPECT_EQ(borrowed->metadata().sequence, published->record.source_sequence);
     auto received = fixture.sink.input.receive();
     ASSERT_TRUE(received) << runtime_error_message(received.error());
     ASSERT_NE(predicate.sample().data.data, nullptr);

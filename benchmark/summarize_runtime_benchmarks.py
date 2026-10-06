@@ -475,7 +475,15 @@ def render_provenance(
     created = transport_summary.number(manifest.get("created_unix_seconds"))
     if created is None:
         raise RuntimeError("suite manifest is missing its creation timestamp")
-    run_date = datetime.fromtimestamp(created, tz=timezone.utc).date().isoformat()
+    run_date = (
+        datetime.fromtimestamp(
+            created,
+            # This standalone tool is intentionally independent of the SDK Python floor.
+            tz=timezone.utc,  # noqa: UP017
+        )
+        .date()
+        .isoformat()
+    )
 
     native_manifest = artifact_manifest(suite_dir, by_id)
     machine = native_manifest.get("machine")
